@@ -1,12 +1,15 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/faceair/clash-speedtest/core/profiles"
 )
@@ -73,4 +76,192 @@ func TestWebServerEndpoints(t *testing.T) {
 		t.Errorf("expected 200 for switch policy, got %d", recPolicy.Code)
 	}
 }
+
+func TestWebServer_LoopbackHostClassification(t *testing.T) {
+	tests := []struct {
+		host     string
+		expected bool
+	}{
+		{"127.0.0.1", true},
+		{"127.0.0.1:8080", true},
+		{"127.0.0.2", true},
+		{"127.0.0.2:9090", true},
+		{"::1", true},
+		{"[::1]:9090", true},
+		{"localhost", true},
+		{"localhost:5173", true},
+		{"localhost.localdomain", true},
+		{"localhost.localdomain:8080", true},
+		{"127.evil.com", false},
+		{"127.evil.com:8080", false},
+		{"127.0.0.1.nip.io", false},
+		{"127.0.0.1.nip.io:8080", false},
+		{"attacker.com", false},
+		{"attacker.com:80", false},
+		{"", false},
+	}
+
+	for _, tc := range tests {
+		got := isLoopbackHost(tc.host)
+		if got != tc.expected {
+			t.Errorf("isLoopbackHost(%q) = %v; expected %v", tc.host, got, tc.expected)
+		}
+	}
+}
+
+func TestWebServer_SecurityMiddleware(t *testing.T) {
+	tmpDir := t.TempDir()
+	profileDir := filepath.Join(tmpDir, "profiles")
+	_ = os.MkdirAll(profileDir, 0o755)
+
+	server, err := NewServer(ServerConfig{
+		Port:         0,
+		ProfilePaths: profiles.Paths{Dir: profileDir},
+		HistoryDir:   filepath.Join(tmpDir, "history"),
+	})
+	if err != nil {
+		t.Fatalf("NewServer error: %v", err)
+	}
+	handler := server.Handler()
+
+	// 1. Safe GET request with loopback Host -> 200 OK
+	req1 := httptest.NewRequest(http.MethodGet, "/api/test/status", nil)
+	req1.Host = "127.0.0.1:8080"
+	rec1 := httptest.NewRecorder()
+	handler.ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusOK {
+		t.Errorf("GET with loopback host: expected 200, got %d", rec1.Code)
+	}
+
+	// 2. Non-loopback Host header (DNS rebinding attempt) -> 403 Forbidden
+	req2 := httptest.NewRequest(http.MethodGet, "/api/test/status", nil)
+	req2.Host = "attacker.com"
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusForbidden {
+		t.Errorf("GET with attacker host: expected 403, got %d", rec2.Code)
+	}
+
+	// 3. Mutating request (POST /api/settings) with loopback Origin -> 200 OK & reflect Origin (never wildcard)
+	body := []byte(`{}`)
+	req3 := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	req3.Host = "127.0.0.1:8080"
+	req3.Header.Set("Content-Type", "application/json")
+	req3.Header.Set("Origin", "http://localhost:5173")
+	rec3 := httptest.NewRecorder()
+	handler.ServeHTTP(rec3, req3)
+	if rec3.Code != http.StatusOK {
+		t.Errorf("POST with loopback origin: expected 200, got %d", rec3.Code)
+	}
+	if rec3.Header().Get("Access-Control-Allow-Origin") != "http://localhost:5173" {
+		t.Errorf("expected reflected loopback origin, got %q", rec3.Header().Get("Access-Control-Allow-Origin"))
+	}
+
+	// 4. Mutating request with untrusted external Origin -> 403 Forbidden
+	req4 := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	req4.Host = "127.0.0.1:8080"
+	req4.Header.Set("Content-Type", "application/json")
+	req4.Header.Set("Origin", "http://evil.com")
+	rec4 := httptest.NewRecorder()
+	handler.ServeHTTP(rec4, req4)
+	if rec4.Code != http.StatusForbidden {
+		t.Errorf("POST with evil.com origin: expected 403, got %d", rec4.Code)
+	}
+
+	// 5. Mutating request with prefix bypass Origin -> 403 Forbidden
+	req5 := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	req5.Host = "127.0.0.1:8080"
+	req5.Header.Set("Content-Type", "application/json")
+	req5.Header.Set("Origin", "http://127.evil.com")
+	rec5 := httptest.NewRecorder()
+	handler.ServeHTTP(rec5, req5)
+	if rec5.Code != http.StatusForbidden {
+		t.Errorf("POST with 127.evil.com origin: expected 403, got %d", rec5.Code)
+	}
+
+	// 6. Mutating request with nip.io Origin -> 403 Forbidden
+	req6 := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	req6.Host = "127.0.0.1:8080"
+	req6.Header.Set("Content-Type", "application/json")
+	req6.Header.Set("Origin", "http://127.0.0.1.nip.io:8080")
+	rec6 := httptest.NewRecorder()
+	handler.ServeHTTP(rec6, req6)
+	if rec6.Code != http.StatusForbidden {
+		t.Errorf("POST with nip.io origin: expected 403, got %d", rec6.Code)
+	}
+
+	// 7. Mutating request with untrusted Referer -> 403 Forbidden
+	req7 := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	req7.Host = "127.0.0.1:8080"
+	req7.Header.Set("Content-Type", "application/json")
+	req7.Header.Set("Referer", "http://evil.com/attack")
+	rec7 := httptest.NewRecorder()
+	handler.ServeHTTP(rec7, req7)
+	if rec7.Code != http.StatusForbidden {
+		t.Errorf("POST with evil referer: expected 403, got %d", rec7.Code)
+	}
+
+	// 8. CORS preflight OPTIONS with loopback Origin -> 200 OK
+	req8 := httptest.NewRequest(http.MethodOptions, "/api/settings", nil)
+	req8.Host = "127.0.0.1:8080"
+	req8.Header.Set("Origin", "http://localhost:5173")
+	rec8 := httptest.NewRecorder()
+	handler.ServeHTTP(rec8, req8)
+	if rec8.Code != http.StatusOK {
+		t.Errorf("OPTIONS with loopback origin: expected 200, got %d", rec8.Code)
+	}
+	if rec8.Header().Get("Access-Control-Allow-Origin") != "http://localhost:5173" {
+		t.Errorf("OPTIONS: expected reflected loopback origin, got %q", rec8.Header().Get("Access-Control-Allow-Origin"))
+	}
+
+	// 9. CORS preflight OPTIONS with untrusted Origin -> 403 Forbidden
+	req9 := httptest.NewRequest(http.MethodOptions, "/api/settings", nil)
+	req9.Host = "127.0.0.1:8080"
+	req9.Header.Set("Origin", "http://evil.com")
+	rec9 := httptest.NewRecorder()
+	handler.ServeHTTP(rec9, req9)
+	if rec9.Code != http.StatusForbidden {
+		t.Errorf("OPTIONS with evil origin: expected 403, got %d", rec9.Code)
+	}
+
+	// 10. Verify that Access-Control-Allow-Origin: * is NEVER set in any responses
+	for idx, rec := range []*httptest.ResponseRecorder{rec1, rec2, rec3, rec4, rec5, rec6, rec7, rec8, rec9} {
+		if rec.Header().Get("Access-Control-Allow-Origin") == "*" {
+			t.Errorf("case %d: Access-Control-Allow-Origin MUST NEVER be wildcard '*'", idx+1)
+		}
+	}
+}
+
+func TestWebServer_SPAHandler(t *testing.T) {
+	mockFS := fstest.MapFS{
+		"index.html":       {Data: []byte("<html><body>Mock App</body></html>")},
+		"assets/style.css": {Data: []byte("body { color: red; }")},
+	}
+	spa := SPAHandler(mockFS)
+
+	// 1. Root path -> index.html
+	req1 := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec1 := httptest.NewRecorder()
+	spa.ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusOK || !strings.Contains(rec1.Body.String(), "Mock App") {
+		t.Errorf("SPA root: expected index.html content, got %s", rec1.Body.String())
+	}
+
+	// 2. Direct static file -> assets/style.css
+	req2 := httptest.NewRequest(http.MethodGet, "/assets/style.css", nil)
+	rec2 := httptest.NewRecorder()
+	spa.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK || !strings.Contains(rec2.Body.String(), "color: red") {
+		t.Errorf("SPA static asset: expected css content, got %s", rec2.Body.String())
+	}
+
+	// 3. Unknown route -> fallback to index.html (SPA routing)
+	req3 := httptest.NewRequest(http.MethodGet, "/controller/dashboard", nil)
+	rec3 := httptest.NewRecorder()
+	spa.ServeHTTP(rec3, req3)
+	if rec3.Code != http.StatusOK || !strings.Contains(rec3.Body.String(), "Mock App") {
+		t.Errorf("SPA fallback: expected index.html content, got %s", rec3.Body.String())
+	}
+}
+
 

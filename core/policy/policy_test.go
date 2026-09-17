@@ -63,6 +63,122 @@ func TestDecisionEngine_Modes(t *testing.T) {
 	}
 }
 
+func TestDecisionEngine_ModeBoundariesAndLocking(t *testing.T) {
+	engine := NewDecisionEngine()
+	now := time.Now()
+
+	// Base evaluations where HK-01 is failing (unavailable), and HK-FAST is available
+	evalsFailure := []NodeEvaluation{
+		{
+			Name:              "HK-01",
+			Available:         false,
+			TriageStatus:      "failed",
+			SampleCount:       5,
+			LastSampleTime:    now,
+			ObservationWindow: 2 * time.Minute,
+		},
+		{
+			Name:              "HK-FAST",
+			Available:         true,
+			RTT:               35 * time.Millisecond,
+			SampleCount:       5,
+			LastSampleTime:    now,
+			ObservationWindow: 2 * time.Minute,
+		},
+	}
+
+	tests := []struct {
+		name                 string
+		mode                 OrchestratorMode
+		lockedNode           string
+		stateFailures        int
+		expectShouldSwitch   bool
+		expectRecommendation bool
+		expectTargetNode     string
+	}{
+		{
+			name:                 "monitor_only + locked",
+			mode:                 ModeMonitorOnly,
+			lockedNode:           "HK-LOCKED",
+			stateFailures:        0,
+			expectShouldSwitch:   false,
+			expectRecommendation: false,
+		},
+		{
+			name:                 "recommend + locked",
+			mode:                 ModeRecommend,
+			lockedNode:           "HK-LOCKED",
+			stateFailures:        0,
+			expectShouldSwitch:   false,
+			expectRecommendation: false,
+		},
+		{
+			name:                 "auto + locked",
+			mode:                 ModeAuto,
+			lockedNode:           "HK-LOCKED",
+			stateFailures:        0,
+			expectShouldSwitch:   false,
+			expectRecommendation: false,
+		},
+		{
+			name:                 "monitor_only + failure",
+			mode:                 ModeMonitorOnly,
+			lockedNode:           "",
+			stateFailures:        5,
+			expectShouldSwitch:   false,
+			expectRecommendation: false,
+		},
+		{
+			name:                 "recommend + failure",
+			mode:                 ModeRecommend,
+			lockedNode:           "",
+			stateFailures:        5,
+			expectShouldSwitch:   false,
+			expectRecommendation: true,
+			expectTargetNode:     "HK-FAST",
+		},
+		{
+			name:                 "auto + failure",
+			mode:                 ModeAuto,
+			lockedNode:           "",
+			stateFailures:        5,
+			expectShouldSwitch:   true,
+			expectRecommendation: false,
+			expectTargetNode:     "HK-FAST",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := DefaultSwitchPolicy()
+			p.Mode = tt.mode
+			p.LockedNode = tt.lockedNode
+			p.CooldownDuration = 0
+
+			state := &DecisionState{
+				CurrentNode:         "HK-01",
+				ConsecutiveFailures: tt.stateFailures,
+			}
+
+			res := engine.Evaluate(now, p, state, evalsFailure)
+
+			if res.ShouldSwitch != tt.expectShouldSwitch {
+				t.Errorf("%s: ShouldSwitch = %v, expected %v", tt.name, res.ShouldSwitch, tt.expectShouldSwitch)
+			}
+			hasRec := res.Recommendation != nil
+			if hasRec != tt.expectRecommendation {
+				t.Errorf("%s: hasRecommendation = %v, expected %v", tt.name, hasRec, tt.expectRecommendation)
+			}
+			if tt.expectShouldSwitch && res.TargetNode != tt.expectTargetNode {
+				t.Errorf("%s: TargetNode = %s, expected %s", tt.name, res.TargetNode, tt.expectTargetNode)
+			}
+			if tt.expectRecommendation && res.Recommendation.TargetNode != tt.expectTargetNode {
+				t.Errorf("%s: Recommendation.TargetNode = %s, expected %s", tt.name, res.Recommendation.TargetNode, tt.expectTargetNode)
+			}
+		})
+	}
+}
+
 func TestDecisionEngine_SampleFreshness(t *testing.T) {
 	engine := NewDecisionEngine()
 	now := time.Now()

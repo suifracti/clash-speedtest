@@ -5,6 +5,7 @@ import (
 	"embed"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"os/signal"
@@ -15,6 +16,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/faceair/clash-speedtest/adapter/desktop"
+	"github.com/faceair/clash-speedtest/adapter/web"
 	"github.com/faceair/clash-speedtest/core/auth"
 	"github.com/faceair/clash-speedtest/core/ip"
 	"github.com/faceair/clash-speedtest/core/profiles"
@@ -464,17 +466,24 @@ func keepProxies(proxies map[string]*speedtester.CProxy, names []string) map[str
 
 func runGUI(port int, userAgent string, browser string) {
 	profiles.EnableUTF8Console()
-	server, err := gui.NewServer(gui.ServerConfig{
-		Port:         port,
-		ProfilePaths: profiles.DefaultPaths(),
-		UserAgent:    userAgent,
+
+	distFS, err := fs.Sub(desktopAssets, "frontend/dist")
+	if err != nil {
+		log.Fatalf("初始化前端静态资源失败: %s", err)
+	}
+
+	server, err := web.NewServer(web.ServerConfig{
+		Port:          port,
+		ProfilePaths:  profiles.DefaultPaths(),
+		UserAgent:     userAgent,
+		StaticHandler: web.SPAHandler(distFS),
 	})
 	if err != nil {
-		log.Fatalf("启动桌面 GUI 服务失败: %s", err)
+		log.Fatalf("启动 Web 服务失败: %s", err)
 	}
 
 	if err := server.Start(); err != nil {
-		log.Fatalf("监听桌面服务端口失败: %s", err)
+		log.Fatalf("监听 Web 服务端口失败: %s", err)
 	}
 
 	url := server.URL()

@@ -237,30 +237,24 @@ func (e *DecisionEngine) Evaluate(
 		}
 	}
 
-	// 1. Check if manually locked to a node
-	if p.LockedNode != "" {
-		if state.CurrentNode != p.LockedNode {
-			return DecisionResult{
-				Mode:         p.Mode,
-				ShouldSwitch: true,
-				TargetNode:   p.LockedNode,
-				Reason:       fmt.Sprintf("手动锁定节点至 %s", p.LockedNode),
-				TriggerType:  "manual_override",
-			}
-		}
-		return DecisionResult{
-			Mode:         p.Mode,
-			ShouldSwitch: false,
-			Reason:       fmt.Sprintf("已锁定至节点 %s，暂停自动调度", p.LockedNode),
-		}
-	}
-
-	// 2. Check Orchestrator Mode: Monitor Only mode NEVER performs switches
+	// 1. Check Orchestrator Mode: Monitor Only mode NEVER performs or recommends switches.
+	// This is the highest-priority guard.
 	if p.Mode == ModeMonitorOnly {
 		return DecisionResult{
 			Mode:         p.Mode,
 			ShouldSwitch: false,
 			Reason:       "处于仅监测模式 (Monitor Only)，仅收集遥测数据，不执行或推荐切换",
+		}
+	}
+
+	// 2. Check if manually locked to a node.
+	// LockedNode semantics: pins user's explicit current selection, completely pausing automatic switching.
+	// It does NOT background-force switches to LockedNode (node selection is an independent explicit user action).
+	if p.LockedNode != "" {
+		return DecisionResult{
+			Mode:         p.Mode,
+			ShouldSwitch: false,
+			Reason:       fmt.Sprintf("已锁定节点 %s，暂停所有自动切换调度", p.LockedNode),
 		}
 	}
 

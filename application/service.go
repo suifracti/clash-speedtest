@@ -229,11 +229,12 @@ func (s *AppService) StartBatch(req BatchTestRequest, explicitToken string) erro
 		},
 	})
 
-	go s.runBatchTest(ctx, st, targetProxies, airport.ID, airport.Name, req.Config.Metrics)
+	go s.runBatchTest(ctx, cancel, st, targetProxies, airport.ID, airport.Name, req.Config.Metrics)
 	return nil
 }
 
-func (s *AppService) runBatchTest(ctx context.Context, st *speedtester.SpeedTester, proxies map[string]*speedtester.CProxy, airportID, airportName string, metrics []string) {
+func (s *AppService) runBatchTest(ctx context.Context, cancel context.CancelFunc, st *speedtester.SpeedTester, proxies map[string]*speedtester.CProxy, airportID, airportName string, metrics []string) {
+	defer cancel()
 	defer func() {
 		s.mu.Lock()
 		s.status.IsRunning = false
@@ -1308,7 +1309,9 @@ func (s *AppService) UpdateSwitchPolicy(ctx context.Context, p policy.SwitchPoli
 func (s *AppService) GetSwitchAuditTrail(ctx context.Context) ([]policy.SwitchEvent, error) {
 	s.ctrlMu.RLock()
 	defer s.ctrlMu.RUnlock()
-	return s.decisionState.AuditTrail, nil
+	trail := make([]policy.SwitchEvent, len(s.decisionState.AuditTrail))
+	copy(trail, s.decisionState.AuditTrail)
+	return trail, nil
 }
 
 // EvaluateAndAutoSwitch evaluates latest probe results against policy, checks freshness,
@@ -1318,6 +1321,39 @@ func (s *AppService) EvaluateAndAutoSwitch(ctx context.Context, evals []policy.N
 	pol := s.policy
 	engine := s.decisionEngine
 	ctrl := s.controller
+	group := pol.TargetGroup
+	if group == "" {
+		group = "PROXY"
+	}
+	s.ctrlMu.Unlock()
+
+	// Active Controller State Synchronization (B-03):
+	// External Controller is the single source of truth for the active selection.
+	if ctrl != nil {
+		if actualCurrent, err := ctrl.GetCurrentSelection(ctx, group); err == nil && actualCurrent != "" {
+			s.ctrlMu.Lock()
+			if s.decisionState.CurrentNode == "" {
+				// Initial startup synchronization: adopt core selection and proceed with evaluation
+				s.decisionState.CurrentNode = actualCurrent
+			} else if s.decisionState.CurrentNode != actualCurrent {
+				// External / manual selection change detected during runtime:
+				// Update internal CurrentNode and clear prior node's failure counters.
+				s.decisionState.CurrentNode = actualCurrent
+				s.decisionState.ConsecutiveFailures = 0
+				s.ctrlMu.Unlock()
+
+				// Suppress auto reverse switch in this round so user's manual change is not immediately hijacked back.
+				return policy.DecisionResult{
+					Mode:         pol.Mode,
+					ShouldSwitch: false,
+					Reason:       fmt.Sprintf("检测到外部或用户手动更新当前节点为 %s，本轮暂停自动调度以完成同步", actualCurrent),
+				}, nil
+			}
+			s.ctrlMu.Unlock()
+		}
+	}
+
+	s.ctrlMu.Lock()
 	res := engine.Evaluate(time.Now(), pol, &s.decisionState, evals)
 	s.ctrlMu.Unlock()
 
@@ -1341,7 +1377,14 @@ func (s *AppService) EvaluateAndAutoSwitch(ctx context.Context, evals []policy.N
 		return res, nil
 	}
 
-	// 3. If ShouldSwitch is false, nothing to execute
+	// 3. Second Hard Line of Defense (B-02):
+	// Only ModeAuto is permitted to execute switches in external core.
+	// Monitor Only and Recommend modes MUST NEVER execute switches under any circumstances.
+	if pol.Mode != policy.ModeAuto {
+		return res, nil
+	}
+
+	// 4. If ShouldSwitch is false, nothing to execute
 	if !res.ShouldSwitch || res.TargetNode == "" {
 		return res, nil
 	}
@@ -1350,7 +1393,7 @@ func (s *AppService) EvaluateAndAutoSwitch(ctx context.Context, evals []policy.N
 		return res, fmt.Errorf("controller not initialized, cannot execute switch to %s", res.TargetNode)
 	}
 
-	group := pol.TargetGroup
+	group = pol.TargetGroup
 	if group == "" {
 		group = "PROXY"
 	}

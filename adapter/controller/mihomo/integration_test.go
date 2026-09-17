@@ -58,6 +58,42 @@ func TestMihomoSecurity_LoopbackEnforcement(t *testing.T) {
 	}
 }
 
+func TestMihomoSecurity_LoopbackClassification(t *testing.T) {
+	tests := []struct {
+		url        string
+		isLoopback bool
+	}{
+		{"http://127.0.0.1:9090", true},
+		{"http://127.0.0.2:9090", true},
+		{"http://[::1]:9090", true},
+		{"http://localhost:9090", true},
+		{"http://127.evil.com:9090", false},
+		{"http://127.0.0.1.nip.io:9090", false},
+	}
+
+	for _, tt := range tests {
+		got := isLoopbackEndpoint(tt.url)
+		if got != tt.isLoopback {
+			t.Errorf("isLoopbackEndpoint(%q) = %v, expected %v", tt.url, got, tt.isLoopback)
+		}
+	}
+
+	// Verify pseudo-loopback domains are strictly constrained by remote security policy
+	for _, remoteURL := range []string{"http://127.evil.com:9090", "http://127.0.0.1.nip.io:9090"} {
+		// 1. Rejected without AllowRemote
+		_, err := NewClient(Config{Endpoint: remoteURL})
+		if err == nil {
+			t.Errorf("expected error for pseudo-loopback %s without AllowRemote", remoteURL)
+		}
+
+		// 2. Rejected with AllowRemote=true but unencrypted HTTP (no AllowInsecurePlaintextRemote)
+		_, err = NewClient(Config{Endpoint: remoteURL, AllowRemote: true})
+		if err == nil {
+			t.Errorf("expected TLS requirement error for pseudo-loopback %s over plain HTTP", remoteURL)
+		}
+	}
+}
+
 func TestMihomoSecurity_MaskedSecret(t *testing.T) {
 	cfgShort := Config{Secret: "12"}
 	if cfgShort.MaskedSecret() != "****" {

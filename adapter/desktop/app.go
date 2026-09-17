@@ -180,33 +180,41 @@ func (a *App) OpenURL(targetURL string) error {
 	return auth.OpenBrowser(targetURL)
 }
 
+func (a *App) context() context.Context {
+	if a.ctx != nil {
+		return a.ctx
+	}
+	return context.Background()
+}
+
 // --- Controller & Smart Orchestrator Operations ---
 
 func (a *App) GetControllerStatus() (application.ControllerStatusDTO, error) {
-	return a.app.GetControllerStatus(a.ctx)
+	return a.app.GetControllerStatus(a.context())
 }
 
 func (a *App) ConfigureController(cfg application.ControllerConfigDTO) error {
-	return a.app.ConfigureController(a.ctx, cfg)
+	return a.app.ConfigureController(a.context(), cfg)
 }
 
 func (a *App) ListControllerGroups() ([]controller.Group, error) {
-	return a.app.ListControllerGroups(a.ctx)
+	return a.app.ListControllerGroups(a.context())
 }
 
 func (a *App) SelectControllerNode(group string, nodeName string) error {
-	return a.app.SelectControllerNode(a.ctx, group, nodeName)
+	return a.app.SelectControllerNode(a.context(), group, nodeName)
 }
 
 func (a *App) GetSwitchPolicy() (policy.SwitchPolicy, error) {
-	return a.app.GetSwitchPolicy(a.ctx)
+	return a.app.GetSwitchPolicy(a.context())
 }
 
 func (a *App) UpdateSwitchPolicy(p policy.SwitchPolicy) error {
-	return a.app.UpdateSwitchPolicy(a.ctx, p)
+	return a.app.UpdateSwitchPolicy(a.context(), p)
 }
 
 func (a *App) GetSwitchAuditTrail() ([]policy.SwitchEvent, error) {
-	return a.app.GetSwitchAuditTrail(a.ctx)
+	return a.app.GetSwitchAuditTrail(a.context())
 }
+
 

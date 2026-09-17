@@ -121,6 +121,7 @@ func searchStr(s, substr string) bool {
 
 type testMockController struct {
 	selectedNode string
+	selectCalls  int
 }
 
 func (m *testMockController) GetVersion(ctx context.Context) (controller.VersionInfo, error) {
@@ -149,6 +150,7 @@ func (m *testMockController) GetCurrentSelection(ctx context.Context, group stri
 }
 
 func (m *testMockController) SelectNode(ctx context.Context, group string, nodeName string) error {
+	m.selectCalls++
 	m.selectedNode = nodeName
 	return nil
 }
@@ -238,6 +240,130 @@ func TestAppService_ControllerAndPolicy(t *testing.T) {
 	audit, err := svc.GetSwitchAuditTrail(ctx)
 	if err != nil || len(audit) < 2 {
 		t.Fatalf("expected at least 2 switch events in audit trail, got %d, err: %v", len(audit), err)
+	}
+}
+
+func TestAppService_OrchestratorModeHardGuards(t *testing.T) {
+	tmpDir := t.TempDir()
+	hStore, _ := history.NewStore(filepath.Join(tmpDir, "history"))
+	paths := profiles.Paths{Dir: filepath.Join(tmpDir, "profiles")}
+	emitter := NewMemoryEventEmitter()
+
+	svc := NewAppService(hStore, paths, emitter)
+	mockCtrl := &testMockController{selectedNode: "HK-01"}
+	svc.SetController(mockCtrl, ControllerConfigDTO{Endpoint: "http://127.0.0.1:9090", Mode: "external"})
+
+	ctx := context.Background()
+	evalsFailure := []policy.NodeEvaluation{
+		{Name: "HK-01", Available: false, TriageStatus: "failed"},
+		{Name: "HK-FAST", Available: true, RTT: 25 * time.Millisecond, SampleCount: 5, LastSampleTime: time.Now(), ObservationWindow: 2 * time.Minute},
+	}
+
+	// 1. Monitor Only: MUST NOT call SelectNode
+	polMon := policy.DefaultSwitchPolicy()
+	polMon.Mode = policy.ModeMonitorOnly
+	polMon.TargetGroup = "PROXY"
+	polMon.LockedNode = "HK-LOCKED" // Even with locked node!
+	_ = svc.UpdateSwitchPolicy(ctx, polMon)
+
+	resMon, err := svc.EvaluateAndAutoSwitch(ctx, evalsFailure)
+	if err != nil {
+		t.Fatalf("EvaluateAndAutoSwitch monitor error: %v", err)
+	}
+	if resMon.ShouldSwitch {
+		t.Errorf("expected ShouldSwitch=false in Monitor Only mode")
+	}
+	if mockCtrl.selectCalls != 0 {
+		t.Errorf("Monitor Only mode MUST NEVER call SelectNode (got %d calls)", mockCtrl.selectCalls)
+	}
+
+	// 2. Recommend: MUST NOT call SelectNode, but produces recommendation
+	polRec := policy.DefaultSwitchPolicy()
+	polRec.Mode = policy.ModeRecommend
+	polRec.TargetGroup = "PROXY"
+	polRec.CooldownDuration = 0
+	_ = svc.UpdateSwitchPolicy(ctx, polRec)
+
+	resRec, err := svc.EvaluateAndAutoSwitch(ctx, evalsFailure)
+	if err != nil {
+		t.Fatalf("EvaluateAndAutoSwitch recommend error: %v", err)
+	}
+	if resRec.ShouldSwitch {
+		t.Errorf("expected ShouldSwitch=false in Recommend mode")
+	}
+	if resRec.Recommendation == nil || resRec.Recommendation.TargetNode != "HK-FAST" {
+		t.Errorf("expected recommendation for HK-FAST, got %+v", resRec.Recommendation)
+	}
+	if mockCtrl.selectCalls != 0 {
+		t.Errorf("Recommend mode MUST NEVER call SelectNode without user confirmation (got %d calls)", mockCtrl.selectCalls)
+	}
+}
+
+func TestAppService_StateSyncAndManualOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	hStore, _ := history.NewStore(filepath.Join(tmpDir, "history"))
+	paths := profiles.Paths{Dir: filepath.Join(tmpDir, "profiles")}
+	emitter := NewMemoryEventEmitter()
+
+	svc := NewAppService(hStore, paths, emitter)
+	mockCtrl := &testMockController{selectedNode: "HK-01"}
+	svc.SetController(mockCtrl, ControllerConfigDTO{Endpoint: "http://127.0.0.1:9090", Mode: "external"})
+
+	ctx := context.Background()
+
+	// Scenario A: Startup without calling GetControllerStatus
+	// Verify that EvaluateAndAutoSwitch actively syncs CurrentNode from controller.
+	evalsA := []policy.NodeEvaluation{
+		{Name: "HK-01", Available: true, RTT: 100 * time.Millisecond},
+		{Name: "HK-FAST", Available: true, RTT: 30 * time.Millisecond},
+	}
+
+	pol := policy.DefaultSwitchPolicy()
+	pol.Mode = policy.ModeAuto
+	pol.TargetGroup = "PROXY"
+	pol.CooldownDuration = 0
+	pol.MinImprovementRTT = 10 * time.Millisecond
+	pol.MinImprovementRatio = 0.10
+	pol.MaxSampleAge = 0
+	pol.MinSampleCount = 0
+	pol.MinObservationWindow = 0
+	pol.RollbackOnFailure = false
+	_ = svc.UpdateSwitchPolicy(ctx, pol)
+
+	resA, err := svc.EvaluateAndAutoSwitch(ctx, evalsA)
+	if err != nil {
+		t.Fatalf("EvaluateAndAutoSwitch startup sync error: %v", err)
+	}
+	if !resA.ShouldSwitch || resA.TargetNode != "HK-FAST" {
+		t.Fatalf("expected switch to HK-FAST on startup evaluation, got %+v", resA)
+	}
+	if mockCtrl.selectedNode != "HK-FAST" {
+		t.Fatalf("expected controller node to be HK-FAST, got %s", mockCtrl.selectedNode)
+	}
+
+	// Scenario B: External manual switch by user in Clash Verge / external core
+	// User manually switches active node to "SG-MANUAL" outside our app
+	mockCtrl.selectedNode = "SG-MANUAL"
+	callsBefore := mockCtrl.selectCalls
+
+	evalsB := []policy.NodeEvaluation{
+		{Name: "SG-MANUAL", Available: true, RTT: 120 * time.Millisecond},
+		{Name: "HK-FAST", Available: true, RTT: 30 * time.Millisecond},
+	}
+
+	// Run EvaluateAndAutoSwitch: it MUST detect external manual switch and SUPPRESS auto-switch this round!
+	resB, err := svc.EvaluateAndAutoSwitch(ctx, evalsB)
+	if err != nil {
+		t.Fatalf("EvaluateAndAutoSwitch manual override error: %v", err)
+	}
+	if resB.ShouldSwitch {
+		t.Errorf("must suppress auto reverse switch when external manual change is detected")
+	}
+	if mockCtrl.selectCalls != callsBefore {
+		t.Errorf("must not call SelectNode when external manual switch is detected")
+	}
+	if mockCtrl.selectedNode != "SG-MANUAL" {
+		t.Errorf("expected selected node to stay SG-MANUAL, got %s", mockCtrl.selectedNode)
 	}
 }
 

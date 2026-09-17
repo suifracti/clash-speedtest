@@ -6,9 +6,11 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -85,13 +87,12 @@ func (s *Server) ShutdownChan() <-chan struct{} {
 	return s.shutdownChan
 }
 
-func (s *Server) Start() error {
-	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", s.config.Port))
-	if err != nil {
-		return fmt.Errorf("listen on port %d: %w", s.config.Port, err)
-	}
-	s.port = listener.Addr().(*net.TCPAddr).Port
+// Handler returns the fully configured http.Handler with routing and security middleware.
+func (s *Server) Handler() http.Handler {
+	return s.buildHandler()
+}
 
+func (s *Server) buildHandler() http.Handler {
 	mux := http.NewServeMux()
 
 	// REST API routes
@@ -141,10 +142,18 @@ func (s *Server) Start() error {
 		mux.Handle("/", s.config.StaticHandler)
 	}
 
-	handler := corsMiddleware(mux)
+	return securityMiddleware(mux)
+}
+
+func (s *Server) Start() error {
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", s.config.Port))
+	if err != nil {
+		return fmt.Errorf("listen on port %d: %w", s.config.Port, err)
+	}
+	s.port = listener.Addr().(*net.TCPAddr).Port
 
 	s.httpServer = &http.Server{
-		Handler:      handler,
+		Handler:      s.buildHandler(),
 		ReadTimeout:  120 * time.Second,
 		WriteTimeout: 0, // Allow SSE streaming
 	}
@@ -165,6 +174,117 @@ func (s *Server) Stop(ctx context.Context) error {
 	return nil
 }
 
+// SPAHandler wraps an fs.FS and serves static assets with fallback to index.html for SPA routing.
+func SPAHandler(fsys fs.FS) http.Handler {
+	fileServer := http.FileServer(http.FS(fsys))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		if path == "" {
+			path = "index.html"
+		}
+
+		if f, err := fsys.Open(path); err == nil {
+			_ = f.Close()
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+
+		// Fallback to index.html for SPA client routes
+		r.URL.Path = "/"
+		fileServer.ServeHTTP(w, r)
+	})
+}
+
+// isLoopbackHost checks whether a host (with or without port) is a trusted loopback address.
+func isLoopbackHost(rawHost string) bool {
+	if rawHost == "" {
+		return false
+	}
+	host := rawHost
+	if h, _, err := net.SplitHostPort(rawHost); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") || strings.EqualFold(host, "localhost.localdomain") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func isMutatingMethod(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
+}
+
+// securityMiddleware enforces loopback Host validation, CSRF defenses on mutating endpoints,
+// and rejects untrusted origins (no CORS wildcard allowed).
+func securityMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 1. Host header validation: local server must only be accessed via loopback host.
+		// Protects against DNS rebinding attacks.
+		if !isLoopbackHost(r.Host) {
+			http.Error(w, "Forbidden: invalid or non-loopback Host header", http.StatusForbidden)
+			return
+		}
+
+		origin := r.Header.Get("Origin")
+		var isLoopbackOrigin bool
+		if origin != "" {
+			if u, err := url.Parse(origin); err == nil {
+				isLoopbackOrigin = isLoopbackHost(u.Hostname())
+			}
+		}
+
+		// 2. CORS preflight (OPTIONS)
+		if r.Method == http.MethodOptions {
+			if origin != "" {
+				if !isLoopbackOrigin {
+					http.Error(w, "Forbidden: untrusted origin", http.StatusForbidden)
+					return
+				}
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+				w.Header().Set("Vary", "Origin")
+			}
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// 3. Mutating requests protection (CSRF defense)
+		if isMutatingMethod(r.Method) {
+			if origin != "" && !isLoopbackOrigin {
+				http.Error(w, "Forbidden: untrusted origin for mutating request", http.StatusForbidden)
+				return
+			}
+			if ref := r.Header.Get("Referer"); ref != "" {
+				if u, err := url.Parse(ref); err != nil || !isLoopbackHost(u.Hostname()) {
+					http.Error(w, "Forbidden: untrusted referer for mutating request", http.StatusForbidden)
+					return
+				}
+			}
+			if site := r.Header.Get("Sec-Fetch-Site"); site == "cross-site" {
+				http.Error(w, "Forbidden: cross-site mutating request rejected", http.StatusForbidden)
+				return
+			}
+		}
+
+		// 4. Safe reflection of loopback origin for local dev servers (e.g. Vite on localhost:5173).
+		// NEVER emit Access-Control-Allow-Origin: *
+		if origin != "" && isLoopbackOrigin {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
@@ -173,19 +293,6 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
-}
-
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 // Handlers
