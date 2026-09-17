@@ -14,15 +14,18 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/faceair/clash-speedtest/adapter/controller/mihomo"
 	"github.com/faceair/clash-speedtest/core/auth"
+	"github.com/faceair/clash-speedtest/core/controller"
 	"github.com/faceair/clash-speedtest/core/history"
+	"github.com/faceair/clash-speedtest/core/policy"
 	"github.com/faceair/clash-speedtest/core/profiles"
 	"github.com/faceair/clash-speedtest/core/speedtester"
 	"gopkg.in/yaml.v2"
 )
 
 // AppService orchestrates domain operations across speedtesting, history analysis,
-// profile subscriptions, and authentication. It is decoupled from any GUI/Wails implementation.
+// profile subscriptions, external proxy controllers, and auto-switch decision policies.
 type AppService struct {
 	historyStore      *history.Store
 	profilePaths      profiles.Paths
@@ -36,6 +39,14 @@ type AppService struct {
 	antigravityToken  string
 	antigravitySource string
 	antigravityMu     sync.RWMutex
+
+	// External Controller & Decision Policy fields
+	ctrlMu         sync.RWMutex
+	controller     controller.Controller
+	controllerCfg  ControllerConfigDTO
+	policy         policy.SwitchPolicy
+	decisionEngine *policy.DecisionEngine
+	decisionState  policy.DecisionState
 }
 
 // NewAppService creates a new application service instance.
@@ -44,9 +55,23 @@ func NewAppService(hStore *history.Store, paths profiles.Paths, emitter EventEmi
 		emitter = NewMemoryEventEmitter()
 	}
 	svc := &AppService{
-		historyStore: hStore,
-		profilePaths: paths,
-		emitter:      emitter,
+		historyStore:   hStore,
+		profilePaths:   paths,
+		emitter:        emitter,
+		decisionEngine: policy.NewDecisionEngine(),
+		policy:         policy.DefaultSwitchPolicy(),
+		controllerCfg: ControllerConfigDTO{
+			Endpoint: "http://127.0.0.1:9090",
+			Mode:     "external",
+		},
+	}
+
+	// Initialize default Mihomo controller adapter
+	if client, err := mihomo.NewClient(mihomo.Config{
+		Endpoint: svc.controllerCfg.Endpoint,
+		Secret:   svc.controllerCfg.Secret,
+	}); err == nil {
+		svc.controller = client
 	}
 
 	// Auto-detect Antigravity token on startup
@@ -1108,3 +1133,237 @@ func (s *AppService) SaveSettings(settings *AppSettings) error {
 	}
 	return os.WriteFile(p, data, 0o644)
 }
+
+// --- Controller & Smart Orchestrator Methods ---
+
+// SetController allows directly setting a controller instance (useful for tests or custom adapters).
+func (s *AppService) SetController(ctrl controller.Controller, cfg ControllerConfigDTO) {
+	s.ctrlMu.Lock()
+	defer s.ctrlMu.Unlock()
+	s.controller = ctrl
+	s.controllerCfg = cfg
+}
+
+// ConfigureController reconfigures the external controller connection.
+func (s *AppService) ConfigureController(ctx context.Context, cfg ControllerConfigDTO) error {
+	s.ctrlMu.Lock()
+	defer s.ctrlMu.Unlock()
+
+	client, err := mihomo.NewClient(mihomo.Config{
+		Endpoint: cfg.Endpoint,
+		Secret:   cfg.Secret,
+	})
+	if err != nil {
+		return fmt.Errorf("create controller client: %w", err)
+	}
+
+	s.controller = client
+	s.controllerCfg = cfg
+
+	s.emitter.Emit(Event{
+		Type: "controller_status_changed",
+		Payload: map[string]any{
+			"endpoint": cfg.Endpoint,
+			"mode":     cfg.Mode,
+		},
+	})
+	return nil
+}
+
+// GetControllerStatus returns the connection and operational status of the controller.
+func (s *AppService) GetControllerStatus(ctx context.Context) (ControllerStatusDTO, error) {
+	s.ctrlMu.RLock()
+	ctrl := s.controller
+	cfg := s.controllerCfg
+	pol := s.policy
+	state := s.decisionState
+	s.ctrlMu.RUnlock()
+
+	status := ControllerStatusDTO{
+		Connected:         false,
+		Endpoint:          cfg.Endpoint,
+		CurrentGroup:      pol.TargetGroup,
+		CurrentNode:       state.CurrentNode,
+		LockedNode:        pol.LockedNode,
+		AutoSwitchEnabled: pol.AutoSwitchEnabled,
+	}
+
+	if ctrl == nil {
+		return status, nil
+	}
+
+	ctxTimeout, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	v, err := ctrl.GetVersion(ctxTimeout)
+	if err != nil {
+		return status, nil
+	}
+
+	status.Connected = true
+	status.CoreVersion = v.Version
+	status.CoreType = v.CoreType
+
+	groups, err := ctrl.ListGroups(ctxTimeout)
+	if err == nil {
+		for _, g := range groups {
+			status.AvailableGroups = append(status.AvailableGroups, g.Name)
+			if pol.TargetGroup != "" && g.Name == pol.TargetGroup {
+				status.CurrentNode = g.Now
+				s.ctrlMu.Lock()
+				s.decisionState.CurrentNode = g.Now
+				s.ctrlMu.Unlock()
+			}
+		}
+	}
+
+	return status, nil
+}
+
+// ListControllerGroups lists all selector/proxy groups from the external core.
+func (s *AppService) ListControllerGroups(ctx context.Context) ([]controller.Group, error) {
+	s.ctrlMu.RLock()
+	ctrl := s.controller
+	s.ctrlMu.RUnlock()
+
+	if ctrl == nil {
+		return nil, fmt.Errorf("external controller is not initialized")
+	}
+	return ctrl.ListGroups(ctx)
+}
+
+// SelectControllerNode explicitly switches the active proxy node for a group.
+func (s *AppService) SelectControllerNode(ctx context.Context, group string, nodeName string) error {
+	s.ctrlMu.Lock()
+	ctrl := s.controller
+	pol := s.policy
+	fromNode := s.decisionState.CurrentNode
+	s.ctrlMu.Unlock()
+
+	if ctrl == nil {
+		return fmt.Errorf("external controller is not initialized")
+	}
+
+	if group == "" {
+		group = pol.TargetGroup
+	}
+	if group == "" {
+		group = "PROXY"
+	}
+
+	if err := ctrl.SelectNode(ctx, group, nodeName); err != nil {
+		s.emitter.Emit(Event{
+			Type: "controller_switch_failed",
+			Payload: map[string]any{
+				"group":     group,
+				"from_node": fromNode,
+				"to_node":   nodeName,
+				"error":     err.Error(),
+			},
+		})
+		return err
+	}
+
+	s.ctrlMu.Lock()
+	s.decisionEngine.RecordSwitch(&s.decisionState, fromNode, nodeName, group, "手动在控制台切换", "manual_override", 0, 0)
+	s.ctrlMu.Unlock()
+
+	s.emitter.Emit(Event{
+		Type: "controller_node_switched",
+		Payload: map[string]any{
+			"group":        group,
+			"from_node":    fromNode,
+			"to_node":      nodeName,
+			"trigger_type": "manual_override",
+			"timestamp":    time.Now(),
+		},
+	})
+	return nil
+}
+
+// GetSwitchPolicy returns the active auto-switch policy.
+func (s *AppService) GetSwitchPolicy(ctx context.Context) (policy.SwitchPolicy, error) {
+	s.ctrlMu.RLock()
+	defer s.ctrlMu.RUnlock()
+	return s.policy, nil
+}
+
+// UpdateSwitchPolicy updates the auto-switch policy.
+func (s *AppService) UpdateSwitchPolicy(ctx context.Context, p policy.SwitchPolicy) error {
+	s.ctrlMu.Lock()
+	defer s.ctrlMu.Unlock()
+	s.policy = p
+
+	s.emitter.Emit(Event{
+		Type:    "controller_policy_updated",
+		Payload: p,
+	})
+	return nil
+}
+
+// GetSwitchAuditTrail returns recent switch events.
+func (s *AppService) GetSwitchAuditTrail(ctx context.Context) ([]policy.SwitchEvent, error) {
+	s.ctrlMu.RLock()
+	defer s.ctrlMu.RUnlock()
+	return s.decisionState.AuditTrail, nil
+}
+
+// EvaluateAndAutoSwitch evaluates latest probe results against policy and executes switch if justified.
+func (s *AppService) EvaluateAndAutoSwitch(ctx context.Context, evals []policy.NodeEvaluation) (policy.DecisionResult, error) {
+	s.ctrlMu.Lock()
+	pol := s.policy
+	engine := s.decisionEngine
+	ctrl := s.controller
+	res := engine.Evaluate(time.Now(), pol, &s.decisionState, evals)
+	s.ctrlMu.Unlock()
+
+	if !res.ShouldSwitch || res.TargetNode == "" {
+		return res, nil
+	}
+
+	if ctrl == nil {
+		return res, fmt.Errorf("controller not initialized, cannot execute switch to %s", res.TargetNode)
+	}
+
+	group := pol.TargetGroup
+	if group == "" {
+		group = "PROXY"
+	}
+
+	s.ctrlMu.Lock()
+	fromNode := s.decisionState.CurrentNode
+	s.ctrlMu.Unlock()
+
+	if err := ctrl.SelectNode(ctx, group, res.TargetNode); err != nil {
+		s.emitter.Emit(Event{
+			Type: "controller_switch_failed",
+			Payload: map[string]any{
+				"group":     group,
+				"from_node": fromNode,
+				"to_node":   res.TargetNode,
+				"reason":    res.Reason,
+				"error":     err.Error(),
+			},
+		})
+		return res, fmt.Errorf("execute switch: %w", err)
+	}
+
+	s.ctrlMu.Lock()
+	s.decisionEngine.RecordSwitch(&s.decisionState, fromNode, res.TargetNode, group, res.Reason, res.TriggerType, 0, 0)
+	s.ctrlMu.Unlock()
+
+	s.emitter.Emit(Event{
+		Type: "controller_node_switched",
+		Payload: map[string]any{
+			"group":        group,
+			"from_node":    fromNode,
+			"to_node":      res.TargetNode,
+			"reason":       res.Reason,
+			"trigger_type": res.TriggerType,
+			"timestamp":    time.Now(),
+		},
+	})
+
+	return res, nil
+}
+

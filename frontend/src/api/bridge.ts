@@ -11,6 +11,11 @@ import type {
   TokenStatus,
   AppSettings,
   NodeResult,
+  ControllerConfig,
+  ControllerGroup,
+  ControllerStatus,
+  SwitchPolicy,
+  SwitchEvent,
 } from '../types'
 
 declare global {
@@ -46,6 +51,10 @@ export function subscribeEvents(onEvent: (type: string, payload: any) => void): 
       'single_test_completed',
       'antigravity_token_updated',
       'antigravity_login_failed',
+      'controller_status_changed',
+      'controller_node_switched',
+      'controller_switch_failed',
+      'controller_policy_updated',
     ]
     const unsubs = events.map((evt) =>
       window.runtime!.EventsOn(evt, (payload) => onEvent(evt, payload))
@@ -303,3 +312,80 @@ export async function openExternalURL(url: string): Promise<void> {
   }
   window.open(url, '_blank')
 }
+
+// --- Controller & Smart Orchestrator Bridge ---
+
+export async function fetchControllerStatus(): Promise<ControllerStatus> {
+  if (isWails()) {
+    return window.go!.desktop!.App!.GetControllerStatus()
+  }
+  const res = await fetch(`${API_BASE}/api/controller/status`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function configureController(cfg: ControllerConfig): Promise<void> {
+  if (isWails()) {
+    return window.go!.desktop!.App!.ConfigureController(cfg)
+  }
+  const res = await fetch(`${API_BASE}/api/controller/config`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cfg),
+  })
+  if (!res.ok) throw new Error(await res.text())
+}
+
+export async function fetchControllerGroups(): Promise<ControllerGroup[]> {
+  if (isWails()) {
+    return window.go!.desktop!.App!.ListControllerGroups()
+  }
+  const res = await fetch(`${API_BASE}/api/controller/groups`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function selectControllerNode(group: string, node: string): Promise<void> {
+  if (isWails()) {
+    return window.go!.desktop!.App!.SelectControllerNode(group, node)
+  }
+  const res = await fetch(`${API_BASE}/api/controller/select`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ group, node }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+}
+
+export async function fetchSwitchPolicy(): Promise<SwitchPolicy> {
+  if (isWails()) {
+    return window.go!.desktop!.App!.GetSwitchPolicy()
+  }
+  const res = await fetch(`${API_BASE}/api/controller/policy`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function updateSwitchPolicy(policy: SwitchPolicy): Promise<SwitchPolicy> {
+  if (isWails()) {
+    await window.go!.desktop!.App!.UpdateSwitchPolicy(policy)
+    return policy
+  }
+  const res = await fetch(`${API_BASE}/api/controller/policy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(policy),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function fetchSwitchAuditTrail(): Promise<SwitchEvent[]> {
+  if (isWails()) {
+    return window.go!.desktop!.App!.GetSwitchAuditTrail()
+  }
+  const res = await fetch(`${API_BASE}/api/controller/audit`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+

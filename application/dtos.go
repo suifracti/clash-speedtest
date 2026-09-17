@@ -60,3 +60,30 @@ type AirportDTO struct {
 type AppSettings struct {
 	PreferredBrowser string `json:"preferred_browser"` // "auto", "chrome", "edge", "default", or custom path
 }
+
+// ControllerConfigDTO configures connection to external proxy controller.
+type ControllerConfigDTO struct {
+	Endpoint string `json:"endpoint"` // e.g. "http://127.0.0.1:9090"
+	Secret   string `json:"secret,omitempty"`
+	Mode     string `json:"mode"`     // "external" (default) or "standalone"
+}
+
+// ControllerStatusDTO conveys current connection state and active proxy selection.
+type ControllerStatusDTO struct {
+	Connected         bool     `json:"connected"`
+	Endpoint          string   `json:"endpoint"`
+	CoreVersion       string   `json:"core_version,omitempty"`
+	CoreType          string   `json:"core_type,omitempty"`
+	CurrentGroup      string   `json:"current_group,omitempty"`
+	CurrentNode       string   `json:"current_node,omitempty"`
+	LockedNode        string   `json:"locked_node,omitempty"`
+	AutoSwitchEnabled bool     `json:"auto_switch_enabled"`
+	AvailableGroups   []string `json:"available_groups,omitempty"`
+}
+
+// SelectNodeRequest requests switching active proxy for a group.
+type SelectNodeRequest struct {
+	Group string `json:"group"`
+	Node  string `json:"node"`
+}
+

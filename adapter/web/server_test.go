@@ -56,4 +56,21 @@ func TestWebServerEndpoints(t *testing.T) {
 	if recToken.Code != http.StatusOK {
 		t.Errorf("expected 200 for token status, got %d", recToken.Code)
 	}
+
+	// 4. Test Controller status endpoint
+	reqCtrl := httptest.NewRequest(http.MethodGet, "/api/controller/status", nil)
+	recCtrl := httptest.NewRecorder()
+	server.handleGetControllerStatus(recCtrl, reqCtrl)
+	if recCtrl.Code != http.StatusOK {
+		t.Errorf("expected 200 for controller status, got %d", recCtrl.Code)
+	}
+
+	// 5. Test Switch Policy endpoint
+	reqPolicy := httptest.NewRequest(http.MethodGet, "/api/controller/policy", nil)
+	recPolicy := httptest.NewRecorder()
+	server.handleGetSwitchPolicy(recPolicy, reqPolicy)
+	if recPolicy.Code != http.StatusOK {
+		t.Errorf("expected 200 for switch policy, got %d", recPolicy.Code)
+	}
 }
+

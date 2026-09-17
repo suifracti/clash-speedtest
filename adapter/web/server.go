@@ -18,6 +18,7 @@ import (
 	"github.com/faceair/clash-speedtest/application"
 	"github.com/faceair/clash-speedtest/core/auth"
 	"github.com/faceair/clash-speedtest/core/history"
+	"github.com/faceair/clash-speedtest/core/policy"
 	"github.com/faceair/clash-speedtest/core/profiles"
 )
 
@@ -122,6 +123,15 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST /api/report/open", s.handleOpenReport)
 	mux.HandleFunc("GET /api/settings", s.handleGetSettings)
 	mux.HandleFunc("POST /api/settings", s.handleSaveSettings)
+
+	// Controller & Policy REST routes
+	mux.HandleFunc("GET /api/controller/status", s.handleGetControllerStatus)
+	mux.HandleFunc("POST /api/controller/config", s.handleConfigureController)
+	mux.HandleFunc("GET /api/controller/groups", s.handleListControllerGroups)
+	mux.HandleFunc("POST /api/controller/select", s.handleSelectControllerNode)
+	mux.HandleFunc("GET /api/controller/policy", s.handleGetSwitchPolicy)
+	mux.HandleFunc("POST /api/controller/policy", s.handleUpdateSwitchPolicy)
+	mux.HandleFunc("GET /api/controller/audit", s.handleGetSwitchAuditTrail)
 
 	mux.HandleFunc("GET /api/events", s.handleEventsSSE)
 	mux.HandleFunc("POST /api/shutdown", s.handleShutdown)
@@ -579,3 +589,81 @@ func (s *Server) handleShutdown(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 }
+
+// --- Controller & Policy Handlers ---
+
+func (s *Server) handleGetControllerStatus(w http.ResponseWriter, r *http.Request) {
+	status, err := s.app.GetControllerStatus(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+func (s *Server) handleConfigureController(w http.ResponseWriter, r *http.Request) {
+	var cfg application.ControllerConfigDTO
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body: "+err.Error())
+		return
+	}
+	if err := s.app.ConfigureController(r.Context(), cfg); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+
+func (s *Server) handleListControllerGroups(w http.ResponseWriter, r *http.Request) {
+	groups, err := s.app.ListControllerGroups(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, groups)
+}
+
+func (s *Server) handleSelectControllerNode(w http.ResponseWriter, r *http.Request) {
+	var req application.SelectNodeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body: "+err.Error())
+		return
+	}
+	if err := s.app.SelectControllerNode(r.Context(), req.Group, req.Node); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+
+func (s *Server) handleGetSwitchPolicy(w http.ResponseWriter, r *http.Request) {
+	pol, err := s.app.GetSwitchPolicy(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, pol)
+}
+
+func (s *Server) handleUpdateSwitchPolicy(w http.ResponseWriter, r *http.Request) {
+	var pol policy.SwitchPolicy
+	if err := json.NewDecoder(r.Body).Decode(&pol); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body: "+err.Error())
+		return
+	}
+	if err := s.app.UpdateSwitchPolicy(r.Context(), pol); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, pol)
+}
+
+func (s *Server) handleGetSwitchAuditTrail(w http.ResponseWriter, r *http.Request) {
+	audit, err := s.app.GetSwitchAuditTrail(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, audit)
+}
+

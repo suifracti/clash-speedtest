@@ -8,7 +8,9 @@ import (
 
 	"github.com/faceair/clash-speedtest/application"
 	"github.com/faceair/clash-speedtest/core/auth"
+	"github.com/faceair/clash-speedtest/core/controller"
 	"github.com/faceair/clash-speedtest/core/history"
+	"github.com/faceair/clash-speedtest/core/policy"
 	"github.com/faceair/clash-speedtest/core/profiles"
 )
 
@@ -177,3 +179,34 @@ func (a *App) SaveSettings(settings *application.AppSettings) error {
 func (a *App) OpenURL(targetURL string) error {
 	return auth.OpenBrowser(targetURL)
 }
+
+// --- Controller & Smart Orchestrator Operations ---
+
+func (a *App) GetControllerStatus() (application.ControllerStatusDTO, error) {
+	return a.app.GetControllerStatus(a.ctx)
+}
+
+func (a *App) ConfigureController(cfg application.ControllerConfigDTO) error {
+	return a.app.ConfigureController(a.ctx, cfg)
+}
+
+func (a *App) ListControllerGroups() ([]controller.Group, error) {
+	return a.app.ListControllerGroups(a.ctx)
+}
+
+func (a *App) SelectControllerNode(group string, nodeName string) error {
+	return a.app.SelectControllerNode(a.ctx, group, nodeName)
+}
+
+func (a *App) GetSwitchPolicy() (policy.SwitchPolicy, error) {
+	return a.app.GetSwitchPolicy(a.ctx)
+}
+
+func (a *App) UpdateSwitchPolicy(p policy.SwitchPolicy) error {
+	return a.app.UpdateSwitchPolicy(a.ctx, p)
+}
+
+func (a *App) GetSwitchAuditTrail() ([]policy.SwitchEvent, error) {
+	return a.app.GetSwitchAuditTrail(a.ctx)
+}
+

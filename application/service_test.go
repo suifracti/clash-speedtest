@@ -1,11 +1,15 @@
 package application
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/faceair/clash-speedtest/core/controller"
 	"github.com/faceair/clash-speedtest/core/history"
+	"github.com/faceair/clash-speedtest/core/policy"
 	"github.com/faceair/clash-speedtest/core/profiles"
 )
 
@@ -114,3 +118,122 @@ func searchStr(s, substr string) bool {
 	}
 	return false
 }
+
+type testMockController struct {
+	selectedNode string
+}
+
+func (m *testMockController) GetVersion(ctx context.Context) (controller.VersionInfo, error) {
+	return controller.VersionInfo{Version: "v1.18.5", CoreType: "mihomo"}, nil
+}
+
+func (m *testMockController) GetCapabilities(ctx context.Context) (controller.Capabilities, error) {
+	return controller.Capabilities{CanSelectNode: true, CanTestDelay: true}, nil
+}
+
+func (m *testMockController) ListGroups(ctx context.Context) ([]controller.Group, error) {
+	return []controller.Group{
+		{Name: "PROXY", Type: "Selector", Now: m.selectedNode, All: []string{"HK-01", "SG-01"}},
+	}, nil
+}
+
+func (m *testMockController) ListNodes(ctx context.Context, group string) ([]controller.Node, error) {
+	return []controller.Node{
+		{Name: "HK-01", Type: "ss"},
+		{Name: "SG-01", Type: "vmess"},
+	}, nil
+}
+
+func (m *testMockController) GetCurrentSelection(ctx context.Context, group string) (string, error) {
+	return m.selectedNode, nil
+}
+
+func (m *testMockController) SelectNode(ctx context.Context, group string, nodeName string) error {
+	m.selectedNode = nodeName
+	return nil
+}
+
+func (m *testMockController) TestDelay(ctx context.Context, proxyName string, url string, timeout time.Duration) (time.Duration, error) {
+	return 35 * time.Millisecond, nil
+}
+
+func TestAppService_ControllerAndPolicy(t *testing.T) {
+	tmpDir := t.TempDir()
+	hStore, _ := history.NewStore(filepath.Join(tmpDir, "history"))
+	paths := profiles.Paths{Dir: filepath.Join(tmpDir, "profiles")}
+
+	emitter := NewMemoryEventEmitter()
+	var events []Event
+	emitter.Subscribe(func(e Event) {
+		events = append(events, e)
+	})
+
+	svc := NewAppService(hStore, paths, emitter)
+
+	mockCtrl := &testMockController{selectedNode: "HK-01"}
+	svc.SetController(mockCtrl, ControllerConfigDTO{Endpoint: "http://127.0.0.1:9090", Mode: "external"})
+
+	ctx := context.Background()
+
+	// 1. GetControllerStatus
+	st, err := svc.GetControllerStatus(ctx)
+	if err != nil {
+		t.Fatalf("GetControllerStatus failed: %v", err)
+	}
+	if !st.Connected || st.CoreVersion != "v1.18.5" || st.CurrentNode != "HK-01" {
+		t.Fatalf("unexpected controller status: %+v", st)
+	}
+
+	// 2. ListControllerGroups
+	groups, err := svc.ListControllerGroups(ctx)
+	if err != nil || len(groups) != 1 {
+		t.Fatalf("ListControllerGroups failed: %v", err)
+	}
+
+	// 3. SelectControllerNode
+	if err := svc.SelectControllerNode(ctx, "PROXY", "SG-01"); err != nil {
+		t.Fatalf("SelectControllerNode failed: %v", err)
+	}
+	if mockCtrl.selectedNode != "SG-01" {
+		t.Fatalf("expected selectedNode SG-01, got %s", mockCtrl.selectedNode)
+	}
+
+	// 4. Policy manipulation
+	pol, err := svc.GetSwitchPolicy(ctx)
+	if err != nil {
+		t.Fatalf("GetSwitchPolicy failed: %v", err)
+	}
+	pol.AutoSwitchEnabled = true
+	pol.TargetGroup = "PROXY"
+	pol.MinImprovementRTT = 10 * time.Millisecond
+	pol.MinImprovementRatio = 0.10
+	pol.CooldownDuration = 0 // Disable cooldown for test
+
+	if err := svc.UpdateSwitchPolicy(ctx, pol); err != nil {
+		t.Fatalf("UpdateSwitchPolicy failed: %v", err)
+	}
+
+	// 5. EvaluateAndAutoSwitch
+	evals := []policy.NodeEvaluation{
+		{Name: "SG-01", Available: true, RTT: 100 * time.Millisecond},
+		{Name: "HK-01", Available: true, RTT: 40 * time.Millisecond}, // Significant improvement
+	}
+
+	res, err := svc.EvaluateAndAutoSwitch(ctx, evals)
+	if err != nil {
+		t.Fatalf("EvaluateAndAutoSwitch error: %v", err)
+	}
+	if !res.ShouldSwitch || res.TargetNode != "HK-01" {
+		t.Fatalf("expected switch to HK-01, got %+v", res)
+	}
+	if mockCtrl.selectedNode != "HK-01" {
+		t.Fatalf("expected controller node switched to HK-01, got %s", mockCtrl.selectedNode)
+	}
+
+	// 6. Audit Trail
+	audit, err := svc.GetSwitchAuditTrail(ctx)
+	if err != nil || len(audit) < 2 {
+		t.Fatalf("expected at least 2 switch events in audit trail, got %d, err: %v", len(audit), err)
+	}
+}
+

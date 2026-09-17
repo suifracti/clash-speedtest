@@ -289,3 +289,56 @@ export interface RunComparison {
 export interface AppSettings {
   preferred_browser: string
 }
+
+export interface ControllerConfig {
+  endpoint: string
+  secret?: string
+  mode: 'external' | 'standalone'
+}
+
+export interface ControllerGroup {
+  name: string
+  type: string
+  now: string
+  all: string[]
+}
+
+export interface ControllerStatus {
+  connected: boolean
+  endpoint: string
+  core_version?: string
+  core_type?: string
+  current_group?: string
+  current_node?: string
+  locked_node?: string
+  auto_switch_enabled: boolean
+  available_groups?: string[]
+}
+
+export interface SwitchPolicy {
+  auto_switch_enabled: boolean
+  target_group: string
+  candidate_nodes?: string[]
+  interval: number
+  max_consecutive_failures: number
+  min_improvement_rtt: number
+  min_improvement_ratio: number
+  cooldown_duration: number
+  hysteresis_buffer: number
+  locked_node?: string
+  rollback_on_failure: boolean
+}
+
+export interface SwitchEvent {
+  id: string
+  timestamp: string
+  target_group: string
+  from_node: string
+  to_node: string
+  reason: string
+  trigger_type: 'failure_failover' | 'latency_improvement' | 'manual_override' | 'rollback'
+  status: 'success' | 'rolled_back' | 'failed'
+  old_metric?: number
+  new_metric?: number
+}
+
