@@ -30,7 +30,9 @@ type Controller interface {
 	// GetCurrentSelection returns the name of the currently selected proxy in the specified group.
 	GetCurrentSelection(ctx context.Context, group string) (string, error)
 
-	// SelectNode switches the active proxy node for the specified group in the external core.
+	// SelectNode updates the active proxy selection for the specified Selector group in the external core.
+	// Note: This updates the Selector's active choice in Mihomo; by default existing user
+	// connections are NOT terminated or interrupted.
 	SelectNode(ctx context.Context, group string, nodeName string) error
 
 	// TestDelay tests basic HTTP/TCP connectivity and delay to a target URL using the core's built-in probe.

@@ -63,9 +63,11 @@ type AppSettings struct {
 
 // ControllerConfigDTO configures connection to external proxy controller.
 type ControllerConfigDTO struct {
-	Endpoint string `json:"endpoint"` // e.g. "http://127.0.0.1:9090"
-	Secret   string `json:"secret,omitempty"`
-	Mode     string `json:"mode"`     // "external" (default) or "standalone"
+	Endpoint                     string `json:"endpoint"` // e.g. "http://127.0.0.1:9090" or "https://remote:9090"
+	Secret                       string `json:"secret,omitempty"`
+	Mode                         string `json:"mode"` // "external" (default) or "standalone"
+	AllowRemote                  bool   `json:"allow_remote,omitempty"`
+	AllowInsecurePlaintextRemote bool   `json:"allow_insecure_plaintext_remote,omitempty"`
 }
 
 // ControllerStatusDTO conveys current connection state and active proxy selection.

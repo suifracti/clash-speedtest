@@ -155,9 +155,79 @@ func TestDecisionEngine_VerificationAndRollback(t *testing.T) {
 		t.Fatalf("majority failure must trigger rollback")
 	}
 
-	// Case 3: Explicit region block -> MUST rollback immediately regardless of probe count
-	resBlocked := engine.EvaluateVerification(nil, true, 2)
-	if !resBlocked.ShouldRollback {
-		t.Fatalf("explicit region block must trigger immediate rollback")
+	// Case 3: Explicit region block under PurposeGeneral -> must NOT trigger rollback (not a hard failure for general traffic)
+	resBlockedGeneral := engine.EvaluateVerification(nil, true, 2, PurposeGeneral)
+	if resBlockedGeneral.ShouldRollback {
+		t.Fatalf("explicit region block under PurposeGeneral must NOT trigger rollback")
+	}
+
+	// Case 4: Explicit region block under PurposeAI -> MUST trigger immediate rollback
+	resBlockedAI := engine.EvaluateVerification(nil, true, 2, PurposeAI)
+	if !resBlockedAI.ShouldRollback {
+		t.Fatalf("explicit region block under PurposeAI must trigger immediate rollback")
+	}
+}
+
+func TestDecisionEngine_PolicyPurpose(t *testing.T) {
+	engine := NewDecisionEngine()
+	now := time.Now()
+
+	state := &DecisionState{CurrentNode: "HK-01"}
+
+	// HK-01 is available for general internet, but blocked on Google/AI (e.g. Gemini HTTP 400)
+	evals := []NodeEvaluation{
+		{
+			Name:              "HK-01",
+			Available:         true,
+			TriageStatus:      "blocked", // AI/Google region-blocked
+			RTT:               50 * time.Millisecond,
+			SampleCount:       5,
+			LastSampleTime:    now,
+			ObservationWindow: 2 * time.Minute,
+		},
+		{
+			Name:              "HK-AI-PASS",
+			Available:         true,
+			TriageStatus:      "pass",
+			RTT:               60 * time.Millisecond,
+			SampleCount:       5,
+			LastSampleTime:    now,
+			ObservationWindow: 2 * time.Minute,
+		},
+		{
+			Name:              "HK-AI-BLOCKED",
+			Available:         true,
+			TriageStatus:      "blocked",
+			RTT:               30 * time.Millisecond, // Lower RTT but blocked on AI
+			SampleCount:       5,
+			LastSampleTime:    now,
+			ObservationWindow: 2 * time.Minute,
+		},
+	}
+
+	// 1. General Purpose Policy: AI regional block is NOT a hard failure
+	pGeneral := DefaultSwitchPolicy()
+	pGeneral.Mode = ModeAuto
+	pGeneral.Purpose = PurposeGeneral
+	pGeneral.CooldownDuration = 0
+
+	resGeneral := engine.Evaluate(now, pGeneral, state, evals)
+	if resGeneral.TriggerType == "failure_failover" {
+		t.Fatalf("General policy must NOT trigger failure_failover for AI regional block")
+	}
+
+	// 2. AI Purpose Policy: AI regional block IS a hard failure -> triggers urgent failover
+	pAI := DefaultSwitchPolicy()
+	pAI.Mode = ModeAuto
+	pAI.Purpose = PurposeAI
+	pAI.CooldownDuration = 0
+
+	resAI := engine.Evaluate(now, pAI, state, evals)
+	if !resAI.ShouldSwitch || resAI.TriggerType != "failure_failover" {
+		t.Fatalf("AI policy must trigger failure_failover when current node is region blocked on AI, got: %+v", resAI)
+	}
+	// HK-AI-BLOCKED has lower RTT (30ms) but is blocked on AI, so HK-AI-PASS (60ms) must be chosen!
+	if resAI.TargetNode != "HK-AI-PASS" {
+		t.Fatalf("AI policy must NOT select candidate that is blocked on AI (expected HK-AI-PASS, got %s)", resAI.TargetNode)
 	}
 }

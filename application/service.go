@@ -1150,8 +1150,10 @@ func (s *AppService) ConfigureController(ctx context.Context, cfg ControllerConf
 	defer s.ctrlMu.Unlock()
 
 	client, err := mihomo.NewClient(mihomo.Config{
-		Endpoint: cfg.Endpoint,
-		Secret:   cfg.Secret,
+		Endpoint:                     cfg.Endpoint,
+		Secret:                       cfg.Secret,
+		AllowRemote:                  cfg.AllowRemote,
+		AllowInsecurePlaintextRemote: cfg.AllowInsecurePlaintextRemote,
 	})
 	if err != nil {
 		return fmt.Errorf("create controller client: %w", err)
@@ -1427,9 +1429,10 @@ func (s *AppService) EvaluateAndAutoSwitch(ctx context.Context, evals []policy.N
 			}
 		}
 
-		verifResult := engine.EvaluateVerification(verificationProbes, false, threshold)
+		verifResult := engine.EvaluateVerification(verificationProbes, false, threshold, pol.Purpose)
 		if verifResult.ShouldRollback {
-			// Rollback to previous node in external core
+			// Rollback: update Selector selection back to previous node in external core.
+			// By default this preserves existing connections without terminating them.
 			_ = ctrl.SelectNode(ctx, group, fromNode)
 
 			s.ctrlMu.Lock()

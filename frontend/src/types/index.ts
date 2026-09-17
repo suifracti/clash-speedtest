@@ -294,6 +294,8 @@ export interface ControllerConfig {
   endpoint: string
   secret?: string
   mode: 'external' | 'standalone'
+  allow_remote?: boolean
+  allow_insecure_plaintext_remote?: boolean
 }
 
 export interface ControllerGroup {
@@ -304,6 +306,7 @@ export interface ControllerGroup {
 }
 
 export type OrchestratorMode = 'monitor_only' | 'recommend' | 'auto'
+export type PolicyPurpose = 'general' | 'ai'
 
 export interface ControllerStatus {
   connected: boolean
@@ -319,6 +322,7 @@ export interface ControllerStatus {
 }
 
 export interface SwitchPolicy {
+  purpose?: PolicyPurpose
   mode: OrchestratorMode
   target_group: string
   target_group_type?: string

@@ -17,7 +17,7 @@ import (
 
 // Config configures the Mihomo External Controller REST client.
 type Config struct {
-	// Endpoint is the base URL of the External Controller, e.g. "http://127.0.0.1:9090".
+	// Endpoint is the base URL of the External Controller, e.g. "http://127.0.0.1:9090" or "https://remote:9090".
 	Endpoint string `json:"endpoint"`
 	// Secret is the optional Bearer token configured in Mihomo external-controller-secret.
 	// Never log or serialize this in plaintext in UI/DTOs.
@@ -27,6 +27,9 @@ type Config struct {
 	// AllowRemote explicitly permits connecting to a non-loopback external controller endpoint.
 	// By default, only localhost/loopback connections are allowed for local security.
 	AllowRemote bool `json:"allow_remote"`
+	// AllowInsecurePlaintextRemote explicitly allows unencrypted HTTP over a remote non-loopback network.
+	// High security risk (secret and control commands sent in cleartext); strongly discouraged.
+	AllowInsecurePlaintextRemote bool `json:"allow_insecure_plaintext_remote"`
 }
 
 // MaskedSecret returns a safe, redacted representation of the secret.
@@ -47,7 +50,7 @@ type Client struct {
 	client   *http.Client
 }
 
-// NewClient creates a new Mihomo External Controller REST client with loopback enforcement.
+// NewClient creates a new Mihomo External Controller REST client with loopback and transport security enforcement.
 func NewClient(cfg Config) (*Client, error) {
 	endpoint := strings.TrimRight(cfg.Endpoint, "/")
 	if endpoint == "" {
@@ -57,9 +60,19 @@ func NewClient(cfg Config) (*Client, error) {
 		endpoint = "http://" + endpoint
 	}
 
-	// Security Enforcement: only localhost/loopback permitted unless AllowRemote is explicitly true
-	if !cfg.AllowRemote && !isLoopbackEndpoint(endpoint) {
-		return nil, fmt.Errorf("external controller endpoint %q is not localhost/loopback; by default only loopback connections are permitted for security (set AllowRemote=true to override)", endpoint)
+	isLoopback := isLoopbackEndpoint(endpoint)
+	isHTTPS := strings.HasPrefix(strings.ToLower(endpoint), "https://")
+
+	// Security Enforcement:
+	if !isLoopback {
+		// Non-loopback remote connection check
+		if !cfg.AllowRemote {
+			return nil, fmt.Errorf("external controller endpoint %q is not localhost/loopback; by default remote connections are disabled for security (set AllowRemote=true to enable)", endpoint)
+		}
+		// Non-loopback remote connections must use HTTPS / Mihomo external-controller-tls unless explicit high-risk opt-in
+		if !isHTTPS && !cfg.AllowInsecurePlaintextRemote {
+			return nil, fmt.Errorf("remote external controller endpoint %q uses insecure plaintext HTTP; remote connections require HTTPS (Mihomo external-controller-tls) for security, or explicit AllowInsecurePlaintextRemote=true opt-in", endpoint)
+		}
 	}
 
 	timeout := cfg.Timeout
@@ -172,9 +185,12 @@ func (c *Client) GetCurrentSelection(ctx context.Context, group string) (string,
 	return raw.Now, nil
 }
 
-// SelectNode changes the active node of a Selector group in the external core.
-// Crucial Safety Boundary: Only Selector groups are permitted to be switched.
-// URLTest, Fallback, and LoadBalance groups are read-only to preserve core automatic selection semantics.
+// SelectNode updates the active proxy selection for a Selector group in the external core.
+// Crucial Safety Boundaries:
+// 1. Only Selector groups are permitted to be updated; URLTest, Fallback, and LoadBalance groups
+//    are read-only to preserve core native automatic selection semantics.
+// 2. Updating the selection instructs Mihomo to route new connections via nodeName; existing active user
+//    connections are preserved by default (no DELETE /connections call).
 func (c *Client) SelectNode(ctx context.Context, group string, nodeName string) error {
 	groupInfo, err := c.getGroupRaw(ctx, group)
 	if err != nil {

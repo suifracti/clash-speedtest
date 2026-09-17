@@ -13,7 +13,7 @@ import (
 )
 
 func TestMihomoSecurity_LoopbackEnforcement(t *testing.T) {
-	// Remote public IP should be rejected by default
+	// Remote public IP should be rejected by default without AllowRemote
 	_, err := NewClient(Config{
 		Endpoint: "http://198.51.100.1:9090",
 	})
@@ -21,13 +21,32 @@ func TestMihomoSecurity_LoopbackEnforcement(t *testing.T) {
 		t.Fatalf("expected error for remote endpoint without AllowRemote")
 	}
 
-	// Remote public IP with AllowRemote=true should be allowed
-	clientRemote, err := NewClient(Config{
+	// Remote public IP with AllowRemote=true but unencrypted HTTP should be rejected by default
+	_, err = NewClient(Config{
 		Endpoint:    "http://198.51.100.1:9090",
 		AllowRemote: true,
 	})
-	if err != nil || clientRemote == nil {
-		t.Fatalf("expected success with AllowRemote=true, got: %v", err)
+	if err == nil {
+		t.Fatalf("expected error for remote HTTP endpoint without AllowInsecurePlaintextRemote")
+	}
+
+	// Remote public IP with AllowRemote=true and HTTPS should be allowed
+	clientRemoteHTTPS, err := NewClient(Config{
+		Endpoint:    "https://198.51.100.1:9090",
+		AllowRemote: true,
+	})
+	if err != nil || clientRemoteHTTPS == nil {
+		t.Fatalf("expected success for remote HTTPS with AllowRemote=true, got: %v", err)
+	}
+
+	// Remote public IP with AllowRemote=true and explicit AllowInsecurePlaintextRemote=true should be allowed
+	clientRemoteInsecure, err := NewClient(Config{
+		Endpoint:                     "http://198.51.100.1:9090",
+		AllowRemote:                  true,
+		AllowInsecurePlaintextRemote: true,
+	})
+	if err != nil || clientRemoteInsecure == nil {
+		t.Fatalf("expected success for remote HTTP with AllowInsecurePlaintextRemote=true, got: %v", err)
 	}
 
 	// Localhost and 127.0.0.1 should always be allowed
@@ -52,7 +71,11 @@ func TestMihomoSecurity_MaskedSecret(t *testing.T) {
 	}
 }
 
-func TestMihomoIntegration_E2EWorkflow(t *testing.T) {
+// TestMihomoController_ContractIntegrationWorkflow executes contract and integration tests
+// against the Mihomo External Controller REST API specification using httptest.Server (simulating Mihomo endpoints).
+// NOTE: This is an API contract and integration test; it does NOT spin up a live Mihomo core binary.
+// Live core binary smoke testing can be added in future work.
+func TestMihomoController_ContractIntegrationWorkflow(t *testing.T) {
 	complexSelectorName := "🚀 节点选择 / Auto [Fast]"
 	complexNodeName1 := "🇭🇰 香港 01 - BGP / Premium (x1.5)"
 	complexNodeName2 := "🇯🇵 日本 02 - Direct / 4K"

@@ -22,8 +22,26 @@ const (
 	ModeAuto OrchestratorMode = "auto"
 )
 
+// PolicyPurpose defines the intended routing purpose or capability required for candidate nodes.
+type PolicyPurpose string
+
+const (
+	// PurposeGeneral routes general internet traffic. Google/AI regional restrictions
+	// are NOT treated as hard failures, and will not cause auto-switching on an otherwise functional node.
+	PurposeGeneral PolicyPurpose = "general"
+
+	// PurposeAI routes AI/LLM specialized traffic (e.g. OpenAI, Google Gemini, Anthropic).
+	// Confirmed regional blocking (e.g. HTTP 400 FAILED_PRECONDITION / Geo-Blocked) is treated
+	// as a hard failure, triggering failover or rollback to an AI-capable node.
+	PurposeAI PolicyPurpose = "ai"
+)
+
 // SwitchPolicy defines user-configured criteria for automatic proxy node switching.
 type SwitchPolicy struct {
+	// Purpose defines the target routing domain / required capability ("general" or "ai").
+	// Defaults to "general". Regional Google/AI blocks are ONLY hard failures if Purpose == "ai".
+	Purpose PolicyPurpose `json:"purpose"`
+
 	// Mode specifies the operational mode: "monitor_only" (default), "recommend", or "auto".
 	Mode OrchestratorMode `json:"mode"`
 
@@ -96,6 +114,7 @@ type SwitchPolicy struct {
 // DefaultSwitchPolicy returns sensible, secure production defaults (Monitor Only by default).
 func DefaultSwitchPolicy() SwitchPolicy {
 	return SwitchPolicy{
+		Purpose:                      PurposeGeneral,
 		Mode:                         ModeMonitorOnly,
 		TargetGroup:                  "PROXY",
 		TargetGroupType:              "Selector",
@@ -267,12 +286,21 @@ func (e *DecisionEngine) Evaluate(
 	currentEv, hasCurrent := evalMap[state.CurrentNode]
 
 	// 3. Urgent Failover Check: current node has failed >= MaxConsecutiveFailures
-	// or current node is explicitly confirmed unavailable / geo-blocked
+	// or current node is explicitly confirmed unavailable / failed.
+	// NOTE: Google/AI regional restrictions (TriageStatus == "blocked") are ONLY treated
+	// as hard failures when the policy explicitly requires AI capability (Purpose == PurposeAI).
+	// For general Selector policies, regional AI blocking does NOT cause unprovoked automatic failover.
 	currentUnhealthy := false
 	if state.ConsecutiveFailures >= p.MaxConsecutiveFailures && p.MaxConsecutiveFailures > 0 {
 		currentUnhealthy = true
-	} else if hasCurrent && (!currentEv.Available || currentEv.TriageStatus == "blocked" || currentEv.TriageStatus == "failed") {
-		currentUnhealthy = true
+	} else if hasCurrent {
+		if !currentEv.Available || currentEv.TriageStatus == "failed" {
+			currentUnhealthy = true
+		} else if currentEv.TriageStatus == "blocked" {
+			if p.Purpose == PurposeAI {
+				currentUnhealthy = true
+			}
+		}
 	}
 
 	// Sample Freshness & Evidence Filter for candidate nodes
@@ -303,6 +331,10 @@ func (e *DecisionEngine) Evaluate(
 				continue
 			}
 			if !isFreshCandidate(ev) {
+				continue
+			}
+			// In AI purpose mode, candidates blocked on AI/Google cannot be chosen
+			if p.Purpose == PurposeAI && ev.TriageStatus == "blocked" {
 				continue
 			}
 			if ev.Available && ev.RTT > 0 && ev.RTT < bestRTT {
@@ -381,6 +413,10 @@ func (e *DecisionEngine) Evaluate(
 		if !isFreshCandidate(ev) {
 			continue
 		}
+		// In AI purpose mode, candidates blocked on AI/Google cannot be chosen
+		if p.Purpose == PurposeAI && ev.TriageStatus == "blocked" {
+			continue
+		}
 
 		diff := currentEv.RTT - ev.RTT
 		if diff < p.MinImprovementRTT {
@@ -441,18 +477,28 @@ func (e *DecisionEngine) Evaluate(
 }
 
 // EvaluateVerification checks post-switch multi-probe results to determine whether rollback is warranted.
-// Rollback is executed ONLY if majority fail (failures >= threshold) or there is confirmed region blocking.
+// Rollback is executed ONLY if majority fail (failures >= threshold) or there is confirmed region blocking under AI purpose.
+// Regional blocking is NOT treated as a hard failure under PurposeGeneral.
 func (e *DecisionEngine) EvaluateVerification(
 	probes []VerificationProbe,
 	explicitBlocked bool,
 	threshold int,
+	purpose ...PolicyPurpose,
 ) VerificationResult {
+	pPurpose := PurposeGeneral
+	if len(purpose) > 0 && purpose[0] != "" {
+		pPurpose = purpose[0]
+	}
+
 	if explicitBlocked {
-		return VerificationResult{
-			ShouldRollback: true,
-			Reason:         "新节点明确捕获地区阻断证据 (HTTP 400 FAILED_PRECONDITION)，立即执行回退",
-			TotalCount:     len(probes),
+		if pPurpose == PurposeAI {
+			return VerificationResult{
+				ShouldRollback: true,
+				Reason:         "新节点在 AI 策略下明确捕获地区阻断证据 (HTTP 400 FAILED_PRECONDITION)，立即执行回退",
+				TotalCount:     len(probes),
+			}
 		}
+		// Under PurposeGeneral, regional AI blocking alone is not a hard failure for general traffic
 	}
 
 	successCount := 0
