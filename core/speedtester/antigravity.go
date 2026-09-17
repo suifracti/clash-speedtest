@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/faceair/clash-speedtest/core/auth"
 	"github.com/metacubex/mihomo/constant"
 )
 
@@ -201,7 +202,7 @@ func (st *SpeedTester) testAntigravity(proxy constant.Proxy) (status, country, c
 
 	token := st.config.AntigravityToken
 	if token == "" {
-		if autoToken, _, err := TryAutoDetectAntigravityToken(); err == nil && autoToken != "" {
+		if autoToken, _, err := auth.TryAutoDetectAntigravityToken(); err == nil && autoToken != "" {
 			token = autoToken
 		}
 	}

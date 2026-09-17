@@ -1,4 +1,4 @@
-package speedtester
+package auth
 
 import (
 	"bytes"

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/faceair/clash-speedtest/history"
-	"github.com/faceair/clash-speedtest/speedtester"
+	"github.com/faceair/clash-speedtest/core/history"
+	"github.com/faceair/clash-speedtest/core/speedtester"
 	"gopkg.in/yaml.v2"
 )
 

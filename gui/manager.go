@@ -13,9 +13,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/faceair/clash-speedtest/history"
-	"github.com/faceair/clash-speedtest/profiles"
-	"github.com/faceair/clash-speedtest/speedtester"
+	"github.com/faceair/clash-speedtest/core/history"
+	"github.com/faceair/clash-speedtest/core/profiles"
+	"github.com/faceair/clash-speedtest/core/speedtester"
 )
 
 type Event struct {

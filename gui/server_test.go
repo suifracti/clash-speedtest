@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/faceair/clash-speedtest/history"
-	"github.com/faceair/clash-speedtest/profiles"
+	"github.com/faceair/clash-speedtest/core/history"
+	"github.com/faceair/clash-speedtest/core/profiles"
 )
 
 func TestWebHandler(t *testing.T) {

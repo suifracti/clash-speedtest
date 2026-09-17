@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/faceair/clash-speedtest/speedtester"
+	"github.com/faceair/clash-speedtest/core/auth"
 )
 
 func findZen() string {
@@ -132,7 +132,7 @@ func LaunchApp(url string, preferred string) (*exec.Cmd, error) {
 
 	// System default browser (e.g. Zen / Chrome / Edge according to user's Windows default setting)
 	if lower == "default" || lower == "system" || lower == "" || lower == "auto" {
-		return nil, speedtester.OpenBrowser(url)
+		return nil, auth.OpenBrowser(url)
 	}
 
 	// 1. Zen Browser on Windows
@@ -144,7 +144,7 @@ func LaunchApp(url string, preferred string) (*exec.Cmd, error) {
 			}
 		}
 		// Fallback to system default browser if Zen was explicitly picked but not found/failed
-		return nil, speedtester.OpenBrowser(url)
+		return nil, auth.OpenBrowser(url)
 	}
 
 	var browserPath string
@@ -162,7 +162,7 @@ func LaunchApp(url string, preferred string) (*exec.Cmd, error) {
 
 	// If preferred browser not installed, fallback to system default
 	if browserPath == "" {
-		return nil, speedtester.OpenBrowser(url)
+		return nil, auth.OpenBrowser(url)
 	}
 
 	// Try launching in clean app mode (without isolated user-data-dir to avoid ProcessSingleton lock collision)
@@ -178,6 +178,6 @@ func LaunchApp(url string, preferred string) (*exec.Cmd, error) {
 	}
 
 	// Final fallback: System default browser
-	return nil, speedtester.OpenBrowser(url)
+	return nil, auth.OpenBrowser(url)
 }
 

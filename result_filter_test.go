@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/faceair/clash-speedtest/speedtester"
+	"github.com/faceair/clash-speedtest/core/speedtester"
 )
 
 func TestResultFilterMatch(t *testing.T) {

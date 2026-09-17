@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/faceair/clash-speedtest/speedtester"
+	"github.com/faceair/clash-speedtest/core/speedtester"
 )
 
 type resultFilter struct {

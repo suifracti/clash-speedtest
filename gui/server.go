@@ -14,9 +14,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/faceair/clash-speedtest/history"
-	"github.com/faceair/clash-speedtest/profiles"
-	"github.com/faceair/clash-speedtest/speedtester"
+	"github.com/faceair/clash-speedtest/core/auth"
+	"github.com/faceair/clash-speedtest/core/history"
+	"github.com/faceair/clash-speedtest/core/profiles"
+	"github.com/faceair/clash-speedtest/core/speedtester"
 )
 
 type ServerConfig struct {
@@ -63,7 +64,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	}
 
 	// Auto-detect Antigravity token on startup
-	if token, src, err := speedtester.TryAutoDetectAntigravityToken(); err == nil && token != "" {
+	if token, src, err := auth.TryAutoDetectAntigravityToken(); err == nil && token != "" {
 		s.antigravityToken = token
 		s.antigravitySource = src
 	}
@@ -75,7 +76,7 @@ func (s *Server) GetAntigravityToken() (string, string) {
 	s.antigravityMu.Lock()
 	defer s.antigravityMu.Unlock()
 	if s.antigravityToken == "" {
-		if tok, src, err := speedtester.TryAutoDetectAntigravityToken(); err == nil && tok != "" {
+		if tok, src, err := auth.TryAutoDetectAntigravityToken(); err == nil && tok != "" {
 			s.antigravityToken = tok
 			s.antigravitySource = src
 		}
@@ -719,7 +720,7 @@ func (s *Server) handleAntigravityToken(w http.ResponseWriter, r *http.Request) 
 	}
 
 	token := strings.TrimSpace(req.Token)
-	parsed := speedtester.ParseAntigravityToken(token)
+	parsed := auth.ParseAntigravityToken(token)
 	if parsed == "" {
 		writeError(w, http.StatusBadRequest, "Token 格式无效，请检查")
 		return
@@ -742,7 +743,7 @@ func (s *Server) handleAntigravityToken(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleAntigravityLogin(w http.ResponseWriter, r *http.Request) {
 	go func() {
-		token, err := speedtester.StartOAuthBrowserFlow(os.Stdout)
+		token, err := auth.StartOAuthBrowserFlow(os.Stdout)
 		if err != nil {
 			log.Printf("OAuth login failed: %s", err)
 			s.broadcaster.Broadcast(Event{

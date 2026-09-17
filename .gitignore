@@ -15,4 +15,15 @@ report.html
 *.sqlite
 *.sqlite3
 *.log
+node_modules/
+frontend/node_modules/
+dist-ssr/
+*.local
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+frontend/vite.config.js
+frontend/vite.config.d.ts
+.DS_Store
+build/bin/
 

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "clash-speedtest",
+  "outputfilename": "clash-speedtest",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "clash-speedtest team",
+    "email": ""
+  },
+  "info": {
+    "companyName": "clash-speedtest",
+    "productName": "Clash SpeedTest Pro",
+    "productVersion": "1.0.0",
+    "copyright": "GPL-3.0"
+  },
+  "wailsjsdir": "./frontend/src",
+  "version": "2"
+}

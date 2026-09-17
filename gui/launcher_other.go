@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/faceair/clash-speedtest/speedtester"
+	"github.com/faceair/clash-speedtest/core/auth"
 )
 
 // GetAvailableBrowsers lists detectable browsers on Linux/Unix.
@@ -56,7 +56,7 @@ func LaunchApp(url string, preferred string) (*exec.Cmd, error) {
 
 	lower := strings.ToLower(strings.TrimSpace(preferred))
 	if lower == "default" || lower == "system" {
-		return nil, speedtester.OpenBrowser(url)
+		return nil, auth.OpenBrowser(url)
 	}
 
 	candidates := []string{
@@ -82,7 +82,7 @@ func LaunchApp(url string, preferred string) (*exec.Cmd, error) {
 	}
 
 	if browserPath == "" {
-		return nil, speedtester.OpenBrowser(url)
+		return nil, auth.OpenBrowser(url)
 	}
 
 	tempDir := filepath.Join(os.TempDir(), "clash-speedtest-profile")
@@ -98,7 +98,7 @@ func LaunchApp(url string, preferred string) (*exec.Cmd, error) {
 
 	cmd := exec.Command(browserPath, args...)
 	if err := cmd.Start(); err != nil {
-		return nil, speedtester.OpenBrowser(url)
+		return nil, auth.OpenBrowser(url)
 	}
 
 	return cmd, nil

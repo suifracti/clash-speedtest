@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"embed"
 	"flag"
 	"fmt"
 	"log"
@@ -13,16 +14,21 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/faceair/clash-speedtest/adapter/desktop"
+	"github.com/faceair/clash-speedtest/core/auth"
+	"github.com/faceair/clash-speedtest/core/ip"
+	"github.com/faceair/clash-speedtest/core/profiles"
+	"github.com/faceair/clash-speedtest/core/speedtester"
 	"github.com/faceair/clash-speedtest/gist"
 	"github.com/faceair/clash-speedtest/gui"
-	"github.com/faceair/clash-speedtest/ip"
 	"github.com/faceair/clash-speedtest/output"
-	"github.com/faceair/clash-speedtest/profiles"
-	"github.com/faceair/clash-speedtest/speedtester"
 	"github.com/faceair/clash-speedtest/tui"
 	mihomolog "github.com/metacubex/mihomo/log"
 	"gopkg.in/yaml.v2"
 )
+
+//go:embed all:frontend/dist
+var desktopAssets embed.FS
 
 // Version information injected via ldflags during build
 var (
@@ -63,6 +69,7 @@ var (
 	antigravityTokenFlag = flag.String("antigravity-token", "", "OAuth Bearer token (ya29...) for the Antigravity availability check")
 	antigravityTokenFile = flag.String("antigravity-token-file", "", "OAuth token file for the Antigravity availability check; required when --metrics includes antigravity (file holds a bare Bearer token or an 'Authorization: Bearer ...' line)")
 	guiFlag              = flag.Bool("gui", false, "launch desktop graphical user interface (GUI)")
+	webFlag              = flag.Bool("web", false, "launch web browser interface instead of native desktop window")
 	cliFlag              = flag.Bool("cli", false, "force terminal CLI interactive mode")
 	portFlag             = flag.Int("port", 0, "port for GUI web server (default: random free port)")
 	browserFlag          = flag.String("browser", "", "preferred browser for GUI: zen, arc, brave, chrome, edge, safari, default, or path to executable")
@@ -84,11 +91,14 @@ func main() {
 	explicitDuration := false
 	explicitRounds := false
 	explicitGUI := false
+	explicitWeb := false
 	explicitCLI := false
 	flag.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "gui":
 			explicitGUI = true
+		case "web":
+			explicitWeb = true
 		case "cli":
 			explicitCLI = true
 		case "f":
@@ -105,12 +115,18 @@ func main() {
 	shouldRunGUI := false
 	if explicitGUI && *guiFlag {
 		shouldRunGUI = true
+	} else if explicitWeb && *webFlag {
+		shouldRunGUI = true
 	} else if !explicitCLI && !*cliFlag && *configPathsConfig == "" && len(flag.Args()) == 0 {
 		shouldRunGUI = true
 	}
 
 	if shouldRunGUI {
-		runGUI(*portFlag, *userAgent, *browserFlag)
+		if *webFlag {
+			runGUI(*portFlag, *userAgent, *browserFlag)
+		} else {
+			runDesktop(*userAgent, *portFlag, *browserFlag)
+		}
 		return
 	}
 
@@ -220,7 +236,7 @@ func main() {
 	antigravityToken := ""
 	if selectedMetrics.Antigravity {
 		isInteractive := profiles.IsInteractive() || output.IsTerminalFile(os.Stdin)
-		token, tokenErr := speedtester.ResolveAntigravityToken(*antigravityTokenFlag, *antigravityTokenFile, isInteractive, os.Stdin, os.Stdout)
+		token, tokenErr := auth.ResolveAntigravityToken(*antigravityTokenFlag, *antigravityTokenFile, isInteractive, os.Stdin, os.Stdout)
 		if tokenErr != nil {
 			log.Fatalf("获取 Antigravity 凭据失败: %v", tokenErr)
 		}
@@ -473,7 +489,7 @@ func runGUI(port int, userAgent string, browser string) {
 	cmd, err := gui.LaunchApp(url, browser)
 	if err != nil {
 		fmt.Printf("唤起桌面窗口提示: %v，已降级至系统浏览器。\n", err)
-		_ = speedtester.OpenBrowser(url)
+		_ = auth.OpenBrowser(url)
 	}
 
 	sigChan := make(chan os.Signal, 1)
@@ -506,4 +522,19 @@ func runGUI(port int, userAgent string, browser string) {
 	defer cancel()
 	_ = server.Stop(ctx)
 }
+
+func runDesktop(userAgent string, fallbackPort int, browser string) {
+	profiles.EnableUTF8Console()
+	cfg := desktop.RunConfig{
+		ProfilePaths: profiles.DefaultPaths(),
+		UserAgent:    userAgent,
+		Assets:       desktopAssets,
+	}
+	err := desktop.Run(cfg)
+	if err != nil {
+		fmt.Printf("启动 Wails 原生桌面窗口失败 (%v)，正在自动降级至 Web 模式...\n", err)
+		runGUI(fallbackPort, userAgent, browser)
+	}
+}
+
 

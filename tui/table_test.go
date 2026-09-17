@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/faceair/clash-speedtest/speedtester"
+	"github.com/faceair/clash-speedtest/core/speedtester"
 )
 
 // TestTUIModelColorizeRow tests the colorizeRow function
