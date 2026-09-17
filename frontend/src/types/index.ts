@@ -303,6 +303,8 @@ export interface ControllerGroup {
   all: string[]
 }
 
+export type OrchestratorMode = 'monitor_only' | 'recommend' | 'auto'
+
 export interface ControllerStatus {
   connected: boolean
   endpoint: string
@@ -311,13 +313,15 @@ export interface ControllerStatus {
   current_group?: string
   current_node?: string
   locked_node?: string
-  auto_switch_enabled: boolean
+  mode: OrchestratorMode
+  has_secret: boolean
   available_groups?: string[]
 }
 
 export interface SwitchPolicy {
-  auto_switch_enabled: boolean
+  mode: OrchestratorMode
   target_group: string
+  target_group_type?: string
   candidate_nodes?: string[]
   interval: number
   max_consecutive_failures: number
@@ -327,6 +331,12 @@ export interface SwitchPolicy {
   hysteresis_buffer: number
   locked_node?: string
   rollback_on_failure: boolean
+  max_sample_age: number
+  min_sample_count: number
+  min_observation_window: number
+  verification_grace_period: number
+  verification_probe_count: number
+  verification_failure_threshold: number
 }
 
 export interface SwitchEvent {

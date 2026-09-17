@@ -70,15 +70,16 @@ type ControllerConfigDTO struct {
 
 // ControllerStatusDTO conveys current connection state and active proxy selection.
 type ControllerStatusDTO struct {
-	Connected         bool     `json:"connected"`
-	Endpoint          string   `json:"endpoint"`
-	CoreVersion       string   `json:"core_version,omitempty"`
-	CoreType          string   `json:"core_type,omitempty"`
-	CurrentGroup      string   `json:"current_group,omitempty"`
-	CurrentNode       string   `json:"current_node,omitempty"`
-	LockedNode        string   `json:"locked_node,omitempty"`
-	AutoSwitchEnabled bool     `json:"auto_switch_enabled"`
-	AvailableGroups   []string `json:"available_groups,omitempty"`
+	Connected       bool     `json:"connected"`
+	Endpoint        string   `json:"endpoint"`
+	CoreVersion     string   `json:"core_version,omitempty"`
+	CoreType        string   `json:"core_type,omitempty"`
+	CurrentGroup    string   `json:"current_group,omitempty"`
+	CurrentNode     string   `json:"current_node,omitempty"`
+	LockedNode      string   `json:"locked_node,omitempty"`
+	Mode            string   `json:"mode"` // "monitor_only", "recommend", "auto"
+	HasSecret       bool     `json:"has_secret"`
+	AvailableGroups []string `json:"available_groups,omitempty"`
 }
 
 // SelectNodeRequest requests switching active proxy for a group.

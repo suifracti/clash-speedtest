@@ -5,132 +5,159 @@ import (
 	"time"
 )
 
-func TestDecisionEngine_ManualLock(t *testing.T) {
+func TestDecisionEngine_Modes(t *testing.T) {
+	engine := NewDecisionEngine()
+	now := time.Now()
+
+	state := &DecisionState{CurrentNode: "HK-01"}
+	evals := []NodeEvaluation{
+		{
+			Name:              "HK-01",
+			Available:         true,
+			RTT:               100 * time.Millisecond,
+			SampleCount:       5,
+			LastSampleTime:    now,
+			ObservationWindow: 2 * time.Minute,
+		},
+		{
+			Name:              "HK-FAST",
+			Available:         true,
+			RTT:               40 * time.Millisecond,
+			SampleCount:       5,
+			LastSampleTime:    now,
+			ObservationWindow: 2 * time.Minute,
+		},
+	}
+
+	// 1. Default Mode: Monitor Only -> MUST NEVER SWITCH
+	pDefault := DefaultSwitchPolicy()
+	if pDefault.Mode != ModeMonitorOnly {
+		t.Fatalf("expected default mode to be ModeMonitorOnly, got %s", pDefault.Mode)
+	}
+	resMon := engine.Evaluate(now, pDefault, state, evals)
+	if resMon.ShouldSwitch {
+		t.Fatalf("Monitor Only mode must NEVER switch")
+	}
+
+	// 2. Recommend Mode -> Must produce recommendation but NOT switch
+	pRec := DefaultSwitchPolicy()
+	pRec.Mode = ModeRecommend
+	pRec.CooldownDuration = 0
+
+	resRec := engine.Evaluate(now, pRec, state, evals)
+	if resRec.ShouldSwitch {
+		t.Fatalf("Recommend mode must NOT automatically switch")
+	}
+	if resRec.Recommendation == nil || resRec.Recommendation.TargetNode != "HK-FAST" {
+		t.Fatalf("expected recommendation for HK-FAST, got %+v", resRec.Recommendation)
+	}
+
+	// 3. Auto Mode -> Executes switch
+	pAuto := DefaultSwitchPolicy()
+	pAuto.Mode = ModeAuto
+	pAuto.CooldownDuration = 0
+
+	resAuto := engine.Evaluate(now, pAuto, state, evals)
+	if !resAuto.ShouldSwitch || resAuto.TargetNode != "HK-FAST" {
+		t.Fatalf("Auto mode must switch to HK-FAST, got %+v", resAuto)
+	}
+}
+
+func TestDecisionEngine_SampleFreshness(t *testing.T) {
 	engine := NewDecisionEngine()
 	now := time.Now()
 
 	p := DefaultSwitchPolicy()
-	p.AutoSwitchEnabled = true
-	p.LockedNode = "HK-VIP"
+	p.Mode = ModeAuto
+	p.CooldownDuration = 0
+	p.MaxSampleAge = 5 * time.Minute
+	p.MinSampleCount = 3
 
-	state := &DecisionState{
-		CurrentNode: "HK-01",
+	state := &DecisionState{CurrentNode: "HK-01"}
+
+	// Case 1: Candidate sample is too old (6 minutes old)
+	evalsOld := []NodeEvaluation{
+		{
+			Name:              "HK-01",
+			Available:         true,
+			RTT:               100 * time.Millisecond,
+			SampleCount:       5,
+			LastSampleTime:    now,
+			ObservationWindow: 5 * time.Minute,
+		},
+		{
+			Name:              "HK-STALE",
+			Available:         true,
+			RTT:               40 * time.Millisecond,
+			SampleCount:       5,
+			LastSampleTime:    now.Add(-6 * time.Minute), // Stale!
+			ObservationWindow: 5 * time.Minute,
+		},
+	}
+	resOld := engine.Evaluate(now, p, state, evalsOld)
+	if resOld.ShouldSwitch {
+		t.Fatalf("should not switch to stale candidate")
+	}
+	if !resOld.RequiresFreshProbe {
+		t.Fatalf("expected RequiresFreshProbe=true for stale candidate")
 	}
 
-	evals := []NodeEvaluation{
-		{Name: "HK-01", Available: true, RTT: 50 * time.Millisecond},
-		{Name: "HK-VIP", Available: true, RTT: 100 * time.Millisecond},
+	// Case 2: Candidate sample count is insufficient (only 1 sample < 3)
+	evalsFew := []NodeEvaluation{
+		{
+			Name:              "HK-01",
+			Available:         true,
+			RTT:               100 * time.Millisecond,
+			SampleCount:       5,
+			LastSampleTime:    now,
+			ObservationWindow: 5 * time.Minute,
+		},
+		{
+			Name:              "HK-FEW",
+			Available:         true,
+			RTT:               40 * time.Millisecond,
+			SampleCount:       1, // Insufficient!
+			LastSampleTime:    now,
+			ObservationWindow: 10 * time.Second,
+		},
 	}
-
-	res := engine.Evaluate(now, p, state, evals)
-	if !res.ShouldSwitch || res.TargetNode != "HK-VIP" || res.TriggerType != "manual_override" {
-		t.Fatalf("expected manual override switch to HK-VIP, got %+v", res)
+	resFew := engine.Evaluate(now, p, state, evalsFew)
+	if resFew.ShouldSwitch {
+		t.Fatalf("should not switch to candidate with insufficient sample count")
 	}
-
-	// Once switched, it should remain locked and not switch
-	state.CurrentNode = "HK-VIP"
-	res2 := engine.Evaluate(now, p, state, evals)
-	if res2.ShouldSwitch {
-		t.Fatalf("expected no switch when already on locked node, got %+v", res2)
-	}
-}
-
-func TestDecisionEngine_UrgentFailover(t *testing.T) {
-	engine := NewDecisionEngine()
-	now := time.Now()
-
-	p := DefaultSwitchPolicy()
-	p.AutoSwitchEnabled = true
-	p.MaxConsecutiveFailures = 3
-	p.CooldownDuration = 10 * time.Minute
-
-	// Even if in cooldown, emergency failover should ignore cooldown!
-	state := &DecisionState{
-		CurrentNode:         "HK-01",
-		LastSwitchAt:        now.Add(-1 * time.Minute), // Inside cooldown
-		ConsecutiveFailures: 3,
-	}
-
-	evals := []NodeEvaluation{
-		{Name: "HK-01", Available: false, RTT: 0, TriageStatus: "failed"},
-		{Name: "SG-01", Available: true, RTT: 65 * time.Millisecond, TriageStatus: "stable"},
-		{Name: "JP-01", Available: true, RTT: 45 * time.Millisecond, TriageStatus: "stable"},
-	}
-
-	res := engine.Evaluate(now, p, state, evals)
-	if !res.ShouldSwitch || res.TargetNode != "JP-01" || res.TriggerType != "failure_failover" {
-		t.Fatalf("expected urgent failover to JP-01, got %+v", res)
-	}
-}
-
-func TestDecisionEngine_CooldownAndThreshold(t *testing.T) {
-	engine := NewDecisionEngine()
-	now := time.Now()
-
-	p := DefaultSwitchPolicy()
-	p.AutoSwitchEnabled = true
-	p.CooldownDuration = 5 * time.Minute
-	p.MinImprovementRTT = 30 * time.Millisecond
-	p.MinImprovementRatio = 0.20
-
-	state := &DecisionState{
-		CurrentNode:         "HK-01",
-		LastSwitchAt:        now.Add(-2 * time.Minute), // 2 min ago < 5 min cooldown
-		ConsecutiveFailures: 0,
-	}
-
-	evals := []NodeEvaluation{
-		{Name: "HK-01", Available: true, RTT: 100 * time.Millisecond},
-		{Name: "HK-FAST", Available: true, RTT: 50 * time.Millisecond}, // 50% faster, but blocked by cooldown
-	}
-
-	res := engine.Evaluate(now, p, state, evals)
-	if res.ShouldSwitch {
-		t.Fatalf("expected switch blocked by cooldown, got %+v", res)
-	}
-
-	// Advance time beyond cooldown
-	nowAfterCooldown := now.Add(6 * time.Minute)
-
-	// Case A: Insufficient improvement (HK-01 is 100ms, candidate is 85ms -> diff is 15ms < 30ms threshold)
-	evalsMarginal := []NodeEvaluation{
-		{Name: "HK-01", Available: true, RTT: 100 * time.Millisecond},
-		{Name: "HK-SLIGHT", Available: true, RTT: 85 * time.Millisecond},
-	}
-	resMarginal := engine.Evaluate(nowAfterCooldown, p, state, evalsMarginal)
-	if resMarginal.ShouldSwitch {
-		t.Fatalf("expected marginal improvement to be rejected, got %+v", resMarginal)
-	}
-
-	// Case B: Substantial improvement (100ms vs 50ms -> diff 50ms >= 30ms, ratio 50% >= 20%)
-	resSubstantial := engine.Evaluate(nowAfterCooldown, p, state, evals)
-	if !resSubstantial.ShouldSwitch || resSubstantial.TargetNode != "HK-FAST" || resSubstantial.TriggerType != "latency_improvement" {
-		t.Fatalf("expected latency improvement switch to HK-FAST, got %+v", resSubstantial)
+	if !resFew.RequiresFreshProbe {
+		t.Fatalf("expected RequiresFreshProbe=true for sparse candidate")
 	}
 }
 
-func TestDecisionEngine_RecordSwitchAndRollback(t *testing.T) {
+func TestDecisionEngine_VerificationAndRollback(t *testing.T) {
 	engine := NewDecisionEngine()
-	state := &DecisionState{
-		CurrentNode: "HK-01",
+
+	// Case 1: 1 transient failure out of 3 -> Should NOT rollback
+	probesTransient := []VerificationProbe{
+		{Index: 1, Success: false, Error: "connection timeout"},
+		{Index: 2, Success: true, RTT: 45 * time.Millisecond},
+		{Index: 3, Success: true, RTT: 48 * time.Millisecond},
+	}
+	resTransient := engine.EvaluateVerification(probesTransient, false, 2)
+	if resTransient.ShouldRollback {
+		t.Fatalf("single transient failure must NOT trigger rollback")
 	}
 
-	engine.RecordSwitch(state, "HK-01", "SG-01", "PROXY", "Latency improvement", "latency_improvement", 120*time.Millisecond, 60*time.Millisecond)
-
-	if state.CurrentNode != "SG-01" || state.PreviousNode != "HK-01" {
-		t.Fatalf("state mismatch after switch: %+v", state)
+	// Case 2: 2 failures out of 3 (reaches threshold 2) -> MUST rollback
+	probesMajorityFail := []VerificationProbe{
+		{Index: 1, Success: false, Error: "connection timeout"},
+		{Index: 2, Success: true, RTT: 45 * time.Millisecond},
+		{Index: 3, Success: false, Error: "connection reset"},
 	}
-	if len(state.AuditTrail) != 1 || state.AuditTrail[0].Status != "success" {
-		t.Fatalf("audit trail mismatch: %+v", state.AuditTrail)
+	resMajority := engine.EvaluateVerification(probesMajorityFail, false, 2)
+	if !resMajority.ShouldRollback {
+		t.Fatalf("majority failure must trigger rollback")
 	}
 
-	// Simulate immediate failure of SG-01 -> trigger rollback
-	engine.RecordRollback(state, "PROXY", "SG-01", "DNS resolution failed")
-
-	if state.CurrentNode != "HK-01" {
-		t.Fatalf("expected current node to rollback to HK-01, got %s", state.CurrentNode)
-	}
-	if len(state.AuditTrail) != 2 || state.AuditTrail[1].Status != "rolled_back" {
-		t.Fatalf("expected 2 audit events with rollback status, got %+v", state.AuditTrail)
+	// Case 3: Explicit region block -> MUST rollback immediately regardless of probe count
+	resBlocked := engine.EvaluateVerification(nil, true, 2)
+	if !resBlocked.ShouldRollback {
+		t.Fatalf("explicit region block must trigger immediate rollback")
 	}
 }

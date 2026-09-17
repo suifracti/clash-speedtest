@@ -1180,12 +1180,13 @@ func (s *AppService) GetControllerStatus(ctx context.Context) (ControllerStatusD
 	s.ctrlMu.RUnlock()
 
 	status := ControllerStatusDTO{
-		Connected:         false,
-		Endpoint:          cfg.Endpoint,
-		CurrentGroup:      pol.TargetGroup,
-		CurrentNode:       state.CurrentNode,
-		LockedNode:        pol.LockedNode,
-		AutoSwitchEnabled: pol.AutoSwitchEnabled,
+		Connected:       false,
+		Endpoint:        cfg.Endpoint,
+		CurrentGroup:    pol.TargetGroup,
+		CurrentNode:     state.CurrentNode,
+		LockedNode:      pol.LockedNode,
+		Mode:            string(pol.Mode),
+		HasSecret:       cfg.Secret != "",
 	}
 
 	if ctrl == nil {
@@ -1308,7 +1309,8 @@ func (s *AppService) GetSwitchAuditTrail(ctx context.Context) ([]policy.SwitchEv
 	return s.decisionState.AuditTrail, nil
 }
 
-// EvaluateAndAutoSwitch evaluates latest probe results against policy and executes switch if justified.
+// EvaluateAndAutoSwitch evaluates latest probe results against policy, checks freshness,
+// and executes switch, recommendation, or resilient verification with rollback.
 func (s *AppService) EvaluateAndAutoSwitch(ctx context.Context, evals []policy.NodeEvaluation) (policy.DecisionResult, error) {
 	s.ctrlMu.Lock()
 	pol := s.policy
@@ -1317,6 +1319,27 @@ func (s *AppService) EvaluateAndAutoSwitch(ctx context.Context, evals []policy.N
 	res := engine.Evaluate(time.Now(), pol, &s.decisionState, evals)
 	s.ctrlMu.Unlock()
 
+	// 1. If candidate data is stale or insufficient, notify clients that fresh probes are needed
+	if res.RequiresFreshProbe && len(res.StaleNodes) > 0 {
+		s.emitter.Emit(Event{
+			Type: "controller_fresh_probe_required",
+			Payload: map[string]any{
+				"stale_nodes": res.StaleNodes,
+				"reason":      "候选节点样本过旧或样本数不足，需轻量复测后方可参评",
+			},
+		})
+	}
+
+	// 2. If in Recommend mode and a recommendation was produced, emit recommendation event
+	if res.Recommendation != nil {
+		s.emitter.Emit(Event{
+			Type:    "controller_switch_recommended",
+			Payload: res.Recommendation,
+		})
+		return res, nil
+	}
+
+	// 3. If ShouldSwitch is false, nothing to execute
 	if !res.ShouldSwitch || res.TargetNode == "" {
 		return res, nil
 	}
@@ -1334,6 +1357,7 @@ func (s *AppService) EvaluateAndAutoSwitch(ctx context.Context, evals []policy.N
 	fromNode := s.decisionState.CurrentNode
 	s.ctrlMu.Unlock()
 
+	// Execute switch in external proxy core
 	if err := ctrl.SelectNode(ctx, group, res.TargetNode); err != nil {
 		s.emitter.Emit(Event{
 			Type: "controller_switch_failed",
@@ -1348,6 +1372,7 @@ func (s *AppService) EvaluateAndAutoSwitch(ctx context.Context, evals []policy.N
 		return res, fmt.Errorf("execute switch: %w", err)
 	}
 
+	// Record switch in state
 	s.ctrlMu.Lock()
 	s.decisionEngine.RecordSwitch(&s.decisionState, fromNode, res.TargetNode, group, res.Reason, res.TriggerType, 0, 0)
 	s.ctrlMu.Unlock()
@@ -1364,6 +1389,68 @@ func (s *AppService) EvaluateAndAutoSwitch(ctx context.Context, evals []policy.N
 		},
 	})
 
+	// 4. Post-Switch Verification & Resilient Rollback:
+	// If RollbackOnFailure is enabled, run multiple lightweight verification probes.
+	// A single transient probe failure will NOT cause an immediate rollback.
+	// Rollback is executed ONLY if majority fail (failureCount >= threshold).
+	if pol.RollbackOnFailure && fromNode != "" && fromNode != res.TargetNode {
+		probeCount := pol.VerificationProbeCount
+		if probeCount <= 0 {
+			probeCount = 3
+		}
+		threshold := pol.VerificationFailureThreshold
+		if threshold <= 0 {
+			threshold = 2
+		}
+
+		var verificationProbes []policy.VerificationProbe
+		for i := 1; i <= probeCount; i++ {
+			select {
+			case <-ctx.Done():
+				return res, ctx.Err()
+			default:
+			}
+
+			d, err := ctrl.TestDelay(ctx, res.TargetNode, "", 2*time.Second)
+			if err != nil {
+				verificationProbes = append(verificationProbes, policy.VerificationProbe{
+					Index:   i,
+					Success: false,
+					Error:   err.Error(),
+				})
+			} else {
+				verificationProbes = append(verificationProbes, policy.VerificationProbe{
+					Index:   i,
+					Success: true,
+					RTT:     d,
+				})
+			}
+		}
+
+		verifResult := engine.EvaluateVerification(verificationProbes, false, threshold)
+		if verifResult.ShouldRollback {
+			// Rollback to previous node in external core
+			_ = ctrl.SelectNode(ctx, group, fromNode)
+
+			s.ctrlMu.Lock()
+			s.decisionEngine.RecordRollback(&s.decisionState, group, res.TargetNode, verifResult.Reason)
+			s.ctrlMu.Unlock()
+
+			s.emitter.Emit(Event{
+				Type: "controller_node_rolled_back",
+				Payload: map[string]any{
+					"group":         group,
+					"rolled_back_to": fromNode,
+					"failed_node":   res.TargetNode,
+					"reason":        verifResult.Reason,
+					"probes":        verificationProbes,
+					"timestamp":     time.Now(),
+				},
+			})
+		}
+	}
+
 	return res, nil
 }
+
 

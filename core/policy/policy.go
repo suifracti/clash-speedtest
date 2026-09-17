@@ -5,13 +5,33 @@ import (
 	"time"
 )
 
+// OrchestratorMode defines the operational mode for proxy auto-switching.
+type OrchestratorMode string
+
+const (
+	// ModeMonitorOnly monitors and probes candidate nodes, but NEVER alters external proxy settings.
+	// This is the required secure default.
+	ModeMonitorOnly OrchestratorMode = "monitor_only"
+
+	// ModeRecommend evaluates policies and produces switch recommendations with full rationale,
+	// but requires explicit user confirmation before executing.
+	ModeRecommend OrchestratorMode = "recommend"
+
+	// ModeAuto automatically executes node switching in the external proxy controller
+	// according to configured thresholds and anti-flapping rules.
+	ModeAuto OrchestratorMode = "auto"
+)
+
 // SwitchPolicy defines user-configured criteria for automatic proxy node switching.
 type SwitchPolicy struct {
-	// AutoSwitchEnabled toggles automatic switching on/off.
-	AutoSwitchEnabled bool `json:"auto_switch_enabled"`
+	// Mode specifies the operational mode: "monitor_only" (default), "recommend", or "auto".
+	Mode OrchestratorMode `json:"mode"`
 
 	// TargetGroup specifies the proxy selector group in the external core (e.g. "PROXY", "节点选择").
 	TargetGroup string `json:"target_group"`
+
+	// TargetGroupType enforces that only Selector groups can be modified. Defaults to "Selector".
+	TargetGroupType string `json:"target_group_type"`
 
 	// CandidateNodes is an optional whitelist of node names to select from.
 	// If empty, all available nodes in the target group are considered.
@@ -43,36 +63,82 @@ type SwitchPolicy struct {
 	// Auto-switching is completely suspended while locked.
 	LockedNode string `json:"locked_node,omitempty"`
 
-	// RollbackOnFailure indicates whether to immediately revert to the previous working node
-	// if the newly selected node fails initial verification.
+	// RollbackOnFailure indicates whether to revert to the previous working node
+	// if the newly selected node fails verification after a grace period.
 	RollbackOnFailure bool `json:"rollback_on_failure"`
+
+	// --- Sample Freshness & Evidence Thresholds ---
+
+	// MaxSampleAge specifies the maximum allowed age of probe samples.
+	// Stale candidate data older than this requires a fresh probe before entering decision.
+	MaxSampleAge time.Duration `json:"max_sample_age"`
+
+	// MinSampleCount is the minimum number of distinct probe samples required
+	// before a candidate node is eligible for selection.
+	MinSampleCount int `json:"min_sample_count"`
+
+	// MinObservationWindow is the minimum timespan between first and latest sample.
+	MinObservationWindow time.Duration `json:"min_observation_window"`
+
+	// --- Post-Switch Verification ---
+
+	// VerificationGracePeriod is the settling delay after switching before running verification probes.
+	VerificationGracePeriod time.Duration `json:"verification_grace_period"`
+
+	// VerificationProbeCount is the number of lightweight probes run to verify a newly selected node.
+	VerificationProbeCount int `json:"verification_probe_count"`
+
+	// VerificationFailureThreshold is the number of failed verification probes (e.g. 2 out of 3)
+	// required to trigger a rollback. A single transient failure does NOT trigger rollback.
+	VerificationFailureThreshold int `json:"verification_failure_threshold"`
 }
 
-// DefaultSwitchPolicy returns sensible production defaults.
+// DefaultSwitchPolicy returns sensible, secure production defaults (Monitor Only by default).
 func DefaultSwitchPolicy() SwitchPolicy {
 	return SwitchPolicy{
-		AutoSwitchEnabled:      false,
-		TargetGroup:            "PROXY",
-		CandidateNodes:         nil,
-		Interval:               1 * time.Minute,
-		MaxConsecutiveFailures: 3,
-		MinImprovementRTT:      30 * time.Millisecond,
-		MinImprovementRatio:    0.20,
-		CooldownDuration:       5 * time.Minute,
-		HysteresisBuffer:       15 * time.Millisecond,
-		LockedNode:             "",
-		RollbackOnFailure:      true,
+		Mode:                         ModeMonitorOnly,
+		TargetGroup:                  "PROXY",
+		TargetGroupType:              "Selector",
+		CandidateNodes:               nil,
+		Interval:                     1 * time.Minute,
+		MaxConsecutiveFailures:       3,
+		MinImprovementRTT:            30 * time.Millisecond,
+		MinImprovementRatio:          0.20,
+		CooldownDuration:             5 * time.Minute,
+		HysteresisBuffer:             15 * time.Millisecond,
+		LockedNode:                   "",
+		RollbackOnFailure:            true,
+		MaxSampleAge:                 5 * time.Minute,
+		MinSampleCount:               3,
+		MinObservationWindow:         1 * time.Minute,
+		VerificationGracePeriod:      10 * time.Second,
+		VerificationProbeCount:       3,
+		VerificationFailureThreshold: 2,
 	}
 }
 
-// NodeEvaluation holds latest probe metrics for a node under evaluation.
+// NodeEvaluation holds latest probe metrics and evidence provenance for a candidate node.
 type NodeEvaluation struct {
-	Name         string        `json:"name"`
-	Available    bool          `json:"available"`
-	RTT          time.Duration `json:"rtt"`
-	Loss         float64       `json:"loss"`
-	Bandwidth    float64       `json:"bandwidth"` // MB/s
-	TriageStatus string        `json:"triage_status"`
+	Name              string        `json:"name"`
+	Available         bool          `json:"available"`
+	RTT               time.Duration `json:"rtt"`
+	Loss              float64       `json:"loss"`
+	Bandwidth         float64       `json:"bandwidth"` // MB/s
+	TriageStatus      string        `json:"triage_status"`
+	SampleCount       int           `json:"sample_count"`
+	FirstSampleTime   time.Time     `json:"first_sample_time"`
+	LastSampleTime    time.Time     `json:"last_sample_time"`
+	ObservationWindow time.Duration `json:"observation_window"`
+}
+
+// SwitchRecommendation represents a proposed switch in ModeRecommend.
+type SwitchRecommendation struct {
+	TargetNode     string        `json:"target_node"`
+	Reason         string        `json:"reason"`
+	CurrentRTT     time.Duration `json:"current_rtt"`
+	TargetRTT      time.Duration `json:"target_rtt"`
+	ImprovementPct int           `json:"improvement_pct"`
+	TriggerType    string        `json:"trigger_type"`
 }
 
 // DecisionState tracks runtime state, switch cooldowns, failure counters, and audit trail.
@@ -102,13 +168,34 @@ type SwitchEvent struct {
 
 // DecisionResult represents the outcome of a policy evaluation.
 type DecisionResult struct {
-	ShouldSwitch bool   `json:"should_switch"`
-	TargetNode   string `json:"target_node,omitempty"`
-	Reason       string `json:"reason,omitempty"`
-	TriggerType  string `json:"trigger_type,omitempty"`
+	Mode                OrchestratorMode      `json:"mode"`
+	ShouldSwitch        bool                  `json:"should_switch"`
+	TargetNode          string                `json:"target_node,omitempty"`
+	Reason              string                `json:"reason,omitempty"`
+	TriggerType         string                `json:"trigger_type,omitempty"`
+	RequiresFreshProbe  bool                  `json:"requires_fresh_probe"`
+	StaleNodes          []string              `json:"stale_nodes,omitempty"`
+	Recommendation      *SwitchRecommendation `json:"recommendation,omitempty"`
 }
 
-// DecisionEngine implements hysteresis-damped evaluation logic.
+// VerificationProbe represents one probe sample during post-switch verification.
+type VerificationProbe struct {
+	Index   int           `json:"index"`
+	Success bool          `json:"success"`
+	RTT     time.Duration `json:"rtt"`
+	Error   string        `json:"error,omitempty"`
+}
+
+// VerificationResult contains the outcome of post-switch verification.
+type VerificationResult struct {
+	ShouldRollback bool   `json:"should_rollback"`
+	Reason         string `json:"reason"`
+	SuccessCount   int    `json:"success_count"`
+	FailureCount   int    `json:"failure_count"`
+	TotalCount     int    `json:"total_count"`
+}
+
+// DecisionEngine implements hysteresis-damped evaluation and sample evidence verification.
 type DecisionEngine struct{}
 
 // NewDecisionEngine creates an instance of the DecisionEngine.
@@ -116,7 +203,7 @@ func NewDecisionEngine() *DecisionEngine {
 	return &DecisionEngine{}
 }
 
-// Evaluate analyzes the current node's health and candidate nodes against the policy.
+// Evaluate analyzes current node health and candidate nodes against the policy.
 func (e *DecisionEngine) Evaluate(
 	now time.Time,
 	p SwitchPolicy,
@@ -124,25 +211,38 @@ func (e *DecisionEngine) Evaluate(
 	evaluations []NodeEvaluation,
 ) DecisionResult {
 	if state == nil {
-		return DecisionResult{ShouldSwitch: false, Reason: "uninitialized decision state"}
+		return DecisionResult{
+			Mode:         p.Mode,
+			ShouldSwitch: false,
+			Reason:       "uninitialized decision state",
+		}
 	}
 
 	// 1. Check if manually locked to a node
 	if p.LockedNode != "" {
 		if state.CurrentNode != p.LockedNode {
 			return DecisionResult{
+				Mode:         p.Mode,
 				ShouldSwitch: true,
 				TargetNode:   p.LockedNode,
 				Reason:       fmt.Sprintf("手动锁定节点至 %s", p.LockedNode),
 				TriggerType:  "manual_override",
 			}
 		}
-		return DecisionResult{ShouldSwitch: false, Reason: fmt.Sprintf("已锁定至节点 %s，暂停自动切换", p.LockedNode)}
+		return DecisionResult{
+			Mode:         p.Mode,
+			ShouldSwitch: false,
+			Reason:       fmt.Sprintf("已锁定至节点 %s，暂停自动调度", p.LockedNode),
+		}
 	}
 
-	// 2. Check if auto switch is enabled
-	if !p.AutoSwitchEnabled {
-		return DecisionResult{ShouldSwitch: false, Reason: "自动切换未启用"}
+	// 2. Check Orchestrator Mode: Monitor Only mode NEVER performs switches
+	if p.Mode == ModeMonitorOnly {
+		return DecisionResult{
+			Mode:         p.Mode,
+			ShouldSwitch: false,
+			Reason:       "处于仅监测模式 (Monitor Only)，仅收集遥测数据，不执行或推荐切换",
+		}
 	}
 
 	// Index candidate evaluations
@@ -151,12 +251,11 @@ func (e *DecisionEngine) Evaluate(
 		evalMap[ev.Name] = ev
 	}
 
-	// Whitelist filter map
+	// Whitelist filter
 	candidateSet := make(map[string]struct{}, len(p.CandidateNodes))
 	for _, c := range p.CandidateNodes {
 		candidateSet[c] = struct{}{}
 	}
-
 	isEligible := func(name string) bool {
 		if len(candidateSet) == 0 {
 			return true
@@ -173,12 +272,29 @@ func (e *DecisionEngine) Evaluate(
 	if state.ConsecutiveFailures >= p.MaxConsecutiveFailures && p.MaxConsecutiveFailures > 0 {
 		currentUnhealthy = true
 	} else if hasCurrent && (!currentEv.Available || currentEv.TriageStatus == "blocked" || currentEv.TriageStatus == "failed") {
-		// If current node is explicitly unavailable
 		currentUnhealthy = true
 	}
 
+	// Sample Freshness & Evidence Filter for candidate nodes
+	var staleNodes []string
+	isFreshCandidate := func(ev NodeEvaluation) bool {
+		if !ev.LastSampleTime.IsZero() && p.MaxSampleAge > 0 && now.Sub(ev.LastSampleTime) > p.MaxSampleAge {
+			staleNodes = append(staleNodes, ev.Name)
+			return false
+		}
+		if p.MinSampleCount > 0 && ev.SampleCount < p.MinSampleCount {
+			staleNodes = append(staleNodes, ev.Name)
+			return false
+		}
+		if p.MinObservationWindow > 0 && ev.ObservationWindow < p.MinObservationWindow {
+			staleNodes = append(staleNodes, ev.Name)
+			return false
+		}
+		return true
+	}
+
 	if currentUnhealthy {
-		// Urgent failover ignores cooldown
+		// Urgent failover: pick best available node that is verified and fresh
 		bestNode := ""
 		var bestRTT time.Duration = 1<<63 - 1
 
@@ -186,7 +302,9 @@ func (e *DecisionEngine) Evaluate(
 			if ev.Name == state.CurrentNode || !isEligible(ev.Name) {
 				continue
 			}
-			// Only consider verified available nodes
+			if !isFreshCandidate(ev) {
+				continue
+			}
 			if ev.Available && ev.RTT > 0 && ev.RTT < bestRTT {
 				bestRTT = ev.RTT
 				bestNode = ev.Name
@@ -194,25 +312,51 @@ func (e *DecisionEngine) Evaluate(
 		}
 
 		if bestNode != "" {
+			reason := fmt.Sprintf("当前节点 %s 持续故障（连续失败 %d 次），紧急切换至可用优质节点 %s (RTT: %v)",
+				state.CurrentNode, state.ConsecutiveFailures, bestNode, bestRTT)
+
+			if p.Mode == ModeRecommend {
+				return DecisionResult{
+					Mode:               p.Mode,
+					ShouldSwitch:       false,
+					Reason:             "生成故障切换建议",
+					RequiresFreshProbe: len(staleNodes) > 0,
+					StaleNodes:         staleNodes,
+					Recommendation: &SwitchRecommendation{
+						TargetNode:  bestNode,
+						Reason:      reason,
+						CurrentRTT:  0,
+						TargetRTT:   bestRTT,
+						TriggerType: "failure_failover",
+					},
+				}
+			}
+
 			return DecisionResult{
-				ShouldSwitch: true,
-				TargetNode:   bestNode,
-				Reason: fmt.Sprintf("当前节点 %s 持续故障（连续失败 %d 次），紧急切换至可用节点 %s (RTT: %v)",
-					state.CurrentNode, state.ConsecutiveFailures, bestNode, bestRTT),
-				TriggerType: "failure_failover",
+				Mode:               p.Mode,
+				ShouldSwitch:       true,
+				TargetNode:         bestNode,
+				Reason:             reason,
+				TriggerType:        "failure_failover",
+				RequiresFreshProbe: len(staleNodes) > 0,
+				StaleNodes:         staleNodes,
 			}
 		}
 
 		return DecisionResult{
-			ShouldSwitch: false,
-			Reason:       fmt.Sprintf("当前节点 %s 故障，但候选池中无可用替代节点", state.CurrentNode),
+			Mode:               p.Mode,
+			ShouldSwitch:       false,
+			Reason:             fmt.Sprintf("当前节点 %s 故障，但候选池中无满足证据门槛的可用替代节点", state.CurrentNode),
+			RequiresFreshProbe: len(staleNodes) > 0,
+			StaleNodes:         staleNodes,
 		}
 	}
 
-	// 4. Cooldown & Hysteresis Check for non-emergency optimization
+	// 4. Cooldown Check for non-emergency optimization
 	if !state.LastSwitchAt.IsZero() && now.Sub(state.LastSwitchAt) < p.CooldownDuration {
 		remaining := p.CooldownDuration - now.Sub(state.LastSwitchAt)
 		return DecisionResult{
+			Mode:         p.Mode,
 			ShouldSwitch: false,
 			Reason:       fmt.Sprintf("处于切换冷却期中，剩余 %v", remaining.Round(time.Second)),
 		}
@@ -220,7 +364,11 @@ func (e *DecisionEngine) Evaluate(
 
 	// 5. Latency Improvement Evaluation
 	if !hasCurrent || !currentEv.Available || currentEv.RTT <= 0 {
-		return DecisionResult{ShouldSwitch: false, Reason: "当前节点尚未测得有效基准延迟，暂不决策"}
+		return DecisionResult{
+			Mode:         p.Mode,
+			ShouldSwitch: false,
+			Reason:       "当前节点尚未测得有效基准延迟，暂不决策",
+		}
 	}
 
 	bestCandidate := ""
@@ -230,22 +378,18 @@ func (e *DecisionEngine) Evaluate(
 		if ev.Name == state.CurrentNode || !isEligible(ev.Name) || !ev.Available || ev.RTT <= 0 {
 			continue
 		}
-
-		// Calculate difference
-		diff := currentEv.RTT - ev.RTT
-
-		// Check absolute improvement threshold
-		if diff < p.MinImprovementRTT {
+		if !isFreshCandidate(ev) {
 			continue
 		}
 
-		// Check relative improvement ratio
+		diff := currentEv.RTT - ev.RTT
+		if diff < p.MinImprovementRTT {
+			continue
+		}
 		ratio := float64(diff) / float64(currentEv.RTT)
 		if ratio < p.MinImprovementRatio {
 			continue
 		}
-
-		// Check hysteresis buffer against best candidate
 		if ev.RTT < bestCandidateRTT-p.HysteresisBuffer {
 			bestCandidateRTT = ev.RTT
 			bestCandidate = ev.Name
@@ -255,16 +399,95 @@ func (e *DecisionEngine) Evaluate(
 	if bestCandidate != "" {
 		improvementMs := (currentEv.RTT - bestCandidateRTT).Milliseconds()
 		ratioPct := int(float64(currentEv.RTT-bestCandidateRTT) / float64(currentEv.RTT) * 100)
+		reason := fmt.Sprintf("候选节点 %s 显著优于当前节点（延迟低 %dms / 优化 %d%%，满足证据门槛与防抖阈值）",
+			bestCandidate, improvementMs, ratioPct)
+
+		if p.Mode == ModeRecommend {
+			return DecisionResult{
+				Mode:               p.Mode,
+				ShouldSwitch:       false,
+				Reason:             "生成优化切换建议",
+				RequiresFreshProbe: len(staleNodes) > 0,
+				StaleNodes:         staleNodes,
+				Recommendation: &SwitchRecommendation{
+					TargetNode:     bestCandidate,
+					Reason:         reason,
+					CurrentRTT:     currentEv.RTT,
+					TargetRTT:      bestCandidateRTT,
+					ImprovementPct: ratioPct,
+					TriggerType:    "latency_improvement",
+				},
+			}
+		}
+
 		return DecisionResult{
-			ShouldSwitch: true,
-			TargetNode:   bestCandidate,
-			Reason: fmt.Sprintf("候选节点 %s 显著优于当前节点（延迟低 %dms / 优化 %d%%，满足防抖阈值）",
-				bestCandidate, improvementMs, ratioPct),
-			TriggerType: "latency_improvement",
+			Mode:               p.Mode,
+			ShouldSwitch:       true,
+			TargetNode:         bestCandidate,
+			Reason:             reason,
+			TriggerType:        "latency_improvement",
+			RequiresFreshProbe: len(staleNodes) > 0,
+			StaleNodes:         staleNodes,
 		}
 	}
 
-	return DecisionResult{ShouldSwitch: false, Reason: "当前节点表现稳定，无可显著改善的替代节点"}
+	return DecisionResult{
+		Mode:               p.Mode,
+		ShouldSwitch:       false,
+		Reason:             "当前节点表现稳定，无可显著改善的替代节点",
+		RequiresFreshProbe: len(staleNodes) > 0,
+		StaleNodes:         staleNodes,
+	}
+}
+
+// EvaluateVerification checks post-switch multi-probe results to determine whether rollback is warranted.
+// Rollback is executed ONLY if majority fail (failures >= threshold) or there is confirmed region blocking.
+func (e *DecisionEngine) EvaluateVerification(
+	probes []VerificationProbe,
+	explicitBlocked bool,
+	threshold int,
+) VerificationResult {
+	if explicitBlocked {
+		return VerificationResult{
+			ShouldRollback: true,
+			Reason:         "新节点明确捕获地区阻断证据 (HTTP 400 FAILED_PRECONDITION)，立即执行回退",
+			TotalCount:     len(probes),
+		}
+	}
+
+	successCount := 0
+	failureCount := 0
+	for _, p := range probes {
+		if p.Success {
+			successCount++
+		} else {
+			failureCount++
+		}
+	}
+
+	if threshold <= 0 {
+		threshold = 2
+	}
+
+	if failureCount >= threshold {
+		return VerificationResult{
+			ShouldRollback: true,
+			Reason: fmt.Sprintf("切换后轻量复测多数失败 (%d/%d 失败，达到阈值 %d)，确认节点不稳定，触发防抖回退",
+				failureCount, len(probes), threshold),
+			SuccessCount: successCount,
+			FailureCount: failureCount,
+			TotalCount:   len(probes),
+		}
+	}
+
+	return VerificationResult{
+		ShouldRollback: false,
+		Reason: fmt.Sprintf("新节点复测通过 (%d/%d 成功)，新路线验证完成",
+			successCount, len(probes)),
+		SuccessCount: successCount,
+		FailureCount: failureCount,
+		TotalCount:   len(probes),
+	}
 }
 
 // RecordSwitch updates state when a switch succeeds.
@@ -300,7 +523,6 @@ func (e *DecisionEngine) RecordSwitch(
 	state.ConsecutiveFailures = 0
 	state.AuditTrail = append(state.AuditTrail, event)
 
-	// Keep last 100 audit events in memory
 	if len(state.AuditTrail) > 100 {
 		state.AuditTrail = state.AuditTrail[len(state.AuditTrail)-100:]
 	}

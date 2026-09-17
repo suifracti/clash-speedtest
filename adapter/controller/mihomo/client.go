@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -19,9 +20,24 @@ type Config struct {
 	// Endpoint is the base URL of the External Controller, e.g. "http://127.0.0.1:9090".
 	Endpoint string `json:"endpoint"`
 	// Secret is the optional Bearer token configured in Mihomo external-controller-secret.
+	// Never log or serialize this in plaintext in UI/DTOs.
 	Secret string `json:"secret,omitempty"`
 	// Timeout specifies the HTTP request timeout. Defaults to 5s.
 	Timeout time.Duration `json:"timeout,omitempty"`
+	// AllowRemote explicitly permits connecting to a non-loopback external controller endpoint.
+	// By default, only localhost/loopback connections are allowed for local security.
+	AllowRemote bool `json:"allow_remote"`
+}
+
+// MaskedSecret returns a safe, redacted representation of the secret.
+func (c Config) MaskedSecret() string {
+	if c.Secret == "" {
+		return ""
+	}
+	if len(c.Secret) <= 4 {
+		return "****"
+	}
+	return c.Secret[:2] + "****" + c.Secret[len(c.Secret)-2:]
 }
 
 // Client implements controller.Controller via Mihomo's official External Controller REST API.
@@ -31,7 +47,7 @@ type Client struct {
 	client   *http.Client
 }
 
-// NewClient creates a new Mihomo External Controller REST client.
+// NewClient creates a new Mihomo External Controller REST client with loopback enforcement.
 func NewClient(cfg Config) (*Client, error) {
 	endpoint := strings.TrimRight(cfg.Endpoint, "/")
 	if endpoint == "" {
@@ -39,6 +55,11 @@ func NewClient(cfg Config) (*Client, error) {
 	}
 	if !strings.HasPrefix(endpoint, "http://") && !strings.HasPrefix(endpoint, "https://") {
 		endpoint = "http://" + endpoint
+	}
+
+	// Security Enforcement: only localhost/loopback permitted unless AllowRemote is explicitly true
+	if !cfg.AllowRemote && !isLoopbackEndpoint(endpoint) {
+		return nil, fmt.Errorf("external controller endpoint %q is not localhost/loopback; by default only loopback connections are permitted for security (set AllowRemote=true to override)", endpoint)
 	}
 
 	timeout := cfg.Timeout
@@ -98,7 +119,6 @@ func (c *Client) ListGroups(ctx context.Context) ([]controller.Group, error) {
 	var groups []controller.Group
 	for _, raw := range proxies {
 		groupType := strings.ToLower(raw.Type)
-		// Proxy groups in Mihomo are identified by type: Selector, URLTest, Fallback, LoadBalance, Relay
 		if isGroupType(groupType) {
 			groups = append(groups, controller.Group{
 				Name: raw.Name,
@@ -134,7 +154,6 @@ func (c *Client) ListNodes(ctx context.Context, group string) ([]controller.Node
 		return nodes, nil
 	}
 
-	// If group is empty, return all non-group proxy nodes
 	var nodes []controller.Node
 	for _, raw := range proxies {
 		if !isGroupType(strings.ToLower(raw.Type)) && !isBuiltInSpecial(raw.Name) {
@@ -146,21 +165,26 @@ func (c *Client) ListNodes(ctx context.Context, group string) ([]controller.Node
 
 // GetCurrentSelection returns the currently selected node for the specified group.
 func (c *Client) GetCurrentSelection(ctx context.Context, group string) (string, error) {
-	req, err := c.newRequest(ctx, http.MethodGet, "/proxies/"+url.PathEscape(group), nil)
+	raw, err := c.getGroupRaw(ctx, group)
 	if err != nil {
 		return "", err
 	}
-
-	var raw rawProxy
-	if err := c.doJSON(req, &raw); err != nil {
-		return "", fmt.Errorf("get group %q: %w", group, err)
-	}
-
 	return raw.Now, nil
 }
 
 // SelectNode changes the active node of a Selector group in the external core.
+// Crucial Safety Boundary: Only Selector groups are permitted to be switched.
+// URLTest, Fallback, and LoadBalance groups are read-only to preserve core automatic selection semantics.
 func (c *Client) SelectNode(ctx context.Context, group string, nodeName string) error {
+	groupInfo, err := c.getGroupRaw(ctx, group)
+	if err != nil {
+		return fmt.Errorf("verify group %q: %w", group, err)
+	}
+
+	if strings.ToLower(groupInfo.Type) != "selector" {
+		return fmt.Errorf("group %q has type %q; auto-switching only officially manages Selector groups (URLTest, Fallback, and LoadBalance groups are read-only to preserve native semantics)", group, groupInfo.Type)
+	}
+
 	payload, err := json.Marshal(map[string]string{
 		"name": nodeName,
 	})
@@ -168,7 +192,8 @@ func (c *Client) SelectNode(ctx context.Context, group string, nodeName string) 
 		return err
 	}
 
-	req, err := c.newRequest(ctx, http.MethodPut, "/proxies/"+url.PathEscape(group), bytes.NewReader(payload))
+	escapedGroup := url.PathEscape(group)
+	req, err := c.newRequest(ctx, http.MethodPut, "/proxies/"+escapedGroup, bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
@@ -200,7 +225,8 @@ func (c *Client) TestDelay(ctx context.Context, proxyName string, testURL string
 	q.Set("url", testURL)
 	q.Set("timeout", fmt.Sprintf("%d", timeout.Milliseconds()))
 
-	path := fmt.Sprintf("/proxies/%s/delay?%s", url.PathEscape(proxyName), q.Encode())
+	escapedProxy := url.PathEscape(proxyName)
+	path := fmt.Sprintf("/proxies/%s/delay?%s", escapedProxy, q.Encode())
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return 0, err
@@ -229,6 +255,20 @@ type rawProxy struct {
 	Now     string                  `json:"now"`
 	All     []string                `json:"all"`
 	History []controller.DelayRecord `json:"history"`
+}
+
+func (c *Client) getGroupRaw(ctx context.Context, group string) (*rawProxy, error) {
+	escapedGroup := url.PathEscape(group)
+	req, err := c.newRequest(ctx, http.MethodGet, "/proxies/"+escapedGroup, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var raw rawProxy
+	if err := c.doJSON(req, &raw); err != nil {
+		return nil, fmt.Errorf("get group %q: %w", group, err)
+	}
+	return &raw, nil
 }
 
 func (c *Client) fetchProxiesMap(ctx context.Context) (map[string]rawProxy, error) {
@@ -270,6 +310,19 @@ func (c *Client) doJSON(req *http.Request, target interface{}) error {
 		return fmt.Errorf("http %d: %s", resp.StatusCode, string(b))
 	}
 	return json.NewDecoder(resp.Body).Decode(target)
+}
+
+func isLoopbackEndpoint(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" || strings.HasPrefix(host, "127.") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func isGroupType(t string) bool {

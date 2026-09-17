@@ -203,11 +203,15 @@ func TestAppService_ControllerAndPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSwitchPolicy failed: %v", err)
 	}
-	pol.AutoSwitchEnabled = true
+	pol.Mode = policy.ModeAuto
 	pol.TargetGroup = "PROXY"
 	pol.MinImprovementRTT = 10 * time.Millisecond
 	pol.MinImprovementRatio = 0.10
 	pol.CooldownDuration = 0 // Disable cooldown for test
+	pol.MaxSampleAge = 0     // Disable freshness check for test
+	pol.MinSampleCount = 0
+	pol.MinObservationWindow = 0
+	pol.RollbackOnFailure = false // Test switch only in this unit test
 
 	if err := svc.UpdateSwitchPolicy(ctx, pol); err != nil {
 		t.Fatalf("UpdateSwitchPolicy failed: %v", err)
