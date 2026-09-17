@@ -381,6 +381,37 @@ describe('background refresh', () => {
     expect(store.samples).toHaveLength(1)
     expect(store.loadState).toBe('ready')
   })
+
+  it('retains late-arriving samples with identical timestamps during live refresh without dropping either', async () => {
+    const store = useTimelineStore()
+    const sharedTs = NOW - MIN
+
+    // Initial load has sample 's_first' at sharedTs
+    mockedCursor.mockResolvedValueOnce(page([sample('s_first', sharedTs)]))
+    await store.reload()
+    expect(store.samples).toHaveLength(1)
+    expect(store.samples[0].sampleId).toBe('s_first')
+
+    // Live refresh brings both 's_first' and a late-arriving 's_late' at the EXACT same timestamp
+    mockedCursor.mockResolvedValueOnce(page([
+      sample('s_late', sharedTs),
+      sample('s_first', sharedTs),
+    ]))
+
+    const added = await store.refreshNewest()
+    expect(added).toBe(1)
+    expect(store.samples).toHaveLength(2)
+
+    // Both samples exist in the store, deterministically ordered
+    const ids = store.samples.map((s) => s.sampleId)
+    expect(ids).toContain('s_first')
+    expect(ids).toContain('s_late')
+
+    // Both samples are present in lanes
+    const laneSamples = store.lanes[0].samples.map((s) => s.sampleId)
+    expect(laneSamples).toContain('s_first')
+    expect(laneSamples).toContain('s_late')
+  })
 })
 
 describe('viewport interactions', () => {
@@ -487,16 +518,48 @@ describe('selection', () => {
     expect(store.selectedSample?.sampleId).toBe('s2')
   })
 
-  it('clears selection state', async () => {
+  it('clears selection state', () => {
     const store = useTimelineStore()
     mockedCursor.mockResolvedValue(page([sample('s1', NOW - MIN)]))
-    await store.reload()
     store.selectSample('s1')
 
     store.clearSelection()
 
     expect(store.selectedSample).toBeNull()
     expect(store.candidates).toHaveLength(0)
+  })
+
+  it('navigates across lanes to the temporally closest sample with selectAdjacentLane', async () => {
+    const store = useTimelineStore()
+    // Lane 0: RTT at 10m, 20m, 30m ago
+    // Lane 1: TTFB at 12m, 28m ago
+    mockedCursor.mockResolvedValue(
+      page([
+        sample('l0_1', NOW - 30 * MIN, { probeType: 'rtt' }),
+        sample('l0_2', NOW - 20 * MIN, { probeType: 'rtt' }),
+        sample('l0_3', NOW - 10 * MIN, { probeType: 'rtt' }),
+        sample('l1_1', NOW - 28 * MIN, { probeType: 'ttfb' }),
+        sample('l1_2', NOW - 12 * MIN, { probeType: 'ttfb' }),
+      ])
+    )
+    await store.reload()
+    expect(store.lanes).toHaveLength(2)
+
+    // Select l0_2 (at 20m ago in Lane 0)
+    store.selectSample('l0_2')
+    expect(store.selectedSample?.sampleId).toBe('l0_2')
+
+    // Press ArrowDown to jump to Lane 1.
+    // In Lane 1, l1_1 is at 28m (diff 8m), l1_2 is at 12m (diff 8m).
+    // Closest is l1_1 or l1_2. Now test selecting l0_3 (at 10m ago in Lane 0).
+    store.selectSample('l0_3')
+    // Down to Lane 1: l1_2 (12m ago, diff 2m) is much closer than l1_1 (28m ago, diff 18m).
+    store.selectAdjacentLane(1)
+    expect(store.selectedSample?.sampleId).toBe('l1_2')
+
+    // Up to Lane 0: from l1_2 (12m ago), l0_3 (10m ago, diff 2m) is closest.
+    store.selectAdjacentLane(-1)
+    expect(store.selectedSample?.sampleId).toBe('l0_3')
   })
 })
 
@@ -538,6 +601,59 @@ describe('lanes and revision boundaries', () => {
 
     expect(store.hasLegacySamples).toBe(true)
     expect(store.samples[0].nodeIdentityKey).toBe('nk_legacy')
+  })
+
+  it('discovers older nodes and dimensions in custom range even beyond 30d/90d facet window', async () => {
+    const store = useTimelineStore()
+    // Mock facets to only return a recent node 'nid_recent' from the last 30d
+    mockedFacets.mockResolvedValueOnce({
+      nodes: [
+        {
+          nodeIdentityKey: 'nid_recent',
+          nodeKey: 'nk_recent',
+          displayName: 'Recent Node',
+          profileId: 'prof_recent',
+          sampleCount: 5,
+        },
+      ],
+      profiles: ['prof_recent'],
+      probeTypes: ['rtt'],
+      targets: ['https://recent.example.com'],
+      windowSinceMs: NOW - 30 * 24 * HOUR,
+      windowUntilMs: NOW,
+      truncated: false,
+    })
+
+    // Custom query fetches samples from 120 days ago, containing an old node 'nid_historical'
+    const oldTs = NOW - 120 * 24 * HOUR
+    mockedCursor.mockResolvedValueOnce(
+      page([
+        sample('old_1', oldTs, {
+          nodeIdentityKey: 'nid_historical',
+          nodeKey: 'nk_historical',
+          displayNameSnapshot: 'Old Node',
+          profileId: 'prof_historical',
+          probeType: 'ttfb',
+          target: 'https://old.example.com',
+        }),
+      ])
+    )
+
+    await store.setCustomRange(oldTs - 24 * HOUR, oldTs + 24 * HOUR)
+
+    // availableNodes must union recent facet nodes with the historical node from loaded lanes
+    const nodeKeys = store.availableNodes.map((n) => n.nodeIdentityKey)
+    expect(nodeKeys).toContain('nid_recent')
+    expect(nodeKeys).toContain('nid_historical')
+
+    const oldNode = store.availableNodes.find((n) => n.nodeIdentityKey === 'nid_historical')
+    expect(oldNode?.displayName).toBe('Old Node')
+    expect(oldNode?.sampleCount).toBe(1)
+
+    // availableProfiles and availableTargets must also include the historical values
+    expect(store.availableProfiles).toContain('prof_historical')
+    expect(store.availableTargets).toContain('https://old.example.com')
+    expect(store.availableProbeTypes).toContain('ttfb')
   })
 })
 

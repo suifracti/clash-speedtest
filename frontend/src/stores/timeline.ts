@@ -18,7 +18,7 @@
 
 import { computed, ref, shallowRef } from 'vue'
 import { defineStore } from 'pinia'
-import type { DerivedStats, MonitorSample, MonitorSampleFacets } from '../types'
+import type { DerivedStats, FacetNode, MonitorSample, MonitorSampleFacets } from '../types'
 import { fetchMonitorFacets, fetchMonitorStats, queryMonitorSamplesCursor } from '../api/monitor'
 import { buildLanes, compareSamplesAsc, detectRevisionBoundaries, isLegacyBackfilledSample } from '../utils/timeline/lanes'
 import {
@@ -175,24 +175,46 @@ export const useTimelineStore = defineStore('timeline', () => {
   const hasLegacySamples = computed(() => samples.value.some(isLegacyBackfilledSample))
 
   const availableProbeTypes = computed(() => {
-    const fromFacets = facets.value?.probeTypes ?? []
-    if (fromFacets.length > 0) return fromFacets
-    return Array.from(new Set(samples.value.map((s) => s.probeType))).filter(Boolean).sort()
+    const set = new Set(facets.value?.probeTypes ?? [])
+    for (const s of samples.value) {
+      if (s.probeType) set.add(s.probeType)
+    }
+    return Array.from(set).sort()
   })
 
   const availableTargets = computed(() => {
-    const fromFacets = facets.value?.targets ?? []
-    if (fromFacets.length > 0) return fromFacets
-    return Array.from(new Set(samples.value.map((s) => s.target))).filter(Boolean).sort()
+    const set = new Set(facets.value?.targets ?? [])
+    for (const s of samples.value) {
+      if (s.target) set.add(s.target)
+    }
+    return Array.from(set).sort()
   })
 
   const availableProfiles = computed(() => {
-    const fromFacets = facets.value?.profiles ?? []
-    if (fromFacets.length > 0) return fromFacets
-    return Array.from(new Set(samples.value.map((s) => s.profileId))).filter(Boolean).sort()
+    const set = new Set(facets.value?.profiles ?? [])
+    for (const s of samples.value) {
+      if (s.profileId) set.add(s.profileId)
+    }
+    return Array.from(set).sort()
   })
 
-  const availableNodes = computed(() => facets.value?.nodes ?? [])
+  const availableNodes = computed<FacetNode[]>(() => {
+    const list: FacetNode[] = [...(facets.value?.nodes ?? [])]
+    const seen = new Set(list.map((n) => n.nodeIdentityKey))
+    for (const lane of lanes.value) {
+      if (!seen.has(lane.nodeIdentityKey)) {
+        seen.add(lane.nodeIdentityKey)
+        list.push({
+          nodeIdentityKey: lane.nodeIdentityKey,
+          nodeKey: lane.legacyNodeKey,
+          displayName: lane.displayName,
+          profileId: lane.samples[0]?.profileId ?? '',
+          sampleCount: lane.samples.length,
+        })
+      }
+    }
+    return list
+  })
 
   // --- Internal helpers ----------------------------------------------------
   function publish(): void {
@@ -561,7 +583,7 @@ export const useTimelineStore = defineStore('timeline', () => {
     selectSample(lane.samples[next].sampleId)
   }
 
-  /** Moves the selection to the first sample of the adjacent lane. */
+  /** Moves the selection to the sample in the adjacent lane closest in time. */
   function selectAdjacentLane(direction: 1 | -1): void {
     if (lanes.value.length === 0) return
     const currentKey = selectedLaneKey.value
@@ -569,7 +591,24 @@ export const useTimelineStore = defineStore('timeline', () => {
     const targetIndex = index < 0 ? 0 : index + direction
     if (targetIndex < 0 || targetIndex >= lanes.value.length) return
     const lane = lanes.value[targetIndex]
-    if (lane.samples.length > 0) selectSample(lane.samples[0].sampleId)
+    if (lane.samples.length === 0) return
+
+    const current = selectedSample.value
+    if (!current) {
+      selectSample(lane.samples[0].sampleId)
+      return
+    }
+
+    let closest = lane.samples[0]
+    let minDiff = Math.abs(closest.timestampMs - current.timestampMs)
+    for (let i = 1; i < lane.samples.length; i++) {
+      const diff = Math.abs(lane.samples[i].timestampMs - current.timestampMs)
+      if (diff < minDiff) {
+        minDiff = diff
+        closest = lane.samples[i]
+      }
+    }
+    selectSample(closest.sampleId)
   }
 
   // --- Auto refresh --------------------------------------------------------

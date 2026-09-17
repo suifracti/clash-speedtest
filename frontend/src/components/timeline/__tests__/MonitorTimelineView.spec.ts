@@ -223,4 +223,71 @@ describe('MonitorTimelineView states', () => {
     expect(clearSpy).toHaveBeenCalled()
     clearSpy.mockRestore()
   })
+
+  it('clicks a specific lane on canvas and asserts Inspector displays the SampleID of that lane', async () => {
+    const now = Date.now()
+    const sampleL0 = sample('sample_lane0', {
+      timestampMs: now - 60_000,
+      timestampIso: new Date(now - 60_000).toISOString(),
+      probeType: 'rtt',
+      target: 'https://cp.cloudflare.com/generate_204',
+      displayNameSnapshot: 'Node Alpha RTT',
+    })
+    const sampleL1 = sample('sample_lane1', {
+      timestampMs: now - 60_000,
+      timestampIso: new Date(now - 60_000).toISOString(),
+      probeType: 'ttfb',
+      target: 'https://cp.cloudflare.com/generate_204',
+      displayNameSnapshot: 'Node Alpha TTFB',
+    })
+
+    mockedCursor.mockResolvedValue({
+      items: [sampleL0, sampleL1],
+      nextCursor: '',
+      hasMore: false,
+      limit: 500,
+    })
+
+    // Mount view WITHOUT stubbing SampleTimeline and TimelineInspector
+    wrapper = mount(MonitorTimelineView, {
+      global: {
+        stubs: {
+          TimelineFilterBar: { template: '<div data-testid="filter-bar" />' },
+          TimelineEvidenceBar: { template: '<div data-testid="evidence-bar" />' },
+        },
+      },
+    })
+    await flushPromises()
+
+    const store = useTimelineStore()
+    expect(store.lanes).toHaveLength(2)
+
+    // Lane buttons are rendered in the lane sidebar for every lane
+    const laneButtons = wrapper.findAll('.relative.border-r button')
+    expect(laneButtons).toHaveLength(2)
+
+    // Click Lane 1 button
+    await laneButtons[1].trigger('click')
+    await flushPromises()
+
+    // Assert that sample from Lane 1 is selected
+    expect(store.selectedSample?.sampleId).toBe('sample_lane1')
+    expect(store.selectedLaneKey).toBe(store.lanes[1].key)
+
+    // Inspector must render and display sample_lane1
+    const inspector = wrapper.find('aside')
+    expect(inspector.exists()).toBe(true)
+    expect(inspector.text()).toContain('sample_lane1')
+    expect(inspector.text()).not.toContain('sample_lane0')
+
+    // Click Lane 0 button
+    await laneButtons[0].trigger('click')
+    await flushPromises()
+
+    // Assert that sample from Lane 0 is selected
+    expect(store.selectedSample?.sampleId).toBe('sample_lane0')
+    expect(store.selectedLaneKey).toBe(store.lanes[0].key)
+    expect(inspector.text()).toContain('sample_lane0')
+    expect(inspector.text()).not.toContain('sample_lane1')
+  })
 })

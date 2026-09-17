@@ -162,6 +162,72 @@ describe('individually addressable samples', () => {
     }
   })
 
+  it('isolates multi-lane hits when multiple lanes share the exact same timestamp', () => {
+    // 3 distinct lanes with samples at the exact same timestamp.
+    const sharedTs = BASE_TS + 15 * MIN
+    const samples = [
+      makeSample({ displayNameSnapshot: 'Lane 0', nodeIdentityKey: 'nid_0', probeType: 'rtt', target: 'https://t/1', sampleId: 'lane0_s', timestampMs: sharedTs }),
+      makeSample({ displayNameSnapshot: 'Lane 1', nodeIdentityKey: 'nid_1', probeType: 'rtt', target: 'https://t/1', sampleId: 'lane1_s', timestampMs: sharedTs }),
+      makeSample({ displayNameSnapshot: 'Lane 2', nodeIdentityKey: 'nid_2', probeType: 'rtt', target: 'https://t/1', sampleId: 'lane2_s', timestampMs: sharedTs }),
+    ]
+    const projection = project(samples, oneHourViewport())
+    expect(projection.lanes).toHaveLength(3)
+
+    // All 3 marks share the exact same X coordinate.
+    const sharedX = projection.marks[0].x
+    expect(projection.marks[1].x).toBe(sharedX)
+    expect(projection.marks[2].x).toBe(sharedX)
+
+    // Lane 0 hit-test: pointer Y within Lane 0.
+    const y0 = LAYOUT.laneHeightPx / 2
+    const hits0 = hitTestMarks(projection, sharedX, y0)
+    expect(hits0).toHaveLength(1)
+    expect(projection.marks[hits0[0]].sample.sampleId).toBe('lane0_s')
+    expect(projection.marks[hits0[0]].laneIndex).toBe(0)
+
+    // Lane 1 hit-test: pointer Y within Lane 1.
+    const y1 = LAYOUT.laneHeightPx + LAYOUT.laneGapPx + LAYOUT.laneHeightPx / 2
+    const hits1 = hitTestMarks(projection, sharedX, y1)
+    expect(hits1).toHaveLength(1)
+    expect(projection.marks[hits1[0]].sample.sampleId).toBe('lane1_s')
+    expect(projection.marks[hits1[0]].laneIndex).toBe(1)
+
+    // Lane 2 hit-test: pointer Y within Lane 2.
+    const y2 = (LAYOUT.laneHeightPx + LAYOUT.laneGapPx) * 2 + LAYOUT.laneHeightPx / 2
+    const hits2 = hitTestMarks(projection, sharedX, y2)
+    expect(hits2).toHaveLength(1)
+    expect(projection.marks[hits2[0]].sample.sampleId).toBe('lane2_s')
+    expect(projection.marks[hits2[0]].laneIndex).toBe(2)
+  })
+
+  it('deterministically tie-breaks multiple samples in the same lane with the exact same timestamp', () => {
+    // 3 samples in the same lane with the identical timestamp and X, provided in arbitrary ID order.
+    const sharedTs = BASE_TS + 20 * MIN
+    const samples = [
+      makeSample({ nodeIdentityKey: 'nid_a', probeType: 'rtt', sampleId: 'sample_z', timestampMs: sharedTs }),
+      makeSample({ nodeIdentityKey: 'nid_a', probeType: 'rtt', sampleId: 'sample_a', timestampMs: sharedTs }),
+      makeSample({ nodeIdentityKey: 'nid_a', probeType: 'rtt', sampleId: 'sample_m', timestampMs: sharedTs }),
+    ]
+    const projection = project(samples, oneHourViewport())
+    expect(projection.lanes).toHaveLength(1)
+
+    const x = projection.marks[0].x
+    const y = LAYOUT.laneHeightPx / 2
+
+    // All 3 samples must be returned without aggregation or dropping.
+    const hits = hitTestMarks(projection, x, y)
+    expect(hits).toHaveLength(3)
+
+    // Order must be deterministic: identical distance, identical timestamp -> tie-break by sampleId ascending.
+    const hitIds = hits.map((i) => projection.marks[i].sample.sampleId)
+    expect(hitIds).toEqual(['sample_a', 'sample_m', 'sample_z'])
+
+    // pickNearestMark must deterministically return the top tie-break winner (sample_a).
+    const nearest = pickNearestMark(projection, x, y)
+    expect(nearest).not.toBeNull()
+    expect(projection.marks[nearest!].sample.sampleId).toBe('sample_a')
+  })
+
   it('returns nothing for a pointer outside any lane band', () => {
     const projection = project(makeSeries(3), oneHourViewport())
     expect(hitTestMarks(projection, 100, 5000)).toEqual([])
