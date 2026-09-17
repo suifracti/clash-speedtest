@@ -17,14 +17,16 @@ type SchedulerConfig struct {
 
 // Scheduler manages the periodic execution and lifecycle of a MonitorJob.
 type Scheduler struct {
-	mu            sync.RWMutex
+	mu            sync.Mutex
 	job           *MonitorJob
 	runner        *Runner
 	store         SampleStore
 	state         JobState
+	stopping      bool
 	ctx           context.Context
 	cancel        context.CancelFunc
-	wg            sync.WaitGroup
+	loopWg        sync.WaitGroup
+	runWg         sync.WaitGroup
 	isExecuting   int32 // atomic flag: 1 if runner is active, 0 otherwise
 	skippedRounds int64 // atomic counter for overlapped ticks skipped
 	completedRuns int64 // atomic counter for finished runs
@@ -54,15 +56,15 @@ func NewScheduler(cfg SchedulerConfig) (*Scheduler, error) {
 
 // State returns the current lifecycle state of the scheduler.
 func (s *Scheduler) State() JobState {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.state
 }
 
 // Job returns a copy of the underlying MonitorJob.
 func (s *Scheduler) Job() MonitorJob {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return *s.job
 }
 
@@ -76,15 +78,31 @@ func (s *Scheduler) CompletedRuns() int64 {
 	return atomic.LoadInt64(&s.completedRuns)
 }
 
-// Start initiates the periodic monitoring loop.
+// Start initiates or resumes the periodic monitoring loop.
+// Running -> Start: idempotent no-op.
+// Paused -> Start: resumes existing loop without creating a duplicate goroutine or overwriting cancel.
+// Stopped -> Start: initializes a fresh lifecycle context and loop.
 func (s *Scheduler) Start(parentCtx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.stopping {
+		return fmt.Errorf("scheduler is stopping")
+	}
 
 	if s.state == JobStateRunning {
 		return nil // Already running
 	}
 
+	if s.state == JobStatePaused {
+		// Paused -> Start is equivalent to Resume, reusing existing loop and cancel func
+		s.state = JobStateRunning
+		s.job.State = JobStateRunning
+		s.job.UpdatedAt = time.Now()
+		return nil
+	}
+
+	// Stopped -> Start: create new lifecycle
 	if parentCtx == nil {
 		parentCtx = context.Background()
 	}
@@ -94,7 +112,7 @@ func (s *Scheduler) Start(parentCtx context.Context) error {
 	s.job.State = JobStateRunning
 	s.job.UpdatedAt = time.Now()
 
-	s.wg.Add(1)
+	s.loopWg.Add(1)
 	go s.scheduleLoop(s.ctx, s.job.Interval)
 
 	return nil
@@ -105,7 +123,7 @@ func (s *Scheduler) Pause() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.state != JobStateRunning {
+	if s.state != JobStateRunning || s.stopping {
 		return nil
 	}
 
@@ -120,7 +138,7 @@ func (s *Scheduler) Resume() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.state != JobStatePaused {
+	if s.state != JobStatePaused || s.stopping {
 		return nil
 	}
 
@@ -130,14 +148,16 @@ func (s *Scheduler) Resume() error {
 	return nil
 }
 
-// Stop terminates the scheduler, cancels in-flight tasks, and waits for workers to exit.
+// Stop terminates the scheduler, cancels in-flight tasks, and waits for all workers and the loop to exit.
+// Follows strict happens-before: stopping = true -> prohibit new runs -> cancel -> Wait().
 func (s *Scheduler) Stop() error {
 	s.mu.Lock()
-	if s.state == JobStateStopped {
+	if s.state == JobStateStopped || s.stopping {
 		s.mu.Unlock()
 		return nil
 	}
 
+	s.stopping = true
 	s.state = JobStateStopped
 	s.job.State = JobStateStopped
 	s.job.UpdatedAt = time.Now()
@@ -146,24 +166,56 @@ func (s *Scheduler) Stop() error {
 	}
 	s.mu.Unlock()
 
-	// Wait for background schedule loop and any active run to finish
-	s.wg.Wait()
+	// Wait for background schedule loop and any active runs to finish
+	s.runWg.Wait()
+	s.loopWg.Wait()
+
+	s.mu.Lock()
+	s.stopping = false
+	s.mu.Unlock()
 	return nil
 }
 
-// TriggerImmediate runs an immediate single monitoring round in the background if not currently executing.
+// TriggerImmediate runs an immediate single monitoring round bounded by scheduler lifecycle.
+// Rejects execution if stopped or stopping, links to scheduler context, and drains via runWg.
 func (s *Scheduler) TriggerImmediate(ctx context.Context) (*MonitorRun, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	s.mu.Lock()
+	if s.state == JobStateStopped || s.stopping {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("scheduler is stopped or stopping")
+	}
+
 	if !atomic.CompareAndSwapInt32(&s.isExecuting, 0, 1) {
+		s.mu.Unlock()
 		atomic.AddInt64(&s.skippedRounds, 1)
 		return nil, fmt.Errorf("上一轮监测正在执行中，跳过本次触发")
 	}
-	defer atomic.StoreInt32(&s.isExecuting, 0)
 
-	s.mu.RLock()
+	s.runWg.Add(1)
+	schedCtx := s.ctx
 	jobCopy := *s.job
-	s.mu.RUnlock()
+	s.mu.Unlock()
 
-	run, _, err := s.runner.ExecuteRun(ctx, &jobCopy, time.Now())
+	defer func() {
+		atomic.StoreInt32(&s.isExecuting, 0)
+		s.runWg.Done()
+	}()
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	if schedCtx != nil {
+		stopAfter := context.AfterFunc(schedCtx, func() {
+			cancel()
+		})
+		defer stopAfter()
+	}
+
+	run, _, err := s.runner.ExecuteRun(runCtx, &jobCopy, time.Now())
 	if err == nil {
 		atomic.AddInt64(&s.completedRuns, 1)
 	}
@@ -171,7 +223,7 @@ func (s *Scheduler) TriggerImmediate(ctx context.Context) (*MonitorRun, error) {
 }
 
 func (s *Scheduler) scheduleLoop(ctx context.Context, interval time.Duration) {
-	defer s.wg.Done()
+	defer s.loopWg.Done()
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -184,11 +236,12 @@ func (s *Scheduler) scheduleLoop(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case tickTime := <-ticker.C:
-			s.mu.RLock()
+			s.mu.Lock()
 			currentState := s.state
-			s.mu.RUnlock()
+			isStopping := s.stopping
+			s.mu.Unlock()
 
-			if currentState != JobStateRunning {
+			if currentState != JobStateRunning || isStopping {
 				// Paused or stopped: skip tick
 				continue
 			}
@@ -199,9 +252,16 @@ func (s *Scheduler) scheduleLoop(ctx context.Context, interval time.Duration) {
 }
 
 func (s *Scheduler) launchScheduledRound(ctx context.Context, scheduledAt time.Time) {
-	s.wg.Add(1)
+	s.mu.Lock()
+	if s.state != JobStateRunning || s.stopping {
+		s.mu.Unlock()
+		return
+	}
+	s.runWg.Add(1)
+	s.mu.Unlock()
+
 	go func() {
-		defer s.wg.Done()
+		defer s.runWg.Done()
 		s.executeScheduledRound(ctx, scheduledAt)
 	}()
 }
@@ -214,28 +274,39 @@ func (s *Scheduler) executeScheduledRound(ctx context.Context, scheduledAt time.
 
 		// Record skipped run in store for audit observability
 		if s.store != nil {
-			s.mu.RLock()
+			s.mu.Lock()
 			jobID := s.job.ID
-			s.mu.RUnlock()
+			isStopping := s.stopping
+			state := s.state
+			s.mu.Unlock()
 
-			skippedRun := &MonitorRun{
-				RunID:        newID("run_skip"),
-				JobID:        jobID,
-				ScheduledAt:  scheduledAt,
-				StartedAt:    scheduledAt,
-				Status:       RunStatusSkipped,
-				ErrorMessage: "上一轮监测仍在执行，按防重叠策略跳过本轮",
+			if !isStopping && state != JobStateStopped {
+				skippedRun := &MonitorRun{
+					RunID:        newID("run_skip"),
+					JobID:        jobID,
+					ScheduledAt:  scheduledAt,
+					StartedAt:    scheduledAt,
+					FinishedAt:   &scheduledAt,
+					Status:       RunStatusSkipped,
+					ErrorMessage: "上一轮监测仍在执行，按防重叠策略跳过本轮",
+				}
+				_ = s.store.SaveMonitorRun(ctx, skippedRun)
 			}
-			_ = s.store.SaveMonitorRun(ctx, skippedRun)
 		}
 		return
 	}
 
 	defer atomic.StoreInt32(&s.isExecuting, 0)
 
-	s.mu.RLock()
+	s.mu.Lock()
 	jobCopy := *s.job
-	s.mu.RUnlock()
+	isStopping := s.stopping
+	state := s.state
+	s.mu.Unlock()
+
+	if isStopping || state == JobStateStopped {
+		return
+	}
 
 	_, _, err := s.runner.ExecuteRun(ctx, &jobCopy, scheduledAt)
 	if err == nil {

@@ -562,7 +562,18 @@ func TestAppService_MonitorZeroSelectNode(t *testing.T) {
 		t.Fatalf("CreateMonitorJob failed: %v", err)
 	}
 
-	// Trigger immediate monitor run
+	// 1. Triggering a stopped job must return an error
+	_, err = svc.TriggerMonitorJob("zero_select_job")
+	if err == nil {
+		t.Fatalf("Expected TriggerMonitorJob to fail on stopped job")
+	}
+
+	// 2. Start job
+	if err := svc.StartMonitorJob("zero_select_job"); err != nil {
+		t.Fatalf("StartMonitorJob failed: %v", err)
+	}
+
+	// 3. Trigger immediate monitor run
 	_, err = svc.TriggerMonitorJob("zero_select_job")
 	if err != nil {
 		t.Fatalf("TriggerMonitorJob failed: %v", err)
@@ -574,6 +585,92 @@ func TestAppService_MonitorZeroSelectNode(t *testing.T) {
 	}
 	if mockCtrl.selectedNode != "HK-01" {
 		t.Fatalf("Selected node changed unexpectedly: %s", mockCtrl.selectedNode)
+	}
+}
+
+func TestAppService_CreateDuplicateRunningJobFails(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "app_service_dup_test_*")
+	if err != nil {
+		t.Fatalf("MkdirTemp failed: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	hStore, err := history.NewStore(filepath.Join(tmpDir, "history"))
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	defer hStore.Close()
+
+	paths := profiles.Paths{Dir: filepath.Join(tmpDir, "profiles")}
+	emitter := NewMemoryEventEmitter()
+
+	svc := NewAppService(hStore, paths, emitter)
+	defer svc.Close()
+
+	runner := monitor.NewRunner(monitor.RunnerConfig{
+		Store:  hStore,
+		Dialer: &serviceTestMockDialer{},
+	})
+	svc.SetMonitorRunner(runner)
+
+	jobReq := monitor.MonitorJob{
+		ID:       "dup_test_job",
+		Name:     "Duplicate Test Job",
+		ProbeSet: monitor.ProbeSetLight,
+		Interval: 1 * time.Hour,
+		Nodes: []monitor.MonitoredNode{
+			{
+				DisplayName: "Node A",
+				Type:        "ss",
+				Server:      "1.1.1.1",
+				Port:        8388,
+			},
+		},
+	}
+
+	// 1. Initial creation succeeds
+	_, err = svc.CreateMonitorJob(jobReq)
+	if err != nil {
+		t.Fatalf("Initial CreateMonitorJob failed: %v", err)
+	}
+
+	// 2. Creating with same ID while initial job is STOPPED -> must fail
+	_, err = svc.CreateMonitorJob(jobReq)
+	if err == nil {
+		t.Fatalf("Expected duplicate CreateMonitorJob to fail when job is stopped")
+	}
+
+	// 3. Start the job
+	if err := svc.StartMonitorJob("dup_test_job"); err != nil {
+		t.Fatalf("StartMonitorJob failed: %v", err)
+	}
+
+	// 4. Creating with same ID while job is RUNNING -> must fail
+	_, err = svc.CreateMonitorJob(jobReq)
+	if err == nil {
+		t.Fatalf("Expected duplicate CreateMonitorJob to fail when job is running")
+	}
+
+	// 5. Pause the job
+	if err := svc.PauseMonitorJob("dup_test_job"); err != nil {
+		t.Fatalf("PauseMonitorJob failed: %v", err)
+	}
+
+	// 6. Creating with same ID while job is PAUSED -> must fail
+	_, err = svc.CreateMonitorJob(jobReq)
+	if err == nil {
+		t.Fatalf("Expected duplicate CreateMonitorJob to fail when job is paused")
+	}
+
+	// 7. Stop the job
+	if err := svc.StopMonitorJob("dup_test_job"); err != nil {
+		t.Fatalf("StopMonitorJob failed: %v", err)
+	}
+
+	// 8. Creating with same ID while job is back to STOPPED -> must STILL fail
+	_, err = svc.CreateMonitorJob(jobReq)
+	if err == nil {
+		t.Fatalf("Expected duplicate CreateMonitorJob to fail when job is stopped again")
 	}
 }
 

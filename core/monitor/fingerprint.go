@@ -9,7 +9,16 @@ import (
 	"strings"
 )
 
-const fingerprintSalt = "clash-speedtest-nodekey-v1"
+// fingerprintDomainSeparator is a fixed domain separator ensuring deterministic NodeKey derivation
+// across application restarts. It is NOT a secret credential salt, but an architectural prefix
+// to avoid hash collision with other digests across the system.
+//
+// TODO (Architectural Evolution):
+// Currently, NodeKey conflates transport endpoint identity and credential configuration.
+// In a future release, NodeIdentityKey (transport endpoint: type, server, port, network, sni, path)
+// should be decoupled from ConfigRevisionKey (credentials, encryption params, headers) so that credential
+// rotation or minor header tweaks will not orphan long-term time-series probe history.
+const fingerprintDomainSeparator = "clash-speedtest-nodekey-v1"
 
 // ComputeNodeKey calculates a stable, deterministic identifier for a proxy node.
 // It incorporates non-mutable transport and connection parameters:
@@ -22,7 +31,7 @@ const fingerprintSalt = "clash-speedtest-nodekey-v1"
 //
 // Sensitive Information Handling:
 // Sensitive fields (passwords, UUIDs, secret tokens, private keys) are hashed using
-// SHA-256 with a domain salt before entering the fingerprint calculation.
+// SHA-256 with the domain separator before entering the fingerprint calculation.
 // Plaintext secrets are NEVER included in the NodeKey string, logs, or SQLite indexes.
 // Renaming a node's display name does NOT alter its NodeKey.
 func ComputeNodeKey(nodeType, server string, port int, network, sni, path string, rawConfig map[string]any) string {
@@ -36,7 +45,7 @@ func ComputeNodeKey(nodeType, server string, port int, network, sni, path string
 	credHash := hashSensitiveCredentials(rawConfig)
 
 	h := sha256.New()
-	h.Write([]byte(fingerprintSalt))
+	h.Write([]byte(fingerprintDomainSeparator))
 	h.Write([]byte("\n"))
 	h.Write([]byte(cleanType))
 	h.Write([]byte("\n"))
@@ -134,8 +143,8 @@ func hashSensitiveCredentials(rawConfig map[string]any) string {
 		if val, exists := rawConfig[k]; exists && val != nil {
 			strVal := fmt.Sprintf("%v", val)
 			if strVal != "" {
-				// Salted SHA-256 of the individual credential
-				h := sha256.Sum256([]byte(fingerprintSalt + ":" + k + ":" + strVal))
+				// SHA-256 of the individual credential with domain separator
+				h := sha256.Sum256([]byte(fingerprintDomainSeparator + ":" + k + ":" + strVal))
 				foundCreds = append(foundCreds, k+"="+hex.EncodeToString(h[:16]))
 			}
 		}

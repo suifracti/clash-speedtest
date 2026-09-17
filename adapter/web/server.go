@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/faceair/clash-speedtest/application"
@@ -42,6 +43,8 @@ type Server struct {
 	httpServer   *http.Server
 	port         int
 	shutdownChan chan struct{}
+	stopOnce     sync.Once
+	stopErr      error
 }
 
 // NewServer constructs a new web adapter Server.
@@ -88,15 +91,9 @@ func (s *Server) ShutdownChan() <-chan struct{} {
 	return s.shutdownChan
 }
 
-// Close stops the server and cleanly releases backend resources including SQLite connections.
+// Close stops the server and cleanly releases backend resources including draining monitor jobs and closing SQLite connections.
 func (s *Server) Close() error {
-	if s.httpServer != nil {
-		_ = s.httpServer.Close()
-	}
-	if s.app != nil {
-		return s.app.Close()
-	}
-	return nil
+	return s.Stop(context.Background())
 }
 
 // Handler returns the fully configured http.Handler with routing and security middleware.
@@ -192,11 +189,25 @@ func (s *Server) Start() error {
 	return nil
 }
 
+// Stop shuts down the HTTP server and cascades to AppService.Close() to drain monitor jobs and close storage.
+// Protected by sync.Once to guarantee idempotent teardown without double-close errors.
 func (s *Server) Stop(ctx context.Context) error {
-	if s.httpServer != nil {
-		return s.httpServer.Shutdown(ctx)
-	}
-	return nil
+	s.stopOnce.Do(func() {
+		var httpErr error
+		if s.httpServer != nil {
+			httpErr = s.httpServer.Shutdown(ctx)
+		}
+		var appErr error
+		if s.app != nil {
+			appErr = s.app.Close()
+		}
+		if httpErr != nil {
+			s.stopErr = httpErr
+		} else {
+			s.stopErr = appErr
+		}
+	})
+	return s.stopErr
 }
 
 // SPAHandler wraps an fs.FS and serves static assets with fallback to index.html for SPA routing.

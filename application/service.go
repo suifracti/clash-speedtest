@@ -1534,11 +1534,23 @@ func (s *AppService) SetMonitorRunner(runner *monitor.Runner) {
 }
 
 // CreateMonitorJob registers a new 24/7 monitor job and prepares its scheduler.
+//
+// Persistence Boundary (R-04):
+// MonitorJob configurations are registered in-memory for the lifecycle of the application process.
+// Only execution runs (MonitorRun) and raw probe measurements (MonitorSample) are persisted to SQLite.
+//
+// Uniqueness (B-02):
+// A JobID must be unique among registered schedulers. Re-creating a job with an existing JobID
+// (regardless of running, paused, or stopped state) is rejected.
 func (s *AppService) CreateMonitorJob(job monitor.MonitorJob) (*monitor.MonitorJob, error) {
 	s.monitorMu.Lock()
 	defer s.monitorMu.Unlock()
 
-	if job.ID == "" {
+	if job.ID != "" {
+		if _, exists := s.monitorSchedulers[job.ID]; exists {
+			return nil, fmt.Errorf("monitor job %s already exists", job.ID)
+		}
+	} else {
 		job.ID = fmt.Sprintf("job_%d", time.Now().UnixNano())
 	}
 	if job.Name == "" {

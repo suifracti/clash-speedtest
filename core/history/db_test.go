@@ -245,3 +245,112 @@ func TestSQLite_RawSampleChronologicalOrdering(t *testing.T) {
 		t.Fatalf("expected 3 timeline samples since 3m, got %d", len(timelineSamples))
 	}
 }
+
+func TestSQLite_SameTimestampPaginationDeterministicOrder(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	store, err := NewStore(tmpDir)
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	fixedTime := time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC)
+	nodeKey := "nk_same_timestamp_test"
+
+	// Insert 6 samples with identical timestamp
+	var batch []*monitor.MonitorSample
+	expectedIDs := []string{"sample_01", "sample_02", "sample_03", "sample_04", "sample_05", "sample_06"}
+	for _, id := range expectedIDs {
+		batch = append(batch, &monitor.MonitorSample{
+			SampleID:  id,
+			RunID:     "run_fixed",
+			NodeKey:   nodeKey,
+			ProbeType: "rtt",
+			Target:    "https://example.com",
+			Timestamp: fixedTime,
+			Success:   true,
+			Latency:   50 * time.Millisecond,
+		})
+	}
+	if err := store.SaveMonitorSamples(ctx, batch); err != nil {
+		t.Fatalf("SaveMonitorSamples failed: %v", err)
+	}
+
+	// 1. Ascending pagination (Limit 3, Offset 0 and Offset 3)
+	page1Asc, err := store.QueryMonitorSamples(ctx, monitor.SampleFilter{
+		NodeKey:   nodeKey,
+		OrderDesc: false,
+		Limit:     3,
+		Offset:    0,
+	})
+	if err != nil {
+		t.Fatalf("Page 1 ASC failed: %v", err)
+	}
+	if len(page1Asc) != 3 {
+		t.Fatalf("Expected 3 items in Page 1 ASC, got %d", len(page1Asc))
+	}
+
+	page2Asc, err := store.QueryMonitorSamples(ctx, monitor.SampleFilter{
+		NodeKey:   nodeKey,
+		OrderDesc: false,
+		Limit:     3,
+		Offset:    3,
+	})
+	if err != nil {
+		t.Fatalf("Page 2 ASC failed: %v", err)
+	}
+	if len(page2Asc) != 3 {
+		t.Fatalf("Expected 3 items in Page 2 ASC, got %d", len(page2Asc))
+	}
+
+	var combinedAsc []string
+	for _, s := range page1Asc {
+		combinedAsc = append(combinedAsc, s.SampleID)
+	}
+	for _, s := range page2Asc {
+		combinedAsc = append(combinedAsc, s.SampleID)
+	}
+
+	for i, id := range expectedIDs {
+		if combinedAsc[i] != id {
+			t.Errorf("ASC pagination mismatch at %d: expected %s, got %s", i, id, combinedAsc[i])
+		}
+	}
+
+	// 2. Descending pagination (Limit 3, Offset 0 and Offset 3)
+	page1Desc, err := store.QueryMonitorSamples(ctx, monitor.SampleFilter{
+		NodeKey:   nodeKey,
+		OrderDesc: true,
+		Limit:     3,
+		Offset:    0,
+	})
+	if err != nil {
+		t.Fatalf("Page 1 DESC failed: %v", err)
+	}
+	page2Desc, err := store.QueryMonitorSamples(ctx, monitor.SampleFilter{
+		NodeKey:   nodeKey,
+		OrderDesc: true,
+		Limit:     3,
+		Offset:    3,
+	})
+	if err != nil {
+		t.Fatalf("Page 2 DESC failed: %v", err)
+	}
+
+	var combinedDesc []string
+	for _, s := range page1Desc {
+		combinedDesc = append(combinedDesc, s.SampleID)
+	}
+	for _, s := range page2Desc {
+		combinedDesc = append(combinedDesc, s.SampleID)
+	}
+
+	expectedDesc := []string{"sample_06", "sample_05", "sample_04", "sample_03", "sample_02", "sample_01"}
+	for i, id := range expectedDesc {
+		if combinedDesc[i] != id {
+			t.Errorf("DESC pagination mismatch at %d: expected %s, got %s", i, id, combinedDesc[i])
+		}
+	}
+}

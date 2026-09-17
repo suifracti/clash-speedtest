@@ -375,9 +375,9 @@ func (d *DB) QueryMonitorSamples(ctx context.Context, filter monitor.SampleFilte
 		       error_class, error_detail, exit_ip, exit_region, metadata_json
 		FROM monitor_samples
 		%s
-		ORDER BY timestamp %s
+		ORDER BY timestamp %s, sample_id %s
 		LIMIT ? OFFSET ?
-	`, whereSQL, orderDir)
+	`, whereSQL, orderDir, orderDir)
 
 	args = append(args, limit, filter.Offset)
 

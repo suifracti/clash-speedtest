@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,7 +11,9 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
+	"github.com/faceair/clash-speedtest/core/monitor"
 	"github.com/faceair/clash-speedtest/core/profiles"
 )
 
@@ -386,6 +389,61 @@ func TestWebServer_MonitorEndpoints(t *testing.T) {
 	handler.ServeHTTP(recTimeline, reqTimeline)
 	if recTimeline.Code != http.StatusOK {
 		t.Fatalf("GET /api/monitor/timeline: expected 200 OK, got %d", recTimeline.Code)
+	}
+}
+
+func TestWebServer_StopCascadeAndIdempotency(t *testing.T) {
+	tmpDir := t.TempDir()
+	profileDir := filepath.Join(tmpDir, "profiles")
+	_ = os.MkdirAll(profileDir, 0o755)
+
+	server, err := NewServer(ServerConfig{
+		Port:         0,
+		ProfilePaths: profiles.Paths{Dir: profileDir},
+		HistoryDir:   filepath.Join(tmpDir, "history"),
+	})
+	if err != nil {
+		t.Fatalf("NewServer error: %v", err)
+	}
+
+	// 1. Create a monitor job to ensure backend state exists
+	jobReq := monitor.MonitorJob{
+		ID:       "cascade_job",
+		Name:     "Cascade Job",
+		ProbeSet: monitor.ProbeSetLight,
+		Interval: 1 * time.Minute,
+	}
+	_, err = server.AppService().CreateMonitorJob(jobReq)
+	if err != nil {
+		t.Fatalf("CreateMonitorJob failed: %v", err)
+	}
+	if err := server.AppService().StartMonitorJob("cascade_job"); err != nil {
+		t.Fatalf("StartMonitorJob failed: %v", err)
+	}
+
+	// 2. Calling Stop should cleanly shutdown httpServer and cascade to AppService.Close()
+	ctx := context.Background()
+	if err := server.Stop(ctx); err != nil {
+		t.Fatalf("First server.Stop failed: %v", err)
+	}
+
+	// Verify monitor job was stopped by the cascade
+	job, err := server.AppService().GetMonitorJob("cascade_job")
+	if err != nil {
+		t.Fatalf("GetMonitorJob failed: %v", err)
+	}
+	if job.State != monitor.JobStateStopped {
+		t.Errorf("Expected job state %s after server.Stop cascade, got %s", monitor.JobStateStopped, job.State)
+	}
+
+	// 3. Repeated Stop calls must be idempotent and succeed without errors
+	if err := server.Stop(ctx); err != nil {
+		t.Fatalf("Second server.Stop failed: %v", err)
+	}
+
+	// 4. Calling Close() after Stop() must also be idempotent
+	if err := server.Close(); err != nil {
+		t.Fatalf("server.Close after Stop failed: %v", err)
 	}
 }
 
