@@ -740,13 +740,13 @@ func TestAppService_MonitorHistoryAPIs(t *testing.T) {
 		t.Errorf("expected ConfigRevisionKey to be populated on MonitoredNode")
 	}
 
-	// Start & trigger one run to produce a raw sample
-	if err := svc.StartMonitorJob("history_test_job"); err != nil {
-		t.Fatalf("StartMonitorJob failed: %v", err)
-	}
-	run, err := svc.TriggerMonitorJob("history_test_job")
+	// Execute a single deterministic run via the configured runner to produce a raw sample for history verification
+	run, samples, err := runner.ExecuteRun(context.Background(), created, time.Now())
 	if err != nil || run.Status != monitor.RunStatusCompleted {
-		t.Fatalf("TriggerMonitorJob failed: run=%+v, err=%v", run, err)
+		t.Fatalf("ExecuteRun failed: run=%+v, err=%v", run, err)
+	}
+	if len(samples) != 1 {
+		t.Fatalf("expected 1 sample produced, got %d", len(samples))
 	}
 
 	ctx := context.Background()
@@ -764,6 +764,9 @@ func TestAppService_MonitorHistoryAPIs(t *testing.T) {
 	}
 	if page.Items[0].NodeIdentityKey != created.Nodes[0].NodeIdentityKey {
 		t.Errorf("mismatched NodeIdentityKey in sample: %s", page.Items[0].NodeIdentityKey)
+	}
+	if page.Items[0].SampleID != samples[0].SampleID {
+		t.Errorf("mismatched SampleID in sample: expected %s, got %s", samples[0].SampleID, page.Items[0].SampleID)
 	}
 
 	// 2. Test GetMonitorStats
