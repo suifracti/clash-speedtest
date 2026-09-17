@@ -69,7 +69,7 @@ func TestResolveServerTarget(t *testing.T) {
 	})
 }
 
-func TestNewDisablesUploadForDirectURL(t *testing.T) {
+func TestNewUsesSpeedServerForUploadOnDirectURL(t *testing.T) {
 	st, err := New(&Config{
 		ServerURL:    "https://example.com/file.bin",
 		UploadSize:   10,
@@ -80,8 +80,14 @@ func TestNewDisablesUploadForDirectURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	if st.Mode() != SpeedModeDownload {
-		t.Fatalf("expected mode to downgrade to %s for direct download url, got %s", SpeedModeDownload, st.Mode())
+	if st.Mode() != SpeedModeFull {
+		t.Fatalf("expected mode to remain %s when upload is selected, got %s", SpeedModeFull, st.Mode())
+	}
+	if st.serverMode != serverModeDownloadServer {
+		t.Fatalf("expected download-server fallback for upload, got %v", st.serverMode)
+	}
+	if st.serverBaseURL != DefaultSpeedServer {
+		t.Fatalf("expected fallback server %s, got %s", DefaultSpeedServer, st.serverBaseURL)
 	}
 }
 

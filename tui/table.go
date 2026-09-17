@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/table"
@@ -15,7 +17,7 @@ func (m *tuiModel) updateTableRows() {
 	defer m.perf.record(perfEventRows, len(m.results), start)
 	rows := make([]table.Row, len(m.results))
 	for i, result := range m.results {
-		rows[i] = output.FormatRow(result, m.mode, i)
+		rows[i] = output.FormatRowWithMetrics(result, m.mode, i, m.metrics)
 	}
 	m.table.SetRows(rows)
 	m.syncSelection()
@@ -31,7 +33,7 @@ func (m *tuiModel) updateTableHeaders() {
 
 func buildColumns(headers []string, width int, mode speedtester.SpeedMode) []table.Column {
 	columns := make([]table.Column, len(headers))
-	widths := calculateColumnWidths(width, mode)
+	widths := calculateHeaderColumnWidths(headers, width)
 	for i, h := range headers {
 		columnWidth := 10
 		if i < len(widths) {
@@ -42,74 +44,111 @@ func buildColumns(headers []string, width int, mode speedtester.SpeedMode) []tab
 	return columns
 }
 
-func calculateColumnWidths(width int, mode speedtester.SpeedMode) []int {
+func calculateHeaderColumnWidths(headers []string, width int) []int {
 	columnPadding := 2
-	columnCount := 7
-	if mode.IsFast() {
-		columnCount = 4
-	} else if mode.UploadEnabled() {
-		columnCount = 8
-	}
+	columnCount := len(headers)
 	windowWidth := width
 	availableWidth := width
 	if width > 0 {
 		availableWidth = max(width-columnCount*columnPadding, 0)
 	}
 
-	if mode.IsFast() {
-		indexWidth := 6
-		typeWidth := 12
-		latencyWidth := 10
-		if windowWidth <= 0 {
-			return []int{indexWidth, 30, typeWidth, latencyWidth}
+	widths := make([]int, len(headers))
+	minWidths := make([]int, len(headers))
+	type colPriority struct {
+		index    int
+		priority int
+	}
+	priorities := make([]colPriority, len(headers))
+
+	fixedWidth := 0
+	nameIndex := -1
+
+	for i, h := range headers {
+		clean := strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(h, " ⇅"), " ↑"), " ↓"))
+		switch clean {
+		case "序号":
+			widths[i] = 6
+			minWidths[i] = 4
+			priorities[i] = colPriority{index: i, priority: 9}
+			fixedWidth += widths[i]
+		case "节点名称":
+			nameIndex = i
+			minWidths[i] = 4
+			priorities[i] = colPriority{index: i, priority: 0}
+		case "类型":
+			widths[i] = 12
+			minWidths[i] = 6
+			priorities[i] = colPriority{index: i, priority: 8}
+			fixedWidth += widths[i]
+		case "延迟":
+			widths[i] = 10
+			minWidths[i] = 6
+			priorities[i] = colPriority{index: i, priority: 6}
+			fixedWidth += widths[i]
+		case "抖动":
+			widths[i] = 10
+			minWidths[i] = 6
+			priorities[i] = colPriority{index: i, priority: 5}
+			fixedWidth += widths[i]
+		case "丢包率":
+			widths[i] = 10
+			minWidths[i] = 6
+			priorities[i] = colPriority{index: i, priority: 5}
+			fixedWidth += widths[i]
+		case "下载速度":
+			widths[i] = 16
+			minWidths[i] = 6
+			priorities[i] = colPriority{index: i, priority: 2}
+			fixedWidth += widths[i]
+		case "上传速度":
+			widths[i] = 16
+			minWidths[i] = 6
+			priorities[i] = colPriority{index: i, priority: 3}
+			fixedWidth += widths[i]
+		case "Antigravity":
+			widths[i] = 14
+			minWidths[i] = 8
+			priorities[i] = colPriority{index: i, priority: 4}
+			fixedWidth += widths[i]
+		case "出口":
+			widths[i] = 16
+			minWidths[i] = 6
+			priorities[i] = colPriority{index: i, priority: 4}
+			fixedWidth += widths[i]
+		default:
+			widths[i] = 12
+			minWidths[i] = 6
+			priorities[i] = colPriority{index: i, priority: 7}
+			fixedWidth += widths[i]
 		}
-		minIndexWidth := 4
-		minNameWidth := 4
-		minTypeWidth := 6
-		minLatencyWidth := 6
-		fixedWidth := indexWidth + typeWidth + latencyWidth
-		nameWidth := max(minNameWidth, availableWidth-fixedWidth)
-		widths := []int{indexWidth, nameWidth, typeWidth, latencyWidth}
-		minWidths := []int{minIndexWidth, minNameWidth, minTypeWidth, minLatencyWidth}
-		shrinkOrder := []int{1, 3, 2, 0}
-		return shrinkWidthsToFit(windowWidth, columnPadding, widths, minWidths, shrinkOrder)
 	}
 
-	indexWidth := 6
-	typeWidth := 12
-	latencyWidth := 10
-	jitterWidth := 10
-	lossWidth := 10
-	downloadWidth := 16
-	uploadWidth := 16
-	if windowWidth <= 0 {
-		if mode.UploadEnabled() {
-			return []int{indexWidth, 30, typeWidth, latencyWidth, jitterWidth, lossWidth, downloadWidth, uploadWidth}
+	if nameIndex >= 0 {
+		if windowWidth <= 0 {
+			widths[nameIndex] = 30
+		} else {
+			widths[nameIndex] = max(minWidths[nameIndex], availableWidth-fixedWidth)
 		}
-		return []int{indexWidth, 30, typeWidth, latencyWidth, jitterWidth, lossWidth, downloadWidth}
 	}
-	minIndexWidth := 4
-	minNameWidth := 4
-	minTypeWidth := 6
-	minLatencyWidth := 6
-	minJitterWidth := 6
-	minLossWidth := 6
-	minDownloadWidth := 6
-	minUploadWidth := 6
-	if mode.UploadEnabled() {
-		fixedWidth := indexWidth + typeWidth + latencyWidth + jitterWidth + lossWidth + downloadWidth + uploadWidth
-		nameWidth := max(minNameWidth, availableWidth-fixedWidth)
-		widths := []int{indexWidth, nameWidth, typeWidth, latencyWidth, jitterWidth, lossWidth, downloadWidth, uploadWidth}
-		minWidths := []int{minIndexWidth, minNameWidth, minTypeWidth, minLatencyWidth, minJitterWidth, minLossWidth, minDownloadWidth, minUploadWidth}
-		shrinkOrder := []int{1, 6, 7, 4, 5, 3, 2, 0}
-		return shrinkWidthsToFit(windowWidth, columnPadding, widths, minWidths, shrinkOrder)
+
+	if windowWidth <= 0 {
+		return widths
 	}
-	fixedWidth := indexWidth + typeWidth + latencyWidth + jitterWidth + lossWidth + downloadWidth
-	nameWidth := max(minNameWidth, availableWidth-fixedWidth)
-	widths := []int{indexWidth, nameWidth, typeWidth, latencyWidth, jitterWidth, lossWidth, downloadWidth}
-	minWidths := []int{minIndexWidth, minNameWidth, minTypeWidth, minLatencyWidth, minJitterWidth, minLossWidth, minDownloadWidth}
-	shrinkOrder := []int{1, 6, 4, 5, 3, 2, 0}
+
+	sort.SliceStable(priorities, func(i, j int) bool {
+		return priorities[i].priority < priorities[j].priority
+	})
+	shrinkOrder := make([]int, len(priorities))
+	for i, p := range priorities {
+		shrinkOrder[i] = p.index
+	}
+
 	return shrinkWidthsToFit(windowWidth, columnPadding, widths, minWidths, shrinkOrder)
+}
+
+func calculateColumnWidths(width int, mode speedtester.SpeedMode) []int {
+	return calculateHeaderColumnWidths(output.GetHeaders(mode), width)
 }
 
 func shrinkWidthsToFit(windowWidth int, columnPadding int, widths []int, minWidths []int, shrinkOrder []int) []int {

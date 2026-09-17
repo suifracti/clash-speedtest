@@ -100,3 +100,48 @@ func TestSortResultsLatencyNA(t *testing.T) {
 		t.Error("Expected N/A latency to sort last when ascending")
 	}
 }
+
+func TestDefaultSortStateAndAscending(t *testing.T) {
+	t.Run("upload only headers", func(t *testing.T) {
+		headers := []string{"序号", "节点名称", "类型", "上传速度"}
+		col, asc := defaultSortState(speedtester.SpeedModeFull, headers)
+		if col != 3 || asc != false {
+			t.Errorf("expected col 3, asc false, got col %d, asc %v", col, asc)
+		}
+	})
+
+	t.Run("antigravity only headers", func(t *testing.T) {
+		headers := []string{"序号", "节点名称", "类型", "Antigravity", "出口"}
+		col, asc := defaultSortState(speedtester.SpeedModeFast, headers)
+		if col != 3 || asc != true {
+			t.Errorf("expected col 3, asc true, got col %d, asc %v", col, asc)
+		}
+	})
+
+	t.Run("latency only headers", func(t *testing.T) {
+		headers := []string{"序号", "节点名称", "类型", "延迟"}
+		col, asc := defaultSortState(speedtester.SpeedModeFast, headers)
+		if col != 3 || asc != true {
+			t.Errorf("expected col 3, asc true, got col %d, asc %v", col, asc)
+		}
+	})
+}
+
+func TestSortResultsByMetrics(t *testing.T) {
+	resultChannel := make(chan *speedtester.Result, 10)
+	model := NewTUIModel(speedtester.SpeedModeFull, 2, resultChannel).WithMetrics(speedtester.MetricSet{Upload: true})
+
+	r1 := &speedtester.Result{ProxyName: "P1", UploadSpeed: 10 * 1024 * 1024}
+	r2 := &speedtester.Result{ProxyName: "P2", UploadSpeed: 50 * 1024 * 1024}
+	model.results = []*speedtester.Result{r1, r2}
+
+	// Should default to sorting by 上传速度 (column 3) descending
+	if model.sortColumn != 3 || model.sortAscending != false {
+		t.Fatalf("expected sortColumn 3, ascending false, got %d, %v", model.sortColumn, model.sortAscending)
+	}
+
+	model.sortResults()
+	if model.results[0] != r2 {
+		t.Errorf("expected r2 first for upload sort descending, got %s", model.results[0].ProxyName)
+	}
+}

@@ -70,4 +70,47 @@ func TestSpeedModeHelpers(t *testing.T) {
 	if !SpeedModeFull.UploadEnabled() {
 		t.Fatalf("expected full mode to enable upload")
 	}
+	if SpeedModeFast.DownloadEnabled() {
+		t.Fatalf("expected fast mode to disable download")
+	}
+	if !SpeedModeDownload.DownloadEnabled() {
+		t.Fatalf("expected download mode to enable download")
+	}
+}
+
+func TestParseMetrics(t *testing.T) {
+	all, err := ParseMetrics("all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !all.Latency || !all.Download || !all.Upload || !all.Antigravity {
+		t.Fatalf("all metrics: %+v", all)
+	}
+
+	combo, err := ParseMetrics("latency,upload")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !combo.Latency || combo.Download || !combo.Upload {
+		t.Fatalf("combo: %+v", combo)
+	}
+
+	if _, err := ParseMetrics("bandwidth"); err == nil {
+		t.Fatal("expected error for unknown metric")
+	}
+
+	downloadOnly, err := ParseMetrics("download")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if downloadOnly.ToSpeedMode() != SpeedModeDownload {
+		t.Fatal("download should map to download mode")
+	}
+	uploadOnly, err := ParseMetrics("upload")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uploadOnly.ToSpeedMode() != SpeedModeFull {
+		t.Fatal("upload should map to full mode")
+	}
 }

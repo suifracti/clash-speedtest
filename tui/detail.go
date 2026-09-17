@@ -98,6 +98,13 @@ func buildDetailContent(result *speedtester.Result, width int, mode speedtester.
 			lines = appendWrappedValue(lines, "Upload Error:", result.FormatUploadError(), width)
 		}
 	}
+	if result.AntigravityStatus != "" || result.ExitCountry != "" || result.ExitCountryCode != "" {
+		lines = append(lines, "", fmt.Sprintf("Antigravity: %s", result.FormatAntigravity()))
+		lines = append(lines, fmt.Sprintf("Exit: %s", result.FormatExitCountry()))
+		if result.AntigravityDetail != "" {
+			lines = appendWrappedValue(lines, "Detail:", result.AntigravityDetail, width)
+		}
+	}
 	lines = append(lines, "", "Press ESC to close details.")
 	return strings.Join(lines, "\n")
 }

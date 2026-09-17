@@ -34,6 +34,25 @@ func TestGetHeaders(t *testing.T) {
 		}
 	})
 
+	t.Run("antigravity columns", func(t *testing.T) {
+		metrics := speedtester.MetricSet{Antigravity: true}
+		headers := GetHeadersWithMetrics(speedtester.SpeedModeFast, metrics)
+		if headers[len(headers)-2] != "Antigravity" || headers[len(headers)-1] != "出口" {
+			t.Fatalf("headers=%v", headers)
+		}
+		result := &speedtester.Result{
+			ProxyName:         "n1",
+			ProxyType:         "Vless",
+			AntigravityStatus: speedtester.AntigravityBlocked,
+			ExitCountry:       "Hong Kong",
+			ExitCountryCode:   "HK",
+		}
+		row := FormatRowWithMetrics(result, speedtester.SpeedModeFast, 0, metrics)
+		if row[len(row)-2] != "地区不可用" || row[len(row)-1] != "HK Hong Kong" {
+			t.Fatalf("row=%v", row)
+		}
+	})
+
 	t.Run("upload-enabled mode", func(t *testing.T) {
 		headers := GetHeaders(speedtester.SpeedModeFull)
 		expected := []string{"序号", "节点名称", "类型", "延迟", "抖动", "丢包率", "下载速度", "上传速度"}
@@ -287,6 +306,98 @@ func TestResultFormatting(t *testing.T) {
 		}
 		if row[1] != "Proxy B" {
 			t.Errorf("expected proxy name 'Proxy B', got %q", row[1])
+		}
+	})
+}
+
+func TestGetHeadersWithMetrics_CustomMetrics(t *testing.T) {
+	t.Run("upload only", func(t *testing.T) {
+		m := speedtester.MetricSet{Upload: true}
+		headers := GetHeadersWithMetrics(speedtester.SpeedModeFull, m)
+		expected := []string{"序号", "节点名称", "类型", "上传速度"}
+		if len(headers) != len(expected) {
+			t.Fatalf("expected %v, got %v", expected, headers)
+		}
+		for i, h := range headers {
+			if h != expected[i] {
+				t.Errorf("header %d: expected %q, got %q", i, expected[i], h)
+			}
+		}
+
+		res := &speedtester.Result{
+			ProxyName:   "P1",
+			ProxyType:   "ss",
+			UploadSpeed: 5 * 1024 * 1024,
+		}
+		row := FormatRowWithMetrics(res, speedtester.SpeedModeFull, 0, m)
+		if len(row) != len(expected) {
+			t.Fatalf("expected %d cols, got %d: %v", len(expected), len(row), row)
+		}
+		if row[3] != "5.00MB/s" {
+			t.Errorf("expected 5.00MB/s, got %q", row[3])
+		}
+	})
+
+	t.Run("download only", func(t *testing.T) {
+		m := speedtester.MetricSet{Download: true}
+		headers := GetHeadersWithMetrics(speedtester.SpeedModeDownload, m)
+		expected := []string{"序号", "节点名称", "类型", "下载速度"}
+		if len(headers) != len(expected) {
+			t.Fatalf("expected %v, got %v", expected, headers)
+		}
+
+		res := &speedtester.Result{
+			ProxyName:     "P1",
+			ProxyType:     "ss",
+			DownloadSpeed: 10 * 1024 * 1024,
+		}
+		row := FormatRowWithMetrics(res, speedtester.SpeedModeDownload, 0, m)
+		if len(row) != 4 || row[3] != "10.00MB/s" {
+			t.Fatalf("unexpected row: %v", row)
+		}
+	})
+
+	t.Run("latency and antigravity", func(t *testing.T) {
+		m := speedtester.MetricSet{Latency: true, Antigravity: true}
+		headers := GetHeadersWithMetrics(speedtester.SpeedModeFast, m)
+		expected := []string{"序号", "节点名称", "类型", "延迟", "Antigravity", "出口"}
+		if len(headers) != len(expected) {
+			t.Fatalf("expected %v, got %v", expected, headers)
+		}
+
+		res := &speedtester.Result{
+			ProxyName:         "P1",
+			ProxyType:         "vless",
+			Latency:           80 * time.Millisecond,
+			AntigravityStatus: speedtester.AntigravityAvailable,
+			ExitCountryCode:   "SG",
+			ExitCountry:       "Singapore",
+		}
+		row := FormatRowWithMetrics(res, speedtester.SpeedModeFast, 0, m)
+		if len(row) != 6 {
+			t.Fatalf("unexpected row length: %v", row)
+		}
+		if row[3] != "80ms" || row[4] != "可用" || row[5] != "SG Singapore" {
+			t.Fatalf("unexpected row values: %v", row)
+		}
+	})
+}
+
+func TestSortResultsWithMetrics(t *testing.T) {
+	r1 := &speedtester.Result{ProxyName: "R1", Latency: 200 * time.Millisecond, UploadSpeed: 10 * 1024 * 1024, AntigravityStatus: speedtester.AntigravityBlocked}
+	r2 := &speedtester.Result{ProxyName: "R2", Latency: 100 * time.Millisecond, UploadSpeed: 50 * 1024 * 1024, AntigravityStatus: speedtester.AntigravityAvailable}
+
+	t.Run("sort by upload", func(t *testing.T) {
+		sorted := SortResultsWithMetrics([]*speedtester.Result{r1, r2}, speedtester.SpeedModeFull, speedtester.MetricSet{Upload: true})
+		if sorted[0].ProxyName != "R2" {
+			t.Errorf("expected R2 first (50MB/s > 10MB/s), got %s", sorted[0].ProxyName)
+		}
+	})
+
+	t.Run("sort by antigravity", func(t *testing.T) {
+		sorted := SortResultsWithMetrics([]*speedtester.Result{r1, r2}, speedtester.SpeedModeFast, speedtester.MetricSet{Antigravity: true})
+		if sorted[0].ProxyName != "R2" {
+			t.Errorf("expected R2 first (Available < Blocked), got %s", sorted[0].ProxyName)
 		}
 	})
 }

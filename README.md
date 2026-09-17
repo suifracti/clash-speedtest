@@ -53,6 +53,10 @@ Usage of clash-speedtest:
         server url or direct download url (default "https://dl.google.com/chrome/mac/universal/stable/GGRO/googlechrome.dmg")
   -speed-mode string
         speed test mode: fast, download, full (default "download")
+  -metrics string
+        test metrics: latency,download,upload,antigravity or all (default follows --speed-mode)
+  -duration duration
+        keep testing for this long, e.g. 10m (0 = one pass per node)
   -download-size int
         download size for testing proxies (default 50MB)
   -upload-size int
@@ -75,6 +79,8 @@ Usage of clash-speedtest:
         stop testing after this many results pass filters (0 disables)
   -rename
         rename nodes with IP location and speed
+  -rename-template string
+        name template for renaming (Go text/template). Placeholders: {{.Flag}}, {{.CountryCode}}, {{.Index}}, {{.Direction}}, {{.Speed}}, {{.SpeedUnit}}, {{.LatencyMs}}, {{.DownloadSpeedMBps}}, {{.UploadSpeedMBps}}. Empty = default format
   -fast
         fast mode (alias for --speed-mode fast)
   -gist-token string
@@ -89,6 +95,8 @@ Usage of clash-speedtest:
         repository file path for uploading output file (default: output basename)
   -repo-branch string
         repository branch for uploading output file (default: repository default branch)
+  -antigravity-token-file string
+        OAuth token file for the Antigravity availability check; required when --metrics includes antigravity (file holds a bare Bearer token or an 'Authorization: Bearer ...' line)
 
 # 演示：
 
@@ -144,7 +152,44 @@ Premium|广港|IEPL|05                        	3.87MB/s    	249.00ms
 
 # 9. 上传到 GitHub 仓库指定分支与路径
 > clash-speedtest -c config.yaml -output result.yaml -repo-token "ghp_xxx" -repo-address "https://github.com/user/repo" -repo-file-path "configs/subscriptions/result.yaml" -repo-branch "main"
+
+# 10. 用 -metrics 精确指定测试项目（覆盖 --speed-mode 的预设）
+> clash-speedtest -c config.yaml -metrics latency,download
+# 可选值：latency、download、upload、antigravity，或用 all 表示全部
+# 支持中英文别名与多种分隔符（, ， ; 、 | 空格），例如：-metrics 延迟,下载
+# 别名：latency/ping/delay/rtt/延迟、download/down/dl/下载、upload/up/ul/上传、antigravity/ag/gravity/地区
+# --speed-mode 只是粗粒度预设，--metrics 才是真正的开关；两者同时出现时以 --metrics 为准
+
+# 11. 用 -duration 持续测试（边测边刷新）
+> clash-speedtest -c config.yaml -duration 10m
+# 在指定时长内反复测试所有节点，0（默认）表示每个节点只测一轮
+
+# 12. 检测节点能否用于 Google Antigravity
+> clash-speedtest -c config.yaml -metrics antigravity -antigravity-token-file ~/.antigravity-token
+# 必须提供 OAuth token，否则会直接报错退出，原因见下节。
 ```
+
+### 关于 Antigravity 可用性检测
+
+Antigravity 的地区门槛**只有在通过 Google 鉴权之后才会被判定**。匿名请求（不带 token）无论节点在哪个地区，都会先被拦在鉴权这一步、统一返回 `401`，因此**无法**用匿名探测区分“可用”与“不可用”——早期版本把 `401` 当作可用，会把香港等不支持地区的节点误判为可用。
+
+所以 `--metrics antigravity` 要求通过 `-antigravity-token-file` 提供一个真实的 OAuth token：
+
+- 文件内容可以是**裸 token**，也可以是**从 DevTools 里整行复制的** `Authorization: Bearer eyJ...`。
+- 工具会带上 `Authorization: Bearer <token>` 去请求 `cloudcode-pa.googleapis.com`；此时 Google 才会真正做地区判定，被拦截的节点返回 `400 FAILED_PRECONDITION` + `User location is not supported for the API use.`。
+
+判定结果（与输出中的文案一致）：
+
+| 输出文案 | 含义 |
+| --- | --- |
+| 可用 | 该节点可用于 Antigravity |
+| 地区不可用 | 节点出口地区不被 Antigravity 支持 |
+| 节点不通 | 请求根本没能到达 Google（连不上/超时） |
+| 凭证失效 | token 无效或过期（`401`/`403`）。注意：这也可能是节点不可用导致的，**并不代表该地区可用** |
+| 未知 | 其他非预期响应（其他 4xx/5xx、解析失败等） |
+| N/A | 该项未参与本轮测试 |
+
+> token 属于敏感凭证，请勿提交到仓库；建议放在仓库外并用环境变量或本地文件引用。
 
 ## GitHub Token 创建与权限
 

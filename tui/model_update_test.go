@@ -152,6 +152,28 @@ func TestTUIModelUpdate(t *testing.T) {
 	}
 }
 
+func TestTUIModelUpsertSameProxy(t *testing.T) {
+	model := NewTUIModel(speedtester.SpeedModeDownload, 1, make(chan *speedtester.Result, 4))
+	first := &speedtester.Result{ProxyName: "Proxy 1", Latency: 100 * time.Millisecond}
+	second := &speedtester.Result{ProxyName: "Proxy 1", Latency: 80 * time.Millisecond, DownloadSpeed: 10}
+
+	updated, _ := model.Update(resultMsg{result: first})
+	updated, _ = updated.(tuiModel).Update(resultMsg{result: second})
+	got := updated.(tuiModel)
+	if got.currentProxy != 1 {
+		t.Fatalf("expected 1 unique node, got %d", got.currentProxy)
+	}
+	if len(got.results) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(got.results))
+	}
+	if got.results[0].Latency != 80*time.Millisecond {
+		t.Fatalf("expected updated latency, got %v", got.results[0].Latency)
+	}
+	if got.sampleCount != 2 {
+		t.Fatalf("expected 2 samples, got %d", got.sampleCount)
+	}
+}
+
 // TestTUIModelUpdateFastMode tests the TUI model update logic in fast mode
 func TestTUIModelUpdateFastMode(t *testing.T) {
 	// Create a result channel

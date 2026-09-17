@@ -14,14 +14,20 @@ import (
 type TSVWriter struct {
 	output        io.Writer
 	mode          speedtester.SpeedMode
+	metrics       speedtester.MetricSet
 	headerWritten bool
 }
 
 // NewTSVWriter creates a new TSV writer and writes the header immediately
 func NewTSVWriter(output io.Writer, mode speedtester.SpeedMode) (*TSVWriter, error) {
+	return NewTSVWriterWithMetrics(output, mode, speedtester.MetricSet{})
+}
+
+func NewTSVWriterWithMetrics(output io.Writer, mode speedtester.SpeedMode, metrics speedtester.MetricSet) (*TSVWriter, error) {
 	w := &TSVWriter{
-		output: output,
-		mode:   mode,
+		output:  output,
+		mode:    mode,
+		metrics: metrics,
 	}
 	if err := w.writeHeader(); err != nil {
 		return nil, fmt.Errorf("failed to write TSV header: %w", err)
@@ -34,7 +40,7 @@ func (w *TSVWriter) writeHeader() error {
 	if w.headerWritten {
 		return nil
 	}
-	headers := GetHeaders(w.mode)
+	headers := GetHeadersWithMetrics(w.mode, w.metrics)
 	_, err := w.output.Write([]byte(strings.Join(headers, "\t") + "\n"))
 	if err != nil {
 		return fmt.Errorf("write header failed: %w", err)
@@ -49,7 +55,7 @@ func (w *TSVWriter) WriteRow(result *speedtester.Result, index int) error {
 	if result == nil {
 		return errors.New("cannot write nil result")
 	}
-	row := FormatRow(result, w.mode, index)
+	row := FormatRowWithMetrics(result, w.mode, index, w.metrics)
 	_, err := w.output.Write([]byte(strings.Join(row, "\t") + "\n"))
 	if err != nil {
 		return fmt.Errorf("write row for proxy %q (index %d) failed: %w", result.ProxyName, index, err)

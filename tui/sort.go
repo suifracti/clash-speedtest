@@ -17,11 +17,32 @@ func (m *tuiModel) recordSequence(result *speedtester.Result) {
 	m.sequence[result] = m.nextSequence
 }
 
-func defaultSortState(mode speedtester.SpeedMode) (int, bool) {
-	if mode.IsFast() {
-		return 3, true
+func defaultSortState(mode speedtester.SpeedMode, headers []string) (int, bool) {
+	priority := []string{"下载速度", "上传速度", "Antigravity", "延迟"}
+	for _, target := range priority {
+		for i, header := range headers {
+			if header == target {
+				return i, defaultSortAscendingForHeader(target)
+			}
+		}
 	}
-	return 6, false
+	return 0, true
+}
+
+func defaultSortAscendingForHeader(header string) bool {
+	switch header {
+	case "下载速度", "上传速度":
+		return false
+	default:
+		return true
+	}
+}
+
+func (m *tuiModel) defaultSortAscending(column int) bool {
+	if column >= 0 && column < len(m.baseHeaders) {
+		return defaultSortAscendingForHeader(m.baseHeaders[column])
+	}
+	return true
 }
 
 func defaultSortAscending(column int) bool {
@@ -46,23 +67,31 @@ func (m *tuiModel) sortResults() {
 }
 
 func (m *tuiModel) compareResults(a, b *speedtester.Result) int {
-	switch m.sortColumn {
-	case 0:
+	header := ""
+	if m.sortColumn >= 0 && m.sortColumn < len(m.baseHeaders) {
+		header = m.baseHeaders[m.sortColumn]
+	}
+	switch header {
+	case "序号":
 		return compareInt(m.sequence[a], m.sequence[b])
-	case 1:
+	case "节点名称":
 		return strings.Compare(a.ProxyName, b.ProxyName)
-	case 2:
+	case "类型":
 		return strings.Compare(a.ProxyType, b.ProxyType)
-	case 3:
+	case "延迟":
 		return compareDuration(a.Latency, b.Latency)
-	case 4:
+	case "抖动":
 		return compareDuration(a.Jitter, b.Jitter)
-	case 5:
+	case "丢包率":
 		return compareFloat(a.PacketLoss, b.PacketLoss)
-	case 6:
+	case "下载速度":
 		return compareFloat(a.DownloadSpeed, b.DownloadSpeed)
-	case 7:
+	case "上传速度":
 		return compareFloat(a.UploadSpeed, b.UploadSpeed)
+	case "Antigravity":
+		return compareInt(speedtester.AntigravityRank(a.AntigravityStatus), speedtester.AntigravityRank(b.AntigravityStatus))
+	case "出口":
+		return strings.Compare(a.FormatExitCountry(), b.FormatExitCountry())
 	default:
 		return 0
 	}

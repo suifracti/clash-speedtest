@@ -35,13 +35,29 @@ func (m *tuiModel) updateTableLayout() {
 
 func (m tuiModel) progressLine() string {
 	elapsed := time.Since(m.startTime)
-	eta := formatETA(elapsed, m.currentProxy, m.totalProxies)
 	state := "Testing"
 	if !m.testing {
 		state = "Completed"
 	}
-	info := fmt.Sprintf("%s %d/%d", state, m.currentProxy, m.totalProxies)
-	metrics := fmt.Sprintf("Elapsed %s | ETA %s", formatDuration(elapsed), eta)
+	var info, metrics string
+	if m.duration > 0 {
+		remaining := m.duration - elapsed
+		if remaining < 0 {
+			remaining = 0
+		}
+		info = fmt.Sprintf("%s %d nodes | %d samples", state, len(m.results), m.sampleCount)
+		metrics = fmt.Sprintf("%s / %s | left %s", formatDuration(elapsed), formatDuration(m.duration), formatDuration(remaining))
+	} else if m.rounds > 1 {
+		totalSamples := m.totalProxies * m.rounds
+		currentRound := min(m.sampleCount/max(m.totalProxies, 1)+1, m.rounds)
+		eta := formatETA(elapsed, m.sampleCount, totalSamples)
+		info = fmt.Sprintf("%s %d/%d (第 %d/%d 轮)", state, m.sampleCount, totalSamples, currentRound, m.rounds)
+		metrics = fmt.Sprintf("Elapsed %s | ETA %s", formatDuration(elapsed), eta)
+	} else {
+		eta := formatETA(elapsed, m.currentProxy, m.totalProxies)
+		info = fmt.Sprintf("%s %d/%d", state, m.currentProxy, m.totalProxies)
+		metrics = fmt.Sprintf("Elapsed %s | ETA %s", formatDuration(elapsed), eta)
+	}
 	barWidth := 40
 	if m.windowWidth > 0 {
 		available := min(max(m.windowWidth-lipgloss.Width(info)-lipgloss.Width(metrics)-lipgloss.Width(" | ")-1, 10), 40)

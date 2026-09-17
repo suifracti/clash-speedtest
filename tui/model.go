@@ -55,6 +55,11 @@ type tuiModel struct {
 	flushScheduled bool
 	detailHeight   int
 	perf           *perfTracker
+	duration       time.Duration
+	rounds         int
+	sampleCount    int
+	resultIndex    map[string]int
+	metrics        speedtester.MetricSet
 }
 
 const (
@@ -78,9 +83,9 @@ func NewTUIModel(mode speedtester.SpeedMode, totalProxies int, resultChannel cha
 		progress.WithWidth(40),
 	)
 
-	// Initialize table with headers
-	headers := output.GetHeaders(mode)
-	sortColumn, sortAscending := defaultSortState(mode)
+	metrics := speedtester.MetricsFromMode(mode)
+	headers := output.GetHeadersWithMetrics(mode, metrics)
+	sortColumn, sortAscending := defaultSortState(mode, headers)
 	columns := buildColumns(addSortIndicators(headers, sortColumn, sortAscending), 0, mode)
 
 	t := table.New(
@@ -126,7 +131,33 @@ func NewTUIModel(mode speedtester.SpeedMode, totalProxies int, resultChannel cha
 		flushScheduled: false,
 		detailHeight:   0,
 		perf:           newPerfTracker(),
+		resultIndex:    make(map[string]int),
+		metrics:        metrics,
 	}
+}
+
+func (m tuiModel) WithDuration(duration time.Duration) tuiModel {
+	m.duration = duration
+	return m
+}
+
+func (m tuiModel) WithRounds(rounds int) tuiModel {
+	if rounds <= 0 {
+		rounds = 1
+	}
+	m.rounds = rounds
+	return m
+}
+
+func (m tuiModel) WithMetrics(metrics speedtester.MetricSet) tuiModel {
+	if metrics.IsZero() {
+		metrics = speedtester.MetricsFromMode(m.mode)
+	}
+	m.metrics = metrics
+	m.baseHeaders = output.GetHeadersWithMetrics(m.mode, metrics)
+	m.sortColumn, m.sortAscending = defaultSortState(m.mode, m.baseHeaders)
+	m.table.SetColumns(buildColumns(addSortIndicators(m.baseHeaders, m.sortColumn, m.sortAscending), m.windowWidth, m.mode))
+	return m
 }
 
 // Init initializes the TUI model
@@ -205,7 +236,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.sortAscending = !m.sortAscending
 					} else {
 						m.sortColumn = columnIndex
-						m.sortAscending = defaultSortAscending(columnIndex)
+						m.sortAscending = m.defaultSortAscending(columnIndex)
 					}
 					m.sortResults()
 					m.updateTableHeaders()
@@ -229,11 +260,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case resultMsg:
-		m.currentProxy++
-		m.results = append(m.results, msg.result)
-		m.recordSequence(msg.result)
+		m.upsertResult(msg.result)
 		m.resultsDirty = true
-		progressCmd := m.progress.SetPercent(float64(m.currentProxy) / float64(m.totalProxies))
+		progressCmd := m.progress.SetPercent(m.progressPercent())
 		cmds := []tea.Cmd{progressCmd, m.waitForResult()}
 		if !m.flushScheduled {
 			m.flushScheduled = true
@@ -261,6 +290,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case timerTickMsg:
+		if m.duration > 0 && m.testing {
+			return m, tea.Batch(timerTickCmd(), m.progress.SetPercent(m.progressPercent()))
+		}
 		return m, timerTickCmd()
 
 	case flushResultsMsg:
@@ -275,6 +307,60 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmd = progressCmd
 
 	return m, cmd
+}
+
+func (m *tuiModel) upsertResult(result *speedtester.Result) {
+	if result == nil {
+		return
+	}
+	m.sampleCount++
+	if idx, ok := m.resultIndex[result.ProxyName]; ok {
+		old := m.results[idx]
+		m.results[idx] = result
+		if seq, exists := m.sequence[old]; exists {
+			m.sequence[result] = seq
+			delete(m.sequence, old)
+		} else {
+			m.recordSequence(result)
+		}
+		if m.detailVisible && m.detailResult != nil && m.detailResult.ProxyName == result.ProxyName {
+			m.detailResult = result
+		}
+		return
+	}
+	m.currentProxy++
+	m.resultIndex[result.ProxyName] = len(m.results)
+	m.results = append(m.results, result)
+	m.recordSequence(result)
+}
+
+func (m tuiModel) progressPercent() float64 {
+	if m.duration > 0 {
+		elapsed := time.Since(m.startTime)
+		if elapsed <= 0 {
+			return 0
+		}
+		percent := float64(elapsed) / float64(m.duration)
+		if percent > 1 {
+			return 1
+		}
+		return percent
+	}
+	if m.rounds > 1 {
+		total := m.totalProxies * m.rounds
+		if total <= 0 {
+			return 0
+		}
+		percent := float64(m.sampleCount) / float64(total)
+		if percent > 1 {
+			return 1
+		}
+		return percent
+	}
+	if m.totalProxies <= 0 {
+		return 0
+	}
+	return float64(m.currentProxy) / float64(m.totalProxies)
 }
 
 // View renders the TUI
