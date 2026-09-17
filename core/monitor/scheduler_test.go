@@ -213,7 +213,7 @@ func TestScheduler_OverlapPrevention(t *testing.T) {
 
 	// Verify store captured at least one RunStatusSkipped record
 	foundSkippedRecord := false
-	for _, r := range mockStore.runs {
+	for _, r := range mockStore.GetRuns() {
 		if r.Status == RunStatusSkipped {
 			foundSkippedRecord = true
 			break

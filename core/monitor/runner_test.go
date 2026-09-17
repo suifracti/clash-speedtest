@@ -11,17 +11,22 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 type mockDialer struct {
+	mu        sync.RWMutex
 	responses map[string]func(req *http.Request) (*http.Response, error)
 }
 
 func (m *mockDialer) CreateClient(node MonitoredNode, timeout time.Duration) (*http.Client, error) {
+	m.mu.RLock()
+	handler := m.responses[node.NodeKey]
+	m.mu.RUnlock()
 	transport := &mockRoundTripper{
-		handler: m.responses[node.NodeKey],
+		handler: handler,
 	}
 	return &http.Client{
 		Timeout:   timeout,
@@ -45,16 +50,21 @@ func (m *mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 }
 
 type mockSampleStore struct {
+	mu      sync.RWMutex
 	runs    []*MonitorRun
 	samples []*MonitorSample
 }
 
 func (m *mockSampleStore) SaveMonitorRun(ctx context.Context, run *MonitorRun) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.runs = append(m.runs, run)
 	return nil
 }
 
 func (m *mockSampleStore) UpdateMonitorRun(ctx context.Context, run *MonitorRun) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for i, r := range m.runs {
 		if r.RunID == run.RunID {
 			m.runs[i] = run
@@ -66,19 +76,31 @@ func (m *mockSampleStore) UpdateMonitorRun(ctx context.Context, run *MonitorRun)
 }
 
 func (m *mockSampleStore) SaveMonitorSamples(ctx context.Context, samples []*MonitorSample) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.samples = append(m.samples, samples...)
 	return nil
 }
 
 func (m *mockSampleStore) QueryMonitorRuns(ctx context.Context, jobID string, limit int) ([]*MonitorRun, error) {
-	return m.runs, nil
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	res := make([]*MonitorRun, len(m.runs))
+	copy(res, m.runs)
+	return res, nil
 }
 
 func (m *mockSampleStore) QueryMonitorSamples(ctx context.Context, filter SampleFilter) ([]*MonitorSample, error) {
-	return m.samples, nil
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	res := make([]*MonitorSample, len(m.samples))
+	copy(res, m.samples)
+	return res, nil
 }
 
 func (m *mockSampleStore) GetNodeTimelineSamples(ctx context.Context, nodeKey string, since time.Time) ([]*MonitorSample, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	var matched []*MonitorSample
 	for _, s := range m.samples {
 		if s.NodeKey == nodeKey && !s.Timestamp.Before(since) {
@@ -86,6 +108,14 @@ func (m *mockSampleStore) GetNodeTimelineSamples(ctx context.Context, nodeKey st
 		}
 	}
 	return matched, nil
+}
+
+func (m *mockSampleStore) GetRuns() []*MonitorRun {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	res := make([]*MonitorRun, len(m.runs))
+	copy(res, m.runs)
+	return res
 }
 
 func TestRunner_PartialFailureResilience(t *testing.T) {
