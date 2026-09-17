@@ -1,6 +1,7 @@
 package history
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/faceair/clash-speedtest/core/monitor"
 )
 
 type TestRun struct {
@@ -261,6 +264,7 @@ type AirportHistory struct {
 type Store struct {
 	dir string
 	mu  sync.RWMutex
+	db  *DB
 }
 
 func DefaultHistoryDir() string {
@@ -278,7 +282,52 @@ func NewStore(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create history dir %q: %w", dir, err)
 	}
-	return &Store{dir: dir}, nil
+	db, err := OpenDB(dir)
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite db: %w", err)
+	}
+	return &Store{dir: dir, db: db}, nil
+}
+
+func (s *Store) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.db != nil {
+		err := s.db.Close()
+		s.db = nil
+		return err
+	}
+	return nil
+}
+
+func (s *Store) DB() *DB {
+	return s.db
+}
+
+// SampleStore interface implementation delegating to SQLite DB
+
+func (s *Store) SaveMonitorRun(ctx context.Context, run *monitor.MonitorRun) error {
+	return s.db.SaveMonitorRun(ctx, run)
+}
+
+func (s *Store) UpdateMonitorRun(ctx context.Context, run *monitor.MonitorRun) error {
+	return s.db.UpdateMonitorRun(ctx, run)
+}
+
+func (s *Store) SaveMonitorSamples(ctx context.Context, samples []*monitor.MonitorSample) error {
+	return s.db.SaveMonitorSamples(ctx, samples)
+}
+
+func (s *Store) QueryMonitorRuns(ctx context.Context, jobID string, limit int) ([]*monitor.MonitorRun, error) {
+	return s.db.QueryMonitorRuns(ctx, jobID, limit)
+}
+
+func (s *Store) QueryMonitorSamples(ctx context.Context, filter monitor.SampleFilter) ([]*monitor.MonitorSample, error) {
+	return s.db.QueryMonitorSamples(ctx, filter)
+}
+
+func (s *Store) GetNodeTimelineSamples(ctx context.Context, nodeKey string, since time.Time) ([]*monitor.MonitorSample, error) {
+	return s.db.GetNodeTimelineSamples(ctx, nodeKey, since)
 }
 
 func (s *Store) Dir() string {

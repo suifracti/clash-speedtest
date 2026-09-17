@@ -27,6 +27,7 @@ func TestWebServerEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewServer error: %v", err)
 	}
+	defer server.Close()
 
 	// 1. Test status endpoint
 	req := httptest.NewRequest(http.MethodGet, "/api/test/status", nil)
@@ -122,6 +123,7 @@ func TestWebServer_SecurityMiddleware(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewServer error: %v", err)
 	}
+	defer server.Close()
 	handler := server.Handler()
 
 	// 1. Safe GET request with loopback Host -> 200 OK
@@ -263,5 +265,129 @@ func TestWebServer_SPAHandler(t *testing.T) {
 		t.Errorf("SPA fallback: expected index.html content, got %s", rec3.Body.String())
 	}
 }
+
+func TestWebServer_MonitorEndpoints(t *testing.T) {
+	tmpDir := t.TempDir()
+	profileDir := filepath.Join(tmpDir, "profiles")
+	_ = os.MkdirAll(profileDir, 0o755)
+
+	server, err := NewServer(ServerConfig{
+		Port:         0,
+		ProfilePaths: profiles.Paths{Dir: profileDir},
+		HistoryDir:   filepath.Join(tmpDir, "history"),
+	})
+	if err != nil {
+		t.Fatalf("NewServer error: %v", err)
+	}
+	defer server.Close()
+
+	handler := server.Handler()
+
+	// 1. Create monitor job
+	createPayload := []byte(`{
+		"id": "job_web_1",
+		"name": "Web Test Monitor",
+		"interval": 300000000000,
+		"nodes": [
+			{
+				"display_name": "HK-Node",
+				"type": "ss",
+				"server": "1.2.3.4",
+				"port": 8388,
+				"raw_config": {"type": "ss", "server": "1.2.3.4", "port": 8388}
+			}
+		]
+	}`)
+	reqCreate := httptest.NewRequest(http.MethodPost, "/api/monitor/jobs", bytes.NewReader(createPayload))
+	reqCreate.Host = "127.0.0.1:8080"
+	reqCreate.Header.Set("Content-Type", "application/json")
+	recCreate := httptest.NewRecorder()
+	handler.ServeHTTP(recCreate, reqCreate)
+	if recCreate.Code != http.StatusCreated {
+		t.Fatalf("POST /api/monitor/jobs: expected 201 Created, got %d, body: %s", recCreate.Code, recCreate.Body.String())
+	}
+
+	// 2. List monitor jobs
+	reqList := httptest.NewRequest(http.MethodGet, "/api/monitor/jobs", nil)
+	reqList.Host = "127.0.0.1:8080"
+	recList := httptest.NewRecorder()
+	handler.ServeHTTP(recList, reqList)
+	if recList.Code != http.StatusOK {
+		t.Fatalf("GET /api/monitor/jobs: expected 200 OK, got %d", recList.Code)
+	}
+
+	// 3. Get specific job
+	reqGet := httptest.NewRequest(http.MethodGet, "/api/monitor/jobs/job_web_1", nil)
+	reqGet.Host = "127.0.0.1:8080"
+	recGet := httptest.NewRecorder()
+	handler.ServeHTTP(recGet, reqGet)
+	if recGet.Code != http.StatusOK {
+		t.Fatalf("GET /api/monitor/jobs/job_web_1: expected 200 OK, got %d", recGet.Code)
+	}
+
+	// 4. Start job
+	reqStart := httptest.NewRequest(http.MethodPost, "/api/monitor/jobs/job_web_1/start", nil)
+	reqStart.Host = "127.0.0.1:8080"
+	recStart := httptest.NewRecorder()
+	handler.ServeHTTP(recStart, reqStart)
+	if recStart.Code != http.StatusOK {
+		t.Fatalf("POST /api/monitor/jobs/job_web_1/start: expected 200 OK, got %d", recStart.Code)
+	}
+
+	// 5. Pause job
+	reqPause := httptest.NewRequest(http.MethodPost, "/api/monitor/jobs/job_web_1/pause", nil)
+	reqPause.Host = "127.0.0.1:8080"
+	recPause := httptest.NewRecorder()
+	handler.ServeHTTP(recPause, reqPause)
+	if recPause.Code != http.StatusOK {
+		t.Fatalf("POST /api/monitor/jobs/job_web_1/pause: expected 200 OK, got %d", recPause.Code)
+	}
+
+	// 6. Resume job
+	reqResume := httptest.NewRequest(http.MethodPost, "/api/monitor/jobs/job_web_1/resume", nil)
+	reqResume.Host = "127.0.0.1:8080"
+	recResume := httptest.NewRecorder()
+	handler.ServeHTTP(recResume, reqResume)
+	if recResume.Code != http.StatusOK {
+		t.Fatalf("POST /api/monitor/jobs/job_web_1/resume: expected 200 OK, got %d", recResume.Code)
+	}
+
+	// 7. Stop job
+	reqStop := httptest.NewRequest(http.MethodPost, "/api/monitor/jobs/job_web_1/stop", nil)
+	reqStop.Host = "127.0.0.1:8080"
+	recStop := httptest.NewRecorder()
+	handler.ServeHTTP(recStop, reqStop)
+	if recStop.Code != http.StatusOK {
+		t.Fatalf("POST /api/monitor/jobs/job_web_1/stop: expected 200 OK, got %d", recStop.Code)
+	}
+
+	// 8. Query runs
+	reqRuns := httptest.NewRequest(http.MethodGet, "/api/monitor/runs?job_id=job_web_1", nil)
+	reqRuns.Host = "127.0.0.1:8080"
+	recRuns := httptest.NewRecorder()
+	handler.ServeHTTP(recRuns, reqRuns)
+	if recRuns.Code != http.StatusOK {
+		t.Fatalf("GET /api/monitor/runs: expected 200 OK, got %d", recRuns.Code)
+	}
+
+	// 9. Query samples
+	reqSamples := httptest.NewRequest(http.MethodGet, "/api/monitor/samples?probe_type=rtt", nil)
+	reqSamples.Host = "127.0.0.1:8080"
+	recSamples := httptest.NewRecorder()
+	handler.ServeHTTP(recSamples, reqSamples)
+	if recSamples.Code != http.StatusOK {
+		t.Fatalf("GET /api/monitor/samples: expected 200 OK, got %d", recSamples.Code)
+	}
+
+	// 10. Query timeline
+	reqTimeline := httptest.NewRequest(http.MethodGet, "/api/monitor/timeline?node_key=test_nk", nil)
+	reqTimeline.Host = "127.0.0.1:8080"
+	recTimeline := httptest.NewRecorder()
+	handler.ServeHTTP(recTimeline, reqTimeline)
+	if recTimeline.Code != http.StatusOK {
+		t.Fatalf("GET /api/monitor/timeline: expected 200 OK, got %d", recTimeline.Code)
+	}
+}
+
 
 

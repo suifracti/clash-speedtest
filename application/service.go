@@ -18,6 +18,7 @@ import (
 	"github.com/faceair/clash-speedtest/core/auth"
 	"github.com/faceair/clash-speedtest/core/controller"
 	"github.com/faceair/clash-speedtest/core/history"
+	"github.com/faceair/clash-speedtest/core/monitor"
 	"github.com/faceair/clash-speedtest/core/policy"
 	"github.com/faceair/clash-speedtest/core/profiles"
 	"github.com/faceair/clash-speedtest/core/speedtester"
@@ -47,6 +48,11 @@ type AppService struct {
 	policy         policy.SwitchPolicy
 	decisionEngine *policy.DecisionEngine
 	decisionState  policy.DecisionState
+
+	// 24/7 Monitor subsystem fields
+	monitorMu         sync.RWMutex
+	monitorSchedulers map[string]*monitor.Scheduler
+	monitorRunner     *monitor.Runner
 }
 
 // NewAppService creates a new application service instance.
@@ -55,15 +61,22 @@ func NewAppService(hStore *history.Store, paths profiles.Paths, emitter EventEmi
 		emitter = NewMemoryEventEmitter()
 	}
 	svc := &AppService{
-		historyStore:   hStore,
-		profilePaths:   paths,
-		emitter:        emitter,
-		decisionEngine: policy.NewDecisionEngine(),
-		policy:         policy.DefaultSwitchPolicy(),
+		historyStore:      hStore,
+		profilePaths:      paths,
+		emitter:           emitter,
+		decisionEngine:    policy.NewDecisionEngine(),
+		policy:            policy.DefaultSwitchPolicy(),
+		monitorSchedulers: make(map[string]*monitor.Scheduler),
 		controllerCfg: ControllerConfigDTO{
 			Endpoint: "http://127.0.0.1:9090",
 			Mode:     "external",
 		},
+	}
+
+	if hStore != nil {
+		svc.monitorRunner = monitor.NewRunner(monitor.RunnerConfig{
+			Store: hStore,
+		})
 	}
 
 	// Initialize default Mihomo controller adapter
@@ -95,22 +108,34 @@ func (s *AppService) Status() TestStatus {
 	return s.status
 }
 
-// Stop interrupts any running test task.
+// Stop interrupts any running test task and stops background monitor jobs.
 func (s *AppService) Stop() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.cancelFunc != nil {
 		s.stoppedByUser.Store(true)
 		s.cancelFunc()
 		s.cancelFunc = nil
 	}
 	s.status.IsRunning = false
+	s.mu.Unlock()
+
+	s.StopAllMonitorJobs()
+
 	s.emitter.Emit(Event{
 		Type: "test_stopped",
 		Payload: map[string]any{
 			"message": "测试已被用户中断",
 		},
 	})
+}
+
+// Close stops all background tasks and cleanly releases database connections.
+func (s *AppService) Close() error {
+	s.Stop()
+	if s.historyStore != nil {
+		return s.historyStore.Close()
+	}
+	return nil
 }
 
 // StartBatch starts a batch speed test across specified or all nodes of an airport.
@@ -1498,5 +1523,249 @@ func (s *AppService) EvaluateAndAutoSwitch(ctx context.Context, evals []policy.N
 
 	return res, nil
 }
+
+// --- 24/7 Monitor Subsystem ---
+
+// SetMonitorRunner injects a custom runner (useful for testing).
+func (s *AppService) SetMonitorRunner(runner *monitor.Runner) {
+	s.monitorMu.Lock()
+	defer s.monitorMu.Unlock()
+	s.monitorRunner = runner
+}
+
+// CreateMonitorJob registers a new 24/7 monitor job and prepares its scheduler.
+func (s *AppService) CreateMonitorJob(job monitor.MonitorJob) (*monitor.MonitorJob, error) {
+	s.monitorMu.Lock()
+	defer s.monitorMu.Unlock()
+
+	if job.ID == "" {
+		job.ID = fmt.Sprintf("job_%d", time.Now().UnixNano())
+	}
+	if job.Name == "" {
+		job.Name = "24/7 Monitor Job"
+	}
+	if job.Interval <= 0 {
+		job.Interval = 5 * time.Minute
+	}
+	if job.Timeout <= 0 {
+		job.Timeout = 10 * time.Second
+	}
+	if job.ProbeSet == "" {
+		job.ProbeSet = monitor.ProbeSetLight
+	}
+
+	// Compute NodeKeys for all nodes
+	for i := range job.Nodes {
+		if job.Nodes[i].NodeKey == "" {
+			job.Nodes[i].NodeKey = monitor.ComputeNodeKeyFromNode(job.Nodes[i])
+		}
+	}
+	job.NodeKeys = make([]string, len(job.Nodes))
+	for i, n := range job.Nodes {
+		job.NodeKeys[i] = n.NodeKey
+	}
+
+	job.State = monitor.JobStateStopped
+	job.CreatedAt = time.Now()
+	job.UpdatedAt = time.Now()
+
+	runner := s.monitorRunner
+	if runner == nil {
+		if s.historyStore != nil {
+			runner = monitor.NewRunner(monitor.RunnerConfig{
+				Store: s.historyStore,
+			})
+			s.monitorRunner = runner
+		} else {
+			return nil, fmt.Errorf("history store is not initialized")
+		}
+	}
+
+	sched, err := monitor.NewScheduler(monitor.SchedulerConfig{
+		Job:    &job,
+		Runner: runner,
+		Store:  s.historyStore,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create monitor scheduler: %w", err)
+	}
+
+	s.monitorSchedulers[job.ID] = sched
+
+	s.emitter.Emit(Event{
+		Type: "monitor_job_created",
+		Payload: map[string]any{
+			"job_id": job.ID,
+			"name":   job.Name,
+			"nodes":  len(job.Nodes),
+		},
+	})
+
+	return &job, nil
+}
+
+// StartMonitorJob starts the scheduler loop for the given job.
+func (s *AppService) StartMonitorJob(jobID string) error {
+	s.monitorMu.RLock()
+	sched, ok := s.monitorSchedulers[jobID]
+	s.monitorMu.RUnlock()
+	if !ok {
+		return fmt.Errorf("monitor job %s not found", jobID)
+	}
+
+	if err := sched.Start(context.Background()); err != nil {
+		return fmt.Errorf("start monitor job %s: %w", jobID, err)
+	}
+
+	s.emitter.Emit(Event{
+		Type: "monitor_job_started",
+		Payload: map[string]any{
+			"job_id": jobID,
+		},
+	})
+	return nil
+}
+
+// PauseMonitorJob pauses execution of the monitor job without stopping the scheduler.
+func (s *AppService) PauseMonitorJob(jobID string) error {
+	s.monitorMu.RLock()
+	sched, ok := s.monitorSchedulers[jobID]
+	s.monitorMu.RUnlock()
+	if !ok {
+		return fmt.Errorf("monitor job %s not found", jobID)
+	}
+
+	if err := sched.Pause(); err != nil {
+		return fmt.Errorf("pause monitor job %s: %w", jobID, err)
+	}
+
+	s.emitter.Emit(Event{
+		Type: "monitor_job_paused",
+		Payload: map[string]any{
+			"job_id": jobID,
+		},
+	})
+	return nil
+}
+
+// ResumeMonitorJob resumes a paused monitor job.
+func (s *AppService) ResumeMonitorJob(jobID string) error {
+	s.monitorMu.RLock()
+	sched, ok := s.monitorSchedulers[jobID]
+	s.monitorMu.RUnlock()
+	if !ok {
+		return fmt.Errorf("monitor job %s not found", jobID)
+	}
+
+	if err := sched.Resume(); err != nil {
+		return fmt.Errorf("resume monitor job %s: %w", jobID, err)
+	}
+
+	s.emitter.Emit(Event{
+		Type: "monitor_job_resumed",
+		Payload: map[string]any{
+			"job_id": jobID,
+		},
+	})
+	return nil
+}
+
+// StopMonitorJob stops the scheduler and waits for in-flight tasks to exit cleanly.
+func (s *AppService) StopMonitorJob(jobID string) error {
+	s.monitorMu.RLock()
+	sched, ok := s.monitorSchedulers[jobID]
+	s.monitorMu.RUnlock()
+	if !ok {
+		return fmt.Errorf("monitor job %s not found", jobID)
+	}
+
+	if err := sched.Stop(); err != nil {
+		return fmt.Errorf("stop monitor job %s: %w", jobID, err)
+	}
+
+	s.emitter.Emit(Event{
+		Type: "monitor_job_stopped",
+		Payload: map[string]any{
+			"job_id": jobID,
+		},
+	})
+	return nil
+}
+
+// StopAllMonitorJobs stops all configured monitor schedulers.
+func (s *AppService) StopAllMonitorJobs() {
+	s.monitorMu.RLock()
+	schedulers := make([]*monitor.Scheduler, 0, len(s.monitorSchedulers))
+	for _, sched := range s.monitorSchedulers {
+		schedulers = append(schedulers, sched)
+	}
+	s.monitorMu.RUnlock()
+
+	for _, sched := range schedulers {
+		_ = sched.Stop()
+	}
+}
+
+// GetMonitorJob returns the current status and config of the specified job.
+func (s *AppService) GetMonitorJob(jobID string) (*monitor.MonitorJob, error) {
+	s.monitorMu.RLock()
+	sched, ok := s.monitorSchedulers[jobID]
+	s.monitorMu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("monitor job %s not found", jobID)
+	}
+
+	job := sched.Job()
+	return &job, nil
+}
+
+// ListMonitorJobs returns all configured monitor jobs.
+func (s *AppService) ListMonitorJobs() []monitor.MonitorJob {
+	s.monitorMu.RLock()
+	defer s.monitorMu.RUnlock()
+
+	jobs := make([]monitor.MonitorJob, 0, len(s.monitorSchedulers))
+	for _, sched := range s.monitorSchedulers {
+		jobs = append(jobs, sched.Job())
+	}
+	return jobs
+}
+
+// TriggerMonitorJob triggers an immediate single round execution of the specified job.
+func (s *AppService) TriggerMonitorJob(jobID string) (*monitor.MonitorRun, error) {
+	s.monitorMu.RLock()
+	sched, ok := s.monitorSchedulers[jobID]
+	s.monitorMu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("monitor job %s not found", jobID)
+	}
+
+	return sched.TriggerImmediate(context.Background())
+}
+
+// QueryMonitorSamples retrieves raw probe samples according to the filter.
+func (s *AppService) QueryMonitorSamples(ctx context.Context, filter monitor.SampleFilter) ([]*monitor.MonitorSample, error) {
+	if s.historyStore == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
+	return s.historyStore.QueryMonitorSamples(ctx, filter)
+}
+
+// QueryMonitorRuns retrieves past monitor run metadata.
+func (s *AppService) QueryMonitorRuns(ctx context.Context, jobID string, limit int) ([]*monitor.MonitorRun, error) {
+	if s.historyStore == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
+	return s.historyStore.QueryMonitorRuns(ctx, jobID, limit)
+}
+
+// GetNodeTimelineSamples retrieves timestamp-ordered samples for a node key.
+func (s *AppService) GetNodeTimelineSamples(ctx context.Context, nodeKey string, since time.Time) ([]*monitor.MonitorSample, error) {
+	if s.historyStore == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
+	return s.historyStore.GetNodeTimelineSamples(ctx, nodeKey, since)
+}
+
 
 

@@ -20,6 +20,7 @@ import (
 	"github.com/faceair/clash-speedtest/application"
 	"github.com/faceair/clash-speedtest/core/auth"
 	"github.com/faceair/clash-speedtest/core/history"
+	"github.com/faceair/clash-speedtest/core/monitor"
 	"github.com/faceair/clash-speedtest/core/policy"
 	"github.com/faceair/clash-speedtest/core/profiles"
 )
@@ -87,6 +88,17 @@ func (s *Server) ShutdownChan() <-chan struct{} {
 	return s.shutdownChan
 }
 
+// Close stops the server and cleanly releases backend resources including SQLite connections.
+func (s *Server) Close() error {
+	if s.httpServer != nil {
+		_ = s.httpServer.Close()
+	}
+	if s.app != nil {
+		return s.app.Close()
+	}
+	return nil
+}
+
 // Handler returns the fully configured http.Handler with routing and security middleware.
 func (s *Server) Handler() http.Handler {
 	return s.buildHandler()
@@ -133,6 +145,19 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("GET /api/controller/policy", s.handleGetSwitchPolicy)
 	mux.HandleFunc("POST /api/controller/policy", s.handleUpdateSwitchPolicy)
 	mux.HandleFunc("GET /api/controller/audit", s.handleGetSwitchAuditTrail)
+
+	// 24/7 Monitor REST routes
+	mux.HandleFunc("POST /api/monitor/jobs", s.handleCreateMonitorJob)
+	mux.HandleFunc("GET /api/monitor/jobs", s.handleListMonitorJobs)
+	mux.HandleFunc("GET /api/monitor/jobs/{id}", s.handleGetMonitorJob)
+	mux.HandleFunc("POST /api/monitor/jobs/{id}/start", s.handleStartMonitorJob)
+	mux.HandleFunc("POST /api/monitor/jobs/{id}/pause", s.handlePauseMonitorJob)
+	mux.HandleFunc("POST /api/monitor/jobs/{id}/resume", s.handleResumeMonitorJob)
+	mux.HandleFunc("POST /api/monitor/jobs/{id}/stop", s.handleStopMonitorJob)
+	mux.HandleFunc("POST /api/monitor/jobs/{id}/trigger", s.handleTriggerMonitorJob)
+	mux.HandleFunc("GET /api/monitor/runs", s.handleQueryMonitorRuns)
+	mux.HandleFunc("GET /api/monitor/samples", s.handleQueryMonitorSamples)
+	mux.HandleFunc("GET /api/monitor/timeline", s.handleGetNodeTimelineSamples)
 
 	mux.HandleFunc("GET /api/events", s.handleEventsSSE)
 	mux.HandleFunc("POST /api/shutdown", s.handleShutdown)
@@ -772,5 +797,144 @@ func (s *Server) handleGetSwitchAuditTrail(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, audit)
+}
+
+// --- 24/7 Monitor Handlers ---
+
+func (s *Server) handleCreateMonitorJob(w http.ResponseWriter, r *http.Request) {
+	var job monitor.MonitorJob
+	if err := json.NewDecoder(r.Body).Decode(&job); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body: "+err.Error())
+		return
+	}
+	created, err := s.app.CreateMonitorJob(job)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, created)
+}
+
+func (s *Server) handleListMonitorJobs(w http.ResponseWriter, r *http.Request) {
+	jobs := s.app.ListMonitorJobs()
+	writeJSON(w, http.StatusOK, jobs)
+}
+
+func (s *Server) handleGetMonitorJob(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	job, err := s.app.GetMonitorJob(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, job)
+}
+
+func (s *Server) handleStartMonitorJob(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.app.StartMonitorJob(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"started": true})
+}
+
+func (s *Server) handlePauseMonitorJob(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.app.PauseMonitorJob(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"paused": true})
+}
+
+func (s *Server) handleResumeMonitorJob(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.app.ResumeMonitorJob(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"resumed": true})
+}
+
+func (s *Server) handleStopMonitorJob(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.app.StopMonitorJob(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"stopped": true})
+}
+
+func (s *Server) handleTriggerMonitorJob(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	run, err := s.app.TriggerMonitorJob(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, run)
+}
+
+func (s *Server) handleQueryMonitorRuns(w http.ResponseWriter, r *http.Request) {
+	jobID := r.URL.Query().Get("job_id")
+	limitStr := r.URL.Query().Get("limit")
+	limit := 50
+	if limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	runs, err := s.app.QueryMonitorRuns(r.Context(), jobID, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, runs)
+}
+
+func (s *Server) handleQueryMonitorSamples(w http.ResponseWriter, r *http.Request) {
+	filter := monitor.SampleFilter{
+		RunID:     r.URL.Query().Get("run_id"),
+		NodeKey:   r.URL.Query().Get("node_key"),
+		ProfileID: r.URL.Query().Get("profile_id"),
+		ProbeType: r.URL.Query().Get("probe_type"),
+	}
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if limit, err := strconv.Atoi(limitStr); err == nil {
+			filter.Limit = limit
+		}
+	}
+	if successStr := r.URL.Query().Get("success"); successStr != "" {
+		val := successStr == "true" || successStr == "1"
+		filter.Success = &val
+	}
+	samples, err := s.app.QueryMonitorSamples(r.Context(), filter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, samples)
+}
+
+func (s *Server) handleGetNodeTimelineSamples(w http.ResponseWriter, r *http.Request) {
+	nodeKey := r.URL.Query().Get("node_key")
+	if nodeKey == "" {
+		writeError(w, http.StatusBadRequest, "node_key query param required")
+		return
+	}
+	sinceStr := r.URL.Query().Get("since")
+	since := time.Now().Add(-24 * time.Hour)
+	if sinceStr != "" {
+		if t, err := time.Parse(time.RFC3339, sinceStr); err == nil {
+			since = t
+		}
+	}
+	samples, err := s.app.GetNodeTimelineSamples(r.Context(), nodeKey, since)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, samples)
 }
 

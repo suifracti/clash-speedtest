@@ -1,14 +1,19 @@
 package application
 
 import (
+	"bytes"
 	"context"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/faceair/clash-speedtest/core/controller"
 	"github.com/faceair/clash-speedtest/core/history"
+	"github.com/faceair/clash-speedtest/core/monitor"
 	"github.com/faceair/clash-speedtest/core/policy"
 	"github.com/faceair/clash-speedtest/core/profiles"
 )
@@ -32,6 +37,7 @@ func TestAppServiceInitialization(t *testing.T) {
 	})
 
 	svc := NewAppService(hStore, paths, emitter)
+	defer svc.Close()
 
 	// Verify initial status
 	st := svc.Status()
@@ -171,6 +177,7 @@ func TestAppService_ControllerAndPolicy(t *testing.T) {
 	})
 
 	svc := NewAppService(hStore, paths, emitter)
+	defer svc.Close()
 
 	mockCtrl := &testMockController{selectedNode: "HK-01"}
 	svc.SetController(mockCtrl, ControllerConfigDTO{Endpoint: "http://127.0.0.1:9090", Mode: "external"})
@@ -250,6 +257,7 @@ func TestAppService_OrchestratorModeHardGuards(t *testing.T) {
 	emitter := NewMemoryEventEmitter()
 
 	svc := NewAppService(hStore, paths, emitter)
+	defer svc.Close()
 	mockCtrl := &testMockController{selectedNode: "HK-01"}
 	svc.SetController(mockCtrl, ControllerConfigDTO{Endpoint: "http://127.0.0.1:9090", Mode: "external"})
 
@@ -306,6 +314,7 @@ func TestAppService_StateSyncAndManualOverride(t *testing.T) {
 	emitter := NewMemoryEventEmitter()
 
 	svc := NewAppService(hStore, paths, emitter)
+	defer svc.Close()
 	mockCtrl := &testMockController{selectedNode: "HK-01"}
 	svc.SetController(mockCtrl, ControllerConfigDTO{Endpoint: "http://127.0.0.1:9090", Mode: "external"})
 
@@ -364,6 +373,207 @@ func TestAppService_StateSyncAndManualOverride(t *testing.T) {
 	}
 	if mockCtrl.selectedNode != "SG-MANUAL" {
 		t.Errorf("expected selected node to stay SG-MANUAL, got %s", mockCtrl.selectedNode)
+	}
+}
+
+type serviceTestMockDialer struct{}
+
+func (d *serviceTestMockDialer) CreateClient(node monitor.MonitoredNode, timeout time.Duration) (*http.Client, error) {
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &serviceTestRoundTripper{},
+	}, nil
+}
+
+type serviceTestRoundTripper struct{}
+
+func (rt *serviceTestRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: 204,
+		Body:       io.NopCloser(bytes.NewReader(nil)),
+		Header:     make(http.Header),
+	}, nil
+}
+
+func TestAppService_MonitorJobLifecycle(t *testing.T) {
+	tmpDir := t.TempDir()
+	hStore, err := history.NewStore(filepath.Join(tmpDir, "history"))
+	if err != nil {
+		t.Fatalf("create history store: %v", err)
+	}
+
+	paths := profiles.Paths{Dir: filepath.Join(tmpDir, "profiles")}
+	emitter := NewMemoryEventEmitter()
+
+	svc := NewAppService(hStore, paths, emitter)
+	defer svc.Close()
+
+	// Inject custom runner with mock dialer
+	runner := monitor.NewRunner(monitor.RunnerConfig{
+		Store:  hStore,
+		Dialer: &serviceTestMockDialer{},
+	})
+	svc.SetMonitorRunner(runner)
+
+	jobReq := monitor.MonitorJob{
+		ID:       "test_job_1",
+		Name:     "Test Job",
+		ProbeSet: monitor.ProbeSetLight,
+		Interval: 10 * time.Minute,
+		Nodes: []monitor.MonitoredNode{
+			{
+				DisplayName: "HK Node 1",
+				Type:        "ss",
+				Server:      "1.1.1.1",
+				Port:        8388,
+				RawConfig: map[string]any{
+					"type":     "ss",
+					"server":   "1.1.1.1",
+					"port":     8388,
+					"password": "secret_password",
+				},
+			},
+		},
+	}
+
+	// 1. CreateMonitorJob
+	created, err := svc.CreateMonitorJob(jobReq)
+	if err != nil {
+		t.Fatalf("CreateMonitorJob failed: %v", err)
+	}
+	if created.ID != "test_job_1" {
+		t.Fatalf("expected job ID test_job_1, got %s", created.ID)
+	}
+	if len(created.Nodes) != 1 || created.Nodes[0].NodeKey == "" {
+		t.Fatalf("expected node key to be generated, got %+v", created.Nodes)
+	}
+	// Verify plaintext password is not in NodeKey
+	if strings.Contains(created.Nodes[0].NodeKey, "secret_password") {
+		t.Fatalf("NodeKey contains sensitive password: %s", created.Nodes[0].NodeKey)
+	}
+
+	// 2. StartMonitorJob
+	if err := svc.StartMonitorJob("test_job_1"); err != nil {
+		t.Fatalf("StartMonitorJob failed: %v", err)
+	}
+	job, err := svc.GetMonitorJob("test_job_1")
+	if err != nil || job.State != monitor.JobStateRunning {
+		t.Fatalf("expected running state, got err: %v, job: %+v", err, job)
+	}
+
+	// 3. PauseMonitorJob
+	if err := svc.PauseMonitorJob("test_job_1"); err != nil {
+		t.Fatalf("PauseMonitorJob failed: %v", err)
+	}
+	job, err = svc.GetMonitorJob("test_job_1")
+	if err != nil || job.State != monitor.JobStatePaused {
+		t.Fatalf("expected paused state, got err: %v, job: %+v", err, job)
+	}
+
+	// 4. ResumeMonitorJob
+	if err := svc.ResumeMonitorJob("test_job_1"); err != nil {
+		t.Fatalf("ResumeMonitorJob failed: %v", err)
+	}
+	job, err = svc.GetMonitorJob("test_job_1")
+	if err != nil || job.State != monitor.JobStateRunning {
+		t.Fatalf("expected running state, got err: %v, job: %+v", err, job)
+	}
+
+	// 5. Trigger Immediate Run
+	run, err := svc.TriggerMonitorJob("test_job_1")
+	if err != nil {
+		t.Fatalf("TriggerMonitorJob failed: %v", err)
+	}
+	if run == nil || run.Status != monitor.RunStatusCompleted {
+		t.Fatalf("expected completed run, got %+v", run)
+	}
+
+	// 6. StopMonitorJob
+	if err := svc.StopMonitorJob("test_job_1"); err != nil {
+		t.Fatalf("StopMonitorJob failed: %v", err)
+	}
+	job, err = svc.GetMonitorJob("test_job_1")
+	if err != nil || job.State != monitor.JobStateStopped {
+		t.Fatalf("expected stopped state, got err: %v, job: %+v", err, job)
+	}
+
+	// 7. Verify SQLite Persistence
+	ctx := context.Background()
+	runs, err := svc.QueryMonitorRuns(ctx, "test_job_1", 10)
+	if err != nil {
+		t.Fatalf("QueryMonitorRuns failed: %v", err)
+	}
+	if len(runs) < 1 {
+		t.Fatalf("expected at least 1 run in SQLite, got %d", len(runs))
+	}
+
+	samples, err := svc.QueryMonitorSamples(ctx, monitor.SampleFilter{NodeKey: created.Nodes[0].NodeKey})
+	if err != nil {
+		t.Fatalf("QueryMonitorSamples failed: %v", err)
+	}
+	if len(samples) < 1 {
+		t.Fatalf("expected at least 1 sample in SQLite, got %d", len(samples))
+	}
+	if !samples[0].Success {
+		t.Fatalf("expected successful sample, got %+v", samples[0])
+	}
+}
+
+func TestAppService_MonitorZeroSelectNode(t *testing.T) {
+	tmpDir := t.TempDir()
+	hStore, _ := history.NewStore(filepath.Join(tmpDir, "history"))
+	paths := profiles.Paths{Dir: filepath.Join(tmpDir, "profiles")}
+	emitter := NewMemoryEventEmitter()
+
+	svc := NewAppService(hStore, paths, emitter)
+	defer svc.Close()
+
+	mockCtrl := &testMockController{selectedNode: "HK-01"}
+	svc.SetController(mockCtrl, ControllerConfigDTO{Endpoint: "http://127.0.0.1:9090", Mode: "external"})
+
+	runner := monitor.NewRunner(monitor.RunnerConfig{
+		Store:  hStore,
+		Dialer: &serviceTestMockDialer{},
+	})
+	svc.SetMonitorRunner(runner)
+
+	jobReq := monitor.MonitorJob{
+		ID:       "zero_select_job",
+		Name:     "Zero Select Job",
+		ProbeSet: monitor.ProbeSetLight,
+		Interval: 1 * time.Hour,
+		Nodes: []monitor.MonitoredNode{
+			{
+				DisplayName: "Target Node",
+				Type:        "ss",
+				Server:      "1.1.1.1",
+				Port:        8388,
+				RawConfig: map[string]any{
+					"type":   "ss",
+					"server": "1.1.1.1",
+					"port":   8388,
+				},
+			},
+		},
+	}
+
+	_, err := svc.CreateMonitorJob(jobReq)
+	if err != nil {
+		t.Fatalf("CreateMonitorJob failed: %v", err)
+	}
+
+	// Trigger immediate monitor run
+	_, err = svc.TriggerMonitorJob("zero_select_job")
+	if err != nil {
+		t.Fatalf("TriggerMonitorJob failed: %v", err)
+	}
+
+	// PROOF: Zero SelectNode calls!
+	if mockCtrl.selectCalls != 0 {
+		t.Fatalf("CRITICAL ARCHITECTURE VIOLATION: Monitor must NEVER call Controller.SelectNode! Found %d calls", mockCtrl.selectCalls)
+	}
+	if mockCtrl.selectedNode != "HK-01" {
+		t.Fatalf("Selected node changed unexpectedly: %s", mockCtrl.selectedNode)
 	}
 }
 

@@ -6,10 +6,13 @@ import (
 	"os"
 	"strings"
 
+	"time"
+
 	"github.com/faceair/clash-speedtest/application"
 	"github.com/faceair/clash-speedtest/core/auth"
 	"github.com/faceair/clash-speedtest/core/controller"
 	"github.com/faceair/clash-speedtest/core/history"
+	"github.com/faceair/clash-speedtest/core/monitor"
 	"github.com/faceair/clash-speedtest/core/policy"
 	"github.com/faceair/clash-speedtest/core/profiles"
 )
@@ -44,7 +47,7 @@ func (a *App) Startup(ctx context.Context) {
 
 // Shutdown is called by Wails on termination.
 func (a *App) Shutdown(ctx context.Context) {
-	a.app.Stop()
+	_ = a.app.Close()
 }
 
 // --- Test Operations ---
@@ -216,5 +219,52 @@ func (a *App) UpdateSwitchPolicy(p policy.SwitchPolicy) error {
 func (a *App) GetSwitchAuditTrail() ([]policy.SwitchEvent, error) {
 	return a.app.GetSwitchAuditTrail(a.context())
 }
+
+// --- 24/7 Monitor Operations ---
+
+func (a *App) CreateMonitorJob(job monitor.MonitorJob) (*monitor.MonitorJob, error) {
+	return a.app.CreateMonitorJob(job)
+}
+
+func (a *App) StartMonitorJob(jobID string) error {
+	return a.app.StartMonitorJob(jobID)
+}
+
+func (a *App) PauseMonitorJob(jobID string) error {
+	return a.app.PauseMonitorJob(jobID)
+}
+
+func (a *App) ResumeMonitorJob(jobID string) error {
+	return a.app.ResumeMonitorJob(jobID)
+}
+
+func (a *App) StopMonitorJob(jobID string) error {
+	return a.app.StopMonitorJob(jobID)
+}
+
+func (a *App) GetMonitorJob(jobID string) (*monitor.MonitorJob, error) {
+	return a.app.GetMonitorJob(jobID)
+}
+
+func (a *App) ListMonitorJobs() []monitor.MonitorJob {
+	return a.app.ListMonitorJobs()
+}
+
+func (a *App) TriggerMonitorJob(jobID string) (*monitor.MonitorRun, error) {
+	return a.app.TriggerMonitorJob(jobID)
+}
+
+func (a *App) QueryMonitorSamples(filter monitor.SampleFilter) ([]*monitor.MonitorSample, error) {
+	return a.app.QueryMonitorSamples(a.context(), filter)
+}
+
+func (a *App) QueryMonitorRuns(jobID string, limit int) ([]*monitor.MonitorRun, error) {
+	return a.app.QueryMonitorRuns(a.context(), jobID, limit)
+}
+
+func (a *App) GetNodeTimelineSamples(nodeKey string, since time.Time) ([]*monitor.MonitorSample, error) {
+	return a.app.GetNodeTimelineSamples(a.context(), nodeKey, since)
+}
+
 
 
