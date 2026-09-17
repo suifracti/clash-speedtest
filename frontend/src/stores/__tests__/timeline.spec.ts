@@ -628,6 +628,180 @@ describe('background refresh', () => {
     expect(store.samples.find((s) => s.sampleId === 's_burst_0')).toBeDefined()
     expect(store.samples.find((s) => s.sampleId === 's_boundary')).toBeDefined()
   })
+
+  it('tracks and drains head-side gaps across cursor pages when head arrivals exceed page limit during catch-up', async () => {
+    const store = useTimelineStore()
+    const baseTs = NOW - 60 * MIN
+    const boundarySample = sample('s_boundary', baseTs)
+
+    // 1. Initial known boundary
+    mockedCursor.mockResolvedValueOnce(page([boundarySample]))
+    await store.reload()
+    expect(store.samples).toHaveLength(1)
+    expect(store.samples[0].sampleId).toBe('s_boundary')
+    expect(store.refreshGapIncomplete).toBe(false)
+    expect(store.pendingGaps).toEqual([])
+
+    // 2. First burst of 6500 samples arrives (pages 1..13)
+    const burstSamples: MonitorSample[] = []
+    for (let i = 6499; i >= 0; i--) {
+      burstSamples.push(sample(`s_burst_${i}`, baseTs + (i + 1) * 1000))
+    }
+    const burstPages: ReturnType<typeof page>[] = []
+    for (let p = 0; p < 13; p++) {
+      const start = p * 500
+      const end = start + 500
+      const items = burstSamples.slice(start, end)
+      if (p === 12) {
+        burstPages.push(page([...items, boundarySample], '', false))
+      } else {
+        burstPages.push(page(items, `cursor_hist_p${p + 2}`, true))
+      }
+    }
+
+    mockedCursor.mockImplementation(async (query) => {
+      if (!query.cursor) {
+        return burstPages[0]
+      }
+      const match = query.cursor.match(/cursor_hist_p(\d+)/)
+      if (match) {
+        const pageIdx = parseInt(match[1], 10) - 1
+        return burstPages[pageIdx]
+      }
+      throw new Error(`Unexpected cursor in round 1: ${query.cursor}`)
+    })
+
+    // Execute Round 1: fetches first 5000 samples (10 pages)
+    const addedR1 = await store.refreshNewest()
+    expect(addedR1).toBe(5000)
+    expect(store.refreshGapIncomplete).toBe(true)
+    const histGapR1 = store.pendingGaps.find((g) => g.kind === 'history')
+    expect(histGapR1).toBeDefined()
+    expect(histGapR1?.cursor).toBe('cursor_hist_p11')
+
+    // 3. Before Round 2 starts, a burst of 1200 new head samples arrives (> PAGE_LIMIT 500)
+    const headTsStart = baseTs + 7000 * 1000
+    const head1200Samples: MonitorSample[] = []
+    for (let i = 1199; i >= 0; i--) {
+      head1200Samples.push(sample(`s_head_${i}`, headTsStart + (i + 1) * 1000))
+    }
+    // Head page 1: newest 500 samples (1199..700)
+    const headPage1 = page(head1200Samples.slice(0, 500), 'cursor_head_p2', true)
+    // Head page 2: next 500 samples (699..200)
+    const headPage2 = page(head1200Samples.slice(500, 1000), 'cursor_head_p3', true)
+    // Head page 3: remaining 200 samples (199..0) + top of burst (s_burst_6499)
+    const headPage3 = page([...head1200Samples.slice(1000), burstSamples[0]], '', false)
+
+    // Round 2 implementation:
+    // - Head pull gets headPage1 (500 items), creating a 'head' gap for the remaining 700 items
+    // - History drain gets burstPages[10..12] (pages 11..13), reaching s_boundary and closing history gap
+    mockedCursor.mockImplementation(async (query) => {
+      if (!query.cursor) {
+        return headPage1
+      }
+      if (query.cursor === 'cursor_head_p2') {
+        return headPage2
+      }
+      if (query.cursor === 'cursor_head_p3') {
+        return headPage3
+      }
+      const match = query.cursor.match(/cursor_hist_p(\d+)/)
+      if (match) {
+        const pageIdx = parseInt(match[1], 10) - 1
+        return burstPages[pageIdx]
+      }
+      throw new Error(`Unexpected cursor in round 2: ${query.cursor}`)
+    })
+
+    const addedR2 = await store.refreshNewest()
+    // Round 2 added: 500 (from headPage1) + 1500 (from burstPages 11..13) = 2000
+    expect(addedR2).toBe(2000)
+
+    // History gap closed, but head gap was created and is STILL INCOMPLETE
+    expect(store.pendingGaps.some((g) => g.kind === 'history')).toBe(false)
+    const headGapR2 = store.pendingGaps.find((g) => g.kind === 'head')
+    expect(headGapR2).toBeDefined()
+    expect(headGapR2?.cursor).toBe('cursor_head_p2')
+    expect(store.refreshGapIncomplete).toBe(true)
+
+    // 4. Before Round 3, another batch of 3 extra head samples arrives
+    const extraHeadTs = headTsStart + 2000 * 1000
+    const extraHeadSamples = [
+      sample('s_head_extra_2', extraHeadTs + 3000),
+      sample('s_head_extra_1', extraHeadTs + 2000),
+      sample('s_head_extra_0', extraHeadTs + 1000),
+    ]
+
+    // Round 3 implementation:
+    // - Step 1a: stream head check returns extraHeadSamples + headPage1 items
+    // - Step 1b: drains head gap from cursor_head_p2 (headPage2, then headPage3)
+    mockedCursor.mockImplementation(async (query) => {
+      if (!query.cursor) {
+        return page([...extraHeadSamples, ...headPage1.items], 'cur_extra_tail', true)
+      }
+      if (query.cursor === 'cursor_head_p2') {
+        return headPage2
+      }
+      if (query.cursor === 'cursor_head_p3') {
+        return headPage3
+      }
+      throw new Error(`Unexpected cursor in round 3: ${query.cursor}`)
+    })
+
+    const addedR3 = await store.refreshNewest()
+    // Added: 3 extra head + 700 remaining head gap samples = 703
+    expect(addedR3).toBe(703)
+
+    // All gaps are now closed!
+    expect(store.pendingGaps).toEqual([])
+    expect(store.refreshGapIncomplete).toBe(false)
+    expect(store.pendingRefreshCursor).toBeNull()
+
+    // Total: 1 (boundary) + 6500 (burst) + 1200 (head) + 3 (extra head) = 7704 samples
+    expect(store.samples).toHaveLength(7704)
+    const uniqueIds = new Set(store.samples.map((s) => s.sampleId))
+    expect(uniqueIds.size).toBe(7704)
+
+    // Zero omissions: all milestones present
+    expect(store.samples.find((s) => s.sampleId === 's_boundary')).toBeDefined()
+    expect(store.samples.find((s) => s.sampleId === 's_burst_0')).toBeDefined()
+    expect(store.samples.find((s) => s.sampleId === 's_burst_6499')).toBeDefined()
+    expect(store.samples.find((s) => s.sampleId === 's_head_0')).toBeDefined()
+    expect(store.samples.find((s) => s.sampleId === 's_head_699')).toBeDefined()
+    expect(store.samples.find((s) => s.sampleId === 's_head_700')).toBeDefined()
+    expect(store.samples.find((s) => s.sampleId === 's_head_1199')).toBeDefined()
+    expect(store.samples.find((s) => s.sampleId === 's_head_extra_0')).toBeDefined()
+    expect(store.samples.find((s) => s.sampleId === 's_head_extra_2')).toBeDefined()
+  })
+
+  it('filter change during incomplete catch-up resets all continuation state', async () => {
+    const store = useTimelineStore()
+    const baseTs = NOW - 60 * MIN
+    const boundarySample = sample('s_boundary', baseTs)
+
+    // Initial load
+    mockedCursor.mockResolvedValueOnce(page([boundarySample]))
+    await store.reload()
+
+    // Simulate an incomplete gap in the store
+    store.pendingGaps.push({
+      id: 'gap_history_test',
+      kind: 'history',
+      cursor: 'cursor_pending_123',
+      targetSampleId: 's_boundary',
+      targetTimestampMs: baseTs,
+    })
+    expect(store.refreshGapIncomplete).toBe(true)
+    expect(store.pendingRefreshCursor).toBe('cursor_pending_123')
+
+    // Filter change must reset all continuation state
+    mockedCursor.mockResolvedValueOnce(page([sample('s_new_filter', NOW)]))
+    await store.setProbeTypeFilter('ttfb')
+
+    expect(store.refreshGapIncomplete).toBe(false)
+    expect(store.pendingGaps).toEqual([])
+    expect(store.pendingRefreshCursor).toBeNull()
+  })
 })
 
 describe('viewport interactions', () => {

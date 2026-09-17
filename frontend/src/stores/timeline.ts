@@ -47,6 +47,14 @@ export const RANGE_OPTIONS: { key: RangeKey; label: string; durationMs: number |
 
 export type LoadState = 'idle' | 'loading' | 'ready' | 'error'
 
+export interface PendingGap {
+  id: string
+  kind: 'head' | 'history'
+  cursor: string
+  targetSampleId: string | null
+  targetTimestampMs: number | null
+}
+
 /** Samples per cursor page. Kept within the API's 1..1000 bound. */
 export const PAGE_LIMIT = 500
 
@@ -60,13 +68,12 @@ export const useTimelineStore = defineStore('timeline', () => {
   const profileId = ref('')
   const probeType = ref('')
   const target = ref('')
-
-  /** Display timestamps in UTC instead of the host timezone. Local is the default. */
   const useUtc = ref(false)
 
   /**
-   * Identity of the active filter set. Any change here invalidates the cursor and all loaded
-   * samples, because a keyset cursor is only valid for the exact filter that produced it.
+   * Filter signature uniquely identifying the query parameters.
+   * If any filter changes while a query is in-flight, the signature comparison drops the stale
+   * response instead of letting older data overwrite newer user intent.
    */
   const filtersSignature = computed(() =>
     [
@@ -109,12 +116,16 @@ export const useTimelineStore = defineStore('timeline', () => {
   /** Guards against a refresh landing after a filter change reset the dataset. */
   let activeSignature = ''
 
-  // Catch-up state when a burst exceeds MAX_BURST_PAGES * PAGE_LIMIT:
-  const refreshGapIncomplete = ref(false)
-  const pendingRefreshCursor = ref<string | null>(null)
-  const catchUpTargetSampleId = ref<string | null>(null)
-  const catchUpTargetTimestampMs = ref<number | null>(null)
+  // Catch-up state: unified pending gap queue for both head and history gaps
+  const pendingGaps = ref<PendingGap[]>([])
+  const refreshGapIncomplete = computed(() => pendingGaps.value.length > 0)
+  const pendingRefreshCursor = computed(() => {
+    const hist = pendingGaps.value.find((g) => g.kind === 'history')
+    if (hist) return hist.cursor
+    return pendingGaps.value[0]?.cursor ?? null
+  })
   const MAX_BURST_PAGES = 10
+  const MAX_PAGES_PER_REFRESH = 10
 
   // --- Viewport ------------------------------------------------------------
   const widthPx = ref(1000)
@@ -228,6 +239,10 @@ export const useTimelineStore = defineStore('timeline', () => {
     samples.value = Array.from(sampleIndex.values()).sort(compareSamplesAsc)
   }
 
+  function resetContinuationState(): void {
+    pendingGaps.value = []
+  }
+
   function clearDataset(): void {
     sampleIndex.clear()
     samples.value = []
@@ -238,10 +253,7 @@ export const useTimelineStore = defineStore('timeline', () => {
     candidates.value = []
     candidateIndex.value = 0
     newSampleCount.value = 0
-    refreshGapIncomplete.value = false
-    pendingRefreshCursor.value = null
-    catchUpTargetSampleId.value = null
-    catchUpTargetTimestampMs.value = null
+    resetContinuationState()
   }
 
   function currentFilter() {
@@ -360,13 +372,12 @@ export const useTimelineStore = defineStore('timeline', () => {
    * If a burst of new samples arrives between polls exceeding PAGE_LIMIT, we follow has_more /
    * next_cursor to drain pages until we cross the previously known dataset boundary.
    *
-   * If a huge burst exceeds MAX_BURST_PAGES (e.g. > 5000 samples), we enter an explicit
-   * catch-up state (refreshGapIncomplete = true, pendingRefreshCursor). Subsequent refresh
-   * cycles perform a two-phase update: first pull any newest head samples, then resume draining
-   * backwards from pendingRefreshCursor until reaching the pre-burst historical boundary.
-   *
-   * Already-loaded samples are never duplicated and the viewport is only advanced when the
-   * user is actually sitting at the live edge.
+   * If a burst exceeds the per-refresh page budget (e.g. 5000 samples for history, or 500 samples
+   * for head during catch-up), a resumable PendingGap is recorded.
+   * Each subsequent refresh executes in a balanced manner:
+   *   1. Pulls newest stream head (and drains any head-side gap) so live data never starves.
+   *   2. Drains pending history gaps using remaining budget so historical continuity is restored.
+   * All gaps are tracked in `pendingGaps` until closed, ensuring zero sample omissions and zero duplicates.
    */
   async function refreshNewest(): Promise<number> {
     if (loadState.value !== 'ready') return 0
@@ -375,16 +386,22 @@ export const useTimelineStore = defineStore('timeline', () => {
 
     try {
       let added = 0
+      let remainingBudget = MAX_PAGES_PER_REFRESH
 
-      if (refreshGapIncomplete.value && pendingRefreshCursor.value) {
-        // --- Catch-Up Mode (Two Phases) ---
-        // Phase 1: Lightweight pull of stream head to avoid starving newest samples.
+      // --- Part 1: Stream Head Pull / Head Gap Continuation ---
+      const existingHeadGap = pendingGaps.value.find((g) => g.kind === 'head')
+      const hasHistoryGap = pendingGaps.value.some((g) => g.kind === 'history')
+
+      if (existingHeadGap) {
+        // We already have an open head gap.
+        // Step 1a: 1-page check at top of stream to capture any new head arrivals.
         const headPage = await queryMonitorSamplesCursor({
           ...currentFilter(),
           limit: PAGE_LIMIT,
           orderDesc: true,
         })
         if (signature !== activeSignature) return 0
+        remainingBudget -= 1
         for (const sample of headPage.items) {
           if (!sampleIndex.has(sample.sampleId)) {
             sampleIndex.set(sample.sampleId, sample)
@@ -392,112 +409,157 @@ export const useTimelineStore = defineStore('timeline', () => {
           }
         }
 
-        // Phase 2: Resume draining backwards from pendingRefreshCursor to bridge the gap.
-        let cursor: string | undefined = pendingRefreshCursor.value
-        let pages = 0
-        let reachedBoundary = false
-        let lastCursor: string | null = null
-        let lastPageHasMore = false
+        // Step 1b: Resume draining the head gap from existingHeadGap.cursor.
+        const maxHeadGapPages = Math.min(3, remainingBudget)
+        let headPages = 0
+        let headCursor: string | undefined = existingHeadGap.cursor
+        let reachedHeadTarget = false
+        let lastHeadCursor: string | null = null
+        let lastHeadHasMore = false
 
-        while (pages < MAX_BURST_PAGES && cursor) {
-          const gapPage = await queryMonitorSamplesCursor({
+        while (headPages < maxHeadGapPages && remainingBudget > 0 && headCursor) {
+          const page = await queryMonitorSamplesCursor({
             ...currentFilter(),
             limit: PAGE_LIMIT,
             orderDesc: true,
-            cursor,
+            cursor: headCursor,
           })
           if (signature !== activeSignature) return 0
-          pages += 1
-          lastCursor = gapPage.nextCursor || null
-          lastPageHasMore = gapPage.hasMore
+          headPages += 1
+          remainingBudget -= 1
+          lastHeadCursor = page.nextCursor || null
+          lastHeadHasMore = page.hasMore
 
-          for (const sample of gapPage.items) {
-            if (isPreRefreshBoundary(sample, catchUpTargetSampleId.value, catchUpTargetTimestampMs.value)) {
-              reachedBoundary = true
+          for (const sample of page.items) {
+            if (isPreRefreshBoundary(sample, existingHeadGap.targetSampleId, existingHeadGap.targetTimestampMs)) {
+              reachedHeadTarget = true
             }
-
             if (!sampleIndex.has(sample.sampleId)) {
               sampleIndex.set(sample.sampleId, sample)
               added += 1
             }
           }
 
-          if (reachedBoundary || !gapPage.hasMore || !gapPage.nextCursor || gapPage.items.length === 0) {
+          if (reachedHeadTarget || !page.hasMore || !page.nextCursor || page.items.length === 0) {
             break
           }
-
-          cursor = gapPage.nextCursor
+          headCursor = page.nextCursor
         }
 
-        if (reachedBoundary || !lastPageHasMore || !lastCursor) {
-          refreshGapIncomplete.value = false
-          pendingRefreshCursor.value = null
-          catchUpTargetSampleId.value = null
-          catchUpTargetTimestampMs.value = null
+        if (reachedHeadTarget || !lastHeadHasMore || !lastHeadCursor) {
+          pendingGaps.value = pendingGaps.value.filter((g) => g.id !== existingHeadGap.id)
         } else {
-          pendingRefreshCursor.value = lastCursor
+          existingHeadGap.cursor = lastHeadCursor
         }
       } else {
-        // --- Normal Refresh Mode ---
+        // No head gap currently open.
         const preRefreshLatest = latestSample.value
-        const targetId = preRefreshLatest?.sampleId ?? null
-        const targetTs = preRefreshLatest?.timestampMs ?? null
+        const headTargetId = preRefreshLatest?.sampleId ?? null
+        const headTargetTs = preRefreshLatest?.timestampMs ?? null
         const hasKnownBoundary = preRefreshLatest !== null
 
-        let cursor: string | undefined = undefined
-        let pages = 0
-        let reachedBoundary = false
-        let lastCursor: string | null = null
-        let lastPageHasMore = false
+        // If a history gap is already pending, allocate 1 page for head pull.
+        // If no gaps are pending, head pull can use the entire remainingBudget.
+        const maxHeadPages = hasHistoryGap ? 1 : remainingBudget
+        let headCursor: string | undefined = undefined
+        let headPages = 0
+        let reachedHeadTarget = false
+        let lastHeadCursor: string | null = null
+        let lastHeadHasMore = false
 
-        while (pages < MAX_BURST_PAGES) {
-          const query: MonitorCursorQuery = {
+        while (headPages < maxHeadPages && remainingBudget > 0) {
+          const page = await queryMonitorSamplesCursor({
             ...currentFilter(),
             limit: PAGE_LIMIT,
             orderDesc: true,
-            cursor,
-          }
-          const page = await queryMonitorSamplesCursor(query)
+            cursor: headCursor,
+          })
           if (signature !== activeSignature) return 0
-          pages += 1
-          lastCursor = page.nextCursor || null
-          lastPageHasMore = page.hasMore
+          headPages += 1
+          remainingBudget -= 1
+          lastHeadCursor = page.nextCursor || null
+          lastHeadHasMore = page.hasMore
 
           for (const sample of page.items) {
-            if (hasKnownBoundary && isPreRefreshBoundary(sample, targetId, targetTs)) {
-              reachedBoundary = true
+            if (hasKnownBoundary && isPreRefreshBoundary(sample, headTargetId, headTargetTs)) {
+              reachedHeadTarget = true
             }
-
             if (!sampleIndex.has(sample.sampleId)) {
               sampleIndex.set(sample.sampleId, sample)
               added += 1
             }
           }
 
-          // If we reached the known boundary or there was no boundary to reach, done.
-          if (reachedBoundary || !hasKnownBoundary) {
+          if (reachedHeadTarget || !hasKnownBoundary) {
             break
           }
-
-          // If no more pages or page was empty, stop draining.
           if (!page.hasMore || !page.nextCursor || page.items.length === 0) {
             break
           }
-
-          cursor = page.nextCursor
+          headCursor = page.nextCursor
         }
 
-        // If we hit the safety cap while page.hasMore was true AND we did not reach the boundary:
-        if (!reachedBoundary && hasKnownBoundary && lastCursor && lastPageHasMore) {
-          refreshGapIncomplete.value = true
-          pendingRefreshCursor.value = lastCursor
-          catchUpTargetSampleId.value = targetId
-          catchUpTargetTimestampMs.value = targetTs
+        if (!reachedHeadTarget && hasKnownBoundary && lastHeadCursor && lastHeadHasMore) {
+          if (pendingGaps.value.length === 0) {
+            pendingGaps.value.push({
+              id: 'gap_history',
+              kind: 'history',
+              cursor: lastHeadCursor,
+              targetSampleId: headTargetId,
+              targetTimestampMs: headTargetTs,
+            })
+          } else {
+            pendingGaps.value.push({
+              id: 'gap_head',
+              kind: 'head',
+              cursor: lastHeadCursor,
+              targetSampleId: headTargetId,
+              targetTimestampMs: headTargetTs,
+            })
+          }
+        }
+      }
+
+      // --- Part 2: History Gap Drain ---
+      const historyGap = pendingGaps.value.find((g) => g.kind === 'history')
+      if (historyGap && remainingBudget > 0) {
+        let histCursor: string | undefined = historyGap.cursor
+        let reachedHistTarget = false
+        let lastHistCursor: string | null = null
+        let lastHistHasMore = false
+
+        while (remainingBudget > 0 && histCursor) {
+          const page = await queryMonitorSamplesCursor({
+            ...currentFilter(),
+            limit: PAGE_LIMIT,
+            orderDesc: true,
+            cursor: histCursor,
+          })
+          if (signature !== activeSignature) return 0
+          remainingBudget -= 1
+          lastHistCursor = page.nextCursor || null
+          lastHistHasMore = page.hasMore
+
+          for (const sample of page.items) {
+            if (isPreRefreshBoundary(sample, historyGap.targetSampleId, historyGap.targetTimestampMs)) {
+              reachedHistTarget = true
+            }
+            if (!sampleIndex.has(sample.sampleId)) {
+              sampleIndex.set(sample.sampleId, sample)
+              added += 1
+            }
+          }
+
+          if (reachedHistTarget || !page.hasMore || !page.nextCursor || page.items.length === 0) {
+            break
+          }
+          histCursor = page.nextCursor
+        }
+
+        if (reachedHistTarget || !lastHistHasMore || !lastHistCursor) {
+          pendingGaps.value = pendingGaps.value.filter((g) => g.id !== historyGap.id)
         } else {
-          refreshGapIncomplete.value = false
-          pendingRefreshCursor.value = null
-          catchUpTargetSampleId.value = null
-          catchUpTargetTimestampMs.value = null
+          historyGap.cursor = lastHistCursor
         }
       }
 
@@ -574,11 +636,13 @@ export const useTimelineStore = defineStore('timeline', () => {
 
   function setRange(key: RangeKey): Promise<void> {
     if (rangeKey.value === key) return Promise.resolve()
+    resetContinuationState()
     rangeKey.value = key
     return reload()
   }
 
   function setCustomRange(sinceMs: number, untilMs: number): Promise<void> {
+    resetContinuationState()
     customSinceMs.value = sinceMs
     customUntilMs.value = untilMs
     rangeKey.value = 'custom'
@@ -594,6 +658,7 @@ export const useTimelineStore = defineStore('timeline', () => {
    */
   function setNodeFilter(identity: string, legacyKey = ''): Promise<void> {
     if (nodeIdentityKey.value === identity && legacyNodeKey.value === legacyKey) return Promise.resolve()
+    resetContinuationState()
     nodeIdentityKey.value = identity
     legacyNodeKey.value = identity ? legacyKey : ''
     // A node filter also clears the node-scoped probe/target narrowing.
@@ -604,23 +669,27 @@ export const useTimelineStore = defineStore('timeline', () => {
 
   function setProfileFilter(value: string): Promise<void> {
     if (profileId.value === value) return Promise.resolve()
+    resetContinuationState()
     profileId.value = value
     return reload()
   }
 
   function setProbeTypeFilter(value: string): Promise<void> {
     if (probeType.value === value) return Promise.resolve()
+    resetContinuationState()
     probeType.value = value
     return reload()
   }
 
   function setTargetFilter(value: string): Promise<void> {
     if (target.value === value) return Promise.resolve()
+    resetContinuationState()
     target.value = value
     return reload()
   }
 
   function resetFilters(): Promise<void> {
+    resetContinuationState()
     nodeIdentityKey.value = ''
     legacyNodeKey.value = ''
     profileId.value = ''
@@ -815,8 +884,10 @@ export const useTimelineStore = defineStore('timeline', () => {
     lastRefreshAtMs,
     followLive,
     refreshIntervalMs,
+    pendingGaps,
     refreshGapIncomplete,
     pendingRefreshCursor,
+    resetContinuationState,
     // viewport
     widthPx,
     viewport,
