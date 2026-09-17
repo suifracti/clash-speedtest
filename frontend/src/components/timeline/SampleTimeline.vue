@@ -327,6 +327,9 @@ defineExpose({ zoomIn, zoomOut })
         <span>
           已加载 <span class="text-content-main font-semibold">{{ store.samples.length }}</span> 条原始样本
         </span>
+        <span v-if="store.refreshGapIncomplete" class="text-amber-600 dark:text-amber-400 font-medium" data-testid="catch-up-indicator">
+          历史追赶中 · history catch-up in progress
+        </span>
         <span v-if="store.isPartiallyLoaded" class="text-amber-600 dark:text-amber-400">
           仅加载部分历史（还有更旧数据）
         </span>

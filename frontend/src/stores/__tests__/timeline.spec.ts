@@ -517,6 +517,117 @@ describe('background refresh', () => {
     expect(store.samples.find((s) => s.sampleId === 's_burst_0')).toBeDefined()
     expect(store.samples.find((s) => s.sampleId === 's_boundary')).toBeDefined()
   })
+
+  it('handles massive burst exceeding MAX_BURST_PAGES with two-phase catch-up and seamless boundary closure', async () => {
+    const store = useTimelineStore()
+    const baseTs = NOW - 60 * MIN
+    const boundarySample = sample('s_boundary', baseTs)
+
+    // 1. Initial known boundary
+    mockedCursor.mockResolvedValueOnce(page([boundarySample]))
+    await store.reload()
+    expect(store.samples).toHaveLength(1)
+    expect(store.samples[0].sampleId).toBe('s_boundary')
+    expect(store.refreshGapIncomplete).toBe(false)
+    expect(store.pendingRefreshCursor).toBeNull()
+
+    // 2. A burst of 6500 samples arrives between polls (exceeds 10 * 500 = 5000)
+    // Timestamps range from baseTs + 1s to baseTs + 6500s
+    const burstSamples: MonitorSample[] = []
+    for (let i = 6499; i >= 0; i--) {
+      burstSamples.push(sample(`s_burst_${i}`, baseTs + (i + 1) * 1000))
+    }
+
+    // Pages 1 to 10 each have 500 samples (5000 total)
+    // Pages 11 to 13 have the remaining 1500 samples, with Page 13 ending at boundarySample
+    const burstPages: ReturnType<typeof page>[] = []
+    for (let p = 0; p < 13; p++) {
+      const start = p * 500
+      const end = start + 500
+      const items = burstSamples.slice(start, end)
+      if (p === 12) {
+        // Page 13 has remaining items (6000..6499 -> 500 items) + boundarySample
+        burstPages.push(page([...items, boundarySample], '', false))
+      } else {
+        burstPages.push(page(items, `cursor_p${p + 2}`, true))
+      }
+    }
+
+    // Round 1 implementation: returns pages 1..10
+    mockedCursor.mockImplementation(async (query) => {
+      if (!query.cursor) {
+        return burstPages[0]
+      }
+      const match = query.cursor.match(/cursor_p(\d+)/)
+      if (match) {
+        const pageIdx = parseInt(match[1], 10) - 1
+        return burstPages[pageIdx]
+      }
+      throw new Error(`Unexpected cursor in round 1: ${query.cursor}`)
+    })
+
+    // Execute Round 1
+    const addedR1 = await store.refreshNewest()
+
+    // Round 1 assertions:
+    // Only loaded first 5000 samples (10 pages cap)
+    expect(addedR1).toBe(5000)
+    expect(store.samples).toHaveLength(5001) // 5000 burst + 1 boundary
+    expect(store.refreshGapIncomplete).toBe(true)
+    expect(store.pendingRefreshCursor).toBe('cursor_p11')
+
+    // 3. Between Round 1 and Round 2, a batch of 5 new head samples arrived
+    const headSamples: MonitorSample[] = [
+      sample('s_head_4', baseTs + 6505 * 1000),
+      sample('s_head_3', baseTs + 6504 * 1000),
+      sample('s_head_2', baseTs + 6503 * 1000),
+      sample('s_head_1', baseTs + 6502 * 1000),
+      sample('s_head_0', baseTs + 6501 * 1000),
+    ]
+
+    // Round 2 implementation:
+    // Phase 1 (no cursor): returns headSamples + page 1 items
+    // Phase 2 (resumes from cursor_p11): returns page 11, then page 12, then page 13
+    mockedCursor.mockImplementation(async (query) => {
+      if (!query.cursor) {
+        return page([...headSamples, ...burstPages[0].items], 'cursor_head_tail', true)
+      }
+      const match = query.cursor.match(/cursor_p(\d+)/)
+      if (match) {
+        const pageIdx = parseInt(match[1], 10) - 1
+        return burstPages[pageIdx]
+      }
+      throw new Error(`Unexpected cursor in round 2: ${query.cursor}`)
+    })
+
+    // Execute Round 2
+    const addedR2 = await store.refreshNewest()
+
+    // Round 2 assertions:
+    // Added 5 head samples + remaining 1500 burst samples = 1505
+    expect(addedR2).toBe(1505)
+    // Truly reached boundary, so incomplete state must be cleared
+    expect(store.refreshGapIncomplete).toBe(false)
+    expect(store.pendingRefreshCursor).toBeNull()
+
+    // Total samples: 5 head + 6500 burst + 1 boundary = 6506
+    expect(store.samples).toHaveLength(6506)
+
+    // No duplicates: unique IDs count must match length
+    const uniqueIds = new Set(store.samples.map((s) => s.sampleId))
+    expect(uniqueIds.size).toBe(6506)
+
+    // No omissions: boundary, head, middle, and tail all present
+    expect(store.samples.find((s) => s.sampleId === 's_head_4')).toBeDefined()
+    expect(store.samples.find((s) => s.sampleId === 's_head_0')).toBeDefined()
+    expect(store.samples.find((s) => s.sampleId === 's_burst_6499')).toBeDefined()
+    expect(store.samples.find((s) => s.sampleId === 's_burst_5000')).toBeDefined()
+    expect(store.samples.find((s) => s.sampleId === 's_burst_4999')).toBeDefined()
+    expect(store.samples.find((s) => s.sampleId === 's_burst_1500')).toBeDefined()
+    expect(store.samples.find((s) => s.sampleId === 's_burst_1499')).toBeDefined()
+    expect(store.samples.find((s) => s.sampleId === 's_burst_0')).toBeDefined()
+    expect(store.samples.find((s) => s.sampleId === 's_boundary')).toBeDefined()
+  })
 })
 
 describe('viewport interactions', () => {

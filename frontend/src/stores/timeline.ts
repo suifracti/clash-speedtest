@@ -109,6 +109,13 @@ export const useTimelineStore = defineStore('timeline', () => {
   /** Guards against a refresh landing after a filter change reset the dataset. */
   let activeSignature = ''
 
+  // Catch-up state when a burst exceeds MAX_BURST_PAGES * PAGE_LIMIT:
+  const refreshGapIncomplete = ref(false)
+  const pendingRefreshCursor = ref<string | null>(null)
+  const catchUpTargetSampleId = ref<string | null>(null)
+  const catchUpTargetTimestampMs = ref<number | null>(null)
+  const MAX_BURST_PAGES = 10
+
   // --- Viewport ------------------------------------------------------------
   const widthPx = ref(1000)
   const viewport = shallowRef<TimelineViewport>({ startMs: 0, endMs: 0, widthPx: 1 })
@@ -231,6 +238,10 @@ export const useTimelineStore = defineStore('timeline', () => {
     candidates.value = []
     candidateIndex.value = 0
     newSampleCount.value = 0
+    refreshGapIncomplete.value = false
+    pendingRefreshCursor.value = null
+    catchUpTargetSampleId.value = null
+    catchUpTargetTimestampMs.value = null
   }
 
   function currentFilter() {
@@ -331,6 +342,16 @@ export const useTimelineStore = defineStore('timeline', () => {
     }
   }
 
+  function isPreRefreshBoundary(sample: MonitorSample, targetId: string | null, targetTs: number | null): boolean {
+    if (!targetId && targetTs === null) return false
+    if (targetId && sample.sampleId === targetId) return true
+    if (targetTs !== null) {
+      if (sample.timestampMs < targetTs) return true
+      if (sample.timestampMs === targetTs && targetId && sample.sampleId <= targetId) return true
+    }
+    return false
+  }
+
   /**
    * Re-queries the newest page and merges by `sample_id`.
    *
@@ -338,6 +359,11 @@ export const useTimelineStore = defineStore('timeline', () => {
    * re-read from the head of the stream (orderDesc: true, no exclusive timestamp anchor) and merge.
    * If a burst of new samples arrives between polls exceeding PAGE_LIMIT, we follow has_more /
    * next_cursor to drain pages until we cross the previously known dataset boundary.
+   *
+   * If a huge burst exceeds MAX_BURST_PAGES (e.g. > 5000 samples), we enter an explicit
+   * catch-up state (refreshGapIncomplete = true, pendingRefreshCursor). Subsequent refresh
+   * cycles perform a two-phase update: first pull any newest head samples, then resume draining
+   * backwards from pendingRefreshCursor until reaching the pre-burst historical boundary.
    *
    * Already-loaded samples are never duplicated and the viewport is only advanced when the
    * user is actually sitting at the live edge.
@@ -349,44 +375,130 @@ export const useTimelineStore = defineStore('timeline', () => {
 
     try {
       let added = 0
-      let cursor: string | undefined = undefined
-      let pages = 0
-      const MAX_BURST_PAGES = 10
-      const hasKnownBoundary = sampleIndex.size > 0
 
-      while (pages < MAX_BURST_PAGES) {
-        const query: MonitorCursorQuery = {
+      if (refreshGapIncomplete.value && pendingRefreshCursor.value) {
+        // --- Catch-Up Mode (Two Phases) ---
+        // Phase 1: Lightweight pull of stream head to avoid starving newest samples.
+        const headPage = await queryMonitorSamplesCursor({
           ...currentFilter(),
           limit: PAGE_LIMIT,
           orderDesc: true,
-          cursor,
-        }
-        const page = await queryMonitorSamplesCursor(query)
+        })
         if (signature !== activeSignature) return 0
-        pages += 1
-
-        let encounteredKnown = false
-        for (const sample of page.items) {
-          if (sampleIndex.has(sample.sampleId)) {
-            encounteredKnown = true
-            continue
+        for (const sample of headPage.items) {
+          if (!sampleIndex.has(sample.sampleId)) {
+            sampleIndex.set(sample.sampleId, sample)
+            added += 1
           }
-          sampleIndex.set(sample.sampleId, sample)
-          added += 1
         }
 
-        // If we crossed into our previously known dataset, or if there was no
-        // previous dataset to bridge into, we have completed the refresh.
-        if (encounteredKnown || !hasKnownBoundary) {
-          break
+        // Phase 2: Resume draining backwards from pendingRefreshCursor to bridge the gap.
+        let cursor: string | undefined = pendingRefreshCursor.value
+        let pages = 0
+        let reachedBoundary = false
+        let lastCursor: string | null = null
+        let lastPageHasMore = false
+
+        while (pages < MAX_BURST_PAGES && cursor) {
+          const gapPage = await queryMonitorSamplesCursor({
+            ...currentFilter(),
+            limit: PAGE_LIMIT,
+            orderDesc: true,
+            cursor,
+          })
+          if (signature !== activeSignature) return 0
+          pages += 1
+          lastCursor = gapPage.nextCursor || null
+          lastPageHasMore = gapPage.hasMore
+
+          for (const sample of gapPage.items) {
+            if (isPreRefreshBoundary(sample, catchUpTargetSampleId.value, catchUpTargetTimestampMs.value)) {
+              reachedBoundary = true
+            }
+
+            if (!sampleIndex.has(sample.sampleId)) {
+              sampleIndex.set(sample.sampleId, sample)
+              added += 1
+            }
+          }
+
+          if (reachedBoundary || !gapPage.hasMore || !gapPage.nextCursor || gapPage.items.length === 0) {
+            break
+          }
+
+          cursor = gapPage.nextCursor
         }
 
-        // If no more pages or page was empty, stop draining.
-        if (!page.hasMore || !page.nextCursor || page.items.length === 0) {
-          break
+        if (reachedBoundary || !lastPageHasMore || !lastCursor) {
+          refreshGapIncomplete.value = false
+          pendingRefreshCursor.value = null
+          catchUpTargetSampleId.value = null
+          catchUpTargetTimestampMs.value = null
+        } else {
+          pendingRefreshCursor.value = lastCursor
+        }
+      } else {
+        // --- Normal Refresh Mode ---
+        const preRefreshLatest = latestSample.value
+        const targetId = preRefreshLatest?.sampleId ?? null
+        const targetTs = preRefreshLatest?.timestampMs ?? null
+        const hasKnownBoundary = preRefreshLatest !== null
+
+        let cursor: string | undefined = undefined
+        let pages = 0
+        let reachedBoundary = false
+        let lastCursor: string | null = null
+        let lastPageHasMore = false
+
+        while (pages < MAX_BURST_PAGES) {
+          const query: MonitorCursorQuery = {
+            ...currentFilter(),
+            limit: PAGE_LIMIT,
+            orderDesc: true,
+            cursor,
+          }
+          const page = await queryMonitorSamplesCursor(query)
+          if (signature !== activeSignature) return 0
+          pages += 1
+          lastCursor = page.nextCursor || null
+          lastPageHasMore = page.hasMore
+
+          for (const sample of page.items) {
+            if (hasKnownBoundary && isPreRefreshBoundary(sample, targetId, targetTs)) {
+              reachedBoundary = true
+            }
+
+            if (!sampleIndex.has(sample.sampleId)) {
+              sampleIndex.set(sample.sampleId, sample)
+              added += 1
+            }
+          }
+
+          // If we reached the known boundary or there was no boundary to reach, done.
+          if (reachedBoundary || !hasKnownBoundary) {
+            break
+          }
+
+          // If no more pages or page was empty, stop draining.
+          if (!page.hasMore || !page.nextCursor || page.items.length === 0) {
+            break
+          }
+
+          cursor = page.nextCursor
         }
 
-        cursor = page.nextCursor
+        // If we hit the safety cap while page.hasMore was true AND we did not reach the boundary:
+        if (!reachedBoundary && hasKnownBoundary && lastCursor && lastPageHasMore) {
+          refreshGapIncomplete.value = true
+          pendingRefreshCursor.value = lastCursor
+          catchUpTargetSampleId.value = targetId
+          catchUpTargetTimestampMs.value = targetTs
+        } else {
+          refreshGapIncomplete.value = false
+          pendingRefreshCursor.value = null
+          catchUpTargetSampleId.value = null
+          catchUpTargetTimestampMs.value = null
+        }
       }
 
       if (added > 0) {
@@ -703,6 +815,8 @@ export const useTimelineStore = defineStore('timeline', () => {
     lastRefreshAtMs,
     followLive,
     refreshIntervalMs,
+    refreshGapIncomplete,
+    pendingRefreshCursor,
     // viewport
     widthPx,
     viewport,
