@@ -534,6 +534,105 @@ func TestWebServer_MonitorHistoryEndpoints(t *testing.T) {
 	}
 }
 
+func TestWebServer_MonitorValidation_400BadRequest(t *testing.T) {
+	// R-03: Verify client input validation errors map to HTTP 400 Bad Request
+	tmpDir := t.TempDir()
+	profileDir := filepath.Join(tmpDir, "profiles")
+	_ = os.MkdirAll(profileDir, 0o755)
+
+	server, err := NewServer(ServerConfig{
+		Port:         0,
+		ProfilePaths: profiles.Paths{Dir: profileDir},
+		HistoryDir:   filepath.Join(tmpDir, "history"),
+	})
+	if err != nil {
+		t.Fatalf("NewServer error: %v", err)
+	}
+	defer server.Close()
+
+	handler := server.buildHandler()
+
+	// 1. Invalid limits: limit=0, limit=2000, limit=invalid
+	for _, lim := range []string{"0", "2000", "-5", "not_a_number"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/monitor/samples/cursor?limit="+lim, nil)
+		req.Host = "127.0.0.1:8080"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("expected 400 Bad Request for limit=%s, got %d", lim, rec.Code)
+		}
+	}
+
+	// 2. Invalid time range: since > until
+	reqBadRange := httptest.NewRequest(http.MethodGet, "/api/monitor/samples/cursor?since=2026-09-02T00:00:00Z&until=2026-09-01T00:00:00Z", nil)
+	reqBadRange.Host = "127.0.0.1:8080"
+	recBadRange := httptest.NewRecorder()
+	handler.ServeHTTP(recBadRange, reqBadRange)
+	if recBadRange.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request for since > until on cursor, got %d", recBadRange.Code)
+	}
+
+	reqBadStatsRange := httptest.NewRequest(http.MethodGet, "/api/monitor/stats?since=2026-09-02T00:00:00Z&until=2026-09-01T00:00:00Z", nil)
+	reqBadStatsRange.Host = "127.0.0.1:8080"
+	recBadStatsRange := httptest.NewRecorder()
+	handler.ServeHTTP(recBadStatsRange, reqBadStatsRange)
+	if recBadStatsRange.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request for since > until on stats, got %d", recBadStatsRange.Code)
+	}
+
+	// 3. Oversized cursor token (> 512 bytes)
+	longCursor := strings.Repeat("x", 550)
+	reqOversized := httptest.NewRequest(http.MethodGet, "/api/monitor/samples/cursor?cursor="+longCursor, nil)
+	reqOversized.Host = "127.0.0.1:8080"
+	recOversized := httptest.NewRecorder()
+	handler.ServeHTTP(recOversized, reqOversized)
+	if recOversized.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request for oversized cursor token, got %d", recOversized.Code)
+	}
+
+	// 4. POST /api/monitor/retention validation
+	// a. Malformed JSON
+	reqBadJSON := httptest.NewRequest(http.MethodPost, "/api/monitor/retention", strings.NewReader("{invalid-json"))
+	reqBadJSON.Host = "127.0.0.1:8080"
+	reqBadJSON.Header.Set("Origin", "http://127.0.0.1:8080")
+	recBadJSON := httptest.NewRecorder()
+	handler.ServeHTTP(recBadJSON, reqBadJSON)
+	if recBadJSON.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request for malformed JSON, got %d", recBadJSON.Code)
+	}
+
+	// b. Custom retention with custom_days <= 0
+	reqCustom0 := httptest.NewRequest(http.MethodPost, "/api/monitor/retention", strings.NewReader(`{"policy":"custom","custom_days":0}`))
+	reqCustom0.Host = "127.0.0.1:8080"
+	reqCustom0.Header.Set("Origin", "http://127.0.0.1:8080")
+	recCustom0 := httptest.NewRecorder()
+	handler.ServeHTTP(recCustom0, reqCustom0)
+	if recCustom0.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request for custom_days=0, got %d", recCustom0.Code)
+	}
+
+	// c. Custom retention with custom_days > 36500 (N-02 hard max)
+	reqCustomHuge := httptest.NewRequest(http.MethodPost, "/api/monitor/retention", strings.NewReader(`{"policy":"custom","custom_days":50000}`))
+	reqCustomHuge.Host = "127.0.0.1:8080"
+	reqCustomHuge.Header.Set("Origin", "http://127.0.0.1:8080")
+	recCustomHuge := httptest.NewRecorder()
+	handler.ServeHTTP(recCustomHuge, reqCustomHuge)
+	if recCustomHuge.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request for custom_days > 36500, got %d", recCustomHuge.Code)
+	}
+
+	// d. Retention with future cutoff time
+	futureTime := time.Now().Add(48 * time.Hour).Format(time.RFC3339)
+	reqFuture := httptest.NewRequest(http.MethodPost, "/api/monitor/retention", strings.NewReader(`{"policy":"custom","cutoff_time":"`+futureTime+`"}`))
+	reqFuture.Host = "127.0.0.1:8080"
+	reqFuture.Header.Set("Origin", "http://127.0.0.1:8080")
+	recFuture := httptest.NewRecorder()
+	handler.ServeHTTP(recFuture, reqFuture)
+	if recFuture.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request for future cutoff time, got %d", recFuture.Code)
+	}
+}
+
 
 
 

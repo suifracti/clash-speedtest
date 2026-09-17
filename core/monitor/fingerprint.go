@@ -35,8 +35,8 @@ func sanitizeServerTag(cleanServer string) string {
 	return safeServer
 }
 
-// ComputeNodeIdentityKey calculates a stable, long-term transport endpoint identifier for a proxy node.
-// It incorporates purely transport and connection parameters:
+// ComputeNodeIdentityKey calculates a stable transport endpoint identifier for a proxy node.
+// It incorporates purely physical/transport and connection parameters:
 // - Protocol Type (lowercased)
 // - Server Hostname or IP (lowercased)
 // - Server Port
@@ -44,8 +44,13 @@ func sanitizeServerTag(cleanServer string) string {
 // - Host / SNI / ServerName
 // - Path (e.g. ws path / grpc serviceName)
 //
+// Scope & Boundary (R-01):
+// NodeIdentityKey represents the physical transport endpoint, NOT a globally unique subscription node instance.
+// If multiple subscriptions/profiles share the same public CDN host or reverse proxy endpoint,
+// they will yield the same NodeIdentityKey. Queries for a specific logical subscription node must
+// qualify with ProfileID or use NodeKey to avoid cross-profile aggregation.
+//
 // It strictly EXCLUDES credentials (passwords, tokens, UUIDs, private keys) and display names.
-// This key enables long-term historical continuity even across credential rotations or name changes.
 func ComputeNodeIdentityKey(nodeType, server string, port int, network, sni, path string) string {
 	cleanType := strings.ToLower(strings.TrimSpace(nodeType))
 	cleanServer := strings.ToLower(strings.TrimSpace(server))
@@ -74,10 +79,14 @@ func ComputeNodeIdentityKey(nodeType, server string, port int, network, sni, pat
 	return fmt.Sprintf("nid_%s_%s_%d_%s", cleanType, safeServer, port, digest[:8])
 }
 
-// ComputeConfigRevisionKey hashes the credential parameters and connection options for a node,
-// binding it to its NodeIdentityKey.
-// When credentials rotate or TLS parameters change, ConfigRevisionKey changes,
-// while NodeIdentityKey remains stable.
+// ComputeConfigRevisionKey produces a deterministic version fingerprint of the credential parameters
+// and connection options for a node, bound to its NodeIdentityKey.
+//
+// Security & Purpose (R-02):
+// ConfigRevisionKey is a deterministic version fingerprint intended solely to detect configuration changes
+// and trigger revision increments. It is NOT cryptographic encryption, NOT password hashing (such as argon2
+// or bcrypt), and does NOT provide security guarantees against offline dictionary guessing for low-entropy passwords.
+// Plaintext secrets/passwords are never emitted into the key string itself.
 func ComputeConfigRevisionKey(identityKey string, rawConfig map[string]any) string {
 	credHash := hashSensitiveCredentials(rawConfig)
 

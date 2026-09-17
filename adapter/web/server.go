@@ -956,6 +956,7 @@ func (s *Server) handleQueryMonitorSamplesCursor(w http.ResponseWriter, r *http.
 	q := r.URL.Query()
 	filter := monitor.CursorFilter{
 		NodeIdentityKey: q.Get("node_identity_key"),
+		LegacyNodeKey:   q.Get("legacy_node_key"),
 		NodeKey:         q.Get("node_key"),
 		ProfileID:       q.Get("profile_id"),
 		ProbeType:       q.Get("probe_type"),
@@ -963,10 +964,18 @@ func (s *Server) handleQueryMonitorSamplesCursor(w http.ResponseWriter, r *http.
 		Cursor:          q.Get("cursor"),
 	}
 
+	if filter.Cursor != "" && len(filter.Cursor) > 512 {
+		writeError(w, http.StatusBadRequest, "cursor token exceeds maximum length of 512 bytes")
+		return
+	}
+
 	if limitStr := q.Get("limit"); limitStr != "" {
-		if limit, err := strconv.Atoi(limitStr); err == nil {
-			filter.Limit = limit
+		limit, err := strconv.Atoi(limitStr)
+		if err != nil || limit <= 0 || limit > 1000 {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 1000")
+			return
 		}
+		filter.Limit = limit
 	}
 	if successStr := q.Get("success"); successStr != "" {
 		val := successStr == "true" || successStr == "1"
@@ -978,18 +987,32 @@ func (s *Server) handleQueryMonitorSamplesCursor(w http.ResponseWriter, r *http.
 		filter.OrderDesc = true // Default newest first
 	}
 	if sinceStr := q.Get("since"); sinceStr != "" {
-		if t, err := time.Parse(time.RFC3339, sinceStr); err == nil {
-			filter.Since = &t
+		t, err := time.Parse(time.RFC3339, sinceStr)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid since parameter: must be RFC3339")
+			return
 		}
+		filter.Since = &t
 	}
 	if untilStr := q.Get("until"); untilStr != "" {
-		if t, err := time.Parse(time.RFC3339, untilStr); err == nil {
-			filter.Until = &t
+		t, err := time.Parse(time.RFC3339, untilStr)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid until parameter: must be RFC3339")
+			return
 		}
+		filter.Until = &t
+	}
+	if filter.Since != nil && filter.Until != nil && filter.Since.After(*filter.Until) {
+		writeError(w, http.StatusBadRequest, monitor.ErrInvalidTimeRange.Error())
+		return
 	}
 
 	page, err := s.app.QueryMonitorSamplesCursor(r.Context(), filter)
 	if err != nil {
+		if monitor.IsValidationError(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1000,24 +1023,39 @@ func (s *Server) handleGetMonitorStats(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	query := monitor.StatsQuery{
 		NodeIdentityKey: q.Get("node_identity_key"),
+		LegacyNodeKey:   q.Get("legacy_node_key"),
 		NodeKey:         q.Get("node_key"),
 		ProfileID:       q.Get("profile_id"),
 		ProbeType:       q.Get("probe_type"),
 		Target:          q.Get("target"),
 	}
 	if sinceStr := q.Get("since"); sinceStr != "" {
-		if t, err := time.Parse(time.RFC3339, sinceStr); err == nil {
-			query.Since = &t
+		t, err := time.Parse(time.RFC3339, sinceStr)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid since parameter: must be RFC3339")
+			return
 		}
+		query.Since = &t
 	}
 	if untilStr := q.Get("until"); untilStr != "" {
-		if t, err := time.Parse(time.RFC3339, untilStr); err == nil {
-			query.Until = &t
+		t, err := time.Parse(time.RFC3339, untilStr)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid until parameter: must be RFC3339")
+			return
 		}
+		query.Until = &t
+	}
+	if query.Since != nil && query.Until != nil && query.Since.After(*query.Until) {
+		writeError(w, http.StatusBadRequest, monitor.ErrInvalidTimeRange.Error())
+		return
 	}
 
 	stats, err := s.app.GetMonitorStats(r.Context(), query)
 	if err != nil {
+		if monitor.IsValidationError(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1033,6 +1071,10 @@ func (s *Server) handleApplyRetention(w http.ResponseWriter, r *http.Request) {
 
 	result, err := s.app.ApplyRetention(r.Context(), req)
 	if err != nil {
+		if monitor.IsValidationError(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

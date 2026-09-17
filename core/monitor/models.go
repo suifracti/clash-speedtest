@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -121,6 +122,7 @@ type SampleFilter struct {
 // CursorFilter specifies query criteria for keyset/cursor-based sample pagination.
 type CursorFilter struct {
 	NodeIdentityKey string     `json:"node_identity_key,omitempty"`
+	LegacyNodeKey   string     `json:"legacy_node_key,omitempty"` // For PR#3 backfilled samples compatibility
 	NodeKey         string     `json:"node_key,omitempty"`
 	ProfileID       string     `json:"profile_id,omitempty"`
 	ProbeType       string     `json:"probe_type,omitempty"`
@@ -134,10 +136,10 @@ type CursorFilter struct {
 }
 
 // SampleCursorPage represents a page of MonitorSample results using keyset pagination.
+// In this revision, pagination is single-direction stream (next_cursor only).
 type SampleCursorPage struct {
 	Items      []*MonitorSample `json:"items"`
 	NextCursor string           `json:"next_cursor,omitempty"`
-	PrevCursor string           `json:"prev_cursor,omitempty"`
 	HasMore    bool             `json:"has_more"`
 	Limit      int              `json:"limit"`
 }
@@ -145,12 +147,59 @@ type SampleCursorPage struct {
 // StatsQuery defines filtering criteria for deriving statistical metrics over raw samples.
 type StatsQuery struct {
 	NodeIdentityKey string     `json:"node_identity_key,omitempty"`
+	LegacyNodeKey   string     `json:"legacy_node_key,omitempty"` // For PR#3 backfilled samples compatibility
 	NodeKey         string     `json:"node_key,omitempty"`
 	ProfileID       string     `json:"profile_id,omitempty"`
 	ProbeType       string     `json:"probe_type,omitempty"`
 	Target          string     `json:"target,omitempty"`
 	Since           *time.Time `json:"since,omitempty"`
 	Until           *time.Time `json:"until,omitempty"`
+}
+
+// Validation errors for client request inputs (mapped to HTTP 400 Bad Request in Web adapter).
+var (
+	ErrInvalidCursor          = errors.New("invalid cursor token")
+	ErrInvalidTimeRange       = errors.New("invalid time range: since cannot be after until")
+	ErrInvalidLimit           = errors.New("limit must be between 1 and 1000")
+	ErrFutureCutoff           = errors.New("cutoff time cannot be in the future")
+	ErrInvalidCustomDays      = errors.New("custom days must be between 1 and 36500")
+	ErrInvalidRetentionPolicy = errors.New("unsupported retention policy")
+	ErrQueryWindowTooLarge    = errors.New("query window too large: please specify a narrower time window")
+)
+
+// ValidationError represents an explicit client-side validation failure.
+type ValidationError struct {
+	Err error
+}
+
+func (v *ValidationError) Error() string {
+	if v.Err != nil {
+		return v.Err.Error()
+	}
+	return "validation error"
+}
+
+func (v *ValidationError) Unwrap() error {
+	return v.Err
+}
+
+// NewValidationError constructs a ValidationError with the given message.
+func NewValidationError(msg string) error {
+	return &ValidationError{Err: errors.New(msg)}
+}
+
+// WrapValidationError wraps an existing error as a ValidationError.
+func WrapValidationError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &ValidationError{Err: err}
+}
+
+// IsValidationError checks whether an error is a ValidationError.
+func IsValidationError(err error) bool {
+	var ve *ValidationError
+	return errors.As(err, &ve)
 }
 
 // DerivedStats contains aggregated metrics computed on-the-fly from raw immutable samples.

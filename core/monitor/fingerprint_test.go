@@ -237,3 +237,39 @@ func TestPopulateNodesKeys(t *testing.T) {
 	}
 }
 
+func TestNodeIdentityKey_MultiProfileIsolation(t *testing.T) {
+	// R-01: Verify that NodeIdentityKey identifies the physical transport endpoint.
+	// Two distinct subscriptions (Profile A and Profile B) sharing the same endpoint server/port
+	// yield the same NodeIdentityKey, which is why queries for logical subscription nodes
+	// must be qualified by ProfileID or NodeKey to maintain strict isolation.
+	nodeProfileA := map[string]any{
+		"name":     "SubA-Edge-01",
+		"type":     "trojan",
+		"server":   "edge.common-cdn.com",
+		"port":     443,
+		"password": "sub-a-password",
+		"sni":      "cdn.domain.com",
+	}
+	nodeProfileB := map[string]any{
+		"name":     "SubB-Edge-01",
+		"type":     "trojan",
+		"server":   "edge.common-cdn.com",
+		"port":     443,
+		"password": "sub-b-password",
+		"sni":      "cdn.domain.com",
+	}
+
+	nidA := ComputeNodeIdentityKeyFromConfig(nodeProfileA)
+	nidB := ComputeNodeIdentityKeyFromConfig(nodeProfileB)
+
+	if nidA != nidB {
+		t.Errorf("expected shared physical endpoint to produce same NodeIdentityKey, got %q vs %q", nidA, nidB)
+	}
+
+	nkA := ComputeNodeKeyFromConfig(nodeProfileA)
+	nkB := ComputeNodeKeyFromConfig(nodeProfileB)
+	if nkA == nkB {
+		t.Errorf("distinct credentials must produce distinct NodeKeys: %q vs %q", nkA, nkB)
+	}
+}
+

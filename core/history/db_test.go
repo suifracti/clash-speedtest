@@ -3,8 +3,10 @@ package history
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -890,6 +892,507 @@ func TestSQLite_Retention_BatchedCutoff(t *testing.T) {
 	runs, err := store.QueryMonitorRuns(ctx, "job_retention", 10)
 	if err != nil || len(runs) != 1 || runs[0].RunID != "run_new" {
 		t.Fatalf("expected only run_new to remain, got %+v", runs)
+	}
+}
+
+func TestSQLite_Migration_HistoricalContinuity(t *testing.T) {
+	// B-01: Verify that upgrading from PR#3 preserves legacy node_key
+	// and that querying with (NodeIdentityKey + LegacyNodeKey) bridges PR3 and PR4 samples continuously.
+	tmpDir := t.TempDir()
+	ctx := context.Background()
+	dbPath := filepath.Join(tmpDir, "history.db")
+
+	// 1. Manually setup PR#3 schema without node_identity_key or config_revision_key
+	rawDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	pr3DDL := `
+	CREATE TABLE monitor_samples (
+		sample_id TEXT PRIMARY KEY,
+		run_id TEXT NOT NULL,
+		node_key TEXT NOT NULL,
+		profile_id TEXT NOT NULL,
+		display_name_snapshot TEXT NOT NULL,
+		probe_type TEXT NOT NULL,
+		target TEXT NOT NULL,
+		timestamp DATETIME NOT NULL,
+		success INTEGER NOT NULL,
+		latency_ms INTEGER NOT NULL DEFAULT 0,
+		ttfb_ms INTEGER NOT NULL DEFAULT 0,
+		error_class TEXT NOT NULL DEFAULT 'none',
+		error_detail TEXT,
+		exit_ip TEXT,
+		exit_region TEXT,
+		metadata_json TEXT
+	);
+	CREATE TABLE monitor_runs (
+		run_id TEXT PRIMARY KEY,
+		job_id TEXT NOT NULL,
+		scheduled_at DATETIME NOT NULL,
+		started_at DATETIME NOT NULL,
+		finished_at DATETIME,
+		status TEXT NOT NULL,
+		total_nodes INTEGER NOT NULL DEFAULT 0,
+		success_nodes INTEGER NOT NULL DEFAULT 0,
+		failed_nodes INTEGER NOT NULL DEFAULT 0,
+		error_message TEXT
+	);
+	`
+	if _, err := rawDB.Exec(pr3DDL); err != nil {
+		t.Fatalf("exec pr3 ddl: %v", err)
+	}
+
+	// Insert PR#3 legacy sample
+	tLegacy := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	_, err = rawDB.Exec(`
+		INSERT INTO monitor_samples (
+			sample_id, run_id, node_key, profile_id, display_name_snapshot,
+			probe_type, target, timestamp, success, latency_ms, ttfb_ms
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, "s_pr3_legacy", "run_pr3", "nk_legacy_test", "prof_1", "HK-01", "rtt", "https://example.com", tLegacy, 1, 45, 35)
+	if err != nil {
+		t.Fatalf("insert legacy sample: %v", err)
+	}
+	_ = rawDB.Close()
+
+	// 2. Open DB with NewStore, which runs migrateSchema
+	store, err := NewStore(tmpDir)
+	if err != nil {
+		t.Fatalf("NewStore with migration failed: %v", err)
+	}
+	defer store.Close()
+
+	// 3. Insert PR#4 new sample with new NodeIdentityKey
+	tPR4 := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	newIdentityKey := "nid_ss_1.2.3.4_8388_a1b2c3d4"
+	err = store.SaveMonitorSamples(ctx, []*monitor.MonitorSample{
+		{
+			SampleID:            "s_pr4_new",
+			RunID:               "run_pr4",
+			NodeKey:             "nk_legacy_test",
+			NodeIdentityKey:     newIdentityKey,
+			ConfigRevisionKey:   "rev_0123456789abcdef",
+			ProfileID:           "prof_1",
+			DisplayNameSnapshot: "HK-01",
+			ProbeType:           "rtt",
+			Target:              "https://example.com",
+			Timestamp:           tPR4,
+			Success:             true,
+			Latency:             55 * time.Millisecond,
+			TTFB:                40 * time.Millisecond,
+		},
+	})
+	if err != nil {
+		t.Fatalf("save pr4 sample: %v", err)
+	}
+
+	// 4. Query with (NodeIdentityKey + LegacyNodeKey) bridge
+	page, err := store.QueryMonitorSamplesCursor(ctx, monitor.CursorFilter{
+		NodeIdentityKey: newIdentityKey,
+		LegacyNodeKey:   "nk_legacy_test",
+		OrderDesc:       true,
+		Limit:           10,
+	})
+	if err != nil {
+		t.Fatalf("QueryMonitorSamplesCursor bridge failed: %v", err)
+	}
+
+	if len(page.Items) != 2 {
+		t.Fatalf("expected both PR3 old sample and PR4 new sample to be returned, got %d items", len(page.Items))
+	}
+	if page.Items[0].SampleID != "s_pr4_new" || page.Items[1].SampleID != "s_pr3_legacy" {
+		t.Errorf("unexpected continuous item sequence: %s, %s", page.Items[0].SampleID, page.Items[1].SampleID)
+	}
+
+	// 5. GetDerivedStats with (NodeIdentityKey + LegacyNodeKey) bridge
+	stats, err := store.GetDerivedStats(ctx, monitor.StatsQuery{
+		NodeIdentityKey: newIdentityKey,
+		LegacyNodeKey:   "nk_legacy_test",
+	})
+	if err != nil {
+		t.Fatalf("GetDerivedStats bridge failed: %v", err)
+	}
+	if stats.SampleCount != 2 || stats.SuccessCount != 2 {
+		t.Errorf("expected 2 continuous samples in stats, got %+v", stats)
+	}
+}
+
+func TestSQLite_DerivedStats_ExactQuantiles_BoundedMemory(t *testing.T) {
+	// B-02: Verify exact SQL rank quantiles, non-HTTP TTFB <= 0 exclusion, and safety boundaries.
+	tmpDir := t.TempDir()
+	store, err := NewStore(tmpDir)
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	tBase := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+
+	// Insert 10 successful samples with latencies 10..100ms
+	// TTFB: only 5 of them have valid ttfb_ms > 0 (20, 40, 60, 80, 100). The other 5 have ttfb_ms = 0.
+	var samples []*monitor.MonitorSample
+	for i := 1; i <= 10; i++ {
+		ttfbVal := time.Duration(0)
+		if i%2 == 0 {
+			ttfbVal = time.Duration(i*10) * time.Millisecond
+		}
+		samples = append(samples, &monitor.MonitorSample{
+			SampleID:            fmt.Sprintf("stat_s_%02d", i),
+			RunID:               "run_stats",
+			NodeKey:             "nk_stats_test",
+			NodeIdentityKey:     "nid_stats_test",
+			ProfileID:           "prof_stats",
+			ProbeType:           "http",
+			Target:              "https://target.test",
+			Timestamp:           tBase.Add(time.Duration(i) * time.Minute),
+			Success:             true,
+			Latency:             time.Duration(i*10) * time.Millisecond,
+			TTFB:                ttfbVal,
+		})
+	}
+	// Add 1 failed sample (latency=0, success=false)
+	samples = append(samples, &monitor.MonitorSample{
+		SampleID:        "stat_fail_01",
+		RunID:           "run_stats",
+		NodeKey:         "nk_stats_test",
+		NodeIdentityKey: "nid_stats_test",
+		ProfileID:       "prof_stats",
+		ProbeType:       "http",
+		Target:          "https://target.test",
+		Timestamp:       tBase.Add(11 * time.Minute),
+		Success:         false,
+		Latency:         0,
+		TTFB:            0,
+		ErrorClass:      "dns_failure",
+	})
+
+	if err := store.SaveMonitorSamples(ctx, samples); err != nil {
+		t.Fatalf("save samples: %v", err)
+	}
+
+	stats, err := store.GetDerivedStats(ctx, monitor.StatsQuery{
+		NodeIdentityKey: "nid_stats_test",
+	})
+	if err != nil {
+		t.Fatalf("GetDerivedStats failed: %v", err)
+	}
+
+	if stats.SampleCount != 11 || stats.SuccessCount != 10 || stats.FailureCount != 1 {
+		t.Fatalf("unexpected summary counts: %+v", stats)
+	}
+
+	// Latency percentiles: 10 valid samples (10..100)
+	// rank50 = ceil(0.50*10)-1 = 4 -> 50ms
+	// rank95 = ceil(0.95*10)-1 = 9 -> 100ms
+	if *stats.LatencyMinMs != 10 || *stats.LatencyMaxMs != 100 {
+		t.Errorf("latency min/max mismatch: min=%v max=%v", *stats.LatencyMinMs, *stats.LatencyMaxMs)
+	}
+	if *stats.LatencyP50Ms != 50 {
+		t.Errorf("expected LatencyP50Ms=50, got %v", *stats.LatencyP50Ms)
+	}
+	if *stats.LatencyP95Ms != 100 {
+		t.Errorf("expected LatencyP95Ms=100, got %v", *stats.LatencyP95Ms)
+	}
+
+	// TTFB percentiles: exactly 5 valid samples (20, 40, 60, 80, 100). Samples with ttfb_ms=0 are excluded!
+	// rank50 = ceil(0.50*5)-1 = 2 -> 60ms
+	// rank95 = ceil(0.95*5)-1 = 4 -> 100ms
+	if stats.TTFBP50Ms == nil || *stats.TTFBP50Ms != 60 {
+		t.Errorf("expected TTFBP50Ms=60 (excluding 0ms), got %v", stats.TTFBP50Ms)
+	}
+	if stats.TTFBP95Ms == nil || *stats.TTFBP95Ms != 100 {
+		t.Errorf("expected TTFBP95Ms=100 (excluding 0ms), got %v", stats.TTFBP95Ms)
+	}
+
+	// Safety boundaries: Since > Until
+	since := tBase.Add(10 * time.Minute)
+	until := tBase.Add(5 * time.Minute)
+	_, err = store.GetDerivedStats(ctx, monitor.StatsQuery{
+		Since: &since,
+		Until: &until,
+	})
+	if err == nil || !monitor.IsValidationError(err) || !errors.Is(err, monitor.ErrInvalidTimeRange) {
+		t.Errorf("expected ErrInvalidTimeRange validation error, got %v", err)
+	}
+
+	// Safety boundaries: Window width > 366 days
+	wideSince := tBase
+	wideUntil := tBase.AddDate(2, 0, 0)
+	_, err = store.GetDerivedStats(ctx, monitor.StatsQuery{
+		Since: &wideSince,
+		Until: &wideUntil,
+	})
+	if err == nil || !monitor.IsValidationError(err) || !errors.Is(err, monitor.ErrQueryWindowTooLarge) {
+		t.Errorf("expected ErrQueryWindowTooLarge for 2-year window, got %v", err)
+	}
+}
+
+func TestSQLite_Retention_SafetyGuards(t *testing.T) {
+	// B-03: Verify future cutoff rejection, custom_days hard max, partial_failed orphan cleanup,
+	// strict preservation of running and skipped runs, and exact sample cutoff boundary.
+	tmpDir := t.TempDir()
+	store, err := NewStore(tmpDir)
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	// 1. Future cutoff rejects without deleting anything
+	future := now.Add(24 * time.Hour)
+	_, err = store.ApplyRetention(ctx, monitor.RetentionRequest{
+		Policy:     monitor.RetentionCustom,
+		CutoffTime: &future,
+	})
+	if err == nil || !monitor.IsValidationError(err) || !errors.Is(err, monitor.ErrFutureCutoff) {
+		t.Errorf("expected ErrFutureCutoff for future cutoff time, got %v", err)
+	}
+
+	// 2. Invalid custom_days
+	_, err = store.ApplyRetention(ctx, monitor.RetentionRequest{
+		Policy:     monitor.RetentionCustom,
+		CustomDays: 0,
+	})
+	if err == nil || !monitor.IsValidationError(err) || !errors.Is(err, monitor.ErrInvalidCustomDays) {
+		t.Errorf("expected ErrInvalidCustomDays for custom_days=0, got %v", err)
+	}
+	_, err = store.ApplyRetention(ctx, monitor.RetentionRequest{
+		Policy:     monitor.RetentionCustom,
+		CustomDays: 40000, // exceeds hard max 36500
+	})
+	if err == nil || !monitor.IsValidationError(err) || !errors.Is(err, monitor.ErrInvalidCustomDays) {
+		t.Errorf("expected ErrInvalidCustomDays for custom_days=40000, got %v", err)
+	}
+
+	// 3. Run retention semantics:
+	// Insert 4 runs older than cutoff (60 days ago):
+	// - run_running (status: running) -> MUST BE PRESERVED
+	// - run_skipped (status: skipped) -> MUST BE PRESERVED
+	// - run_partial_failed (status: partial_failed) -> MUST BE CLEANED UP
+	// - run_completed (status: completed) -> MUST BE CLEANED UP
+	tPast := now.AddDate(0, 0, -60)
+	runs := []*monitor.MonitorRun{
+		{RunID: "run_running", JobID: "j1", ScheduledAt: tPast, StartedAt: tPast, Status: monitor.RunStatusRunning},
+		{RunID: "run_skipped", JobID: "j1", ScheduledAt: tPast, StartedAt: tPast, Status: monitor.RunStatusSkipped},
+		{RunID: "run_partial_failed", JobID: "j1", ScheduledAt: tPast, StartedAt: tPast, Status: monitor.RunStatusPartialFailed},
+		{RunID: "run_completed", JobID: "j1", ScheduledAt: tPast, StartedAt: tPast, Status: monitor.RunStatusCompleted},
+	}
+	for _, r := range runs {
+		if err := store.SaveMonitorRun(ctx, r); err != nil {
+			t.Fatalf("save run %s: %v", r.RunID, err)
+		}
+	}
+
+	// Sample boundary test:
+	// cutoff is 30 days ago.
+	// sample_before is at cutoff - 10s -> deleted.
+	// sample_at is at cutoff + 10s -> kept.
+	cutoff := now.AddDate(0, 0, -30)
+	err = store.SaveMonitorSamples(ctx, []*monitor.MonitorSample{
+		{
+			SampleID:  "s_before_cutoff",
+			RunID:     "run_other",
+			NodeKey:   "nk_1",
+			Timestamp: cutoff.Add(-10 * time.Second),
+			Success:   true,
+		},
+		{
+			SampleID:  "s_after_cutoff",
+			RunID:     "run_other",
+			NodeKey:   "nk_1",
+			Timestamp: cutoff.Add(10 * time.Second),
+			Success:   true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("save boundary samples: %v", err)
+	}
+
+	// Apply 30d retention
+	res, err := store.ApplyRetention(ctx, monitor.RetentionRequest{
+		Policy:     monitor.Retention30d,
+		CutoffTime: &cutoff,
+	})
+	if err != nil {
+		t.Fatalf("ApplyRetention failed: %v", err)
+	}
+
+	if res.SamplesDeleted != 1 {
+		t.Errorf("expected exactly 1 sample deleted (s_before_cutoff), got %d", res.SamplesDeleted)
+	}
+	if res.RunsDeleted != 2 {
+		t.Errorf("expected exactly 2 runs deleted (completed and partial_failed), got %d", res.RunsDeleted)
+	}
+
+	// Verify runs status: running and skipped must exist
+	allRuns, err := store.QueryMonitorRuns(ctx, "j1", 10)
+	if err != nil {
+		t.Fatalf("query runs: %v", err)
+	}
+	runMap := make(map[string]monitor.RunStatus)
+	for _, r := range allRuns {
+		runMap[r.RunID] = r.Status
+	}
+
+	if _, ok := runMap["run_running"]; !ok {
+		t.Errorf("run_running was erroneously deleted!")
+	}
+	if _, ok := runMap["run_skipped"]; !ok {
+		t.Errorf("run_skipped was erroneously deleted!")
+	}
+	if _, ok := runMap["run_partial_failed"]; ok {
+		t.Errorf("run_partial_failed was not cleaned up!")
+	}
+	if _, ok := runMap["run_completed"]; ok {
+		t.Errorf("run_completed was not cleaned up!")
+	}
+
+	// Verify remaining sample is s_after_cutoff
+	remainingSamples, err := store.QueryMonitorSamples(ctx, monitor.SampleFilter{})
+	if err != nil || len(remainingSamples) != 1 || remainingSamples[0].SampleID != "s_after_cutoff" {
+		t.Fatalf("expected only s_after_cutoff to remain, got %+v", remainingSamples)
+	}
+}
+
+func TestSQLite_Cursor_DirectionAndValidation(t *testing.T) {
+	// B-04: Verify direction mismatch rejection, token size limit, version check, Since > Until, and limit bounds.
+	tmpDir := t.TempDir()
+	store, err := NewStore(tmpDir)
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	// 1. Direction mismatch: ASC cursor reused in DESC query
+	ascCursor := EncodeCursor(now, "s_01", "asc")
+	_, err = store.QueryMonitorSamplesCursor(ctx, monitor.CursorFilter{
+		Cursor:    ascCursor,
+		OrderDesc: true, // Requested DESC, but cursor is ASC
+	})
+	if err == nil || !monitor.IsValidationError(err) || !errors.Is(err, monitor.ErrInvalidCursor) {
+		t.Errorf("expected ErrInvalidCursor for ASC cursor in DESC query, got %v", err)
+	}
+
+	// 2. Direction mismatch: DESC cursor reused in ASC query
+	descCursor := EncodeCursor(now, "s_01", "desc")
+	_, err = store.QueryMonitorSamplesCursor(ctx, monitor.CursorFilter{
+		Cursor:    descCursor,
+		OrderDesc: false, // Requested ASC, but cursor is DESC
+	})
+	if err == nil || !monitor.IsValidationError(err) || !errors.Is(err, monitor.ErrInvalidCursor) {
+		t.Errorf("expected ErrInvalidCursor for DESC cursor in ASC query, got %v", err)
+	}
+
+	// 3. Oversized cursor (> 512 bytes)
+	longToken := strings.Repeat("A", 600)
+	_, err = store.QueryMonitorSamplesCursor(ctx, monitor.CursorFilter{
+		Cursor: longToken,
+	})
+	if err == nil || !monitor.IsValidationError(err) || !errors.Is(err, monitor.ErrInvalidCursor) {
+		t.Errorf("expected ErrInvalidCursor for oversized cursor, got %v", err)
+	}
+
+	// 4. Malformed cursor
+	_, err = store.QueryMonitorSamplesCursor(ctx, monitor.CursorFilter{
+		Cursor: "!!!not_valid_base64???",
+	})
+	if err == nil || !monitor.IsValidationError(err) || !errors.Is(err, monitor.ErrInvalidCursor) {
+		t.Errorf("expected ErrInvalidCursor for malformed cursor, got %v", err)
+	}
+
+	// 5. Invalid Time range: Since > Until
+	since := now.Add(1 * time.Hour)
+	until := now
+	_, err = store.QueryMonitorSamplesCursor(ctx, monitor.CursorFilter{
+		Since: &since,
+		Until: &until,
+	})
+	if err == nil || !monitor.IsValidationError(err) || !errors.Is(err, monitor.ErrInvalidTimeRange) {
+		t.Errorf("expected ErrInvalidTimeRange, got %v", err)
+	}
+
+	// 6. Invalid Limit bounds
+	_, err = store.QueryMonitorSamplesCursor(ctx, monitor.CursorFilter{
+		Limit: -1,
+	})
+	if err == nil || !monitor.IsValidationError(err) || !errors.Is(err, monitor.ErrInvalidLimit) {
+		t.Errorf("expected ErrInvalidLimit for Limit < 0, got %v", err)
+	}
+	_, err = store.QueryMonitorSamplesCursor(ctx, monitor.CursorFilter{
+		Limit: 2000,
+	})
+	if err == nil || !monitor.IsValidationError(err) || !errors.Is(err, monitor.ErrInvalidLimit) {
+		t.Errorf("expected ErrInvalidLimit for Limit > 1000, got %v", err)
+	}
+}
+
+func TestSQLite_ProfileIsolation_SameIdentity(t *testing.T) {
+	// R-01: Verify that two subscriptions with the same NodeIdentityKey are strictly isolated
+	// when queried with ProfileID.
+	tmpDir := t.TempDir()
+	store, err := NewStore(tmpDir)
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	sharedIdentity := "nid_shared_endpoint_443"
+
+	// Insert sample from Profile A
+	_ = store.SaveMonitorSamples(ctx, []*monitor.MonitorSample{
+		{
+			SampleID:        "s_prof_a",
+			RunID:           "run_a",
+			NodeKey:         "nk_node_a",
+			NodeIdentityKey: sharedIdentity,
+			ProfileID:       "profile_A",
+			Timestamp:       now.Add(-10 * time.Minute),
+			Success:         true,
+			Latency:         40 * time.Millisecond,
+		},
+		{
+			SampleID:        "s_prof_b",
+			RunID:           "run_b",
+			NodeKey:         "nk_node_b",
+			NodeIdentityKey: sharedIdentity,
+			ProfileID:       "profile_B",
+			Timestamp:       now.Add(-5 * time.Minute),
+			Success:         true,
+			Latency:         70 * time.Millisecond,
+		},
+	})
+
+	// Query Profile A
+	pageA, err := store.QueryMonitorSamplesCursor(ctx, monitor.CursorFilter{
+		NodeIdentityKey: sharedIdentity,
+		ProfileID:       "profile_A",
+	})
+	if err != nil {
+		t.Fatalf("query profile A failed: %v", err)
+	}
+	if len(pageA.Items) != 1 || pageA.Items[0].SampleID != "s_prof_a" {
+		t.Errorf("expected only s_prof_a, got %+v", pageA.Items)
+	}
+
+	// Query Stats Profile B
+	statsB, err := store.GetDerivedStats(ctx, monitor.StatsQuery{
+		NodeIdentityKey: sharedIdentity,
+		ProfileID:       "profile_B",
+	})
+	if err != nil {
+		t.Fatalf("stats profile B failed: %v", err)
+	}
+	if statsB.SampleCount != 1 || *statsB.LatencyP50Ms != 70 {
+		t.Errorf("expected isolated stats for Profile B, got %+v", statsB)
 	}
 }
 

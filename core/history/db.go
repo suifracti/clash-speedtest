@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -101,6 +100,8 @@ func OpenDB(dir string) (*DB, error) {
 	return &DB{db: db}, nil
 }
 
+// migrateSchema performs idempotent, backward-compatible schema updates.
+// TODO(schema): Introduce a formal schema version framework in a future milestone (N-01).
 func migrateSchema(db *sql.DB) error {
 	rows, err := db.Query("PRAGMA table_info(monitor_samples);")
 	if err != nil {
@@ -131,6 +132,11 @@ func migrateSchema(db *sql.DB) error {
 		if _, err := db.Exec("ALTER TABLE monitor_samples ADD COLUMN node_identity_key TEXT NOT NULL DEFAULT '';"); err != nil {
 			return fmt.Errorf("migrate add node_identity_key: %w", err)
 		}
+		// Migration Limitation Note (B-01): When upgrading from PR#3, samples only retain the legacy node_key.
+		// If a node had multiple credential revisions during PR#3, the new NodeIdentityKey cannot be mathematically
+		// back-computed from raw samples alone without credentials. Setting node_identity_key = node_key preserves
+		// raw data without destructive migration while QueryMonitorSamplesCursor and GetDerivedStats bridge queries
+		// using both NodeIdentityKey and LegacyNodeKey.
 		_, _ = db.Exec("UPDATE monitor_samples SET node_identity_key = node_key WHERE node_identity_key = '' OR node_identity_key IS NULL;")
 	}
 
@@ -532,35 +538,56 @@ func (d *DB) GetNodeTimelineSamples(ctx context.Context, nodeKey string, since t
 
 // --- Keyset Pagination ---
 
+const (
+	maxCursorLength = 512
+	cursorVersion   = 1
+)
+
 type cursorData struct {
+	Version   int    `json:"v"`
 	Timestamp int64  `json:"t"`
 	SampleID  string `json:"id"`
+	Direction string `json:"dir"` // "desc" or "asc"
 }
 
 // EncodeCursor creates an opaque, URL-safe base64 string representing the pagination cursor.
-func EncodeCursor(t time.Time, sampleID string) string {
+func EncodeCursor(t time.Time, sampleID string, direction string) string {
 	b, _ := json.Marshal(cursorData{
+		Version:   cursorVersion,
 		Timestamp: t.UTC().UnixNano(),
 		SampleID:  sampleID,
+		Direction: strings.ToLower(direction),
 	})
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// DecodeCursor parses an opaque cursor string into its timestamp and sampleID components.
-func DecodeCursor(cursorStr string) (time.Time, string, error) {
+// DecodeCursor parses an opaque cursor string into its timestamp, sampleID, and validates direction/version.
+func DecodeCursor(cursorStr string, expectedDir string) (time.Time, string, error) {
 	if cursorStr == "" {
 		return time.Time{}, "", nil
+	}
+	if len(cursorStr) > maxCursorLength {
+		return time.Time{}, "", monitor.WrapValidationError(monitor.ErrInvalidCursor)
 	}
 	b, err := base64.RawURLEncoding.DecodeString(cursorStr)
 	if err != nil {
 		b, err = base64.StdEncoding.DecodeString(cursorStr)
 		if err != nil {
-			return time.Time{}, "", fmt.Errorf("invalid cursor base64: %w", err)
+			return time.Time{}, "", monitor.WrapValidationError(monitor.ErrInvalidCursor)
 		}
 	}
 	var cd cursorData
 	if err := json.Unmarshal(b, &cd); err != nil {
-		return time.Time{}, "", fmt.Errorf("invalid cursor json payload: %w", err)
+		return time.Time{}, "", monitor.WrapValidationError(monitor.ErrInvalidCursor)
+	}
+	if cd.Version != cursorVersion {
+		return time.Time{}, "", monitor.WrapValidationError(monitor.ErrInvalidCursor)
+	}
+	if cd.SampleID == "" || cd.Timestamp == 0 {
+		return time.Time{}, "", monitor.WrapValidationError(monitor.ErrInvalidCursor)
+	}
+	if expectedDir != "" && cd.Direction != "" && strings.ToLower(cd.Direction) != strings.ToLower(expectedDir) {
+		return time.Time{}, "", monitor.WrapValidationError(fmt.Errorf("%w: cursor direction mismatch (expected %s, got %s)", monitor.ErrInvalidCursor, expectedDir, cd.Direction))
 	}
 	return time.Unix(0, cd.Timestamp).UTC(), cd.SampleID, nil
 }
@@ -568,12 +595,26 @@ func DecodeCursor(cursorStr string) (time.Time, string, error) {
 // QueryMonitorSamplesCursor executes keyset pagination based on (timestamp, sample_id).
 // It ensures that dynamic sample insertions during paging will not duplicate or shift historical windows.
 func (d *DB) QueryMonitorSamplesCursor(ctx context.Context, filter monitor.CursorFilter) (*monitor.SampleCursorPage, error) {
+	if filter.Since != nil && filter.Until != nil && filter.Since.After(*filter.Until) {
+		return nil, monitor.WrapValidationError(monitor.ErrInvalidTimeRange)
+	}
+	if filter.Limit < 0 || filter.Limit > 1000 {
+		return nil, monitor.WrapValidationError(monitor.ErrInvalidLimit)
+	}
+
 	var whereClauses []string
 	var args []any
 
-	if filter.NodeIdentityKey != "" {
+	// B-01 Legacy Key Bridge:
+	if filter.NodeIdentityKey != "" && filter.LegacyNodeKey != "" {
+		whereClauses = append(whereClauses, "((node_identity_key = ?) OR (node_identity_key = node_key AND node_key = ?))")
+		args = append(args, filter.NodeIdentityKey, filter.LegacyNodeKey)
+	} else if filter.NodeIdentityKey != "" {
 		whereClauses = append(whereClauses, "node_identity_key = ?")
 		args = append(args, filter.NodeIdentityKey)
+	} else if filter.LegacyNodeKey != "" {
+		whereClauses = append(whereClauses, "node_key = ?")
+		args = append(args, filter.LegacyNodeKey)
 	}
 	if filter.NodeKey != "" {
 		whereClauses = append(whereClauses, "node_key = ?")
@@ -615,9 +656,9 @@ func (d *DB) QueryMonitorSamplesCursor(ctx context.Context, filter monitor.Curso
 
 	// Keyset evaluation
 	if filter.Cursor != "" {
-		curTime, curID, err := DecodeCursor(filter.Cursor)
+		curTime, curID, err := DecodeCursor(filter.Cursor, orderDir)
 		if err != nil {
-			return nil, fmt.Errorf("invalid cursor token: %w", err)
+			return nil, err
 		}
 		if !curTime.IsZero() && curID != "" {
 			if orderDir == "DESC" {
@@ -633,9 +674,6 @@ func (d *DB) QueryMonitorSamplesCursor(ctx context.Context, filter monitor.Curso
 	limit := filter.Limit
 	if limit <= 0 {
 		limit = 50
-	}
-	if limit > 1000 {
-		limit = 1000
 	}
 
 	whereSQL := ""
@@ -731,29 +769,39 @@ func (d *DB) QueryMonitorSamplesCursor(ctx context.Context, filter monitor.Curso
 		Limit:   limit,
 	}
 
-	if len(samples) > 0 {
-		if hasMore {
-			lastItem := samples[len(samples)-1]
-			page.NextCursor = EncodeCursor(lastItem.Timestamp, lastItem.SampleID)
-		}
-		if filter.Cursor != "" {
-			firstItem := samples[0]
-			page.PrevCursor = EncodeCursor(firstItem.Timestamp, firstItem.SampleID)
-		}
+	if len(samples) > 0 && hasMore {
+		lastItem := samples[len(samples)-1]
+		page.NextCursor = EncodeCursor(lastItem.Timestamp, lastItem.SampleID, orderDir)
 	}
 
 	return page, nil
 }
 
 // GetDerivedStats dynamically calculates metrics across raw samples within a query window.
-// It is read-only, never overwrites raw samples, and gracefully handles edge cases (zero samples, all fail/pass).
+// It is read-only, never overwrites raw samples, calculates exact quantiles via SQL rank in O(1) memory,
+// and gracefully handles edge cases (zero samples, all fail/pass).
 func (d *DB) GetDerivedStats(ctx context.Context, q monitor.StatsQuery) (*monitor.DerivedStats, error) {
+	if q.Since != nil && q.Until != nil {
+		if q.Since.After(*q.Until) {
+			return nil, monitor.WrapValidationError(monitor.ErrInvalidTimeRange)
+		}
+		if q.Until.Sub(*q.Since) > 366*24*time.Hour {
+			return nil, monitor.WrapValidationError(monitor.ErrQueryWindowTooLarge)
+		}
+	}
+
 	var whereClauses []string
 	var args []any
 
-	if q.NodeIdentityKey != "" {
+	if q.NodeIdentityKey != "" && q.LegacyNodeKey != "" {
+		whereClauses = append(whereClauses, "((node_identity_key = ?) OR (node_identity_key = node_key AND node_key = ?))")
+		args = append(args, q.NodeIdentityKey, q.LegacyNodeKey)
+	} else if q.NodeIdentityKey != "" {
 		whereClauses = append(whereClauses, "node_identity_key = ?")
 		args = append(args, q.NodeIdentityKey)
+	} else if q.LegacyNodeKey != "" {
+		whereClauses = append(whereClauses, "node_key = ?")
+		args = append(args, q.LegacyNodeKey)
 	}
 	if q.NodeKey != "" {
 		whereClauses = append(whereClauses, "node_key = ?")
@@ -785,7 +833,7 @@ func (d *DB) GetDerivedStats(ctx context.Context, q monitor.StatsQuery) (*monito
 		whereSQL = "WHERE " + strings.Join(whereClauses, " AND ")
 	}
 
-	// 1. Summary counts and first/last timestamps
+	// 1. Summary counts and first/last timestamps via SQL aggregate
 	summaryQuery := fmt.Sprintf(`
 		SELECT COUNT(*),
 		       COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0),
@@ -808,6 +856,12 @@ func (d *DB) GetDerivedStats(ctx context.Context, q monitor.StatsQuery) (*monito
 	)
 	if err != nil {
 		return nil, fmt.Errorf("calculate stats summary: %w", err)
+	}
+
+	// Bounded exact sample safety boundary (B-02)
+	const maxExactStatsSamples = 1000000
+	if totalCount > maxExactStatsSamples {
+		return nil, monitor.WrapValidationError(fmt.Errorf("%w: matched %d samples (safety boundary %d)", monitor.ErrQueryWindowTooLarge, totalCount, maxExactStatsSamples))
 	}
 
 	stats := &monitor.DerivedStats{
@@ -852,15 +906,18 @@ func (d *DB) GetDerivedStats(ctx context.Context, q monitor.StatsQuery) (*monito
 
 	// 2. Error Breakdown for failed samples
 	if failureCount > 0 {
+		errWhere := whereSQL
+		if errWhere == "" {
+			errWhere = "WHERE success = 0"
+		} else {
+			errWhere += " AND success = 0"
+		}
 		errQuery := fmt.Sprintf(`
 			SELECT error_class, COUNT(*)
 			FROM monitor_samples
-			%s AND success = 0
+			%s
 			GROUP BY error_class
-		`, whereSQL)
-		if whereSQL == "" {
-			errQuery = `SELECT error_class, COUNT(*) FROM monitor_samples WHERE success = 0 GROUP BY error_class`
-		}
+		`, errWhere)
 
 		rows, err := d.db.QueryContext(ctx, errQuery, args...)
 		if err == nil {
@@ -878,64 +935,92 @@ func (d *DB) GetDerivedStats(ctx context.Context, q monitor.StatsQuery) (*monito
 		}
 	}
 
-	// 3. Percentiles for successful samples
+	// 3. Exact Percentiles and Min/Max for Latency via SQL rank & streaming offset (O(1) memory)
+	// Latency only accounts for valid successful samples with latency_ms > 0
 	if successCount > 0 {
-		latQuery := fmt.Sprintf(`
-			SELECT latency_ms, ttfb_ms
-			FROM monitor_samples
-			%s AND success = 1
-		`, whereSQL)
-		if whereSQL == "" {
-			latQuery = `SELECT latency_ms, ttfb_ms FROM monitor_samples WHERE success = 1`
+		latWhere := whereSQL
+		if latWhere == "" {
+			latWhere = "WHERE success = 1 AND latency_ms > 0"
+		} else {
+			latWhere += " AND success = 1 AND latency_ms > 0"
 		}
 
-		rows, err := d.db.QueryContext(ctx, latQuery, args...)
-		if err == nil {
-			defer rows.Close()
-			var latencies []int64
-			var ttfbs []int64
-			for rows.Next() {
-				var lat, ttfb int64
-				if scanErr := rows.Scan(&lat, &ttfb); scanErr == nil {
-					latencies = append(latencies, lat)
-					ttfbs = append(ttfbs, ttfb)
-				}
+		var validLatCount int64
+		var minLat, maxLat sql.NullInt64
+		latSummaryQuery := fmt.Sprintf(`SELECT COUNT(*), MIN(latency_ms), MAX(latency_ms) FROM monitor_samples %s`, latWhere)
+		if err := d.db.QueryRowContext(ctx, latSummaryQuery, args...).Scan(&validLatCount, &minLat, &maxLat); err == nil && validLatCount > 0 {
+			if minLat.Valid {
+				v := minLat.Int64
+				stats.LatencyMinMs = &v
+			}
+			if maxLat.Valid {
+				v := maxLat.Int64
+				stats.LatencyMaxMs = &v
 			}
 
-			if len(latencies) > 0 {
-				sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
-				minVal := latencies[0]
-				maxVal := latencies[len(latencies)-1]
-				stats.LatencyMinMs = &minVal
-				stats.LatencyMaxMs = &maxVal
-				stats.LatencyP50Ms = calculatePercentile(latencies, 0.50)
-				stats.LatencyP95Ms = calculatePercentile(latencies, 0.95)
+			// P50 rank
+			rank50 := int(math.Ceil(0.50*float64(validLatCount))) - 1
+			if rank50 < 0 {
+				rank50 = 0
+			}
+			var p50Val int64
+			p50Query := fmt.Sprintf(`SELECT latency_ms FROM monitor_samples %s ORDER BY latency_ms ASC LIMIT 1 OFFSET ?`, latWhere)
+			p50Args := append(append([]any{}, args...), rank50)
+			if err := d.db.QueryRowContext(ctx, p50Query, p50Args...).Scan(&p50Val); err == nil {
+				stats.LatencyP50Ms = &p50Val
 			}
 
-			if len(ttfbs) > 0 {
-				sort.Slice(ttfbs, func(i, j int) bool { return ttfbs[i] < ttfbs[j] })
-				stats.TTFBP50Ms = calculatePercentile(ttfbs, 0.50)
-				stats.TTFBP95Ms = calculatePercentile(ttfbs, 0.95)
+			// P95 rank
+			rank95 := int(math.Ceil(0.95*float64(validLatCount))) - 1
+			if rank95 < 0 {
+				rank95 = 0
+			}
+			var p95Val int64
+			p95Query := fmt.Sprintf(`SELECT latency_ms FROM monitor_samples %s ORDER BY latency_ms ASC LIMIT 1 OFFSET ?`, latWhere)
+			p95Args := append(append([]any{}, args...), rank95)
+			if err := d.db.QueryRowContext(ctx, p95Query, p95Args...).Scan(&p95Val); err == nil {
+				stats.LatencyP95Ms = &p95Val
+			}
+		}
+
+		// 4. Exact Percentiles for TTFB (exclude non-HTTP evidence where ttfb_ms <= 0 or NULL)
+		ttfbWhere := whereSQL
+		if ttfbWhere == "" {
+			ttfbWhere = "WHERE success = 1 AND ttfb_ms > 0"
+		} else {
+			ttfbWhere += " AND success = 1 AND ttfb_ms > 0"
+		}
+
+		var validTTFBCount int64
+		ttfbCountQuery := fmt.Sprintf(`SELECT COUNT(*) FROM monitor_samples %s`, ttfbWhere)
+		if err := d.db.QueryRowContext(ctx, ttfbCountQuery, args...).Scan(&validTTFBCount); err == nil && validTTFBCount > 0 {
+			// TTFB P50
+			ttfbRank50 := int(math.Ceil(0.50*float64(validTTFBCount))) - 1
+			if ttfbRank50 < 0 {
+				ttfbRank50 = 0
+			}
+			var ttfbP50Val int64
+			ttfbP50Query := fmt.Sprintf(`SELECT ttfb_ms FROM monitor_samples %s ORDER BY ttfb_ms ASC LIMIT 1 OFFSET ?`, ttfbWhere)
+			ttfbP50Args := append(append([]any{}, args...), ttfbRank50)
+			if err := d.db.QueryRowContext(ctx, ttfbP50Query, ttfbP50Args...).Scan(&ttfbP50Val); err == nil {
+				stats.TTFBP50Ms = &ttfbP50Val
+			}
+
+			// TTFB P95
+			ttfbRank95 := int(math.Ceil(0.95*float64(validTTFBCount))) - 1
+			if ttfbRank95 < 0 {
+				ttfbRank95 = 0
+			}
+			var ttfbP95Val int64
+			ttfbP95Query := fmt.Sprintf(`SELECT ttfb_ms FROM monitor_samples %s ORDER BY ttfb_ms ASC LIMIT 1 OFFSET ?`, ttfbWhere)
+			ttfbP95Args := append(append([]any{}, args...), ttfbRank95)
+			if err := d.db.QueryRowContext(ctx, ttfbP95Query, ttfbP95Args...).Scan(&ttfbP95Val); err == nil {
+				stats.TTFBP95Ms = &ttfbP95Val
 			}
 		}
 	}
 
 	return stats, nil
-}
-
-func calculatePercentile(values []int64, p float64) *int64 {
-	if len(values) == 0 {
-		return nil
-	}
-	idx := int(math.Ceil(p*float64(len(values)))) - 1
-	if idx < 0 {
-		idx = 0
-	}
-	if idx >= len(values) {
-		idx = len(values) - 1
-	}
-	val := values[idx]
-	return &val
 }
 
 func parseSQLiteTime(s string) (time.Time, error) {
@@ -970,11 +1055,15 @@ func (d *DB) ApplyRetention(ctx context.Context, req monitor.RetentionRequest) (
 	}
 
 	start := time.Now()
+	now := time.Now().UTC()
 	var cutoff time.Time
+
 	if req.CutoffTime != nil && !req.CutoffTime.IsZero() {
 		cutoff = req.CutoffTime.UTC()
+		if cutoff.After(now) {
+			return nil, monitor.WrapValidationError(monitor.ErrFutureCutoff)
+		}
 	} else {
-		now := time.Now().UTC()
 		switch req.Policy {
 		case monitor.Retention30d:
 			cutoff = now.AddDate(0, 0, -30)
@@ -983,13 +1072,17 @@ func (d *DB) ApplyRetention(ctx context.Context, req monitor.RetentionRequest) (
 		case monitor.Retention180d:
 			cutoff = now.AddDate(0, 0, -180)
 		case monitor.RetentionCustom:
-			if req.CustomDays <= 0 {
-				return nil, fmt.Errorf("custom retention requires custom_days > 0")
+			if req.CustomDays <= 0 || req.CustomDays > 36500 {
+				return nil, monitor.WrapValidationError(monitor.ErrInvalidCustomDays)
 			}
 			cutoff = now.AddDate(0, 0, -req.CustomDays)
 		default:
-			return nil, fmt.Errorf("unsupported retention policy: %s", req.Policy)
+			return nil, monitor.WrapValidationError(monitor.ErrInvalidRetentionPolicy)
 		}
+	}
+
+	if cutoff.After(now) {
+		return nil, monitor.WrapValidationError(monitor.ErrFutureCutoff)
 	}
 
 	const batchSize = 500
@@ -1046,7 +1139,8 @@ func (d *DB) ApplyRetention(ctx context.Context, req monitor.RetentionRequest) (
 		time.Sleep(2 * time.Millisecond)
 	}
 
-	// Prune orphaned completed runs older than cutoff with no remaining samples
+	// Prune orphaned completed/failed/partial_failed runs older than cutoff with no remaining samples.
+	// Strictly preserve 'running' (in-flight) and 'skipped' (intentional no-op runs with 0 samples).
 	var runsDeleted int64
 	err := func() error {
 		d.mu.Lock()
@@ -1055,7 +1149,7 @@ func (d *DB) ApplyRetention(ctx context.Context, req monitor.RetentionRequest) (
 		res, err := d.db.ExecContext(ctx, `
 			DELETE FROM monitor_runs
 			WHERE scheduled_at < ?
-			  AND status IN ('completed', 'failed')
+			  AND status IN ('completed', 'failed', 'partial_failed')
 			  AND run_id NOT IN (SELECT DISTINCT run_id FROM monitor_samples)
 		`, cutoff)
 		if err != nil {
