@@ -356,3 +356,147 @@ export interface SwitchEvent {
   new_metric?: number
 }
 
+// --- 24/7 Monitor: raw sample history ---
+
+/**
+ * Raw wire shape of one immutable monitor sample.
+ *
+ * IMPORTANT: the Go backend serializes `latency` and `ttfb` as `time.Duration`, i.e. plain
+ * integer NANOSECONDS. Never read these fields directly in UI code — go through
+ * `normalizeMonitorSample()` so the rest of the app only ever sees milliseconds.
+ */
+export interface RawMonitorSampleWire {
+  sample_id: string
+  run_id: string
+  node_key: string
+  node_identity_key: string
+  config_revision_key: string
+  profile_id: string
+  display_name_snapshot: string
+  probe_type: string
+  target: string
+  timestamp: string
+  success: boolean
+  latency: number
+  ttfb: number
+  error_class: string
+  error_detail?: string
+  exit_ip?: string
+  exit_region?: string
+  metadata?: Record<string, unknown>
+}
+
+/** Normalized raw sample: durations converted to milliseconds, timestamp to epoch ms. */
+export interface MonitorSample {
+  sampleId: string
+  runId: string
+  nodeKey: string
+  nodeIdentityKey: string
+  configRevisionKey: string
+  profileId: string
+  displayNameSnapshot: string
+  probeType: string
+  target: string
+  /** Epoch milliseconds. */
+  timestampMs: number
+  /** ISO 8601 as returned by the backend, kept verbatim for evidence display. */
+  timestampIso: string
+  success: boolean
+  /** Milliseconds. */
+  latencyMs: number
+  /** Milliseconds. */
+  ttfbMs: number
+  errorClass: string
+  errorDetail?: string
+  exitIp?: string
+  exitRegion?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface RawSampleCursorPageWire {
+  items: RawMonitorSampleWire[] | null
+  next_cursor?: string
+  has_more: boolean
+  limit: number
+}
+
+export interface SampleCursorPage {
+  items: MonitorSample[]
+  nextCursor: string
+  hasMore: boolean
+  limit: number
+}
+
+export interface RawDerivedStatsWire {
+  sample_count: number
+  success_count: number
+  failure_count: number
+  success_rate: number
+  latency_min_ms: number | null
+  latency_p50_ms: number | null
+  latency_p95_ms: number | null
+  latency_max_ms: number | null
+  ttfb_p50_ms: number | null
+  ttfb_p95_ms: number | null
+  error_breakdown: Record<string, number> | null
+  first_sample_at: string | null
+  last_sample_at: string | null
+  observed_since: string | null
+  observed_until: string | null
+  node_identity_key?: string
+  node_key?: string
+  probe_type?: string
+}
+
+export interface DerivedStats {
+  sampleCount: number
+  successCount: number
+  failureCount: number
+  successRate: number
+  latencyMinMs: number | null
+  latencyP50Ms: number | null
+  latencyP95Ms: number | null
+  latencyMaxMs: number | null
+  ttfbP50Ms: number | null
+  ttfbP95Ms: number | null
+  errorBreakdown: Record<string, number>
+  firstSampleAtMs: number | null
+  lastSampleAtMs: number | null
+}
+
+export interface RawFacetNodeWire {
+  node_identity_key: string
+  node_key: string
+  display_name: string
+  profile_id: string
+  sample_count: number
+}
+
+export interface RawMonitorSampleFacetsWire {
+  nodes: RawFacetNodeWire[] | null
+  profiles: string[] | null
+  probe_types: string[] | null
+  targets: string[] | null
+  window_since: string
+  window_until: string
+  truncated: boolean
+}
+
+export interface FacetNode {
+  nodeIdentityKey: string
+  nodeKey: string
+  displayName: string
+  profileId: string
+  sampleCount: number
+}
+
+export interface MonitorSampleFacets {
+  nodes: FacetNode[]
+  profiles: string[]
+  probeTypes: string[]
+  targets: string[]
+  windowSinceMs: number
+  windowUntilMs: number
+  truncated: boolean
+}
+

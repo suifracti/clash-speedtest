@@ -1797,6 +1797,46 @@ func (s *AppService) GetMonitorStats(ctx context.Context, query monitor.StatsQue
 	return s.historyStore.GetDerivedStats(ctx, query)
 }
 
+// Facet scan bounds. The facet read model is presentation-only, so its cost is bounded by a
+// window rather than by the full retention horizon: the UI only needs the dimensions that are
+// plausibly reachable from the ranges it offers.
+const (
+	monitorFacetDefaultWindow = 7 * 24 * time.Hour
+	monitorFacetMaxWindow     = 90 * 24 * time.Hour
+	monitorFacetMaxNodes      = 500
+	monitorFacetMaxValues     = 500
+)
+
+// GetMonitorSampleFacets returns the distinct node / profile / probe_type / target dimensions
+// that exist in raw samples over a bounded window.
+//
+// This is a presentation-only projection used to populate UI filters. It does not aggregate
+// or replace raw samples, and it does not participate in any monitoring decision.
+func (s *AppService) GetMonitorSampleFacets(ctx context.Context, since, until *time.Time) (*monitor.MonitorSampleFacets, error) {
+	if s.historyStore == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
+
+	now := time.Now().UTC()
+	winUntil := now
+	if until != nil && !until.IsZero() {
+		winUntil = until.UTC()
+	}
+	winSince := winUntil.Add(-monitorFacetDefaultWindow)
+	if since != nil && !since.IsZero() {
+		winSince = since.UTC()
+	}
+
+	if winSince.After(winUntil) {
+		return nil, monitor.WrapValidationError(monitor.ErrInvalidTimeRange)
+	}
+	if winUntil.Sub(winSince) > monitorFacetMaxWindow {
+		return nil, monitor.WrapValidationError(monitor.ErrQueryWindowTooLarge)
+	}
+
+	return s.historyStore.GetMonitorSampleFacets(ctx, winSince, winUntil, monitorFacetMaxNodes, monitorFacetMaxValues)
+}
+
 // ApplyRetention applies a retention policy by pruning historical raw samples and orphaned runs.
 func (s *AppService) ApplyRetention(ctx context.Context, req monitor.RetentionRequest) (*monitor.RetentionResult, error) {
 	if s.historyStore == nil {

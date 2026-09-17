@@ -3,6 +3,13 @@ import { computed } from 'vue'
 import { useWorkbenchStore } from '../../stores/workbench'
 import * as api from '../../api/bridge'
 
+/**
+ * `activeView` is owned by App.vue and switched here so the entry point sits in the same
+ * header the user already uses, instead of hiding the timeline behind a modal.
+ */
+defineProps<{ activeView: 'workbench' | 'timeline' }>()
+const emit = defineEmits<{ (e: 'update:activeView', value: 'workbench' | 'timeline'): void }>()
+
 const store = useWorkbenchStore()
 
 const isTokenValid = computed(() => store.tokenStatus.has_token)
@@ -92,8 +99,36 @@ async function handleLogin() {
       </button>
     </div>
 
-    <!-- Right: Token & Trigger Actions -->
+    <!-- Right: View Switch, Token & Trigger Actions -->
     <div class="flex items-center gap-3">
+      <!-- View switch: Workbench (batch triage) vs Monitor Timeline (raw samples) -->
+      <div class="flex items-center gap-1 bg-card-subtle p-1 rounded-lg border border-border text-xs">
+        <button
+          @click="emit('update:activeView', 'workbench')"
+          :class="
+            activeView === 'workbench'
+              ? 'bg-card text-brand shadow-sm font-medium'
+              : 'text-content-secondary hover:text-content-main'
+          "
+          class="px-2.5 py-1 rounded transition-all flex items-center gap-1"
+          title="节点测速与分诊工作台"
+        >
+          <span>🧪</span> 工作台
+        </button>
+        <button
+          @click="emit('update:activeView', 'timeline')"
+          :class="
+            activeView === 'timeline'
+              ? 'bg-card text-brand shadow-sm font-medium'
+              : 'text-content-secondary hover:text-content-main'
+          "
+          class="px-2.5 py-1 rounded transition-all flex items-center gap-1"
+          title="监控稳定性时间轴：逐条原始样本，可缩放与点选"
+        >
+          <span>📈</span> 稳定性时间轴
+        </button>
+      </div>
+
       <!-- Token Status Indicator -->
       <div class="flex items-center gap-2">
         <span

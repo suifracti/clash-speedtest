@@ -225,6 +225,28 @@ type DerivedStats struct {
 	ProbeType       string           `json:"probe_type,omitempty"`
 }
 
+// FacetNode describes one distinct node identity observed among persisted raw samples.
+type FacetNode struct {
+	NodeIdentityKey string `json:"node_identity_key"`
+	NodeKey         string `json:"node_key"`
+	DisplayName     string `json:"display_name"`
+	ProfileID       string `json:"profile_id"`
+	SampleCount     int64  `json:"sample_count"`
+}
+
+// MonitorSampleFacets enumerates the filter dimensions that actually exist in persisted
+// raw samples. It is a presentation-only projection used to build UI filters, and carries
+// no monitoring semantics: it never aggregates, summarizes, or replaces raw samples.
+type MonitorSampleFacets struct {
+	Nodes       []FacetNode `json:"nodes"`
+	Profiles    []string    `json:"profiles"`
+	ProbeTypes  []string    `json:"probe_types"`
+	Targets     []string    `json:"targets"`
+	WindowSince time.Time   `json:"window_since"`
+	WindowUntil time.Time   `json:"window_until"`
+	Truncated   bool        `json:"truncated"`
+}
+
 // RetentionPolicy defines data retention strategies for raw samples.
 type RetentionPolicy string
 

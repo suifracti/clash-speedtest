@@ -342,6 +342,12 @@ func (s *Store) ApplyRetention(ctx context.Context, req monitor.RetentionRequest
 	return s.db.ApplyRetention(ctx, req)
 }
 
+// GetMonitorSampleFacets returns the distinct filter dimensions present in raw samples.
+// Presentation-only read model; see DB.GetMonitorSampleFacets.
+func (s *Store) GetMonitorSampleFacets(ctx context.Context, since, until time.Time, maxNodes, maxValues int) (*monitor.MonitorSampleFacets, error) {
+	return s.db.GetMonitorSampleFacets(ctx, since, until, maxNodes, maxValues)
+}
+
 // SetTestBatchFailAt injects a batch failure on batch n for testing partial retention semantics.
 func (s *Store) SetTestBatchFailAt(n int) {
 	if s.db != nil {

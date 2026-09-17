@@ -159,6 +159,7 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("GET /api/monitor/stats", s.handleGetMonitorStats)
 	mux.HandleFunc("POST /api/monitor/retention", s.handleApplyRetention)
 	mux.HandleFunc("GET /api/monitor/timeline", s.handleGetNodeTimelineSamples)
+	mux.HandleFunc("GET /api/monitor/facets", s.handleGetMonitorFacets)
 
 	mux.HandleFunc("GET /api/events", s.handleEventsSSE)
 	mux.HandleFunc("POST /api/shutdown", s.handleShutdown)
@@ -951,6 +952,39 @@ func (s *Server) handleGetNodeTimelineSamples(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, http.StatusOK, samples)
+}
+
+// handleGetMonitorFacets serves the presentation-only facet read model used to build UI filters.
+func (s *Server) handleGetMonitorFacets(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	var since, until *time.Time
+	if v := q.Get("since"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid since parameter: must be RFC3339")
+			return
+		}
+		since = &t
+	}
+	if v := q.Get("until"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid until parameter: must be RFC3339")
+			return
+		}
+		until = &t
+	}
+
+	facets, err := s.app.GetMonitorSampleFacets(r.Context(), since, until)
+	if err != nil {
+		if monitor.IsValidationError(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, facets)
 }
 
 func (s *Server) handleQueryMonitorSamplesCursor(w http.ResponseWriter, r *http.Request) {

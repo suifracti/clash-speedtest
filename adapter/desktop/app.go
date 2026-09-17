@@ -278,5 +278,11 @@ func (a *App) ApplyRetention(req monitor.RetentionRequest) (*monitor.RetentionRe
 	return a.app.ApplyRetention(a.context(), req)
 }
 
+// GetMonitorSampleFacets returns the distinct filter dimensions present in raw samples.
+// Presentation-only read model used to populate the timeline filter controls.
+func (a *App) GetMonitorSampleFacets(since, until *time.Time) (*monitor.MonitorSampleFacets, error) {
+	return a.app.GetMonitorSampleFacets(a.context(), since, until)
+}
+
 
 

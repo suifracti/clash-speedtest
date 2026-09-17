@@ -1048,6 +1048,127 @@ func parseSQLiteTime(s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("cannot parse sqlite time: %s", s)
 }
 
+// GetMonitorSampleFacets enumerates the distinct filter dimensions that actually exist in
+// persisted raw samples within the given window.
+//
+// This is a presentation-only read model. It exists so a UI can build filter controls without
+// scanning or aggregating sample data client-side. It never mutates raw samples, never
+// summarizes them, and never replaces them as the source of truth. The caller is responsible
+// for bounding the window; the limits here only bound the number of distinct values returned.
+func (d *DB) GetMonitorSampleFacets(ctx context.Context, since, until time.Time, maxNodes, maxValues int) (*monitor.MonitorSampleFacets, error) {
+	if maxNodes <= 0 {
+		maxNodes = 500
+	}
+	if maxValues <= 0 {
+		maxValues = 500
+	}
+
+	sinceUTC, untilUTC := since.UTC(), until.UTC()
+
+	facets := &monitor.MonitorSampleFacets{
+		Nodes:       make([]monitor.FacetNode, 0),
+		Profiles:    make([]string, 0),
+		ProbeTypes:  make([]string, 0),
+		Targets:     make([]string, 0),
+		WindowSince: sinceUTC,
+		WindowUntil: untilUTC,
+	}
+
+	// Read maxNodes+1 rows so truncation is detectable without a second COUNT query.
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT node_identity_key, node_key, MAX(display_name_snapshot), profile_id, COUNT(*)
+		FROM monitor_samples
+		WHERE timestamp >= ? AND timestamp <= ?
+		GROUP BY node_identity_key, node_key, profile_id
+		ORDER BY node_identity_key ASC, node_key ASC
+		LIMIT ?
+	`, sinceUTC, untilUTC, maxNodes+1)
+	if err != nil {
+		return nil, fmt.Errorf("query sample facet nodes: %w", err)
+	}
+	for rows.Next() {
+		var n monitor.FacetNode
+		if err := rows.Scan(&n.NodeIdentityKey, &n.NodeKey, &n.DisplayName, &n.ProfileID, &n.SampleCount); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan sample facet node: %w", err)
+		}
+		facets.Nodes = append(facets.Nodes, n)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("iterate sample facet nodes: %w", err)
+	}
+	rows.Close()
+
+	if len(facets.Nodes) > maxNodes {
+		facets.Nodes = facets.Nodes[:maxNodes]
+		facets.Truncated = true
+	}
+
+	profiles, profilesTruncated, err := d.distinctSampleValues(ctx, "profile_id", sinceUTC, untilUTC, maxValues)
+	if err != nil {
+		return nil, err
+	}
+	facets.Profiles = profiles
+
+	probeTypes, probeTypesTruncated, err := d.distinctSampleValues(ctx, "probe_type", sinceUTC, untilUTC, maxValues)
+	if err != nil {
+		return nil, err
+	}
+	facets.ProbeTypes = probeTypes
+
+	targets, targetsTruncated, err := d.distinctSampleValues(ctx, "target", sinceUTC, untilUTC, maxValues)
+	if err != nil {
+		return nil, err
+	}
+	facets.Targets = targets
+
+	facets.Truncated = facets.Truncated || profilesTruncated || probeTypesTruncated || targetsTruncated
+
+	return facets, nil
+}
+
+// distinctSampleValues returns the distinct non-empty values of a monitor_samples column.
+// column must be an internal compile-time constant; it is never derived from user input.
+func (d *DB) distinctSampleValues(ctx context.Context, column string, since, until time.Time, limit int) ([]string, bool, error) {
+	switch column {
+	case "profile_id", "probe_type", "target":
+	default:
+		return nil, false, fmt.Errorf("unsupported facet column: %s", column)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT DISTINCT %s FROM monitor_samples
+		WHERE timestamp >= ? AND timestamp <= ? AND %s <> ''
+		ORDER BY %s ASC
+		LIMIT ?
+	`, column, column, column)
+
+	rows, err := d.db.QueryContext(ctx, query, since, until, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("query sample facet %s: %w", column, err)
+	}
+	defer rows.Close()
+
+	values := make([]string, 0)
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, false, fmt.Errorf("scan sample facet %s: %w", column, err)
+		}
+		values = append(values, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("iterate sample facet %s: %w", column, err)
+	}
+
+	truncated := len(values) > limit
+	if truncated {
+		values = values[:limit]
+	}
+	return values, truncated, nil
+}
+
 // ApplyRetention prunes raw samples and orphaned runs according to the retention policy.
 // It executes deletions in bounded batches to prevent monopolizing the SQLite write lock.
 // Default policy is KeepAll, which performs no deletions.

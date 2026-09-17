@@ -1469,3 +1469,145 @@ func TestSQLite_Retention_DeterministicFaultInjection(t *testing.T) {
 	}
 }
 
+
+func TestSQLite_GetMonitorSampleFacets(t *testing.T) {
+	// The facet read model is presentation-only: it must enumerate the dimensions that
+	// actually exist in raw samples, strictly bounded by the requested window.
+	tmpDir := t.TempDir()
+	store, err := NewStore(tmpDir)
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	inWindow := now.Add(-2 * time.Hour)
+	outOfWindow := now.Add(-30 * 24 * time.Hour)
+
+	samples := []*monitor.MonitorSample{
+		{
+			SampleID: "f1", RunID: "r1", NodeKey: "nk_a", NodeIdentityKey: "nid_a",
+			ConfigRevisionKey: "rev1", ProfileID: "prof_1", DisplayNameSnapshot: "Node A",
+			ProbeType: "rtt", Target: "https://cp.cloudflare.com/generate_204",
+			Timestamp: inWindow, Success: true, Latency: 20 * time.Millisecond,
+		},
+		{
+			SampleID: "f2", RunID: "r1", NodeKey: "nk_a", NodeIdentityKey: "nid_a",
+			ConfigRevisionKey: "rev1", ProfileID: "prof_1", DisplayNameSnapshot: "Node A",
+			ProbeType: "ttfb", Target: "https://www.google.com/generate_204",
+			Timestamp: inWindow.Add(time.Minute), Success: true, Latency: 30 * time.Millisecond,
+		},
+		{
+			SampleID: "f3", RunID: "r1", NodeKey: "nk_b", NodeIdentityKey: "nid_b",
+			ConfigRevisionKey: "rev2", ProfileID: "prof_2", DisplayNameSnapshot: "Node B",
+			ProbeType: "rtt", Target: "https://cp.cloudflare.com/generate_204",
+			Timestamp: inWindow.Add(2 * time.Minute), Success: false, ErrorClass: "timeout",
+		},
+		{
+			SampleID: "f4", RunID: "r0", NodeKey: "nk_old", NodeIdentityKey: "nid_old",
+			ConfigRevisionKey: "rev0", ProfileID: "prof_old", DisplayNameSnapshot: "Old Node",
+			ProbeType: "rtt", Target: "https://old.example.com",
+			Timestamp: outOfWindow, Success: true,
+		},
+	}
+	if err := store.SaveMonitorSamples(ctx, samples); err != nil {
+		t.Fatalf("save samples failed: %v", err)
+	}
+
+	facets, err := store.GetMonitorSampleFacets(ctx, now.Add(-24*time.Hour), now, 0, 0)
+	if err != nil {
+		t.Fatalf("GetMonitorSampleFacets failed: %v", err)
+	}
+
+	if len(facets.Nodes) != 2 {
+		t.Fatalf("expected 2 in-window node facets, got %d: %+v", len(facets.Nodes), facets.Nodes)
+	}
+	byIdentity := map[string]monitor.FacetNode{}
+	for _, n := range facets.Nodes {
+		byIdentity[n.NodeIdentityKey] = n
+	}
+	if _, ok := byIdentity["nid_old"]; ok {
+		t.Errorf("out-of-window node must not appear in facets")
+	}
+	if n, ok := byIdentity["nid_a"]; !ok {
+		t.Errorf("expected nid_a in facets")
+	} else if n.DisplayName != "Node A" || n.ProfileID != "prof_1" || n.SampleCount != 2 {
+		t.Errorf("unexpected nid_a facet: %+v", n)
+	}
+
+	if len(facets.Profiles) != 2 {
+		t.Errorf("expected 2 profiles, got %v", facets.Profiles)
+	}
+	if len(facets.ProbeTypes) != 2 {
+		t.Errorf("expected 2 probe types, got %v", facets.ProbeTypes)
+	}
+	if len(facets.Targets) != 2 {
+		t.Errorf("expected 2 targets, got %v", facets.Targets)
+	}
+	if facets.Truncated {
+		t.Errorf("expected Truncated=false for small facet set")
+	}
+	if !facets.WindowSince.Before(facets.WindowUntil) {
+		t.Errorf("expected a well-formed window, got %v..%v", facets.WindowSince, facets.WindowUntil)
+	}
+}
+
+func TestSQLite_GetMonitorSampleFacets_TruncationIsReported(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, err := NewStore(tmpDir)
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	var samples []*monitor.MonitorSample
+	for i := 0; i < 5; i++ {
+		samples = append(samples, &monitor.MonitorSample{
+			SampleID:            fmt.Sprintf("trunc_%d", i),
+			RunID:               "r_trunc",
+			NodeKey:             fmt.Sprintf("nk_%d", i),
+			NodeIdentityKey:     fmt.Sprintf("nid_%d", i),
+			ProfileID:           "prof_1",
+			DisplayNameSnapshot: fmt.Sprintf("Node %d", i),
+			ProbeType:           "rtt",
+			Target:              "https://example.com",
+			Timestamp:           now.Add(-time.Duration(i+1) * time.Minute),
+			Success:             true,
+		})
+	}
+	if err := store.SaveMonitorSamples(ctx, samples); err != nil {
+		t.Fatalf("save samples failed: %v", err)
+	}
+
+	facets, err := store.GetMonitorSampleFacets(ctx, now.Add(-time.Hour), now, 2, 2)
+	if err != nil {
+		t.Fatalf("GetMonitorSampleFacets failed: %v", err)
+	}
+	if len(facets.Nodes) != 2 {
+		t.Errorf("expected node facets capped at 2, got %d", len(facets.Nodes))
+	}
+	if !facets.Truncated {
+		t.Errorf("expected Truncated=true when node facets exceed the cap")
+	}
+}
+
+func TestSQLite_GetMonitorSampleFacets_RejectsUnknownColumn(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, err := NewStore(tmpDir)
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	// Column names must never be interpolated from untrusted input.
+	if _, _, err := store.DB().distinctSampleValues(ctx, "target; DROP TABLE monitor_samples", now.Add(-time.Hour), now, 10); err == nil {
+		t.Fatalf("expected error for unsupported facet column")
+	}
+}
