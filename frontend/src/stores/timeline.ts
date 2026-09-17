@@ -115,6 +115,7 @@ export const useTimelineStore = defineStore('timeline', () => {
   let refreshTimer: ReturnType<typeof setInterval> | null = null
   /** Guards against a refresh landing after a filter change reset the dataset. */
   let activeSignature = ''
+  let gapSeq = 0
 
   // Catch-up state: unified pending gap queue for both head and history gaps
   const pendingGaps = ref<PendingGap[]>([])
@@ -241,6 +242,7 @@ export const useTimelineStore = defineStore('timeline', () => {
 
   function resetContinuationState(): void {
     pendingGaps.value = []
+    gapSeq = 0
   }
 
   function clearDataset(): void {
@@ -388,161 +390,91 @@ export const useTimelineStore = defineStore('timeline', () => {
       let added = 0
       let remainingBudget = MAX_PAGES_PER_REFRESH
 
-      // --- Part 1: Stream Head Pull / Head Gap Continuation ---
-      const existingHeadGap = pendingGaps.value.find((g) => g.kind === 'head')
-      const hasHistoryGap = pendingGaps.value.some((g) => g.kind === 'history')
+      const preRefreshLatest = latestSample.value
+      const headTargetId = preRefreshLatest?.sampleId ?? null
+      const headTargetTs = preRefreshLatest?.timestampMs ?? null
+      const hasKnownBoundary = preRefreshLatest !== null
 
-      if (existingHeadGap) {
-        // We already have an open head gap.
-        // Step 1a: 1-page check at top of stream to capture any new head arrivals.
-        const headPage = await queryMonitorSamplesCursor({
-          ...currentFilter(),
-          limit: PAGE_LIMIT,
-          orderDesc: true,
-        })
-        if (signature !== activeSignature) return 0
-        remainingBudget -= 1
-        for (const sample of headPage.items) {
-          if (!sampleIndex.has(sample.sampleId)) {
-            sampleIndex.set(sample.sampleId, sample)
-            added += 1
-          }
+      // Snapshot gaps that existed before this refresh started
+      const preExistingGaps = [...pendingGaps.value]
+
+      // --- Part 1: Stream Head Pull ---
+      // Always pull 1 page from stream head (cursor: undefined) to capture newest live arrivals.
+      const headPage = await queryMonitorSamplesCursor({
+        ...currentFilter(),
+        limit: PAGE_LIMIT,
+        orderDesc: true,
+      })
+      if (signature !== activeSignature) return 0
+      remainingBudget -= 1
+
+      let reachedHeadTarget = false
+      for (const sample of headPage.items) {
+        if (hasKnownBoundary && isPreRefreshBoundary(sample, headTargetId, headTargetTs)) {
+          reachedHeadTarget = true
         }
-
-        // Step 1b: Resume draining the head gap from existingHeadGap.cursor.
-        const maxHeadGapPages = Math.min(3, remainingBudget)
-        let headPages = 0
-        let headCursor: string | undefined = existingHeadGap.cursor
-        let reachedHeadTarget = false
-        let lastHeadCursor: string | null = null
-        let lastHeadHasMore = false
-
-        while (headPages < maxHeadGapPages && remainingBudget > 0 && headCursor) {
-          const page = await queryMonitorSamplesCursor({
-            ...currentFilter(),
-            limit: PAGE_LIMIT,
-            orderDesc: true,
-            cursor: headCursor,
-          })
-          if (signature !== activeSignature) return 0
-          headPages += 1
-          remainingBudget -= 1
-          lastHeadCursor = page.nextCursor || null
-          lastHeadHasMore = page.hasMore
-
-          for (const sample of page.items) {
-            if (isPreRefreshBoundary(sample, existingHeadGap.targetSampleId, existingHeadGap.targetTimestampMs)) {
-              reachedHeadTarget = true
-            }
-            if (!sampleIndex.has(sample.sampleId)) {
-              sampleIndex.set(sample.sampleId, sample)
-              added += 1
-            }
-          }
-
-          if (reachedHeadTarget || !page.hasMore || !page.nextCursor || page.items.length === 0) {
-            break
-          }
-          headCursor = page.nextCursor
-        }
-
-        if (reachedHeadTarget || !lastHeadHasMore || !lastHeadCursor) {
-          pendingGaps.value = pendingGaps.value.filter((g) => g.id !== existingHeadGap.id)
-        } else {
-          existingHeadGap.cursor = lastHeadCursor
-        }
-      } else {
-        // No head gap currently open.
-        const preRefreshLatest = latestSample.value
-        const headTargetId = preRefreshLatest?.sampleId ?? null
-        const headTargetTs = preRefreshLatest?.timestampMs ?? null
-        const hasKnownBoundary = preRefreshLatest !== null
-
-        // If a history gap is already pending, allocate 1 page for head pull.
-        // If no gaps are pending, head pull can use the entire remainingBudget.
-        const maxHeadPages = hasHistoryGap ? 1 : remainingBudget
-        let headCursor: string | undefined = undefined
-        let headPages = 0
-        let reachedHeadTarget = false
-        let lastHeadCursor: string | null = null
-        let lastHeadHasMore = false
-
-        while (headPages < maxHeadPages && remainingBudget > 0) {
-          const page = await queryMonitorSamplesCursor({
-            ...currentFilter(),
-            limit: PAGE_LIMIT,
-            orderDesc: true,
-            cursor: headCursor,
-          })
-          if (signature !== activeSignature) return 0
-          headPages += 1
-          remainingBudget -= 1
-          lastHeadCursor = page.nextCursor || null
-          lastHeadHasMore = page.hasMore
-
-          for (const sample of page.items) {
-            if (hasKnownBoundary && isPreRefreshBoundary(sample, headTargetId, headTargetTs)) {
-              reachedHeadTarget = true
-            }
-            if (!sampleIndex.has(sample.sampleId)) {
-              sampleIndex.set(sample.sampleId, sample)
-              added += 1
-            }
-          }
-
-          if (reachedHeadTarget || !hasKnownBoundary) {
-            break
-          }
-          if (!page.hasMore || !page.nextCursor || page.items.length === 0) {
-            break
-          }
-          headCursor = page.nextCursor
-        }
-
-        if (!reachedHeadTarget && hasKnownBoundary && lastHeadCursor && lastHeadHasMore) {
-          if (pendingGaps.value.length === 0) {
-            pendingGaps.value.push({
-              id: 'gap_history',
-              kind: 'history',
-              cursor: lastHeadCursor,
-              targetSampleId: headTargetId,
-              targetTimestampMs: headTargetTs,
-            })
-          } else {
-            pendingGaps.value.push({
-              id: 'gap_head',
-              kind: 'head',
-              cursor: lastHeadCursor,
-              targetSampleId: headTargetId,
-              targetTimestampMs: headTargetTs,
-            })
-          }
+        if (!sampleIndex.has(sample.sampleId)) {
+          sampleIndex.set(sample.sampleId, sample)
+          added += 1
         }
       }
 
-      // --- Part 2: History Gap Drain ---
-      const historyGap = pendingGaps.value.find((g) => g.kind === 'history')
-      if (historyGap && remainingBudget > 0) {
-        let histCursor: string | undefined = historyGap.cursor
-        let reachedHistTarget = false
-        let lastHistCursor: string | null = null
-        let lastHistHasMore = false
+      // If headPage did not reach preRefreshLatest and hasMore is true:
+      // A new unbuffered gap exists between headPage.nextCursor and headTargetId!
+      if (!reachedHeadTarget && hasKnownBoundary && headPage.nextCursor && headPage.hasMore) {
+        const isInitialHistory = pendingGaps.value.length === 0
+        pendingGaps.value.push({
+          id: isInitialHistory ? 'gap_history' : `gap_head_${++gapSeq}`,
+          kind: isInitialHistory ? 'history' : 'head',
+          cursor: headPage.nextCursor,
+          targetSampleId: headTargetId,
+          targetTimestampMs: headTargetTs,
+        })
+      }
 
-        while (remainingBudget > 0 && histCursor) {
+      // --- Part 2: Backlog Draining (Fair Forward Progress on Pending Gaps) ---
+      // Iterate through pending gaps in FIFO order (oldest first).
+      // Pre-existing backlog is prioritized; any newly created gap in this cycle is deferred
+      // if pre-existing gaps are waiting.
+      const totalGapsInCycle = pendingGaps.value.length
+
+      for (const gap of [...pendingGaps.value]) {
+        if (remainingBudget <= 0) break
+
+        const isPreExisting = preExistingGaps.some((g) => g.id === gap.id)
+        if (!isPreExisting && preExistingGaps.length > 0) {
+          continue
+        }
+
+        const maxPagesForGap =
+          totalGapsInCycle === 1
+            ? remainingBudget
+            : gap.kind === 'history'
+              ? Math.min(3, remainingBudget)
+              : Math.min(1, remainingBudget)
+
+        let gapPages = 0
+        let gapCursor: string | undefined = gap.cursor
+        let reachedTarget = false
+        let lastCursor: string | null = null
+        let lastHasMore = false
+
+        while (gapPages < maxPagesForGap && remainingBudget > 0 && gapCursor) {
           const page = await queryMonitorSamplesCursor({
             ...currentFilter(),
             limit: PAGE_LIMIT,
             orderDesc: true,
-            cursor: histCursor,
+            cursor: gapCursor,
           })
           if (signature !== activeSignature) return 0
+          gapPages += 1
           remainingBudget -= 1
-          lastHistCursor = page.nextCursor || null
-          lastHistHasMore = page.hasMore
+          lastCursor = page.nextCursor || null
+          lastHasMore = page.hasMore
 
           for (const sample of page.items) {
-            if (isPreRefreshBoundary(sample, historyGap.targetSampleId, historyGap.targetTimestampMs)) {
-              reachedHistTarget = true
+            if (isPreRefreshBoundary(sample, gap.targetSampleId, gap.targetTimestampMs)) {
+              reachedTarget = true
             }
             if (!sampleIndex.has(sample.sampleId)) {
               sampleIndex.set(sample.sampleId, sample)
@@ -550,16 +482,16 @@ export const useTimelineStore = defineStore('timeline', () => {
             }
           }
 
-          if (reachedHistTarget || !page.hasMore || !page.nextCursor || page.items.length === 0) {
+          if (reachedTarget || !page.hasMore || !page.nextCursor || page.items.length === 0) {
             break
           }
-          histCursor = page.nextCursor
+          gapCursor = page.nextCursor
         }
 
-        if (reachedHistTarget || !lastHistHasMore || !lastHistCursor) {
-          pendingGaps.value = pendingGaps.value.filter((g) => g.id !== historyGap.id)
+        if (reachedTarget || !lastHasMore || !lastCursor) {
+          pendingGaps.value = pendingGaps.value.filter((g) => g.id !== gap.id)
         } else {
-          historyGap.cursor = lastHistCursor
+          gap.cursor = lastCursor
         }
       }
 
