@@ -412,6 +412,111 @@ describe('background refresh', () => {
     expect(laneSamples).toContain('s_first')
     expect(laneSamples).toContain('s_late')
   })
+
+  it('queries same-timestamp late arrival using inclusive query semantics without exclusive anchor and merges', async () => {
+    const store = useTimelineStore()
+    const sharedTs = NOW - 10 * MIN
+
+    // 1. First request returns T / A
+    mockedCursor.mockResolvedValueOnce(page([sample('s_A', sharedTs)]))
+    await store.reload()
+    expect(store.samples).toHaveLength(1)
+    expect(store.samples[0].sampleId).toBe('s_A')
+
+    // 2. Simulate backend now has both T/A and newly inserted T/B.
+    // When refreshNewest is called, capture the query argument sent by the frontend.
+    mockedCursor.mockImplementationOnce(async (query) => {
+      // Assert request semantics:
+      // - Must NOT emit an exclusive timestamp anchor like `since > sharedTs`
+      // - Must query from the newest head (orderDesc: true)
+      // - Limit must be PAGE_LIMIT
+      // - Cursor must be undefined for head-of-stream refresh
+      expect(query.orderDesc).toBe(true)
+      expect(query.cursor).toBeUndefined()
+      expect(query.limit).toBe(500)
+      if (query.sinceMs !== undefined && query.sinceMs !== null) {
+        expect(query.sinceMs).toBeLessThanOrEqual(sharedTs)
+      }
+      if (query.untilMs !== undefined && query.untilMs !== null) {
+        expect(query.untilMs).toBeGreaterThanOrEqual(sharedTs)
+      }
+
+      // Backend result conforming to this query: both B and A at timestamp sharedTs
+      return page([
+        sample('s_B', sharedTs),
+        sample('s_A', sharedTs),
+      ])
+    })
+
+    const added = await store.refreshNewest()
+    expect(added).toBe(1)
+    expect(store.samples).toHaveLength(2)
+
+    // Final assertion: both A and B exist in the store
+    const sampleIds = store.samples.map((s) => s.sampleId)
+    expect(sampleIds).toContain('s_A')
+    expect(sampleIds).toContain('s_B')
+  })
+
+  it('drains consecutive cursor pages during multi-page live refresh burst exceeding PAGE_LIMIT', async () => {
+    const store = useTimelineStore()
+    const baseTs = NOW - 30 * MIN
+    const boundarySample = sample('s_boundary', baseTs)
+
+    // Store initially has boundarySample
+    mockedCursor.mockResolvedValueOnce(page([boundarySample]))
+    await store.reload()
+    expect(store.samples).toHaveLength(1)
+
+    // A burst of 650 new samples arrived between polls (exceeding PAGE_LIMIT of 500).
+    // All 650 samples have timestamps newer than baseTs.
+    const burstSamples: MonitorSample[] = []
+    for (let i = 649; i >= 0; i--) {
+      burstSamples.push(sample(`s_burst_${i}`, baseTs + (i + 1) * 1000))
+    }
+
+    // Page 1: newest 500 samples (indices 0..499 -> s_burst_649..s_burst_150)
+    const page1Items = burstSamples.slice(0, 500)
+    // Page 2: remaining 150 samples (indices 500..649 -> s_burst_149..s_burst_0) + known boundarySample
+    const page2Items = [...burstSamples.slice(500), boundarySample]
+
+    const receivedQueries: any[] = []
+    mockedCursor.mockImplementation(async (query) => {
+      receivedQueries.push(query)
+      if (!query.cursor) {
+        return page(page1Items, 'cursor_p2', true)
+      }
+      if (query.cursor === 'cursor_p2') {
+        return page(page2Items, '', false)
+      }
+      throw new Error(`Unexpected cursor: ${query.cursor}`)
+    })
+
+    const added = await store.refreshNewest()
+
+    // Assert: all 650 new samples were retrieved across both pages
+    expect(added).toBe(650)
+    expect(store.samples).toHaveLength(651)
+
+    // Assert request semantics:
+    // Page 1 requested head of stream (no cursor)
+    expect(receivedQueries).toHaveLength(2)
+    expect(receivedQueries[0].cursor).toBeUndefined()
+    expect(receivedQueries[0].limit).toBe(500)
+    expect(receivedQueries[0].orderDesc).toBe(true)
+
+    // Page 2 chained using next_cursor from Page 1
+    expect(receivedQueries[1].cursor).toBe('cursor_p2')
+    expect(receivedQueries[1].limit).toBe(500)
+    expect(receivedQueries[1].orderDesc).toBe(true)
+
+    // Assert no samples in the burst were dropped
+    expect(store.samples.find((s) => s.sampleId === 's_burst_649')).toBeDefined()
+    expect(store.samples.find((s) => s.sampleId === 's_burst_150')).toBeDefined()
+    expect(store.samples.find((s) => s.sampleId === 's_burst_149')).toBeDefined()
+    expect(store.samples.find((s) => s.sampleId === 's_burst_0')).toBeDefined()
+    expect(store.samples.find((s) => s.sampleId === 's_boundary')).toBeDefined()
+  })
 })
 
 describe('viewport interactions', () => {

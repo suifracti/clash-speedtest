@@ -19,7 +19,7 @@
 import { computed, ref, shallowRef } from 'vue'
 import { defineStore } from 'pinia'
 import type { DerivedStats, FacetNode, MonitorSample, MonitorSampleFacets } from '../types'
-import { fetchMonitorFacets, fetchMonitorStats, queryMonitorSamplesCursor } from '../api/monitor'
+import { fetchMonitorFacets, fetchMonitorStats, queryMonitorSamplesCursor, type MonitorCursorQuery } from '../api/monitor'
 import { buildLanes, compareSamplesAsc, detectRevisionBoundaries, isLegacyBackfilledSample } from '../utils/timeline/lanes'
 import {
   clampViewportToDomain,
@@ -335,8 +335,12 @@ export const useTimelineStore = defineStore('timeline', () => {
    * Re-queries the newest page and merges by `sample_id`.
    *
    * The cursor API is single-direction, so "load newer" cannot use a reverse cursor. Instead we
-   * re-read the head of the stream and merge. Already-loaded samples are never duplicated and
-   * the viewport is only advanced when the user is actually sitting at the live edge.
+   * re-read from the head of the stream (orderDesc: true, no exclusive timestamp anchor) and merge.
+   * If a burst of new samples arrives between polls exceeding PAGE_LIMIT, we follow has_more /
+   * next_cursor to drain pages until we cross the previously known dataset boundary.
+   *
+   * Already-loaded samples are never duplicated and the viewport is only advanced when the
+   * user is actually sitting at the live edge.
    */
   async function refreshNewest(): Promise<number> {
     if (loadState.value !== 'ready') return 0
@@ -344,14 +348,45 @@ export const useTimelineStore = defineStore('timeline', () => {
     if (signature !== filtersSignature.value) return 0
 
     try {
-      const page = await queryMonitorSamplesCursor({ ...currentFilter(), limit: PAGE_LIMIT, orderDesc: true })
-      if (signature !== activeSignature) return 0
-
       let added = 0
-      for (const sample of page.items) {
-        if (sampleIndex.has(sample.sampleId)) continue
-        sampleIndex.set(sample.sampleId, sample)
-        added += 1
+      let cursor: string | undefined = undefined
+      let pages = 0
+      const MAX_BURST_PAGES = 10
+      const hasKnownBoundary = sampleIndex.size > 0
+
+      while (pages < MAX_BURST_PAGES) {
+        const query: MonitorCursorQuery = {
+          ...currentFilter(),
+          limit: PAGE_LIMIT,
+          orderDesc: true,
+          cursor,
+        }
+        const page = await queryMonitorSamplesCursor(query)
+        if (signature !== activeSignature) return 0
+        pages += 1
+
+        let encounteredKnown = false
+        for (const sample of page.items) {
+          if (sampleIndex.has(sample.sampleId)) {
+            encounteredKnown = true
+            continue
+          }
+          sampleIndex.set(sample.sampleId, sample)
+          added += 1
+        }
+
+        // If we crossed into our previously known dataset, or if there was no
+        // previous dataset to bridge into, we have completed the refresh.
+        if (encounteredKnown || !hasKnownBoundary) {
+          break
+        }
+
+        // If no more pages or page was empty, stop draining.
+        if (!page.hasMore || !page.nextCursor || page.items.length === 0) {
+          break
+        }
+
+        cursor = page.nextCursor
       }
 
       if (added > 0) {
