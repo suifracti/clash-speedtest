@@ -330,6 +330,18 @@ func (s *Store) GetNodeTimelineSamples(ctx context.Context, nodeKey string, sinc
 	return s.db.GetNodeTimelineSamples(ctx, nodeKey, since)
 }
 
+func (s *Store) QueryMonitorSamplesCursor(ctx context.Context, filter monitor.CursorFilter) (*monitor.SampleCursorPage, error) {
+	return s.db.QueryMonitorSamplesCursor(ctx, filter)
+}
+
+func (s *Store) GetDerivedStats(ctx context.Context, query monitor.StatsQuery) (*monitor.DerivedStats, error) {
+	return s.db.GetDerivedStats(ctx, query)
+}
+
+func (s *Store) ApplyRetention(ctx context.Context, req monitor.RetentionRequest) (*monitor.RetentionResult, error) {
+	return s.db.ApplyRetention(ctx, req)
+}
+
 func (s *Store) Dir() string {
 	return s.dir
 }

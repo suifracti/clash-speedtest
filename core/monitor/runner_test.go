@@ -110,6 +110,32 @@ func (m *mockSampleStore) GetNodeTimelineSamples(ctx context.Context, nodeKey st
 	return matched, nil
 }
 
+func (m *mockSampleStore) QueryMonitorSamplesCursor(ctx context.Context, filter CursorFilter) (*SampleCursorPage, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	res := make([]*MonitorSample, len(m.samples))
+	copy(res, m.samples)
+	return &SampleCursorPage{
+		Items:   res,
+		HasMore: false,
+		Limit:   filter.Limit,
+	}, nil
+}
+
+func (m *mockSampleStore) GetDerivedStats(ctx context.Context, query StatsQuery) (*DerivedStats, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return &DerivedStats{
+		SampleCount: int64(len(m.samples)),
+	}, nil
+}
+
+func (m *mockSampleStore) ApplyRetention(ctx context.Context, req RetentionRequest) (*RetentionResult, error) {
+	return &RetentionResult{
+		Policy: req.Policy,
+	}, nil
+}
+
 func (m *mockSampleStore) GetRuns() []*MonitorRun {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

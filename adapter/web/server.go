@@ -154,6 +154,9 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("POST /api/monitor/jobs/{id}/trigger", s.handleTriggerMonitorJob)
 	mux.HandleFunc("GET /api/monitor/runs", s.handleQueryMonitorRuns)
 	mux.HandleFunc("GET /api/monitor/samples", s.handleQueryMonitorSamples)
+	mux.HandleFunc("GET /api/monitor/samples/cursor", s.handleQueryMonitorSamplesCursor)
+	mux.HandleFunc("GET /api/monitor/stats", s.handleGetMonitorStats)
+	mux.HandleFunc("POST /api/monitor/retention", s.handleApplyRetention)
 	mux.HandleFunc("GET /api/monitor/timeline", s.handleGetNodeTimelineSamples)
 
 	mux.HandleFunc("GET /api/events", s.handleEventsSSE)
@@ -948,4 +951,92 @@ func (s *Server) handleGetNodeTimelineSamples(w http.ResponseWriter, r *http.Req
 	}
 	writeJSON(w, http.StatusOK, samples)
 }
+
+func (s *Server) handleQueryMonitorSamplesCursor(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	filter := monitor.CursorFilter{
+		NodeIdentityKey: q.Get("node_identity_key"),
+		NodeKey:         q.Get("node_key"),
+		ProfileID:       q.Get("profile_id"),
+		ProbeType:       q.Get("probe_type"),
+		Target:          q.Get("target"),
+		Cursor:          q.Get("cursor"),
+	}
+
+	if limitStr := q.Get("limit"); limitStr != "" {
+		if limit, err := strconv.Atoi(limitStr); err == nil {
+			filter.Limit = limit
+		}
+	}
+	if successStr := q.Get("success"); successStr != "" {
+		val := successStr == "true" || successStr == "1"
+		filter.Success = &val
+	}
+	if orderDescStr := q.Get("order_desc"); orderDescStr != "" {
+		filter.OrderDesc = orderDescStr == "true" || orderDescStr == "1"
+	} else {
+		filter.OrderDesc = true // Default newest first
+	}
+	if sinceStr := q.Get("since"); sinceStr != "" {
+		if t, err := time.Parse(time.RFC3339, sinceStr); err == nil {
+			filter.Since = &t
+		}
+	}
+	if untilStr := q.Get("until"); untilStr != "" {
+		if t, err := time.Parse(time.RFC3339, untilStr); err == nil {
+			filter.Until = &t
+		}
+	}
+
+	page, err := s.app.QueryMonitorSamplesCursor(r.Context(), filter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
+}
+
+func (s *Server) handleGetMonitorStats(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	query := monitor.StatsQuery{
+		NodeIdentityKey: q.Get("node_identity_key"),
+		NodeKey:         q.Get("node_key"),
+		ProfileID:       q.Get("profile_id"),
+		ProbeType:       q.Get("probe_type"),
+		Target:          q.Get("target"),
+	}
+	if sinceStr := q.Get("since"); sinceStr != "" {
+		if t, err := time.Parse(time.RFC3339, sinceStr); err == nil {
+			query.Since = &t
+		}
+	}
+	if untilStr := q.Get("until"); untilStr != "" {
+		if t, err := time.Parse(time.RFC3339, untilStr); err == nil {
+			query.Until = &t
+		}
+	}
+
+	stats, err := s.app.GetMonitorStats(r.Context(), query)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
+}
+
+func (s *Server) handleApplyRetention(w http.ResponseWriter, r *http.Request) {
+	var req monitor.RetentionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body: "+err.Error())
+		return
+	}
+
+	result, err := s.app.ApplyRetention(r.Context(), req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 

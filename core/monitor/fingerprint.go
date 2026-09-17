@@ -20,8 +20,23 @@ import (
 // rotation or minor header tweaks will not orphan long-term time-series probe history.
 const fingerprintDomainSeparator = "clash-speedtest-nodekey-v1"
 
-// ComputeNodeKey calculates a stable, deterministic identifier for a proxy node.
-// It incorporates non-mutable transport and connection parameters:
+// sanitizeServerTag produces a filesystem- and URL-safe server string slice of max 32 chars.
+func sanitizeServerTag(cleanServer string) string {
+	safeServer := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' || r == '-' {
+			return r
+		}
+		return '_'
+	}, cleanServer)
+
+	if len(safeServer) > 32 {
+		safeServer = safeServer[:32]
+	}
+	return safeServer
+}
+
+// ComputeNodeIdentityKey calculates a stable, long-term transport endpoint identifier for a proxy node.
+// It incorporates purely transport and connection parameters:
 // - Protocol Type (lowercased)
 // - Server Hostname or IP (lowercased)
 // - Server Port
@@ -29,11 +44,69 @@ const fingerprintDomainSeparator = "clash-speedtest-nodekey-v1"
 // - Host / SNI / ServerName
 // - Path (e.g. ws path / grpc serviceName)
 //
-// Sensitive Information Handling:
-// Sensitive fields (passwords, UUIDs, secret tokens, private keys) are hashed using
-// SHA-256 with the domain separator before entering the fingerprint calculation.
-// Plaintext secrets are NEVER included in the NodeKey string, logs, or SQLite indexes.
-// Renaming a node's display name does NOT alter its NodeKey.
+// It strictly EXCLUDES credentials (passwords, tokens, UUIDs, private keys) and display names.
+// This key enables long-term historical continuity even across credential rotations or name changes.
+func ComputeNodeIdentityKey(nodeType, server string, port int, network, sni, path string) string {
+	cleanType := strings.ToLower(strings.TrimSpace(nodeType))
+	cleanServer := strings.ToLower(strings.TrimSpace(server))
+	cleanNetwork := strings.ToLower(strings.TrimSpace(network))
+	cleanSNI := strings.ToLower(strings.TrimSpace(sni))
+	cleanPath := strings.TrimSpace(path)
+
+	h := sha256.New()
+	h.Write([]byte(fingerprintDomainSeparator))
+	h.Write([]byte(":nid\n"))
+	h.Write([]byte(cleanType))
+	h.Write([]byte("\n"))
+	h.Write([]byte(cleanServer))
+	h.Write([]byte("\n"))
+	h.Write([]byte(strconv.Itoa(port)))
+	h.Write([]byte("\n"))
+	h.Write([]byte(cleanNetwork))
+	h.Write([]byte("\n"))
+	h.Write([]byte(cleanSNI))
+	h.Write([]byte("\n"))
+	h.Write([]byte(cleanPath))
+
+	digest := hex.EncodeToString(h.Sum(nil))
+	safeServer := sanitizeServerTag(cleanServer)
+
+	return fmt.Sprintf("nid_%s_%s_%d_%s", cleanType, safeServer, port, digest[:8])
+}
+
+// ComputeConfigRevisionKey hashes the credential parameters and connection options for a node,
+// binding it to its NodeIdentityKey.
+// When credentials rotate or TLS parameters change, ConfigRevisionKey changes,
+// while NodeIdentityKey remains stable.
+func ComputeConfigRevisionKey(identityKey string, rawConfig map[string]any) string {
+	credHash := hashSensitiveCredentials(rawConfig)
+
+	var extraFlags []string
+	if rawConfig != nil {
+		flagKeys := []string{"alpn", "skip-cert-verify", "client-fingerprint", "udp", "tls"}
+		for _, k := range flagKeys {
+			if val, exists := rawConfig[k]; exists && val != nil {
+				extraFlags = append(extraFlags, fmt.Sprintf("%s=%v", k, val))
+			}
+		}
+		sort.Strings(extraFlags)
+	}
+
+	h := sha256.New()
+	h.Write([]byte(fingerprintDomainSeparator))
+	h.Write([]byte(":rev\n"))
+	h.Write([]byte(identityKey))
+	h.Write([]byte("\n"))
+	h.Write([]byte(credHash))
+	h.Write([]byte("\n"))
+	h.Write([]byte(strings.Join(extraFlags, ";")))
+
+	digest := hex.EncodeToString(h.Sum(nil))
+	return fmt.Sprintf("rev_%s", digest[:16])
+}
+
+// ComputeNodeKey calculates a backward-compatible composite identifier for a proxy node.
+// It incorporates both transport endpoint parameters and credential digests.
 func ComputeNodeKey(nodeType, server string, port int, network, sni, path string, rawConfig map[string]any) string {
 	cleanType := strings.ToLower(strings.TrimSpace(nodeType))
 	cleanServer := strings.ToLower(strings.TrimSpace(server))
@@ -62,20 +135,71 @@ func ComputeNodeKey(nodeType, server string, port int, network, sni, path string
 	h.Write([]byte(credHash))
 
 	digest := hex.EncodeToString(h.Sum(nil))
-
-	// URL and filesystem safe server tag
-	safeServer := strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' || r == '-' {
-			return r
-		}
-		return '_'
-	}, cleanServer)
-
-	if len(safeServer) > 32 {
-		safeServer = safeServer[:32]
-	}
+	safeServer := sanitizeServerTag(cleanServer)
 
 	return fmt.Sprintf("nk_%s_%s_%d_%s", cleanType, safeServer, port, digest[:8])
+}
+
+// ComputeNodeIdentityKeyFromConfig extracts transport parameters from raw config and computes NodeIdentityKey.
+func ComputeNodeIdentityKeyFromConfig(cfg map[string]any) string {
+	if cfg == nil {
+		return "nid_unknown"
+	}
+
+	nodeType, _ := cfg["type"].(string)
+	server, _ := cfg["server"].(string)
+	port := extractPort(cfg["port"])
+
+	network, _ := cfg["network"].(string)
+	sni, _ := cfg["sni"].(string)
+	if sni == "" {
+		sni, _ = cfg["servername"].(string)
+	}
+
+	path := ""
+	if wsOpts, ok := cfg["ws-opts"].(map[string]any); ok {
+		path, _ = wsOpts["path"].(string)
+	} else if grpcOpts, ok := cfg["grpc-opts"].(map[string]any); ok {
+		path, _ = grpcOpts["grpc-service-name"].(string)
+	}
+
+	return ComputeNodeIdentityKey(nodeType, server, port, network, sni, path)
+}
+
+// ComputeNodeIdentityKeyFromNode computes the NodeIdentityKey for a MonitoredNode.
+func ComputeNodeIdentityKeyFromNode(node MonitoredNode) string {
+	if len(node.RawConfig) > 0 {
+		return ComputeNodeIdentityKeyFromConfig(node.RawConfig)
+	}
+	return ComputeNodeIdentityKey(node.Type, node.Server, node.Port, "", "", "")
+}
+
+// ComputeConfigRevisionKeyFromNode computes the ConfigRevisionKey for a MonitoredNode.
+func ComputeConfigRevisionKeyFromNode(identityKey string, node MonitoredNode) string {
+	return ComputeConfigRevisionKey(identityKey, node.RawConfig)
+}
+
+// PopulateNodeKeys populates NodeKey, NodeIdentityKey, and ConfigRevisionKey on a MonitoredNode if empty.
+func PopulateNodeKeys(node *MonitoredNode) {
+	if node == nil {
+		return
+	}
+	if node.NodeKey == "" {
+		node.NodeKey = ComputeNodeKeyFromNode(*node)
+	}
+	if node.NodeIdentityKey == "" {
+		node.NodeIdentityKey = ComputeNodeIdentityKeyFromNode(*node)
+	}
+	if node.ConfigRevisionKey == "" {
+		node.ConfigRevisionKey = ComputeConfigRevisionKeyFromNode(node.NodeIdentityKey, *node)
+	}
+}
+
+// PopulateNodesKeys populates NodeKey, NodeIdentityKey, and ConfigRevisionKey for a slice of MonitoredNode.
+func PopulateNodesKeys(nodes []MonitoredNode) {
+	for i := range nodes {
+		PopulateNodeKeys(&nodes[i])
+	}
 }
 
 // ComputeNodeKeyFromConfig parses raw proxy config map and produces its stable NodeKey.

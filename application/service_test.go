@@ -674,3 +674,125 @@ func TestAppService_CreateDuplicateRunningJobFails(t *testing.T) {
 	}
 }
 
+func TestAppService_MonitorHistoryAPIs(t *testing.T) {
+	tmpDir := t.TempDir()
+	hStore, err := history.NewStore(filepath.Join(tmpDir, "history"))
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	defer hStore.Close()
+
+	paths := profiles.Paths{Dir: filepath.Join(tmpDir, "profiles")}
+	emitter := NewMemoryEventEmitter()
+
+	var retentionEvents []Event
+	emitter.Subscribe(func(e Event) {
+		if e.Type == "monitor_retention_applied" {
+			retentionEvents = append(retentionEvents, e)
+		}
+	})
+
+	svc := NewAppService(hStore, paths, emitter)
+	defer svc.Close()
+
+	mockCtrl := &testMockController{selectedNode: "DEFAULT_NODE"}
+	svc.SetController(mockCtrl, ControllerConfigDTO{Endpoint: "http://127.0.0.1:9090", Mode: "external"})
+
+	runner := monitor.NewRunner(monitor.RunnerConfig{
+		Store:  hStore,
+		Dialer: &serviceTestMockDialer{},
+	})
+	svc.SetMonitorRunner(runner)
+
+	jobReq := monitor.MonitorJob{
+		ID:       "history_test_job",
+		Name:     "History Test Job",
+		ProbeSet: monitor.ProbeSetLight,
+		Interval: 1 * time.Hour,
+		Nodes: []monitor.MonitoredNode{
+			{
+				DisplayName: "Node Alpha",
+				Type:        "ss",
+				Server:      "2.2.2.2",
+				Port:        8388,
+				RawConfig: map[string]any{
+					"type":     "ss",
+					"server":   "2.2.2.2",
+					"port":     8388,
+					"password": "secret_pwd",
+				},
+			},
+		},
+	}
+
+	created, err := svc.CreateMonitorJob(jobReq)
+	if err != nil {
+		t.Fatalf("CreateMonitorJob failed: %v", err)
+	}
+
+	// Verify identity keys were automatically populated
+	if created.Nodes[0].NodeIdentityKey == "" {
+		t.Errorf("expected NodeIdentityKey to be populated on MonitoredNode")
+	}
+	if created.Nodes[0].ConfigRevisionKey == "" {
+		t.Errorf("expected ConfigRevisionKey to be populated on MonitoredNode")
+	}
+
+	// Start & trigger one run to produce a raw sample
+	if err := svc.StartMonitorJob("history_test_job"); err != nil {
+		t.Fatalf("StartMonitorJob failed: %v", err)
+	}
+	run, err := svc.TriggerMonitorJob("history_test_job")
+	if err != nil || run.Status != monitor.RunStatusCompleted {
+		t.Fatalf("TriggerMonitorJob failed: run=%+v, err=%v", run, err)
+	}
+
+	ctx := context.Background()
+
+	// 1. Test QueryMonitorSamplesCursor
+	page, err := svc.QueryMonitorSamplesCursor(ctx, monitor.CursorFilter{
+		NodeIdentityKey: created.Nodes[0].NodeIdentityKey,
+		Limit:           10,
+	})
+	if err != nil {
+		t.Fatalf("QueryMonitorSamplesCursor failed: %v", err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("expected 1 item in cursor page, got %d", len(page.Items))
+	}
+	if page.Items[0].NodeIdentityKey != created.Nodes[0].NodeIdentityKey {
+		t.Errorf("mismatched NodeIdentityKey in sample: %s", page.Items[0].NodeIdentityKey)
+	}
+
+	// 2. Test GetMonitorStats
+	stats, err := svc.GetMonitorStats(ctx, monitor.StatsQuery{
+		NodeIdentityKey: created.Nodes[0].NodeIdentityKey,
+	})
+	if err != nil {
+		t.Fatalf("GetMonitorStats failed: %v", err)
+	}
+	if stats.SampleCount != 1 || stats.SuccessCount != 1 || stats.SuccessRate != 1.0 {
+		t.Errorf("unexpected stats: %+v", stats)
+	}
+
+	// 3. Test ApplyRetention (KeepAll by default)
+	retRes, err := svc.ApplyRetention(ctx, monitor.RetentionRequest{
+		Policy: monitor.RetentionKeepAll,
+	})
+	if err != nil {
+		t.Fatalf("ApplyRetention failed: %v", err)
+	}
+	if retRes.SamplesDeleted != 0 {
+		t.Errorf("expected 0 samples deleted with KeepAll, got %d", retRes.SamplesDeleted)
+	}
+	if len(retentionEvents) != 1 {
+		t.Errorf("expected 1 monitor_retention_applied event emitted, got %d", len(retentionEvents))
+	}
+
+	// 4. Hard Line of Defense: Zero calls to SelectNode throughout
+	if mockCtrl.selectCalls != 0 {
+		t.Fatalf("CRITICAL SECURITY VIOLATION: SelectNode called %d times during monitor history operations", mockCtrl.selectCalls)
+	}
+}
+
+

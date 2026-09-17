@@ -167,6 +167,7 @@ func (r *Runner) ExecuteRun(ctx context.Context, job *MonitorJob, scheduledAt ti
 	// Bounded worker pool
 	nodeChan := make(chan MonitoredNode, len(job.Nodes))
 	for _, n := range job.Nodes {
+		PopulateNodeKeys(&n)
 		nodeChan <- n
 	}
 	close(nodeChan)
@@ -238,6 +239,8 @@ func (r *Runner) ExecuteRun(ctx context.Context, job *MonitorJob, scheduledAt ti
 }
 
 func (r *Runner) probeNode(ctx context.Context, profileID string, node MonitoredNode, targets []TargetSpec, timeout time.Duration, runID string) ([]*MonitorSample, bool) {
+	PopulateNodeKeys(&node)
+
 	client, err := r.dialer.CreateClient(node, timeout)
 	if err != nil {
 		// Client creation failure (e.g. invalid config)
@@ -245,6 +248,8 @@ func (r *Runner) probeNode(ctx context.Context, profileID string, node Monitored
 			SampleID:            newID("s"),
 			RunID:               runID,
 			NodeKey:             node.NodeKey,
+			NodeIdentityKey:     node.NodeIdentityKey,
+			ConfigRevisionKey:   node.ConfigRevisionKey,
 			ProfileID:           profileID,
 			DisplayNameSnapshot: node.DisplayName,
 			ProbeType:           "init",
@@ -291,6 +296,8 @@ func (r *Runner) executeSingleProbe(
 		SampleID:            newID("s"),
 		RunID:               runID,
 		NodeKey:             node.NodeKey,
+		NodeIdentityKey:     node.NodeIdentityKey,
+		ConfigRevisionKey:   node.ConfigRevisionKey,
 		ProfileID:           profileID,
 		DisplayNameSnapshot: node.DisplayName,
 		ProbeType:           target.ProbeType,

@@ -39,12 +39,14 @@ const (
 
 // MonitoredNode represents a proxy node targeted for monitoring.
 type MonitoredNode struct {
-	NodeKey     string         `json:"node_key"`
-	DisplayName string         `json:"display_name"`
-	Type        string         `json:"type"`
-	Server      string         `json:"server"`
-	Port        int            `json:"port"`
-	RawConfig   map[string]any `json:"raw_config,omitempty"`
+	NodeKey           string         `json:"node_key"`            // Backward-compatible composite key (endpoint + cred hash)
+	NodeIdentityKey   string         `json:"node_identity_key"`   // Pure physical/transport endpoint identity
+	ConfigRevisionKey string         `json:"config_revision_key"` // Config & credential revision digest
+	DisplayName       string         `json:"display_name"`
+	Type              string         `json:"type"`
+	Server            string         `json:"server"`
+	Port              int            `json:"port"`
+	RawConfig         map[string]any `json:"raw_config,omitempty"`
 }
 
 // MonitorJob holds the persistent configuration and state of a 24/7 monitoring task.
@@ -81,7 +83,9 @@ type MonitorRun struct {
 type MonitorSample struct {
 	SampleID            string         `json:"sample_id"`
 	RunID               string         `json:"run_id"`
-	NodeKey             string         `json:"node_key"`
+	NodeKey             string         `json:"node_key"`            // Backward-compatible composite key
+	NodeIdentityKey     string         `json:"node_identity_key"`   // Pure transport endpoint identity
+	ConfigRevisionKey   string         `json:"config_revision_key"` // Config & credential revision digest
 	ProfileID           string         `json:"profile_id"`
 	DisplayNameSnapshot string         `json:"display_name_snapshot"`
 	ProbeType           string         `json:"probe_type"` // "rtt", "ttfb", "http_status", "exit_ip", "ai_check"
@@ -97,27 +101,116 @@ type MonitorSample struct {
 	Metadata            map[string]any `json:"metadata,omitempty"`
 }
 
-// SampleFilter specifies query criteria for retrieving raw samples from persistence.
+// SampleFilter specifies query criteria for retrieving raw samples from persistence using OFFSET.
 type SampleFilter struct {
-	JobID     string
-	RunID     string
-	NodeKey   string
-	ProfileID string
-	ProbeType string
-	Success   *bool
-	Since     *time.Time
-	Until     *time.Time
-	Limit     int
-	Offset    int
-	OrderDesc bool // true: newest first; false: chronological ascending
+	JobID           string
+	RunID           string
+	NodeKey         string
+	NodeIdentityKey string
+	ProfileID       string
+	ProbeType       string
+	Target          string
+	Success         *bool
+	Since           *time.Time
+	Until           *time.Time
+	Limit           int
+	Offset          int
+	OrderDesc       bool // true: newest first; false: chronological ascending
 }
 
-// SampleStore defines the persistence abstraction for saving and querying runs and samples.
+// CursorFilter specifies query criteria for keyset/cursor-based sample pagination.
+type CursorFilter struct {
+	NodeIdentityKey string     `json:"node_identity_key,omitempty"`
+	NodeKey         string     `json:"node_key,omitempty"`
+	ProfileID       string     `json:"profile_id,omitempty"`
+	ProbeType       string     `json:"probe_type,omitempty"`
+	Target          string     `json:"target,omitempty"`
+	Success         *bool      `json:"success,omitempty"`
+	Since           *time.Time `json:"since,omitempty"`
+	Until           *time.Time `json:"until,omitempty"`
+	Limit           int        `json:"limit"`
+	OrderDesc       bool       `json:"order_desc"` // true: newest first (default); false: chronological ascending
+	Cursor          string     `json:"cursor,omitempty"` // Opaque cursor token
+}
+
+// SampleCursorPage represents a page of MonitorSample results using keyset pagination.
+type SampleCursorPage struct {
+	Items      []*MonitorSample `json:"items"`
+	NextCursor string           `json:"next_cursor,omitempty"`
+	PrevCursor string           `json:"prev_cursor,omitempty"`
+	HasMore    bool             `json:"has_more"`
+	Limit      int              `json:"limit"`
+}
+
+// StatsQuery defines filtering criteria for deriving statistical metrics over raw samples.
+type StatsQuery struct {
+	NodeIdentityKey string     `json:"node_identity_key,omitempty"`
+	NodeKey         string     `json:"node_key,omitempty"`
+	ProfileID       string     `json:"profile_id,omitempty"`
+	ProbeType       string     `json:"probe_type,omitempty"`
+	Target          string     `json:"target,omitempty"`
+	Since           *time.Time `json:"since,omitempty"`
+	Until           *time.Time `json:"until,omitempty"`
+}
+
+// DerivedStats contains aggregated metrics computed on-the-fly from raw immutable samples.
+type DerivedStats struct {
+	SampleCount     int64            `json:"sample_count"`
+	SuccessCount    int64            `json:"success_count"`
+	FailureCount    int64            `json:"failure_count"`
+	SuccessRate     float64          `json:"success_rate"` // 0.0 to 1.0
+	LatencyMinMs    *int64           `json:"latency_min_ms"`
+	LatencyP50Ms    *int64           `json:"latency_p50_ms"`
+	LatencyP95Ms    *int64           `json:"latency_p95_ms"`
+	LatencyMaxMs    *int64           `json:"latency_max_ms"`
+	TTFBP50Ms       *int64           `json:"ttfb_p50_ms"`
+	TTFBP95Ms       *int64           `json:"ttfb_p95_ms"`
+	ErrorBreakdown  map[string]int64 `json:"error_breakdown"`
+	FirstSampleAt   *time.Time       `json:"first_sample_at"`
+	LastSampleAt    *time.Time       `json:"last_sample_at"`
+	ObservedSince   *time.Time       `json:"observed_since"`
+	ObservedUntil   *time.Time       `json:"observed_until"`
+	NodeIdentityKey string           `json:"node_identity_key,omitempty"`
+	NodeKey         string           `json:"node_key,omitempty"`
+	ProbeType       string           `json:"probe_type,omitempty"`
+}
+
+// RetentionPolicy defines data retention strategies for raw samples.
+type RetentionPolicy string
+
+const (
+	RetentionKeepAll RetentionPolicy = "keep_all" // Default: Never delete or overwrite raw samples
+	Retention30d     RetentionPolicy = "30d"
+	Retention90d     RetentionPolicy = "90d"
+	Retention180d    RetentionPolicy = "180d"
+	RetentionCustom  RetentionPolicy = "custom"
+)
+
+// RetentionRequest specifies retention execution options.
+type RetentionRequest struct {
+	Policy     RetentionPolicy `json:"policy"`
+	CustomDays int             `json:"custom_days,omitempty"`
+	CutoffTime *time.Time      `json:"cutoff_time,omitempty"`
+}
+
+// RetentionResult summarizes the outcome of an irreversible retention deletion operation.
+type RetentionResult struct {
+	Policy         RetentionPolicy `json:"policy"`
+	Cutoff         time.Time       `json:"cutoff"`
+	SamplesDeleted int64           `json:"samples_deleted"`
+	RunsDeleted    int64           `json:"runs_deleted"`
+	DurationMs     int64           `json:"duration_ms"`
+}
+
+// SampleStore defines the persistence abstraction for saving, querying, calculating, and pruning runs and samples.
 type SampleStore interface {
 	SaveMonitorRun(ctx context.Context, run *MonitorRun) error
 	UpdateMonitorRun(ctx context.Context, run *MonitorRun) error
 	SaveMonitorSamples(ctx context.Context, samples []*MonitorSample) error
 	QueryMonitorRuns(ctx context.Context, jobID string, limit int) ([]*MonitorRun, error)
 	QueryMonitorSamples(ctx context.Context, filter SampleFilter) ([]*MonitorSample, error)
+	QueryMonitorSamplesCursor(ctx context.Context, filter CursorFilter) (*SampleCursorPage, error)
+	GetDerivedStats(ctx context.Context, query StatsQuery) (*DerivedStats, error)
+	ApplyRetention(ctx context.Context, req RetentionRequest) (*RetentionResult, error)
 	GetNodeTimelineSamples(ctx context.Context, nodeKey string, since time.Time) ([]*MonitorSample, error)
 }

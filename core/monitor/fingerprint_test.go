@@ -109,3 +109,131 @@ func TestComputeNodeKey_DifferentEndpoints(t *testing.T) {
 		t.Errorf("distinct endpoints must produce distinct keys: A=%q, B=%q, C=%q", keyA, keyB, keyC)
 	}
 }
+
+func TestComputeNodeIdentityKey_DecoupledFromCredentials(t *testing.T) {
+	secret1 := "super-password-alpha"
+	secret2 := "super-password-beta-updated"
+
+	cfgOriginal := map[string]any{
+		"name":     "Tokyo-01",
+		"type":     "vmess",
+		"server":   "tokyo.node.com",
+		"port":     443,
+		"uuid":     secret1,
+		"network":  "ws",
+		"sni":      "cdn.node.com",
+		"ws-opts": map[string]any{
+			"path": "/ws",
+		},
+	}
+
+	// 1. Password changed, transport intact
+	cfgCredUpdated := map[string]any{
+		"name":     "Tokyo-01",
+		"type":     "vmess",
+		"server":   "tokyo.node.com",
+		"port":     443,
+		"uuid":     secret2, // Changed!
+		"network":  "ws",
+		"sni":      "cdn.node.com",
+		"ws-opts": map[string]any{
+			"path": "/ws",
+		},
+	}
+
+	// 2. Display name changed, credentials and transport intact
+	cfgNameChanged := map[string]any{
+		"name":     "⚡ Tokyo Premium Line", // Changed!
+		"type":     "vmess",
+		"server":   "tokyo.node.com",
+		"port":     443,
+		"uuid":     secret1,
+		"network":  "ws",
+		"sni":      "cdn.node.com",
+		"ws-opts": map[string]any{
+			"path": "/ws",
+		},
+	}
+
+	// 3. Transport endpoint changed
+	cfgServerChanged := map[string]any{
+		"name":     "Tokyo-01",
+		"type":     "vmess",
+		"server":   "osaka.node.com", // Changed!
+		"port":     443,
+		"uuid":     secret1,
+		"network":  "ws",
+		"sni":      "cdn.node.com",
+		"ws-opts": map[string]any{
+			"path": "/ws",
+		},
+	}
+
+	nidOrig := ComputeNodeIdentityKeyFromConfig(cfgOriginal)
+	revOrig := ComputeConfigRevisionKey(nidOrig, cfgOriginal)
+
+	nidCred := ComputeNodeIdentityKeyFromConfig(cfgCredUpdated)
+	revCred := ComputeConfigRevisionKey(nidCred, cfgCredUpdated)
+
+	nidName := ComputeNodeIdentityKeyFromConfig(cfgNameChanged)
+	revName := ComputeConfigRevisionKey(nidName, cfgNameChanged)
+
+	nidServer := ComputeNodeIdentityKeyFromConfig(cfgServerChanged)
+
+	// Invariant 1: Credential update must preserve NodeIdentityKey, but change ConfigRevisionKey
+	if nidOrig != nidCred {
+		t.Errorf("NodeIdentityKey must be decoupled from credentials: orig=%q, cred=%q", nidOrig, nidCred)
+	}
+	if revOrig == revCred {
+		t.Errorf("ConfigRevisionKey must change when credential is changed: revOrig=%q, revCred=%q", revOrig, revCred)
+	}
+
+	// Invariant 2: Name change must preserve both NodeIdentityKey and ConfigRevisionKey
+	if nidOrig != nidName {
+		t.Errorf("NodeIdentityKey must be immune to display name changes: orig=%q, name=%q", nidOrig, nidName)
+	}
+	if revOrig != revName {
+		t.Errorf("ConfigRevisionKey must be immune to display name changes: revOrig=%q, revName=%q", revOrig, revName)
+	}
+
+	// Invariant 3: Server change must produce a distinct NodeIdentityKey
+	if nidOrig == nidServer {
+		t.Errorf("different server must produce different NodeIdentityKey: orig=%q, server=%q", nidOrig, nidServer)
+	}
+
+	// Invariant 4: No plaintext secret in NodeIdentityKey or ConfigRevisionKey
+	for _, k := range []string{nidOrig, nidCred, revOrig, revCred} {
+		if strings.Contains(k, secret1) || strings.Contains(k, secret2) {
+			t.Fatalf("SECURITY VIOLATION: plaintext secret leaked in key: %s", k)
+		}
+	}
+}
+
+func TestPopulateNodesKeys(t *testing.T) {
+	nodes := []MonitoredNode{
+		{
+			Type:   "ss",
+			Server: "1.2.3.4",
+			Port:   8388,
+			RawConfig: map[string]any{
+				"type":     "ss",
+				"server":   "1.2.3.4",
+				"port":     8388,
+				"password": "secret-pass-word",
+			},
+		},
+	}
+
+	PopulateNodesKeys(nodes)
+
+	if nodes[0].NodeKey == "" {
+		t.Errorf("expected NodeKey populated")
+	}
+	if nodes[0].NodeIdentityKey == "" {
+		t.Errorf("expected NodeIdentityKey populated")
+	}
+	if nodes[0].ConfigRevisionKey == "" {
+		t.Errorf("expected ConfigRevisionKey populated")
+	}
+}
+

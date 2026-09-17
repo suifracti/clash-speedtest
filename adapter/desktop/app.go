@@ -266,5 +266,17 @@ func (a *App) GetNodeTimelineSamples(nodeKey string, since time.Time) ([]*monito
 	return a.app.GetNodeTimelineSamples(a.context(), nodeKey, since)
 }
 
+func (a *App) QueryMonitorSamplesCursor(filter monitor.CursorFilter) (*monitor.SampleCursorPage, error) {
+	return a.app.QueryMonitorSamplesCursor(a.context(), filter)
+}
+
+func (a *App) GetMonitorStats(query monitor.StatsQuery) (*monitor.DerivedStats, error) {
+	return a.app.GetMonitorStats(a.context(), query)
+}
+
+func (a *App) ApplyRetention(req monitor.RetentionRequest) (*monitor.RetentionResult, error) {
+	return a.app.ApplyRetention(a.context(), req)
+}
+
 
 

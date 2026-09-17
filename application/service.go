@@ -1566,12 +1566,8 @@ func (s *AppService) CreateMonitorJob(job monitor.MonitorJob) (*monitor.MonitorJ
 		job.ProbeSet = monitor.ProbeSetLight
 	}
 
-	// Compute NodeKeys for all nodes
-	for i := range job.Nodes {
-		if job.Nodes[i].NodeKey == "" {
-			job.Nodes[i].NodeKey = monitor.ComputeNodeKeyFromNode(job.Nodes[i])
-		}
-	}
+	// Compute NodeKeys, NodeIdentityKeys, and ConfigRevisionKeys for all nodes
+	monitor.PopulateNodesKeys(job.Nodes)
 	job.NodeKeys = make([]string, len(job.Nodes))
 	for i, n := range job.Nodes {
 		job.NodeKeys[i] = n.NodeKey
@@ -1778,6 +1774,46 @@ func (s *AppService) GetNodeTimelineSamples(ctx context.Context, nodeKey string,
 	}
 	return s.historyStore.GetNodeTimelineSamples(ctx, nodeKey, since)
 }
+
+// QueryMonitorSamplesCursor retrieves raw probe samples via keyset pagination.
+func (s *AppService) QueryMonitorSamplesCursor(ctx context.Context, filter monitor.CursorFilter) (*monitor.SampleCursorPage, error) {
+	if s.historyStore == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
+	return s.historyStore.QueryMonitorSamplesCursor(ctx, filter)
+}
+
+// GetMonitorStats dynamically derives aggregated statistical metrics across raw samples.
+func (s *AppService) GetMonitorStats(ctx context.Context, query monitor.StatsQuery) (*monitor.DerivedStats, error) {
+	if s.historyStore == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
+	return s.historyStore.GetDerivedStats(ctx, query)
+}
+
+// ApplyRetention applies a retention policy by pruning historical raw samples and orphaned runs.
+func (s *AppService) ApplyRetention(ctx context.Context, req monitor.RetentionRequest) (*monitor.RetentionResult, error) {
+	if s.historyStore == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
+	res, err := s.historyStore.ApplyRetention(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	s.emitter.Emit(Event{
+		Type: "monitor_retention_applied",
+		Payload: map[string]any{
+			"policy":          res.Policy,
+			"cutoff":          res.Cutoff,
+			"samples_deleted": res.SamplesDeleted,
+			"runs_deleted":    res.RunsDeleted,
+			"duration_ms":     res.DurationMs,
+		},
+	})
+	return res, nil
+}
+
 
 
 

@@ -447,5 +447,93 @@ func TestWebServer_StopCascadeAndIdempotency(t *testing.T) {
 	}
 }
 
+func TestWebServer_MonitorHistoryEndpoints(t *testing.T) {
+	tmpDir := t.TempDir()
+	profileDir := filepath.Join(tmpDir, "profiles")
+	_ = os.MkdirAll(profileDir, 0o755)
+
+	server, err := NewServer(ServerConfig{
+		Port:         0,
+		ProfilePaths: profiles.Paths{Dir: profileDir},
+		HistoryDir:   filepath.Join(tmpDir, "history"),
+	})
+	if err != nil {
+		t.Fatalf("NewServer error: %v", err)
+	}
+	defer server.Close()
+
+	handler := server.buildHandler()
+
+	// 1. GET /api/monitor/samples/cursor
+	reqCursor := httptest.NewRequest(http.MethodGet, "/api/monitor/samples/cursor?limit=10&order_desc=true", nil)
+	reqCursor.Host = "127.0.0.1:8080"
+	recCursor := httptest.NewRecorder()
+	handler.ServeHTTP(recCursor, reqCursor)
+	if recCursor.Code != http.StatusOK {
+		t.Fatalf("GET /api/monitor/samples/cursor: expected 200 OK, got %d, body: %s", recCursor.Code, recCursor.Body.String())
+	}
+	var cursorPage monitor.SampleCursorPage
+	if err := json.NewDecoder(recCursor.Body).Decode(&cursorPage); err != nil {
+		t.Fatalf("decode cursor page failed: %v", err)
+	}
+
+	// 2. GET /api/monitor/stats
+	reqStats := httptest.NewRequest(http.MethodGet, "/api/monitor/stats?probe_type=rtt", nil)
+	reqStats.Host = "127.0.0.1:8080"
+	recStats := httptest.NewRecorder()
+	handler.ServeHTTP(recStats, reqStats)
+	if recStats.Code != http.StatusOK {
+		t.Fatalf("GET /api/monitor/stats: expected 200 OK, got %d, body: %s", recStats.Code, recStats.Body.String())
+	}
+	var stats monitor.DerivedStats
+	if err := json.NewDecoder(recStats.Body).Decode(&stats); err != nil {
+		t.Fatalf("decode stats failed: %v", err)
+	}
+	if stats.SampleCount != 0 {
+		t.Errorf("expected 0 samples initially, got %d", stats.SampleCount)
+	}
+
+	// 3. POST /api/monitor/retention CSRF defense tests:
+	// a. Untrusted origin must be rejected with 403 Forbidden
+	retPayload := []byte(`{"policy":"keep_all"}`)
+	reqCSRF := httptest.NewRequest(http.MethodPost, "/api/monitor/retention", bytes.NewReader(retPayload))
+	reqCSRF.Host = "127.0.0.1:8080"
+	reqCSRF.Header.Set("Origin", "http://malicious-site.com")
+	reqCSRF.Header.Set("Content-Type", "application/json")
+	recCSRF := httptest.NewRecorder()
+	handler.ServeHTTP(recCSRF, reqCSRF)
+	if recCSRF.Code != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden for untrusted origin on mutating retention, got %d", recCSRF.Code)
+	}
+
+	// b. Non-loopback Host must be rejected with 403 Forbidden
+	reqHost := httptest.NewRequest(http.MethodPost, "/api/monitor/retention", bytes.NewReader(retPayload))
+	reqHost.Host = "external-attacker.com:8080"
+	recHost := httptest.NewRecorder()
+	handler.ServeHTTP(recHost, reqHost)
+	if recHost.Code != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden for non-loopback Host, got %d", recHost.Code)
+	}
+
+	// c. Valid loopback request succeeds
+	reqValid := httptest.NewRequest(http.MethodPost, "/api/monitor/retention", bytes.NewReader(retPayload))
+	reqValid.Host = "127.0.0.1:8080"
+	reqValid.Header.Set("Origin", "http://127.0.0.1:8080")
+	reqValid.Header.Set("Content-Type", "application/json")
+	recValid := httptest.NewRecorder()
+	handler.ServeHTTP(recValid, reqValid)
+	if recValid.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for valid retention request, got %d, body: %s", recValid.Code, recValid.Body.String())
+	}
+	var retResult monitor.RetentionResult
+	if err := json.NewDecoder(recValid.Body).Decode(&retResult); err != nil {
+		t.Fatalf("decode retention result failed: %v", err)
+	}
+	if retResult.Policy != monitor.RetentionKeepAll || retResult.SamplesDeleted != 0 {
+		t.Errorf("unexpected retention result: %+v", retResult)
+	}
+}
+
+
 
 
