@@ -67,6 +67,7 @@ func TestMihomoSecurity_LoopbackClassification(t *testing.T) {
 		{"http://127.0.0.2:9090", true},
 		{"http://[::1]:9090", true},
 		{"http://localhost:9090", true},
+		{"http://localhost.localdomain:9090", false},
 		{"http://127.evil.com:9090", false},
 		{"http://127.0.0.1.nip.io:9090", false},
 	}
@@ -79,7 +80,7 @@ func TestMihomoSecurity_LoopbackClassification(t *testing.T) {
 	}
 
 	// Verify pseudo-loopback domains are strictly constrained by remote security policy
-	for _, remoteURL := range []string{"http://127.evil.com:9090", "http://127.0.0.1.nip.io:9090"} {
+	for _, remoteURL := range []string{"http://localhost.localdomain:9090", "http://127.evil.com:9090", "http://127.0.0.1.nip.io:9090"} {
 		// 1. Rejected without AllowRemote
 		_, err := NewClient(Config{Endpoint: remoteURL})
 		if err == nil {

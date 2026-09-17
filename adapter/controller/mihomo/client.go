@@ -334,7 +334,7 @@ func isLoopbackEndpoint(rawURL string) bool {
 		return false
 	}
 	host := strings.ToLower(u.Hostname())
-	if host == "localhost" || host == "localhost.localdomain" {
+	if host == "localhost" {
 		return true
 	}
 	ip := net.ParseIP(host)
