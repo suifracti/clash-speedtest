@@ -3,7 +3,9 @@ package web
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -632,6 +634,200 @@ func TestWebServer_MonitorValidation_400BadRequest(t *testing.T) {
 		t.Errorf("expected 400 Bad Request for future cutoff time, got %d", recFuture.Code)
 	}
 }
+
+func TestWebServer_Retention_PartialFailure_500Response(t *testing.T) {
+	// NEW B-05: When retention partially fails, Web API returns non-2xx (500),
+	// but the JSON response must explicitly report partial=true, samples_deleted, runs_deleted, error.
+	tmpDir := t.TempDir()
+	profileDir := filepath.Join(tmpDir, "profiles")
+	_ = os.MkdirAll(profileDir, 0o755)
+
+	server, err := NewServer(ServerConfig{
+		Port:         0,
+		ProfilePaths: profiles.Paths{Dir: profileDir},
+		HistoryDir:   filepath.Join(tmpDir, "history"),
+	})
+	if err != nil {
+		t.Fatalf("NewServer error: %v", err)
+	}
+	defer server.Close()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	cutoff := now.AddDate(0, 0, -30)
+
+	// Seed 1200 samples
+	var samples []*monitor.MonitorSample
+	for i := 0; i < 1200; i++ {
+		samples = append(samples, &monitor.MonitorSample{
+			SampleID:  fmt.Sprintf("s_web_fault_%04d", i),
+			RunID:     "run_web_fault",
+			NodeKey:   "nk_web_fault",
+			Timestamp: cutoff.Add(-time.Duration(i+1) * time.Minute),
+			Success:   true,
+		})
+	}
+	if err := server.AppService().HistoryStore().SaveMonitorSamples(ctx, samples); err != nil {
+		t.Fatalf("save samples: %v", err)
+	}
+
+	// Trigger fault on batch 3
+	server.AppService().HistoryStore().SetTestBatchFailAt(3)
+
+	handler := server.buildHandler()
+	payload := fmt.Sprintf(`{"policy":"30d","cutoff_time":"%s"}`, cutoff.Format(time.RFC3339))
+	req := httptest.NewRequest(http.MethodPost, "/api/monitor/retention", strings.NewReader(payload))
+	req.Host = "127.0.0.1:8080"
+	req.Header.Set("Origin", "http://127.0.0.1:8080")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	// Non-2xx status (500 Internal Server Error)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 Internal Server Error for partial retention failure, got %d", rec.Code)
+	}
+
+	var respBody map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&respBody); err != nil {
+		t.Fatalf("decode 500 response body failed: %v", err)
+	}
+
+	// Must explicitly report partial=true, samples_deleted=1000, runs_deleted=0, and error
+	if respBody["partial"] != true {
+		t.Errorf("expected partial=true in response, got %v", respBody["partial"])
+	}
+	if respBody["samples_deleted"] != float64(1000) {
+		t.Errorf("expected samples_deleted=1000 in response, got %v", respBody["samples_deleted"])
+	}
+	if respBody["error"] == nil || respBody["error"] == "" {
+		t.Errorf("expected non-empty error message in response, got %v", respBody["error"])
+	}
+}
+
+func TestWebServer_MigrationContinuity_Endpoint(t *testing.T) {
+	// Verify that PR3 legacy samples + PR4 new samples are continuously returned
+	// via GET /api/monitor/samples/cursor using node_identity_key + legacy_node_key.
+	tmpDir := t.TempDir()
+	hDir := filepath.Join(tmpDir, "history")
+	_ = os.MkdirAll(hDir, 0o755)
+	dbPath := filepath.Join(hDir, "history.db")
+
+	// 1. Setup PR#3 schema
+	rawDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	_, err = rawDB.Exec(`
+	CREATE TABLE monitor_samples (
+		sample_id TEXT PRIMARY KEY,
+		run_id TEXT NOT NULL,
+		node_key TEXT NOT NULL,
+		profile_id TEXT NOT NULL,
+		display_name_snapshot TEXT NOT NULL,
+		probe_type TEXT NOT NULL,
+		target TEXT NOT NULL,
+		timestamp DATETIME NOT NULL,
+		success INTEGER NOT NULL,
+		latency_ms INTEGER NOT NULL DEFAULT 0,
+		ttfb_ms INTEGER NOT NULL DEFAULT 0,
+		error_class TEXT NOT NULL DEFAULT 'none',
+		error_detail TEXT,
+		exit_ip TEXT,
+		exit_region TEXT,
+		metadata_json TEXT
+	);
+	CREATE TABLE monitor_runs (
+		run_id TEXT PRIMARY KEY,
+		job_id TEXT NOT NULL,
+		scheduled_at DATETIME NOT NULL,
+		started_at DATETIME NOT NULL,
+		finished_at DATETIME,
+		status TEXT NOT NULL,
+		total_nodes INTEGER NOT NULL DEFAULT 0,
+		success_nodes INTEGER NOT NULL DEFAULT 0,
+		failed_nodes INTEGER NOT NULL DEFAULT 0,
+		error_message TEXT
+	);
+	`)
+	if err != nil {
+		t.Fatalf("exec pr3 ddl: %v", err)
+	}
+
+	tLegacy := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	_, err = rawDB.Exec(`
+		INSERT INTO monitor_samples (
+			sample_id, run_id, node_key, profile_id, display_name_snapshot,
+			probe_type, target, timestamp, success, latency_ms, ttfb_ms
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, "s_web_legacy", "run_pr3", "nk_web_legacy_node", "prof_1", "LegacyNode", "rtt", "https://test.com", tLegacy, 1, 50, 40)
+	if err != nil {
+		t.Fatalf("insert legacy sample: %v", err)
+	}
+	_ = rawDB.Close()
+
+	// 2. Start server
+	server, err := NewServer(ServerConfig{
+		Port:         0,
+		ProfilePaths: profiles.Paths{Dir: filepath.Join(tmpDir, "profiles")},
+		HistoryDir:   hDir,
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer server.Close()
+
+	// 3. Insert PR#4 new sample
+	tPR4 := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	newIdentity := "nid_ss_web_node_8388_def456"
+	err = server.AppService().HistoryStore().SaveMonitorSamples(context.Background(), []*monitor.MonitorSample{
+		{
+			SampleID:            "s_web_new",
+			RunID:               "run_pr4",
+			NodeKey:             "nk_web_legacy_node",
+			NodeIdentityKey:     newIdentity,
+			ConfigRevisionKey:   "rev_def456",
+			ProfileID:           "prof_1",
+			DisplayNameSnapshot: "LegacyNode",
+			ProbeType:           "rtt",
+			Target:              "https://test.com",
+			Timestamp:           tPR4,
+			Success:             true,
+			Latency:             35 * time.Millisecond,
+			TTFB:                25 * time.Millisecond,
+		},
+	})
+	if err != nil {
+		t.Fatalf("save pr4 sample: %v", err)
+	}
+
+	handler := server.buildHandler()
+
+	// 4. GET /api/monitor/samples/cursor with node_identity_key + legacy_node_key
+	url := fmt.Sprintf("/api/monitor/samples/cursor?node_identity_key=%s&legacy_node_key=%s&limit=10&order_desc=true",
+		newIdentity, "nk_web_legacy_node")
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	req.Host = "127.0.0.1:8080"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d, body: %s", rec.Code, rec.Body.String())
+	}
+
+	var page monitor.SampleCursorPage
+	if err := json.NewDecoder(rec.Body).Decode(&page); err != nil {
+		t.Fatalf("decode page: %v", err)
+	}
+
+	if len(page.Items) != 2 {
+		t.Fatalf("expected 2 continuous items bridging PR3 and PR4, got %d", len(page.Items))
+	}
+	if page.Items[0].SampleID != "s_web_new" || page.Items[1].SampleID != "s_web_legacy" {
+		t.Errorf("unexpected continuous item sequence: %s, %s", page.Items[0].SampleID, page.Items[1].SampleID)
+	}
+}
+
 
 
 

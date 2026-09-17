@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -242,13 +243,36 @@ type RetentionRequest struct {
 	CutoffTime *time.Time      `json:"cutoff_time,omitempty"`
 }
 
-// RetentionResult summarizes the outcome of an irreversible retention deletion operation.
+// RetentionResult summarizes the outcome of a retention deletion operation.
 type RetentionResult struct {
 	Policy         RetentionPolicy `json:"policy"`
 	Cutoff         time.Time       `json:"cutoff"`
 	SamplesDeleted int64           `json:"samples_deleted"`
 	RunsDeleted    int64           `json:"runs_deleted"`
 	DurationMs     int64           `json:"duration_ms"`
+	Partial        bool            `json:"partial"`
+	ErrorMessage   string          `json:"error_message,omitempty"`
+}
+
+// RetentionError indicates that retention pruning failed, optionally with partial progress.
+type RetentionError struct {
+	Result *RetentionResult
+	Err    error
+}
+
+func (e *RetentionError) Error() string {
+	if e.Result != nil && e.Result.Partial {
+		return fmt.Sprintf("retention partially applied (%d samples, %d runs deleted): %v",
+			e.Result.SamplesDeleted, e.Result.RunsDeleted, e.Err)
+	}
+	if e.Err != nil {
+		return e.Err.Error()
+	}
+	return "retention execution failed"
+}
+
+func (e *RetentionError) Unwrap() error {
+	return e.Err
 }
 
 // SampleStore defines the persistence abstraction for saving, querying, calculating, and pruning runs and samples.

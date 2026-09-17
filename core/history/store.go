@@ -342,6 +342,13 @@ func (s *Store) ApplyRetention(ctx context.Context, req monitor.RetentionRequest
 	return s.db.ApplyRetention(ctx, req)
 }
 
+// SetTestBatchFailAt injects a batch failure on batch n for testing partial retention semantics.
+func (s *Store) SetTestBatchFailAt(n int) {
+	if s.db != nil {
+		s.db.SetTestBatchFailAt(n)
+	}
+}
+
 func (s *Store) Dir() string {
 	return s.dir
 }

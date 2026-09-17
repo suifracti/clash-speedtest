@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -1071,6 +1072,18 @@ func (s *Server) handleApplyRetention(w http.ResponseWriter, r *http.Request) {
 
 	result, err := s.app.ApplyRetention(r.Context(), req)
 	if err != nil {
+		var retErr *monitor.RetentionError
+		if errors.As(err, &retErr) && retErr.Result != nil && retErr.Result.Partial {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"error":           retErr.Err.Error(),
+				"partial":         true,
+				"samples_deleted": retErr.Result.SamplesDeleted,
+				"runs_deleted":    retErr.Result.RunsDeleted,
+				"cutoff":          retErr.Result.Cutoff,
+				"policy":          retErr.Result.Policy,
+			})
+			return
+		}
 		if monitor.IsValidationError(err) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return

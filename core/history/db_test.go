@@ -1396,3 +1396,76 @@ func TestSQLite_ProfileIsolation_SameIdentity(t *testing.T) {
 	}
 }
 
+func TestSQLite_Retention_DeterministicFaultInjection(t *testing.T) {
+	// NEW B-05: Verify retention partial commit semantics when fault is injected on batch 3.
+	// 1. Prepare > 2 batches of samples (1200 samples with batchSize = 500).
+	// 2. Batch 1 (500) and Batch 2 (500) commit successfully.
+	// 3. Artificially fail Batch 3.
+	// 4. Assert error is returned.
+	// 5. Assert Partial == true.
+	// 6. Assert SamplesDeleted == 1000.
+	// 7. Assert exactly 200 remaining Raw Samples exist in DB.
+	tmpDir := t.TempDir()
+	store, err := NewStore(tmpDir)
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	cutoff := now.AddDate(0, 0, -30)
+
+	var samples []*monitor.MonitorSample
+	for i := 0; i < 1200; i++ {
+		samples = append(samples, &monitor.MonitorSample{
+			SampleID:  fmt.Sprintf("s_fault_%04d", i),
+			RunID:     "run_fault",
+			NodeKey:   "nk_fault",
+			Timestamp: cutoff.Add(-time.Duration(i+1) * time.Minute),
+			Success:   true,
+		})
+	}
+	if err := store.SaveMonitorSamples(ctx, samples); err != nil {
+		t.Fatalf("save samples failed: %v", err)
+	}
+
+	// Inject fault on batch 3
+	store.SetTestBatchFailAt(3)
+
+	result, err := store.ApplyRetention(ctx, monitor.RetentionRequest{
+		Policy:     monitor.Retention30d,
+		CutoffTime: &cutoff,
+	})
+
+	// Assert error returned
+	if err == nil {
+		t.Fatalf("expected error from injected fault on batch 3, got nil")
+	}
+
+	var retErr *monitor.RetentionError
+	if !errors.As(err, &retErr) {
+		t.Fatalf("expected error to be *monitor.RetentionError, got %T: %v", err, err)
+	}
+
+	// Assert partial == true and samples_deleted == 1000
+	if !retErr.Result.Partial {
+		t.Errorf("expected retErr.Result.Partial to be true, got false")
+	}
+	if retErr.Result.SamplesDeleted != 1000 {
+		t.Errorf("expected 1000 samples deleted before batch 3 fault, got %d", retErr.Result.SamplesDeleted)
+	}
+	if result != nil && !result.Partial {
+		t.Errorf("expected returned result.Partial to be true, got false")
+	}
+
+	// Assert remaining raw samples in DB: 1200 - 1000 = 200
+	remaining, err := store.QueryMonitorSamples(ctx, monitor.SampleFilter{Limit: 5000})
+	if err != nil {
+		t.Fatalf("query remaining samples failed: %v", err)
+	}
+	if len(remaining) != 200 {
+		t.Errorf("expected exactly 200 remaining samples in DB, got %d", len(remaining))
+	}
+}
+

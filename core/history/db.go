@@ -59,8 +59,16 @@ CREATE INDEX IF NOT EXISTS idx_runs_job_id_time ON monitor_runs(job_id, schedule
 
 // DB manages the SQLite single-writer connection pool with WAL mode enabled.
 type DB struct {
-	db *sql.DB
-	mu sync.Mutex // Write lock guaranteeing strictly serialized single-writer transactions
+	db                  *sql.DB
+	mu                  sync.Mutex // Write lock guaranteeing strictly serialized single-writer transactions
+	testBatchFailAt     int        // For testing fault-injection during batched retention
+}
+
+// SetTestBatchFailAt configures a deterministic fault on retention batch #n (for test verification).
+func (d *DB) SetTestBatchFailAt(n int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.testBatchFailAt = n
 }
 
 // OpenDB opens (or creates) the SQLite database in the given directory and executes migrations.
@@ -1087,13 +1095,46 @@ func (d *DB) ApplyRetention(ctx context.Context, req monitor.RetentionRequest) (
 
 	const batchSize = 500
 	var totalSamplesDeleted int64
+	var batchNum int
 
 	// Prune samples in bounded batches
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			partial := totalSamplesDeleted > 0
+			partialResult := &monitor.RetentionResult{
+				Policy:         req.Policy,
+				Cutoff:         cutoff,
+				SamplesDeleted: totalSamplesDeleted,
+				RunsDeleted:    0,
+				DurationMs:     time.Since(start).Milliseconds(),
+				Partial:        partial,
+				ErrorMessage:   ctx.Err().Error(),
+			}
+			return partialResult, &monitor.RetentionError{
+				Result: partialResult,
+				Err:    ctx.Err(),
+			}
 		default:
+		}
+
+		batchNum++
+		if d.testBatchFailAt > 0 && batchNum == d.testBatchFailAt {
+			faultErr := fmt.Errorf("injected fault on batch %d", batchNum)
+			partial := totalSamplesDeleted > 0
+			partialResult := &monitor.RetentionResult{
+				Policy:         req.Policy,
+				Cutoff:         cutoff,
+				SamplesDeleted: totalSamplesDeleted,
+				RunsDeleted:    0,
+				DurationMs:     time.Since(start).Milliseconds(),
+				Partial:        partial,
+				ErrorMessage:   faultErr.Error(),
+			}
+			return partialResult, &monitor.RetentionError{
+				Result: partialResult,
+				Err:    faultErr,
+			}
 		}
 
 		var batchDeleted int64
@@ -1127,7 +1168,20 @@ func (d *DB) ApplyRetention(ctx context.Context, req monitor.RetentionRequest) (
 			return tx.Commit()
 		}()
 		if err != nil {
-			return nil, fmt.Errorf("prune sample batch: %w", err)
+			partial := totalSamplesDeleted > 0
+			partialResult := &monitor.RetentionResult{
+				Policy:         req.Policy,
+				Cutoff:         cutoff,
+				SamplesDeleted: totalSamplesDeleted,
+				RunsDeleted:    0,
+				DurationMs:     time.Since(start).Milliseconds(),
+				Partial:        partial,
+				ErrorMessage:   err.Error(),
+			}
+			return partialResult, &monitor.RetentionError{
+				Result: partialResult,
+				Err:    fmt.Errorf("prune sample batch %d: %w", batchNum, err),
+			}
 		}
 
 		totalSamplesDeleted += batchDeleted
@@ -1159,7 +1213,20 @@ func (d *DB) ApplyRetention(ctx context.Context, req monitor.RetentionRequest) (
 		return err
 	}()
 	if err != nil {
-		return nil, fmt.Errorf("prune orphaned runs: %w", err)
+		partial := totalSamplesDeleted > 0 || runsDeleted > 0
+		partialResult := &monitor.RetentionResult{
+			Policy:         req.Policy,
+			Cutoff:         cutoff,
+			SamplesDeleted: totalSamplesDeleted,
+			RunsDeleted:    runsDeleted,
+			DurationMs:     time.Since(start).Milliseconds(),
+			Partial:        partial,
+			ErrorMessage:   err.Error(),
+		}
+		return partialResult, &monitor.RetentionError{
+			Result: partialResult,
+			Err:    fmt.Errorf("prune orphaned runs: %w", err),
+		}
 	}
 
 	return &monitor.RetentionResult{
@@ -1168,5 +1235,6 @@ func (d *DB) ApplyRetention(ctx context.Context, req monitor.RetentionRequest) (
 		SamplesDeleted: totalSamplesDeleted,
 		RunsDeleted:    runsDeleted,
 		DurationMs:     time.Since(start).Milliseconds(),
+		Partial:        false,
 	}, nil
 }

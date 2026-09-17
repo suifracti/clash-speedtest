@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -99,6 +100,11 @@ func NewAppService(hStore *history.Store, paths profiles.Paths, emitter EventEmi
 // Emitter returns the configured EventEmitter.
 func (s *AppService) Emitter() EventEmitter {
 	return s.emitter
+}
+
+// HistoryStore returns the configured history Store.
+func (s *AppService) HistoryStore() *history.Store {
+	return s.historyStore
 }
 
 // Status returns a copy of the current active test status.
@@ -1798,6 +1804,22 @@ func (s *AppService) ApplyRetention(ctx context.Context, req monitor.RetentionRe
 	}
 	res, err := s.historyStore.ApplyRetention(ctx, req)
 	if err != nil {
+		var retErr *monitor.RetentionError
+		if errors.As(err, &retErr) && retErr.Result != nil && retErr.Result.Partial {
+			s.emitter.Emit(Event{
+				Type: "monitor_retention_partial_failure",
+				Payload: map[string]any{
+					"policy":          retErr.Result.Policy,
+					"cutoff":          retErr.Result.Cutoff,
+					"samples_deleted": retErr.Result.SamplesDeleted,
+					"runs_deleted":    retErr.Result.RunsDeleted,
+					"duration_ms":     retErr.Result.DurationMs,
+					"partial":         true,
+					"error":           retErr.Err.Error(),
+				},
+			})
+			return retErr.Result, err
+		}
 		return nil, err
 	}
 
@@ -1809,6 +1831,7 @@ func (s *AppService) ApplyRetention(ctx context.Context, req monitor.RetentionRe
 			"samples_deleted": res.SamplesDeleted,
 			"runs_deleted":    res.RunsDeleted,
 			"duration_ms":     res.DurationMs,
+			"partial":         false,
 		},
 	})
 	return res, nil

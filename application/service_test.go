@@ -3,6 +3,8 @@ package application
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -792,6 +794,230 @@ func TestAppService_MonitorHistoryAPIs(t *testing.T) {
 	// 4. Hard Line of Defense: Zero calls to SelectNode throughout
 	if mockCtrl.selectCalls != 0 {
 		t.Fatalf("CRITICAL SECURITY VIOLATION: SelectNode called %d times during monitor history operations", mockCtrl.selectCalls)
+	}
+}
+
+func TestAppService_Retention_PartialFailureAudit(t *testing.T) {
+	// NEW B-05: Verify that partial retention failure emits monitor_retention_partial_failure
+	// and strictly does NOT emit monitor_retention_applied.
+	tmpDir := t.TempDir()
+	hStore, err := history.NewStore(filepath.Join(tmpDir, "history"))
+	if err != nil {
+		t.Fatalf("create history store: %v", err)
+	}
+
+	paths := profiles.Paths{
+		Dir: filepath.Join(tmpDir, "profiles"),
+	}
+	_ = os.MkdirAll(paths.Dir, 0o755)
+
+	emitter := NewMemoryEventEmitter()
+	var partialEvents []Event
+	var appliedEvents []Event
+	emitter.Subscribe(func(e Event) {
+		if e.Type == "monitor_retention_partial_failure" {
+			partialEvents = append(partialEvents, e)
+		}
+		if e.Type == "monitor_retention_applied" {
+			appliedEvents = append(appliedEvents, e)
+		}
+	})
+
+	svc := NewAppService(hStore, paths, emitter)
+	defer svc.Close()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	cutoff := now.AddDate(0, 0, -30)
+
+	// Seed 1200 samples (> 2 batches of 500)
+	var samples []*monitor.MonitorSample
+	for i := 0; i < 1200; i++ {
+		samples = append(samples, &monitor.MonitorSample{
+			SampleID:  fmt.Sprintf("s_app_fault_%04d", i),
+			RunID:     "run_fault",
+			NodeKey:   "nk_app_fault",
+			Timestamp: cutoff.Add(-time.Duration(i+1) * time.Minute),
+			Success:   true,
+		})
+	}
+	if err := hStore.SaveMonitorSamples(ctx, samples); err != nil {
+		t.Fatalf("save samples failed: %v", err)
+	}
+
+	// Trigger fault on batch 3
+	hStore.SetTestBatchFailAt(3)
+
+	result, err := svc.ApplyRetention(ctx, monitor.RetentionRequest{
+		Policy:     monitor.Retention30d,
+		CutoffTime: &cutoff,
+	})
+
+	if err == nil {
+		t.Fatalf("expected error from injected batch 3 fault, got nil")
+	}
+
+	// Assert partial == true and SamplesDeleted == 1000
+	if result == nil || !result.Partial {
+		t.Errorf("expected result.Partial to be true, got %+v", result)
+	}
+	if result.SamplesDeleted != 1000 {
+		t.Errorf("expected 1000 samples deleted, got %d", result.SamplesDeleted)
+	}
+
+	// Assert events
+	if len(partialEvents) != 1 {
+		t.Fatalf("expected exactly 1 monitor_retention_partial_failure event, got %d", len(partialEvents))
+	}
+	evt := partialEvents[0]
+	payload, ok := evt.Payload.(map[string]any)
+	if !ok {
+		t.Fatalf("expected payload to be map[string]any, got %T", evt.Payload)
+	}
+	if payload["partial"] != true {
+		t.Errorf("expected payload partial=true, got %v", payload["partial"])
+	}
+	if payload["samples_deleted"] != int64(1000) {
+		t.Errorf("expected payload samples_deleted=1000, got %v", payload["samples_deleted"])
+	}
+	if payload["error"] == "" {
+		t.Errorf("expected payload error string to be populated")
+	}
+
+	// CRITICAL: Must NOT emit success event
+	if len(appliedEvents) != 0 {
+		t.Errorf("VIOLATION: monitor_retention_applied emitted on partial failure! %+v", appliedEvents)
+	}
+}
+
+func TestAppService_MigrationContinuity_PublicAPI(t *testing.T) {
+	// Verify that PR3 legacy samples + PR4 new samples are continuously visible
+	// across AppService.QueryMonitorSamplesCursor and AppService.GetMonitorStats.
+	tmpDir := t.TempDir()
+	ctx := context.Background()
+	hDir := filepath.Join(tmpDir, "history")
+	_ = os.MkdirAll(hDir, 0o755)
+	dbPath := filepath.Join(hDir, "history.db")
+
+	// 1. Manually setup PR#3 schema
+	rawDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	_, err = rawDB.Exec(`
+	CREATE TABLE monitor_samples (
+		sample_id TEXT PRIMARY KEY,
+		run_id TEXT NOT NULL,
+		node_key TEXT NOT NULL,
+		profile_id TEXT NOT NULL,
+		display_name_snapshot TEXT NOT NULL,
+		probe_type TEXT NOT NULL,
+		target TEXT NOT NULL,
+		timestamp DATETIME NOT NULL,
+		success INTEGER NOT NULL,
+		latency_ms INTEGER NOT NULL DEFAULT 0,
+		ttfb_ms INTEGER NOT NULL DEFAULT 0,
+		error_class TEXT NOT NULL DEFAULT 'none',
+		error_detail TEXT,
+		exit_ip TEXT,
+		exit_region TEXT,
+		metadata_json TEXT
+	);
+	CREATE TABLE monitor_runs (
+		run_id TEXT PRIMARY KEY,
+		job_id TEXT NOT NULL,
+		scheduled_at DATETIME NOT NULL,
+		started_at DATETIME NOT NULL,
+		finished_at DATETIME,
+		status TEXT NOT NULL,
+		total_nodes INTEGER NOT NULL DEFAULT 0,
+		success_nodes INTEGER NOT NULL DEFAULT 0,
+		failed_nodes INTEGER NOT NULL DEFAULT 0,
+		error_message TEXT
+	);
+	`)
+	if err != nil {
+		t.Fatalf("exec pr3 ddl: %v", err)
+	}
+
+	// Insert PR#3 legacy sample
+	tLegacy := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	_, err = rawDB.Exec(`
+		INSERT INTO monitor_samples (
+			sample_id, run_id, node_key, profile_id, display_name_snapshot,
+			probe_type, target, timestamp, success, latency_ms, ttfb_ms
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, "s_app_legacy", "run_pr3", "nk_app_legacy_node", "prof_1", "LegacyNode", "rtt", "https://test.com", tLegacy, 1, 60, 50)
+	if err != nil {
+		t.Fatalf("insert legacy sample: %v", err)
+	}
+	_ = rawDB.Close()
+
+	// 2. Open AppService which triggers schema migration
+	hStore, err := history.NewStore(hDir)
+	if err != nil {
+		t.Fatalf("create migrated store: %v", err)
+	}
+	paths := profiles.Paths{
+		Dir: filepath.Join(tmpDir, "profiles"),
+	}
+	_ = os.MkdirAll(paths.Dir, 0o755)
+	emitter := NewMemoryEventEmitter()
+	svc := NewAppService(hStore, paths, emitter)
+	defer svc.Close()
+
+	// 3. Insert PR#4 new sample
+	tPR4 := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	newIdentity := "nid_ss_app_node_8388_abc123"
+	err = hStore.SaveMonitorSamples(ctx, []*monitor.MonitorSample{
+		{
+			SampleID:            "s_app_new",
+			RunID:               "run_pr4",
+			NodeKey:             "nk_app_legacy_node",
+			NodeIdentityKey:     newIdentity,
+			ConfigRevisionKey:   "rev_abc123",
+			ProfileID:           "prof_1",
+			DisplayNameSnapshot: "LegacyNode",
+			ProbeType:           "rtt",
+			Target:              "https://test.com",
+			Timestamp:           tPR4,
+			Success:             true,
+			Latency:             40 * time.Millisecond,
+			TTFB:                30 * time.Millisecond,
+		},
+	})
+	if err != nil {
+		t.Fatalf("save pr4 sample: %v", err)
+	}
+
+	// 4. Query via AppService.QueryMonitorSamplesCursor with (NodeIdentityKey + LegacyNodeKey) bridge
+	page, err := svc.QueryMonitorSamplesCursor(ctx, monitor.CursorFilter{
+		NodeIdentityKey: newIdentity,
+		LegacyNodeKey:   "nk_app_legacy_node",
+		OrderDesc:       true,
+		Limit:           10,
+	})
+	if err != nil {
+		t.Fatalf("QueryMonitorSamplesCursor failed: %v", err)
+	}
+
+	if len(page.Items) != 2 {
+		t.Fatalf("expected 2 items bridging PR3 and PR4, got %d", len(page.Items))
+	}
+	if page.Items[0].SampleID != "s_app_new" || page.Items[1].SampleID != "s_app_legacy" {
+		t.Errorf("unexpected continuous item sequence: %s, %s", page.Items[0].SampleID, page.Items[1].SampleID)
+	}
+
+	// 5. Query via AppService.GetMonitorStats with bridge
+	stats, err := svc.GetMonitorStats(ctx, monitor.StatsQuery{
+		NodeIdentityKey: newIdentity,
+		LegacyNodeKey:   "nk_app_legacy_node",
+	})
+	if err != nil {
+		t.Fatalf("GetMonitorStats failed: %v", err)
+	}
+	if stats.SampleCount != 2 || stats.SuccessCount != 2 {
+		t.Errorf("expected 2 samples in derived stats, got %+v", stats)
 	}
 }
 
