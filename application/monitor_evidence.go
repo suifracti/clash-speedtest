@@ -131,7 +131,10 @@ func (s *AppService) GetMonitorRecommendation(
 	}
 
 	// 4. Project raw samples into neutral evidence samples, one query per node identity.
-	samplesByNode, rawTotal, samplesTruncated := s.collectEvidenceSamples(ctx, nodes, since)
+	samplesByNode, rawTotal, samplesTruncated, err := collectEvidenceSamples(ctx, s.historyStore, nodes, since)
+	if err != nil {
+		return nil, err
+	}
 
 	// 5. Build the evidence snapshot and hand it to the existing policy engine.
 	snap := policy.BuildEvidenceSnapshot(policy.EvidenceInput{
@@ -314,11 +317,17 @@ func (s *AppService) collectEvidenceNodes(
 // Samples are fetched by NodeIdentityKey (which deliberately spans config revisions) and
 // qualified by ProfileID so a logical node's evidence can never be aggregated with the
 // same physical endpoint observed under a different subscription/profile.
-func (s *AppService) collectEvidenceSamples(
+// collectEvidenceSamples reads raw samples for each node from the given store.
+//
+// It takes the store explicitly (rather than reading AppService.historyStore) so the
+// failure path is injectable and testable: a failing query must surface as an error instead
+// of being silently downgraded to "this node has no evidence".
+func collectEvidenceSamples(
 	ctx context.Context,
+	store monitor.SampleStore,
 	nodes []policy.EvidenceNode,
 	since time.Time,
-) (map[string][]policy.EvidenceSample, int, bool) {
+) (map[string][]policy.EvidenceSample, int, bool, error) {
 	out := make(map[string][]policy.EvidenceSample, len(nodes))
 	truncated := false
 	total := 0
@@ -348,11 +357,12 @@ func (s *AppService) collectEvidenceSamples(
 			filter.ProfileID = node.ProfileID
 		}
 
-		samples, err := s.historyStore.QueryMonitorSamples(ctx, filter)
+		samples, err := store.QueryMonitorSamples(ctx, filter)
 		if err != nil {
-			// Evidence for one node failing to load must not fabricate a verdict for it:
-			// the node simply carries no samples and will be gated as insufficient.
-			continue
+			// A failing query must surface as an error. Swallowing it would report an
+			// infrastructure failure as "this node simply has no evidence", which looks like
+			// an ordinary insufficient-data verdict and hides the real problem.
+			return nil, 0, false, fmt.Errorf("load monitor evidence for node %s: %w", node.DisplayName, err)
 		}
 		if len(samples) >= evidenceSampleLimitPerNode {
 			truncated = true
@@ -384,7 +394,7 @@ func (s *AppService) collectEvidenceSamples(
 		total += len(projected)
 	}
 
-	return out, total, truncated
+	return out, total, truncated, nil
 }
 
 // regionBlockedFromMetadata surfaces an explicit upstream region-block flag if present.

@@ -340,13 +340,19 @@ func (e *DecisionEngine) RecommendFromEvidence(
 	} else {
 		rec.EvaluationMode = ModeRecommend
 		pEval.Mode = ModeRecommend
-		if opts.Preview && configuredMode == ModeMonitorOnly {
-			rec.addReason(ReasonPreviewNotice, SeverityWarning,
-				"preview 模式（显式请求）：已越过 monitor_only 的建议抑制，仅为预览评估；任何模式下都不会执行切换",
-				nil, map[string]any{
-					"configured_mode": string(configuredMode),
-					"preview":         true,
-				})
+		if opts.Preview {
+			// Preview is always explained, whether or not it actually overrode a suppression,
+			// so a result flagged preview=true is never left without a reason.
+			overrode := configuredMode == ModeMonitorOnly
+			message := "preview 模式（显式请求）：仅为预览评估；任何模式下都不会执行切换"
+			if overrode {
+				message = "preview 模式（显式请求）：已越过 monitor_only 的建议抑制，仅为预览评估；任何模式下都不会执行切换"
+			}
+			rec.addReason(ReasonPreviewNotice, SeverityWarning, message, nil, map[string]any{
+				"configured_mode":      string(configuredMode),
+				"preview":              true,
+				"overrode_suppression": overrode,
+			})
 		}
 		if configuredMode == ModeAuto {
 			rec.addReason(ReasonAutoNotImplemented, SeverityInfo,
@@ -416,6 +422,26 @@ func (e *DecisionEngine) RecommendFromEvidence(
 	// --- Candidate selection: apply the same gate to every candidate. ---
 	curIndex := indexOfNode(&snap, cur)
 	nodeNames := assignEvaluationNames(&snap)
+
+	// The policy whitelist is expressed with display names, but the engine matches it against
+	// the disambiguated evaluation names. Remap it, otherwise two logical nodes sharing a
+	// display name would cause the second one ("DUP#2") to be silently excluded by the
+	// whitelist even though it is the better candidate.
+	if len(pEval.CandidateNodes) > 0 {
+		allowed := make(map[string]struct{}, len(pEval.CandidateNodes))
+		for _, name := range pEval.CandidateNodes {
+			allowed[strings.TrimSpace(name)] = struct{}{}
+		}
+		remapped := make([]string, 0, len(pEval.CandidateNodes))
+		for i := range snap.Nodes {
+			if _, ok := allowed[snap.Nodes[i].DisplayName]; ok {
+				remapped = append(remapped, nodeNames[i])
+			}
+		}
+		if len(remapped) > 0 {
+			pEval.CandidateNodes = remapped
+		}
+	}
 
 	var evals []NodeEvaluation
 	evals = append(evals, toNodeEvaluation(nodeNames[curIndex], cur))
