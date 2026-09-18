@@ -382,7 +382,7 @@ type serviceTestMockDialer struct{}
 
 func (d *serviceTestMockDialer) CreateClient(node monitor.MonitoredNode, timeout time.Duration) (*http.Client, error) {
 	return &http.Client{
-		Timeout: timeout,
+		Timeout:   timeout,
 		Transport: &serviceTestRoundTripper{},
 	}, nil
 }
@@ -395,6 +395,36 @@ func (rt *serviceTestRoundTripper) RoundTrip(req *http.Request) (*http.Response,
 		Body:       io.NopCloser(bytes.NewReader(nil)),
 		Header:     make(http.Header),
 	}, nil
+}
+
+// waitForIdleMonitorScheduler waits until the monitor scheduler has finished the round it
+// launches immediately on Start.
+//
+// Scheduler.Start hands off to scheduleLoop, which spawns the first round in a second
+// goroutine. The scheduler's overlap guard (isExecuting) is therefore claimed asynchronously,
+// so an immediate trigger issued right after Start races it: whichever side wins, the other
+// is reported as an overlapping run. A trigger that loses is correctly rejected with
+// "上一轮监测正在执行中，跳过本次触发", which makes an unconditional
+// "trigger must succeed right after Start" assertion order-dependent.
+//
+// This surfaced as a CI-only flake under -race (same commit, one workflow run green and one
+// red). Waiting for a terminal run status makes the assertion deterministic without changing
+// any production behaviour.
+func waitForIdleMonitorScheduler(t *testing.T, hStore *history.Store, jobID string) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		runs, err := hStore.QueryMonitorRuns(context.Background(), jobID, 20)
+		if err == nil {
+			for _, run := range runs {
+				if run != nil && run.Status != monitor.RunStatusRunning {
+					return
+				}
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for the initial monitor round of %s to finish", jobID)
 }
 
 func TestAppService_MonitorJobLifecycle(t *testing.T) {
@@ -481,7 +511,8 @@ func TestAppService_MonitorJobLifecycle(t *testing.T) {
 		t.Fatalf("expected running state, got err: %v, job: %+v", err, job)
 	}
 
-	// 5. Trigger Immediate Run
+	// 5. Trigger Immediate Run (after the initial scheduled round has finished)
+	waitForIdleMonitorScheduler(t, hStore, "test_job_1")
 	run, err := svc.TriggerMonitorJob("test_job_1")
 	if err != nil {
 		t.Fatalf("TriggerMonitorJob failed: %v", err)
@@ -575,7 +606,8 @@ func TestAppService_MonitorZeroSelectNode(t *testing.T) {
 		t.Fatalf("StartMonitorJob failed: %v", err)
 	}
 
-	// 3. Trigger immediate monitor run
+	// 3. Trigger immediate monitor run (after the initial scheduled round has finished)
+	waitForIdleMonitorScheduler(t, hStore, "zero_select_job")
 	_, err = svc.TriggerMonitorJob("zero_select_job")
 	if err != nil {
 		t.Fatalf("TriggerMonitorJob failed: %v", err)
@@ -1023,5 +1055,3 @@ func TestAppService_MigrationContinuity_PublicAPI(t *testing.T) {
 		t.Errorf("expected 2 samples in derived stats, got %+v", stats)
 	}
 }
-
-
