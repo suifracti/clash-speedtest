@@ -88,6 +88,10 @@ const (
 	ReasonMonitorOnlySuppresses = "monitor_only_suppresses_recommendation"
 	ReasonPreviewNotice         = "preview_mode_notice"
 	ReasonAutoNotImplemented    = "auto_execution_not_implemented"
+	// ReasonInvalidMode is emitted when the configured orchestrator mode is not one of
+	// ValidOrchestratorModes. The evaluation is fail-closed (no candidate comparison, no
+	// recommendation) and the boundary surfaces this as HTTP 400.
+	ReasonInvalidMode = "invalid_orchestrator_mode"
 
 	// Evidence isolation provenance.
 	ReasonProfileIsolation = "profile_isolation"
@@ -95,10 +99,17 @@ const (
 
 // Candidate rejection codes (stable, machine-readable).
 const (
-	RejectNotInWhitelist                = "not_in_candidate_whitelist"
-	RejectNoEvidence                    = "no_evidence"
-	RejectStaleEvidence                 = "stale_evidence"
-	RejectInsufficientSampleCount       = "insufficient_sample_count"
+	RejectNotInWhitelist          = "not_in_candidate_whitelist"
+	RejectNoEvidence              = "no_evidence"
+	RejectStaleEvidence           = "stale_evidence"
+	RejectInsufficientSampleCount = "insufficient_sample_count"
+	// RejectInsufficientLatencySamples means the node had enough samples in total but too few
+	// transport-scope latency observations for its P50 to be ranked on.
+	RejectInsufficientLatencySamples = "insufficient_latency_samples"
+	// RejectEvidenceBudgetExceeded means the node's raw-sample window could not be drained
+	// completely, so its statistics are partial. Distinct from no_evidence: evidence exists,
+	// it just could not all be read.
+	RejectEvidenceBudgetExceeded        = "evidence_budget_exceeded"
 	RejectInsufficientObservationWindow = "insufficient_observation_window"
 	RejectOtherConfigRevision           = "config_revision_mismatch"
 	RejectUnknownConfigRevision         = "unknown_config_revision"
@@ -116,6 +127,10 @@ const (
 // Recommendation suppression codes (why no recommendation was produced by design).
 const (
 	SuppressReasonMonitorOnly = "configured_mode_monitor_only"
+	// SuppressReasonInvalidMode means the configured mode is not an implemented mode. It is
+	// fail-closed to monitor_only semantics and surfaced as a validation error (400) by the
+	// boundary, never as a normal suppressed result.
+	SuppressReasonInvalidMode = "configured_mode_invalid"
 )
 
 // RecommendationReason is one explainable statement backed by real evidence.
@@ -329,17 +344,45 @@ func (e *DecisionEngine) RecommendFromEvidence(
 	pEval := p
 	pEval.Purpose = purpose
 
-	// An empty mode must not fall through to "evaluate": the secure default is
-	// ModeMonitorOnly (matching DefaultSwitchPolicy), so normalize it explicitly.
+	// An unset mode must not fall through to "evaluate": the secure default is
+	// ModeMonitorOnly (matching DefaultSwitchPolicy). An UNRECOGNISED mode is not a mode
+	// at all — it is a configuration error, and this engine's fail-closed duty is to
+	// treat it exactly like monitor_only rather than silently evaluating under
+	// ModeRecommend and emitting a switch recommendation for a typo.
+	//
+	// The caller-facing 400 for this case is produced at the boundaries
+	// (NormalizeOrchestratorMode in application.GetMonitorRecommendation /
+	// UpdateSwitchPolicy). This branch is the last line of defence for a bad value that
+	// somehow reached the policy layer, so it must never be the *only* handling.
 	configuredMode := p.Mode
-	if configuredMode == "" {
+	modeInvalid := false
+	if normalized, err := NormalizeOrchestratorMode(configuredMode); err != nil {
+		modeInvalid = true
 		configuredMode = ModeMonitorOnly
+	} else {
+		configuredMode = normalized
 	}
 	rec.ConfiguredMode = configuredMode
 
 	// Mode semantics: respect the configured mode unless a preview was explicitly asked for.
-	suppressRecommendation := configuredMode == ModeMonitorOnly && !opts.Preview
-	if suppressRecommendation {
+	// An invalid mode can NEVER be overridden by preview: a malformed configuration is not
+	// a "what if" question, and answering it would emit a recommendation for a policy the
+	// operator never validly expressed.
+	suppressRecommendation := (configuredMode == ModeMonitorOnly && !opts.Preview) || modeInvalid
+	if modeInvalid {
+		rec.RecommendationSuppressed = true
+		rec.SuppressedReason = SuppressReasonInvalidMode
+		rec.EvaluationMode = ModeMonitorOnly
+		rec.addReason(ReasonInvalidMode, SeverityBlocker,
+			fmt.Sprintf("配置的编排模式 %q 不是已实现的模式之一（%q / %q / %q），为避免把拼写错误当成有效策略，本次不进行任何候选比较与推荐",
+				string(p.Mode), string(ModeMonitorOnly), string(ModeRecommend), string(ModeAuto)),
+			nil, map[string]any{
+				"configured_mode": string(p.Mode),
+				"valid_modes": []string{
+					string(ModeMonitorOnly), string(ModeRecommend), string(ModeAuto),
+				},
+			})
+	} else if suppressRecommendation {
 		rec.RecommendationSuppressed = true
 		rec.SuppressedReason = SuppressReasonMonitorOnly
 		rec.EvaluationMode = ModeMonitorOnly
@@ -489,6 +532,26 @@ func (e *DecisionEngine) RecommendFromEvidence(
 				"evidence_window":    rec.Gate.EvidenceWindow.String(),
 				"gate_reasons":       node.Sufficiency.Reasons,
 			})
+			continue
+		}
+
+		// Latency-ranking depth: a candidate may only be chosen on its speed if enough
+		// transport-scope latency observations back the P50 it would be chosen for. This is
+		// checked here (a candidate property) rather than in per-node sufficiency, so that an
+		// incumbent whose probes succeed without a measurable latency is still correctly
+		// reported as healthy instead of "insufficient evidence".
+		if !node.LatencyRankingEligible(p.MinLatencySampleCount) {
+			rec.reject(node, RejectInsufficientLatencySamples,
+				fmt.Sprintf("候选 %s 有效的传输层延迟样本数 %d 少于 MinLatencySampleCount=%d，其 P50=%s 不足以作为排序依据（总样本数 %d 不计入，因为延迟仅由传输层成功探测构成）",
+					node.DisplayName, node.LatencySampleCount, p.MinLatencySampleCount,
+					roundDuration(node.LatencyP50), node.SampleCount),
+				map[string]any{
+					"latency_sample_count":     node.LatencySampleCount,
+					"min_latency_sample_count": p.MinLatencySampleCount,
+					"sample_count":             node.SampleCount,
+					"latency_p50":              node.LatencyP50.String(),
+					"transport_success_count":  node.TransportSuccessCount,
+				})
 			continue
 		}
 
@@ -675,8 +738,15 @@ func sufficiencyRejection(node *NodeEvidence) (string, string) {
 			return RejectStaleEvidence, detail
 		case GateReasonInsufficientSampleCount:
 			return RejectInsufficientSampleCount, detail
+		case GateReasonInsufficientLatencySamples:
+			return RejectInsufficientLatencySamples, detail
 		case GateReasonInsufficientObservationWindow:
 			return RejectInsufficientObservationWindow, detail
+		case GateReasonEvidenceBudgetExceeded:
+			// Must have its own code: reporting a partial read as "no evidence" tells the
+			// caller the opposite of what happened (there WAS evidence, we could not read
+			// all of it) and hides the one condition a retry/larger budget would fix.
+			return RejectEvidenceBudgetExceeded, detail
 		case GateReasonOtherRevisionSamplesExcluded:
 			return RejectOtherConfigRevision, detail
 		case GateReasonUnknownRevisionSamplesExcluded:
@@ -1137,16 +1207,17 @@ func indexOfNode(snap *EvidenceSnapshot, node *NodeEvidence) int {
 // legacy DecisionEngine can be reused verbatim instead of reimplemented.
 func toNodeEvaluation(name string, ev *NodeEvidence) NodeEvaluation {
 	return NodeEvaluation{
-		Name:              name,
-		Available:         ev.TransportHealthy,
-		RTT:               ev.LatencyP50,
-		Loss:              0,
-		Bandwidth:         0,
-		TriageStatus:      ev.TriageStatus,
-		SampleCount:       ev.SampleCount,
-		FirstSampleTime:   ev.FirstSampleAt,
-		LastSampleTime:    ev.LastSampleAt,
-		ObservationWindow: ev.ObservationWindow,
+		Name:               name,
+		Available:          ev.TransportHealthy,
+		RTT:                ev.LatencyP50,
+		Loss:               0,
+		Bandwidth:          0,
+		TriageStatus:       ev.TriageStatus,
+		SampleCount:        ev.SampleCount,
+		FirstSampleTime:    ev.FirstSampleAt,
+		LastSampleTime:     ev.LastSampleAt,
+		ObservationWindow:  ev.ObservationWindow,
+		LatencySampleCount: ev.LatencySampleCount,
 	}
 }
 

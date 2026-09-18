@@ -1214,13 +1214,13 @@ func (s *AppService) GetControllerStatus(ctx context.Context) (ControllerStatusD
 	s.ctrlMu.RUnlock()
 
 	status := ControllerStatusDTO{
-		Connected:       false,
-		Endpoint:        cfg.Endpoint,
-		CurrentGroup:    pol.TargetGroup,
-		CurrentNode:     state.CurrentNode,
-		LockedNode:      pol.LockedNode,
-		Mode:            string(pol.Mode),
-		HasSecret:       cfg.Secret != "",
+		Connected:    false,
+		Endpoint:     cfg.Endpoint,
+		CurrentGroup: pol.TargetGroup,
+		CurrentNode:  state.CurrentNode,
+		LockedNode:   pol.LockedNode,
+		Mode:         string(pol.Mode),
+		HasSecret:    cfg.Secret != "",
 	}
 
 	if ctrl == nil {
@@ -1325,6 +1325,15 @@ func (s *AppService) GetSwitchPolicy(ctx context.Context) (policy.SwitchPolicy, 
 
 // UpdateSwitchPolicy updates the auto-switch policy.
 func (s *AppService) UpdateSwitchPolicy(ctx context.Context, p policy.SwitchPolicy) error {
+	// Reject an unimplemented mode at the write boundary. Storing it would leave the
+	// orchestrator holding a policy it cannot honour, and every later read would have to
+	// guess what the operator meant. Empty is normalized to the safe default instead.
+	mode, err := policy.NormalizeOrchestratorMode(p.Mode)
+	if err != nil {
+		return monitor.WrapValidationError(fmt.Errorf("invalid switch policy: %w", err))
+	}
+	p.Mode = mode
+
 	s.ctrlMu.Lock()
 	defer s.ctrlMu.Unlock()
 	s.policy = p
@@ -1516,12 +1525,12 @@ func (s *AppService) EvaluateAndAutoSwitch(ctx context.Context, evals []policy.N
 			s.emitter.Emit(Event{
 				Type: "controller_node_rolled_back",
 				Payload: map[string]any{
-					"group":         group,
+					"group":          group,
 					"rolled_back_to": fromNode,
-					"failed_node":   res.TargetNode,
-					"reason":        verifResult.Reason,
-					"probes":        verificationProbes,
-					"timestamp":     time.Now(),
+					"failed_node":    res.TargetNode,
+					"reason":         verifResult.Reason,
+					"probes":         verificationProbes,
+					"timestamp":      time.Now(),
 				},
 			})
 		}
@@ -1876,7 +1885,3 @@ func (s *AppService) ApplyRetention(ctx context.Context, req monitor.RetentionRe
 	})
 	return res, nil
 }
-
-
-
-

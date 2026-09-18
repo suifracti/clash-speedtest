@@ -444,8 +444,19 @@ func TestDefaultEvidenceWindow_NotDerivedFromMaxSampleAgeAlone(t *testing.T) {
 	}
 
 	// Beyond the cap, the explicit requirement wins over the safety default.
+	//
+	// It wins with MaxSampleAge of slack: the newest sample is allowed to be up to MaxSampleAge
+	// old and still count as fresh, and that interval eats into the observable span. A window
+	// of exactly MinObservationWindow could therefore never yield a span of that length, making
+	// the configured requirement a permanent dead-end. See
+	// TestMinObservationWindow30hIsReachable for the production-path proof.
 	p.MinObservationWindow = 100 * time.Hour
-	if got := DefaultEvidenceWindow(p); got != 100*time.Hour {
-		t.Fatalf("expected MinObservationWindow to win over the cap, got %s", got)
+	got = DefaultEvidenceWindow(p)
+	want := 100*time.Hour + p.MaxSampleAge
+	if got != want {
+		t.Fatalf("expected MinObservationWindow + MaxSampleAge slack (%s), got %s", want, got)
+	}
+	if got < p.MinObservationWindow {
+		t.Fatalf("the window must never be smaller than MinObservationWindow: %s < %s", got, p.MinObservationWindow)
 	}
 }

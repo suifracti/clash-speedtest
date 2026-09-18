@@ -22,6 +22,38 @@ const (
 	ModeAuto OrchestratorMode = "auto"
 )
 
+// ValidOrchestratorModes enumerates every mode the orchestrator actually implements.
+//
+// Anything outside this set is a configuration error, not "some other mode". Callers must
+// reject it (HTTP 400) rather than letting it fall through to an evaluating branch: an
+// unrecognised mode that silently behaves as "recommend" would turn a typo
+// ("Monitor_Only", "auto_switch") into an unintended recommendation-producing mode.
+var ValidOrchestratorModes = []OrchestratorMode{ModeMonitorOnly, ModeRecommend, ModeAuto}
+
+// NormalizeOrchestratorMode maps a configured mode onto an implemented mode.
+//
+//   - "" (unset) is normalized to ModeMonitorOnly, the safe default chosen by
+//     DefaultSwitchPolicy. This is NOT an error: an unset mode is a legitimate state.
+//   - any other unrecognised value is an error. It is deliberately NOT coerced to a
+//     usable mode, because guessing what the operator meant is exactly how a
+//     monitor-only deployment silently starts emitting switch recommendations.
+//
+// The original value is returned untouched on error so callers can echo it back.
+func NormalizeOrchestratorMode(mode OrchestratorMode) (OrchestratorMode, error) {
+	if mode == "" {
+		return ModeMonitorOnly, nil
+	}
+	for _, valid := range ValidOrchestratorModes {
+		if mode == valid {
+			return mode, nil
+		}
+	}
+	return mode, fmt.Errorf(
+		"invalid orchestrator mode %q: must be one of %q, %q, %q (or empty for the safe default %q)",
+		string(mode), string(ModeMonitorOnly), string(ModeRecommend), string(ModeAuto),
+		string(ModeMonitorOnly))
+}
+
 // PolicyPurpose defines the intended routing purpose or capability required for candidate nodes.
 type PolicyPurpose string
 
@@ -98,6 +130,18 @@ type SwitchPolicy struct {
 	// MinObservationWindow is the minimum timespan between first and latest sample.
 	MinObservationWindow time.Duration `json:"min_observation_window"`
 
+	// MinLatencySampleCount is the minimum number of VALID transport-scope latency
+	// observations (successful transport probes with a positive RTT) required before a node
+	// may participate in latency ranking / be selected for its speed.
+	//
+	// This is deliberately separate from MinSampleCount. MinSampleCount counts every sample
+	// regardless of probe scope and is satisfied by a mixture of service probes, so a node
+	// with a single real transport measurement could otherwise win a switch on a P50 derived
+	// from one data point. Latency ranking therefore requires its own, scope-matched depth.
+	//
+	// Zero disables the check (retains the pre-fix behaviour for callers that opt out).
+	MinLatencySampleCount int `json:"min_latency_sample_count"`
+
 	// --- Post-Switch Verification ---
 
 	// VerificationGracePeriod is the settling delay after switching before running verification probes.
@@ -130,6 +174,7 @@ func DefaultSwitchPolicy() SwitchPolicy {
 		MaxSampleAge:                 5 * time.Minute,
 		MinSampleCount:               3,
 		MinObservationWindow:         1 * time.Minute,
+		MinLatencySampleCount:        3,
 		VerificationGracePeriod:      10 * time.Second,
 		VerificationProbeCount:       3,
 		VerificationFailureThreshold: 2,
@@ -148,6 +193,10 @@ type NodeEvaluation struct {
 	FirstSampleTime   time.Time     `json:"first_sample_time"`
 	LastSampleTime    time.Time     `json:"last_sample_time"`
 	ObservationWindow time.Duration `json:"observation_window"`
+	// LatencySampleCount is the number of valid transport-scope latency observations behind
+	// RTT. It is what MinLatencySampleCount gates: SampleCount alone can be satisfied by
+	// non-latency probes, which would let a single measurement rank as if it were a trend.
+	LatencySampleCount int `json:"latency_sample_count"`
 }
 
 // SwitchRecommendation represents a proposed switch in ModeRecommend.
@@ -187,14 +236,14 @@ type SwitchEvent struct {
 
 // DecisionResult represents the outcome of a policy evaluation.
 type DecisionResult struct {
-	Mode                OrchestratorMode      `json:"mode"`
-	ShouldSwitch        bool                  `json:"should_switch"`
-	TargetNode          string                `json:"target_node,omitempty"`
-	Reason              string                `json:"reason,omitempty"`
-	TriggerType         string                `json:"trigger_type,omitempty"`
-	RequiresFreshProbe  bool                  `json:"requires_fresh_probe"`
-	StaleNodes          []string              `json:"stale_nodes,omitempty"`
-	Recommendation      *SwitchRecommendation `json:"recommendation,omitempty"`
+	Mode               OrchestratorMode      `json:"mode"`
+	ShouldSwitch       bool                  `json:"should_switch"`
+	TargetNode         string                `json:"target_node,omitempty"`
+	Reason             string                `json:"reason,omitempty"`
+	TriggerType        string                `json:"trigger_type,omitempty"`
+	RequiresFreshProbe bool                  `json:"requires_fresh_probe"`
+	StaleNodes         []string              `json:"stale_nodes,omitempty"`
+	Recommendation     *SwitchRecommendation `json:"recommendation,omitempty"`
 }
 
 // VerificationProbe represents one probe sample during post-switch verification.
@@ -312,6 +361,13 @@ func (e *DecisionEngine) Evaluate(
 			staleNodes = append(staleNodes, ev.Name)
 			return false
 		}
+		// NOTE: MinLatencySampleCount is deliberately NOT enforced here. This engine's
+		// NodeEvaluation contract is fed both from the evidence-backed path (where
+		// LatencySampleCount is a real transport-scope count) and from legacy callers that
+		// build NodeEvaluation directly and leave the field zero. Gating on it here would
+		// reject every legacy node. The latency-depth requirement is enforced where the field
+		// is guaranteed truthful: evaluateSufficiency (core/policy/evidence.go), which every
+		// evidence-backed evaluation passes through before reaching this engine.
 		return true
 	}
 

@@ -121,9 +121,17 @@ func (s *AppService) GetMonitorRecommendation(
 	state := s.decisionState
 	s.ctrlMu.RUnlock()
 
-	if pol.Mode == "" {
-		pol.Mode = policy.ModeMonitorOnly
+	// The configured mode must be an implemented mode. An unrecognised value (a typo such as
+	// "Monitor_Only" or "auto_switch") is a client-visible configuration error, NOT an
+	// invitation to evaluate: silently running under ModeRecommend would emit switch
+	// recommendations for a policy the operator never validly expressed. Empty stays legal
+	// and normalizes to the safe default monitor_only.
+	normalizedMode, err := policy.NormalizeOrchestratorMode(pol.Mode)
+	if err != nil {
+		return nil, monitor.WrapValidationError(fmt.Errorf(
+			"configured orchestrator mode is invalid and cannot be evaluated: %w", err))
 	}
+	pol.Mode = normalizedMode
 
 	purpose := pol.Purpose
 	if purpose == "" {
@@ -497,8 +505,13 @@ func (s *AppService) resolveEvidenceCurrentNode(
 //
 // B-02: it can only RESTRICT the job's node set — membership always originates from the job.
 // Returns (nil, nil) when no narrowing is requested. When the policy already carries a
-// whitelist, the two are intersected rather than replaced. An empty intersection is a client
-// error: silently widening to "all nodes" would be the opposite of the request.
+// whitelist, the two are intersected rather than replaced.
+//
+// Every requested key must resolve. A request is an explicit statement of which nodes the
+// caller wants considered; silently accepting the keys that happen to match while dropping
+// the rest would answer a different question than the one asked, and the caller would have no
+// way to notice a typo'd or stale key. So an unmatched key is a client error that names the
+// offending key(s), never a silent narrowing.
 func resolveCandidateNames(
 	p policy.SwitchPolicy,
 	nodes []policy.EvidenceNode,
@@ -508,36 +521,74 @@ func resolveCandidateNames(
 		return nil, nil
 	}
 
+	// Preserve the caller's order for the diagnostics, but de-duplicate for matching.
 	wanted := map[string]struct{}{}
+	var ordered []string
 	for _, key := range requested {
 		key = strings.TrimSpace(key)
-		if key != "" {
-			wanted[key] = struct{}{}
+		if key == "" {
+			continue
 		}
+		if _, seen := wanted[key]; seen {
+			continue
+		}
+		wanted[key] = struct{}{}
+		ordered = append(ordered, key)
 	}
 	if len(wanted) == 0 {
 		return nil, monitor.WrapValidationError(fmt.Errorf("candidate_node_keys must not be empty"))
 	}
 
+	matched := map[string]bool{}
 	var names []string
+	var excludedByPolicy []string
 	for _, node := range nodes {
-		matched := false
-		if _, ok := wanted[node.NodeKey]; ok {
-			matched = true
+		nodeMatched := false
+		for _, key := range []string{node.NodeKey, node.NodeIdentityKey} {
+			if key == "" {
+				continue
+			}
+			if _, ok := wanted[key]; ok {
+				matched[key] = true
+				nodeMatched = true
+			}
 		}
-		if _, ok := wanted[node.NodeIdentityKey]; ok {
-			matched = true
-		}
-		if !matched {
+		if !nodeMatched {
 			continue
 		}
 		if len(p.CandidateNodes) > 0 && !containsName(p.CandidateNodes, node.DisplayName) {
+			// The key identified a real node, but the policy whitelist excludes it. The policy
+			// outranks a request, so this is not a bad key — but it must not silently become
+			// "no narrowing" either, which would widen the set to every whitelisted node.
+			excludedByPolicy = append(excludedByPolicy, node.DisplayName)
 			continue
 		}
 		names = append(names, node.DisplayName)
 	}
 
+	// Any requested key that resolved to no node at all is a client error. It cannot be
+	// quietly ignored: the caller would believe it constrained the candidate set when it did
+	// not.
+	var unmatched []string
+	for _, key := range ordered {
+		if !matched[key] {
+			unmatched = append(unmatched, key)
+		}
+	}
+	if len(unmatched) > 0 {
+		return nil, monitor.WrapValidationError(fmt.Errorf(
+			"candidate_node_keys matched no node of the monitor job: %s",
+			strings.Join(unmatched, ", ")))
+	}
+
 	if len(names) == 0 {
+		// Every key resolved, but the policy whitelist excludes all of them. Report the cause
+		// explicitly rather than widening the request.
+		if len(excludedByPolicy) > 0 {
+			return nil, monitor.WrapValidationError(fmt.Errorf(
+				"candidate_node_keys matched only nodes excluded by the policy candidate whitelist: %s",
+				strings.Join(excludedByPolicy, ", ")))
+		}
 		return nil, monitor.WrapValidationError(fmt.Errorf(
 			"candidate_node_keys did not match any node of the monitor job"))
 	}

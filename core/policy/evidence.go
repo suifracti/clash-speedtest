@@ -290,6 +290,21 @@ type EvidenceInput struct {
 // unsatisfiable forever and the node permanently insufficient_evidence with no configuration
 // that could ever fix it. So the resolved semantics are: the cap applies to the derived
 // window, and an explicit observation requirement always wins over it.
+// DefaultEvidenceWindow resolves how much history must be scanned to evaluate a policy.
+//
+// The window is NOT the observation requirement itself. A node can only be observed between
+// the window's start and the newest sample, and the newest sample is legitimately up to
+// MaxSampleAge old (that is exactly what "fresh" allows). A window of exactly
+// MinObservationWindow can therefore only ever yield a span of MinObservationWindow -
+// MaxSampleAge, which is strictly less than the requirement: whenever the requirement is the
+// binding constraint, it becomes a dead-end for every node whose latest sample is not at the
+// very instant of evaluation.
+//
+// Slack for that freshness allowance is added ONLY when the requirement actually binds (i.e.
+// when the window would otherwise be no wider than the requirement plus the allowance). When
+// the MaxSampleAge-derived floor already dwarfs the requirement, the window is left exactly as
+// before, preserving the documented contract that the scan window is not derived from
+// MaxSampleAge alone.
 func DefaultEvidenceWindow(p SwitchPolicy) time.Duration {
 	window := time.Hour
 	if p.MinObservationWindow > 0 {
@@ -305,8 +320,18 @@ func DefaultEvidenceWindow(p SwitchPolicy) time.Duration {
 	if window > 24*time.Hour {
 		window = 24 * time.Hour
 	}
+	// An explicit observation requirement outranks the cap: clamping below it would make the
+	// configured requirement permanently unsatisfiable.
 	if p.MinObservationWindow > window {
 		window = p.MinObservationWindow
+	}
+	// Slack, applied only where the requirement binds: the newest sample may be up to
+	// MaxSampleAge old without becoming stale, so the window must start that much earlier than
+	// the required span for the span to be observable. If the window is already comfortably
+	// wider than requirement+allowance, no node is at risk and the value is left untouched.
+	if p.MinObservationWindow > 0 && p.MaxSampleAge > 0 &&
+		window < p.MinObservationWindow+p.MaxSampleAge {
+		window = p.MinObservationWindow + p.MaxSampleAge
 	}
 	return window
 }
@@ -327,10 +352,15 @@ const (
 
 // Evidence gate reason codes.
 const (
-	GateReasonNoEvidence                     = "no_evidence"
-	GateReasonStaleEvidence                  = "stale_evidence"
-	GateReasonInsufficientSampleCount        = "insufficient_sample_count"
-	GateReasonInsufficientObservationWindow  = "insufficient_observation_window"
+	GateReasonNoEvidence                    = "no_evidence"
+	GateReasonStaleEvidence                 = "stale_evidence"
+	GateReasonInsufficientSampleCount       = "insufficient_sample_count"
+	GateReasonInsufficientObservationWindow = "insufficient_observation_window"
+	// GateReasonInsufficientLatencySamples means the node passed the general sample-count
+	// gate but has too few TRANSPORT-scope latency observations for its P50 to be trusted
+	// as a ranking basis. Kept distinct from insufficient_sample_count so callers can tell
+	// "not enough data overall" from "enough data, but not enough of the right kind".
+	GateReasonInsufficientLatencySamples     = "insufficient_latency_samples"
 	GateReasonOtherRevisionSamplesExcluded   = "evidence_only_from_other_config_revision"
 	GateReasonUnknownRevisionSamplesExcluded = "unknown_revision_evidence_excluded"
 	GateReasonOtherProfileSamplesExcluded    = "evidence_only_from_other_profile"
@@ -348,6 +378,9 @@ type EvidenceGate struct {
 	MaxSampleAge         time.Duration `json:"max_sample_age"`
 	MinSampleCount       int           `json:"min_sample_count"`
 	MinObservationWindow time.Duration `json:"min_observation_window"`
+	// MinLatencySampleCount is the minimum number of transport-scope latency observations
+	// required before the node's P50 may be used for ranking (see SwitchPolicy).
+	MinLatencySampleCount int `json:"min_latency_sample_count"`
 	// EvidenceWindow is the length of history scanned (NOT derived from MaxSampleAge).
 	EvidenceWindow time.Duration `json:"evidence_window"`
 	// WindowSince / WindowUntil bound the scanned observation window.
@@ -457,6 +490,9 @@ type NodeEvidence struct {
 	// The statistics above are then INCOMPLETE and the node is gated as insufficient.
 	EvidenceBudgetExceeded bool `json:"evidence_budget_exceeded,omitempty"`
 	// PagesRead is how many cursor pages were drained for this node (B-01 provenance).
+	// When EvidenceBudgetExceeded is true this is non-zero by definition: the budget is only
+	// ever exceeded after at least one page has been read. Reporting 0 there would read as
+	// "no pages were read" and hide that a partial read actually happened.
 	PagesRead int `json:"pages_read"`
 }
 
@@ -534,12 +570,13 @@ func BuildEvidenceSnapshot(in EvidenceInput) EvidenceSnapshot {
 	windowSince := now.Add(-evidenceWindow)
 
 	gate := EvidenceGate{
-		MaxSampleAge:         in.Policy.MaxSampleAge,
-		MinSampleCount:       in.Policy.MinSampleCount,
-		MinObservationWindow: in.Policy.MinObservationWindow,
-		EvidenceWindow:       evidenceWindow,
-		WindowSince:          windowSince,
-		WindowUntil:          now,
+		MaxSampleAge:          in.Policy.MaxSampleAge,
+		MinSampleCount:        in.Policy.MinSampleCount,
+		MinObservationWindow:  in.Policy.MinObservationWindow,
+		MinLatencySampleCount: in.Policy.MinLatencySampleCount,
+		EvidenceWindow:        evidenceWindow,
+		WindowSince:           windowSince,
+		WindowUntil:           now,
 	}
 
 	snap := EvidenceSnapshot{
@@ -594,6 +631,14 @@ func buildNodeEvidence(
 	budgetExceeded bool,
 	pagesRead int,
 ) NodeEvidence {
+	if budgetExceeded && pagesRead <= 0 {
+		// Invariant: exceeding the read budget means at least one page was read. A caller that
+		// flags the budget without supplying the page count must not produce provenance that
+		// reads as "0 pages" — that is indistinguishable from "nothing was read at all",
+		// which is precisely the confusion the budget flag exists to prevent.
+		pagesRead = 1
+	}
+
 	ev := NodeEvidence{
 		ProfileID:           strings.TrimSpace(node.ProfileID),
 		NodeKey:             node.NodeKey,
@@ -908,7 +953,36 @@ func evaluateSufficiency(ev NodeEvidence, gate EvidenceGate) EvidenceSufficiency
 			ev.DisplayName, roundDuration(ev.ObservationWindow), roundDuration(gate.MinObservationWindow)))
 	}
 
+	// NOTE: the latency-ranking depth requirement (MinLatencySampleCount) is deliberately NOT
+	// evaluated here. Per-node sufficiency answers "is this node's evidence trustworthy?", and
+	// that must stay true for an incumbent whose probes succeed without a measurable latency —
+	// such a node is healthy, it simply cannot be RANKED. Ranking depth is a candidate
+	// property and is enforced in RecommendFromEvidence (LatencyRankingEligible).
+
 	return sufficiency
+}
+
+// LatencyRankingEligible reports whether this node's latency evidence is deep enough to rank
+// it as a switch target.
+//
+// It is separate from EvidenceSufficiency on purpose. Sufficiency asks "is the evidence
+// trustworthy?"; this asks "may this node be CHOSEN on its speed?". A node whose transport
+// probes succeed but whose latency was never measured has sufficient evidence about its
+// health yet no basis for a speed comparison, and a node with a single measurement has a
+// basis that is one sample wide. Neither may win a switch on P50.
+//
+// A node with no transport successes at all is NOT rejected here: it is not a sparse-latency
+// node, it is a failed one, and it is handled by the transport-health / failover path.
+func (n NodeEvidence) LatencyRankingEligible(minLatencySamples int) bool {
+	if minLatencySamples <= 0 {
+		return true
+	}
+	if n.TransportSuccessCount <= 0 {
+		// No successful transport probe: not rankable anyway (no P50), and gating it here
+		// would misreport an outage as sparse evidence.
+		return true
+	}
+	return n.LatencySampleCount >= minLatencySamples
 }
 
 // consecutiveFailures counts leading failures for the given scope when walking

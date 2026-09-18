@@ -804,6 +804,10 @@ func (s *Server) handleUpdateSwitchPolicy(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := s.app.UpdateSwitchPolicy(r.Context(), pol); err != nil {
+		if monitor.IsValidationError(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
