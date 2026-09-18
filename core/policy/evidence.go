@@ -3,6 +3,7 @@ package policy
 import (
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -118,9 +119,22 @@ const (
 	FailureAIBlock   FailureKind = "ai_block"
 )
 
-// regionRejectionStatusMarkers are the HTTP status codes that represent an explicit
-// regional / capability rejection (e.g. 400 FAILED_PRECONDITION, 403, 451).
-var regionRejectionStatusMarkers = []string{"400", "403", "451"}
+// regionRejectionStatusPattern matches a status code that is EXPLICITLY presented as a
+// status, e.g. "HTTP status 400 FAILED_PRECONDITION", "status_code=403", "status: 451".
+//
+// A bare substring search must not be used here. Error details routinely contain unrelated
+// numbers — "HTTP status 500 (took 403 ms)" contains "403" — and misreading those as an
+// explicit regional rejection would hard-reject an otherwise usable node under PurposeAI.
+//
+// The codes covered are 400 (FAILED_PRECONDITION), 403 and 451, the ones that represent an
+// explicit regional / capability rejection.
+//
+// The single producer of this error class is core/monitor/runner.go
+// (`fmt.Sprintf("HTTP status %d", resp.StatusCode)`), so requiring the literal "status"
+// token loses no true positive. If another producer is ever added, it must keep the
+// "status <code>" shape or extend this pattern.
+var regionRejectionStatusPattern = regexp.MustCompile(
+	`(?i)\bstatus(?:_code)?\s*[:=]?\s*\(?(400|403|451)\b`)
 
 // isRegionRejection reports whether an error looks like an explicit regional /
 // service-level rejection rather than a broken transport path.
@@ -132,12 +146,7 @@ func isRegionRejection(errorClass, errorDetail string, regionBlocked bool) bool 
 	case "blocked", "geo_blocked", "region_blocked", "geo_restricted", "region_restricted":
 		return true
 	case "http_status_error":
-		d := strings.ToLower(errorDetail)
-		for _, marker := range regionRejectionStatusMarkers {
-			if strings.Contains(d, marker) {
-				return true
-			}
-		}
+		return regionRejectionStatusPattern.MatchString(errorDetail)
 	}
 	return false
 }
@@ -383,6 +392,13 @@ type NodeEvidence struct {
 	SuccessRate  float64 `json:"success_rate"`
 
 	// --- scope-aware counts (purpose semantics) ---
+	//
+	// Note the two different failure counters and do not mix them:
+	//   TransportScopeFailureCount() — failures of transport-scope probes; pairs with
+	//                                  TransportSampleCount to form a real failure rate.
+	//   TransportFailureCount        — failures attributed to the transport layer across ALL
+	//                                  scopes (a service probe that times out counts here);
+	//                                  it can exceed TransportSampleCount.
 	TransportSampleCount         int `json:"transport_sample_count"`
 	TransportSuccessCount        int `json:"transport_success_count"`
 	TransportFailureCount        int `json:"transport_failure_count"`
@@ -442,6 +458,22 @@ type NodeEvidence struct {
 	EvidenceBudgetExceeded bool `json:"evidence_budget_exceeded,omitempty"`
 	// PagesRead is how many cursor pages were drained for this node (B-01 provenance).
 	PagesRead int `json:"pages_read"`
+}
+
+// TransportScopeFailureCount is the number of failed samples that were themselves
+// transport-scope probes.
+//
+// It is the ONLY failure counter that forms a meaningful ratio with TransportSampleCount.
+// It is deliberately not TransportFailureCount: that counter aggregates every failure
+// attributed to the transport layer regardless of probe scope (a service probe that times
+// out is transport evidence, see ClassifyFailure), so it can legitimately exceed
+// TransportSampleCount and must never be presented as "X out of TransportSampleCount".
+func (n NodeEvidence) TransportScopeFailureCount() int {
+	failures := n.TransportSampleCount - n.TransportSuccessCount
+	if failures < 0 {
+		return 0
+	}
+	return failures
 }
 
 // EvidenceSnapshot is the full, self-describing evidence bundle handed to the policy engine.
@@ -880,8 +912,14 @@ func evaluateSufficiency(ev NodeEvidence, gate EvidenceGate) EvidenceSufficiency
 }
 
 // consecutiveFailures counts leading failures for the given scope when walking
-// samples newest-first. When blockingOnly is true, only explicit region/service
-// rejections break the streak (a plain timeout on a service probe is transport evidence).
+// samples newest-first. Samples of other scopes are skipped entirely, so a transport streak
+// is not broken by a service probe and vice versa.
+//
+// When blockingOnly is true, a failure that is not an explicit region/service rejection is
+// skipped rather than counted: a plain timeout on a service probe is transport evidence, not
+// service-block evidence. Note that "skipped" means it neither counts nor breaks the streak
+// — it is transparent to the walk. The resulting counter is provenance only; no verdict in
+// this package consumes it.
 func consecutiveFailures(samples []EvidenceSample, scope ProbeScope, blockingOnly bool) int {
 	count := 0
 	for _, s := range samples {

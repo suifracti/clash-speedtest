@@ -317,8 +317,17 @@ func collectEvidenceSamples(
 			Limit:     evidenceCursorPageSize,
 			OrderDesc: true,
 		}
+		// Legacy key bridge: history written before the NodeIdentityKey migration stores
+		// node_identity_key = node_key, so it is only reachable when BOTH keys are supplied
+		// (core/history/db.go applies
+		// "((node_identity_key = ?) OR (node_identity_key = node_key AND node_key = ?))"
+		// only when both are set). Supplying just the identity key silently under-reads that
+		// history. Those rows also carry no config_revision_key and are excluded by the
+		// revision gate anyway, so this keeps the read qualification consistent with the
+		// documented bridge convention rather than changing the statistics.
 		if node.NodeIdentityKey != "" {
 			filter.NodeIdentityKey = node.NodeIdentityKey
+			filter.LegacyNodeKey = node.NodeKey
 		} else {
 			filter.NodeKey = node.NodeKey
 		}

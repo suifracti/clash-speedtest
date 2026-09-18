@@ -37,6 +37,18 @@ const (
 	// DecisionInsufficientEvidence means: the available evidence is not sufficient to
 	// justify any verdict. Stale or thin data must never drive a recommendation.
 	DecisionInsufficientEvidence RecommendationDecision = "insufficient_evidence"
+
+	// DecisionNoEligibleCandidate means: the current node's own evidence WAS sufficient
+	// (it cleared every gate), but the node is judged failed or blocked and no alternative
+	// candidate cleared the evidence gate either.
+	//
+	// This is deliberately NOT DecisionInsufficientEvidence. Reporting it as
+	// "insufficient_evidence" would contradict the very same payload, which carries
+	// EvidenceSufficiency.Sufficient == true, and would describe an operational outage
+	// ("the node I am on is down and there is nothing to move to") as a data problem
+	// ("come back when there are more samples") — the opposite of what an operator needs
+	// to act on.
+	DecisionNoEligibleCandidate RecommendationDecision = "no_eligible_candidate"
 )
 
 // Reason severities.
@@ -496,13 +508,15 @@ func (e *DecisionEngine) RecommendFromEvidence(
 
 		if !node.TransportHealthy {
 			rec.reject(node, RejectTransportUnhealthy,
-				fmt.Sprintf("候选 %s 传输层失败 %d/%d（连续 %d 次），判定为节点故障",
-					node.DisplayName, node.TransportFailureCount, node.TransportSampleCount, node.ConsecutiveTransportFailures),
+				fmt.Sprintf("候选 %s 传输层探测失败 %d/%d（连续 %d 次），判定为节点故障",
+					node.DisplayName, node.TransportScopeFailureCount(), node.TransportSampleCount,
+					node.ConsecutiveTransportFailures),
 				map[string]any{
-					"transport_failure_count": node.TransportFailureCount,
-					"transport_sample_count":  node.TransportSampleCount,
-					"consecutive_failures":    node.ConsecutiveTransportFailures,
-					"error_breakdown":         node.ErrorBreakdown,
+					"transport_scope_failure_count": node.TransportScopeFailureCount(),
+					"transport_sample_count":        node.TransportSampleCount,
+					"transport_attributed_failures": node.TransportFailureCount,
+					"consecutive_failures":          node.ConsecutiveTransportFailures,
+					"error_breakdown":               node.ErrorBreakdown,
 				})
 			continue
 		}
@@ -580,8 +594,13 @@ func (e *DecisionEngine) RecommendFromEvidence(
 	}
 
 	// No recommendation produced by the engine.
+	//
+	// The current node's evidence was sufficient (checked above), so this is not an
+	// evidence problem: the node is failed/blocked and the candidate pool is empty after
+	// the gate. It gets its own verdict so the payload cannot contradict its own
+	// EvidenceSufficiency.
 	if !cur.TransportHealthy || cur.BlockedForPurpose {
-		rec.Decision = DecisionInsufficientEvidence
+		rec.Decision = DecisionNoEligibleCandidate
 		rec.ConfidenceBasis = ConfidenceBasis{Score: 0, Detail: "当前节点已判定故障或受阻，但无可用替代节点，不计算置信度"}
 		rec.addReason(ReasonNoEligibleCandidate, SeverityBlocker,
 			"当前节点已判定故障或受阻，但候选池中没有通过证据门槛的可用替代节点，无法给出切换建议", cur,
@@ -593,8 +612,31 @@ func (e *DecisionEngine) RecommendFromEvidence(
 	}
 
 	rec.Decision = DecisionStay
-	rec.addReason(ReasonStayCurrentStable, SeverityInfo,
-		"当前节点传输层健康，且没有候选节点满足证据门槛与防抖阈值，维持当前选择", cur, nil)
+
+	// The reason must state the cause that actually applied. The engine returns
+	// ShouldSwitch == false for several distinct reasons, and only one of them is
+	// "no candidate beat the thresholds" — the others never compared candidates at all,
+	// so asserting that cause there would be a fabricated explanation.
+	switch {
+	case !stateCopy.LastSwitchAt.IsZero() && now.Sub(stateCopy.LastSwitchAt) < pEval.CooldownDuration:
+		remaining := pEval.CooldownDuration - now.Sub(stateCopy.LastSwitchAt)
+		rec.addReason(ReasonStayCurrentStable, SeverityInfo,
+			fmt.Sprintf("处于切换冷却期中（剩余 %s），本轮未进行候选比较，维持当前选择",
+				roundDuration(remaining)), cur,
+			map[string]any{
+				"cooldown_duration":  pEval.CooldownDuration.String(),
+				"cooldown_remaining": remaining.String(),
+				"last_switch_at":     stateCopy.LastSwitchAt,
+			})
+	case cur.LatencyP50 <= 0:
+		rec.addReason(ReasonStayCurrentStable, SeverityInfo,
+			"当前节点尚无可用的传输层延迟基线（P50=0），引擎不做切换决策，维持当前选择", cur,
+			map[string]any{"latency_sample_count": cur.LatencySampleCount})
+	default:
+		rec.addReason(ReasonStayCurrentStable, SeverityInfo,
+			"当前节点传输层健康，且没有候选节点满足证据门槛与防抖阈值，维持当前选择", cur, nil)
+	}
+
 	rec.ConfidenceBasis = computeConfidence(cur, nil, snap.Gate)
 	rec.Confidence = rec.ConfidenceBasis.Score
 	rec.addReason(ReasonEvidenceConfidence, SeverityInfo,
@@ -786,12 +828,13 @@ func appendCurrentNodeReasons(rec *MonitorRecommendation, cur *NodeEvidence, p S
 
 	if !cur.TransportHealthy {
 		rec.addReason(ReasonCurrentTransportDown, SeverityBlocker,
-			fmt.Sprintf("当前节点 %s 传输层失败 %d/%d，判定为传输层故障",
-				cur.DisplayName, cur.TransportFailureCount, cur.TransportSampleCount),
+			fmt.Sprintf("当前节点 %s 传输层探测失败 %d/%d，判定为传输层故障",
+				cur.DisplayName, cur.TransportScopeFailureCount(), cur.TransportSampleCount),
 			cur, map[string]any{
-				"transport_failure_count": cur.TransportFailureCount,
-				"transport_sample_count":  cur.TransportSampleCount,
-				"error_breakdown":         cur.ErrorBreakdown,
+				"transport_scope_failure_count": cur.TransportScopeFailureCount(),
+				"transport_sample_count":        cur.TransportSampleCount,
+				"transport_attributed_failures": cur.TransportFailureCount,
+				"error_breakdown":               cur.ErrorBreakdown,
 			})
 	}
 
@@ -859,20 +902,37 @@ func appendCandidateReasons(
 		if cur.LatencyP50 > 0 {
 			ratio = float64(delta) / float64(cur.LatencyP50)
 		}
-		rec.addReason(ReasonRecommendedP50, SeverityInfo,
-			fmt.Sprintf("候选 %s P50=%s 相对当前节点 P50=%s 改善 %s（%.1f%%），满足 MinImprovementRTT=%s / MinImprovementRatio=%.2f",
+
+		trigger := res.TriggerType
+		if trigger == "" && res.Recommendation != nil {
+			trigger = res.Recommendation.TriggerType
+		}
+
+		// The threshold claim is only true on the optimisation path. The urgent-failover path
+		// does NOT apply MinImprovementRTT / MinImprovementRatio (it takes the lowest-RTT
+		// candidate among the fresh, available ones), so the recommended node can even be
+		// slower than the current one — claiming the thresholds were met there would be false.
+		thresholdsApplied := trigger != "failure_failover"
+		message := fmt.Sprintf("候选 %s P50=%s 相对当前节点 P50=%s 改善 %s（%.1f%%），满足 MinImprovementRTT=%s / MinImprovementRatio=%.2f",
+			target.DisplayName, roundDuration(target.LatencyP50), roundDuration(cur.LatencyP50),
+			roundDuration(delta), ratio*100,
+			roundDuration(p.MinImprovementRTT), p.MinImprovementRatio)
+		if !thresholdsApplied {
+			message = fmt.Sprintf("候选 %s P50=%s 与当前节点 P50=%s 相差 %s：本建议由故障切换触发，引擎按“通过证据门槛的可用候选中 RTT 最低者”选取，不适用 MinImprovementRTT / MinImprovementRatio",
 				target.DisplayName, roundDuration(target.LatencyP50), roundDuration(cur.LatencyP50),
-				roundDuration(delta), ratio*100,
-				roundDuration(p.MinImprovementRTT), p.MinImprovementRatio),
-			target, map[string]any{
-				"target_p50":            target.LatencyP50.String(),
-				"current_p50":           cur.LatencyP50.String(),
-				"delta":                 delta.String(),
-				"improvement_ratio":     ratio,
-				"min_improvement_rtt":   p.MinImprovementRTT.String(),
-				"min_improvement_ratio": p.MinImprovementRatio,
-				"trigger_type":          res.TriggerType,
-			})
+				roundDuration(delta))
+		}
+
+		rec.addReason(ReasonRecommendedP50, SeverityInfo, message, target, map[string]any{
+			"target_p50":            target.LatencyP50.String(),
+			"current_p50":           cur.LatencyP50.String(),
+			"delta":                 delta.String(),
+			"improvement_ratio":     ratio,
+			"trigger_type":          trigger,
+			"thresholds_applied":    thresholdsApplied,
+			"min_improvement_rtt":   p.MinImprovementRTT.String(),
+			"min_improvement_ratio": p.MinImprovementRatio,
+		})
 	}
 
 	rec.addReason(ReasonRecommendedFreshness, SeverityInfo,
@@ -903,38 +963,57 @@ func appendLosingCandidates(
 			continue
 		}
 		node := &snap.Nodes[i]
+		target := &snap.Nodes[targetIndex]
 
 		delta := cur.LatencyP50 - node.LatencyP50
 		ratio := 0.0
 		if cur.LatencyP50 > 0 {
 			ratio = float64(delta) / float64(cur.LatencyP50)
 		}
+		// Positive means this candidate is genuinely FASTER than the node that was recommended.
+		deltaVsTarget := target.LatencyP50 - node.LatencyP50
 
 		code := RejectNotBestCandidate
-		reason := fmt.Sprintf("候选 %s 通过证据门槛但未被选中：P50=%s 未优于被推荐节点的 %s",
-			node.DisplayName, roundDuration(node.LatencyP50), roundDuration(snap.Nodes[targetIndex].LatencyP50))
+		reason := ""
 
 		switch {
 		case p.MinImprovementRTT > 0 && delta < p.MinImprovementRTT:
 			code = RejectNoSignificantImprovement
-			reason = fmt.Sprintf("候选 %s 相对当前节点 P50 改善 %s，低于 MinImprovementRTT=%s",
+			reason = fmt.Sprintf("候选 %s 相对当前节点 P50 改善 %s，低于 MinImprovementRTT=%s，引擎不予采纳",
 				node.DisplayName, roundDuration(delta), roundDuration(p.MinImprovementRTT))
 		case p.MinImprovementRatio > 0 && ratio < p.MinImprovementRatio:
 			code = RejectNoSignificantImprovement
-			reason = fmt.Sprintf("候选 %s 相对当前节点 P50 改善比例 %.1f%%，低于 MinImprovementRatio=%.2f",
+			reason = fmt.Sprintf("候选 %s 相对当前节点 P50 改善比例 %.1f%%，低于 MinImprovementRatio=%.2f，引擎不予采纳",
 				node.DisplayName, ratio*100, p.MinImprovementRatio)
-		case p.HysteresisBuffer > 0 && node.LatencyP50 >= cur.LatencyP50-p.HysteresisBuffer:
+		case deltaVsTarget > 0:
+			// The candidate really is faster than the recommended node, yet the engine never
+			// promoted it. That happens because the engine's running best only advances when
+			// the improvement clears HysteresisBuffer, so a candidate that beats the eventual
+			// winner by less than the buffer is skipped purely because of scan order.
+			//
+			// This case MUST NOT fall through to the "not better than the recommended node"
+			// wording below: that sentence would state the opposite of the evidence in the
+			// same object (the candidate is faster, and the numbers say so).
 			code = RejectHysteresisNotMet
-			reason = fmt.Sprintf("候选 %s P50=%s 未低于当前节点 P50=%s 减去防抖缓冲 HysteresisBuffer=%s",
-				node.DisplayName, roundDuration(node.LatencyP50), roundDuration(cur.LatencyP50),
-				roundDuration(p.HysteresisBuffer))
+			reason = fmt.Sprintf("候选 %s P50=%s 确实优于被推荐的 %s P50=%s（快 %s），但未超过防抖缓冲 HysteresisBuffer=%s，引擎的 running-best 规则因此未改选",
+				node.DisplayName, roundDuration(node.LatencyP50), target.DisplayName,
+				roundDuration(target.LatencyP50), roundDuration(deltaVsTarget), roundDuration(p.HysteresisBuffer))
+		default:
+			// Only reachable when the candidate is not faster than the recommended node, so
+			// this statement is always true of the numbers it quotes.
+			reason = fmt.Sprintf("候选 %s 通过证据门槛但未被选中：P50=%s 未优于被推荐节点的 %s",
+				node.DisplayName, roundDuration(node.LatencyP50), roundDuration(target.LatencyP50))
 		}
 
 		rec.reject(node, code, reason, map[string]any{
-			"latency_p50":       node.LatencyP50.String(),
-			"current_p50":       cur.LatencyP50.String(),
-			"delta":             delta.String(),
-			"improvement_ratio": ratio,
+			"latency_p50":          node.LatencyP50.String(),
+			"current_p50":          cur.LatencyP50.String(),
+			"delta":                delta.String(),
+			"improvement_ratio":    ratio,
+			"recommended_node":     target.DisplayName,
+			"recommended_p50":      target.LatencyP50.String(),
+			"delta_vs_recommended": deltaVsTarget.String(),
+			"hysteresis_buffer":    p.HysteresisBuffer.String(),
 		})
 	}
 }
