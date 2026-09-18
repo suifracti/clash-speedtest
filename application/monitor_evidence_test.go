@@ -162,12 +162,36 @@ func TestAppService_GetMonitorRecommendation_ReadOnlyEvidencePath(t *testing.T) 
 	insertEvidenceSamples(t, hStore, job.Nodes[1], "prof-1", "sg", now, 10*time.Second, 30*time.Second, 5, true, 45, "")
 	insertEvidenceSamples(t, hStore, job.Nodes[2], "prof-1", "jp", now, 10*time.Second, 30*time.Second, 5, true, 90, "")
 
-	rec, err := svc.GetMonitorRecommendation(context.Background(), MonitorRecommendationRequest{
+	// 1. Default (no preview): the configured monitor_only mode is respected, so no
+	// recommendation is produced. Telemetry is still reported.
+	suppressed, err := svc.GetMonitorRecommendation(context.Background(), MonitorRecommendationRequest{
 		JobID:          "rec_job",
 		CurrentNodeKey: job.Nodes[0].NodeKey,
 	})
 	if err != nil {
-		t.Fatalf("GetMonitorRecommendation: %v", err)
+		t.Fatalf("GetMonitorRecommendation (monitor_only): %v", err)
+	}
+	if !suppressed.RecommendationSuppressed || suppressed.SuppressedReason != policy.SuppressReasonMonitorOnly {
+		t.Fatalf("monitor_only must suppress the recommendation, got %+v", suppressed)
+	}
+	if suppressed.RecommendedNode != nil {
+		t.Fatalf("monitor_only must not recommend a node, got %+v", suppressed.RecommendedNode)
+	}
+	if suppressed.EvaluationMode != policy.ModeMonitorOnly {
+		t.Fatalf("expected EvaluationMode monitor_only, got %s", suppressed.EvaluationMode)
+	}
+	if suppressed.CurrentNode == nil {
+		t.Fatalf("telemetry must still be reported under monitor_only")
+	}
+
+	// 2. Explicit preview: the override is visible and auditable.
+	rec, err := svc.GetMonitorRecommendation(context.Background(), MonitorRecommendationRequest{
+		JobID:          "rec_job",
+		CurrentNodeKey: job.Nodes[0].NodeKey,
+		Preview:        true,
+	})
+	if err != nil {
+		t.Fatalf("GetMonitorRecommendation (preview): %v", err)
 	}
 	if rec == nil {
 		t.Fatalf("expected a recommendation result")
@@ -239,15 +263,18 @@ func TestAppService_GetMonitorRecommendation_ReadOnlyEvidencePath(t *testing.T) 
 		t.Fatalf("confidence must be derivable from the reported basis, got %+v", rec.ConfidenceBasis)
 	}
 
-	// The configured monitor_only mode must be surfaced, not silently ignored.
+	// The explicit preview must be surfaced as such, never silently applied.
+	if !rec.Preview {
+		t.Fatalf("expected the result to be flagged as a preview")
+	}
 	foundNotice := false
 	for _, reason := range rec.Reasons {
-		if reason.Code == policy.ReasonConfiguredModeNotice {
+		if reason.Code == policy.ReasonPreviewNotice {
 			foundNotice = true
 		}
 	}
 	if !foundNotice {
-		t.Fatalf("expected a configured-mode notice when policy is monitor_only")
+		t.Fatalf("expected a preview notice when overriding monitor_only")
 	}
 }
 

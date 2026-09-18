@@ -963,6 +963,9 @@ func (s *Server) handleGetNodeTimelineSamples(w http.ResponseWriter, r *http.Req
 // This endpoint is deliberately non-executing: it only reads persisted monitor evidence
 // and the configured policy, and returns an explainable recommendation. It never switches
 // the active node, never mutates the controller, and never triggers a monitor run.
+//
+// The configured orchestrator mode is respected: under monitor_only no recommendation is
+// produced unless the caller explicitly opts in with ?preview=true.
 func (s *Server) handleGetMonitorRecommendation(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
@@ -979,6 +982,14 @@ func (s *Server) handleGetMonitorRecommendation(w http.ResponseWriter, r *http.R
 				req.CandidateNodeKeys = append(req.CandidateNodeKeys, key)
 			}
 		}
+	}
+	if raw := q.Get("preview"); raw != "" {
+		preview, err := strconv.ParseBool(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid preview parameter: must be a boolean")
+			return
+		}
+		req.Preview = preview
 	}
 
 	rec, err := s.app.GetMonitorRecommendation(r.Context(), req)

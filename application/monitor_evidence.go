@@ -22,15 +22,20 @@ import (
 //
 // The heavy lifting (freshness gate, purpose semantics, decision) lives in
 // core/policy; this file only projects persistence into policy.EvidenceSample.
+//
+// Evidence isolation (all three keys must agree, see policy/evidence.go):
+//
+//	ProfileID         — required, otherwise the same physical endpoint observed under
+//	                    two subscriptions would be aggregated (fingerprint.go R-01).
+//	NodeIdentityKey   — the transport endpoint we query by (spans config revisions).
+//	ConfigRevisionKey — the config/credential revision, filtered by the policy layer.
+//
+// The observation window is resolved by policy.DefaultEvidenceWindow and is NOT
+// derived from MaxSampleAge: MaxSampleAge is a freshness gate on the newest sample,
+// not a statement about how much history is meaningful.
 // =============================================================================
 
 const (
-	// evidenceLookbackMultiplier widens the raw-sample lookback beyond MaxSampleAge so a
-	// stale node can be reported as "stale" (with its real age) instead of merely "unknown".
-	evidenceLookbackMultiplier = 4
-	evidenceMinLookback        = time.Hour
-	evidenceMaxLookback        = 24 * time.Hour
-
 	// evidenceSampleLimitPerNode bounds how many raw samples per node are projected into
 	// evidence. Newest-first, so the freshness window is always fully covered.
 	evidenceSampleLimitPerNode = 2000
@@ -38,6 +43,10 @@ const (
 	// evidenceDiscoverySampleLimit bounds the node-discovery scan when no live monitor job
 	// is available (e.g. after an application restart, since job definitions are in-memory).
 	evidenceDiscoverySampleLimit = 10000
+
+	// evidenceDiscoveryMaxWindow caps the node-discovery scan window independently of the
+	// evidence window, so discovery stays cheap even with a long evidence window.
+	evidenceDiscoveryMaxWindow = time.Hour
 )
 
 // MonitorRecommendationRequest selects the evidence window to evaluate.
@@ -59,6 +68,14 @@ type MonitorRecommendationRequest struct {
 	// CandidateNodeKeys optionally narrows the candidate set to specific node keys.
 	// The current node is always evaluated.
 	CandidateNodeKeys []string `json:"candidate_node_keys,omitempty"`
+
+	// Preview explicitly requests a "what would the policy say" preview even when the
+	// configured mode would suppress recommendations (i.e. monitor_only).
+	//
+	// Default false: the configured mode is respected and no recommendation is produced
+	// under monitor_only. This is an explicit opt-in so the configured mode is never
+	// silently bypassed.
+	Preview bool `json:"preview,omitempty"`
 }
 
 // GetMonitorRecommendation produces a read-only, evidence-backed recommendation.
@@ -96,8 +113,10 @@ func (s *AppService) GetMonitorRecommendation(
 	}
 
 	now := time.Now()
-	lookback := resolveEvidenceLookback(pol)
-	since := now.Add(-lookback)
+	// The observation window is resolved by the policy layer from the policy's own
+	// observation requirements — deliberately NOT from MaxSampleAge.
+	evidenceWindow := policy.DefaultEvidenceWindow(pol)
+	since := now.Add(-evidenceWindow)
 
 	// 2. Resolve the node universe (live job definition, or persisted samples).
 	nodes, source, truncated, err := s.collectEvidenceNodes(ctx, req.JobID, since, now)
@@ -117,6 +136,7 @@ func (s *AppService) GetMonitorRecommendation(
 		Purpose:                purpose,
 		Policy:                 pol,
 		Source:                 source,
+		EvidenceWindow:         evidenceWindow,
 		CurrentNodeKey:         nodeKeyOf(current, hasCurrent),
 		CurrentNodeIdentityKey: identityKeyOf(current, hasCurrent),
 		Nodes:                  nodes,
@@ -139,7 +159,9 @@ func (s *AppService) GetMonitorRecommendation(
 		engine = policy.NewDecisionEngine()
 	}
 
-	rec := engine.RecommendFromEvidence(now, evalPolicy, &state, snap)
+	rec := engine.RecommendFromEvidence(now, evalPolicy, &state, snap, policy.RecommendOptions{
+		Preview: req.Preview,
+	})
 	return &rec, nil
 }
 
@@ -169,26 +191,13 @@ func parsePolicyPurpose(raw string) (policy.PolicyPurpose, error) {
 	}
 }
 
-// resolveEvidenceLookback derives the raw-sample lookback window from the policy.
-func resolveEvidenceLookback(p policy.SwitchPolicy) time.Duration {
-	lookback := evidenceMinLookback
-	if p.MaxSampleAge > 0 {
-		lookback = time.Duration(evidenceLookbackMultiplier) * p.MaxSampleAge
-	}
-	if lookback < evidenceMinLookback {
-		lookback = evidenceMinLookback
-	}
-	if lookback > evidenceMaxLookback {
-		lookback = evidenceMaxLookback
-	}
-	return lookback
-}
-
 // collectEvidenceNodes resolves the node universe and its provenance.
 //
 // When jobID names a live monitor job, that job's node set is authoritative (it carries
-// the exact NodeIdentityKey / ConfigRevisionKey derived from the raw proxy config).
-// Otherwise the node set is discovered from persisted raw samples.
+// the exact ProfileID / NodeIdentityKey / ConfigRevisionKey derived from the raw proxy
+// config). Otherwise the node set is discovered from persisted raw samples, grouped by
+// (ProfileID, NodeIdentityKey) so the same endpoint under different profiles stays
+// separate instead of being collapsed into one node.
 func (s *AppService) collectEvidenceNodes(
 	ctx context.Context,
 	jobID string,
@@ -212,6 +221,7 @@ func (s *AppService) collectEvidenceNodes(
 			node := job.Nodes[i]
 			monitor.PopulateNodeKeys(&node)
 			nodes = append(nodes, policy.EvidenceNode{
+				ProfileID:         job.ProfileID,
 				NodeKey:           node.NodeKey,
 				NodeIdentityKey:   node.NodeIdentityKey,
 				ConfigRevisionKey: node.ConfigRevisionKey,
@@ -228,7 +238,7 @@ func (s *AppService) collectEvidenceNodes(
 
 	// Discovery path: enumerate node identities present in persisted raw samples.
 	discoverySince := since
-	if maxDiscovery := now.Add(-time.Hour); discoverySince.Before(maxDiscovery) {
+	if maxDiscovery := now.Add(-evidenceDiscoveryMaxWindow); discoverySince.Before(maxDiscovery) {
 		discoverySince = maxDiscovery
 	}
 
@@ -243,8 +253,10 @@ func (s *AppService) collectEvidenceNodes(
 
 	truncated := len(samples) >= evidenceDiscoverySampleLimit
 
-	// Newest-first: the first sample seen for an identity key is the current revision.
+	// Newest-first: the first sample seen for a (profile, identity) pair is the current
+	// revision of that logical node.
 	seen := map[string]struct{}{}
+	profiles := map[string]struct{}{}
 	var nodes []policy.EvidenceNode
 	for _, sample := range samples {
 		if sample == nil {
@@ -257,11 +269,17 @@ func (s *AppService) collectEvidenceNodes(
 		if identity == "" {
 			continue
 		}
-		if _, exists := seen[identity]; exists {
+		profile := strings.TrimSpace(sample.ProfileID)
+		key := profile + "\x00" + identity
+		if _, exists := seen[key]; exists {
 			continue
 		}
-		seen[identity] = struct{}{}
+		seen[key] = struct{}{}
+		if profile != "" {
+			profiles[profile] = struct{}{}
+		}
 		nodes = append(nodes, policy.EvidenceNode{
+			ProfileID:         profile,
 			NodeKey:           sample.NodeKey,
 			NodeIdentityKey:   sample.NodeIdentityKey,
 			ConfigRevisionKey: sample.ConfigRevisionKey,
@@ -269,15 +287,20 @@ func (s *AppService) collectEvidenceNodes(
 		})
 	}
 
+	if len(profiles) == 1 {
+		for profile := range profiles {
+			source.ProfileID = profile
+		}
+	}
 	source.NodeSetSource = "persisted_samples"
 	return nodes, source, truncated, nil
 }
 
 // collectEvidenceSamples projects persisted raw samples into policy.EvidenceSample.
 //
-// Samples are fetched by NodeIdentityKey (which deliberately spans config revisions) so
-// the policy layer can detect and exclude evidence recorded under a previous
-// ConfigRevisionKey instead of silently mixing it in.
+// Samples are fetched by NodeIdentityKey (which deliberately spans config revisions) and
+// qualified by ProfileID so a logical node's evidence can never be aggregated with the
+// same physical endpoint observed under a different subscription/profile.
 func (s *AppService) collectEvidenceSamples(
 	ctx context.Context,
 	nodes []policy.EvidenceNode,
@@ -288,6 +311,13 @@ func (s *AppService) collectEvidenceSamples(
 	total := 0
 
 	for _, node := range nodes {
+		if node.NodeIdentityKey == "" && node.NodeKey == "" {
+			// Without an identity key the query would be unbounded and every sample in the
+			// database would be attributed to this node. Refuse rather than fabricate.
+			out[node.NodeKey] = nil
+			continue
+		}
+
 		filter := monitor.SampleFilter{
 			Since:     &since,
 			Limit:     evidenceSampleLimitPerNode,
@@ -297,6 +327,9 @@ func (s *AppService) collectEvidenceSamples(
 			filter.NodeIdentityKey = node.NodeIdentityKey
 		} else {
 			filter.NodeKey = node.NodeKey
+		}
+		if node.ProfileID != "" {
+			filter.ProfileID = node.ProfileID
 		}
 
 		samples, err := s.historyStore.QueryMonitorSamples(ctx, filter)
@@ -315,6 +348,7 @@ func (s *AppService) collectEvidenceSamples(
 				continue
 			}
 			projected = append(projected, policy.EvidenceSample{
+				ProfileID:         sample.ProfileID,
 				NodeKey:           sample.NodeKey,
 				NodeIdentityKey:   sample.NodeIdentityKey,
 				ConfigRevisionKey: sample.ConfigRevisionKey,

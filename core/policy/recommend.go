@@ -69,7 +69,16 @@ const (
 	ReasonNoEligibleCandidate     = "no_eligible_candidate"
 	ReasonNoCandidateNodes        = "no_candidate_nodes"
 	ReasonEvidenceConfidence      = "evidence_confidence"
-	ReasonConfiguredModeNotice    = "configured_mode_notice"
+
+	// Mode semantics. The configured mode is never silently bypassed: either it is
+	// respected (monitor_only suppresses recommendations), or the caller explicitly
+	// asked for a preview.
+	ReasonMonitorOnlySuppresses = "monitor_only_suppresses_recommendation"
+	ReasonPreviewNotice         = "preview_mode_notice"
+	ReasonAutoNotImplemented    = "auto_execution_not_implemented"
+
+	// Evidence isolation provenance.
+	ReasonProfileIsolation = "profile_isolation"
 )
 
 // Candidate rejection codes (stable, machine-readable).
@@ -81,12 +90,20 @@ const (
 	RejectInsufficientObservationWindow = "insufficient_observation_window"
 	RejectOtherConfigRevision           = "config_revision_mismatch"
 	RejectUnknownConfigRevision         = "unknown_config_revision"
+	RejectOtherProfile                  = "profile_mismatch"
+	RejectUnknownProfile                = "unknown_profile"
+	RejectProfileIsolationAmbiguous     = "profile_isolation_unavailable"
 	RejectTransportUnhealthy            = "transport_unhealthy"
 	RejectAIRegionBlocked               = "ai_region_blocked"
 	RejectNoLatencyBaseline             = "no_latency_baseline"
 	RejectNoSignificantImprovement      = "no_significant_latency_improvement"
 	RejectHysteresisNotMet              = "hysteresis_not_met"
 	RejectNotBestCandidate              = "not_best_candidate"
+)
+
+// Recommendation suppression codes (why no recommendation was produced by design).
+const (
+	SuppressReasonMonitorOnly = "configured_mode_monitor_only"
 )
 
 // RecommendationReason is one explainable statement backed by real evidence.
@@ -101,6 +118,7 @@ type RecommendationReason struct {
 
 // CandidateRejection explains why a specific node was excluded from consideration.
 type CandidateRejection struct {
+	ProfileID         string         `json:"profile_id,omitempty"`
 	NodeKey           string         `json:"node_key"`
 	NodeIdentityKey   string         `json:"node_identity_key,omitempty"`
 	ConfigRevisionKey string         `json:"config_revision_key,omitempty"`
@@ -112,6 +130,8 @@ type CandidateRejection struct {
 
 // NodeRecommendationRef is a self-contained evidence summary for one node.
 type NodeRecommendationRef struct {
+	ProfileID         string `json:"profile_id,omitempty"`
+	ProfileIDInferred bool   `json:"profile_id_inferred,omitempty"`
 	NodeKey           string `json:"node_key"`
 	NodeIdentityKey   string `json:"node_identity_key,omitempty"`
 	ConfigRevisionKey string `json:"config_revision_key,omitempty"`
@@ -160,6 +180,23 @@ type ConfidenceBasis struct {
 	Detail          string  `json:"detail"`
 }
 
+// RecommendOptions controls how an evidence evaluation is scoped.
+type RecommendOptions struct {
+	// Preview explicitly requests a "what would the policy say" preview even when the
+	// configured mode would suppress recommendations.
+	//
+	// This exists so the configured mode is NEVER silently bypassed:
+	//   - Preview == false (default): the configured mode is respected. Under
+	//     ModeMonitorOnly the result is a suppressed stay (no recommendation), exactly
+	//     matching the existing "仅收集遥测数据，不执行或推荐切换" semantic.
+	//   - Preview == true: the caller explicitly opts into a preview. The evaluation
+	//     then runs under ModeRecommend semantics, and the result is hard-marked
+	//     Preview == true / AdvisoryOnly == true / Executed == false.
+	//
+	// Neither value can execute anything.
+	Preview bool
+}
+
 // MonitorRecommendation is the complete, explainable, non-executing output of PR#7.
 type MonitorRecommendation struct {
 	GeneratedAt time.Time `json:"generated_at"`
@@ -168,12 +205,22 @@ type MonitorRecommendation struct {
 	ProfileID string `json:"profile_id,omitempty"`
 
 	Purpose PolicyPurpose `json:"purpose"`
-	// ConfiguredMode is the user's configured orchestrator mode (recorded, never acted upon).
+	// ConfiguredMode is the user's configured orchestrator mode. It is always
+	// recorded, and it is always respected unless Preview was explicitly requested.
 	ConfiguredMode OrchestratorMode `json:"configured_mode"`
-	// EvaluationMode is the mode the advisory path evaluated under. It is always
-	// ModeRecommend, whose existing definition is "produce a recommendation with full
-	// rationale but require explicit user confirmation before executing".
+	// EvaluationMode is the mode the evaluation actually ran under:
+	//   ModeMonitorOnly — the configured mode was respected and no evaluation ran
+	//                     (RecommendationSuppressed == true).
+	//   ModeRecommend   — a recommendation evaluation ran. This is either the user's
+	//                     own configured mode, or an explicitly requested preview.
 	EvaluationMode OrchestratorMode `json:"evaluation_mode"`
+	// Preview reports whether this result came from an explicitly requested preview
+	// that overrode a mode which would otherwise suppress recommendations.
+	Preview bool `json:"preview"`
+	// RecommendationSuppressed is true when the configured mode itself forbids
+	// producing a recommendation (ModeMonitorOnly without an explicit preview).
+	RecommendationSuppressed bool   `json:"recommendation_suppressed"`
+	SuppressedReason         string `json:"suppressed_reason,omitempty"`
 
 	// AdvisoryOnly and Executed are structural guarantees of this PR.
 	AdvisoryOnly bool `json:"advisory_only"`
@@ -222,8 +269,13 @@ func (r *MonitorRecommendation) addReason(code, severity, message string, ev *No
 
 // RecommendFromEvidence is the read-only evidence → recommendation entry point.
 //
-// It is a pure function of (now, policy, state, snapshot): it does not mutate the
+// It is a pure function of (now, policy, state, snapshot, opts): it does not mutate the
 // passed DecisionState, does not touch the controller, and cannot switch anything.
+//
+// The configured mode is always honored. A recommendation is only produced when the
+// configured mode allows it (ModeRecommend / ModeAuto) or when the caller explicitly
+// requested a preview (RecommendOptions.Preview). Under ModeMonitorOnly without a
+// preview the result is an explicit, reasoned suppression — never a silent override.
 //
 // The stay/switch core decision is produced by the existing DecisionEngine.Evaluate;
 // this function only (a) builds the evidence-gated candidate set, and (b) turns the
@@ -233,6 +285,7 @@ func (e *DecisionEngine) RecommendFromEvidence(
 	p SwitchPolicy,
 	state *DecisionState,
 	snap EvidenceSnapshot,
+	opts RecommendOptions,
 ) MonitorRecommendation {
 	rec := MonitorRecommendation{
 		GeneratedAt:        now,
@@ -240,7 +293,8 @@ func (e *DecisionEngine) RecommendFromEvidence(
 		ProfileID:          snap.Source.ProfileID,
 		Purpose:            snap.Purpose,
 		ConfiguredMode:     p.Mode,
-		EvaluationMode:     ModeRecommend,
+		EvaluationMode:     ModeMonitorOnly,
+		Preview:            opts.Preview,
 		AdvisoryOnly:       true,
 		Executed:           false,
 		SelectNodeCalls:    0,
@@ -261,13 +315,36 @@ func (e *DecisionEngine) RecommendFromEvidence(
 	rec.Purpose = purpose
 
 	pEval := p
-	pEval.Mode = ModeRecommend // advisory: "produce a recommendation, execute nothing"
 	pEval.Purpose = purpose
 
-	if p.Mode == ModeMonitorOnly {
-		rec.addReason(ReasonConfiguredModeNotice, SeverityInfo,
-			"当前编排模式为 monitor_only：本结果仅为只读评估，任何模式下都不会被自动执行", nil,
-			map[string]any{"configured_mode": string(p.Mode)})
+	// Mode semantics: respect the configured mode unless a preview was explicitly asked for.
+	suppressRecommendation := p.Mode == ModeMonitorOnly && !opts.Preview
+	if suppressRecommendation {
+		rec.RecommendationSuppressed = true
+		rec.SuppressedReason = SuppressReasonMonitorOnly
+		rec.EvaluationMode = ModeMonitorOnly
+		rec.addReason(ReasonMonitorOnlySuppresses, SeverityInfo,
+			"当前编排模式为 monitor_only：按既有语义本模式不产生切换建议，因此不输出推荐。若需查看\"策略会怎么判\"，请显式请求 preview",
+			nil, map[string]any{
+				"configured_mode": string(p.Mode),
+				"preview":         false,
+			})
+	} else {
+		rec.EvaluationMode = ModeRecommend
+		pEval.Mode = ModeRecommend
+		if opts.Preview && p.Mode == ModeMonitorOnly {
+			rec.addReason(ReasonPreviewNotice, SeverityWarning,
+				"preview 模式（显式请求）：已越过 monitor_only 的建议抑制，仅为预览评估；任何模式下都不会执行切换",
+				nil, map[string]any{
+					"configured_mode": string(p.Mode),
+					"preview":         true,
+				})
+		}
+		if p.Mode == ModeAuto {
+			rec.addReason(ReasonAutoNotImplemented, SeverityInfo,
+				"当前编排模式为 auto：自动执行未在本 PR 实现，本结果仅为建议，不会执行任何切换",
+				nil, map[string]any{"configured_mode": string(p.Mode)})
+		}
 	}
 
 	cur := snap.CurrentNode()
@@ -292,6 +369,19 @@ func (e *DecisionEngine) RecommendFromEvidence(
 	rec.EvidenceSufficiency = cur.Sufficiency
 
 	appendCurrentNodeReasons(&rec, cur, pEval)
+	appendProfileIsolationReason(&rec, cur)
+
+	// --- Configured mode suppression (ModeMonitorOnly without an explicit preview). ---
+	// Telemetry above is still reported; no candidate is compared and no recommendation
+	// is produced, because the configured mode forbids it.
+	if suppressRecommendation {
+		rec.Decision = DecisionStay
+		rec.ConfidenceBasis = ConfidenceBasis{Score: 0, Detail: "monitor_only 抑制推荐，未进入候选比较"}
+		if !cur.Sufficiency.Sufficient {
+			appendInsufficientEvidenceReasons(&rec, cur)
+		}
+		return rec
+	}
 
 	// --- Locked node: reuse the existing policy semantic (pinning suspends switching). ---
 	if p.LockedNode != "" {
@@ -346,9 +436,12 @@ func (e *DecisionEngine) RecommendFromEvidence(
 		if !node.Sufficiency.Sufficient {
 			code, reason := sufficiencyRejection(node)
 			rec.reject(node, code, reason, map[string]any{
+				"profile_id":         node.ProfileID,
 				"sample_count":       node.SampleCount,
 				"sample_age":         node.SampleAge.String(),
 				"observation_window": node.ObservationWindow.String(),
+				"evidence_window":    rec.Gate.EvidenceWindow.String(),
+				"gate_reasons":       node.Sufficiency.Reasons,
 			})
 			continue
 		}
@@ -483,6 +576,7 @@ func (e *DecisionEngine) RecommendFromEvidence(
 
 func (r *MonitorRecommendation) reject(node *NodeEvidence, code, reason string, extra map[string]any) {
 	r.RejectedCandidates = append(r.RejectedCandidates, CandidateRejection{
+		ProfileID:         node.ProfileID,
 		NodeKey:           node.NodeKey,
 		NodeIdentityKey:   node.NodeIdentityKey,
 		ConfigRevisionKey: node.ConfigRevisionKey,
@@ -511,6 +605,12 @@ func sufficiencyRejection(node *NodeEvidence) (string, string) {
 			return RejectOtherConfigRevision, detail
 		case GateReasonUnknownRevisionSamplesExcluded:
 			return RejectUnknownConfigRevision, detail
+		case GateReasonOtherProfileSamplesExcluded:
+			return RejectOtherProfile, detail
+		case GateReasonUnknownProfileSamplesExcluded:
+			return RejectUnknownProfile, detail
+		case GateReasonProfileIsolationAmbiguous:
+			return RejectProfileIsolationAmbiguous, detail
 		case GateReasonNoEvidence:
 			return RejectNoEvidence, detail
 		}
@@ -521,6 +621,37 @@ func sufficiencyRejection(node *NodeEvidence) (string, string) {
 	return RejectNoEvidence, detail
 }
 
+// appendProfileIsolationReason surfaces which ProfileID the evidence was attributed to,
+// so a reviewer can verify no cross-profile mixing happened.
+func appendProfileIsolationReason(rec *MonitorRecommendation, ev *NodeEvidence) {
+	if ev == nil {
+		return
+	}
+	evidence := map[string]any{
+		"profile_id":                       ev.ProfileID,
+		"profile_id_inferred":              ev.ProfileIDInferred,
+		"node_identity_key":                ev.NodeIdentityKey,
+		"config_revision_key":              ev.ConfigRevisionKey,
+		"excluded_other_profile_samples":   ev.ExcludedOtherProfileSamples,
+		"excluded_unknown_profile_samples": ev.ExcludedUnknownProfileSamples,
+		"excluded_other_revision_samples":  ev.ExcludedOtherRevisionSamples,
+		"profile_isolation_ambiguous":      ev.ProfileIsolationAmbiguous,
+	}
+	message := fmt.Sprintf("证据归属：ProfileID=%s", ev.ProfileID)
+	if ev.ProfileIDInferred {
+		message += "（未显式提供，由观察窗口内唯一样本 Profile 推断）"
+	}
+	if ev.ProfileID == "" {
+		message += "（未知；观察窗口内不存在带 Profile 归属的样本）"
+	}
+	message += fmt.Sprintf("；已排除 %d 条属于其他 Profile、%d 条缺少 Profile 归属的样本",
+		ev.ExcludedOtherProfileSamples, ev.ExcludedUnknownProfileSamples)
+	if ev.ProfileIsolationAmbiguous {
+		message += "；同一传输端点存在多个 Profile，归属不可判定"
+	}
+	rec.addReason(ReasonProfileIsolation, SeverityInfo, message, ev, evidence)
+}
+
 func appendInsufficientEvidenceReasons(rec *MonitorRecommendation, cur *NodeEvidence) {
 	rec.addReason(ReasonInsufficientEvidence, SeverityBlocker,
 		fmt.Sprintf("当前节点 %s 证据不足，按保守门槛输出 insufficient_evidence，拒绝给出硬推荐", cur.DisplayName),
@@ -529,6 +660,7 @@ func appendInsufficientEvidenceReasons(rec *MonitorRecommendation, cur *NodeEvid
 			"sample_count":       cur.SampleCount,
 			"sample_age":         cur.SampleAge.String(),
 			"observation_window": cur.ObservationWindow.String(),
+			"evidence_window":    rec.Gate.EvidenceWindow.String(),
 			"freshness":          string(cur.Freshness),
 		})
 	for i, detail := range cur.Sufficiency.Details {
@@ -545,7 +677,20 @@ func appendCurrentNodeReasons(rec *MonitorRecommendation, cur *NodeEvidence, p S
 	switch cur.Freshness {
 	case FreshnessFresh:
 		rec.addReason(ReasonCurrentFreshness, SeverityInfo,
-			fmt.Sprintf("当前节点 %s 最新样本距今 %s，处于新鲜窗口内（MaxSampleAge=%s）",
+			fmt.Sprintf("当前节点 %s 最新样本距今 %s，满足新鲜度门槛（MaxSampleAge=%s）；观察窗口为 %s（扫描窗口 %s）",
+				cur.DisplayName, roundDuration(cur.SampleAge), roundDuration(rec.Gate.MaxSampleAge),
+				roundDuration(cur.ObservationWindow), roundDuration(rec.Gate.EvidenceWindow)),
+			cur, map[string]any{
+				"freshness":          string(cur.Freshness),
+				"sample_age":         cur.SampleAge.String(),
+				"last_sample_at":     cur.LastSampleAt,
+				"max_sample_age":     rec.Gate.MaxSampleAge.String(),
+				"observation_window": cur.ObservationWindow.String(),
+				"evidence_window":    rec.Gate.EvidenceWindow.String(),
+			})
+	case FreshnessStale:
+		rec.addReason(ReasonCurrentFreshness, SeverityBlocker,
+			fmt.Sprintf("当前节点 %s 最新样本距今 %s，已超过 MaxSampleAge=%s，陈旧数据不得驱动推荐",
 				cur.DisplayName, roundDuration(cur.SampleAge), roundDuration(rec.Gate.MaxSampleAge)),
 			cur, map[string]any{
 				"freshness":          string(cur.Freshness),
@@ -553,21 +698,17 @@ func appendCurrentNodeReasons(rec *MonitorRecommendation, cur *NodeEvidence, p S
 				"last_sample_at":     cur.LastSampleAt,
 				"max_sample_age":     rec.Gate.MaxSampleAge.String(),
 				"observation_window": cur.ObservationWindow.String(),
-			})
-	case FreshnessStale:
-		rec.addReason(ReasonCurrentFreshness, SeverityBlocker,
-			fmt.Sprintf("当前节点 %s 最新样本距今 %s，已超过 MaxSampleAge=%s，陈旧数据不得驱动推荐",
-				cur.DisplayName, roundDuration(cur.SampleAge), roundDuration(rec.Gate.MaxSampleAge)),
-			cur, map[string]any{
-				"freshness":      string(cur.Freshness),
-				"sample_age":     cur.SampleAge.String(),
-				"last_sample_at": cur.LastSampleAt,
-				"max_sample_age": rec.Gate.MaxSampleAge.String(),
+				"evidence_window":    rec.Gate.EvidenceWindow.String(),
 			})
 	default:
 		rec.addReason(ReasonCurrentFreshness, SeverityBlocker,
-			fmt.Sprintf("当前节点 %s 在观察回看窗口内没有任何原始样本", cur.DisplayName),
-			cur, map[string]any{"freshness": string(cur.Freshness)})
+			fmt.Sprintf("当前节点 %s 在观察窗口（%s）内没有任何原始样本",
+				cur.DisplayName, roundDuration(rec.Gate.EvidenceWindow)),
+			cur, map[string]any{
+				"freshness":       string(cur.Freshness),
+				"evidence_window": rec.Gate.EvidenceWindow.String(),
+				"window_since":    rec.Gate.WindowSince,
+			})
 	}
 
 	rec.addReason(ReasonCurrentSuccessRate, SeverityInfo,
@@ -898,6 +1039,8 @@ func refFromEvidence(ev *NodeEvidence) *NodeRecommendationRef {
 		return nil
 	}
 	return &NodeRecommendationRef{
+		ProfileID:             ev.ProfileID,
+		ProfileIDInferred:     ev.ProfileIDInferred,
 		NodeKey:               ev.NodeKey,
 		NodeIdentityKey:       ev.NodeIdentityKey,
 		ConfigRevisionKey:     ev.ConfigRevisionKey,

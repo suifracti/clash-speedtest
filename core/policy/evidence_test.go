@@ -10,8 +10,14 @@ import (
 // Test helpers
 // -----------------------------------------------------------------------------
 
+// testProfile is the default ProfileID used by the test helpers. ProfileID is part of
+// the evidence isolation key: samples from the same physical endpoint under a different
+// profile must never be aggregated.
+const testProfile = "prof-test"
+
 func testNode(id, name, rev string) EvidenceNode {
 	return EvidenceNode{
+		ProfileID:         testProfile,
 		NodeKey:           "nk_" + id,
 		NodeIdentityKey:   "nid_" + id,
 		ConfigRevisionKey: rev,
@@ -25,6 +31,7 @@ func transportSeries(n EvidenceNode, now time.Time, age, step time.Duration, cou
 	for i := 0; i < count; i++ {
 		ts := now.Add(-age).Add(-time.Duration(count-1-i) * step)
 		out = append(out, EvidenceSample{
+			ProfileID:         n.ProfileID,
 			NodeKey:           n.NodeKey,
 			NodeIdentityKey:   n.NodeIdentityKey,
 			ConfigRevisionKey: n.ConfigRevisionKey,
@@ -48,6 +55,7 @@ func serviceSeries(n EvidenceNode, now time.Time, age, step time.Duration, count
 	for i := 0; i < count; i++ {
 		ts := now.Add(-age).Add(-time.Duration(count-1-i) * step)
 		out = append(out, EvidenceSample{
+			ProfileID:         n.ProfileID,
 			NodeKey:           n.NodeKey,
 			NodeIdentityKey:   n.NodeIdentityKey,
 			ConfigRevisionKey: n.ConfigRevisionKey,
@@ -62,6 +70,17 @@ func serviceSeries(n EvidenceNode, now time.Time, age, step time.Duration, count
 			ErrorDetail:       errDetail,
 			RegionBlocked:     regionBlocked,
 		})
+	}
+	return out
+}
+
+// profileSeries stamps the same probe series with an explicit ProfileID, modelling the
+// same physical endpoint observed under a different subscription/profile.
+func profileSeries(profile string, samples []EvidenceSample) []EvidenceSample {
+	out := make([]EvidenceSample, len(samples))
+	copy(out, samples)
+	for i := range out {
+		out[i].ProfileID = profile
 	}
 	return out
 }
@@ -91,7 +110,7 @@ func buildSnap(now time.Time, p SwitchPolicy, purpose PolicyPurpose, current Evi
 		Policy:  p,
 		Source: EvidenceSource{
 			JobID:         "job-1",
-			ProfileID:     "prof-1",
+			ProfileID:     testProfile,
 			ProbeSet:      "service",
 			NodeSetSource: "monitor_job",
 			LookbackSince: now.Add(-time.Hour),
@@ -179,12 +198,11 @@ func assertNonExecuting(t *testing.T, rec MonitorRecommendation) {
 	if rec.AutoImplemented {
 		t.Fatalf("Auto execution must remain unimplemented in PR#7")
 	}
-	if rec.EvaluationMode != ModeRecommend {
-		t.Fatalf("advisory path must evaluate under ModeRecommend, got %s", rec.EvaluationMode)
-	}
 	if rec.Snapshot == nil {
 		t.Fatalf("recommendation must preserve its evidence snapshot provenance")
 	}
+	// EvaluationMode is asserted per test: it is ModeMonitorOnly when the configured mode
+	// suppressed the recommendation, and ModeRecommend when an evaluation actually ran.
 }
 
 // -----------------------------------------------------------------------------
@@ -206,7 +224,7 @@ func TestRecommendFromEvidence_FreshSufficientEvidenceRecommends(t *testing.T) {
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 
-	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap)
+	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap, RecommendOptions{})
 
 	assertDecision(t, rec, DecisionRecommendSwitch)
 	assertNonExecuting(t, rec)
@@ -271,7 +289,7 @@ func TestRecommendFromEvidence_InsufficientSampleCount(t *testing.T) {
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 
-	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap)
+	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap, RecommendOptions{})
 
 	assertDecision(t, rec, DecisionInsufficientEvidence)
 	assertNonExecuting(t, rec)
@@ -308,7 +326,7 @@ func TestRecommendFromEvidence_StaleEvidence(t *testing.T) {
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 
-	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap)
+	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap, RecommendOptions{})
 
 	assertDecision(t, rec, DecisionInsufficientEvidence)
 	assertNonExecuting(t, rec)
@@ -350,7 +368,7 @@ func TestRecommendFromEvidence_CurrentHealthyStays(t *testing.T) {
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 
-	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap)
+	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap, RecommendOptions{})
 
 	assertDecision(t, rec, DecisionStay)
 	assertNonExecuting(t, rec)
@@ -385,7 +403,7 @@ func TestRecommendFromEvidence_RepeatedTransportFailureRecommendsCandidate(t *te
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 
-	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap)
+	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap, RecommendOptions{})
 
 	assertDecision(t, rec, DecisionRecommendSwitch)
 	assertNonExecuting(t, rec)
@@ -432,7 +450,7 @@ func TestRecommendFromEvidence_ServiceOnlyFailureUnderGeneralIsNotTransportFailu
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 
-	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap)
+	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap, RecommendOptions{})
 
 	assertNonExecuting(t, rec)
 	assertDecision(t, rec, DecisionStay)
@@ -496,7 +514,7 @@ func TestRecommendFromEvidence_AIBlockUnderAIPurposeIsEliminated(t *testing.T) {
 			sg.NodeKey:        transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 60, "", ""),
 		}
 		snap := buildSnap(now, p, purpose, hk, []EvidenceNode{hk, aiBlocked, sg}, samples)
-		return engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap)
+		return engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap, RecommendOptions{})
 	}
 
 	// --- Under AI purpose: the blocked node is eliminated even though it is fastest. ---
@@ -543,7 +561,8 @@ func TestRecommendFromEvidence_SuccessRateAndP95DriveReasons(t *testing.T) {
 		transportSeries(hk, now, 10*time.Second, 20*time.Second, 3, false, 0, "timeout", "timeout")...,
 	)
 	hkSamples = append(hkSamples, EvidenceSample{
-		NodeKey: hk.NodeKey, NodeIdentityKey: hk.NodeIdentityKey, ConfigRevisionKey: hk.ConfigRevisionKey,
+		ProfileID: hk.ProfileID,
+		NodeKey:   hk.NodeKey, NodeIdentityKey: hk.NodeIdentityKey, ConfigRevisionKey: hk.ConfigRevisionKey,
 		DisplayName: hk.DisplayName, ProbeType: "rtt", Target: "https://cp.cloudflare.com/generate_204",
 		Timestamp: now.Add(-10 * time.Second), Success: true, Latency: 900 * time.Millisecond, TTFB: 900 * time.Millisecond,
 	})
@@ -554,7 +573,7 @@ func TestRecommendFromEvidence_SuccessRateAndP95DriveReasons(t *testing.T) {
 	samples := map[string][]EvidenceSample{hk.NodeKey: hkSamples, sg.NodeKey: sgSamples}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 
-	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap)
+	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap, RecommendOptions{})
 	assertNonExecuting(t, rec)
 
 	if rec.CurrentNode == nil {
@@ -602,7 +621,7 @@ func TestRecommendFromEvidence_StaleCandidateIsRejected(t *testing.T) {
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, old}, samples)
 
-	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap)
+	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap, RecommendOptions{})
 
 	assertDecision(t, rec, DecisionStay)
 	assertNonExecuting(t, rec)
@@ -656,7 +675,7 @@ func TestRecommendFromEvidence_ConfigRevisionChangeDoesNotMixOldEvidence(t *test
 		t.Fatalf("expected rev_new to be recorded, got %s", cur.ConfigRevisionKey)
 	}
 
-	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap)
+	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap, RecommendOptions{})
 	assertNonExecuting(t, rec)
 	assertDecision(t, rec, DecisionRecommendSwitch)
 	if rec.CurrentNode.LatencyP50 != 100*time.Millisecond {
@@ -682,7 +701,7 @@ func TestRecommendFromEvidence_OnlyOtherRevisionEvidenceIsInsufficient(t *testin
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 
-	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap)
+	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap, RecommendOptions{})
 
 	assertDecision(t, rec, DecisionInsufficientEvidence)
 	assertNonExecuting(t, rec)
@@ -726,7 +745,7 @@ func TestRecommendFromEvidence_UnresolvedCurrentNodeIsInsufficient(t *testing.T)
 		SamplesByNode: samples,
 	})
 
-	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap)
+	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap, RecommendOptions{})
 	assertDecision(t, rec, DecisionInsufficientEvidence)
 	assertNonExecuting(t, rec)
 	assertReasonCode(t, rec, ReasonCurrentNodeUnresolved)
@@ -750,7 +769,7 @@ func TestRecommendFromEvidence_LockedNodePinsSelection(t *testing.T) {
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 
-	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap)
+	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap, RecommendOptions{})
 
 	assertDecision(t, rec, DecisionStay)
 	assertNonExecuting(t, rec)
@@ -778,7 +797,7 @@ func TestRecommendFromEvidence_WhitelistFiltersCandidates(t *testing.T) {
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg, fast}, samples)
 
-	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap)
+	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap, RecommendOptions{})
 
 	assertDecision(t, rec, DecisionStay)
 	assertNonExecuting(t, rec)

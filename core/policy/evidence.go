@@ -30,6 +30,41 @@ import (
 // This file does NOT introduce a second policy model: candidate eligibility,
 // purpose semantics, freshness thresholds and the stay/switch decision are all
 // delegated to the existing SwitchPolicy / DecisionEngine.Evaluate.
+//
+// -----------------------------------------------------------------------------
+// Two concepts that must stay separate (external review finding, PR#7)
+// -----------------------------------------------------------------------------
+//
+//	MaxSampleAge       = a FRESHNESS gate on the newest sample only.
+//	                     Existing usage: now - LastSampleTime > MaxSampleAge → stale.
+//	                     It must NEVER be used to define how much history is scanned,
+//	                     otherwise a node with a brand-new sample but a long, otherwise
+//	                     sufficient history would be falsely gated as insufficient.
+//	EvidenceWindow     = how much history is scanned. Resolved independently of
+//	                     MaxSampleAge (see DefaultEvidenceWindow / EvidenceInput.EvidenceWindow).
+//	ObservationWindow  = the ACTUAL span between the first and last considered sample.
+//	                     This is the value MinObservationWindow gates, matching the
+//	                     existing NodeEvaluation.ObservationWindow semantics.
+//
+// -----------------------------------------------------------------------------
+// Isolation: samples must be attributable to exactly one logical node
+// -----------------------------------------------------------------------------
+//
+// A persisted sample is only usable as evidence when it can be attributed to the
+// node under evaluation. Three independent keys must agree:
+//
+//	ProfileID         — the logical subscription/profile. NodeIdentityKey is a pure
+//	                    transport endpoint and is explicitly NOT unique per logical
+//	                    node (monitor/fingerprint.go R-01): two profiles may share the
+//	                    same CDN host / reverse-proxy endpoint and therefore the same
+//	                    NodeIdentityKey. Qualifying by ProfileID is mandatory to avoid
+//	                    cross-profile aggregation.
+//	NodeIdentityKey   — the physical transport endpoint (what we query by, on purpose,
+//	                    so revision changes do not orphan history).
+//	ConfigRevisionKey — the config/credential revision. Evidence recorded under a
+//	                    previous revision must not be mixed into the current one.
+//
+// Samples failing any of these attributions are excluded and counted, never averaged in.
 // =============================================================================
 
 // -----------------------------------------------------------------------------
@@ -140,6 +175,7 @@ func ClassifyFailure(probeType, errorClass, errorDetail string, regionBlocked bo
 // EvidenceSample is a neutral projection of one persisted monitor sample.
 // It carries no persistence concerns so the evidence builder stays pure and unit-testable.
 type EvidenceSample struct {
+	ProfileID         string
 	NodeKey           string
 	NodeIdentityKey   string
 	ConfigRevisionKey string
@@ -158,7 +194,11 @@ type EvidenceSample struct {
 }
 
 // EvidenceNode describes a node targeted for evidence evaluation.
+//
+// ProfileID is mandatory for isolation: without it, samples belonging to the same
+// physical endpoint under a different subscription/profile could be aggregated.
 type EvidenceNode struct {
+	ProfileID         string
 	NodeKey           string
 	NodeIdentityKey   string
 	ConfigRevisionKey string
@@ -181,6 +221,9 @@ type EvidenceInput struct {
 	Purpose PolicyPurpose
 	Policy  SwitchPolicy
 	Source  EvidenceSource
+	// EvidenceWindow is how much history is scanned. It is resolved independently of
+	// MaxSampleAge (see DefaultEvidenceWindow). Zero means "derive the default".
+	EvidenceWindow time.Duration
 	// CurrentNodeKey / CurrentNodeIdentityKey identify the currently active node.
 	// Either may be empty when the current node cannot be resolved.
 	CurrentNodeKey         string
@@ -188,8 +231,8 @@ type EvidenceInput struct {
 	// Nodes is the set of nodes to evaluate. Order is preserved.
 	Nodes []EvidenceNode
 	// SamplesByNode maps EvidenceNode.NodeKey → all raw samples observed for that
-	// node's *transport identity* (NodeIdentityKey) inside the lookback. Samples may
-	// therefore belong to older ConfigRevisionKey revisions; the builder filters them.
+	// node's transport identity inside the lookback. Samples may therefore belong to
+	// other profiles or older ConfigRevisionKey revisions; the builder filters them.
 	SamplesByNode map[string][]EvidenceSample
 	// RawSampleCount is the total number of raw samples fetched from persistence.
 	RawSampleCount int
@@ -197,11 +240,46 @@ type EvidenceInput struct {
 	Truncated bool
 }
 
+// DefaultEvidenceWindow resolves how much history to scan when the caller does not
+// specify a window explicitly.
+//
+// It is deliberately NOT "MaxSampleAge": MaxSampleAge is a freshness gate on the newest
+// sample, not a statement about how much history is meaningful. Tying the two together
+// produces false negatives (a node with a brand-new sample and a long, otherwise
+// sufficient history would be gated as insufficient purely because the window was narrow).
+//
+// The window is instead driven by the policy's own observation requirements, with
+// headroom, and floored so that staleness can be detected and reported with a real age:
+//
+//	max(4 × MinObservationWindow, 4 × MaxSampleAge, 1h), capped at 24h,
+//	and never smaller than MinObservationWindow.
+func DefaultEvidenceWindow(p SwitchPolicy) time.Duration {
+	window := time.Hour
+	if p.MinObservationWindow > 0 {
+		if candidate := 4 * p.MinObservationWindow; candidate > window {
+			window = candidate
+		}
+	}
+	if p.MaxSampleAge > 0 {
+		if candidate := 4 * p.MaxSampleAge; candidate > window {
+			window = candidate
+		}
+	}
+	if window > 24*time.Hour {
+		window = 24 * time.Hour
+	}
+	if p.MinObservationWindow > window {
+		window = p.MinObservationWindow
+	}
+	return window
+}
+
 // -----------------------------------------------------------------------------
 // Evidence output (the snapshot that crosses into the policy engine)
 // -----------------------------------------------------------------------------
 
-// FreshnessStatus describes whether the node's evidence is fresh enough to drive a decision.
+// FreshnessStatus describes whether the node's newest sample is fresh enough to drive
+// a decision. This is a property of the LATEST sample only — never of the window width.
 type FreshnessStatus string
 
 const (
@@ -218,16 +296,25 @@ const (
 	GateReasonInsufficientObservationWindow  = "insufficient_observation_window"
 	GateReasonOtherRevisionSamplesExcluded   = "evidence_only_from_other_config_revision"
 	GateReasonUnknownRevisionSamplesExcluded = "unknown_revision_evidence_excluded"
+	GateReasonOtherProfileSamplesExcluded    = "evidence_only_from_other_profile"
+	GateReasonUnknownProfileSamplesExcluded  = "unknown_profile_evidence_excluded"
+	GateReasonProfileIsolationAmbiguous      = "profile_isolation_unavailable"
 )
 
-// EvidenceGate is the exact freshness/sufficiency threshold set that was applied.
-// It is echoed into the recommendation so the caller can explain "why".
+// EvidenceGate is the exact threshold set that was applied, echoed into the
+// recommendation so the caller can explain "why".
+//
+// Note the deliberate separation: MaxSampleAge gates freshness; EvidenceWindow /
+// WindowSince / WindowUntil describe how much history was scanned.
 type EvidenceGate struct {
 	MaxSampleAge         time.Duration `json:"max_sample_age"`
 	MinSampleCount       int           `json:"min_sample_count"`
 	MinObservationWindow time.Duration `json:"min_observation_window"`
-	WindowSince          time.Time     `json:"window_since"`
-	WindowUntil          time.Time     `json:"window_until"`
+	// EvidenceWindow is the length of history scanned (NOT derived from MaxSampleAge).
+	EvidenceWindow time.Duration `json:"evidence_window"`
+	// WindowSince / WindowUntil bound the scanned observation window.
+	WindowSince time.Time `json:"window_since"`
+	WindowUntil time.Time `json:"window_until"`
 }
 
 // EvidenceSufficiency states whether a node has enough trustworthy evidence.
@@ -241,6 +328,8 @@ type EvidenceSufficiency struct {
 // purpose-aware verdicts derived from them, always with provenance.
 type NodeEvidence struct {
 	// --- identity / provenance ---
+	ProfileID         string `json:"profile_id"`
+	ProfileIDInferred bool   `json:"profile_id_inferred,omitempty"`
 	NodeKey           string `json:"node_key"`
 	NodeIdentityKey   string `json:"node_identity_key"`
 	ConfigRevisionKey string `json:"config_revision_key"`
@@ -250,7 +339,7 @@ type NodeEvidence struct {
 	ProbeTypes []string `json:"probe_types,omitempty"`
 	Targets    []string `json:"targets,omitempty"`
 
-	// --- observation window ---
+	// --- observation window (actual span of the considered samples) ---
 	EvidenceWindowSince time.Time     `json:"evidence_window_since"`
 	EvidenceWindowUntil time.Time     `json:"evidence_window_until"`
 	FirstSampleAt       time.Time     `json:"first_sample_at"`
@@ -308,11 +397,13 @@ type NodeEvidence struct {
 
 	Sufficiency EvidenceSufficiency `json:"evidence_sufficiency"`
 
-	// --- integrity / honesty counters ---
+	// --- isolation / integrity counters (never silently averaged in) ---
+	ExcludedOtherProfileSamples    int  `json:"excluded_other_profile_samples"`
+	ExcludedUnknownProfileSamples  int  `json:"excluded_unknown_profile_samples"`
 	ExcludedOtherRevisionSamples   int  `json:"excluded_other_revision_samples"`
 	ExcludedUnknownRevisionSamples int  `json:"excluded_unknown_revision_samples"`
 	ExcludedFutureSamples          int  `json:"excluded_future_samples"`
-	LookbackSampleCount            int  `json:"lookback_sample_count"`
+	ProfileIsolationAmbiguous      bool `json:"profile_isolation_ambiguous,omitempty"`
 	Truncated                      bool `json:"truncated"`
 }
 
@@ -367,20 +458,19 @@ func BuildEvidenceSnapshot(in EvidenceInput) EvidenceSnapshot {
 		purpose = PurposeGeneral
 	}
 
-	// The evidence window is anchored on now and bounded by MaxSampleAge: only
-	// samples inside it may drive a decision. Anything older is, by definition, stale.
-	windowSince := in.Source.LookbackSince
-	if in.Policy.MaxSampleAge > 0 {
-		windowSince = now.Add(-in.Policy.MaxSampleAge)
+	evidenceWindow := in.EvidenceWindow
+	if evidenceWindow <= 0 {
+		evidenceWindow = DefaultEvidenceWindow(in.Policy)
 	}
-	windowUntil := now
+	windowSince := now.Add(-evidenceWindow)
 
 	gate := EvidenceGate{
 		MaxSampleAge:         in.Policy.MaxSampleAge,
 		MinSampleCount:       in.Policy.MinSampleCount,
 		MinObservationWindow: in.Policy.MinObservationWindow,
+		EvidenceWindow:       evidenceWindow,
 		WindowSince:          windowSince,
-		WindowUntil:          windowUntil,
+		WindowUntil:          now,
 	}
 
 	snap := EvidenceSnapshot{
@@ -419,6 +509,7 @@ func buildNodeEvidence(
 	truncated bool,
 ) NodeEvidence {
 	ev := NodeEvidence{
+		ProfileID:           strings.TrimSpace(node.ProfileID),
 		NodeKey:             node.NodeKey,
 		NodeIdentityKey:     node.NodeIdentityKey,
 		ConfigRevisionKey:   node.ConfigRevisionKey,
@@ -430,12 +521,9 @@ func buildNodeEvidence(
 
 	targetRev := strings.TrimSpace(node.ConfigRevisionKey)
 
-	var considered []EvidenceSample
-	var lookbackCount int
-
+	// --- Stage 1: temporal + config-revision attribution -------------------------
+	var candidates []EvidenceSample
 	for _, s := range samples {
-		// Target revision unknown: we cannot attribute revisions at all, so the samples
-		// are used as-is. The honesty counters below still surface the gap.
 		if targetRev != "" {
 			rev := strings.TrimSpace(s.ConfigRevisionKey)
 			if rev == "" {
@@ -456,16 +544,67 @@ func buildNodeEvidence(
 			ev.ExcludedFutureSamples++
 			continue
 		}
-
-		lookbackCount++
 		if s.Timestamp.Before(gate.WindowSince) {
 			continue
 		}
-		considered = append(considered, s)
+		candidates = append(candidates, s)
 	}
 
-	ev.LookbackSampleCount = lookbackCount
-	ev.Truncated = truncated
+	// --- Stage 2: profile isolation ---------------------------------------------
+	// NodeIdentityKey is a pure transport endpoint and is explicitly NOT unique per
+	// logical node (fingerprint.go R-01): two profiles can share the same CDN host or
+	// reverse-proxy endpoint. ProfileID must therefore qualify the attribution.
+	profilesSeen := map[string]struct{}{}
+	for _, s := range candidates {
+		if profile := strings.TrimSpace(s.ProfileID); profile != "" {
+			profilesSeen[profile] = struct{}{}
+		}
+	}
+
+	effectiveProfile := ev.ProfileID
+	switch {
+	case effectiveProfile != "":
+		// Known target profile: strict isolation.
+	case len(profilesSeen) == 1:
+		// Target profile unknown but all observed samples agree on one profile, so the
+		// attribution is unambiguous. Record it as inferred rather than pretending it
+		// was configured.
+		for profile := range profilesSeen {
+			effectiveProfile = profile
+		}
+		ev.ProfileID = effectiveProfile
+		ev.ProfileIDInferred = true
+	case len(profilesSeen) > 1:
+		// The same transport endpoint carries samples from several profiles and the
+		// target profile is unknown: attribution is impossible. Refuse to guess.
+		ev.ProfileIsolationAmbiguous = true
+	}
+
+	var considered []EvidenceSample
+	if ev.ProfileIsolationAmbiguous {
+		for _, s := range candidates {
+			if strings.TrimSpace(s.ProfileID) != "" {
+				ev.ExcludedOtherProfileSamples++
+			} else {
+				ev.ExcludedUnknownProfileSamples++
+			}
+		}
+	} else {
+		for _, s := range candidates {
+			profile := strings.TrimSpace(s.ProfileID)
+			if effectiveProfile != "" {
+				if profile == "" {
+					ev.ExcludedUnknownProfileSamples++
+					continue
+				}
+				if profile != effectiveProfile {
+					ev.ExcludedOtherProfileSamples++
+					continue
+				}
+			}
+			considered = append(considered, s)
+		}
+	}
 
 	// Sort newest first for consecutive-failure derivation.
 	sort.SliceStable(considered, func(i, j int) bool {
@@ -529,7 +668,9 @@ func buildNodeEvidence(
 		ev.SuccessRate = math.Round((float64(ev.SuccessCount)/float64(ev.SampleCount))*10000) / 10000
 	}
 
-	// --- observation window ---
+	// --- observation window = the ACTUAL span of considered samples --------------
+	// This is the value MinObservationWindow gates, matching the existing
+	// NodeEvaluation.ObservationWindow semantics.
 	if len(considered) > 0 {
 		first := considered[len(considered)-1].Timestamp
 		last := considered[0].Timestamp
@@ -539,28 +680,6 @@ func buildNodeEvidence(
 			ev.ObservationWindow = last.Sub(first)
 		}
 		ev.SampleAge = now.Sub(last)
-	} else if lookbackCount > 0 {
-		// No sample inside the evidence window, but the lookback has data: report the
-		// real age so the reason can say exactly how stale the node is.
-		var newest time.Time
-		for _, s := range samples {
-			if s.Timestamp.After(now.Add(clockSkewTolerance)) {
-				continue
-			}
-			if targetRev != "" {
-				rev := strings.TrimSpace(s.ConfigRevisionKey)
-				if rev == "" || rev != targetRev {
-					continue
-				}
-			}
-			if s.Timestamp.After(newest) {
-				newest = s.Timestamp
-			}
-		}
-		if !newest.IsZero() {
-			ev.LastSampleAt = newest
-			ev.SampleAge = now.Sub(newest)
-		}
 	}
 
 	// --- percentiles (nearest-rank, matching the SQL derived-stats convention) ---
@@ -611,17 +730,20 @@ func buildNodeEvidence(
 	ev.ProbeTypes = sortedKeys(probeTypeSet)
 	ev.Targets = sortedKeys(targetSet)
 
-	ev.Freshness = deriveFreshness(ev)
+	ev.Freshness = deriveFreshness(ev, gate.MaxSampleAge)
 	ev.Sufficiency = evaluateSufficiency(ev, gate)
 	return ev
 }
 
-// deriveFreshness decides whether the node's newest relevant observation is fresh.
-func deriveFreshness(ev NodeEvidence) FreshnessStatus {
+// deriveFreshness decides whether the node's NEWEST sample is fresh enough.
+//
+// MaxSampleAge is used here and only here: it is a freshness gate on the latest
+// sample, never a definition of how much history is scanned.
+func deriveFreshness(ev NodeEvidence, maxSampleAge time.Duration) FreshnessStatus {
 	if ev.SampleCount == 0 {
-		if ev.LookbackSampleCount == 0 {
-			return FreshnessNoEvidence
-		}
+		return FreshnessNoEvidence
+	}
+	if maxSampleAge > 0 && ev.SampleAge > maxSampleAge {
 		return FreshnessStale
 	}
 	return FreshnessFresh
@@ -632,39 +754,44 @@ func deriveFreshness(ev NodeEvidence) FreshnessStatus {
 func evaluateSufficiency(ev NodeEvidence, gate EvidenceGate) EvidenceSufficiency {
 	sufficiency := EvidenceSufficiency{Sufficient: true}
 
-	if ev.SampleCount == 0 {
+	if ev.Freshness == FreshnessNoEvidence {
 		sufficiency.Sufficient = false
-		if ev.LookbackSampleCount == 0 {
-			if ev.ExcludedOtherRevisionSamples > 0 {
-				sufficiency.Reasons = append(sufficiency.Reasons, GateReasonOtherRevisionSamplesExcluded)
-				sufficiency.Details = append(sufficiency.Details, fmt.Sprintf(
-					"节点 %s 在观察回看窗口内只有 %d 条属于其他 ConfigRevisionKey 的样本，当前配置版本无任何样本",
-					ev.DisplayName, ev.ExcludedOtherRevisionSamples))
-			}
-			if ev.ExcludedUnknownRevisionSamples > 0 {
-				sufficiency.Reasons = append(sufficiency.Reasons, GateReasonUnknownRevisionSamplesExcluded)
-				sufficiency.Details = append(sufficiency.Details, fmt.Sprintf(
-					"节点 %s 有 %d 条缺少配置版本来源的样本，无法安全归属到当前配置版本",
-					ev.DisplayName, ev.ExcludedUnknownRevisionSamples))
-			}
-			if len(sufficiency.Reasons) == 0 {
-				sufficiency.Reasons = append(sufficiency.Reasons, GateReasonNoEvidence)
-				sufficiency.Details = append(sufficiency.Details, fmt.Sprintf(
-					"节点 %s 在观察回看窗口内没有任何原始样本", ev.DisplayName))
-			}
-		} else {
-			sufficiency.Reasons = append(sufficiency.Reasons, GateReasonStaleEvidence)
+		switch {
+		case ev.ProfileIsolationAmbiguous:
+			sufficiency.Reasons = append(sufficiency.Reasons, GateReasonProfileIsolationAmbiguous)
 			sufficiency.Details = append(sufficiency.Details, fmt.Sprintf(
-				"节点 %s 最新样本距今 %s，超过 MaxSampleAge=%s，陈旧数据不得驱动推荐",
-				ev.DisplayName, roundDuration(ev.SampleAge), roundDuration(gate.MaxSampleAge)))
+				"节点 %s 的传输端点 (%s) 在观察窗口内同时存在多个 Profile 的样本，而目标 ProfileID 未知，无法安全归属，拒绝猜测",
+				ev.DisplayName, ev.NodeIdentityKey))
+		case ev.ExcludedOtherRevisionSamples > 0 || ev.ExcludedUnknownRevisionSamples > 0:
+			sufficiency.Reasons = append(sufficiency.Reasons, GateReasonOtherRevisionSamplesExcluded)
+			sufficiency.Details = append(sufficiency.Details, fmt.Sprintf(
+				"节点 %s 在观察窗口内只有 %d 条属于其他 ConfigRevisionKey、%d 条缺少配置版本来源的样本，当前配置版本无任何样本",
+				ev.DisplayName, ev.ExcludedOtherRevisionSamples, ev.ExcludedUnknownRevisionSamples))
+		case ev.ExcludedOtherProfileSamples > 0 || ev.ExcludedUnknownProfileSamples > 0:
+			sufficiency.Reasons = append(sufficiency.Reasons, GateReasonOtherProfileSamplesExcluded)
+			sufficiency.Details = append(sufficiency.Details, fmt.Sprintf(
+				"节点 %s 在观察窗口内只有 %d 条属于其他 Profile、%d 条缺少 Profile 归属的样本，当前 Profile 无任何样本",
+				ev.DisplayName, ev.ExcludedOtherProfileSamples, ev.ExcludedUnknownProfileSamples))
+		default:
+			sufficiency.Reasons = append(sufficiency.Reasons, GateReasonNoEvidence)
+			sufficiency.Details = append(sufficiency.Details, fmt.Sprintf(
+				"节点 %s 在观察窗口内没有任何原始样本", ev.DisplayName))
 		}
+	}
+
+	if ev.Freshness == FreshnessStale {
+		sufficiency.Sufficient = false
+		sufficiency.Reasons = append(sufficiency.Reasons, GateReasonStaleEvidence)
+		sufficiency.Details = append(sufficiency.Details, fmt.Sprintf(
+			"节点 %s 最新样本距今 %s，超过 MaxSampleAge=%s，陈旧数据不得驱动推荐",
+			ev.DisplayName, roundDuration(ev.SampleAge), roundDuration(gate.MaxSampleAge)))
 	}
 
 	if gate.MinSampleCount > 0 && ev.SampleCount < gate.MinSampleCount {
 		sufficiency.Sufficient = false
 		sufficiency.Reasons = append(sufficiency.Reasons, GateReasonInsufficientSampleCount)
 		sufficiency.Details = append(sufficiency.Details, fmt.Sprintf(
-			"节点 %s 新鲜样本数 %d 少于 MinSampleCount=%d",
+			"节点 %s 观察窗口内样本数 %d 少于 MinSampleCount=%d",
 			ev.DisplayName, ev.SampleCount, gate.MinSampleCount))
 	}
 
@@ -672,7 +799,7 @@ func evaluateSufficiency(ev NodeEvidence, gate EvidenceGate) EvidenceSufficiency
 		sufficiency.Sufficient = false
 		sufficiency.Reasons = append(sufficiency.Reasons, GateReasonInsufficientObservationWindow)
 		sufficiency.Details = append(sufficiency.Details, fmt.Sprintf(
-			"节点 %s 观察窗口 %s 短于 MinObservationWindow=%s",
+			"节点 %s 实际观察窗口 %s 短于 MinObservationWindow=%s",
 			ev.DisplayName, roundDuration(ev.ObservationWindow), roundDuration(gate.MinObservationWindow)))
 	}
 
