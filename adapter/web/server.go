@@ -161,6 +161,10 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("GET /api/monitor/timeline", s.handleGetNodeTimelineSamples)
 	mux.HandleFunc("GET /api/monitor/facets", s.handleGetMonitorFacets)
 
+	// PR#7: read-only evidence → recommendation. There is deliberately NO execution
+	// endpoint here: the recommendation is advisory only and never switches a node.
+	mux.HandleFunc("GET /api/monitor/recommendation", s.handleGetMonitorRecommendation)
+
 	mux.HandleFunc("GET /api/events", s.handleEventsSSE)
 	mux.HandleFunc("POST /api/shutdown", s.handleShutdown)
 
@@ -954,6 +958,41 @@ func (s *Server) handleGetNodeTimelineSamples(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, samples)
 }
 
+// handleGetMonitorRecommendation serves a read-only, evidence-backed node recommendation.
+//
+// This endpoint is deliberately non-executing: it only reads persisted monitor evidence
+// and the configured policy, and returns an explainable recommendation. It never switches
+// the active node, never mutates the controller, and never triggers a monitor run.
+func (s *Server) handleGetMonitorRecommendation(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	req := application.MonitorRecommendationRequest{
+		JobID:                  q.Get("job_id"),
+		CurrentNodeKey:         q.Get("current_node_key"),
+		CurrentNodeIdentityKey: q.Get("current_node_identity_key"),
+		Purpose:                q.Get("purpose"),
+	}
+	if raw := q.Get("candidate_node_keys"); raw != "" {
+		for _, key := range strings.Split(raw, ",") {
+			key = strings.TrimSpace(key)
+			if key != "" {
+				req.CandidateNodeKeys = append(req.CandidateNodeKeys, key)
+			}
+		}
+	}
+
+	rec, err := s.app.GetMonitorRecommendation(r.Context(), req)
+	if err != nil {
+		if monitor.IsValidationError(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, rec)
+}
+
 // handleGetMonitorFacets serves the presentation-only facet read model used to build UI filters.
 func (s *Server) handleGetMonitorFacets(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
@@ -1127,5 +1166,3 @@ func (s *Server) handleApplyRetention(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, result)
 }
-
-

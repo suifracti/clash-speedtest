@@ -284,5 +284,11 @@ func (a *App) GetMonitorSampleFacets(since, until *time.Time) (*monitor.MonitorS
 	return a.app.GetMonitorSampleFacets(a.context(), since, until)
 }
 
-
-
+// GetMonitorRecommendation returns a read-only, evidence-backed node recommendation.
+//
+// It consumes persisted monitor evidence and the configured policy, and produces an
+// explainable recommendation. It never switches the active node (SelectNodeCalls == 0),
+// never mutates the controller, and never triggers a monitor run.
+func (a *App) GetMonitorRecommendation(req application.MonitorRecommendationRequest) (*policy.MonitorRecommendation, error) {
+	return a.app.GetMonitorRecommendation(a.context(), req)
+}
