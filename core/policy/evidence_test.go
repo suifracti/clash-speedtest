@@ -219,8 +219,8 @@ func TestRecommendFromEvidence_FreshSufficientEvidenceRecommends(t *testing.T) {
 	sg := testNode("sg", "SG-01", "rev_a")
 
 	samples := map[string][]EvidenceSample{
-		hk.NodeKey: transportSeries(hk, now, 10*time.Second, 30*time.Second, 5, true, 100, "", ""),
-		sg.NodeKey: transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 40, "", ""),
+		hk.SampleSetKey(): transportSeries(hk, now, 10*time.Second, 30*time.Second, 5, true, 100, "", ""),
+		sg.SampleSetKey(): transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 40, "", ""),
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 
@@ -284,8 +284,8 @@ func TestRecommendFromEvidence_InsufficientSampleCount(t *testing.T) {
 
 	samples := map[string][]EvidenceSample{
 		// only 2 samples, MinSampleCount defaults to 3
-		hk.NodeKey: transportSeries(hk, now, 10*time.Second, 30*time.Second, 2, true, 100, "", ""),
-		sg.NodeKey: transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 40, "", ""),
+		hk.SampleSetKey(): transportSeries(hk, now, 10*time.Second, 30*time.Second, 2, true, 100, "", ""),
+		sg.SampleSetKey(): transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 40, "", ""),
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 
@@ -321,8 +321,8 @@ func TestRecommendFromEvidence_StaleEvidence(t *testing.T) {
 
 	samples := map[string][]EvidenceSample{
 		// newest sample is 20 minutes old, MaxSampleAge defaults to 5m
-		hk.NodeKey: transportSeries(hk, now, 20*time.Minute, 30*time.Second, 5, true, 100, "", ""),
-		sg.NodeKey: transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 40, "", ""),
+		hk.SampleSetKey(): transportSeries(hk, now, 20*time.Minute, 30*time.Second, 5, true, 100, "", ""),
+		sg.SampleSetKey(): transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 40, "", ""),
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 
@@ -361,10 +361,10 @@ func TestRecommendFromEvidence_CurrentHealthyStays(t *testing.T) {
 	sg := testNode("sg", "SG-01", "rev_a")
 
 	samples := map[string][]EvidenceSample{
-		hk.NodeKey: transportSeries(hk, now, 10*time.Second, 30*time.Second, 5, true, 100, "", ""),
+		hk.SampleSetKey(): transportSeries(hk, now, 10*time.Second, 30*time.Second, 5, true, 100, "", ""),
 		// 95ms is only 5ms better: below MinImprovementRTT (30ms) and below the
 		// HysteresisBuffer, so the anti-flapping rules must keep the current node.
-		sg.NodeKey: transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 95, "", ""),
+		sg.SampleSetKey(): transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 95, "", ""),
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 
@@ -398,8 +398,8 @@ func TestRecommendFromEvidence_RepeatedTransportFailureRecommendsCandidate(t *te
 
 	samples := map[string][]EvidenceSample{
 		// 5 consecutive timeouts >= MaxConsecutiveFailures (3)
-		hk.NodeKey: transportSeries(hk, now, 10*time.Second, 30*time.Second, 5, false, 5000, "timeout", "dial tcp: i/o timeout"),
-		sg.NodeKey: transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 40, "", ""),
+		hk.SampleSetKey(): transportSeries(hk, now, 10*time.Second, 30*time.Second, 5, false, 5000, "timeout", "dial tcp: i/o timeout"),
+		sg.SampleSetKey(): transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 40, "", ""),
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 
@@ -445,8 +445,8 @@ func TestRecommendFromEvidence_ServiceOnlyFailureUnderGeneralIsNotTransportFailu
 	blockedGoogle := serviceSeries(hk, now, 10*time.Second, 30*time.Second, 3, "service_google", false, 0, "blocked", "HTTP status 400 FAILED_PRECONDITION", true)
 
 	samples := map[string][]EvidenceSample{
-		hk.NodeKey: append(append([]EvidenceSample{}, transportHK...), blockedGoogle...),
-		sg.NodeKey: transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 95, "", ""),
+		hk.SampleSetKey(): append(append([]EvidenceSample{}, transportHK...), blockedGoogle...),
+		sg.SampleSetKey(): transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 95, "", ""),
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 
@@ -509,9 +509,9 @@ func TestRecommendFromEvidence_AIBlockUnderAIPurposeIsEliminated(t *testing.T) {
 		)
 
 		samples := map[string][]EvidenceSample{
-			hk.NodeKey:        hkSamples,
-			aiBlocked.NodeKey: aibSamples,
-			sg.NodeKey:        transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 60, "", ""),
+			hk.SampleSetKey():        hkSamples,
+			aiBlocked.SampleSetKey(): aibSamples,
+			sg.SampleSetKey():        transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 60, "", ""),
 		}
 		snap := buildSnap(now, p, purpose, hk, []EvidenceNode{hk, aiBlocked, sg}, samples)
 		return engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap, RecommendOptions{})
@@ -570,7 +570,7 @@ func TestRecommendFromEvidence_SuccessRateAndP95DriveReasons(t *testing.T) {
 	// SG: 100% success rate, tight latency.
 	sgSamples := transportSeries(sg, now, 10*time.Second, 20*time.Second, 7, true, 60, "", "")
 
-	samples := map[string][]EvidenceSample{hk.NodeKey: hkSamples, sg.NodeKey: sgSamples}
+	samples := map[string][]EvidenceSample{hk.SampleSetKey(): hkSamples, sg.SampleSetKey(): sgSamples}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 
 	rec := engine.RecommendFromEvidence(now, p, &DecisionState{CurrentNode: "HK-01"}, snap, RecommendOptions{})
@@ -615,9 +615,9 @@ func TestRecommendFromEvidence_StaleCandidateIsRejected(t *testing.T) {
 	old := testNode("old", "OLD-01", "rev_a")
 
 	samples := map[string][]EvidenceSample{
-		hk.NodeKey: transportSeries(hk, now, 10*time.Second, 30*time.Second, 5, true, 100, "", ""),
+		hk.SampleSetKey(): transportSeries(hk, now, 10*time.Second, 30*time.Second, 5, true, 100, "", ""),
 		// OLD-01 is far faster but its newest sample is 15 minutes old.
-		old.NodeKey: transportSeries(old, now, 15*time.Minute, 30*time.Second, 5, true, 10, "", ""),
+		old.SampleSetKey(): transportSeries(old, now, 15*time.Minute, 30*time.Second, 5, true, 10, "", ""),
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, old}, samples)
 
@@ -653,8 +653,8 @@ func TestRecommendFromEvidence_ConfigRevisionChangeDoesNotMixOldEvidence(t *test
 	newRevision := revisionSeries(hk, "rev_new", transportSeries(hk, now, 10*time.Second, 30*time.Second, 5, true, 100, "", ""))
 
 	samples := map[string][]EvidenceSample{
-		hk.NodeKey: append(append([]EvidenceSample{}, oldRevision...), newRevision...),
-		sg.NodeKey: transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 40, "", ""),
+		hk.SampleSetKey(): append(append([]EvidenceSample{}, oldRevision...), newRevision...),
+		sg.SampleSetKey(): transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 40, "", ""),
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 
@@ -696,8 +696,8 @@ func TestRecommendFromEvidence_OnlyOtherRevisionEvidenceIsInsufficient(t *testin
 	hkOld := revisionSeries(hk, "rev_old", transportSeries(hk, now, 10*time.Second, 30*time.Second, 5, true, 20, "", ""))
 
 	samples := map[string][]EvidenceSample{
-		hk.NodeKey: hkOld,
-		sg.NodeKey: transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 40, "", ""),
+		hk.SampleSetKey(): hkOld,
+		sg.SampleSetKey(): transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 40, "", ""),
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 
@@ -732,8 +732,8 @@ func TestRecommendFromEvidence_UnresolvedCurrentNodeIsInsufficient(t *testing.T)
 	hk := testNode("hk", "HK-01", "rev_a")
 	sg := testNode("sg", "SG-01", "rev_a")
 	samples := map[string][]EvidenceSample{
-		hk.NodeKey: transportSeries(hk, now, 10*time.Second, 30*time.Second, 5, true, 100, "", ""),
-		sg.NodeKey: transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 40, "", ""),
+		hk.SampleSetKey(): transportSeries(hk, now, 10*time.Second, 30*time.Second, 5, true, 100, "", ""),
+		sg.SampleSetKey(): transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 40, "", ""),
 	}
 
 	snap := BuildEvidenceSnapshot(EvidenceInput{
@@ -764,8 +764,8 @@ func TestRecommendFromEvidence_LockedNodePinsSelection(t *testing.T) {
 	hk := testNode("hk", "HK-01", "rev_a")
 	sg := testNode("sg", "SG-01", "rev_a")
 	samples := map[string][]EvidenceSample{
-		hk.NodeKey: transportSeries(hk, now, 10*time.Second, 30*time.Second, 5, true, 200, "", ""),
-		sg.NodeKey: transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 20, "", ""),
+		hk.SampleSetKey(): transportSeries(hk, now, 10*time.Second, 30*time.Second, 5, true, 200, "", ""),
+		sg.SampleSetKey(): transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 20, "", ""),
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 
@@ -791,9 +791,9 @@ func TestRecommendFromEvidence_WhitelistFiltersCandidates(t *testing.T) {
 	fast := testNode("fast", "SG-FAST", "rev_a")
 
 	samples := map[string][]EvidenceSample{
-		hk.NodeKey:   transportSeries(hk, now, 10*time.Second, 30*time.Second, 5, true, 100, "", ""),
-		sg.NodeKey:   transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 95, "", ""),
-		fast.NodeKey: transportSeries(fast, now, 10*time.Second, 30*time.Second, 5, true, 10, "", ""),
+		hk.SampleSetKey():   transportSeries(hk, now, 10*time.Second, 30*time.Second, 5, true, 100, "", ""),
+		sg.SampleSetKey():   transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 95, "", ""),
+		fast.SampleSetKey(): transportSeries(fast, now, 10*time.Second, 30*time.Second, 5, true, 10, "", ""),
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg, fast}, samples)
 

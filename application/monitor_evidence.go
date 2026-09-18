@@ -311,10 +311,13 @@ func (s *AppService) collectEvidenceSamples(
 	total := 0
 
 	for _, node := range nodes {
+		// Keyed by SampleSetKey(), not NodeKey: two logical nodes can share a NodeKey (the
+		// same subscription node in two profiles with identical credentials), and keying by
+		// NodeKey would make one silently read the other's evidence.
 		if node.NodeIdentityKey == "" && node.NodeKey == "" {
 			// Without an identity key the query would be unbounded and every sample in the
 			// database would be attributed to this node. Refuse rather than fabricate.
-			out[node.NodeKey] = nil
+			out[node.SampleSetKey()] = nil
 			continue
 		}
 
@@ -364,7 +367,7 @@ func (s *AppService) collectEvidenceSamples(
 				RegionBlocked:     regionBlockedFromMetadata(sample.Metadata),
 			})
 		}
-		out[node.NodeKey] = projected
+		out[node.SampleSetKey()] = projected
 		total += len(projected)
 	}
 

@@ -317,8 +317,16 @@ func (e *DecisionEngine) RecommendFromEvidence(
 	pEval := p
 	pEval.Purpose = purpose
 
+	// An empty mode must not fall through to "evaluate": the secure default is
+	// ModeMonitorOnly (matching DefaultSwitchPolicy), so normalize it explicitly.
+	configuredMode := p.Mode
+	if configuredMode == "" {
+		configuredMode = ModeMonitorOnly
+	}
+	rec.ConfiguredMode = configuredMode
+
 	// Mode semantics: respect the configured mode unless a preview was explicitly asked for.
-	suppressRecommendation := p.Mode == ModeMonitorOnly && !opts.Preview
+	suppressRecommendation := configuredMode == ModeMonitorOnly && !opts.Preview
 	if suppressRecommendation {
 		rec.RecommendationSuppressed = true
 		rec.SuppressedReason = SuppressReasonMonitorOnly
@@ -326,24 +334,24 @@ func (e *DecisionEngine) RecommendFromEvidence(
 		rec.addReason(ReasonMonitorOnlySuppresses, SeverityInfo,
 			"当前编排模式为 monitor_only：按既有语义本模式不产生切换建议，因此不输出推荐。若需查看\"策略会怎么判\"，请显式请求 preview",
 			nil, map[string]any{
-				"configured_mode": string(p.Mode),
+				"configured_mode": string(configuredMode),
 				"preview":         false,
 			})
 	} else {
 		rec.EvaluationMode = ModeRecommend
 		pEval.Mode = ModeRecommend
-		if opts.Preview && p.Mode == ModeMonitorOnly {
+		if opts.Preview && configuredMode == ModeMonitorOnly {
 			rec.addReason(ReasonPreviewNotice, SeverityWarning,
 				"preview 模式（显式请求）：已越过 monitor_only 的建议抑制，仅为预览评估；任何模式下都不会执行切换",
 				nil, map[string]any{
-					"configured_mode": string(p.Mode),
+					"configured_mode": string(configuredMode),
 					"preview":         true,
 				})
 		}
-		if p.Mode == ModeAuto {
+		if configuredMode == ModeAuto {
 			rec.addReason(ReasonAutoNotImplemented, SeverityInfo,
 				"当前编排模式为 auto：自动执行未在本 PR 实现，本结果仅为建议，不会执行任何切换",
-				nil, map[string]any{"configured_mode": string(p.Mode)})
+				nil, map[string]any{"configured_mode": string(configuredMode)})
 		}
 	}
 
@@ -630,6 +638,7 @@ func appendProfileIsolationReason(rec *MonitorRecommendation, ev *NodeEvidence) 
 	evidence := map[string]any{
 		"profile_id":                       ev.ProfileID,
 		"profile_id_inferred":              ev.ProfileIDInferred,
+		"profile_isolation_unknown":        ev.ProfileIsolationUnknown,
 		"node_identity_key":                ev.NodeIdentityKey,
 		"config_revision_key":              ev.ConfigRevisionKey,
 		"excluded_other_profile_samples":   ev.ExcludedOtherProfileSamples,
@@ -641,8 +650,10 @@ func appendProfileIsolationReason(rec *MonitorRecommendation, ev *NodeEvidence) 
 	if ev.ProfileIDInferred {
 		message += "（未显式提供，由观察窗口内唯一样本 Profile 推断）"
 	}
-	if ev.ProfileID == "" {
-		message += "（未知；观察窗口内不存在带 Profile 归属的样本）"
+	if ev.ProfileIsolationUnknown {
+		message += "（未知：观察窗口内没有任何带 Profile 归属的样本，无法证明跨 Profile 隔离）"
+	} else if ev.ProfileID == "" {
+		message += "（未知）"
 	}
 	message += fmt.Sprintf("；已排除 %d 条属于其他 Profile、%d 条缺少 Profile 归属的样本",
 		ev.ExcludedOtherProfileSamples, ev.ExcludedUnknownProfileSamples)

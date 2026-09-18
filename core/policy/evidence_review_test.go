@@ -38,8 +38,8 @@ func TestRecommendFromEvidence_ProfileIsolation(t *testing.T) {
 	ownProfile := transportSeries(hk, now, 10*time.Second, 30*time.Second, 5, true, 100, "", "")
 
 	samples := map[string][]EvidenceSample{
-		hk.NodeKey: append(append([]EvidenceSample{}, otherProfile...), ownProfile...),
-		sg.NodeKey: transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 40, "", ""),
+		hk.SampleSetKey(): append(append([]EvidenceSample{}, otherProfile...), ownProfile...),
+		sg.SampleSetKey(): transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 40, "", ""),
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 
@@ -100,8 +100,8 @@ func TestRecommendFromEvidence_ProfileIsolationAmbiguous(t *testing.T) {
 	sharedB := profileSeries("prof-B", transportSeries(shared, now, 10*time.Second, 30*time.Second, 5, true, 50, "", ""))
 
 	samples := map[string][]EvidenceSample{
-		shared.NodeKey: append(append([]EvidenceSample{}, sharedA...), sharedB...),
-		sg.NodeKey:     transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 40, "", ""),
+		shared.SampleSetKey(): append(append([]EvidenceSample{}, sharedA...), sharedB...),
+		sg.SampleSetKey():     transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 40, "", ""),
 	}
 	snap := buildSnap(now, p, PurposeGeneral, shared, []EvidenceNode{shared, sg}, samples)
 
@@ -149,8 +149,8 @@ func TestRecommendFromEvidence_OtherProfileOnlyEvidenceIsInsufficient(t *testing
 	otherProfile := profileSeries("prof-OTHER", transportSeries(hk, now, 10*time.Second, 30*time.Second, 5, true, 20, "", ""))
 
 	samples := map[string][]EvidenceSample{
-		hk.NodeKey: otherProfile,
-		sg.NodeKey: transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 40, "", ""),
+		hk.SampleSetKey(): otherProfile,
+		sg.SampleSetKey(): transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 40, "", ""),
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 
@@ -185,7 +185,7 @@ func TestBuildEvidenceSnapshot_ProfileIDInferredFromSingleObservedProfile(t *tes
 		DisplayName:       "INFER",
 	}
 	samples := map[string][]EvidenceSample{
-		node.NodeKey: profileSeries("prof-only", transportSeries(node, now, 10*time.Second, 30*time.Second, 5, true, 50, "", "")),
+		node.SampleSetKey(): profileSeries("prof-only", transportSeries(node, now, 10*time.Second, 30*time.Second, 5, true, 50, "", "")),
 	}
 
 	snap := buildSnap(now, p, PurposeGeneral, node, []EvidenceNode{node}, samples)
@@ -214,8 +214,8 @@ func TestRecommendFromEvidence_MonitorOnlySuppressesUnlessPreview(t *testing.T) 
 	hk := testNode("hk", "HK-01", "rev_a")
 	sg := testNode("sg", "SG-01", "rev_a")
 	samples := map[string][]EvidenceSample{
-		hk.NodeKey: transportSeries(hk, now, 10*time.Second, 30*time.Second, 5, true, 200, "", ""),
-		sg.NodeKey: transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 20, "", ""),
+		hk.SampleSetKey(): transportSeries(hk, now, 10*time.Second, 30*time.Second, 5, true, 200, "", ""),
+		sg.SampleSetKey(): transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 20, "", ""),
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 	state := &DecisionState{CurrentNode: "HK-01"}
@@ -278,8 +278,8 @@ func TestRecommendFromEvidence_ConfiguredRecommendModeNeedsNoPreview(t *testing.
 	hk := testNode("hk", "HK-01", "rev_a")
 	sg := testNode("sg", "SG-01", "rev_a")
 	samples := map[string][]EvidenceSample{
-		hk.NodeKey: transportSeries(hk, now, 10*time.Second, 30*time.Second, 5, true, 200, "", ""),
-		sg.NodeKey: transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 20, "", ""),
+		hk.SampleSetKey(): transportSeries(hk, now, 10*time.Second, 30*time.Second, 5, true, 200, "", ""),
+		sg.SampleSetKey(): transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 20, "", ""),
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 
@@ -304,8 +304,8 @@ func TestRecommendFromEvidence_AutoModeIsAdvisoryOnly(t *testing.T) {
 	hk := testNode("hk", "HK-01", "rev_a")
 	sg := testNode("sg", "SG-01", "rev_a")
 	samples := map[string][]EvidenceSample{
-		hk.NodeKey: transportSeries(hk, now, 10*time.Second, 30*time.Second, 5, true, 200, "", ""),
-		sg.NodeKey: transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 20, "", ""),
+		hk.SampleSetKey(): transportSeries(hk, now, 10*time.Second, 30*time.Second, 5, true, 200, "", ""),
+		sg.SampleSetKey(): transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 20, "", ""),
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 
@@ -342,8 +342,8 @@ func TestRecommendFromEvidence_MaxSampleAgeIsFreshnessGateNotObservationWindow(t
 
 	// 41 samples one minute apart, newest only 10s old → 40m of observation.
 	samples := map[string][]EvidenceSample{
-		hk.NodeKey: transportSeries(hk, now, 10*time.Second, time.Minute, 41, true, 100, "", ""),
-		sg.NodeKey: transportSeries(sg, now, 10*time.Second, time.Minute, 41, true, 40, "", ""),
+		hk.SampleSetKey(): transportSeries(hk, now, 10*time.Second, time.Minute, 41, true, 100, "", ""),
+		sg.SampleSetKey(): transportSeries(sg, now, 10*time.Second, time.Minute, 41, true, 40, "", ""),
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 
@@ -397,8 +397,8 @@ func TestRecommendFromEvidence_StaleLatestSampleStillGatesEvenWithLongHistory(t 
 
 	// Long history, but the newest sample is 20 minutes old → stale, must be gated.
 	samples := map[string][]EvidenceSample{
-		hk.NodeKey: transportSeries(hk, now, 20*time.Minute, time.Minute, 41, true, 100, "", ""),
-		sg.NodeKey: transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 40, "", ""),
+		hk.SampleSetKey(): transportSeries(hk, now, 20*time.Minute, time.Minute, 41, true, 100, "", ""),
+		sg.SampleSetKey(): transportSeries(sg, now, 10*time.Second, 30*time.Second, 5, true, 40, "", ""),
 	}
 	snap := buildSnap(now, p, PurposeGeneral, hk, []EvidenceNode{hk, sg}, samples)
 

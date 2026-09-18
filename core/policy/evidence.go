@@ -205,6 +205,18 @@ type EvidenceNode struct {
 	DisplayName       string
 }
 
+// SampleSetKey is the key under which this node's raw samples must be provided in
+// EvidenceInput.SamplesByNode.
+//
+// It is deliberately NOT NodeKey: the same subscription node can legitimately appear in
+// two profiles with identical credentials, in which case ProfileID, NodeKey,
+// NodeIdentityKey and ConfigRevisionKey are all equal and ProfileID is the only
+// discriminator. Keying by NodeKey alone would make those two logical nodes collide, so
+// one would silently read the other's evidence.
+func (n EvidenceNode) SampleSetKey() string {
+	return n.ProfileID + "\x00" + n.NodeIdentityKey + "\x00" + n.NodeKey
+}
+
 // EvidenceSource records the provenance of the underlying raw samples.
 type EvidenceSource struct {
 	JobID         string    `json:"job_id,omitempty"`
@@ -230,9 +242,12 @@ type EvidenceInput struct {
 	CurrentNodeIdentityKey string
 	// Nodes is the set of nodes to evaluate. Order is preserved.
 	Nodes []EvidenceNode
-	// SamplesByNode maps EvidenceNode.NodeKey → all raw samples observed for that
-	// node's transport identity inside the lookback. Samples may therefore belong to
+	// SamplesByNode maps EvidenceNode.SampleSetKey() → all raw samples observed for that
+	// node's transport identity inside the scan window. Samples may therefore belong to
 	// other profiles or older ConfigRevisionKey revisions; the builder filters them.
+	//
+	// The key must be EvidenceNode.SampleSetKey() and not NodeKey: two logical nodes can
+	// share a NodeKey (same subscription node in two profiles with identical credentials).
 	SamplesByNode map[string][]EvidenceSample
 	// RawSampleCount is the total number of raw samples fetched from persistence.
 	RawSampleCount int
@@ -404,7 +419,11 @@ type NodeEvidence struct {
 	ExcludedUnknownRevisionSamples int  `json:"excluded_unknown_revision_samples"`
 	ExcludedFutureSamples          int  `json:"excluded_future_samples"`
 	ProfileIsolationAmbiguous      bool `json:"profile_isolation_ambiguous,omitempty"`
-	Truncated                      bool `json:"truncated"`
+	// ProfileIsolationUnknown is true when the evidence carries no profile provenance at
+	// all (neither configured nor inferable). The samples are still used — there is nothing
+	// to discriminate on — but the isolation gap is recorded rather than hidden.
+	ProfileIsolationUnknown bool `json:"profile_isolation_unknown,omitempty"`
+	Truncated               bool `json:"truncated"`
 }
 
 // EvidenceSnapshot is the full, self-describing evidence bundle handed to the policy engine.
@@ -484,15 +503,26 @@ func BuildEvidenceSnapshot(in EvidenceInput) EvidenceSnapshot {
 		Truncated:              in.Truncated,
 	}
 
+	// hasCurrent tracks whether the current node has already been claimed, so that only the
+	// FIRST match is marked current.
+	hasCurrent := false
 	for _, node := range in.Nodes {
+		// Only the FIRST match is marked current: when two logical nodes share a NodeKey the
+		// input is genuinely ambiguous, and marking both would be worse than picking one
+		// deterministically.
 		isCurrent := false
-		if in.CurrentNodeKey != "" && node.NodeKey == in.CurrentNodeKey {
-			isCurrent = true
+		if !hasCurrent {
+			if in.CurrentNodeKey != "" && node.NodeKey == in.CurrentNodeKey {
+				isCurrent = true
+			} else if in.CurrentNodeKey == "" && in.CurrentNodeIdentityKey != "" &&
+				node.NodeIdentityKey == in.CurrentNodeIdentityKey {
+				isCurrent = true
+			}
 		}
-		if !isCurrent && in.CurrentNodeIdentityKey != "" && node.NodeIdentityKey == in.CurrentNodeIdentityKey {
-			isCurrent = true
+		if isCurrent {
+			hasCurrent = true
 		}
-		ev := buildNodeEvidence(now, purpose, in.Policy, gate, node, in.SamplesByNode[node.NodeKey], in.Truncated)
+		ev := buildNodeEvidence(now, purpose, in.Policy, gate, node, in.SamplesByNode[node.SampleSetKey()], in.Truncated)
 		ev.IsCurrent = isCurrent
 		snap.Nodes = append(snap.Nodes, ev)
 	}
@@ -610,6 +640,12 @@ func buildNodeEvidence(
 	sort.SliceStable(considered, func(i, j int) bool {
 		return considered[i].Timestamp.After(considered[j].Timestamp)
 	})
+
+	if effectiveProfile == "" && len(considered) > 0 {
+		// Nothing to discriminate on: no sample carries a profile. Use them, but record the
+		// isolation gap explicitly instead of pretending the evidence is profile-qualified.
+		ev.ProfileIsolationUnknown = true
+	}
 
 	probeTypeSet := map[string]struct{}{}
 	targetSet := map[string]struct{}{}
