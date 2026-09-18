@@ -247,6 +247,17 @@ func TestWebServer_MonitorRecommendation_ReadOnlyEndpoint(t *testing.T) {
 		t.Fatalf("expected 400 for an unknown job id, got %d", recUnknown.Code)
 	}
 
+	// An explicit current-node identifier that cannot be honoured is a client error, not a
+	// silent fallback to a different node.
+	unmatchedNode := httptest.NewRequest(http.MethodGet,
+		"/api/monitor/recommendation?job_id=job_rec_web&current_node_key=nk_does_not_exist", nil)
+	unmatchedNode.Host = "127.0.0.1:8080"
+	recUnmatched := httptest.NewRecorder()
+	handler.ServeHTTP(recUnmatched, unmatchedNode)
+	if recUnmatched.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for an unmatched current_node_key, got %d", recUnmatched.Code)
+	}
+
 	// 6. There must be no execution endpoint: POST is not routed.
 	postRec := httptest.NewRequest(http.MethodPost, "/api/monitor/recommendation?job_id=job_rec_web", nil)
 	postRec.Host = "127.0.0.1:8080"

@@ -119,13 +119,16 @@ func (s *AppService) GetMonitorRecommendation(
 	since := now.Add(-evidenceWindow)
 
 	// 2. Resolve the node universe (live job definition, or persisted samples).
-	nodes, source, truncated, err := s.collectEvidenceNodes(ctx, req.JobID, since, now)
+	nodes, source, truncated, err := s.collectEvidenceNodes(ctx, req.JobID, pol, since, now)
 	if err != nil {
 		return nil, err
 	}
 
 	// 3. Resolve the current node (request → orchestrator state → controller selection).
-	current, hasCurrent := s.resolveEvidenceCurrentNode(ctx, req, nodes)
+	current, hasCurrent, err := s.resolveEvidenceCurrentNode(ctx, req, nodes)
+	if err != nil {
+		return nil, err
+	}
 
 	// 4. Project raw samples into neutral evidence samples, one query per node identity.
 	samplesByNode, rawTotal, samplesTruncated := s.collectEvidenceSamples(ctx, nodes, since)
@@ -201,6 +204,7 @@ func parsePolicyPurpose(raw string) (policy.PolicyPurpose, error) {
 func (s *AppService) collectEvidenceNodes(
 	ctx context.Context,
 	jobID string,
+	p policy.SwitchPolicy,
 	since, now time.Time,
 ) ([]policy.EvidenceNode, policy.EvidenceSource, bool, error) {
 	source := policy.EvidenceSource{
@@ -237,10 +241,19 @@ func (s *AppService) collectEvidenceNodes(
 	}
 
 	// Discovery path: enumerate node identities present in persisted raw samples.
-	discoverySince := since
-	if maxDiscovery := now.Add(-evidenceDiscoveryMaxWindow); discoverySince.Before(maxDiscovery) {
-		discoverySince = maxDiscovery
+	//
+	// The discovery horizon is capped so the scan stays cheap, but it must at least cover the
+	// freshness horizon (MaxSampleAge): otherwise a node whose newest sample is older than
+	// the cap yet still within MaxSampleAge would be silently omitted from the candidate
+	// universe instead of being reported as a usable candidate.
+	discoveryWindow := evidenceDiscoveryMaxWindow
+	if p.MaxSampleAge > discoveryWindow {
+		discoveryWindow = p.MaxSampleAge
 	}
+	if evidenceWindow := now.Sub(since); discoveryWindow > evidenceWindow {
+		discoveryWindow = evidenceWindow
+	}
+	discoverySince := now.Add(-discoveryWindow)
 
 	samples, err := s.historyStore.QueryMonitorSamples(ctx, monitor.SampleFilter{
 		Since:     &discoverySince,
@@ -395,20 +408,27 @@ func (s *AppService) resolveEvidenceCurrentNode(
 	ctx context.Context,
 	req MonitorRecommendationRequest,
 	nodes []policy.EvidenceNode,
-) (policy.EvidenceNode, bool) {
+) (policy.EvidenceNode, bool, error) {
+	// An explicit identifier that cannot be honoured must not be silently ignored: falling
+	// back to a different node would answer a question the caller did not ask. This mirrors
+	// the candidate_node_keys behaviour.
 	if key := strings.TrimSpace(req.CurrentNodeKey); key != "" {
 		for _, node := range nodes {
 			if node.NodeKey == key {
-				return node, true
+				return node, true, nil
 			}
 		}
+		return policy.EvidenceNode{}, false, monitor.WrapValidationError(fmt.Errorf(
+			"current_node_key %q did not match any node in the evidence window", key))
 	}
 	if identity := strings.TrimSpace(req.CurrentNodeIdentityKey); identity != "" {
 		for _, node := range nodes {
 			if node.NodeIdentityKey == identity {
-				return node, true
+				return node, true, nil
 			}
 		}
+		return policy.EvidenceNode{}, false, monitor.WrapValidationError(fmt.Errorf(
+			"current_node_identity_key %q did not match any node in the evidence window", identity))
 	}
 
 	// Orchestrator's in-memory notion of the current node (DisplayName-based).
@@ -421,7 +441,7 @@ func (s *AppService) resolveEvidenceCurrentNode(
 	if stateCurrent != "" {
 		for _, node := range nodes {
 			if node.DisplayName == stateCurrent {
-				return node, true
+				return node, true, nil
 			}
 		}
 	}
@@ -434,13 +454,13 @@ func (s *AppService) resolveEvidenceCurrentNode(
 		if selection, err := ctrl.GetCurrentSelection(ctx, group); err == nil && selection != "" {
 			for _, node := range nodes {
 				if node.DisplayName == selection {
-					return node, true
+					return node, true, nil
 				}
 			}
 		}
 	}
 
-	return policy.EvidenceNode{}, false
+	return policy.EvidenceNode{}, false, nil
 }
 
 // resolveCandidateNames narrows the policy candidate whitelist by the request's node keys.
