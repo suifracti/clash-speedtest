@@ -478,50 +478,6 @@ func TestAppService_GetMonitorRecommendation_ValidationErrors(t *testing.T) {
 	}
 }
 
-// TestAppService_GetMonitorRecommendation_DiscoversPersistedNodes verifies the restart
-// path: with no live monitor job (job definitions are in-memory only) the node universe
-// is discovered from persisted raw samples.
-func TestAppService_GetMonitorRecommendation_DiscoversPersistedNodes(t *testing.T) {
-	svc, hStore := newEvidenceTestService(t)
-
-	pol := policy.DefaultSwitchPolicy()
-	pol.Mode = policy.ModeRecommend
-	if err := svc.UpdateSwitchPolicy(context.Background(), pol); err != nil {
-		t.Fatalf("UpdateSwitchPolicy: %v", err)
-	}
-
-	hk := evidenceTestNode("HK-01", "10.20.0.1", 8388, "pw-hk")
-	sg := evidenceTestNode("SG-01", "10.20.0.2", 8388, "pw-sg")
-	monitor.PopulateNodeKeys(&hk)
-	monitor.PopulateNodeKeys(&sg)
-
-	now := time.Now()
-	insertEvidenceSamples(t, hStore, hk, "prof-1", "hk", now, 10*time.Second, 30*time.Second, 5, true, 120, "")
-	insertEvidenceSamples(t, hStore, sg, "prof-1", "sg", now, 10*time.Second, 30*time.Second, 5, true, 40, "")
-
-	rec, err := svc.GetMonitorRecommendation(context.Background(), MonitorRecommendationRequest{
-		CurrentNodeKey: hk.NodeKey,
-	})
-	if err != nil {
-		t.Fatalf("GetMonitorRecommendation (discovery): %v", err)
-	}
-	if rec.Snapshot.Source.NodeSetSource != "persisted_samples" {
-		t.Fatalf("expected persisted_samples node set source, got %q", rec.Snapshot.Source.NodeSetSource)
-	}
-	if len(rec.Snapshot.Nodes) != 2 {
-		t.Fatalf("expected 2 discovered nodes, got %d", len(rec.Snapshot.Nodes))
-	}
-	if rec.Decision != policy.DecisionRecommendSwitch {
-		t.Fatalf("expected recommend_switch, got %s", rec.Decision)
-	}
-	if rec.RecommendedNode == nil || rec.RecommendedNode.DisplayName != "SG-01" {
-		t.Fatalf("expected SG-01, got %+v", rec.RecommendedNode)
-	}
-	if rec.SelectNodeCalls != 0 || rec.Executed {
-		t.Fatalf("discovery path must remain non-executing")
-	}
-}
-
 // TestAppService_GetMonitorRecommendation_DoesNotMutateOrchestratorState proves the
 // read-only path leaves the policy and decision state untouched.
 func TestAppService_GetMonitorRecommendation_DoesNotMutateOrchestratorState(t *testing.T) {

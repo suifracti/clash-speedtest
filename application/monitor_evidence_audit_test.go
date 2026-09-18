@@ -41,13 +41,13 @@ func TestAppService_GetMonitorRecommendation_UnmatchedCurrentNodeIsRejected(t *t
 	}
 }
 
-// TestAppService_GetMonitorRecommendation_DiscoveryHorizonCoversFreshnessWindow proves the
-// node-discovery horizon can never be narrower than the freshness horizon.
+// TestAppService_GetMonitorRecommendation_EvidenceWindowCoversFreshnessHorizon proves the
+// observation window can never be narrower than the freshness horizon.
 //
 // With MaxSampleAge = 90m a node whose newest sample is 70m old is still FRESH. If the
-// discovery scan were capped at 1h, that node would be silently omitted from the candidate
-// universe instead of being evaluated.
-func TestAppService_GetMonitorRecommendation_DiscoveryHorizonCoversFreshnessWindow(t *testing.T) {
+// evidence window were capped at 1h, that node would be reported as having no evidence at all
+// instead of being evaluated.
+func TestAppService_GetMonitorRecommendation_EvidenceWindowCoversFreshnessHorizon(t *testing.T) {
 	svc, hStore := newEvidenceTestService(t)
 
 	pol := policy.DefaultSwitchPolicy()
@@ -57,22 +57,31 @@ func TestAppService_GetMonitorRecommendation_DiscoveryHorizonCoversFreshnessWind
 		t.Fatalf("UpdateSwitchPolicy: %v", err)
 	}
 
-	node := evidenceTestNode("OLD-BUT-FRESH", "10.60.0.1", 8388, "pw-old")
-	monitor.PopulateNodeKeys(&node)
+	job, err := svc.CreateMonitorJob(monitor.MonitorJob{
+		ID:        "job_freshness",
+		Name:      "Freshness Horizon",
+		ProfileID: "prof-fresh",
+		ProbeSet:  monitor.ProbeSetLight,
+		Interval:  time.Hour,
+		Nodes:     []monitor.MonitoredNode{evidenceTestNode("OLD-BUT-FRESH", "10.60.0.1", 8388, "pw-old")},
+	})
+	if err != nil {
+		t.Fatalf("CreateMonitorJob: %v", err)
+	}
 
 	now := time.Now()
-	// Newest sample 70m old: beyond the 1h discovery cap, still inside MaxSampleAge.
-	insertEvidenceSamples(t, hStore, node, "prof-old", "old", now, 70*time.Minute, 30*time.Second, 5, true, 120, "")
+	// Newest sample 70m old: beyond a 1h window, still inside MaxSampleAge.
+	insertEvidenceSamples(t, hStore, job.Nodes[0], "prof-fresh", "old", now, 70*time.Minute, 30*time.Second, 5, true, 120, "")
 
-	// No job id → discovery path.
 	rec, err := svc.GetMonitorRecommendation(context.Background(), MonitorRecommendationRequest{
-		CurrentNodeKey: node.NodeKey,
+		JobID:          "job_freshness",
+		CurrentNodeKey: job.Nodes[0].NodeKey,
 	})
 	if err != nil {
 		t.Fatalf("GetMonitorRecommendation: %v", err)
 	}
 	if rec.Snapshot == nil || len(rec.Snapshot.Nodes) != 1 {
-		t.Fatalf("expected the still-fresh node to be discovered, got %+v", rec.Snapshot)
+		t.Fatalf("expected the job node to be evaluated, got %+v", rec.Snapshot)
 	}
 	if rec.CurrentNode == nil || rec.CurrentNode.DisplayName != "OLD-BUT-FRESH" {
 		t.Fatalf("expected the current node to be resolved, got %+v", rec.CurrentNode)
@@ -85,75 +94,5 @@ func TestAppService_GetMonitorRecommendation_DiscoveryHorizonCoversFreshnessWind
 	}
 	if rec.Decision != policy.DecisionStay {
 		t.Fatalf("with a single node there is no candidate, expected stay, got %s", rec.Decision)
-	}
-}
-
-// TestAppService_GetMonitorRecommendation_DiscoveryKeepsSameNodeKeyAcrossProfiles is a
-// self-audit regression for a second-order consequence of ProfileID isolation.
-//
-// The same subscription node can legitimately appear in two profiles with identical
-// credentials. Such nodes share NodeKey, NodeIdentityKey AND ConfigRevisionKey — the ONLY
-// discriminator is ProfileID. If the per-node sample sets are keyed by NodeKey, the two
-// nodes collide and one silently reads the other's evidence.
-func TestAppService_GetMonitorRecommendation_DiscoveryKeepsSameNodeKeyAcrossProfiles(t *testing.T) {
-	svc, hStore := newEvidenceTestService(t)
-
-	pol := policy.DefaultSwitchPolicy()
-	pol.Mode = policy.ModeRecommend
-	if err := svc.UpdateSwitchPolicy(context.Background(), pol); err != nil {
-		t.Fatalf("UpdateSwitchPolicy: %v", err)
-	}
-
-	// Identical proxy config → identical NodeKey / identity / revision.
-	nodeA := evidenceTestNode("SHARED-A", "10.50.0.1", 8388, "same-password")
-	nodeB := evidenceTestNode("SHARED-B", "10.50.0.1", 8388, "same-password")
-	monitor.PopulateNodeKeys(&nodeA)
-	monitor.PopulateNodeKeys(&nodeB)
-
-	if nodeA.NodeKey != nodeB.NodeKey {
-		t.Fatalf("test precondition failed: expected a shared NodeKey, got %q vs %q", nodeA.NodeKey, nodeB.NodeKey)
-	}
-	if nodeA.ConfigRevisionKey != nodeB.ConfigRevisionKey {
-		t.Fatalf("test precondition failed: expected a shared ConfigRevisionKey")
-	}
-
-	now := time.Now()
-	// Profile A is slow (300ms); profile B is fast (10ms) — same physical node.
-	insertEvidenceSamples(t, hStore, nodeA, "prof-A", "pa", now, 10*time.Second, 30*time.Second, 5, true, 300, "")
-	insertEvidenceSamples(t, hStore, nodeB, "prof-B", "pb", now, 10*time.Second, 30*time.Second, 5, true, 10, "")
-
-	// No job id → node discovery path, which groups by (ProfileID, NodeIdentityKey).
-	rec, err := svc.GetMonitorRecommendation(context.Background(), MonitorRecommendationRequest{
-		CurrentNodeKey: nodeA.NodeKey,
-	})
-	if err != nil {
-		t.Fatalf("GetMonitorRecommendation: %v", err)
-	}
-	if rec.Snapshot == nil {
-		t.Fatalf("expected an evidence snapshot")
-	}
-	if len(rec.Snapshot.Nodes) != 2 {
-		t.Fatalf("expected 2 discovered nodes (one per profile), got %d", len(rec.Snapshot.Nodes))
-	}
-
-	// Each logical node must carry its OWN evidence, not its namesake's.
-	byProfile := map[string]*policy.NodeEvidence{}
-	for i := range rec.Snapshot.Nodes {
-		node := &rec.Snapshot.Nodes[i]
-		byProfile[node.ProfileID] = node
-	}
-	a, okA := byProfile["prof-A"]
-	b, okB := byProfile["prof-B"]
-	if !okA || !okB {
-		t.Fatalf("expected both profiles to be discovered, got %+v", byProfile)
-	}
-	if a.SampleCount != 5 || b.SampleCount != 5 {
-		t.Fatalf("expected 5 samples each, got A=%d B=%d", a.SampleCount, b.SampleCount)
-	}
-	if a.LatencyP50 != 300*time.Millisecond {
-		t.Fatalf("profile A must see its own evidence: P50=%s, want 300ms", a.LatencyP50)
-	}
-	if b.LatencyP50 != 10*time.Millisecond {
-		t.Fatalf("profile B must see its own evidence: P50=%s, want 10ms", b.LatencyP50)
 	}
 }

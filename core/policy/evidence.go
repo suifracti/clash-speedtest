@@ -251,8 +251,14 @@ type EvidenceInput struct {
 	SamplesByNode map[string][]EvidenceSample
 	// RawSampleCount is the total number of raw samples fetched from persistence.
 	RawSampleCount int
-	// Truncated indicates the raw sample fetch hit its safety cap.
-	Truncated bool
+	// BudgetExceededNodes lists the SampleSetKey()s whose raw-sample window could not be read
+	// COMPLETELY within the per-node budget. A partial read must never be presented as complete
+	// evidence, so such a node is gated as insufficient instead.
+	BudgetExceededNodes map[string]bool
+	// PagesReadByNode records how many cursor pages were drained per SampleSetKey(). It is
+	// provenance only (never used for a decision) so a reviewer can verify that multi-page
+	// evidence was actually read completely.
+	PagesReadByNode map[string]int
 }
 
 // DefaultEvidenceWindow resolves how much history to scan when the caller does not
@@ -268,6 +274,13 @@ type EvidenceInput struct {
 //
 //	max(4 × MinObservationWindow, 4 × MaxSampleAge, 1h), capped at 24h,
 //	and never smaller than MinObservationWindow.
+//
+// The last clause is load-bearing for MinObservationWindow > 24h: the cap bounds how much
+// history a pathological policy can scan, but it must NEVER truncate the window below an
+// explicitly configured MinObservationWindow, because that would make the requirement
+// unsatisfiable forever and the node permanently insufficient_evidence with no configuration
+// that could ever fix it. So the resolved semantics are: the cap applies to the derived
+// window, and an explicit observation requirement always wins over it.
 func DefaultEvidenceWindow(p SwitchPolicy) time.Duration {
 	window := time.Hour
 	if p.MinObservationWindow > 0 {
@@ -314,6 +327,7 @@ const (
 	GateReasonOtherProfileSamplesExcluded    = "evidence_only_from_other_profile"
 	GateReasonUnknownProfileSamplesExcluded  = "unknown_profile_evidence_excluded"
 	GateReasonProfileIsolationAmbiguous      = "profile_isolation_unavailable"
+	GateReasonEvidenceBudgetExceeded         = "evidence_budget_exceeded"
 )
 
 // EvidenceGate is the exact threshold set that was applied, echoed into the
@@ -423,7 +437,11 @@ type NodeEvidence struct {
 	// all (neither configured nor inferable). The samples are still used — there is nothing
 	// to discriminate on — but the isolation gap is recorded rather than hidden.
 	ProfileIsolationUnknown bool `json:"profile_isolation_unknown,omitempty"`
-	Truncated               bool `json:"truncated"`
+	// EvidenceBudgetExceeded means the raw-sample window could not be drained completely.
+	// The statistics above are then INCOMPLETE and the node is gated as insufficient.
+	EvidenceBudgetExceeded bool `json:"evidence_budget_exceeded,omitempty"`
+	// PagesRead is how many cursor pages were drained for this node (B-01 provenance).
+	PagesRead int `json:"pages_read"`
 }
 
 // EvidenceSnapshot is the full, self-describing evidence bundle handed to the policy engine.
@@ -500,7 +518,7 @@ func BuildEvidenceSnapshot(in EvidenceInput) EvidenceSnapshot {
 		CurrentNodeKey:         in.CurrentNodeKey,
 		CurrentNodeIdentityKey: in.CurrentNodeIdentityKey,
 		RawSampleCount:         in.RawSampleCount,
-		Truncated:              in.Truncated,
+		Truncated:              len(in.BudgetExceededNodes) > 0,
 	}
 
 	// hasCurrent tracks whether the current node has already been claimed, so that only the
@@ -522,7 +540,12 @@ func BuildEvidenceSnapshot(in EvidenceInput) EvidenceSnapshot {
 		if isCurrent {
 			hasCurrent = true
 		}
-		ev := buildNodeEvidence(now, purpose, in.Policy, gate, node, in.SamplesByNode[node.SampleSetKey()], in.Truncated)
+		ev := buildNodeEvidence(
+			now, purpose, in.Policy, gate, node,
+			in.SamplesByNode[node.SampleSetKey()],
+			in.BudgetExceededNodes[node.SampleSetKey()],
+			in.PagesReadByNode[node.SampleSetKey()],
+		)
 		ev.IsCurrent = isCurrent
 		snap.Nodes = append(snap.Nodes, ev)
 	}
@@ -536,7 +559,8 @@ func buildNodeEvidence(
 	gate EvidenceGate,
 	node EvidenceNode,
 	samples []EvidenceSample,
-	truncated bool,
+	budgetExceeded bool,
+	pagesRead int,
 ) NodeEvidence {
 	ev := NodeEvidence{
 		ProfileID:           strings.TrimSpace(node.ProfileID),
@@ -547,6 +571,9 @@ func buildNodeEvidence(
 		EvidenceWindowSince: gate.WindowSince,
 		EvidenceWindowUntil: gate.WindowUntil,
 		ErrorBreakdown:      map[string]int{},
+		PagesRead:           pagesRead,
+
+		EvidenceBudgetExceeded: budgetExceeded,
 	}
 
 	targetRev := strings.TrimSpace(node.ConfigRevisionKey)
@@ -821,6 +848,16 @@ func evaluateSufficiency(ev NodeEvidence, gate EvidenceGate) EvidenceSufficiency
 		sufficiency.Details = append(sufficiency.Details, fmt.Sprintf(
 			"节点 %s 最新样本距今 %s，超过 MaxSampleAge=%s，陈旧数据不得驱动推荐",
 			ev.DisplayName, roundDuration(ev.SampleAge), roundDuration(gate.MaxSampleAge)))
+	}
+
+	if ev.EvidenceBudgetExceeded {
+		// A partial read must never masquerade as complete evidence: the statistics below are
+		// computed from an unknown fraction of the observation window.
+		sufficiency.Sufficient = false
+		sufficiency.Reasons = append(sufficiency.Reasons, GateReasonEvidenceBudgetExceeded)
+		sufficiency.Details = append(sufficiency.Details, fmt.Sprintf(
+			"节点 %s 在观察窗口内的原始样本超过单节点预算，未能完整读取（已读 %d 页），统计值不完整，按证据不足处理",
+			ev.DisplayName, ev.PagesRead))
 	}
 
 	if gate.MinSampleCount > 0 && ev.SampleCount < gate.MinSampleCount {

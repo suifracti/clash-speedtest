@@ -23,41 +23,65 @@ import (
 // The heavy lifting (freshness gate, purpose semantics, decision) lives in
 // core/policy; this file only projects persistence into policy.EvidenceSample.
 //
-// Evidence isolation (all three keys must agree, see policy/evidence.go):
+// -----------------------------------------------------------------------------
+// Candidate membership (B-02)
+// -----------------------------------------------------------------------------
 //
-//	ProfileID         — required, otherwise the same physical endpoint observed under
-//	                    two subscriptions would be aggregated (fingerprint.go R-01).
-//	NodeIdentityKey   — the transport endpoint we query by (spans config revisions).
-//	ConfigRevisionKey — the config/credential revision, filtered by the policy layer.
+// The candidate universe comes from the CURRENT monitor job definition and nowhere else.
+// History is evidence only: a NodeIdentityKey that merely appeared in recent samples must
+// never be promoted back into the candidate set, because the node may have been removed from
+// the subscription or replaced by a new config revision. A candidate therefore always carries
+// the job's current NodeKey / NodeIdentityKey / ConfigRevisionKey, which is also the only
+// place a current revision can be obtained safely.
 //
-// The observation window is resolved by policy.DefaultEvidenceWindow and is NOT
-// derived from MaxSampleAge: MaxSampleAge is a freshness gate on the newest sample,
-// not a statement about how much history is meaningful.
+// -----------------------------------------------------------------------------
+// Evidence read budget and completeness (B-01)
+// -----------------------------------------------------------------------------
+//
+// The observation window is read COMPLETELY by draining the keyset cursor until the window is
+// exhausted. A single cursor page is capped at 1000 rows by the store, so any node with more
+// than 1000 samples in the window necessarily spans several pages. Keyset (not OFFSET)
+// pagination is required because the monitor subsystem writes samples continuously.
+//
+// Budget arithmetic, worst case per request:
+//
+//	rows  = job node count x maxEvidenceSamplesPerNode
+//	pages = job node count x maxEvidencePagesPerNode
+//
+// Both factors are explicit and finite: the node count comes from the job definition (never
+// from history) and the window itself is capped at 24h by policy.DefaultEvidenceWindow.
+// Exceeding the per-node budget does not silently truncate — the node is gated as
+// insufficient_evidence with reason evidence_budget_exceeded. Any page failing aborts the
+// whole request, so a partial read can never be presented as complete evidence.
 // =============================================================================
 
+// Evidence read budget. See the file header for the worst-case arithmetic.
 const (
-	// evidenceSampleLimitPerNode bounds how many raw samples per node are projected into
-	// evidence. Newest-first, so the freshness window is always fully covered.
-	evidenceSampleLimitPerNode = 2000
+	// evidenceCursorPageSize is the page size used while draining a node's raw samples.
+	// The store rejects any limit above 1000.
+	evidenceCursorPageSize = 1000
 
-	// evidenceDiscoverySampleLimit bounds the node-discovery scan when no live monitor job
-	// is available (e.g. after an application restart, since job definitions are in-memory).
-	evidenceDiscoverySampleLimit = 10000
+	// maxEvidenceSamplesPerNode is the total raw-sample budget for one node inside the
+	// evidence window.
+	maxEvidenceSamplesPerNode = 50000
 
-	// evidenceDiscoveryMaxWindow caps the node-discovery scan window independently of the
-	// evidence window, so discovery stays cheap even with a long evidence window.
-	evidenceDiscoveryMaxWindow = time.Hour
+	// maxEvidencePagesPerNode bounds the pagination loop independently of the row budget.
+	maxEvidencePagesPerNode = 60
 )
 
 // MonitorRecommendationRequest selects the evidence window to evaluate.
 type MonitorRecommendationRequest struct {
-	// JobID identifies the monitor job whose node set defines the candidate universe.
-	// When empty, the node set is discovered from persisted raw samples instead.
-	JobID string `json:"job_id,omitempty"`
+	// JobID identifies the monitor job whose CURRENT node set defines the candidate universe.
+	//
+	// It is required: the job definition is the only authoritative source of the current
+	// candidate membership and of each node's current ConfigRevisionKey. Recent history is
+	// evidence only and can never re-introduce a node that was removed from the job.
+	JobID string `json:"job_id"`
 
 	// CurrentNodeKey / CurrentNodeIdentityKey explicitly identify the active node.
 	// When both are empty the service falls back to the orchestrator's in-memory current
 	// node, then to the external controller's current selector value (a read-only call).
+	// An explicitly supplied identifier that matches no job node is a validation error.
 	CurrentNodeKey         string `json:"current_node_key,omitempty"`
 	CurrentNodeIdentityKey string `json:"current_node_identity_key,omitempty"`
 
@@ -65,7 +89,8 @@ type MonitorRecommendationRequest struct {
 	// Empty means "use the configured policy purpose".
 	Purpose string `json:"purpose,omitempty"`
 
-	// CandidateNodeKeys optionally narrows the candidate set to specific node keys.
+	// CandidateNodeKeys optionally narrows the candidate set to specific node keys of the
+	// job. It can only RESTRICT the job's node set, never extend it.
 	// The current node is always evaluated.
 	CandidateNodeKeys []string `json:"candidate_node_keys,omitempty"`
 
@@ -118,8 +143,8 @@ func (s *AppService) GetMonitorRecommendation(
 	evidenceWindow := policy.DefaultEvidenceWindow(pol)
 	since := now.Add(-evidenceWindow)
 
-	// 2. Resolve the node universe (live job definition, or persisted samples).
-	nodes, source, truncated, err := s.collectEvidenceNodes(ctx, req.JobID, pol, since, now)
+	// 2. Resolve the candidate universe from the current job definition (B-02).
+	nodes, source, err := s.collectEvidenceNodes(req.JobID, since, now)
 	if err != nil {
 		return nil, err
 	}
@@ -130,8 +155,9 @@ func (s *AppService) GetMonitorRecommendation(
 		return nil, err
 	}
 
-	// 4. Project raw samples into neutral evidence samples, one query per node identity.
-	samplesByNode, rawTotal, samplesTruncated, err := collectEvidenceSamples(ctx, s.historyStore, nodes, since)
+	// 4. Read the raw samples for every node, draining the cursor until the window is
+	//    exhausted (B-01).
+	sets, err := collectEvidenceSamples(ctx, s.historyStore, nodes, since)
 	if err != nil {
 		return nil, err
 	}
@@ -146,9 +172,10 @@ func (s *AppService) GetMonitorRecommendation(
 		CurrentNodeKey:         nodeKeyOf(current, hasCurrent),
 		CurrentNodeIdentityKey: identityKeyOf(current, hasCurrent),
 		Nodes:                  nodes,
-		SamplesByNode:          samplesByNode,
-		RawSampleCount:         rawTotal,
-		Truncated:              truncated || samplesTruncated,
+		SamplesByNode:          sets.samples,
+		RawSampleCount:         sets.total,
+		BudgetExceededNodes:    sets.budgetExceeded,
+		PagesReadByNode:        sets.pagesRead,
 	})
 
 	evalPolicy := pol
@@ -197,155 +224,97 @@ func parsePolicyPurpose(raw string) (policy.PolicyPurpose, error) {
 	}
 }
 
-// collectEvidenceNodes resolves the node universe and its provenance.
+// collectEvidenceNodes resolves the candidate universe and its provenance.
 //
-// When jobID names a live monitor job, that job's node set is authoritative (it carries
-// the exact ProfileID / NodeIdentityKey / ConfigRevisionKey derived from the raw proxy
-// config). Otherwise the node set is discovered from persisted raw samples, grouped by
-// (ProfileID, NodeIdentityKey) so the same endpoint under different profiles stays
-// separate instead of being collapsed into one node.
+// B-02: the ONLY authoritative source is the current monitor job definition. It carries the
+// current NodeKey / NodeIdentityKey / ConfigRevisionKey derived from the raw proxy config, so
+// a node that was removed from the job simply is not a candidate, and a node whose config
+// revision changed is evaluated against its NEW revision (never against the old one).
 func (s *AppService) collectEvidenceNodes(
-	ctx context.Context,
 	jobID string,
-	p policy.SwitchPolicy,
 	since, now time.Time,
-) ([]policy.EvidenceNode, policy.EvidenceSource, bool, error) {
+) ([]policy.EvidenceNode, policy.EvidenceSource, error) {
 	source := policy.EvidenceSource{
 		LookbackSince: since,
 		LookbackUntil: now,
 	}
 
-	if strings.TrimSpace(jobID) != "" {
-		job, err := s.GetMonitorJob(jobID)
-		if err != nil {
-			// Job definitions live only in memory, so an unknown ID is a client-visible error
-			// rather than silently-empty evidence.
-			return nil, source, false, monitor.WrapValidationError(err)
-		}
-
-		nodes := make([]policy.EvidenceNode, 0, len(job.Nodes))
-		for i := range job.Nodes {
-			node := job.Nodes[i]
-			monitor.PopulateNodeKeys(&node)
-			nodes = append(nodes, policy.EvidenceNode{
-				ProfileID:         job.ProfileID,
-				NodeKey:           node.NodeKey,
-				NodeIdentityKey:   node.NodeIdentityKey,
-				ConfigRevisionKey: node.ConfigRevisionKey,
-				DisplayName:       node.DisplayName,
-			})
-		}
-
-		source.JobID = job.ID
-		source.ProfileID = job.ProfileID
-		source.ProbeSet = string(job.ProbeSet)
-		source.NodeSetSource = "monitor_job"
-		return nodes, source, false, nil
+	if strings.TrimSpace(jobID) == "" {
+		return nil, source, monitor.WrapValidationError(fmt.Errorf(
+			"job_id is required: the candidate set must come from the current monitor job configuration; " +
+				"recent history is evidence only and can never re-introduce a removed node"))
 	}
 
-	// Discovery path: enumerate node identities present in persisted raw samples.
-	//
-	// The discovery horizon is capped so the scan stays cheap, but it must at least cover the
-	// freshness horizon (MaxSampleAge): otherwise a node whose newest sample is older than
-	// the cap yet still within MaxSampleAge would be silently omitted from the candidate
-	// universe instead of being reported as a usable candidate.
-	discoveryWindow := evidenceDiscoveryMaxWindow
-	if p.MaxSampleAge > discoveryWindow {
-		discoveryWindow = p.MaxSampleAge
-	}
-	if evidenceWindow := now.Sub(since); discoveryWindow > evidenceWindow {
-		discoveryWindow = evidenceWindow
-	}
-	discoverySince := now.Add(-discoveryWindow)
-
-	samples, err := s.historyStore.QueryMonitorSamples(ctx, monitor.SampleFilter{
-		Since:     &discoverySince,
-		Limit:     evidenceDiscoverySampleLimit,
-		OrderDesc: true,
-	})
+	job, err := s.GetMonitorJob(jobID)
 	if err != nil {
-		return nil, source, false, fmt.Errorf("discover monitor evidence nodes: %w", err)
+		// Job definitions live only in memory, so an unknown ID is a client-visible error
+		// rather than silently-empty evidence.
+		return nil, source, monitor.WrapValidationError(err)
 	}
 
-	truncated := len(samples) >= evidenceDiscoverySampleLimit
-
-	// Newest-first: the first sample seen for a (profile, identity) pair is the current
-	// revision of that logical node.
-	seen := map[string]struct{}{}
-	profiles := map[string]struct{}{}
-	var nodes []policy.EvidenceNode
-	for _, sample := range samples {
-		if sample == nil {
-			continue
-		}
-		identity := sample.NodeIdentityKey
-		if identity == "" {
-			identity = sample.NodeKey
-		}
-		if identity == "" {
-			continue
-		}
-		profile := strings.TrimSpace(sample.ProfileID)
-		key := profile + "\x00" + identity
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		seen[key] = struct{}{}
-		if profile != "" {
-			profiles[profile] = struct{}{}
-		}
+	nodes := make([]policy.EvidenceNode, 0, len(job.Nodes))
+	for i := range job.Nodes {
+		node := job.Nodes[i]
+		monitor.PopulateNodeKeys(&node)
 		nodes = append(nodes, policy.EvidenceNode{
-			ProfileID:         profile,
-			NodeKey:           sample.NodeKey,
-			NodeIdentityKey:   sample.NodeIdentityKey,
-			ConfigRevisionKey: sample.ConfigRevisionKey,
-			DisplayName:       sample.DisplayNameSnapshot,
+			ProfileID:         job.ProfileID,
+			NodeKey:           node.NodeKey,
+			NodeIdentityKey:   node.NodeIdentityKey,
+			ConfigRevisionKey: node.ConfigRevisionKey,
+			DisplayName:       node.DisplayName,
 		})
 	}
 
-	if len(profiles) == 1 {
-		for profile := range profiles {
-			source.ProfileID = profile
-		}
-	}
-	source.NodeSetSource = "persisted_samples"
-	return nodes, source, truncated, nil
+	source.JobID = job.ID
+	source.ProfileID = job.ProfileID
+	source.ProbeSet = string(job.ProbeSet)
+	source.NodeSetSource = "monitor_job"
+	return nodes, source, nil
 }
 
-// collectEvidenceSamples projects persisted raw samples into policy.EvidenceSample.
+// evidenceSampleSets is the per-node raw-sample read result.
+type evidenceSampleSets struct {
+	samples        map[string][]policy.EvidenceSample
+	budgetExceeded map[string]bool
+	pagesRead      map[string]int
+	total          int
+}
+
+// collectEvidenceSamples reads the complete raw-sample window for each node.
 //
-// Samples are fetched by NodeIdentityKey (which deliberately spans config revisions) and
-// qualified by ProfileID so a logical node's evidence can never be aggregated with the
-// same physical endpoint observed under a different subscription/profile.
-// collectEvidenceSamples reads raw samples for each node from the given store.
-//
-// It takes the store explicitly (rather than reading AppService.historyStore) so the
-// failure path is injectable and testable: a failing query must surface as an error instead
-// of being silently downgraded to "this node has no evidence".
+// It takes the store explicitly (rather than reading AppService.historyStore) so the failure
+// path is injectable and testable: a failing query must surface as an error instead of being
+// silently downgraded to "this node has no evidence".
 func collectEvidenceSamples(
 	ctx context.Context,
 	store monitor.SampleStore,
 	nodes []policy.EvidenceNode,
 	since time.Time,
-) (map[string][]policy.EvidenceSample, int, bool, error) {
-	out := make(map[string][]policy.EvidenceSample, len(nodes))
-	truncated := false
-	total := 0
+) (*evidenceSampleSets, error) {
+	out := &evidenceSampleSets{
+		samples:        make(map[string][]policy.EvidenceSample, len(nodes)),
+		budgetExceeded: map[string]bool{},
+		pagesRead:      make(map[string]int, len(nodes)),
+	}
 
 	for _, node := range nodes {
 		// Keyed by SampleSetKey(), not NodeKey: two logical nodes can share a NodeKey (the
 		// same subscription node in two profiles with identical credentials), and keying by
-		// NodeKey would make one silently read the other's evidence.
+		// NodeKey would make one silently read the evidence of the other.
+		key := node.SampleSetKey()
 		if node.NodeIdentityKey == "" && node.NodeKey == "" {
 			// Without an identity key the query would be unbounded and every sample in the
 			// database would be attributed to this node. Refuse rather than fabricate.
-			out[node.SampleSetKey()] = nil
+			out.samples[key] = nil
 			continue
 		}
 
-		filter := monitor.SampleFilter{
+		// The filter is built once and only its Cursor advances between pages, so the
+		// NodeIdentityKey / ProfileID / Since qualification is provably identical on every
+		// page of the drain.
+		filter := monitor.CursorFilter{
 			Since:     &since,
-			Limit:     evidenceSampleLimitPerNode,
+			Limit:     evidenceCursorPageSize,
 			OrderDesc: true,
 		}
 		if node.NodeIdentityKey != "" {
@@ -357,19 +326,52 @@ func collectEvidenceSamples(
 			filter.ProfileID = node.ProfileID
 		}
 
-		samples, err := store.QueryMonitorSamples(ctx, filter)
+		projected, pages, budgetExceeded, err := drainNodeSamples(ctx, store, node, filter)
 		if err != nil {
-			// A failing query must surface as an error. Swallowing it would report an
-			// infrastructure failure as "this node simply has no evidence", which looks like
-			// an ordinary insufficient-data verdict and hides the real problem.
-			return nil, 0, false, fmt.Errorf("load monitor evidence for node %s: %w", node.DisplayName, err)
-		}
-		if len(samples) >= evidenceSampleLimitPerNode {
-			truncated = true
+			// Any page failing must fail the whole request: using the pages that did succeed
+			// would silently present a partial read as complete evidence.
+			return nil, err
 		}
 
-		projected := make([]policy.EvidenceSample, 0, len(samples))
-		for _, sample := range samples {
+		out.samples[key] = projected
+		out.pagesRead[key] = pages
+		if budgetExceeded {
+			out.budgetExceeded[key] = true
+		}
+		out.total += len(projected)
+	}
+
+	return out, nil
+}
+
+// drainNodeSamples follows the keyset cursor until the observation window is exhausted.
+//
+// Keyset (not OFFSET) pagination is required here because the monitor subsystem writes samples
+// continuously: an OFFSET-based loop would shift rows between pages and silently skip or
+// duplicate samples. The filter is re-sent unchanged on every page — only Cursor is advanced —
+// so the qualification cannot drift mid-drain.
+func drainNodeSamples(
+	ctx context.Context,
+	store monitor.SampleStore,
+	node policy.EvidenceNode,
+	filter monitor.CursorFilter,
+) ([]policy.EvidenceSample, int, bool, error) {
+	var projected []policy.EvidenceSample
+	pages := 0
+
+	for {
+		page, err := store.QueryMonitorSamplesCursor(ctx, filter)
+		if err != nil {
+			return nil, pages, false, fmt.Errorf(
+				"load monitor evidence for node %s (page %d): %w", node.DisplayName, pages+1, err)
+		}
+		if page == nil {
+			return nil, pages, false, fmt.Errorf(
+				"load monitor evidence for node %s (page %d): store returned no page", node.DisplayName, pages+1)
+		}
+		pages++
+
+		for _, sample := range page.Items {
 			if sample == nil {
 				continue
 			}
@@ -390,11 +392,20 @@ func collectEvidenceSamples(
 				RegionBlocked:     regionBlockedFromMetadata(sample.Metadata),
 			})
 		}
-		out[node.SampleSetKey()] = projected
-		total += len(projected)
-	}
 
-	return out, total, truncated, nil
+		// Window exhausted, or the store has nothing more to give.
+		if !page.HasMore || page.NextCursor == "" {
+			return projected, pages, false, nil
+		}
+
+		if len(projected) >= maxEvidenceSamplesPerNode || pages >= maxEvidencePagesPerNode {
+			// The window cannot be read completely within budget. Report it explicitly instead
+			// of handing a partial read to the policy layer as if it were complete.
+			return projected, pages, true, nil
+		}
+
+		filter.Cursor = page.NextCursor
+	}
 }
 
 // regionBlockedFromMetadata surfaces an explicit upstream region-block flag if present.
@@ -429,7 +440,7 @@ func (s *AppService) resolveEvidenceCurrentNode(
 			}
 		}
 		return policy.EvidenceNode{}, false, monitor.WrapValidationError(fmt.Errorf(
-			"current_node_key %q did not match any node in the evidence window", key))
+			"current_node_key %q did not match any node of the monitor job", key))
 	}
 	if identity := strings.TrimSpace(req.CurrentNodeIdentityKey); identity != "" {
 		for _, node := range nodes {
@@ -438,7 +449,7 @@ func (s *AppService) resolveEvidenceCurrentNode(
 			}
 		}
 		return policy.EvidenceNode{}, false, monitor.WrapValidationError(fmt.Errorf(
-			"current_node_identity_key %q did not match any node in the evidence window", identity))
+			"current_node_identity_key %q did not match any node of the monitor job", identity))
 	}
 
 	// Orchestrator's in-memory notion of the current node (DisplayName-based).
@@ -475,9 +486,10 @@ func (s *AppService) resolveEvidenceCurrentNode(
 
 // resolveCandidateNames narrows the policy candidate whitelist by the request's node keys.
 //
+// B-02: it can only RESTRICT the job's node set — membership always originates from the job.
 // Returns (nil, nil) when no narrowing is requested. When the policy already carries a
-// whitelist, the two are intersected rather than replaced. An empty intersection is a
-// client error: silently widening to "all nodes" would be the opposite of the request.
+// whitelist, the two are intersected rather than replaced. An empty intersection is a client
+// error: silently widening to "all nodes" would be the opposite of the request.
 func resolveCandidateNames(
 	p policy.SwitchPolicy,
 	nodes []policy.EvidenceNode,
@@ -518,7 +530,7 @@ func resolveCandidateNames(
 
 	if len(names) == 0 {
 		return nil, monitor.WrapValidationError(fmt.Errorf(
-			"candidate_node_keys did not match any node in the evidence window"))
+			"candidate_node_keys did not match any node of the monitor job"))
 	}
 	return names, nil
 }
