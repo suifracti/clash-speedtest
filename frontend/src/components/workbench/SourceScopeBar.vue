@@ -7,8 +7,8 @@ import * as api from '../../api/bridge'
  * `activeView` is owned by App.vue and switched here so the entry point sits in the same
  * header the user already uses, instead of hiding the timeline behind a modal.
  */
-defineProps<{ activeView: 'workbench' | 'timeline' }>()
-const emit = defineEmits<{ (e: 'update:activeView', value: 'workbench' | 'timeline'): void }>()
+defineProps<{ activeView: 'workbench' | 'monitor-jobs' | 'timeline' }>()
+const emit = defineEmits<{ (e: 'update:activeView', value: 'workbench' | 'monitor-jobs' | 'timeline'): void }>()
 
 const store = useWorkbenchStore()
 
@@ -114,6 +114,18 @@ async function handleLogin() {
           title="节点测速与分诊工作台"
         >
           <span>🧪</span> 工作台
+        </button>
+        <button
+          @click="emit('update:activeView', 'monitor-jobs')"
+          :class="
+            activeView === 'monitor-jobs'
+              ? 'bg-card text-brand shadow-sm font-medium'
+              : 'text-content-secondary hover:text-content-main'
+          "
+          class="px-2.5 py-1 rounded transition-all flex items-center gap-1"
+          title="创建并管理后台监控任务"
+        >
+          <span>🛰️</span> 监控任务
         </button>
         <button
           @click="emit('update:activeView', 'timeline')"

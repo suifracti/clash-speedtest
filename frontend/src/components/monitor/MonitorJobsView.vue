@@ -1,0 +1,376 @@
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import * as api from '../../api/monitor'
+import type { MonitorJob, MonitorJobNode, MonitorNodeOption, MonitorRun } from '../../types'
+
+const emit = defineEmits<{
+  (event: 'open-timeline', payload: { profileId: string; node: MonitorJobNode }): void
+}>()
+
+const options = ref<MonitorNodeOption[]>([])
+const jobs = ref<MonitorJob[]>([])
+const recentRuns = ref<Record<string, MonitorRun[]>>({})
+const runErrors = ref<Record<string, string>>({})
+
+const loading = ref(false)
+const loadError = ref('')
+const feedback = ref('')
+const creating = ref(false)
+const busyJob = ref<{ id: string; action: api.MonitorJobAction } | null>(null)
+
+const name = ref('')
+const profileId = ref('')
+const selectedNodeKeys = ref<string[]>([])
+const probeSet = ref<'light' | 'service' | 'heavy'>('light')
+const intervalSeconds = ref(60)
+const timeoutSeconds = ref(10)
+
+let refreshTimer: ReturnType<typeof setInterval> | null = null
+let refreshInFlight = false
+
+const profileChoices = computed(() => {
+  const byId = new Map<string, { id: string; name: string; count: number }>()
+  for (const node of options.value) {
+    const current = byId.get(node.profileId)
+    if (current) current.count += 1
+    else byId.set(node.profileId, { id: node.profileId, name: node.profileName, count: 1 })
+  }
+  return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name))
+})
+
+const visibleNodes = computed(() => options.value.filter((node) => node.profileId === profileId.value))
+const canCreate = computed(
+  () =>
+    !creating.value &&
+    !!profileId.value &&
+    selectedNodeKeys.value.length > 0 &&
+    intervalSeconds.value >= 1 &&
+    timeoutSeconds.value >= 1
+)
+
+function selectProfile(next: string): void {
+  profileId.value = next
+  const visible = new Set(visibleNodes.value.map((node) => node.nodeKey))
+  selectedNodeKeys.value = selectedNodeKeys.value.filter((key) => visible.has(key))
+}
+
+function onProfileChange(event: Event): void {
+  selectProfile((event.target as HTMLSelectElement).value)
+}
+
+function formatState(state: MonitorJob['state']): string {
+  return { stopped: '已停止', running: '运行中', paused: '已暂停' }[state] ?? state
+}
+
+function stateClass(state: MonitorJob['state']): string {
+  return {
+    stopped: 'text-content-muted bg-card-subtle border-border',
+    running: 'text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border-emerald-500/25',
+    paused: 'text-amber-700 dark:text-amber-300 bg-amber-500/10 border-amber-500/25',
+  }[state]
+}
+
+function probeLabel(probe: MonitorJob['probeSet']): string {
+  return { light: 'Light', service: 'Service', heavy: 'Heavy' }[probe] ?? probe
+}
+
+function runLabel(status: MonitorRun['status']): string {
+  return {
+    running: '执行中',
+    completed: '完成',
+    partial_failed: '部分失败',
+    failed: '失败',
+    skipped: '跳过（重叠）',
+  }[status] ?? status
+}
+
+function formatTime(value: string | undefined): string {
+  if (!value) return '—'
+  const date = new Date(value)
+  return Number.isFinite(date.getTime()) ? date.toLocaleString() : value
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+async function loadRunHistory(nextJobs: MonitorJob[]): Promise<void> {
+	const nextErrors: Record<string, string> = {}
+	const entries = await Promise.all(
+		nextJobs.map(async (job) => {
+		try {
+			return [job.id, await api.fetchMonitorRuns(job.id, 5)] as const
+		} catch (error) {
+			nextErrors[job.id] = errorMessage(error)
+			return [job.id, recentRuns.value[job.id] ?? []] as const
+		}
+	})
+	)
+	runErrors.value = nextErrors
+	recentRuns.value = Object.fromEntries(entries)
+}
+
+async function reload(showSpinner = false): Promise<void> {
+  if (refreshInFlight) return
+  refreshInFlight = true
+  if (showSpinner) loading.value = true
+  loadError.value = ''
+  try {
+    const [nextOptions, nextJobs] = await Promise.all([api.fetchMonitorNodeOptions(), api.fetchMonitorJobs()])
+    options.value = nextOptions
+    jobs.value = nextJobs
+
+    if (!profileChoices.value.some((profile) => profile.id === profileId.value)) {
+      selectProfile(profileChoices.value[0]?.id ?? '')
+    } else {
+      const visible = new Set(visibleNodes.value.map((node) => node.nodeKey))
+      selectedNodeKeys.value = selectedNodeKeys.value.filter((key) => visible.has(key))
+    }
+    await loadRunHistory(nextJobs)
+  } catch (error) {
+    loadError.value = errorMessage(error)
+  } finally {
+    loading.value = false
+    refreshInFlight = false
+  }
+}
+
+async function createJob(): Promise<void> {
+  if (!canCreate.value) return
+  creating.value = true
+  feedback.value = ''
+  loadError.value = ''
+  try {
+    const created = await api.createMonitorJob({
+      name: name.value.trim(),
+      profile_id: profileId.value,
+      node_keys: [...selectedNodeKeys.value],
+      probe_set: probeSet.value,
+      interval_seconds: Number(intervalSeconds.value),
+      timeout_seconds: Number(timeoutSeconds.value),
+    })
+    feedback.value = `已创建“${created.name}”，当前状态为已停止；请明确点击“启动”。`
+    name.value = ''
+    selectedNodeKeys.value = []
+    await reload()
+  } catch (error) {
+    loadError.value = `创建失败：${errorMessage(error)}`
+  } finally {
+    creating.value = false
+  }
+}
+
+async function applyAction(job: MonitorJob, action: api.MonitorJobAction): Promise<void> {
+  if (busyJob.value || (action === 'start' && job.state === 'running') || (action === 'pause' && job.state !== 'running') || (action === 'resume' && job.state !== 'paused')) {
+    return
+  }
+  busyJob.value = { id: job.id, action }
+  feedback.value = ''
+  try {
+    await api.controlMonitorJob(job.id, action)
+    await reload()
+    feedback.value = `已请求${action === 'start' ? '启动' : action === 'pause' ? '暂停' : action === 'resume' ? '恢复' : '停止'}，列表显示的是后端实际状态。`
+  } catch (error) {
+    loadError.value = `操作失败：${errorMessage(error)}`
+    await reload()
+  } finally {
+    busyJob.value = null
+  }
+}
+
+function isBusy(job: MonitorJob, action?: api.MonitorJobAction): boolean {
+  return busyJob.value?.id === job.id && (!action || busyJob.value.action === action)
+}
+
+function openTimeline(job: MonitorJob, node: MonitorJobNode): void {
+  emit('open-timeline', { profileId: job.profileId, node })
+}
+
+onMounted(async () => {
+  await reload(true)
+  // Poll only the read model. Leaving this page never calls Stop/Pause.
+  refreshTimer = setInterval(() => void reload(), 5000)
+})
+
+onBeforeUnmount(() => {
+  if (refreshTimer !== null) clearInterval(refreshTimer)
+})
+</script>
+
+<template>
+  <main class="flex-1 min-h-0 overflow-auto bg-canvas px-4 py-4">
+    <div class="max-w-6xl mx-auto flex flex-col gap-4">
+      <section class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 class="text-base font-semibold text-content-main">监控任务</h2>
+          <p class="mt-1 text-xs text-content-muted">
+            任务配置只在本次应用进程内保留；重启后不会恢复任务，也不会把历史样本显示为活任务。
+          </p>
+        </div>
+        <button
+          @click="reload(true)"
+          :disabled="loading"
+          class="px-3 py-1.5 rounded border border-border text-xs hover:border-brand hover:text-brand disabled:opacity-50"
+        >
+          {{ loading ? '读取中…' : '重新读取实际状态' }}
+        </button>
+      </section>
+
+      <div v-if="loadError" class="rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+        {{ loadError }}
+      </div>
+      <div v-if="feedback" class="rounded border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300">
+        {{ feedback }}
+      </div>
+
+      <section class="rounded-lg border border-border bg-card p-4">
+        <div class="flex items-center justify-between gap-2">
+          <div>
+            <h3 class="text-sm font-semibold">创建任务</h3>
+            <p class="mt-1 text-[11px] text-content-muted">
+              节点来自已缓存订阅的真实配置；前端只提交稳定 node_key，不接触订阅凭据。
+            </p>
+          </div>
+          <span v-if="options.length === 0 && !loading" class="text-[11px] text-amber-700 dark:text-amber-300">暂无可运行节点</span>
+        </div>
+
+        <div class="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[240px_1fr_180px_160px_auto]">
+          <label class="flex flex-col gap-1 text-xs">
+            <span class="font-medium text-content-secondary">订阅</span>
+            <select
+              :value="profileId"
+              @change="onProfileChange"
+              :disabled="profileChoices.length === 0 || creating"
+              class="rounded border border-border bg-card-subtle px-2 py-1.5 text-xs disabled:opacity-50"
+            >
+              <option value="">请选择订阅</option>
+              <option v-for="profile in profileChoices" :key="profile.id" :value="profile.id">
+                {{ profile.name || profile.id }}（{{ profile.count }} 节点）
+              </option>
+            </select>
+          </label>
+
+          <div class="flex min-w-0 flex-col gap-1 text-xs">
+            <span class="font-medium text-content-secondary">节点（{{ selectedNodeKeys.length }} 已选）</span>
+            <div v-if="visibleNodes.length > 0" class="max-h-40 overflow-auto rounded border border-border bg-card-subtle p-2 space-y-1">
+              <label v-for="node in visibleNodes" :key="node.nodeKey" class="flex items-start gap-2 rounded px-1.5 py-1 hover:bg-card">
+                <input v-model="selectedNodeKeys" type="checkbox" :value="node.nodeKey" :disabled="creating" class="mt-0.5 accent-blue-600" />
+                <span class="min-w-0">
+                  <span class="block truncate text-content-main">{{ node.countryFlag }} {{ node.displayName }} <span class="text-content-muted">({{ node.type }})</span></span>
+                  <span class="block truncate font-mono text-[10px] text-content-muted" :title="node.nodeKey">{{ node.nodeKey }}</span>
+                </span>
+              </label>
+            </div>
+            <span v-else class="rounded border border-dashed border-border px-2 py-3 text-content-muted">先选择有缓存的订阅</span>
+          </div>
+
+          <label class="flex flex-col gap-1 text-xs">
+            <span class="font-medium text-content-secondary">探针</span>
+            <select v-model="probeSet" :disabled="creating" class="rounded border border-border bg-card-subtle px-2 py-1.5 text-xs">
+              <option value="light">Light（延迟/轻量 HTTP）</option>
+              <option value="service">Service（常用服务）</option>
+              <option value="heavy">Heavy（深度诊断）</option>
+            </select>
+          </label>
+
+          <label class="flex flex-col gap-1 text-xs">
+            <span class="font-medium text-content-secondary">间隔</span>
+            <select v-model.number="intervalSeconds" :disabled="creating" class="rounded border border-border bg-card-subtle px-2 py-1.5 text-xs">
+              <option :value="10">10 秒</option>
+              <option :value="30">30 秒</option>
+              <option :value="60">1 分钟</option>
+              <option :value="300">5 分钟</option>
+              <option :value="900">15 分钟</option>
+            </select>
+          </label>
+
+          <label class="flex flex-col gap-1 text-xs">
+            <span class="font-medium text-content-secondary">单节点超时</span>
+            <select v-model.number="timeoutSeconds" :disabled="creating" class="rounded border border-border bg-card-subtle px-2 py-1.5 text-xs">
+              <option :value="5">5 秒</option>
+              <option :value="10">10 秒</option>
+              <option :value="30">30 秒</option>
+              <option :value="60">60 秒</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="mt-3 flex flex-wrap items-end gap-3">
+          <label class="flex min-w-[240px] flex-1 flex-col gap-1 text-xs">
+            <span class="font-medium text-content-secondary">任务名称（可选）</span>
+            <input v-model="name" :disabled="creating" placeholder="例如：晚高峰稳定性" class="rounded border border-border bg-card-subtle px-2 py-1.5 text-xs" />
+          </label>
+          <button
+            @click="createJob"
+            :disabled="!canCreate"
+            class="rounded bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {{ creating ? '创建中…' : '创建（不会自动启动）' }}
+          </button>
+        </div>
+      </section>
+
+      <section class="rounded-lg border border-border bg-card p-4">
+        <div class="flex items-center justify-between gap-2">
+          <h3 class="text-sm font-semibold">任务列表</h3>
+          <span class="text-[11px] text-content-muted">{{ jobs.length }} 个进程内任务</span>
+        </div>
+
+        <div v-if="jobs.length === 0" class="mt-4 rounded border border-dashed border-border px-4 py-8 text-center text-xs text-content-muted">
+          尚未创建任务。创建后仍需明确点击“启动”。
+        </div>
+
+        <div v-else class="mt-4 grid grid-cols-1 gap-3 2xl:grid-cols-2">
+          <article v-for="job in jobs" :key="job.id" class="rounded border border-border bg-card-subtle p-3">
+            <div class="flex flex-wrap items-start justify-between gap-2">
+              <div class="min-w-0">
+                <h4 class="truncate text-sm font-semibold">{{ job.name }}</h4>
+                <p class="mt-1 truncate text-[11px] text-content-muted">{{ job.profileName || job.profileId }} · {{ probeLabel(job.probeSet) }} · 每 {{ job.intervalSeconds }} 秒 · 超时 {{ job.timeoutSeconds }} 秒</p>
+              </div>
+              <span class="rounded-full border px-2 py-0.5 text-[11px]" :class="stateClass(job.state)">{{ formatState(job.state) }}</span>
+            </div>
+
+            <div class="mt-3 flex flex-wrap gap-1.5">
+              <button v-if="job.state === 'stopped'" @click="applyAction(job, 'start')" :disabled="!!busyJob" class="rounded border border-emerald-500/40 px-2 py-1 text-[11px] text-emerald-700 hover:bg-emerald-500/10 disabled:opacity-50">
+                {{ isBusy(job, 'start') ? '启动中…' : '启动' }}
+              </button>
+              <button v-else-if="job.state === 'running'" @click="applyAction(job, 'pause')" :disabled="!!busyJob" class="rounded border border-amber-500/40 px-2 py-1 text-[11px] text-amber-700 hover:bg-amber-500/10 disabled:opacity-50">
+                {{ isBusy(job, 'pause') ? '暂停中…' : '暂停' }}
+              </button>
+              <button v-else @click="applyAction(job, 'resume')" :disabled="!!busyJob" class="rounded border border-blue-500/40 px-2 py-1 text-[11px] text-blue-700 hover:bg-blue-500/10 disabled:opacity-50">
+                {{ isBusy(job, 'resume') ? '恢复中…' : '恢复' }}
+              </button>
+              <button @click="applyAction(job, 'stop')" :disabled="job.state === 'stopped' || !!busyJob" class="rounded border border-red-500/40 px-2 py-1 text-[11px] text-red-700 hover:bg-red-500/10 disabled:opacity-40">
+                {{ isBusy(job, 'stop') ? '停止中…' : '停止' }}
+              </button>
+            </div>
+
+            <div class="mt-3 border-t border-border pt-2">
+              <div class="mb-1 text-[11px] font-medium text-content-secondary">节点与时间轴</div>
+              <div class="space-y-1">
+                <div v-for="node in job.nodes" :key="node.nodeKey" class="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                  <span class="min-w-0 truncate text-content-main">{{ node.displayName }} <span class="text-content-muted">({{ node.type }})</span></span>
+                  <button @click="openTimeline(job, node)" class="shrink-0 text-brand hover:underline">查看时间轴</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-3 border-t border-border pt-2">
+              <div class="mb-1 text-[11px] font-medium text-content-secondary">最近运行结果</div>
+              <div v-if="runErrors[job.id]" class="text-[11px] text-red-600 dark:text-red-400">读取失败：{{ runErrors[job.id] }}</div>
+              <div v-else-if="(recentRuns[job.id] ?? []).length === 0" class="text-[11px] text-content-muted">暂无实际运行记录；启动后首轮会立即按现有 Scheduler 语义执行。</div>
+              <div v-else class="space-y-1">
+                <div v-for="run in recentRuns[job.id]" :key="run.runId" class="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                  <span class="text-content-muted">{{ formatTime(run.startedAt) }}</span>
+                  <span :class="run.status === 'completed' ? 'text-emerald-700 dark:text-emerald-300' : run.status === 'running' ? 'text-blue-700 dark:text-blue-300' : 'text-amber-700 dark:text-amber-300'">{{ runLabel(run.status) }}</span>
+                  <span class="text-content-muted">{{ run.successNodes }}/{{ run.totalNodes }} 节点成功</span>
+                  <span v-if="run.errorMessage" class="max-w-full truncate text-red-600 dark:text-red-400" :title="run.errorMessage">{{ run.errorMessage }}</span>
+                </div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
+    </div>
+  </main>
+</template>
