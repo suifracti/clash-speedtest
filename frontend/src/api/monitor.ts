@@ -13,16 +13,25 @@
 
 import { isWails } from './bridge'
 import type {
-  DerivedStats,
-  FacetNode,
-  MonitorSample,
-  MonitorSampleFacets,
-  RawDerivedStatsWire,
-  RawFacetNodeWire,
-  RawMonitorSampleFacetsWire,
-  RawMonitorSampleWire,
-  RawSampleCursorPageWire,
-  SampleCursorPage,
+	DerivedStats,
+	FacetNode,
+	MonitorSample,
+	MonitorSampleFacets,
+	MonitorJob,
+	MonitorJobCreateRequest,
+	MonitorJobNode,
+	MonitorNodeOption,
+	MonitorRun,
+	RawDerivedStatsWire,
+	RawFacetNodeWire,
+	RawMonitorJobNodeWire,
+	RawMonitorJobWire,
+	RawMonitorSampleFacetsWire,
+	RawMonitorSampleWire,
+	RawMonitorNodeOptionWire,
+	RawMonitorRunWire,
+	RawSampleCursorPageWire,
+	SampleCursorPage,
 } from '../types'
 
 const API_BASE = ''
@@ -231,6 +240,135 @@ async function readError(res: Response): Promise<Error> {
     // Keep the status line as the message.
   }
   return new Error(message)
+}
+
+export function normalizeMonitorNodeOption(wire: RawMonitorNodeOptionWire): MonitorNodeOption {
+	return {
+		profileId: wire.profile_id ?? '',
+		profileName: wire.profile_name ?? '',
+		nodeKey: wire.node_key ?? '',
+		nodeIdentityKey: wire.node_identity_key ?? '',
+		configRevisionKey: wire.config_revision_key ?? '',
+		displayName: wire.display_name ?? '',
+		type: wire.type ?? '',
+		countryCode: wire.country_code ?? '',
+		countryFlag: wire.country_flag ?? '',
+	}
+}
+
+function normalizeMonitorJobNode(wire: RawMonitorJobNodeWire): MonitorJobNode {
+	return {
+		nodeKey: wire.node_key ?? '',
+		nodeIdentityKey: wire.node_identity_key ?? '',
+		configRevisionKey: wire.config_revision_key ?? '',
+		displayName: wire.display_name ?? '',
+		type: wire.type ?? '',
+	}
+}
+
+export function normalizeMonitorJob(wire: RawMonitorJobWire): MonitorJob {
+	return {
+		id: wire.id ?? '',
+		name: wire.name ?? '',
+		profileId: wire.profile_id ?? '',
+		profileName: wire.profile_name ?? '',
+		nodeKeys: Array.isArray(wire.node_keys) ? wire.node_keys : [],
+		nodes: (Array.isArray(wire.nodes) ? wire.nodes : []).map(normalizeMonitorJobNode),
+		probeSet: wire.probe_set,
+		intervalSeconds: Number.isFinite(wire.interval_seconds) ? wire.interval_seconds : 0,
+		timeoutSeconds: Number.isFinite(wire.timeout_seconds) ? wire.timeout_seconds : 0,
+		state: wire.state,
+		createdAt: wire.created_at ?? '',
+		updatedAt: wire.updated_at ?? '',
+	}
+}
+
+export function normalizeMonitorRun(wire: RawMonitorRunWire): MonitorRun {
+	return {
+		runId: wire.run_id ?? '',
+		jobId: wire.job_id ?? '',
+		scheduledAt: wire.scheduled_at ?? '',
+		startedAt: wire.started_at ?? '',
+		finishedAt: wire.finished_at,
+		status: wire.status,
+		totalNodes: wire.total_nodes ?? 0,
+		successNodes: wire.success_nodes ?? 0,
+		failedNodes: wire.failed_nodes ?? 0,
+		errorMessage: wire.error_message,
+	}
+}
+
+/** Reads the safe node choices resolved from the current subscription caches. */
+export async function fetchMonitorNodeOptions(): Promise<MonitorNodeOption[]> {
+	if (isWails()) {
+		const raw = await window.go!.desktop!.App!.ListMonitorNodeOptions()
+		return (Array.isArray(raw) ? raw : []).map((item) => normalizeMonitorNodeOption(item as RawMonitorNodeOptionWire))
+	}
+
+	const res = await fetch(`${API_BASE}/api/monitor/nodes`)
+	if (!res.ok) throw await readError(res)
+	const raw = (await res.json()) as RawMonitorNodeOptionWire[]
+	return (Array.isArray(raw) ? raw : []).map(normalizeMonitorNodeOption)
+}
+
+/** Lists the in-memory monitor jobs without exposing subscription credentials. */
+export async function fetchMonitorJobs(): Promise<MonitorJob[]> {
+	if (isWails()) {
+		const raw = await window.go!.desktop!.App!.ListMonitorJobs()
+		return (Array.isArray(raw) ? raw : []).map((item) => normalizeMonitorJob(item as RawMonitorJobWire))
+	}
+
+	const res = await fetch(`${API_BASE}/api/monitor/jobs`)
+	if (!res.ok) throw await readError(res)
+	const raw = (await res.json()) as RawMonitorJobWire[]
+	return (Array.isArray(raw) ? raw : []).map(normalizeMonitorJob)
+}
+
+/** Creates a stopped job. The UI must issue an explicit start action afterwards. */
+export async function createMonitorJob(req: MonitorJobCreateRequest): Promise<MonitorJob> {
+	if (isWails()) {
+		const raw = await window.go!.desktop!.App!.CreateMonitorJob(req)
+		return normalizeMonitorJob(raw as RawMonitorJobWire)
+	}
+
+	const res = await fetch(`${API_BASE}/api/monitor/jobs`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(req),
+	})
+	if (!res.ok) throw await readError(res)
+	return normalizeMonitorJob((await res.json()) as RawMonitorJobWire)
+}
+
+export async function fetchMonitorRuns(jobId: string, limit = 5): Promise<MonitorRun[]> {
+	if (isWails()) {
+		const raw = await window.go!.desktop!.App!.QueryMonitorRuns(jobId, limit)
+		return (Array.isArray(raw) ? raw : []).map((item) => normalizeMonitorRun(item as RawMonitorRunWire))
+	}
+
+	const params = new URLSearchParams({ job_id: jobId, limit: String(limit) })
+	const res = await fetch(`${API_BASE}/api/monitor/runs?${params.toString()}`)
+	if (!res.ok) throw await readError(res)
+	const raw = (await res.json()) as RawMonitorRunWire[]
+	return (Array.isArray(raw) ? raw : []).map(normalizeMonitorRun)
+}
+
+export type MonitorJobAction = 'start' | 'pause' | 'resume' | 'stop'
+
+/** Applies one idempotent scheduler lifecycle action, then the caller re-reads actual state. */
+export async function controlMonitorJob(jobId: string, action: MonitorJobAction): Promise<void> {
+	if (isWails()) {
+		const app = window.go!.desktop!.App!
+		if (action === 'start') return app.StartMonitorJob(jobId)
+		if (action === 'pause') return app.PauseMonitorJob(jobId)
+		if (action === 'resume') return app.ResumeMonitorJob(jobId)
+		return app.StopMonitorJob(jobId)
+	}
+
+	const res = await fetch(`${API_BASE}/api/monitor/jobs/${encodeURIComponent(jobId)}/${action}`, {
+		method: 'POST',
+	})
+	if (!res.ok) throw await readError(res)
 }
 
 /** Reads one page of raw samples via the single-direction keyset cursor. */

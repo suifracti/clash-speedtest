@@ -15,6 +15,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/faceair/clash-speedtest/application"
 	"github.com/faceair/clash-speedtest/core/monitor"
 	"github.com/faceair/clash-speedtest/core/profiles"
 )
@@ -285,24 +286,46 @@ func TestWebServer_MonitorEndpoints(t *testing.T) {
 		t.Fatalf("NewServer error: %v", err)
 	}
 	defer server.Close()
+	seedWebMonitorProfile(t, profileDir, "profile-web-1", "Web Test Subscription", "HK-Node")
+	options, err := server.AppService().ListMonitorNodeOptions()
+	if err != nil || len(options) != 1 {
+		t.Fatalf("ListMonitorNodeOptions: got %d options, err=%v", len(options), err)
+	}
 
 	handler := server.Handler()
 
-	// 1. Create monitor job
-	createPayload := []byte(`{
-		"id": "job_web_1",
-		"name": "Web Test Monitor",
-		"interval": 300000000000,
-		"nodes": [
-			{
-				"display_name": "HK-Node",
-				"type": "ss",
-				"server": "1.2.3.4",
-				"port": 8388,
-				"raw_config": {"type": "ss", "server": "1.2.3.4", "port": 8388}
-			}
-		]
-	}`)
+	// 1. The selection endpoint returns stable identifiers without raw credentials.
+	reqOptions := httptest.NewRequest(http.MethodGet, "/api/monitor/nodes", nil)
+	reqOptions.Host = "127.0.0.1:8080"
+	recOptions := httptest.NewRecorder()
+	handler.ServeHTTP(recOptions, reqOptions)
+	if recOptions.Code != http.StatusOK || strings.Contains(recOptions.Body.String(), "test-password") || strings.Contains(recOptions.Body.String(), "raw_config") {
+		t.Fatalf("GET /api/monitor/nodes must return safe options, got %d / %s", recOptions.Code, recOptions.Body.String())
+	}
+
+	// 2. Raw-config creation is not a supported UI/API path.
+	legacyPayload := []byte(`{"profile_id":"profile-web-1","nodes":[{"display_name":"HK-Node","raw_config":{"password":"test-password"}}]}`)
+	reqLegacy := httptest.NewRequest(http.MethodPost, "/api/monitor/jobs", bytes.NewReader(legacyPayload))
+	reqLegacy.Host = "127.0.0.1:8080"
+	reqLegacy.Header.Set("Content-Type", "application/json")
+	recLegacy := httptest.NewRecorder()
+	handler.ServeHTTP(recLegacy, reqLegacy)
+	if recLegacy.Code != http.StatusBadRequest {
+		t.Fatalf("raw-config monitor job request must be rejected, got %d / %s", recLegacy.Code, recLegacy.Body.String())
+	}
+
+	// 3. Create monitor job
+	createPayload, err := json.Marshal(application.MonitorJobCreateRequest{
+		Name:            "Web Test Monitor",
+		ProfileID:       "profile-web-1",
+		NodeKeys:        []string{options[0].NodeKey},
+		ProbeSet:        monitor.ProbeSetLight,
+		IntervalSeconds: 300,
+		TimeoutSeconds:  10,
+	})
+	if err != nil {
+		t.Fatalf("marshal create payload: %v", err)
+	}
 	reqCreate := httptest.NewRequest(http.MethodPost, "/api/monitor/jobs", bytes.NewReader(createPayload))
 	reqCreate.Host = "127.0.0.1:8080"
 	reqCreate.Header.Set("Content-Type", "application/json")
@@ -311,8 +334,15 @@ func TestWebServer_MonitorEndpoints(t *testing.T) {
 	if recCreate.Code != http.StatusCreated {
 		t.Fatalf("POST /api/monitor/jobs: expected 201 Created, got %d, body: %s", recCreate.Code, recCreate.Body.String())
 	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(recCreate.Body.Bytes(), &created); err != nil || created.ID == "" {
+		t.Fatalf("decode created job id: err=%v body=%s", err, recCreate.Body.String())
+	}
+	jobID := created.ID
 
-	// 2. List monitor jobs
+	// 4. List monitor jobs
 	reqList := httptest.NewRequest(http.MethodGet, "/api/monitor/jobs", nil)
 	reqList.Host = "127.0.0.1:8080"
 	recList := httptest.NewRecorder()
@@ -321,17 +351,17 @@ func TestWebServer_MonitorEndpoints(t *testing.T) {
 		t.Fatalf("GET /api/monitor/jobs: expected 200 OK, got %d", recList.Code)
 	}
 
-	// 3. Get specific job
-	reqGet := httptest.NewRequest(http.MethodGet, "/api/monitor/jobs/job_web_1", nil)
+	// 5. Get specific job
+	reqGet := httptest.NewRequest(http.MethodGet, "/api/monitor/jobs/"+jobID, nil)
 	reqGet.Host = "127.0.0.1:8080"
 	recGet := httptest.NewRecorder()
 	handler.ServeHTTP(recGet, reqGet)
 	if recGet.Code != http.StatusOK {
-		t.Fatalf("GET /api/monitor/jobs/job_web_1: expected 200 OK, got %d", recGet.Code)
+		t.Fatalf("GET /api/monitor/jobs/%s: expected 200 OK, got %d", jobID, recGet.Code)
 	}
 
-	// 4. Start job
-	reqStart := httptest.NewRequest(http.MethodPost, "/api/monitor/jobs/job_web_1/start", nil)
+	// 6. Start job
+	reqStart := httptest.NewRequest(http.MethodPost, "/api/monitor/jobs/"+jobID+"/start", nil)
 	reqStart.Host = "127.0.0.1:8080"
 	recStart := httptest.NewRecorder()
 	handler.ServeHTTP(recStart, reqStart)
@@ -339,8 +369,8 @@ func TestWebServer_MonitorEndpoints(t *testing.T) {
 		t.Fatalf("POST /api/monitor/jobs/job_web_1/start: expected 200 OK, got %d", recStart.Code)
 	}
 
-	// 5. Pause job
-	reqPause := httptest.NewRequest(http.MethodPost, "/api/monitor/jobs/job_web_1/pause", nil)
+	// 7. Pause job
+	reqPause := httptest.NewRequest(http.MethodPost, "/api/monitor/jobs/"+jobID+"/pause", nil)
 	reqPause.Host = "127.0.0.1:8080"
 	recPause := httptest.NewRecorder()
 	handler.ServeHTTP(recPause, reqPause)
@@ -348,8 +378,8 @@ func TestWebServer_MonitorEndpoints(t *testing.T) {
 		t.Fatalf("POST /api/monitor/jobs/job_web_1/pause: expected 200 OK, got %d", recPause.Code)
 	}
 
-	// 6. Resume job
-	reqResume := httptest.NewRequest(http.MethodPost, "/api/monitor/jobs/job_web_1/resume", nil)
+	// 8. Resume job
+	reqResume := httptest.NewRequest(http.MethodPost, "/api/monitor/jobs/"+jobID+"/resume", nil)
 	reqResume.Host = "127.0.0.1:8080"
 	recResume := httptest.NewRecorder()
 	handler.ServeHTTP(recResume, reqResume)
@@ -357,8 +387,8 @@ func TestWebServer_MonitorEndpoints(t *testing.T) {
 		t.Fatalf("POST /api/monitor/jobs/job_web_1/resume: expected 200 OK, got %d", recResume.Code)
 	}
 
-	// 7. Stop job
-	reqStop := httptest.NewRequest(http.MethodPost, "/api/monitor/jobs/job_web_1/stop", nil)
+	// 9. Stop job
+	reqStop := httptest.NewRequest(http.MethodPost, "/api/monitor/jobs/"+jobID+"/stop", nil)
 	reqStop.Host = "127.0.0.1:8080"
 	recStop := httptest.NewRecorder()
 	handler.ServeHTTP(recStop, reqStop)
@@ -366,8 +396,8 @@ func TestWebServer_MonitorEndpoints(t *testing.T) {
 		t.Fatalf("POST /api/monitor/jobs/job_web_1/stop: expected 200 OK, got %d", recStop.Code)
 	}
 
-	// 8. Query runs
-	reqRuns := httptest.NewRequest(http.MethodGet, "/api/monitor/runs?job_id=job_web_1", nil)
+	// 10. Query runs
+	reqRuns := httptest.NewRequest(http.MethodGet, "/api/monitor/runs?job_id="+jobID, nil)
 	reqRuns.Host = "127.0.0.1:8080"
 	recRuns := httptest.NewRecorder()
 	handler.ServeHTTP(recRuns, reqRuns)
@@ -375,7 +405,7 @@ func TestWebServer_MonitorEndpoints(t *testing.T) {
 		t.Fatalf("GET /api/monitor/runs: expected 200 OK, got %d", recRuns.Code)
 	}
 
-	// 9. Query samples
+	// 11. Query samples
 	reqSamples := httptest.NewRequest(http.MethodGet, "/api/monitor/samples?probe_type=rtt", nil)
 	reqSamples.Host = "127.0.0.1:8080"
 	recSamples := httptest.NewRecorder()
@@ -384,7 +414,7 @@ func TestWebServer_MonitorEndpoints(t *testing.T) {
 		t.Fatalf("GET /api/monitor/samples: expected 200 OK, got %d", recSamples.Code)
 	}
 
-	// 10. Query timeline
+	// 12. Query timeline
 	reqTimeline := httptest.NewRequest(http.MethodGet, "/api/monitor/timeline?node_key=test_nk", nil)
 	reqTimeline.Host = "127.0.0.1:8080"
 	recTimeline := httptest.NewRecorder()
@@ -827,8 +857,3 @@ func TestWebServer_MigrationContinuity_Endpoint(t *testing.T) {
 		t.Errorf("unexpected continuous item sequence: %s, %s", page.Items[0].SampleID, page.Items[1].SampleID)
 	}
 }
-
-
-
-
-

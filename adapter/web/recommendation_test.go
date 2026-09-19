@@ -80,6 +80,11 @@ func TestWebServer_MonitorRecommendation_ReadOnlyEndpoint(t *testing.T) {
 		t.Fatalf("NewServer error: %v", err)
 	}
 	defer server.Close()
+	seedWebMonitorProfile(t, profileDir, "prof-web", "Recommendation Subscription", "HK-01", "SG-01")
+	options, err := server.AppService().ListMonitorNodeOptions()
+	if err != nil || len(options) != 2 {
+		t.Fatalf("ListMonitorNodeOptions: got %d options, err=%v", len(options), err)
+	}
 
 	spy := &webReadOnlyController{selected: "HK-01"}
 	server.AppService().SetController(spy, application.ControllerConfigDTO{
@@ -90,19 +95,17 @@ func TestWebServer_MonitorRecommendation_ReadOnlyEndpoint(t *testing.T) {
 	handler := server.Handler()
 
 	// 1. Register the monitor job that defines the candidate universe.
-	createPayload := []byte(`{
-		"id": "job_rec_web",
-		"name": "Recommendation Web Job",
-		"profile_id": "prof-web",
-		"probe_set": "service",
-		"interval": 3600000000000,
-		"nodes": [
-			{"display_name": "HK-01", "type": "ss", "server": "10.30.0.1", "port": 8388,
-			 "raw_config": {"type": "ss", "server": "10.30.0.1", "port": 8388, "password": "pw-hk"}},
-			{"display_name": "SG-01", "type": "ss", "server": "10.30.0.2", "port": 8388,
-			 "raw_config": {"type": "ss", "server": "10.30.0.2", "port": 8388, "password": "pw-sg"}}
-		]
-	}`)
+	createPayload, err := json.Marshal(application.MonitorJobCreateRequest{
+		Name:            "Recommendation Web Job",
+		ProfileID:       "prof-web",
+		NodeKeys:        []string{options[0].NodeKey, options[1].NodeKey},
+		ProbeSet:        monitor.ProbeSetService,
+		IntervalSeconds: 3600,
+		TimeoutSeconds:  10,
+	})
+	if err != nil {
+		t.Fatalf("marshal create payload: %v", err)
+	}
 	reqCreate := httptest.NewRequest(http.MethodPost, "/api/monitor/jobs", bytes.NewReader(createPayload))
 	reqCreate.Host = "127.0.0.1:8080"
 	reqCreate.Header.Set("Content-Type", "application/json")
@@ -119,6 +122,7 @@ func TestWebServer_MonitorRecommendation_ReadOnlyEndpoint(t *testing.T) {
 	if len(job.Nodes) != 2 || job.Nodes[0].NodeKey == "" {
 		t.Fatalf("expected 2 nodes with generated keys, got %+v", job.Nodes)
 	}
+	jobID := job.ID
 
 	// 2. Configure the policy through the existing read/write policy endpoint.
 	policyPayload := []byte(`{
@@ -175,7 +179,7 @@ func TestWebServer_MonitorRecommendation_ReadOnlyEndpoint(t *testing.T) {
 	saveSamples(job.Nodes[1].NodeKey, job.Nodes[1].NodeIdentityKey, job.Nodes[1].ConfigRevisionKey, "SG-01", 40)
 
 	// 4. GET the read-only recommendation.
-	url := "/api/monitor/recommendation?job_id=job_rec_web&current_node_key=" + job.Nodes[0].NodeKey
+	url := "/api/monitor/recommendation?job_id=" + jobID + "&current_node_key=" + job.Nodes[0].NodeKey
 	reqRec := httptest.NewRequest(http.MethodGet, url, nil)
 	reqRec.Host = "127.0.0.1:8080"
 	recRec := httptest.NewRecorder()
@@ -215,7 +219,7 @@ func TestWebServer_MonitorRecommendation_ReadOnlyEndpoint(t *testing.T) {
 	if rec.ConfidenceBasis.Formula == "" || rec.ConfidenceBasis.Detail == "" {
 		t.Fatalf("confidence must be explained, got %+v", rec.ConfidenceBasis)
 	}
-	if rec.Snapshot == nil || rec.Snapshot.Source.JobID != "job_rec_web" {
+	if rec.Snapshot == nil || rec.Snapshot.Source.JobID != jobID {
 		t.Fatalf("expected the evidence snapshot provenance to be preserved")
 	}
 	if rec.ObservationWindow != 2*time.Minute || rec.SampleCount != 5 {
@@ -231,7 +235,7 @@ func TestWebServer_MonitorRecommendation_ReadOnlyEndpoint(t *testing.T) {
 	}
 
 	// 5. Validation surface → 400.
-	badPurpose := httptest.NewRequest(http.MethodGet, "/api/monitor/recommendation?job_id=job_rec_web&purpose=bogus", nil)
+	badPurpose := httptest.NewRequest(http.MethodGet, "/api/monitor/recommendation?job_id="+jobID+"&purpose=bogus", nil)
 	badPurpose.Host = "127.0.0.1:8080"
 	recBadPurpose := httptest.NewRecorder()
 	handler.ServeHTTP(recBadPurpose, badPurpose)
