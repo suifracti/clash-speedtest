@@ -73,8 +73,8 @@ func (a *App) ListWorkbenchLatencyTests(query application.WorkbenchLatencyHistor
 	return a.app.ListWorkbenchLatencyTests(a.context(), query)
 }
 
-func (a *App) GetWorkbenchLatencyTest(attemptID string) (*application.WorkbenchLatencyTestDTO, error) {
-	return a.app.GetWorkbenchLatencyTest(a.context(), attemptID)
+func (a *App) GetWorkbenchLatencyTest(query application.WorkbenchLatencyHistoryDetailQuery) (*application.WorkbenchLatencyTestDTO, error) {
+	return a.app.GetWorkbenchLatencyTest(a.context(), query)
 }
 
 func (a *App) StopTest() {

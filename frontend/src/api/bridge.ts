@@ -18,6 +18,7 @@ import type {
   SwitchEvent,
   WorkbenchLatencyTestRequest,
   WorkbenchLatencyHistoryQuery,
+  WorkbenchLatencyHistoryDetailQuery,
   WorkbenchLatencyTest,
 } from '../types'
 
@@ -52,6 +53,8 @@ export function subscribeEvents(onEvent: (type: string, payload: any) => void): 
       'single_test_started',
       'single_node_progress',
       'single_test_completed',
+      'workbench_latency_test_completed',
+      'workbench_latency_test_persistence_updated',
       'antigravity_token_updated',
       'antigravity_login_failed',
       'controller_status_changed',
@@ -199,11 +202,12 @@ export async function fetchWorkbenchLatencyHistory(query: WorkbenchLatencyHistor
   return res.json()
 }
 
-export async function fetchWorkbenchLatencyTest(attemptID: string): Promise<WorkbenchLatencyTest> {
+export async function fetchWorkbenchLatencyTest(query: WorkbenchLatencyHistoryDetailQuery): Promise<WorkbenchLatencyTest> {
   if (isWails()) {
-    return window.go!.desktop!.App!.GetWorkbenchLatencyTest(attemptID)
+    return window.go!.desktop!.App!.GetWorkbenchLatencyTest(query)
   }
-  const res = await fetch(`${API_BASE}/api/workbench/latency-tests/${encodeURIComponent(attemptID)}`)
+  const params = new URLSearchParams({ profile_id: query.profile_id, node_key: query.node_key })
+  const res = await fetch(`${API_BASE}/api/workbench/latency-tests/${encodeURIComponent(query.attempt_id)}?${params.toString()}`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }

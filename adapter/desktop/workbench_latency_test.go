@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/faceair/clash-speedtest/application"
 	"github.com/faceair/clash-speedtest/core/history"
@@ -18,7 +19,7 @@ import (
 
 func TestDesktopWorkbenchLatencyContractAndReopen(t *testing.T) {
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
+		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(proxy.Close)
 	proxyURL, err := url.Parse(proxy.URL)
@@ -69,9 +70,10 @@ func TestDesktopWorkbenchLatencyContractAndReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Wails latency test: %v", err)
 	}
-	if result.PersistenceState != "saved" || len(result.Samples) == 0 {
+	if result.PersistenceState != "saving" || len(result.Samples) == 0 {
 		t.Fatalf("unexpected Wails result: %+v", result)
 	}
+	waitDesktopLatencyHistory(t, app, options[0].NodeKey, result.AttemptID)
 	app.Shutdown(context.Background())
 
 	reopenedStore, err := history.NewStore(historyDir)
@@ -81,11 +83,35 @@ func TestDesktopWorkbenchLatencyContractAndReopen(t *testing.T) {
 	reopenedApp := NewApp(reopenedStore, paths, "test-ua")
 	reopenedApp.Startup(context.Background())
 	defer reopenedApp.Shutdown(context.Background())
-	reopened, err := reopenedApp.GetWorkbenchLatencyTest(result.AttemptID)
+	reopened, err := reopenedApp.GetWorkbenchLatencyTest(application.WorkbenchLatencyHistoryDetailQuery{
+		ProfileID: "profile-wails",
+		NodeKey:   options[0].NodeKey,
+		AttemptID: result.AttemptID,
+	})
 	if err != nil {
 		t.Fatalf("Wails reopen query: %v", err)
 	}
 	if reopened.ProfileID != "profile-wails" || len(reopened.Samples) != len(result.Samples) {
 		t.Fatalf("reopened Wails result mismatch: %+v", reopened)
 	}
+}
+
+func waitDesktopLatencyHistory(t *testing.T, app *App, nodeKey, attemptID string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		rows, err := app.ListWorkbenchLatencyTests(application.WorkbenchLatencyHistoryQuery{
+			ProfileID: "profile-wails",
+			NodeKey:   nodeKey,
+		})
+		if err == nil {
+			for _, row := range rows {
+				if row.AttemptID == attemptID && row.PersistenceState == "saved" {
+					return
+				}
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for Wails history attempt %s", attemptID)
 }

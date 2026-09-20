@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/faceair/clash-speedtest/application"
 	"github.com/faceair/clash-speedtest/core/profiles"
@@ -18,7 +19,7 @@ import (
 
 func TestWebWorkbenchLatencyContractAndReopen(t *testing.T) {
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
+		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(proxy.Close)
 	proxyURL, err := url.Parse(proxy.URL)
@@ -86,8 +87,11 @@ func TestWebWorkbenchLatencyContractAndReopen(t *testing.T) {
 	if err := json.Unmarshal(testRec.Body.Bytes(), &result); err != nil {
 		t.Fatalf("decode result: %v", err)
 	}
-	if result.PersistenceState != "saved" || len(result.Samples) == 0 {
+	if result.PersistenceState != "saving" || len(result.Samples) == 0 {
 		t.Fatalf("unexpected Web result: %+v", result)
+	}
+	if rows := waitWebLatencyHistory(t, server.Handler(), options[0].NodeKey, result.AttemptID); len(rows) != 1 {
+		t.Fatalf("async Web history: %+v", rows)
 	}
 	if err := server.Close(); err != nil {
 		t.Fatalf("close first server: %v", err)
@@ -112,4 +116,42 @@ func TestWebWorkbenchLatencyContractAndReopen(t *testing.T) {
 	if rows[0].AttemptID != result.AttemptID || len(rows[0].Samples) != len(result.Samples) {
 		t.Fatalf("reopened Web history mismatch: %+v", rows)
 	}
+	detailReq := httptest.NewRequest(http.MethodGet, "/api/workbench/latency-tests/"+url.PathEscape(result.AttemptID)+"?profile_id=profile-web&node_key="+url.QueryEscape(options[0].NodeKey), nil)
+	detailReq.Host = "127.0.0.1:8080"
+	detailRec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(detailRec, detailReq)
+	if detailRec.Code != http.StatusOK {
+		t.Fatalf("scoped detail status: %d body=%s", detailRec.Code, detailRec.Body.String())
+	}
+	wrongScopeReq := httptest.NewRequest(http.MethodGet, "/api/workbench/latency-tests/"+url.PathEscape(result.AttemptID)+"?profile_id=other-profile&node_key="+url.QueryEscape(options[0].NodeKey), nil)
+	wrongScopeReq.Host = "127.0.0.1:8080"
+	wrongScopeRec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(wrongScopeRec, wrongScopeReq)
+	if wrongScopeRec.Code != http.StatusBadRequest {
+		t.Fatalf("wrong-scope detail should be rejected, got %d body=%s", wrongScopeRec.Code, wrongScopeRec.Body.String())
+	}
+}
+
+func waitWebLatencyHistory(t *testing.T, handler http.Handler, nodeKey, attemptID string) []application.WorkbenchLatencyTestDTO {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		req := httptest.NewRequest(http.MethodGet, "/api/workbench/latency-tests?profile_id=profile-web&node_key="+url.QueryEscape(nodeKey), nil)
+		req.Host = "127.0.0.1:8080"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code == http.StatusOK {
+			var rows []application.WorkbenchLatencyTestDTO
+			if err := json.Unmarshal(rec.Body.Bytes(), &rows); err == nil {
+				for _, row := range rows {
+					if row.AttemptID == attemptID && row.PersistenceState == "saved" {
+						return rows
+					}
+				}
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for Web history attempt %s", attemptID)
+	return nil
 }

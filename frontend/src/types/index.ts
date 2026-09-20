@@ -154,6 +154,12 @@ export interface WorkbenchLatencyHistoryQuery {
   limit?: number
 }
 
+export interface WorkbenchLatencyHistoryDetailQuery {
+  profile_id: string
+  node_key: string
+  attempt_id: string
+}
+
 export interface WorkbenchLatencySample {
   seq: number
   timestamp: string
@@ -185,7 +191,7 @@ export interface WorkbenchLatencyTest {
   failure_samples: number
   error_message?: string
   samples: WorkbenchLatencySample[]
-  persistence_state: 'saved' | 'failed'
+  persistence_state: 'saving' | 'saved' | 'failed'
   persistence_error?: string
 }
 

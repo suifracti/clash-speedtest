@@ -43,6 +43,14 @@ type WorkbenchLatencyHistoryQuery struct {
 	Limit     int    `json:"limit,omitempty"`
 }
 
+// WorkbenchLatencyHistoryDetailQuery binds a detail read to the same logical
+// node scope and immutable attempt ID that produced the history row.
+type WorkbenchLatencyHistoryDetailQuery struct {
+	ProfileID string `json:"profile_id"`
+	NodeKey   string `json:"node_key"`
+	AttemptID string `json:"attempt_id"`
+}
+
 type WorkbenchLatencySampleDTO struct {
 	Seq       int       `json:"seq"`
 	Timestamp time.Time `json:"timestamp"`

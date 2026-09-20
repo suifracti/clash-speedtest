@@ -1,8 +1,17 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { fetchMonitorNodeOptions } from '../../api/monitor'
 import * as api from '../../api/bridge'
 import LatencySamplePlot from './LatencySamplePlot.vue'
+import {
+  acceptsLatencyDetailResponse,
+  acceptsLatencyScopeResponse,
+  acceptsLatencyTestResult,
+  sameLatencyScope,
+  testMatchesLatencyScope,
+  type LatencyAttemptScope,
+  type LatencyScope,
+} from './latencyRequestGuard'
 import type { MonitorNodeOption, WorkbenchLatencyTest } from '../../types'
 
 const options = ref<MonitorNodeOption[]>([])
@@ -21,9 +30,17 @@ const selectedAttemptID = ref('')
 const testing = ref(false)
 const testError = ref('')
 const persistenceNotice = ref('')
+const detailLoading = ref(false)
 const expanded = ref(false)
 const hoveredIndex = ref<number | null>(null)
 const pinnedIndex = ref<number | null>(null)
+
+let historyRequestID = 0
+let detailRequestID = 0
+let runRequestID = 0
+let activeRunID = 0
+let unsubscribeEvents: (() => void) | null = null
+const pendingPersistence = new Map<string, WorkbenchLatencyTest>()
 
 const profileOptions = computed(() => {
   const seen = new Set<string>()
@@ -81,6 +98,65 @@ function sampleLabel(sample: WorkbenchLatencyTest['samples'][number] | null): st
   return `${sample.latency_ms} ms`
 }
 
+function currentScope(): LatencyScope {
+  return { profileId: selectedProfileId.value, nodeKey: selectedNodeKey.value }
+}
+
+function takePendingPersistence(test: WorkbenchLatencyTest): WorkbenchLatencyTest {
+  const update = pendingPersistence.get(test.attempt_id)
+  if (!update || !testMatchesLatencyScope(update, currentScope())) return test
+  pendingPersistence.delete(test.attempt_id)
+  return update
+}
+
+function isWorkbenchLatencyTestPayload(payload: unknown): payload is WorkbenchLatencyTest {
+  if (!payload || typeof payload !== 'object') return false
+  const test = payload as Partial<WorkbenchLatencyTest>
+  return typeof test.attempt_id === 'string' &&
+    typeof test.profile_id === 'string' &&
+    typeof test.node_key === 'string' &&
+    (test.persistence_state === 'saving' || test.persistence_state === 'saved' || test.persistence_state === 'failed')
+}
+
+function handlePersistenceEvent(type: string, payload: unknown) {
+  if (type !== 'workbench_latency_test_persistence_updated' || !isWorkbenchLatencyTestPayload(payload)) return
+
+  pendingPersistence.set(payload.attempt_id, payload)
+  while (pendingPersistence.size > 20) {
+    const oldest = pendingPersistence.keys().next().value
+    if (oldest) pendingPersistence.delete(oldest)
+    else break
+  }
+
+  const scope = currentScope()
+  if (!testMatchesLatencyScope(payload, scope)) return
+
+  let applied = false
+  if (currentResult.value?.attempt_id === payload.attempt_id && testMatchesLatencyScope(currentResult.value, scope)) {
+    currentResult.value = payload
+    applied = true
+  }
+  if (focusedTest.value?.attempt_id === payload.attempt_id && testMatchesLatencyScope(focusedTest.value, scope)) {
+    focusedTest.value = payload
+    applied = true
+  }
+  const historyIndex = history.value.findIndex((item) => item.attempt_id === payload.attempt_id)
+  if (historyIndex >= 0 && testMatchesLatencyScope(history.value[historyIndex], scope)) {
+    history.value.splice(historyIndex, 1, payload)
+    applied = true
+  }
+
+  if (applied) {
+    pendingPersistence.delete(payload.attempt_id)
+    if (payload.persistence_state === 'failed') {
+      persistenceNotice.value = payload.persistence_error || '测试完成，但历史保存失败'
+    } else if (payload.persistence_state === 'saved') {
+      persistenceNotice.value = ''
+      void loadHistory()
+    }
+  }
+}
+
 async function loadOptions() {
   optionsLoading.value = true
   optionsError.value = ''
@@ -100,25 +176,39 @@ async function loadOptions() {
 }
 
 async function loadHistory() {
-  if (!selectedProfileId.value || !selectedNodeKey.value) {
+  const scope = currentScope()
+  const requestID = ++historyRequestID
+  if (!scope.profileId || !scope.nodeKey) {
     history.value = []
     focusedTest.value = null
+    historyLoading.value = false
     return
   }
   historyLoading.value = true
   historyError.value = ''
   try {
-    history.value = await api.fetchWorkbenchLatencyHistory({
-      profile_id: selectedProfileId.value,
-      node_key: selectedNodeKey.value,
+    const loaded = await api.fetchWorkbenchLatencyHistory({
+      profile_id: scope.profileId,
+      node_key: scope.nodeKey,
       limit: 20,
     })
-    focusedTest.value = history.value[0] || null
+    if (!acceptsLatencyScopeResponse(requestID, historyRequestID, scope, currentScope())) return
+    if (loaded.some((test) => !testMatchesLatencyScope(test, scope))) {
+      historyError.value = '历史响应归属不一致，已忽略本次结果，请重试'
+      history.value = []
+      focusedTest.value = null
+      return
+    }
+    history.value = loaded
+    const preserved = selectedAttemptID.value ? loaded.find((test) => test.attempt_id === selectedAttemptID.value) : null
+    focusedTest.value = preserved || loaded[0] || null
     selectedAttemptID.value = focusedTest.value?.attempt_id || ''
   } catch (error) {
-    historyError.value = messageFor(error)
+    if (acceptsLatencyScopeResponse(requestID, historyRequestID, scope, currentScope())) {
+      historyError.value = messageFor(error)
+    }
   } finally {
-    historyLoading.value = false
+    if (requestID === historyRequestID && sameLatencyScope(scope, currentScope())) historyLoading.value = false
   }
 }
 
@@ -128,6 +218,10 @@ watch(selectedProfileId, async () => {
   currentResult.value = null
   pinnedIndex.value = null
   hoveredIndex.value = null
+  history.value = []
+  focusedTest.value = null
+  selectedAttemptID.value = ''
+  detailRequestID++
   await loadHistory()
 })
 
@@ -137,11 +231,16 @@ watch(selectedNodeKey, async () => {
   selectedAttemptID.value = ''
   pinnedIndex.value = null
   hoveredIndex.value = null
+  history.value = []
+  detailRequestID++
   await loadHistory()
 })
 
 async function runTest() {
   if (testing.value || !selectedNode.value) return
+  const scope = currentScope()
+  const requestID = ++runRequestID
+  activeRunID = requestID
   testing.value = true
   testError.value = ''
   persistenceNotice.value = ''
@@ -151,35 +250,55 @@ async function runTest() {
   hoveredIndex.value = null
   try {
     const result = await api.runWorkbenchLatencyTest({
-      profile_id: selectedProfileId.value,
-      node_key: selectedNodeKey.value,
+      profile_id: scope.profileId,
+      node_key: scope.nodeKey,
       test_project: 'latency_stability',
       timeout_seconds: 5,
     })
-    currentResult.value = result
-    focusedTest.value = result
-    selectedAttemptID.value = result.attempt_id
-    if (result.persistence_state === 'failed') {
-      persistenceNotice.value = result.persistence_error || '测试完成，但历史保存失败'
-    } else {
+    if (!acceptsLatencyTestResult(requestID, runRequestID, scope, currentScope(), result)) return
+    const boundResult = takePendingPersistence(result)
+    currentResult.value = boundResult
+    focusedTest.value = boundResult
+    selectedAttemptID.value = boundResult.attempt_id
+    if (boundResult.persistence_state === 'failed') {
+      persistenceNotice.value = boundResult.persistence_error || '测试完成，但历史保存失败'
+    } else if (boundResult.persistence_state === 'saved') {
+      persistenceNotice.value = ''
       await loadHistory()
-      const saved = history.value.find((item) => item.attempt_id === result.attempt_id)
-      focusedTest.value = saved || result
     }
   } catch (error) {
-    testError.value = messageFor(error)
+    if (requestID === activeRunID && sameLatencyScope(scope, currentScope())) testError.value = messageFor(error)
   } finally {
-    testing.value = false
+    if (requestID === activeRunID) {
+      activeRunID = 0
+      testing.value = false
+    }
   }
 }
 
 async function selectHistory(test: WorkbenchLatencyTest) {
+  const scope = currentScope()
+  if (!testMatchesLatencyScope(test, scope) || !test.attempt_id) return
+  const requestID = ++detailRequestID
+  const requested: LatencyAttemptScope = { ...scope, attemptId: test.attempt_id }
   selectedAttemptID.value = test.attempt_id
+  focusedTest.value = test
   historyError.value = ''
+  detailLoading.value = true
   try {
-    focusedTest.value = await api.fetchWorkbenchLatencyTest(test.attempt_id)
+    const loaded = await api.fetchWorkbenchLatencyTest({
+      profile_id: requested.profileId,
+      node_key: requested.nodeKey,
+      attempt_id: requested.attemptId,
+    })
+    if (!acceptsLatencyDetailResponse(requestID, detailRequestID, requested, currentScope(), selectedAttemptID.value, loaded)) return
+    focusedTest.value = loaded
   } catch (error) {
-    historyError.value = messageFor(error)
+    if (acceptsLatencyDetailResponse(requestID, detailRequestID, requested, currentScope(), selectedAttemptID.value, test)) {
+      historyError.value = messageFor(error)
+    }
+  } finally {
+    if (requestID === detailRequestID && sameLatencyScope(scope, currentScope())) detailLoading.value = false
   }
   currentResult.value = null
   pinnedIndex.value = null
@@ -200,7 +319,15 @@ function clearPin() {
   hoveredIndex.value = null
 }
 
-onMounted(loadOptions)
+onMounted(async () => {
+  unsubscribeEvents = api.subscribeEvents(handlePersistenceEvent)
+  await loadOptions()
+})
+
+onUnmounted(() => {
+  unsubscribeEvents?.()
+  unsubscribeEvents = null
+})
 </script>
 
 <template>
@@ -287,6 +414,9 @@ onMounted(loadOptions)
             <div v-if="displayedTest" class="text-right text-xs text-content-muted">
               <div :class="['font-medium', statusClass(displayedTest)]">{{ statusLabel(displayedTest) }}</div>
               <div>{{ formatTime(displayedTest.finished_at) }}</div>
+              <div v-if="displayedTest.persistence_state === 'saving'" class="mt-1 text-amber-600 dark:text-amber-400">历史保存中…</div>
+              <div v-else-if="displayedTest.persistence_state === 'saved'" class="mt-1 text-emerald-600 dark:text-emerald-400">历史已保存</div>
+              <div v-else class="mt-1 text-red-600 dark:text-red-400">历史保存失败</div>
             </div>
           </div>
 
@@ -344,7 +474,7 @@ onMounted(loadOptions)
               <p class="text-xs font-semibold text-content-muted">已保存历史</p>
               <h3 class="mt-1 text-base font-semibold text-content-main">这个节点的测试记录</h3>
             </div>
-            <span v-if="historyLoading" class="text-xs text-content-muted">读取中…</span>
+            <span v-if="historyLoading || detailLoading" class="text-xs text-content-muted">读取中…</span>
           </div>
           <p v-if="historyError" class="mt-3 text-sm text-red-600 dark:text-red-400">历史读取失败：{{ historyError }}</p>
           <p v-else-if="!historyLoading && history.length === 0" class="mt-4 text-sm leading-6 text-content-secondary">
@@ -408,7 +538,9 @@ onMounted(loadOptions)
           </div>
           <div class="rounded-md border border-border p-3 text-sm">
             <div class="text-xs font-semibold text-content-muted">保存记录</div>
-            <div class="mt-1 font-medium text-content-main">{{ displayedTest.persistence_state === 'saved' ? '已保存' : '保存失败' }}</div>
+            <div class="mt-1 font-medium text-content-main">
+              {{ displayedTest.persistence_state === 'saving' ? '保存中' : displayedTest.persistence_state === 'saved' ? '已保存' : '保存失败' }}
+            </div>
             <div class="mt-1 text-content-secondary">{{ displayedTest.attempt_id }}</div>
           </div>
         </div>

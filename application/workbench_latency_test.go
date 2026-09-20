@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -38,10 +39,13 @@ func TestWorkbenchLatencyTestUsesStableIdentityPersistsAndSeparatesProfiles(t *t
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
+	t.Cleanup(func() { _ = store.Close() })
+	emitter := NewMemoryEventEmitter()
+	persistenceEvents := subscribeLatencyPersistence(emitter)
 	service := &AppService{
 		historyStore: store,
 		profilePaths: paths,
-		emitter:      NewMemoryEventEmitter(),
+		emitter:      emitter,
 	}
 
 	options, err := service.ListMonitorNodeOptions()
@@ -73,11 +77,15 @@ func TestWorkbenchLatencyTestUsesStableIdentityPersistsAndSeparatesProfiles(t *t
 	if err != nil {
 		t.Fatalf("RunWorkbenchLatencyTest: %v", err)
 	}
-	if result.PersistenceState != "saved" || result.ProfileID != "profile-a" || result.NodeKey != optionA.NodeKey {
+	if result.PersistenceState != "saving" || result.ProfileID != "profile-a" || result.NodeKey != optionA.NodeKey {
 		t.Fatalf("unexpected saved result: %+v", result)
 	}
 	if len(result.Samples) == 0 || result.TotalSamples != len(result.Samples) {
 		t.Fatalf("expected raw latency samples, got %+v", result)
+	}
+	saved := waitForLatencyPersistence(t, persistenceEvents, result.AttemptID)
+	if saved.PersistenceState != "saved" {
+		t.Fatalf("expected asynchronous persistence success, got %+v", saved)
 	}
 
 	profileAHistory, err := service.ListWorkbenchLatencyTests(context.Background(), WorkbenchLatencyHistoryQuery{
@@ -131,8 +139,12 @@ func TestWorkbenchLatencyTestUsesStableIdentityPersistsAndSeparatesProfiles(t *t
 	if err != nil {
 		t.Fatalf("connection failure test: %v", err)
 	}
-	if failureResult.PersistenceState != "saved" || failureResult.FailureSamples == 0 || failureResult.ErrorMessage == "" {
+	if failureResult.PersistenceState != "saving" || failureResult.FailureSamples == 0 || failureResult.ErrorMessage == "" {
 		t.Fatalf("expected persisted connection failure evidence: %+v", failureResult)
+	}
+	failureSaved := waitForLatencyPersistence(t, persistenceEvents, failureResult.AttemptID)
+	if failureSaved.PersistenceState != "saved" {
+		t.Fatalf("expected connection failure record to be saved, got %+v", failureSaved)
 	}
 
 	if err := store.Close(); err != nil {
@@ -177,7 +189,9 @@ func TestWorkbenchLatencyTestReportsPersistenceFailureSeparately(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	service := &AppService{historyStore: store, profilePaths: paths, emitter: NewMemoryEventEmitter()}
+	emitter := NewMemoryEventEmitter()
+	persistenceEvents := subscribeLatencyPersistence(emitter)
+	service := &AppService{historyStore: store, profilePaths: paths, emitter: emitter}
 	options, err := service.ListMonitorNodeOptions()
 	if err != nil || len(options) != 1 {
 		t.Fatalf("node options: %v %+v", err, options)
@@ -195,11 +209,128 @@ func TestWorkbenchLatencyTestReportsPersistenceFailureSeparately(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run with closed store: %v", err)
 	}
-	if result.PersistenceState != "failed" || result.PersistenceError == "" {
-		t.Fatalf("expected independent persistence failure, got %+v", result)
+	if result.PersistenceState != "saving" {
+		t.Fatalf("expected result-first saving state, got %+v", result)
 	}
 	if len(result.Samples) == 0 {
 		t.Fatalf("test result must remain visible when persistence fails: %+v", result)
+	}
+	failed := waitForLatencyPersistence(t, persistenceEvents, result.AttemptID)
+	if failed.PersistenceState != "failed" || failed.PersistenceError == "" {
+		t.Fatalf("expected independent persistence failure, got %+v", failed)
+	}
+}
+
+func TestWorkbenchLatencyTestReturnsBeforeSlowPersistence(t *testing.T) {
+	proxy := newLatencyProxy(t, 0)
+	paths := profiles.Paths{Dir: t.TempDir()}
+	if err := profiles.SaveStore(paths.StoreFile(), &profiles.Store{Airports: []*profiles.Airport{{ID: "profile-slow", Name: "慢保存订阅"}}}); err != nil {
+		t.Fatalf("SaveStore: %v", err)
+	}
+	writeLatencyProxyCache(t, paths, "profile-slow", "慢保存节点", proxy)
+
+	store, err := history.NewStore(filepath.Join(t.TempDir(), "history"))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	emitter := NewMemoryEventEmitter()
+	persistenceEvents := subscribeLatencyPersistence(emitter)
+	saveStarted := make(chan struct{})
+	releaseSave := make(chan struct{})
+	var releaseOnce sync.Once
+	service := &AppService{
+		historyStore: store,
+		profilePaths: paths,
+		emitter:      emitter,
+		latencySaveHook: func(ctx context.Context, _ *history.LatencyTest) error {
+			close(saveStarted)
+			select {
+			case <-releaseSave:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		},
+	}
+	release := func() { releaseOnce.Do(func() { close(releaseSave) }) }
+	t.Cleanup(func() {
+		release()
+		_ = service.Close()
+	})
+
+	options, err := service.ListMonitorNodeOptions()
+	if err != nil || len(options) != 1 {
+		t.Fatalf("node options: %v %+v", err, options)
+	}
+	resultCh := make(chan struct {
+		result *WorkbenchLatencyTestDTO
+		err    error
+	}, 1)
+	go func() {
+		result, runErr := service.RunWorkbenchLatencyTest(context.Background(), WorkbenchLatencyTestRequest{
+			ProfileID:      "profile-slow",
+			NodeKey:        options[0].NodeKey,
+			TestProject:    WorkbenchLatencyProject,
+			TimeoutSeconds: 1,
+		})
+		resultCh <- struct {
+			result *WorkbenchLatencyTestDTO
+			err    error
+		}{result: result, err: runErr}
+	}()
+
+	var result *WorkbenchLatencyTestDTO
+	select {
+	case outcome := <-resultCh:
+		if outcome.err != nil {
+			t.Fatalf("RunWorkbenchLatencyTest: %v", outcome.err)
+		}
+		result = outcome.result
+	case <-time.After(3 * time.Second):
+		t.Fatal("measurement result was blocked by slow persistence")
+	}
+	if result == nil || result.PersistenceState != "saving" || len(result.Samples) == 0 {
+		t.Fatalf("expected result-first saving response, got %+v", result)
+	}
+	select {
+	case <-saveStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("slow persistence hook did not start")
+	}
+	release()
+	final := waitForLatencyPersistence(t, persistenceEvents, result.AttemptID)
+	if final.PersistenceState != "saved" {
+		t.Fatalf("expected delayed save to finish successfully, got %+v", final)
+	}
+}
+
+func subscribeLatencyPersistence(emitter *MemoryEventEmitter) <-chan WorkbenchLatencyTestDTO {
+	events := make(chan WorkbenchLatencyTestDTO, 8)
+	emitter.Subscribe(func(event Event) {
+		if event.Type != "workbench_latency_test_persistence_updated" {
+			return
+		}
+		dto, ok := event.Payload.(WorkbenchLatencyTestDTO)
+		if ok {
+			events <- dto
+		}
+	})
+	return events
+}
+
+func waitForLatencyPersistence(t *testing.T, events <-chan WorkbenchLatencyTestDTO, attemptID string) WorkbenchLatencyTestDTO {
+	t.Helper()
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	select {
+	case dto := <-events:
+		if dto.AttemptID == attemptID {
+			return dto
+		}
+		return waitForLatencyPersistence(t, events, attemptID)
+	case <-timer.C:
+		t.Fatalf("timed out waiting for persistence update for %s", attemptID)
+		return WorkbenchLatencyTestDTO{}
 	}
 }
 
@@ -209,7 +340,7 @@ func newLatencyProxy(t *testing.T, delay time.Duration) string {
 		if delay > 0 {
 			time.Sleep(delay)
 		}
-		w.WriteHeader(http.StatusNoContent)
+		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(server.Close)
 	parsed, err := url.Parse(server.URL)

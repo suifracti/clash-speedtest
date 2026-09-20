@@ -15,15 +15,17 @@ import (
 )
 
 const (
-	WorkbenchLatencyProject           = "latency_stability"
-	minWorkbenchLatencyTimeoutSeconds = int64(1)
-	maxWorkbenchLatencyTimeoutSeconds = int64(120)
+	WorkbenchLatencyProject            = "latency_stability"
+	minWorkbenchLatencyTimeoutSeconds  = int64(1)
+	maxWorkbenchLatencyTimeoutSeconds  = int64(120)
+	workbenchLatencyPersistenceTimeout = 30 * time.Second
 )
 
 // RunWorkbenchLatencyTest executes a single latency test using a stable node
-// identity and persists the result before returning. The result and persistence
-// status are intentionally independent: a valid measurement remains visible if
-// the history transaction fails.
+// identity. The measured result is returned and emitted first with
+// persistence_state="saving"; the history write completes asynchronously and
+// emits a second update for the same attempt_id. This keeps a slow history
+// transaction from blocking the user's measured result.
 func (s *AppService) RunWorkbenchLatencyTest(ctx context.Context, req WorkbenchLatencyTestRequest) (*WorkbenchLatencyTestDTO, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -95,22 +97,48 @@ func (s *AppService) RunWorkbenchLatencyTest(ctx context.Context, req WorkbenchL
 	}
 
 	record := buildWorkbenchLatencyRecord(attemptID, profileID, selected, req.TestProject, requestedAt, startedAt, finishedAt, lastResult)
-	dto := workbenchLatencyDTO(*record, "saved", "")
-	if err := s.historyStore.SaveLatencyTest(ctx, record); err != nil {
-		dto.PersistenceState = "failed"
-		dto.PersistenceError = err.Error()
-		s.emitter.Emit(Event{
-			Type:    "workbench_latency_test_completed",
-			Payload: dto,
-		})
-		return &dto, nil
-	}
+	dto := workbenchLatencyDTO(*record, "saving", "")
 
 	s.emitter.Emit(Event{
 		Type:    "workbench_latency_test_completed",
 		Payload: dto,
 	})
+	s.persistWorkbenchLatencyTest(record)
 	return &dto, nil
+}
+
+func (s *AppService) persistWorkbenchLatencyTest(record *history.LatencyTest) {
+	s.latencyPersistenceWG.Add(1)
+	go func() {
+		defer s.latencyPersistenceWG.Done()
+
+		ctx, cancel := context.WithTimeout(context.Background(), workbenchLatencyPersistenceTimeout)
+		defer cancel()
+
+		err := s.saveWorkbenchLatencyTest(ctx, record)
+		state := "saved"
+		errorMessage := ""
+		if err != nil {
+			state = "failed"
+			errorMessage = err.Error()
+		}
+		if s.emitter != nil {
+			s.emitter.Emit(Event{
+				Type:    "workbench_latency_test_persistence_updated",
+				Payload: workbenchLatencyDTO(*record, state, errorMessage),
+			})
+		}
+	}()
+}
+
+func (s *AppService) saveWorkbenchLatencyTest(ctx context.Context, record *history.LatencyTest) error {
+	if s.latencySaveHook != nil {
+		return s.latencySaveHook(ctx, record)
+	}
+	if s.historyStore == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
+	return s.historyStore.SaveLatencyTest(ctx, record)
 }
 
 // ListWorkbenchLatencyTests returns persisted records for one profile/node pair.
@@ -138,14 +166,24 @@ func (s *AppService) ListWorkbenchLatencyTests(ctx context.Context, query Workbe
 	return result, nil
 }
 
-// GetWorkbenchLatencyTest returns one persisted record and all raw samples.
-func (s *AppService) GetWorkbenchLatencyTest(ctx context.Context, attemptID string) (*WorkbenchLatencyTestDTO, error) {
+// GetWorkbenchLatencyTest returns one persisted record and all raw samples
+// only when its immutable attempt ID belongs to the requested profile/node.
+func (s *AppService) GetWorkbenchLatencyTest(ctx context.Context, query WorkbenchLatencyHistoryDetailQuery) (*WorkbenchLatencyTestDTO, error) {
 	if s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized")
+	}
+	profileID := strings.TrimSpace(query.ProfileID)
+	nodeKey := strings.TrimSpace(query.NodeKey)
+	attemptID := strings.TrimSpace(query.AttemptID)
+	if profileID == "" || nodeKey == "" || attemptID == "" {
+		return nil, monitor.NewValidationError("历史详情必须同时提供 profile_id、node_key 和 attempt_id")
 	}
 	test, err := s.historyStore.GetLatencyTest(ctx, attemptID)
 	if err != nil {
 		return nil, err
+	}
+	if test.ProfileID != profileID || test.NodeKey != nodeKey {
+		return nil, monitor.NewValidationError("历史详情不属于当前订阅节点")
 	}
 	dto := workbenchLatencyDTO(*test, "saved", "")
 	return &dto, nil

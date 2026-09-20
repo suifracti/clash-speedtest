@@ -902,13 +902,21 @@ func (s *Server) handleListWorkbenchLatencyTests(w http.ResponseWriter, r *http.
 }
 
 func (s *Server) handleGetWorkbenchLatencyTest(w http.ResponseWriter, r *http.Request) {
-	attemptID := strings.TrimSpace(r.PathValue("attempt_id"))
-	if attemptID == "" {
+	query := application.WorkbenchLatencyHistoryDetailQuery{
+		ProfileID: r.URL.Query().Get("profile_id"),
+		NodeKey:   r.URL.Query().Get("node_key"),
+		AttemptID: strings.TrimSpace(r.PathValue("attempt_id")),
+	}
+	if query.AttemptID == "" {
 		writeError(w, http.StatusBadRequest, "attempt_id path param required")
 		return
 	}
-	result, err := s.app.GetWorkbenchLatencyTest(r.Context(), attemptID)
+	result, err := s.app.GetWorkbenchLatencyTest(r.Context(), query)
 	if err != nil {
+		if monitor.IsValidationError(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
