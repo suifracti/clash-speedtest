@@ -222,8 +222,12 @@ func (a *App) GetSwitchAuditTrail() ([]policy.SwitchEvent, error) {
 
 // --- 24/7 Monitor Operations ---
 
-func (a *App) CreateMonitorJob(job monitor.MonitorJob) (*monitor.MonitorJob, error) {
-	return a.app.CreateMonitorJob(job)
+func (a *App) ListMonitorNodeOptions() ([]application.MonitorNodeOptionDTO, error) {
+	return a.app.ListMonitorNodeOptions()
+}
+
+func (a *App) CreateMonitorJob(req application.MonitorJobCreateRequest) (*application.MonitorJobDTO, error) {
+	return a.app.CreateMonitorJobFromRequest(req)
 }
 
 func (a *App) StartMonitorJob(jobID string) error {
@@ -242,12 +246,12 @@ func (a *App) StopMonitorJob(jobID string) error {
 	return a.app.StopMonitorJob(jobID)
 }
 
-func (a *App) GetMonitorJob(jobID string) (*monitor.MonitorJob, error) {
-	return a.app.GetMonitorJob(jobID)
+func (a *App) GetMonitorJob(jobID string) (*application.MonitorJobDTO, error) {
+	return a.app.GetMonitorJobDTO(jobID)
 }
 
-func (a *App) ListMonitorJobs() []monitor.MonitorJob {
-	return a.app.ListMonitorJobs()
+func (a *App) ListMonitorJobs() ([]application.MonitorJobDTO, error) {
+	return a.app.ListMonitorJobDTOs()
 }
 
 func (a *App) TriggerMonitorJob(jobID string) (*monitor.MonitorRun, error) {

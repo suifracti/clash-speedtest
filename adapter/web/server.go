@@ -145,6 +145,7 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("GET /api/controller/audit", s.handleGetSwitchAuditTrail)
 
 	// 24/7 Monitor REST routes
+	mux.HandleFunc("GET /api/monitor/nodes", s.handleListMonitorNodeOptions)
 	mux.HandleFunc("POST /api/monitor/jobs", s.handleCreateMonitorJob)
 	mux.HandleFunc("GET /api/monitor/jobs", s.handleListMonitorJobs)
 	mux.HandleFunc("GET /api/monitor/jobs/{id}", s.handleGetMonitorJob)
@@ -826,27 +827,44 @@ func (s *Server) handleGetSwitchAuditTrail(w http.ResponseWriter, r *http.Reques
 // --- 24/7 Monitor Handlers ---
 
 func (s *Server) handleCreateMonitorJob(w http.ResponseWriter, r *http.Request) {
-	var job monitor.MonitorJob
-	if err := json.NewDecoder(r.Body).Decode(&job); err != nil {
+	var req application.MonitorJobCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json body: "+err.Error())
 		return
 	}
-	created, err := s.app.CreateMonitorJob(job)
+	created, err := s.app.CreateMonitorJobFromRequest(req)
 	if err != nil {
+		if monitor.IsValidationError(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusCreated, created)
 }
 
+func (s *Server) handleListMonitorNodeOptions(w http.ResponseWriter, r *http.Request) {
+	options, err := s.app.ListMonitorNodeOptions()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, options)
+}
+
 func (s *Server) handleListMonitorJobs(w http.ResponseWriter, r *http.Request) {
-	jobs := s.app.ListMonitorJobs()
+	jobs, err := s.app.ListMonitorJobDTOs()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, jobs)
 }
 
 func (s *Server) handleGetMonitorJob(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	job, err := s.app.GetMonitorJob(id)
+	job, err := s.app.GetMonitorJobDTO(id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return

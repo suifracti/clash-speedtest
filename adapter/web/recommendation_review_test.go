@@ -40,6 +40,11 @@ func TestWebServer_MonitorRecommendation_ConfiguredModeRespectedAndPreviewOptIn(
 		t.Fatalf("NewServer error: %v", err)
 	}
 	defer server.Close()
+	seedWebMonitorProfile(t, profileDir, "prof-web", "Recommendation Subscription", "HK-01", "SG-01")
+	options, err := server.AppService().ListMonitorNodeOptions()
+	if err != nil || len(options) != 2 {
+		t.Fatalf("ListMonitorNodeOptions: got %d options, err=%v", len(options), err)
+	}
 
 	spy := &webReadOnlyController{selected: "HK-01"}
 	server.AppService().SetController(spy, application.ControllerConfigDTO{
@@ -49,19 +54,17 @@ func TestWebServer_MonitorRecommendation_ConfiguredModeRespectedAndPreviewOptIn(
 
 	handler := server.Handler()
 
-	createPayload := []byte(`{
-		"id": "job_rec_mode",
-		"name": "Recommendation Mode Job",
-		"profile_id": "prof-web",
-		"probe_set": "light",
-		"interval": 3600000000000,
-		"nodes": [
-			{"display_name": "HK-01", "type": "ss", "server": "10.31.0.1", "port": 8388,
-			 "raw_config": {"type": "ss", "server": "10.31.0.1", "port": 8388, "password": "pw-hk"}},
-			{"display_name": "SG-01", "type": "ss", "server": "10.31.0.2", "port": 8388,
-			 "raw_config": {"type": "ss", "server": "10.31.0.2", "port": 8388, "password": "pw-sg"}}
-		]
-	}`)
+	createPayload, err := json.Marshal(application.MonitorJobCreateRequest{
+		Name:            "Recommendation Mode Job",
+		ProfileID:       "prof-web",
+		NodeKeys:        []string{options[0].NodeKey, options[1].NodeKey},
+		ProbeSet:        monitor.ProbeSetLight,
+		IntervalSeconds: 3600,
+		TimeoutSeconds:  10,
+	})
+	if err != nil {
+		t.Fatalf("marshal create payload: %v", err)
+	}
 	reqCreate := httptest.NewRequest(http.MethodPost, "/api/monitor/jobs", bytes.NewReader(createPayload))
 	reqCreate.Host = "127.0.0.1:8080"
 	reqCreate.Header.Set("Content-Type", "application/json")
@@ -74,6 +77,7 @@ func TestWebServer_MonitorRecommendation_ConfiguredModeRespectedAndPreviewOptIn(
 	if err := json.Unmarshal(recCreate.Body.Bytes(), &job); err != nil {
 		t.Fatalf("decode created job: %v", err)
 	}
+	jobID := job.ID
 
 	// Keep the secure default: monitor_only.
 	policyPayload := []byte(`{
@@ -128,7 +132,7 @@ func TestWebServer_MonitorRecommendation_ConfiguredModeRespectedAndPreviewOptIn(
 	saveSamples(job.Nodes[0].NodeKey, job.Nodes[0].NodeIdentityKey, job.Nodes[0].ConfigRevisionKey, "HK-01", 200)
 	saveSamples(job.Nodes[1].NodeKey, job.Nodes[1].NodeIdentityKey, job.Nodes[1].ConfigRevisionKey, "SG-01", 20)
 
-	base := "/api/monitor/recommendation?job_id=job_rec_mode&current_node_key=" + job.Nodes[0].NodeKey
+	base := "/api/monitor/recommendation?job_id=" + jobID + "&current_node_key=" + job.Nodes[0].NodeKey
 
 	get := func(target string) *httptest.ResponseRecorder {
 		t.Helper()

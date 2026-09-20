@@ -500,3 +500,117 @@ export interface MonitorSampleFacets {
   truncated: boolean
 }
 
+// --- 24/7 Monitor: job management ---
+
+/** Credential-free node choice resolved from an actual cached subscription. */
+export interface RawMonitorNodeOptionWire {
+  profile_id: string
+  profile_name: string
+  node_key: string
+  node_identity_key: string
+  config_revision_key: string
+  display_name: string
+  type: string
+  country_code: string
+  country_flag: string
+}
+
+export interface MonitorNodeOption {
+  profileId: string
+  profileName: string
+  nodeKey: string
+  nodeIdentityKey: string
+  configRevisionKey: string
+  displayName: string
+  type: string
+  countryCode: string
+  countryFlag: string
+}
+
+export interface MonitorJobCreateRequest {
+  name: string
+  profile_id: string
+  node_keys: string[]
+  probe_set: 'light' | 'service' | 'heavy'
+  /** Seconds on the UI/API boundary; never nanoseconds. */
+  interval_seconds: number
+  /** Seconds on the UI/API boundary; never nanoseconds. */
+  timeout_seconds: number
+}
+
+export interface MonitorJobNode {
+  nodeKey: string
+  nodeIdentityKey: string
+  configRevisionKey: string
+  displayName: string
+  type: string
+}
+
+export interface RawMonitorJobNodeWire {
+  node_key: string
+  node_identity_key: string
+  config_revision_key: string
+  display_name: string
+  type: string
+}
+
+export interface RawMonitorJobWire {
+  id: string
+  name: string
+  profile_id: string
+  profile_name: string
+  node_keys: string[]
+  nodes: RawMonitorJobNodeWire[] | null
+  probe_set: 'light' | 'service' | 'heavy'
+  interval_seconds: number
+  timeout_seconds: number
+  state: MonitorJobState
+  created_at: string
+  updated_at: string
+}
+
+export type MonitorJobState = 'stopped' | 'running' | 'paused'
+
+export interface MonitorJob {
+  id: string
+  name: string
+  profileId: string
+  profileName: string
+  nodeKeys: string[]
+  nodes: MonitorJobNode[]
+  probeSet: 'light' | 'service' | 'heavy'
+  intervalSeconds: number
+  timeoutSeconds: number
+  state: MonitorJobState
+  createdAt: string
+  updatedAt: string
+}
+
+export type MonitorRunStatus = 'running' | 'completed' | 'partial_failed' | 'failed' | 'skipped'
+
+export interface MonitorRun {
+  runId: string
+  jobId: string
+  scheduledAt: string
+  startedAt: string
+  finishedAt?: string
+  status: MonitorRunStatus
+  totalNodes: number
+  successNodes: number
+  failedNodes: number
+  errorMessage?: string
+}
+
+export interface RawMonitorRunWire {
+  run_id: string
+  job_id: string
+  scheduled_at: string
+  started_at: string
+  finished_at?: string
+  status: MonitorRunStatus
+  total_nodes: number
+  success_nodes: number
+  failed_nodes: number
+  error_message?: string
+}
+

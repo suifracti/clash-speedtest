@@ -4,9 +4,15 @@ import {
   normalizeCursorPage,
   normalizeDerivedStats,
   normalizeFacets,
+  normalizeMonitorJob,
+  normalizeMonitorNodeOption,
+  normalizeMonitorRun,
   normalizeMonitorSample,
 } from '../monitor'
 import type {
+  RawMonitorJobWire,
+  RawMonitorNodeOptionWire,
+  RawMonitorRunWire,
   RawDerivedStatsWire,
   RawMonitorSampleFacetsWire,
   RawMonitorSampleWire,
@@ -14,6 +20,56 @@ import type {
 } from '../../types'
 
 describe('Go wire JSON -> Frontend decoder DTO contract', () => {
+  it('keeps monitor-job durations in explicit seconds and never expects Go duration nanoseconds', () => {
+    const option: RawMonitorNodeOptionWire = {
+      profile_id: 'profile-1',
+      profile_name: 'Stable subscription',
+      node_key: 'nk-stable',
+      node_identity_key: 'nid-stable',
+      config_revision_key: 'rev-stable',
+      display_name: 'Stable node',
+      type: 'ss',
+      country_code: 'JP',
+      country_flag: '🇯🇵',
+    }
+    const job: RawMonitorJobWire = {
+      id: 'job-1',
+      name: 'Nightly monitor',
+      profile_id: 'profile-1',
+      profile_name: 'Stable subscription',
+      node_keys: ['nk-stable'],
+      nodes: [{
+        node_key: 'nk-stable',
+        node_identity_key: 'nid-stable',
+        config_revision_key: 'rev-stable',
+        display_name: 'Stable node',
+        type: 'ss',
+      }],
+      probe_set: 'light',
+      interval_seconds: 30,
+      timeout_seconds: 5,
+      state: 'stopped',
+      created_at: '2026-09-19T00:00:00Z',
+      updated_at: '2026-09-19T00:00:00Z',
+    }
+    const run: RawMonitorRunWire = {
+      run_id: 'run-1',
+      job_id: 'job-1',
+      scheduled_at: '2026-09-19T00:00:00Z',
+      started_at: '2026-09-19T00:00:00Z',
+      status: 'completed',
+      total_nodes: 1,
+      success_nodes: 1,
+      failed_nodes: 0,
+    }
+
+    expect(normalizeMonitorNodeOption(option).nodeKey).toBe('nk-stable')
+    expect(normalizeMonitorJob(job).intervalSeconds).toBe(30)
+    expect(normalizeMonitorJob(job).timeoutSeconds).toBe(5)
+    expect(normalizeMonitorJob(job).nodes[0].nodeIdentityKey).toBe('nid-stable')
+    expect(normalizeMonitorRun(run).successNodes).toBe(1)
+  })
+
   it('correctly decodes Go time.Duration integer nanoseconds to floating milliseconds', () => {
     // Go time.Duration is serialized as integer nanoseconds: 42.5ms = 42,500,000ns
     expect(durationNsToMs(42_500_000)).toBe(42.5)
