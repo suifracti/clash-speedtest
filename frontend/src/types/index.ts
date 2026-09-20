@@ -141,6 +141,54 @@ export interface SingleTestRequest {
   config: TestConfig
 }
 
+export interface WorkbenchLatencyTestRequest {
+  profile_id: string
+  node_key: string
+  test_project: 'latency_stability'
+  timeout_seconds: number
+}
+
+export interface WorkbenchLatencyHistoryQuery {
+  profile_id: string
+  node_key: string
+  limit?: number
+}
+
+export interface WorkbenchLatencySample {
+  seq: number
+  timestamp: string
+  latency_ms: number
+  success: boolean
+  error?: string
+}
+
+export type WorkbenchLatencyStatus = 'completed' | 'partial_failed' | 'failed'
+
+export interface WorkbenchLatencyTest {
+  attempt_id: string
+  profile_id: string
+  node_key: string
+  node_identity_key: string
+  config_revision_key: string
+  display_name: string
+  node_type: string
+  test_project: 'latency_stability'
+  requested_at: string
+  started_at: string
+  finished_at: string
+  status: WorkbenchLatencyStatus
+  latency_ms: number
+  jitter_ms: number
+  packet_loss: number
+  total_samples: number
+  success_samples: number
+  failure_samples: number
+  error_message?: string
+  samples: WorkbenchLatencySample[]
+  persistence_state: 'saved' | 'failed'
+  persistence_error?: string
+}
+
 export interface TestStatus {
   is_running: boolean
   current_node?: string

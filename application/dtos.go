@@ -27,6 +27,58 @@ type SingleTestRequest struct {
 	Config    TestConfig `json:"config"`
 }
 
+// WorkbenchLatencyTestRequest is the stable-identity request for the first
+// formal workbench path. Raw subscription config never crosses this boundary.
+type WorkbenchLatencyTestRequest struct {
+	ProfileID      string `json:"profile_id"`
+	NodeKey        string `json:"node_key"`
+	TestProject    string `json:"test_project"`
+	TimeoutSeconds int64  `json:"timeout_seconds"`
+}
+
+// WorkbenchLatencyHistoryQuery scopes history to one logical subscription node.
+type WorkbenchLatencyHistoryQuery struct {
+	ProfileID string `json:"profile_id"`
+	NodeKey   string `json:"node_key"`
+	Limit     int    `json:"limit,omitempty"`
+}
+
+type WorkbenchLatencySampleDTO struct {
+	Seq       int       `json:"seq"`
+	Timestamp time.Time `json:"timestamp"`
+	LatencyMs int64     `json:"latency_ms"`
+	Success   bool      `json:"success"`
+	Error     string    `json:"error,omitempty"`
+}
+
+// WorkbenchLatencyTestDTO is the shared Web/Wails result and history shape.
+// PersistenceState is independent from the test Status so a valid result can
+// still be shown when the history transaction fails.
+type WorkbenchLatencyTestDTO struct {
+	AttemptID         string                      `json:"attempt_id"`
+	ProfileID         string                      `json:"profile_id"`
+	NodeKey           string                      `json:"node_key"`
+	NodeIdentityKey   string                      `json:"node_identity_key"`
+	ConfigRevisionKey string                      `json:"config_revision_key"`
+	DisplayName       string                      `json:"display_name"`
+	NodeType          string                      `json:"node_type"`
+	TestProject       string                      `json:"test_project"`
+	RequestedAt       time.Time                   `json:"requested_at"`
+	StartedAt         time.Time                   `json:"started_at"`
+	FinishedAt        time.Time                   `json:"finished_at"`
+	Status            string                      `json:"status"`
+	LatencyMs         int64                       `json:"latency_ms"`
+	JitterMs          int64                       `json:"jitter_ms"`
+	PacketLoss        float64                     `json:"packet_loss"`
+	TotalSamples      int                         `json:"total_samples"`
+	SuccessSamples    int                         `json:"success_samples"`
+	FailureSamples    int                         `json:"failure_samples"`
+	ErrorMessage      string                      `json:"error_message,omitempty"`
+	Samples           []WorkbenchLatencySampleDTO `json:"samples"`
+	PersistenceState  string                      `json:"persistence_state"`
+	PersistenceError  string                      `json:"persistence_error,omitempty"`
+}
+
 // TestStatus represents real-time progress of an active test.
 type TestStatus struct {
 	IsRunning    bool      `json:"is_running"`
@@ -89,4 +141,3 @@ type SelectNodeRequest struct {
 	Group string `json:"group"`
 	Node  string `json:"node"`
 }
-

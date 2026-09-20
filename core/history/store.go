@@ -76,12 +76,12 @@ type IPInfo struct {
 type StabilityInfo struct {
 	TotalProbes   int      `json:"total_probes"`
 	SuccessProbes int      `json:"success_probes"`
-	StabilityRate float64  `json:"stability_rate"` // e.g. 66.7
-	Flapping      bool     `json:"flapping"`       // true if inconsistent results (偶发送中/负载均衡漂移)
-	ExitIPs       []string `json:"exit_ips"`       // unique IPs detected across probe rounds
+	StabilityRate float64  `json:"stability_rate"`        // e.g. 66.7
+	Flapping      bool     `json:"flapping"`              // true if inconsistent results (偶发送中/负载均衡漂移)
+	ExitIPs       []string `json:"exit_ips"`              // unique IPs detected across probe rounds
 	BlockedIPs    []string `json:"blocked_ips,omitempty"` // IPs identified as blocked/CN by Google
 	FlapReason    string   `json:"flap_reason,omitempty"`
-	GoogleTTFBMs  int64    `json:"google_ttfb_ms"`        // average Google API interaction latency
+	GoogleTTFBMs  int64    `json:"google_ttfb_ms"` // average Google API interaction latency
 	GoogleMinTTFB int64    `json:"google_min_ttfb_ms"`
 	GoogleMaxTTFB int64    `json:"google_max_ttfb_ms"`
 	LatencyGrade  string   `json:"latency_grade,omitempty"` // "fast", "medium", "slow", "laggy"
@@ -346,6 +346,30 @@ func (s *Store) ApplyRetention(ctx context.Context, req monitor.RetentionRequest
 // Presentation-only read model; see DB.GetMonitorSampleFacets.
 func (s *Store) GetMonitorSampleFacets(ctx context.Context, since, until time.Time, maxNodes, maxValues int) (*monitor.MonitorSampleFacets, error) {
 	return s.db.GetMonitorSampleFacets(ctx, since, until, maxNodes, maxValues)
+}
+
+// SaveLatencyTest persists one on-demand workbench latency test and its raw samples.
+func (s *Store) SaveLatencyTest(ctx context.Context, test *LatencyTest) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
+	return s.db.SaveLatencyTest(ctx, test)
+}
+
+// QueryLatencyTests returns on-demand latency history scoped to one logical node.
+func (s *Store) QueryLatencyTests(ctx context.Context, filter LatencyTestFilter) ([]*LatencyTest, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
+	return s.db.QueryLatencyTests(ctx, filter)
+}
+
+// GetLatencyTest returns one on-demand latency test by its immutable attempt ID.
+func (s *Store) GetLatencyTest(ctx context.Context, attemptID string) (*LatencyTest, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
+	return s.db.GetLatencyTest(ctx, attemptID)
 }
 
 // SetTestBatchFailAt injects a batch failure on batch n for testing partial retention semantics.

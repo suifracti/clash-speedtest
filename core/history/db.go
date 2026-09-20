@@ -55,13 +55,51 @@ CREATE INDEX IF NOT EXISTS idx_samples_run_id ON monitor_samples(run_id);
 CREATE INDEX IF NOT EXISTS idx_samples_node_key_time ON monitor_samples(node_key, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_samples_timestamp ON monitor_samples(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_runs_job_id_time ON monitor_runs(job_id, scheduled_at DESC);
+
+CREATE TABLE IF NOT EXISTS workbench_latency_tests (
+    attempt_id TEXT PRIMARY KEY,
+    profile_id TEXT NOT NULL,
+    node_key TEXT NOT NULL,
+    node_identity_key TEXT NOT NULL,
+    config_revision_key TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    node_type TEXT NOT NULL,
+    test_project TEXT NOT NULL,
+    requested_at DATETIME NOT NULL,
+    started_at DATETIME NOT NULL,
+    finished_at DATETIME NOT NULL,
+    status TEXT NOT NULL,
+    latency_ms INTEGER NOT NULL DEFAULT 0,
+    jitter_ms INTEGER NOT NULL DEFAULT 0,
+    packet_loss REAL NOT NULL DEFAULT 0,
+    total_samples INTEGER NOT NULL DEFAULT 0,
+    success_samples INTEGER NOT NULL DEFAULT 0,
+    failure_samples INTEGER NOT NULL DEFAULT 0,
+    error_message TEXT
+);
+
+CREATE TABLE IF NOT EXISTS workbench_latency_samples (
+    attempt_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    timestamp DATETIME NOT NULL,
+    latency_ms INTEGER NOT NULL DEFAULT 0,
+    success INTEGER NOT NULL,
+    error TEXT,
+    PRIMARY KEY (attempt_id, seq),
+    FOREIGN KEY (attempt_id) REFERENCES workbench_latency_tests(attempt_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_workbench_latency_scope
+    ON workbench_latency_tests(profile_id, node_key, finished_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workbench_latency_samples_time
+    ON workbench_latency_samples(attempt_id, timestamp ASC, seq ASC);
 `
 
 // DB manages the SQLite single-writer connection pool with WAL mode enabled.
 type DB struct {
-	db                  *sql.DB
-	mu                  sync.Mutex // Write lock guaranteeing strictly serialized single-writer transactions
-	testBatchFailAt     int        // For testing fault-injection during batched retention
+	db              *sql.DB
+	mu              sync.Mutex // Write lock guaranteeing strictly serialized single-writer transactions
+	testBatchFailAt int        // For testing fault-injection during batched retention
 }
 
 // SetTestBatchFailAt configures a deterministic fault on retention batch #n (for test verification).
@@ -332,6 +370,261 @@ func (d *DB) SaveMonitorSamples(ctx context.Context, samples []*monitor.MonitorS
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit monitor_samples tx: %w", err)
+	}
+	return nil
+}
+
+// SaveLatencyTest atomically persists one on-demand workbench test and all of
+// its raw latency samples. AttemptID is the idempotency key: retrying the same
+// completed execution is a no-op, while reusing it for another node/scope is
+// rejected.
+func (d *DB) SaveLatencyTest(ctx context.Context, test *LatencyTest) error {
+	if test == nil {
+		return fmt.Errorf("latency test is nil")
+	}
+	if strings.TrimSpace(test.AttemptID) == "" {
+		return fmt.Errorf("latency test attempt_id is empty")
+	}
+	if strings.TrimSpace(test.ProfileID) == "" || strings.TrimSpace(test.NodeKey) == "" {
+		return fmt.Errorf("latency test identity is incomplete")
+	}
+	if strings.TrimSpace(test.TestProject) == "" {
+		return fmt.Errorf("latency test project is empty")
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin latency test transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var existingProfileID, existingNodeKey, existingProject string
+	err = tx.QueryRowContext(ctx, `
+		SELECT profile_id, node_key, test_project
+		FROM workbench_latency_tests
+		WHERE attempt_id = ?
+	`, test.AttemptID).Scan(&existingProfileID, &existingNodeKey, &existingProject)
+	switch {
+	case err == nil:
+		if existingProfileID != test.ProfileID || existingNodeKey != test.NodeKey || existingProject != test.TestProject {
+			return fmt.Errorf("latency test attempt_id %q already belongs to another execution", test.AttemptID)
+		}
+		return nil
+	case err != sql.ErrNoRows:
+		return fmt.Errorf("check latency test %s: %w", test.AttemptID, err)
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO workbench_latency_tests (
+			attempt_id, profile_id, node_key, node_identity_key, config_revision_key,
+			display_name, node_type, test_project, requested_at, started_at, finished_at,
+			status, latency_ms, jitter_ms, packet_loss, total_samples,
+			success_samples, failure_samples, error_message
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		test.AttemptID,
+		test.ProfileID,
+		test.NodeKey,
+		test.NodeIdentityKey,
+		test.ConfigRevisionKey,
+		test.DisplayName,
+		test.NodeType,
+		test.TestProject,
+		test.RequestedAt.UTC(),
+		test.StartedAt.UTC(),
+		test.FinishedAt.UTC(),
+		test.Status,
+		test.LatencyMs,
+		test.JitterMs,
+		test.PacketLoss,
+		test.TotalSamples,
+		test.SuccessSamples,
+		test.FailureSamples,
+		test.ErrorMessage,
+	)
+	if err != nil {
+		return fmt.Errorf("insert latency test %s: %w", test.AttemptID, err)
+	}
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO workbench_latency_samples (
+			attempt_id, seq, timestamp, latency_ms, success, error
+		) VALUES (?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare latency sample insert: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, sample := range test.Samples {
+		successInt := 0
+		if sample.Success {
+			successInt = 1
+		}
+		if _, err := stmt.ExecContext(ctx,
+			test.AttemptID,
+			sample.Seq,
+			sample.Timestamp.UTC(),
+			sample.LatencyMs,
+			successInt,
+			sample.Error,
+		); err != nil {
+			return fmt.Errorf("insert latency sample %s/%d: %w", test.AttemptID, sample.Seq, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit latency test %s: %w", test.AttemptID, err)
+	}
+	return nil
+}
+
+// QueryLatencyTests returns persisted on-demand tests scoped to one logical
+// subscription node. Samples are loaded with each record so the UI never has
+// to synthesize a graph from aggregate values.
+func (d *DB) QueryLatencyTests(ctx context.Context, filter LatencyTestFilter) ([]*LatencyTest, error) {
+	if strings.TrimSpace(filter.ProfileID) == "" || strings.TrimSpace(filter.NodeKey) == "" {
+		return nil, fmt.Errorf("latency history requires profile_id and node_key")
+	}
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT attempt_id, profile_id, node_key, node_identity_key, config_revision_key,
+			display_name, node_type, test_project, requested_at, started_at, finished_at,
+			status, latency_ms, jitter_ms, packet_loss, total_samples,
+			success_samples, failure_samples, error_message
+		FROM workbench_latency_tests
+		WHERE profile_id = ? AND node_key = ?
+		ORDER BY finished_at DESC, attempt_id DESC
+		LIMIT ?
+	`, filter.ProfileID, filter.NodeKey, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query latency tests: %w", err)
+	}
+	defer rows.Close()
+
+	var tests []*LatencyTest
+	for rows.Next() {
+		test, err := scanLatencyTest(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan latency test: %w", err)
+		}
+		tests = append(tests, test)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate latency tests: %w", err)
+	}
+
+	for _, test := range tests {
+		if err := d.loadLatencyTestSamples(ctx, test); err != nil {
+			return nil, err
+		}
+	}
+	return tests, nil
+}
+
+// GetLatencyTest returns one persisted on-demand test by its immutable attempt ID.
+func (d *DB) GetLatencyTest(ctx context.Context, attemptID string) (*LatencyTest, error) {
+	attemptID = strings.TrimSpace(attemptID)
+	if attemptID == "" {
+		return nil, fmt.Errorf("latency test attempt_id is empty")
+	}
+	row := d.db.QueryRowContext(ctx, `
+		SELECT attempt_id, profile_id, node_key, node_identity_key, config_revision_key,
+			display_name, node_type, test_project, requested_at, started_at, finished_at,
+			status, latency_ms, jitter_ms, packet_loss, total_samples,
+			success_samples, failure_samples, error_message
+		FROM workbench_latency_tests
+		WHERE attempt_id = ?
+	`, attemptID)
+	test, err := scanLatencyTest(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("latency test %q not found: %w", attemptID, err)
+		}
+		return nil, fmt.Errorf("get latency test %s: %w", attemptID, err)
+	}
+	if err := d.loadLatencyTestSamples(ctx, test); err != nil {
+		return nil, err
+	}
+	return test, nil
+}
+
+type latencyTestScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanLatencyTest(scanner latencyTestScanner) (*LatencyTest, error) {
+	test := &LatencyTest{}
+	var requestedAt, startedAt, finishedAt time.Time
+	var errorMessage sql.NullString
+	if err := scanner.Scan(
+		&test.AttemptID,
+		&test.ProfileID,
+		&test.NodeKey,
+		&test.NodeIdentityKey,
+		&test.ConfigRevisionKey,
+		&test.DisplayName,
+		&test.NodeType,
+		&test.TestProject,
+		&requestedAt,
+		&startedAt,
+		&finishedAt,
+		&test.Status,
+		&test.LatencyMs,
+		&test.JitterMs,
+		&test.PacketLoss,
+		&test.TotalSamples,
+		&test.SuccessSamples,
+		&test.FailureSamples,
+		&errorMessage,
+	); err != nil {
+		return nil, err
+	}
+	test.RequestedAt = requestedAt.UTC()
+	test.StartedAt = startedAt.UTC()
+	test.FinishedAt = finishedAt.UTC()
+	test.ErrorMessage = errorMessage.String
+	return test, nil
+}
+
+func (d *DB) loadLatencyTestSamples(ctx context.Context, test *LatencyTest) error {
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT seq, timestamp, latency_ms, success, error
+		FROM workbench_latency_samples
+		WHERE attempt_id = ?
+		ORDER BY timestamp ASC, seq ASC
+	`, test.AttemptID)
+	if err != nil {
+		return fmt.Errorf("query latency samples for %s: %w", test.AttemptID, err)
+	}
+	defer rows.Close()
+
+	test.Samples = make([]LatencyTestSample, 0, test.TotalSamples)
+	for rows.Next() {
+		var sample LatencyTestSample
+		var timestamp time.Time
+		var success int
+		var errorText sql.NullString
+		if err := rows.Scan(&sample.Seq, &timestamp, &sample.LatencyMs, &success, &errorText); err != nil {
+			return fmt.Errorf("scan latency sample for %s: %w", test.AttemptID, err)
+		}
+		sample.Timestamp = timestamp.UTC()
+		sample.Success = success != 0
+		sample.Error = errorText.String
+		test.Samples = append(test.Samples, sample)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate latency samples for %s: %w", test.AttemptID, err)
 	}
 	return nil
 }
