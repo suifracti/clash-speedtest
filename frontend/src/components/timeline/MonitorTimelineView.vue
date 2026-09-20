@@ -70,7 +70,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex flex-col flex-1 min-h-0 bg-canvas">
+  <div class="prototype-history-page flex flex-col flex-1 min-h-0 bg-canvas">
+    <section class="history-page-heading">
+      <div>
+        <p class="history-eyebrow">历史记录 · 原始样本</p>
+        <h2>历史记录</h2>
+        <p>按节点和测试项目查看已保存的变化；这里不把当前结果铺成没有依据的时间轴。</p>
+      </div>
+    </section>
     <!-- Filters: any change restarts cursor pagination from the newest page -->
     <TimelineFilterBar />
 
@@ -138,7 +145,6 @@ onBeforeUnmount(() => {
 
           <!-- API error -->
           <div v-else-if="stateKind === 'error'" class="max-w-[520px] flex flex-col items-center gap-2 text-center">
-            <span class="text-xl" aria-hidden="true">⚠️</span>
             <span class="text-xs font-medium text-red-600 dark:text-red-400">读取监控样本失败</span>
             <span class="text-[11px] text-content-muted font-mono break-all">{{ store.loadError }}</span>
             <button
@@ -151,8 +157,6 @@ onBeforeUnmount(() => {
 
           <!-- Empty: three genuinely different reasons -->
           <div v-else class="max-w-[560px] flex flex-col items-center gap-2 text-center">
-            <span class="text-xl" aria-hidden="true">🗂</span>
-
             <template v-if="emptyReason === 'filter-no-match'">
               <span class="text-xs font-medium text-content-main">当前筛选条件在该时间范围内没有匹配样本</span>
               <span class="text-[11px] text-content-muted leading-relaxed">
@@ -195,3 +199,10 @@ onBeforeUnmount(() => {
     </main>
   </div>
 </template>
+
+<style scoped>
+.history-page-heading { padding: 8px 0 14px; border-bottom: 1px solid var(--border); }
+.history-eyebrow { margin: 0 0 6px; color: var(--primary); font-size: 12px; font-weight: 750; letter-spacing: .08em; }
+.history-page-heading h2 { margin: 0 0 5px; color: var(--text-main); font-size: 21px; }
+.history-page-heading p:last-child { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+</style>

@@ -71,7 +71,7 @@ function stateClass(state: MonitorJob['state']): string {
 }
 
 function probeLabel(probe: MonitorJob['probeSet']): string {
-  return { light: 'Light', service: 'Service', heavy: 'Heavy' }[probe] ?? probe
+  return { light: '轻量连通性', service: '服务响应', heavy: '完整探针组合' }[probe] ?? probe
 }
 
 function runLabel(status: MonitorRun['status']): string {
@@ -202,9 +202,9 @@ onBeforeUnmount(() => {
     <div class="max-w-6xl mx-auto flex flex-col gap-4">
       <section class="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 class="text-base font-semibold text-content-main">监控任务</h2>
+          <h2 class="text-base font-semibold text-content-main">持续监测</h2>
           <p class="mt-1 text-xs text-content-muted">
-            任务配置只在本次应用进程内保留；重启后不会恢复任务，也不会把历史样本显示为活任务。
+            观察哪些节点、检查什么、每隔多久，以及最近检查和下一次检查。配置只在本次应用进程内保留；重启后不会恢复任务，也不会把历史样本显示为活任务。
           </p>
         </div>
         <button
@@ -226,7 +226,7 @@ onBeforeUnmount(() => {
       <section class="rounded-lg border border-border bg-card p-4">
         <div class="flex items-center justify-between gap-2">
           <div>
-            <h3 class="text-sm font-semibold">创建任务</h3>
+            <h3 class="text-sm font-semibold">新建持续监测</h3>
             <p class="mt-1 text-[11px] text-content-muted">
               节点来自已缓存订阅的真实配置；前端只提交稳定 node_key，不接触订阅凭据。
             </p>
@@ -257,7 +257,6 @@ onBeforeUnmount(() => {
                 <input v-model="selectedNodeKeys" type="checkbox" :value="node.nodeKey" :disabled="creating" class="mt-0.5 accent-blue-600" />
                 <span class="min-w-0">
                   <span class="block truncate text-content-main">{{ node.countryFlag }} {{ node.displayName }} <span class="text-content-muted">({{ node.type }})</span></span>
-                  <span class="block truncate font-mono text-[10px] text-content-muted" :title="node.nodeKey">{{ node.nodeKey }}</span>
                 </span>
               </label>
             </div>
@@ -312,8 +311,8 @@ onBeforeUnmount(() => {
 
       <section class="rounded-lg border border-border bg-card p-4">
         <div class="flex items-center justify-between gap-2">
-          <h3 class="text-sm font-semibold">任务列表</h3>
-          <span class="text-[11px] text-content-muted">{{ jobs.length }} 个进程内任务</span>
+          <h3 class="text-sm font-semibold">正在持续监测</h3>
+          <span class="text-[11px] text-content-muted">{{ jobs.length }} 项</span>
         </div>
 
         <div v-if="jobs.length === 0" class="mt-4 rounded border border-dashed border-border px-4 py-8 text-center text-xs text-content-muted">
@@ -350,7 +349,7 @@ onBeforeUnmount(() => {
               <div class="space-y-1">
                 <div v-for="node in job.nodes" :key="node.nodeKey" class="flex flex-wrap items-center justify-between gap-2 text-[11px]">
                   <span class="min-w-0 truncate text-content-main">{{ node.displayName }} <span class="text-content-muted">({{ node.type }})</span></span>
-                  <button @click="openTimeline(job, node)" class="shrink-0 text-brand hover:underline">查看时间轴</button>
+                  <button @click="openTimeline(job, node)" class="shrink-0 text-brand hover:underline">查看历史记录</button>
                 </div>
               </div>
             </div>

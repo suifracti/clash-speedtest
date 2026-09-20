@@ -74,6 +74,11 @@ const activeIndex = computed(() => {
   return props.samples.length > 0 ? props.samples.length - 1 : null
 })
 
+const activeSample = computed(() => {
+  const index = activeIndex.value
+  return index === null ? null : props.samples[index] || null
+})
+
 function nearestIndex(clientX: number): number | null {
   if (!props.samples.length || !svgRef.value) return null
   const rect = svgRef.value.getBoundingClientRect()
@@ -132,6 +137,19 @@ function formatTime(value: string): string {
 function segmentPoints(segment: number[]): string {
   return segment.map((index) => `${xAt(index)},${yAt(props.samples[index])}`).join(' ')
 }
+
+function activeSampleLabel(sample: WorkbenchLatencySample | null): string {
+  if (!sample) return '暂无原始样本'
+  if (sample.success && sample.latency_ms > 0) return `${Math.round(sample.latency_ms)} ms`
+  return /timeout|timed out|超时/i.test(sample.error || '') ? '超时' : '失败'
+}
+
+function activeSampleDetail(sample: WorkbenchLatencySample | null): string {
+  if (!sample) return ''
+  const date = new Date(sample.timestamp)
+  const time = Number.isNaN(date.getTime()) ? '时间未知' : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  return sample.success && sample.latency_ms > 0 ? `${time} · 成功` : `${time} · ${sample.error || '连接失败'}`
+}
 </script>
 
 <template>
@@ -177,8 +195,9 @@ function segmentPoints(segment: number[]): string {
           :fill="activeIndex === index ? '#1d4ed8' : '#60a5fa'"
           :stroke="pinnedIndex === index ? '#0f172a' : 'none'"
           :stroke-width="pinnedIndex === index ? 1.5 : 0"
-        />
+        ><title>{{ sample.success ? `${Math.round(sample.latency_ms)} ms · ${formatTime(sample.timestamp)}` : `${activeSampleLabel(sample)} · ${sample.error || '连接失败'} · ${formatTime(sample.timestamp)}` }}</title></circle>
         <g v-else :transform="`translate(${xAt(index)},${plotBottom})`" stroke="#dc2626" stroke-width="1.8" stroke-linecap="round">
+          <title>{{ `${activeSampleLabel(sample)} · ${sample.error || '连接失败'} · ${formatTime(sample.timestamp)}` }}</title>
           <line x1="-4" y1="-4" x2="4" y2="4" />
           <line x1="4" y1="-4" x2="-4" y2="4" />
         </g>
@@ -203,8 +222,15 @@ function segmentPoints(segment: number[]): string {
         class="cursor-crosshair"
       />
     </svg>
-    <span v-if="pinnedIndex !== null" class="absolute right-1 top-0 text-[10px] text-content-secondary bg-card/90 px-1.5 py-0.5 rounded border border-border">
-      已固定
-    </span>
+    <div v-if="activeSample" class="plot-readout" :class="{ pinned: pinnedIndex !== null }" aria-live="polite">
+      <strong>{{ activeSampleLabel(activeSample) }}</strong>
+      <span>{{ activeSampleDetail(activeSample) }}</span>
+      <em v-if="pinnedIndex !== null">已固定</em>
+    </div>
   </div>
 </template>
+
+<style scoped>
+.plot-readout { position: absolute; top: 2px; right: 2px; z-index: 3; display: flex; align-items: baseline; gap: 6px; max-width: calc(100% - 8px); padding: 3px 6px; overflow: hidden; border: 1px solid var(--border, #d9e0e6); background: rgba(255, 255, 255, .92); color: var(--text-main, #18212b); font-size: 10px; line-height: 1.2; pointer-events: none; white-space: nowrap; }
+.plot-readout strong { font-size: 11px; }.plot-readout span { min-width: 0; overflow: hidden; color: var(--text-secondary, #66727d); text-overflow: ellipsis; }.plot-readout em { color: var(--primary, #246b86); font-size: 9px; font-style: normal; font-weight: 700; }
+</style>

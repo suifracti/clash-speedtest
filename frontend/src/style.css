@@ -3,25 +3,25 @@
 @tailwind utilities;
 
 :root {
-  --canvas: #f8fafc;
+  --canvas: #eef2f4;
   --card-bg: #ffffff;
-  --card-subtle: #f1f5f9;
-  --card-hover: #f8fafc;
-  --border: #e2e8f0;
-  --border-subtle: #cbd5e1;
-  --border-focus: #3b82f6;
-  --text-main: #0f172a;
-  --text-secondary: #475569;
-  --text-muted: #64748b;
-  --primary: #2563eb;
-  --primary-hover: #1d4ed8;
-  --primary-subtle: #eff6ff;
-  --success: #059669;
-  --success-bg: #ecfdf5;
-  --warning: #d97706;
-  --warning-bg: #fffbeb;
-  --danger: #dc2626;
-  --danger-bg: #fef2f2;
+  --card-subtle: #f8fafb;
+  --card-hover: #f7fafb;
+  --border: #d9e0e6;
+  --border-subtle: #bdc8d1;
+  --border-focus: #7ab8ca;
+  --text-main: #18212b;
+  --text-secondary: #66727d;
+  --text-muted: #8d99a5;
+  --primary: #246b86;
+  --primary-hover: #1e5b72;
+  --primary-subtle: #e4f0f4;
+  --success: #2b6b50;
+  --success-bg: #e5f1ea;
+  --warning: #9a651f;
+  --warning-bg: #fbefd9;
+  --danger: #a0443d;
+  --danger-bg: #fae9e7;
 }
 
 body.dark-theme, .dark {
@@ -54,7 +54,26 @@ body {
   padding: 0;
   -webkit-font-smoothing: antialiased;
   transition: background-color 0.15s ease, color 0.15s ease;
-  user-select: none;
+  user-select: text;
+}
+
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+:focus-visible { outline: 3px solid #7ab8ca; outline-offset: 3px; }
+
+.app-shell { min-height: 100vh; color: var(--text-main); }
+.app-page { max-width: 1600px; margin: 0 auto; padding: 14px 34px 52px; }
+.legacy-surface { margin-top: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--card-bg); }
+.legacy-surface > summary { cursor: pointer; padding: 10px 14px; color: var(--text-secondary); font-size: 12px; font-weight: 700; }
+.legacy-surface > summary:hover { color: var(--primary); }
+
+@media (max-width: 860px) {
+  .app-page { padding: 23px 17px 40px; }
+}
+
+@media (max-width: 560px) {
+  .app-page { padding-left: 10px; padding-right: 10px; }
 }
 
 /* Custom Scrollbar */

@@ -66,14 +66,13 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex flex-col h-screen w-screen overflow-hidden bg-canvas text-content-main font-sans">
-    <!-- Zone 1: Source & Scope Bar (shared app header, also hosts the view switch) -->
+  <div class="app-shell">
     <SourceScopeBar v-model:active-view="activeView" />
 
     <template v-if="activeView === 'workbench'">
-      <LatencyWorkbench />
-      <details class="border-t border-border bg-card">
-        <summary class="cursor-pointer px-6 py-2 text-xs font-medium text-content-secondary hover:text-content-main">
+      <LatencyWorkbench @open-monitor="activeView = 'monitor-jobs'" />
+      <details class="legacy-surface app-page">
+        <summary>
           既有批量测速（本阶段未改动）
         </summary>
         <div class="flex max-h-[70vh] min-h-[360px] flex-col overflow-hidden border-t border-border">
@@ -88,10 +87,13 @@ onUnmounted(() => {
       </details>
     </template>
 
-    <!-- Monitor / Stability Timeline: raw-sample telemetry console -->
-    <MonitorJobsView v-else-if="activeView === 'monitor-jobs'" @open-timeline="openJobTimeline" />
+    <div v-else-if="activeView === 'monitor-jobs'" class="app-page">
+      <MonitorJobsView @open-timeline="openJobTimeline" />
+    </div>
 
-    <MonitorTimelineView v-else />
+    <div v-else class="app-page">
+      <MonitorTimelineView />
+    </div>
 
     <!-- Modals -->
     <AirportModal />
