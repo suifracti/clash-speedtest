@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import * as api from '../../api/monitor'
+import UiSelect from '../common/UiSelect.vue'
 import type { MonitorJob, MonitorJobNode, MonitorNodeOption, MonitorRun } from '../../types'
 
 const emit = defineEmits<{
@@ -48,14 +49,43 @@ const canCreate = computed(
     timeoutSeconds.value >= 1
 )
 
-function selectProfile(next: string): void {
-  profileId.value = next
+const probeOptions = [
+  { value: 'light', label: 'Light（延迟 / 轻量 HTTP）' },
+  { value: 'service', label: 'Service（常用服务）' },
+  { value: 'heavy', label: 'Heavy（深度诊断）' },
+]
+const intervalOptions = [
+  { value: 10, label: '10 秒' },
+  { value: 30, label: '30 秒' },
+  { value: 60, label: '1 分钟' },
+  { value: 300, label: '5 分钟' },
+  { value: 900, label: '15 分钟' },
+]
+const timeoutOptions = [
+  { value: 5, label: '5 秒' },
+  { value: 10, label: '10 秒' },
+  { value: 30, label: '30 秒' },
+  { value: 60, label: '60 秒' },
+]
+
+function selectProfile(next: string | number): void {
+  profileId.value = String(next)
   const visible = new Set(visibleNodes.value.map((node) => node.nodeKey))
   selectedNodeKeys.value = selectedNodeKeys.value.filter((key) => visible.has(key))
 }
 
-function onProfileChange(event: Event): void {
-  selectProfile((event.target as HTMLSelectElement).value)
+function setProbeSet(value: string | number): void {
+  if (value === 'light' || value === 'service' || value === 'heavy') probeSet.value = value
+}
+
+function setIntervalSeconds(value: string | number): void {
+  const next = Number(value)
+  if (Number.isFinite(next)) intervalSeconds.value = next
+}
+
+function setTimeoutSeconds(value: string | number): void {
+  const next = Number(value)
+  if (Number.isFinite(next)) timeoutSeconds.value = next
 }
 
 function formatState(state: MonitorJob['state']): string {
@@ -71,7 +101,7 @@ function stateClass(state: MonitorJob['state']): string {
 }
 
 function probeLabel(probe: MonitorJob['probeSet']): string {
-  return { light: 'Light', service: 'Service', heavy: 'Heavy' }[probe] ?? probe
+  return { light: '轻量连通性', service: '服务响应', heavy: '完整探针组合' }[probe] ?? probe
 }
 
 function runLabel(status: MonitorRun['status']): string {
@@ -202,9 +232,9 @@ onBeforeUnmount(() => {
     <div class="max-w-6xl mx-auto flex flex-col gap-4">
       <section class="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 class="text-base font-semibold text-content-main">监控任务</h2>
+          <h2 class="text-base font-semibold text-content-main">持续监测</h2>
           <p class="mt-1 text-xs text-content-muted">
-            任务配置只在本次应用进程内保留；重启后不会恢复任务，也不会把历史样本显示为活任务。
+            观察哪些节点、检查什么、每隔多久，以及最近检查和下一次检查。配置只在本次应用进程内保留；重启后不会恢复任务，也不会把历史样本显示为活任务。
           </p>
         </div>
         <button
@@ -226,7 +256,7 @@ onBeforeUnmount(() => {
       <section class="rounded-lg border border-border bg-card p-4">
         <div class="flex items-center justify-between gap-2">
           <div>
-            <h3 class="text-sm font-semibold">创建任务</h3>
+            <h3 class="text-sm font-semibold">新建持续监测</h3>
             <p class="mt-1 text-[11px] text-content-muted">
               节点来自已缓存订阅的真实配置；前端只提交稳定 node_key，不接触订阅凭据。
             </p>
@@ -237,17 +267,13 @@ onBeforeUnmount(() => {
         <div class="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[240px_1fr_180px_160px_auto]">
           <label class="flex flex-col gap-1 text-xs">
             <span class="font-medium text-content-secondary">订阅</span>
-            <select
-              :value="profileId"
-              @change="onProfileChange"
+            <UiSelect
+              :model-value="profileId"
+              @update:model-value="selectProfile"
               :disabled="profileChoices.length === 0 || creating"
-              class="rounded border border-border bg-card-subtle px-2 py-1.5 text-xs disabled:opacity-50"
-            >
-              <option value="">请选择订阅</option>
-              <option v-for="profile in profileChoices" :key="profile.id" :value="profile.id">
-                {{ profile.name || profile.id }}（{{ profile.count }} 节点）
-              </option>
-            </select>
+              aria-label="选择订阅"
+              :options="[{ value: '', label: '请选择订阅' }, ...profileChoices.map((profile) => ({ value: profile.id, label: `${profile.name || profile.id}（${profile.count} 节点）` }))]"
+            />
           </label>
 
           <div class="flex min-w-0 flex-col gap-1 text-xs">
@@ -257,7 +283,6 @@ onBeforeUnmount(() => {
                 <input v-model="selectedNodeKeys" type="checkbox" :value="node.nodeKey" :disabled="creating" class="mt-0.5 accent-blue-600" />
                 <span class="min-w-0">
                   <span class="block truncate text-content-main">{{ node.countryFlag }} {{ node.displayName }} <span class="text-content-muted">({{ node.type }})</span></span>
-                  <span class="block truncate font-mono text-[10px] text-content-muted" :title="node.nodeKey">{{ node.nodeKey }}</span>
                 </span>
               </label>
             </div>
@@ -266,32 +291,17 @@ onBeforeUnmount(() => {
 
           <label class="flex flex-col gap-1 text-xs">
             <span class="font-medium text-content-secondary">探针</span>
-            <select v-model="probeSet" :disabled="creating" class="rounded border border-border bg-card-subtle px-2 py-1.5 text-xs">
-              <option value="light">Light（延迟/轻量 HTTP）</option>
-              <option value="service">Service（常用服务）</option>
-              <option value="heavy">Heavy（深度诊断）</option>
-            </select>
+            <UiSelect :model-value="probeSet" @update:model-value="setProbeSet" :disabled="creating" aria-label="选择探针" :options="probeOptions" />
           </label>
 
           <label class="flex flex-col gap-1 text-xs">
             <span class="font-medium text-content-secondary">间隔</span>
-            <select v-model.number="intervalSeconds" :disabled="creating" class="rounded border border-border bg-card-subtle px-2 py-1.5 text-xs">
-              <option :value="10">10 秒</option>
-              <option :value="30">30 秒</option>
-              <option :value="60">1 分钟</option>
-              <option :value="300">5 分钟</option>
-              <option :value="900">15 分钟</option>
-            </select>
+            <UiSelect :model-value="intervalSeconds" @update:model-value="setIntervalSeconds" :disabled="creating" aria-label="选择检查间隔" :options="intervalOptions" />
           </label>
 
           <label class="flex flex-col gap-1 text-xs">
             <span class="font-medium text-content-secondary">单节点超时</span>
-            <select v-model.number="timeoutSeconds" :disabled="creating" class="rounded border border-border bg-card-subtle px-2 py-1.5 text-xs">
-              <option :value="5">5 秒</option>
-              <option :value="10">10 秒</option>
-              <option :value="30">30 秒</option>
-              <option :value="60">60 秒</option>
-            </select>
+            <UiSelect :model-value="timeoutSeconds" @update:model-value="setTimeoutSeconds" :disabled="creating" aria-label="选择单节点超时" :options="timeoutOptions" />
           </label>
         </div>
 
@@ -312,8 +322,8 @@ onBeforeUnmount(() => {
 
       <section class="rounded-lg border border-border bg-card p-4">
         <div class="flex items-center justify-between gap-2">
-          <h3 class="text-sm font-semibold">任务列表</h3>
-          <span class="text-[11px] text-content-muted">{{ jobs.length }} 个进程内任务</span>
+          <h3 class="text-sm font-semibold">正在持续监测</h3>
+          <span class="text-[11px] text-content-muted">{{ jobs.length }} 项</span>
         </div>
 
         <div v-if="jobs.length === 0" class="mt-4 rounded border border-dashed border-border px-4 py-8 text-center text-xs text-content-muted">
@@ -350,7 +360,7 @@ onBeforeUnmount(() => {
               <div class="space-y-1">
                 <div v-for="node in job.nodes" :key="node.nodeKey" class="flex flex-wrap items-center justify-between gap-2 text-[11px]">
                   <span class="min-w-0 truncate text-content-main">{{ node.displayName }} <span class="text-content-muted">({{ node.type }})</span></span>
-                  <button @click="openTimeline(job, node)" class="shrink-0 text-brand hover:underline">查看时间轴</button>
+                  <button @click="openTimeline(job, node)" class="shrink-0 text-brand hover:underline">查看历史记录</button>
                 </div>
               </div>
             </div>

@@ -8,6 +8,7 @@
  */
 import { computed, ref } from 'vue'
 import { RANGE_OPTIONS, useTimelineStore, type RangeKey } from '../../stores/timeline'
+import UiSelect from '../common/UiSelect.vue'
 
 const store = useTimelineStore()
 
@@ -23,6 +24,42 @@ const selectedNode = computed({
     void store.setNodeFilter(value, node?.nodeKey ?? '')
   },
 })
+
+const nodeOptions = computed(() => [
+  { value: '', label: '全部节点' },
+  ...store.availableNodes.map((node) => ({
+    value: node.nodeIdentityKey,
+    label: `${node.displayName || node.nodeIdentityKey} (${node.sampleCount})`,
+  })),
+])
+const profileOptions = computed(() => [
+  { value: '', label: '全部' },
+  ...store.availableProfiles.map((profile) => ({ value: profile, label: profile })),
+])
+const probeOptions = computed(() => [
+  { value: '', label: '全部' },
+  ...store.availableProbeTypes.map((probe) => ({ value: probe, label: probe })),
+])
+const targetOptions = computed(() => [
+  { value: '', label: '全部' },
+  ...store.availableTargets.map((target) => ({ value: target, label: shortTarget(target) })),
+])
+
+function setSelectedNode(value: string | number): void {
+  selectedNode.value = String(value)
+}
+
+function setProfileFilter(value: string | number): void {
+  store.setProfileFilter(String(value))
+}
+
+function setProbeTypeFilter(value: string | number): void {
+  store.setProbeTypeFilter(String(value))
+}
+
+function setTargetFilter(value: string | number): void {
+  store.setTargetFilter(String(value))
+}
 
 function toLocalInputValue(ms: number): string {
   const d = new Date(ms - new Date().getTimezoneOffset() * 60_000)
@@ -109,54 +146,25 @@ function shortTarget(target: string): string {
     <!-- Node -->
     <label class="flex items-center gap-1.5">
       <span class="text-content-muted">节点</span>
-      <select
-        v-model="selectedNode"
-        class="bg-card-subtle border border-border rounded px-1.5 py-0.5 text-content-main max-w-[190px] focus:outline-none focus:border-brand"
-      >
-        <option value="">全部节点</option>
-        <option v-for="node in store.availableNodes" :key="node.nodeIdentityKey" :value="node.nodeIdentityKey">
-          {{ node.displayName || node.nodeIdentityKey }} ({{ node.sampleCount }})
-        </option>
-      </select>
+      <UiSelect :model-value="selectedNode" @update:model-value="setSelectedNode" aria-label="选择节点" :options="nodeOptions" />
     </label>
 
     <!-- Profile -->
     <label class="flex items-center gap-1.5">
       <span class="text-content-muted">Profile</span>
-      <select
-        :value="store.profileId"
-        @change="store.setProfileFilter(($event.target as HTMLSelectElement).value)"
-        class="bg-card-subtle border border-border rounded px-1.5 py-0.5 text-content-main max-w-[150px] focus:outline-none focus:border-brand"
-      >
-        <option value="">全部</option>
-        <option v-for="p in store.availableProfiles" :key="p" :value="p">{{ p }}</option>
-      </select>
+      <UiSelect :model-value="store.profileId" @update:model-value="setProfileFilter" aria-label="选择订阅" :options="profileOptions" />
     </label>
 
     <!-- Probe type -->
     <label class="flex items-center gap-1.5">
       <span class="text-content-muted">Probe</span>
-      <select
-        :value="store.probeType"
-        @change="store.setProbeTypeFilter(($event.target as HTMLSelectElement).value)"
-        class="bg-card-subtle border border-border rounded px-1.5 py-0.5 text-content-main max-w-[150px] focus:outline-none focus:border-brand"
-      >
-        <option value="">全部</option>
-        <option v-for="p in store.availableProbeTypes" :key="p" :value="p">{{ p }}</option>
-      </select>
+      <UiSelect :model-value="store.probeType" @update:model-value="setProbeTypeFilter" aria-label="选择探针类型" :options="probeOptions" />
     </label>
 
     <!-- Target -->
     <label class="flex items-center gap-1.5">
       <span class="text-content-muted">Target</span>
-      <select
-        :value="store.target"
-        @change="store.setTargetFilter(($event.target as HTMLSelectElement).value)"
-        class="bg-card-subtle border border-border rounded px-1.5 py-0.5 text-content-main max-w-[220px] focus:outline-none focus:border-brand"
-      >
-        <option value="">全部</option>
-        <option v-for="t in store.availableTargets" :key="t" :value="t">{{ shortTarget(t) }}</option>
-      </select>
+      <UiSelect :model-value="store.target" @update:model-value="setTargetFilter" aria-label="选择目标" :options="targetOptions" />
     </label>
 
     <!-- Timezone + reset -->

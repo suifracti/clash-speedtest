@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useWorkbenchStore } from '../../stores/workbench'
 import * as api from '../../api/bridge'
+import UiSelect from '../common/UiSelect.vue'
 import type { RunSummary, RunComparison } from '../../types'
 
 const store = useWorkbenchStore()
@@ -12,6 +13,19 @@ const compareBaseId = ref<string>('')
 const compareTargetId = ref<string>('')
 const comparisonResult = ref<RunComparison | null>(null)
 const isComparing = ref(false)
+
+const runSelectOptions = computed(() => runs.value.map((run) => ({
+  value: run.id,
+  label: `${run.airport_name} - ${new Date(run.created_at).toLocaleTimeString()}`,
+})))
+
+function setCompareBase(value: string | number): void {
+  compareBaseId.value = String(value)
+}
+
+function setCompareTarget(value: string | number): void {
+  compareTargetId.value = String(value)
+}
 
 onMounted(async () => {
   await loadRuns()
@@ -158,28 +172,14 @@ function openOfflineReport() {
           <div class="bg-card-subtle p-3 rounded-lg border border-border flex items-center gap-3">
             <div class="flex items-center gap-2">
               <span class="text-content-muted">基准记录:</span>
-              <select
-                v-model="compareBaseId"
-                class="bg-card text-content-main border border-border rounded px-2 py-1 focus:outline-none focus:border-brand"
-              >
-                <option v-for="r in runs" :key="r.id" :value="r.id">
-                  {{ r.airport_name }} - {{ new Date(r.created_at).toLocaleTimeString() }}
-                </option>
-              </select>
+              <UiSelect :model-value="compareBaseId" @update:model-value="setCompareBase" aria-label="选择基准记录" :options="runSelectOptions" />
             </div>
 
             <span class="text-content-muted">VS</span>
 
             <div class="flex items-center gap-2">
               <span class="text-content-muted">对比记录:</span>
-              <select
-                v-model="compareTargetId"
-                class="bg-card text-content-main border border-border rounded px-2 py-1 focus:outline-none focus:border-brand"
-              >
-                <option v-for="r in runs" :key="r.id" :value="r.id">
-                  {{ r.airport_name }} - {{ new Date(r.created_at).toLocaleTimeString() }}
-                </option>
-              </select>
+              <UiSelect :model-value="compareTargetId" @update:model-value="setCompareTarget" aria-label="选择对比记录" :options="runSelectOptions" />
             </div>
 
             <button
