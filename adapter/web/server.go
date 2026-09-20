@@ -162,6 +162,11 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("GET /api/monitor/timeline", s.handleGetNodeTimelineSamples)
 	mux.HandleFunc("GET /api/monitor/facets", s.handleGetMonitorFacets)
 
+	// Workbench: stable-identity, single-node latency history.
+	mux.HandleFunc("POST /api/workbench/latency-tests", s.handleRunWorkbenchLatencyTest)
+	mux.HandleFunc("GET /api/workbench/latency-tests", s.handleListWorkbenchLatencyTests)
+	mux.HandleFunc("GET /api/workbench/latency-tests/{attempt_id}", s.handleGetWorkbenchLatencyTest)
+
 	// PR#7: read-only evidence → recommendation. There is deliberately NO execution
 	// endpoint here: the recommendation is advisory only and never switches a node.
 	mux.HandleFunc("GET /api/monitor/recommendation", s.handleGetMonitorRecommendation)
@@ -851,6 +856,71 @@ func (s *Server) handleListMonitorNodeOptions(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, http.StatusOK, options)
+}
+
+func (s *Server) handleRunWorkbenchLatencyTest(w http.ResponseWriter, r *http.Request) {
+	var req application.WorkbenchLatencyTestRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body: "+err.Error())
+		return
+	}
+	result, err := s.app.RunWorkbenchLatencyTest(r.Context(), req)
+	if err != nil {
+		if monitor.IsValidationError(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleListWorkbenchLatencyTests(w http.ResponseWriter, r *http.Request) {
+	query := application.WorkbenchLatencyHistoryQuery{
+		ProfileID: r.URL.Query().Get("profile_id"),
+		NodeKey:   r.URL.Query().Get("node_key"),
+	}
+	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
+		limit, err := strconv.Atoi(rawLimit)
+		if err != nil || limit <= 0 || limit > 100 {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 100")
+			return
+		}
+		query.Limit = limit
+	}
+	results, err := s.app.ListWorkbenchLatencyTests(r.Context(), query)
+	if err != nil {
+		if monitor.IsValidationError(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, results)
+}
+
+func (s *Server) handleGetWorkbenchLatencyTest(w http.ResponseWriter, r *http.Request) {
+	query := application.WorkbenchLatencyHistoryDetailQuery{
+		ProfileID: r.URL.Query().Get("profile_id"),
+		NodeKey:   r.URL.Query().Get("node_key"),
+		AttemptID: strings.TrimSpace(r.PathValue("attempt_id")),
+	}
+	if query.AttemptID == "" {
+		writeError(w, http.StatusBadRequest, "attempt_id path param required")
+		return
+	}
+	result, err := s.app.GetWorkbenchLatencyTest(r.Context(), query)
+	if err != nil {
+		if monitor.IsValidationError(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) handleListMonitorJobs(w http.ResponseWriter, r *http.Request) {

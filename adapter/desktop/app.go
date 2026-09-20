@@ -64,6 +64,19 @@ func (a *App) TestSingle(req application.SingleTestRequest) (*history.RunNodeRes
 	return a.app.TestSingle(req, "")
 }
 
+// RunWorkbenchLatencyTest executes the stable-identity single-node workbench path.
+func (a *App) RunWorkbenchLatencyTest(req application.WorkbenchLatencyTestRequest) (*application.WorkbenchLatencyTestDTO, error) {
+	return a.app.RunWorkbenchLatencyTest(a.context(), req)
+}
+
+func (a *App) ListWorkbenchLatencyTests(query application.WorkbenchLatencyHistoryQuery) ([]application.WorkbenchLatencyTestDTO, error) {
+	return a.app.ListWorkbenchLatencyTests(a.context(), query)
+}
+
+func (a *App) GetWorkbenchLatencyTest(query application.WorkbenchLatencyHistoryDetailQuery) (*application.WorkbenchLatencyTestDTO, error) {
+	return a.app.GetWorkbenchLatencyTest(a.context(), query)
+}
+
 func (a *App) StopTest() {
 	a.app.Stop()
 }

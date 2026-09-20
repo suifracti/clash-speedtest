@@ -54,6 +54,13 @@ type AppService struct {
 	monitorMu         sync.RWMutex
 	monitorSchedulers map[string]*monitor.Scheduler
 	monitorRunner     *monitor.Runner
+
+	// latencyPersistenceWG keeps the result-first workbench path from closing
+	// history.db while a just-finished latency result is still being persisted.
+	latencyPersistenceWG sync.WaitGroup
+	// latencySaveHook is test-only dependency injection for slow/failing-save
+	// verification. Production uses historyStore.SaveLatencyTest directly.
+	latencySaveHook func(context.Context, *history.LatencyTest) error
 }
 
 // NewAppService creates a new application service instance.
@@ -138,6 +145,7 @@ func (s *AppService) Stop() {
 // Close stops all background tasks and cleanly releases database connections.
 func (s *AppService) Close() error {
 	s.Stop()
+	s.latencyPersistenceWG.Wait()
 	if s.historyStore != nil {
 		return s.historyStore.Close()
 	}

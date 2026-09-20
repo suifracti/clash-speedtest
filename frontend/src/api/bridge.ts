@@ -16,6 +16,10 @@ import type {
   ControllerStatus,
   SwitchPolicy,
   SwitchEvent,
+  WorkbenchLatencyTestRequest,
+  WorkbenchLatencyHistoryQuery,
+  WorkbenchLatencyHistoryDetailQuery,
+  WorkbenchLatencyTest,
 } from '../types'
 
 declare global {
@@ -49,6 +53,8 @@ export function subscribeEvents(onEvent: (type: string, payload: any) => void): 
       'single_test_started',
       'single_node_progress',
       'single_test_completed',
+      'workbench_latency_test_completed',
+      'workbench_latency_test_persistence_updated',
       'antigravity_token_updated',
       'antigravity_login_failed',
       'controller_status_changed',
@@ -163,6 +169,45 @@ export async function startSingleTest(req: SingleTestRequest): Promise<NodeResul
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
   })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+// --- Stable-identity workbench latency path ---
+
+export async function runWorkbenchLatencyTest(req: WorkbenchLatencyTestRequest): Promise<WorkbenchLatencyTest> {
+  if (isWails()) {
+    return window.go!.desktop!.App!.RunWorkbenchLatencyTest(req)
+  }
+  const res = await fetch(`${API_BASE}/api/workbench/latency-tests`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function fetchWorkbenchLatencyHistory(query: WorkbenchLatencyHistoryQuery): Promise<WorkbenchLatencyTest[]> {
+  if (isWails()) {
+    return window.go!.desktop!.App!.ListWorkbenchLatencyTests(query)
+  }
+  const params = new URLSearchParams({
+    profile_id: query.profile_id,
+    node_key: query.node_key,
+  })
+  if (query.limit) params.set('limit', String(query.limit))
+  const res = await fetch(`${API_BASE}/api/workbench/latency-tests?${params.toString()}`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function fetchWorkbenchLatencyTest(query: WorkbenchLatencyHistoryDetailQuery): Promise<WorkbenchLatencyTest> {
+  if (isWails()) {
+    return window.go!.desktop!.App!.GetWorkbenchLatencyTest(query)
+  }
+  const params = new URLSearchParams({ profile_id: query.profile_id, node_key: query.node_key })
+  const res = await fetch(`${API_BASE}/api/workbench/latency-tests/${encodeURIComponent(query.attempt_id)}?${params.toString()}`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
