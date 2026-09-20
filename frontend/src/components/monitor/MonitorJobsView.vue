@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import * as api from '../../api/monitor'
+import UiSelect from '../common/UiSelect.vue'
 import type { MonitorJob, MonitorJobNode, MonitorNodeOption, MonitorRun } from '../../types'
 
 const emit = defineEmits<{
@@ -48,14 +49,43 @@ const canCreate = computed(
     timeoutSeconds.value >= 1
 )
 
-function selectProfile(next: string): void {
-  profileId.value = next
+const probeOptions = [
+  { value: 'light', label: 'Light（延迟 / 轻量 HTTP）' },
+  { value: 'service', label: 'Service（常用服务）' },
+  { value: 'heavy', label: 'Heavy（深度诊断）' },
+]
+const intervalOptions = [
+  { value: 10, label: '10 秒' },
+  { value: 30, label: '30 秒' },
+  { value: 60, label: '1 分钟' },
+  { value: 300, label: '5 分钟' },
+  { value: 900, label: '15 分钟' },
+]
+const timeoutOptions = [
+  { value: 5, label: '5 秒' },
+  { value: 10, label: '10 秒' },
+  { value: 30, label: '30 秒' },
+  { value: 60, label: '60 秒' },
+]
+
+function selectProfile(next: string | number): void {
+  profileId.value = String(next)
   const visible = new Set(visibleNodes.value.map((node) => node.nodeKey))
   selectedNodeKeys.value = selectedNodeKeys.value.filter((key) => visible.has(key))
 }
 
-function onProfileChange(event: Event): void {
-  selectProfile((event.target as HTMLSelectElement).value)
+function setProbeSet(value: string | number): void {
+  if (value === 'light' || value === 'service' || value === 'heavy') probeSet.value = value
+}
+
+function setIntervalSeconds(value: string | number): void {
+  const next = Number(value)
+  if (Number.isFinite(next)) intervalSeconds.value = next
+}
+
+function setTimeoutSeconds(value: string | number): void {
+  const next = Number(value)
+  if (Number.isFinite(next)) timeoutSeconds.value = next
 }
 
 function formatState(state: MonitorJob['state']): string {
@@ -237,17 +267,13 @@ onBeforeUnmount(() => {
         <div class="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[240px_1fr_180px_160px_auto]">
           <label class="flex flex-col gap-1 text-xs">
             <span class="font-medium text-content-secondary">订阅</span>
-            <select
-              :value="profileId"
-              @change="onProfileChange"
+            <UiSelect
+              :model-value="profileId"
+              @update:model-value="selectProfile"
               :disabled="profileChoices.length === 0 || creating"
-              class="rounded border border-border bg-card-subtle px-2 py-1.5 text-xs disabled:opacity-50"
-            >
-              <option value="">请选择订阅</option>
-              <option v-for="profile in profileChoices" :key="profile.id" :value="profile.id">
-                {{ profile.name || profile.id }}（{{ profile.count }} 节点）
-              </option>
-            </select>
+              aria-label="选择订阅"
+              :options="[{ value: '', label: '请选择订阅' }, ...profileChoices.map((profile) => ({ value: profile.id, label: `${profile.name || profile.id}（${profile.count} 节点）` }))]"
+            />
           </label>
 
           <div class="flex min-w-0 flex-col gap-1 text-xs">
@@ -265,32 +291,17 @@ onBeforeUnmount(() => {
 
           <label class="flex flex-col gap-1 text-xs">
             <span class="font-medium text-content-secondary">探针</span>
-            <select v-model="probeSet" :disabled="creating" class="rounded border border-border bg-card-subtle px-2 py-1.5 text-xs">
-              <option value="light">Light（延迟/轻量 HTTP）</option>
-              <option value="service">Service（常用服务）</option>
-              <option value="heavy">Heavy（深度诊断）</option>
-            </select>
+            <UiSelect :model-value="probeSet" @update:model-value="setProbeSet" :disabled="creating" aria-label="选择探针" :options="probeOptions" />
           </label>
 
           <label class="flex flex-col gap-1 text-xs">
             <span class="font-medium text-content-secondary">间隔</span>
-            <select v-model.number="intervalSeconds" :disabled="creating" class="rounded border border-border bg-card-subtle px-2 py-1.5 text-xs">
-              <option :value="10">10 秒</option>
-              <option :value="30">30 秒</option>
-              <option :value="60">1 分钟</option>
-              <option :value="300">5 分钟</option>
-              <option :value="900">15 分钟</option>
-            </select>
+            <UiSelect :model-value="intervalSeconds" @update:model-value="setIntervalSeconds" :disabled="creating" aria-label="选择检查间隔" :options="intervalOptions" />
           </label>
 
           <label class="flex flex-col gap-1 text-xs">
             <span class="font-medium text-content-secondary">单节点超时</span>
-            <select v-model.number="timeoutSeconds" :disabled="creating" class="rounded border border-border bg-card-subtle px-2 py-1.5 text-xs">
-              <option :value="5">5 秒</option>
-              <option :value="10">10 秒</option>
-              <option :value="30">30 秒</option>
-              <option :value="60">60 秒</option>
-            </select>
+            <UiSelect :model-value="timeoutSeconds" @update:model-value="setTimeoutSeconds" :disabled="creating" aria-label="选择单节点超时" :options="timeoutOptions" />
           </label>
         </div>
 

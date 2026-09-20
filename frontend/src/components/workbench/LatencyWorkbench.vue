@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { fetchMonitorNodeOptions } from '../../api/monitor'
 import * as api from '../../api/bridge'
+import UiSelect from '../common/UiSelect.vue'
 import LatencySamplePlot from './LatencySamplePlot.vue'
 import {
   acceptsLatencyDetailResponse,
@@ -66,6 +67,26 @@ const profileOptions = computed(() => {
   }
   return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
 })
+
+const profileSelectOptions = computed(() => [
+  { value: 'all', label: `全部订阅（${profileOptions.value.length}）` },
+  ...profileOptions.value.map((profile) => ({ value: profile.id, label: `${profile.name}（${profile.count} 节点）` })),
+])
+const windowSelectOptions = [
+  { value: 'local', label: '最近 4 小时 · 局部' },
+  { value: 'full', label: '最近 24 小时 · 完整' },
+]
+const sortSelectOptions = [
+  { value: 'p50', label: 'P50 从低到高' },
+  { value: 'p95', label: 'P95 从低到高' },
+  { value: 'health', label: '健康优先' },
+  { value: 'name', label: '名称' },
+]
+const serviceSelectOptions = [
+  { value: 'antigravity', label: 'Antigravity · 已支持接口待接入工作台' },
+  { value: 'public-api', label: '公共服务 · 未接入', disabled: true },
+  { value: 'streaming', label: '流媒体 · 未接入', disabled: true },
+]
 
 function scopeKey(option: Pick<MonitorNodeOption, 'profileId' | 'nodeKey'>): string {
   return `${option.profileId}\u0000${option.nodeKey}`
@@ -392,12 +413,12 @@ onUnmounted(() => { unsubscribeEvents?.(); unsubscribeEvents = null })
 
     <section class="prototype-scope-bar" aria-label="范围筛选">
       <span class="scope-title">范围</span>
-      <label class="scope-control">订阅<select v-model="selectedProfileId" aria-label="选择订阅"><option value="all">全部订阅（{{ profileOptions.length }}）</option><option v-for="profile in profileOptions" :key="profile.id" :value="profile.id">{{ profile.name }}（{{ profile.count }} 节点）</option></select></label>
+      <label class="scope-control">订阅<UiSelect v-model="selectedProfileId" variant="scope" aria-label="选择订阅" :options="profileSelectOptions" /></label>
       <span class="scope-separator" aria-hidden="true"></span>
-      <label class="scope-control">观察窗口<select v-model="windowMode" aria-label="选择观察窗口"><option value="local">最近 4 小时 · 局部</option><option value="full">最近 24 小时 · 完整</option></select></label>
+      <label class="scope-control">观察窗口<UiSelect v-model="windowMode" variant="scope" aria-label="选择观察窗口" :options="windowSelectOptions" /></label>
       <span class="scope-separator" aria-hidden="true"></span>
       <label class="scope-control scope-search-control">搜索<input v-model="searchText" class="scope-search" type="search" placeholder="节点、订阅或地区" aria-label="搜索节点、订阅或地区"></label>
-      <label class="scope-control">排序<select v-model="sortBy" aria-label="节点排序"><option value="p50">P50 从低到高</option><option value="p95">P95 从低到高</option><option value="health">健康优先</option><option value="name">名称</option></select></label>
+      <label class="scope-control">排序<UiSelect v-model="sortBy" variant="scope" aria-label="节点排序" :options="sortSelectOptions" /></label>
       <span class="live-line">{{ windowLabel }}</span><span class="selection-summary">已选 {{ selectedKeys.length }} 个节点</span>
       <button type="button" class="prototype-button primary scope-refresh" :disabled="optionsLoading" @click="loadOptions">{{ optionsLoading ? '读取中…' : '重新读取' }}</button>
     </section>
@@ -406,7 +427,7 @@ onUnmounted(() => { unsubscribeEvents?.(); unsubscribeEvents = null })
       <div class="project-bar-heading"><span class="scope-title">测试项目</span><span class="project-bar-note">先选节点；结果直接出现在节点行</span></div>
       <div class="project-tabs" role="tablist" aria-label="切换测试项目"><button v-for="project in workbenchProjects" :key="project.id" type="button" class="project-tab" :class="{ active: activeProject === project.id }" role="tab" :aria-selected="activeProject === project.id" @click="changeProject(project.id)">{{ project.label }}<span v-if="!project.available">尚未接入</span></button></div>
       <div class="project-bar-actions"><span class="selection-summary">{{ selectedKeys.length }} 个节点</span><button type="button" class="prototype-button primary" :disabled="!canRun" @click="runTest">{{ testingKey ? '测试中…' : '立即测试' }}</button><button type="button" class="prototype-button" :disabled="selectedKeys.length === 0" @click="emit('open-monitor')">加入持续监测</button></div>
-      <div v-if="activeProject === 'service'" class="service-toolbar"><span class="service-toolbar-label">服务</span><select v-model="selectedService" aria-label="选择服务"><option value="antigravity">Antigravity · 已支持接口待接入工作台</option><option value="public-api" disabled>公共服务 · 未接入</option><option value="streaming" disabled>流媒体 · 未接入</option></select><span class="service-toolbar-note">选择服务同时决定查看与测试目标；未接入服务不可测试</span></div>
+      <div v-if="activeProject === 'service'" class="service-toolbar"><span class="service-toolbar-label">服务</span><UiSelect v-model="selectedService" variant="toolbar" aria-label="选择服务" :options="serviceSelectOptions" /><span class="service-toolbar-note">选择服务同时决定查看与测试目标；未接入服务不可测试</span></div>
       <div class="batch-test-status" :class="{ running: !!testingKey, blocked: activeProject !== 'latency', complete: !!batchMessage && !testingKey }" aria-live="polite">{{ testError || batchMessage || (activeProject === 'latency' ? '延迟结果来自真实单节点测试；失败、超时和未采样不会画成 0ms。' : projectUnavailableLabel(activeProject)) }}</div>
     </section>
 
@@ -446,7 +467,7 @@ onUnmounted(() => { unsubscribeEvents?.(); unsubscribeEvents = null })
       <button v-if="focusedDisplayedTest" type="button" class="history-open evidence-expand" @click="expanded = true">展开完整历史与原始样本 →</button>
     </section>
 
-    <div v-if="expanded && focusedDisplayedTest" class="prototype-modal-backdrop" @click.self="closeHistory"><section class="prototype-history-modal" role="dialog" aria-modal="true" aria-labelledby="history-modal-title"><div class="modal-header"><div><p class="prototype-eyebrow">历史证据 · 原始样本</p><h2 id="history-modal-title">{{ focusedOption?.displayName }} · 延迟历史</h2><p>{{ focusedOption?.profileName }} · {{ formatTime(focusedDisplayedTest.started_at) }} – {{ formatTime(focusedDisplayedTest.finished_at) }}</p></div><div class="modal-actions"><button v-if="pinnedByKey[focusedKey] !== null && pinnedByKey[focusedKey] !== undefined" type="button" class="prototype-button" @click="clearPin(focusedKey)">取消固定</button><button type="button" class="close-button" aria-label="关闭历史详情" @click="closeHistory">×</button></div></div><div class="history-controls"><label>时间范围<select v-model="windowMode"><option value="local">最近 4 小时 · 局部</option><option value="full">最近 24 小时 · 完整</option></select></label><span>{{ windowLabel }} · 横轴为真实采样时间 · 纵轴为毫秒</span><span v-if="detailLoading">正在读取详情…</span></div><div class="modal-chart"><LatencySamplePlot :samples="focusedDisplayedTest.samples" :hovered-index="hoveredByKey[focusedKey] ?? null" :pinned-index="pinnedByKey[focusedKey] ?? null" :width="1120" :height="300" @hover="onHover(focusedKey, $event)" @pin="onPin(focusedKey, $event)" @unpin="clearPin(focusedKey)" /></div><div class="modal-current"><strong>{{ sampleLabel(activeSampleFor(focusedKey)) }}</strong><span>{{ sampleDetail(activeSampleFor(focusedKey)) }}</span><span>{{ testStatusLabel(focusedDisplayedTest) }} · {{ persistenceLabel(focusedDisplayedTest) }}</span></div><div class="modal-table-wrap"><table><thead><tr><th>样本</th><th>实际时间</th><th>结果</th><th>原因</th></tr></thead><tbody><tr v-for="(sample, index) in focusedDisplayedTest.samples" :key="`${sample.seq}-${sample.timestamp}`" :class="{ selected: activeIndexFor(focusedKey, focusedDisplayedTest.samples) === index }"><td>#{{ sample.seq }}</td><td>{{ formatTime(sample.timestamp) }}</td><td :class="sample.success ? 'success' : 'fail'">{{ sample.success ? `${Math.round(sample.latency_ms)} ms` : sampleLabel(sample) }}</td><td>{{ sample.error || '—' }}</td></tr></tbody></table></div></section></div>
+    <div v-if="expanded && focusedDisplayedTest" class="prototype-modal-backdrop" @click.self="closeHistory"><section class="prototype-history-modal" role="dialog" aria-modal="true" aria-labelledby="history-modal-title"><div class="modal-header"><div><p class="prototype-eyebrow">历史证据 · 原始样本</p><h2 id="history-modal-title">{{ focusedOption?.displayName }} · 延迟历史</h2><p>{{ focusedOption?.profileName }} · {{ formatTime(focusedDisplayedTest.started_at) }} – {{ formatTime(focusedDisplayedTest.finished_at) }}</p></div><div class="modal-actions"><button v-if="pinnedByKey[focusedKey] !== null && pinnedByKey[focusedKey] !== undefined" type="button" class="prototype-button" @click="clearPin(focusedKey)">取消固定</button><button type="button" class="close-button" aria-label="关闭历史详情" @click="closeHistory">×</button></div></div><div class="history-controls"><label>时间范围<UiSelect v-model="windowMode" aria-label="历史时间范围" :options="windowSelectOptions" /></label><span>{{ windowLabel }} · 横轴为真实采样时间 · 纵轴为毫秒</span><span v-if="detailLoading">正在读取详情…</span></div><div class="modal-chart"><LatencySamplePlot :samples="focusedDisplayedTest.samples" :hovered-index="hoveredByKey[focusedKey] ?? null" :pinned-index="pinnedByKey[focusedKey] ?? null" :width="1120" :height="300" @hover="onHover(focusedKey, $event)" @pin="onPin(focusedKey, $event)" @unpin="clearPin(focusedKey)" /></div><div class="modal-current"><strong>{{ sampleLabel(activeSampleFor(focusedKey)) }}</strong><span>{{ sampleDetail(activeSampleFor(focusedKey)) }}</span><span>{{ testStatusLabel(focusedDisplayedTest) }} · {{ persistenceLabel(focusedDisplayedTest) }}</span></div><div class="modal-table-wrap"><table><thead><tr><th>样本</th><th>实际时间</th><th>结果</th><th>原因</th></tr></thead><tbody><tr v-for="(sample, index) in focusedDisplayedTest.samples" :key="`${sample.seq}-${sample.timestamp}`" :class="{ selected: activeIndexFor(focusedKey, focusedDisplayedTest.samples) === index }"><td>#{{ sample.seq }}</td><td>{{ formatTime(sample.timestamp) }}</td><td :class="sample.success ? 'success' : 'fail'">{{ sample.success ? `${Math.round(sample.latency_ms)} ms` : sampleLabel(sample) }}</td><td>{{ sample.error || '—' }}</td></tr></tbody></table></div></section></div>
   </main>
 </template>
 
