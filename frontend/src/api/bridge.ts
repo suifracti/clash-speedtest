@@ -20,6 +20,8 @@ import type {
   WorkbenchLatencyHistoryQuery,
   WorkbenchLatencyHistoryDetailQuery,
   WorkbenchLatencyTest,
+  ProfileSetup,
+  ProfileSource,
 } from '../types'
 
 declare global {
@@ -86,6 +88,56 @@ export function subscribeEvents(onEvent: (type: string, payload: any) => void): 
 }
 
 // --- API Methods ---
+
+export async function fetchProfileSetup(): Promise<ProfileSetup> {
+  if (isWails()) {
+    return window.go!.desktop!.App!.GetProfileSetup()
+  }
+  const res = await fetch(`${API_BASE}/api/profile/setup`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function inspectProfileSource(path: string): Promise<ProfileSource> {
+  if (isWails()) {
+    return window.go!.desktop!.App!.InspectProfileSource(path)
+  }
+  const res = await fetch(`${API_BASE}/api/profile/source/inspect`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function initializeEmptyProfileStore(): Promise<void> {
+  if (isWails()) {
+    return window.go!.desktop!.App!.InitializeEmptyProfileStore()
+  }
+  const res = await fetch(`${API_BASE}/api/profile/setup/empty`, { method: 'POST' })
+  if (!res.ok) throw new Error(await res.text())
+}
+
+export async function importProfileSource(path: string): Promise<void> {
+  if (isWails()) {
+    return window.go!.desktop!.App!.ImportProfileSource(path)
+  }
+  const res = await fetch(`${API_BASE}/api/profile/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+}
+
+export async function discardProfileImport(): Promise<void> {
+  if (isWails()) {
+    return window.go!.desktop!.App!.DiscardProfileImport()
+  }
+  const res = await fetch(`${API_BASE}/api/profile/import/discard`, { method: 'POST' })
+  if (!res.ok) throw new Error(await res.text())
+}
 
 export async function fetchAirports(): Promise<Airport[]> {
   if (isWails()) {

@@ -7,6 +7,30 @@ export interface Airport {
   has_cache: boolean
 }
 
+export interface ProfileSource {
+  path: string
+  label: string
+  available: boolean
+  profile_count: number
+  cache_count: number
+  missing?: string[]
+  possible_test_data: boolean
+  error?: string
+}
+
+export interface ProfileSetup {
+  state: 'ready' | 'needs_choice' | 'error'
+  initialized: boolean
+  data_root: string
+  profile_dir: string
+  history_dir: string
+  settings_file: string
+  unfinished_staging?: string[]
+  lock_present: boolean
+  error?: string
+  sources?: ProfileSource[]
+}
+
 export interface NodeItem {
   name: string
   type: string

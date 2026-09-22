@@ -116,6 +116,34 @@ type AirportDTO struct {
 	HasCache  bool      `json:"has_cache"`
 }
 
+// ProfileSourceDTO is a redacted, user-selectable local source summary. It
+// never carries subscription URLs or raw cache contents.
+type ProfileSourceDTO struct {
+	Path             string   `json:"path"`
+	Label            string   `json:"label"`
+	Available        bool     `json:"available"`
+	ProfileCount     int      `json:"profile_count"`
+	CacheCount       int      `json:"cache_count"`
+	Missing          []string `json:"missing,omitempty"`
+	PossibleTestData bool     `json:"possible_test_data"`
+	Error            string   `json:"error,omitempty"`
+}
+
+// ProfileSetupDTO separates "not yet decided" from a real empty profile
+// store, and gives both Web and Wails the same path/import contract.
+type ProfileSetupDTO struct {
+	State             string             `json:"state"` // ready, needs_choice, error
+	Initialized       bool               `json:"initialized"`
+	DataRoot          string             `json:"data_root"`
+	ProfileDir        string             `json:"profile_dir"`
+	HistoryDir        string             `json:"history_dir"`
+	SettingsFile      string             `json:"settings_file"`
+	UnfinishedStaging []string           `json:"unfinished_staging,omitempty"`
+	LockPresent       bool               `json:"lock_present"`
+	Error             string             `json:"error,omitempty"`
+	Sources           []ProfileSourceDTO `json:"sources,omitempty"`
+}
+
 // AppSettings represents user-configurable persistent settings.
 type AppSettings struct {
 	PreferredBrowser string `json:"preferred_browser"` // "auto", "chrome", "edge", "default", or custom path

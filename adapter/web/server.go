@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/faceair/clash-speedtest/application"
+	"github.com/faceair/clash-speedtest/core/appdata"
 	"github.com/faceair/clash-speedtest/core/auth"
 	"github.com/faceair/clash-speedtest/core/history"
 	"github.com/faceair/clash-speedtest/core/monitor"
@@ -29,6 +30,7 @@ import (
 
 // ServerConfig configures the HTTP & SSE server.
 type ServerConfig struct {
+	AppPaths      appdata.AppPaths
 	Port          int
 	ProfilePaths  profiles.Paths
 	HistoryDir    string
@@ -50,8 +52,23 @@ type Server struct {
 
 // NewServer constructs a new web adapter Server.
 func NewServer(cfg ServerConfig) (*Server, error) {
-	if cfg.ProfilePaths.Dir == "" {
-		cfg.ProfilePaths = profiles.DefaultPaths()
+	if cfg.AppPaths.ProfileDir != "" {
+		cfg.ProfilePaths = profiles.Paths{Dir: cfg.AppPaths.ProfileDir}
+		if cfg.HistoryDir == "" {
+			cfg.HistoryDir = cfg.AppPaths.HistoryDir
+		}
+	} else if cfg.ProfilePaths.Dir == "" {
+		resolved, err := appdata.Resolve("")
+		if err != nil {
+			return nil, fmt.Errorf("resolve application paths: %w", err)
+		}
+		cfg.AppPaths = resolved
+		cfg.ProfilePaths = profiles.Paths{Dir: resolved.ProfileDir}
+		if cfg.HistoryDir == "" {
+			cfg.HistoryDir = resolved.HistoryDir
+		}
+	} else {
+		cfg.AppPaths = appdata.FromLegacy(cfg.ProfilePaths.Dir, cfg.HistoryDir)
 	}
 
 	hStore, err := history.NewStore(cfg.HistoryDir)
@@ -60,7 +77,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	}
 
 	emitter := NewSSEEmitter()
-	appSvc := application.NewAppService(hStore, cfg.ProfilePaths, emitter)
+	appSvc := application.NewAppServiceWithPaths(hStore, cfg.AppPaths, emitter)
 
 	s := &Server{
 		config:       cfg,
@@ -106,6 +123,11 @@ func (s *Server) buildHandler() http.Handler {
 	mux := http.NewServeMux()
 
 	// REST API routes
+	mux.HandleFunc("GET /api/profile/setup", s.handleGetProfileSetup)
+	mux.HandleFunc("POST /api/profile/source/inspect", s.handleInspectProfileSource)
+	mux.HandleFunc("POST /api/profile/setup/empty", s.handleInitializeEmptyProfileStore)
+	mux.HandleFunc("POST /api/profile/import", s.handleImportProfileSource)
+	mux.HandleFunc("POST /api/profile/import/discard", s.handleDiscardProfileImport)
 	mux.HandleFunc("GET /api/airports", s.handleGetAirports)
 	mux.HandleFunc("POST /api/airports", s.handleCreateAirport)
 	mux.HandleFunc("PUT /api/airports/{id}", s.handleUpdateAirport)
@@ -348,10 +370,81 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 
 // Handlers
 
+func (s *Server) handleGetProfileSetup(w http.ResponseWriter, r *http.Request) {
+	setup, err := s.app.GetProfileSetup()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, setup)
+}
+
+type profileSourcePathReq struct {
+	Path string `json:"path"`
+}
+
+func (s *Server) handleInspectProfileSource(w http.ResponseWriter, r *http.Request) {
+	var req profileSourcePathReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "无效的请求参数")
+		return
+	}
+	source, err := s.app.InspectProfileSource(req.Path)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, source)
+}
+
+func (s *Server) handleInitializeEmptyProfileStore(w http.ResponseWriter, r *http.Request) {
+	if err := s.app.InitializeEmptyProfileStore(); err != nil {
+		writeProfileMutationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+
+func (s *Server) handleImportProfileSource(w http.ResponseWriter, r *http.Request) {
+	var req profileSourcePathReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "无效的请求参数")
+		return
+	}
+	if err := s.app.ImportProfileSource(r.Context(), req.Path); err != nil {
+		writeProfileMutationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+
+func (s *Server) handleDiscardProfileImport(w http.ResponseWriter, r *http.Request) {
+	if err := s.app.DiscardProfileImport(); err != nil {
+		writeProfileMutationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+
+func writeProfileMutationError(w http.ResponseWriter, err error) {
+	status := http.StatusBadRequest
+	if errors.Is(err, profiles.ErrProfileAlreadyInitialized) ||
+		errors.Is(err, profiles.ErrProfileImportLocked) ||
+		errors.Is(err, profiles.ErrProfileImportStaged) ||
+		errors.Is(err, profiles.ErrProfileTargetConflict) {
+		status = http.StatusConflict
+	}
+	writeError(w, status, err.Error())
+}
+
 func (s *Server) handleGetAirports(w http.ResponseWriter, r *http.Request) {
 	airports, err := s.app.ListAirports()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		status := http.StatusInternalServerError
+		if errors.Is(err, profiles.ErrProfileNotInitialized) {
+			status = http.StatusConflict
+		}
+		writeError(w, status, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, airports)

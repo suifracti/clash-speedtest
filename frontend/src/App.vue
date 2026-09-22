@@ -16,6 +16,7 @@ import PreferencesModal from './components/settings/PreferencesModal.vue'
 import MonitorTimelineView from './components/timeline/MonitorTimelineView.vue'
 import MonitorJobsView from './components/monitor/MonitorJobsView.vue'
 import LatencyWorkbench from './components/workbench/LatencyWorkbench.vue'
+import ProfileSetupModal from './components/profile/ProfileSetupModal.vue'
 import type { MonitorJobNode } from './types'
 
 const store = useWorkbenchStore()
@@ -51,6 +52,7 @@ onMounted(async () => {
   })
 
   // Load initial data
+  await store.loadProfileSetup()
   await Promise.all([
     store.loadAirports(),
     store.loadTokenStatus(),
@@ -97,6 +99,7 @@ onUnmounted(() => {
 
     <!-- Modals -->
     <AirportModal />
+    <ProfileSetupModal />
     <AirportConsolidatedMatrix />
     <PreferencesModal />
   </div>

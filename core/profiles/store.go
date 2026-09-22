@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/faceair/clash-speedtest/core/appdata"
 )
 
 const (
@@ -31,11 +33,11 @@ type Paths struct {
 }
 
 func DefaultPaths() Paths {
-	cwd, err := os.Getwd()
+	resolved, err := appdata.Resolve("")
 	if err != nil {
-		return Paths{Dir: "."}
+		return Paths{}
 	}
-	return Paths{Dir: cwd}
+	return Paths{Dir: resolved.ProfileDir}
 }
 
 func (p Paths) StoreFile() string {
@@ -69,6 +71,9 @@ func LoadStore(path string) (*Store, error) {
 	if store.Airports == nil {
 		store.Airports = []*Airport{}
 	}
+	if err := validateStore(&store); err != nil {
+		return nil, fmt.Errorf("validate %s: %w", path, err)
+	}
 	return &store, nil
 }
 
@@ -76,7 +81,7 @@ func SaveStore(path string, store *Store) error {
 	if store == nil {
 		store = &Store{}
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(store, "", "  ")
@@ -84,7 +89,7 @@ func SaveStore(path string, store *Store) error {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(path, data, 0o644)
+	return os.WriteFile(path, data, 0o600)
 }
 
 func (s *Store) Add(airport *Airport) {
@@ -131,10 +136,10 @@ func (p Paths) HasCache(id string) bool {
 }
 
 func (p Paths) WriteCache(id string, body []byte) error {
-	if err := os.MkdirAll(p.CacheDir(), 0o755); err != nil {
+	if err := os.MkdirAll(p.CacheDir(), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(p.CacheFile(id), body, 0o644)
+	return os.WriteFile(p.CacheFile(id), body, 0o600)
 }
 
 func (p Paths) RemoveCache(id string) {
