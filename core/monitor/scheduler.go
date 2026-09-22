@@ -50,6 +50,9 @@ func NewScheduler(cfg SchedulerConfig) (*Scheduler, error) {
 		store:  cfg.Store,
 		state:  cfg.Job.State,
 	}
+	if s.job.PersistenceState == "" {
+		s.job.PersistenceState = PersistenceStateHealthy
+	}
 	if s.state != JobStateBlocked {
 		s.state = JobStateStopped
 		s.job.State = JobStateStopped
@@ -69,6 +72,24 @@ func (s *Scheduler) Job() MonitorJob {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return *s.job
+}
+
+func (s *Scheduler) markPersistenceFailure(err error) {
+	if err == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.job.PersistenceState = PersistenceStateDegraded
+	s.job.PersistenceError = err.Error()
+	s.job.UpdatedAt = time.Now()
+}
+
+func (s *Scheduler) clearPersistenceFailure() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.job.PersistenceState = PersistenceStateHealthy
+	s.job.PersistenceError = ""
 }
 
 // SkippedRounds returns the total number of ticks skipped due to overlap.
@@ -230,9 +251,12 @@ func (s *Scheduler) TriggerImmediate(ctx context.Context) (*MonitorRun, error) {
 	}
 
 	run, _, err := s.runner.ExecuteRun(runCtx, &jobCopy, time.Now())
-	if err == nil {
-		atomic.AddInt64(&s.completedRuns, 1)
+	if err != nil {
+		s.markPersistenceFailure(err)
+		return run, err
 	}
+	s.clearPersistenceFailure()
+	atomic.AddInt64(&s.completedRuns, 1)
 	return run, err
 }
 
@@ -304,7 +328,9 @@ func (s *Scheduler) executeScheduledRound(ctx context.Context, scheduledAt time.
 					Status:       RunStatusSkipped,
 					ErrorMessage: "上一轮监测仍在执行，按防重叠策略跳过本轮",
 				}
-				_ = s.store.SaveMonitorRun(ctx, skippedRun)
+				if err := s.store.SaveMonitorRun(ctx, skippedRun); err != nil {
+					s.markPersistenceFailure(fmt.Errorf("save skipped monitor run: %w", err))
+				}
 			}
 		}
 		return
@@ -323,7 +349,10 @@ func (s *Scheduler) executeScheduledRound(ctx context.Context, scheduledAt time.
 	}
 
 	_, _, err := s.runner.ExecuteRun(ctx, &jobCopy, scheduledAt)
-	if err == nil {
-		atomic.AddInt64(&s.completedRuns, 1)
+	if err != nil {
+		s.markPersistenceFailure(err)
+		return
 	}
+	s.clearPersistenceFailure()
+	atomic.AddInt64(&s.completedRuns, 1)
 }

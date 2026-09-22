@@ -674,6 +674,8 @@ export interface RawMonitorJobWire {
   timeout_seconds: number
   state: MonitorJobState
   blocked_reason?: string
+  persistence_state?: 'healthy' | 'degraded'
+  persistence_error?: string
   created_at: string
   updated_at: string
 }
@@ -692,11 +694,13 @@ export interface MonitorJob {
   timeoutSeconds: number
   state: MonitorJobState
   blockedReason: string
+  persistenceState?: 'healthy' | 'degraded'
+  persistenceError?: string
   createdAt: string
   updatedAt: string
 }
 
-export type MonitorRunStatus = 'running' | 'completed' | 'partial_failed' | 'failed' | 'skipped'
+export type MonitorRunStatus = 'running' | 'completed' | 'partial_failed' | 'failed' | 'skipped' | 'persistence_failed'
 
 export interface MonitorRun {
   runId: string
