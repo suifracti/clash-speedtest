@@ -27,16 +27,26 @@ type MonitorNodeOptionDTO struct {
 	CountryFlag       string `json:"country_flag"`
 }
 
+// MonitorNodeSelectionContext is an optional, credential-free snapshot from
+// Workbench. It is only a stale-selection guard; current cache resolution
+// remains the authority for the runnable node configuration.
+type MonitorNodeSelectionContext struct {
+	NodeKey           string `json:"node_key"`
+	NodeIdentityKey   string `json:"node_identity_key"`
+	ConfigRevisionKey string `json:"config_revision_key"`
+}
+
 // MonitorJobCreateRequest is the only UI-facing monitor-job creation shape.
 // Durations are explicitly seconds at this boundary; monitor.MonitorJob keeps
 // Go time.Duration internally (nanoseconds when JSON-marshaled).
 type MonitorJobCreateRequest struct {
-	Name            string               `json:"name"`
-	ProfileID       string               `json:"profile_id"`
-	NodeKeys        []string             `json:"node_keys"`
-	ProbeSet        monitor.ProbeSetType `json:"probe_set"`
-	IntervalSeconds int64                `json:"interval_seconds"`
-	TimeoutSeconds  int64                `json:"timeout_seconds"`
+	Name            string                        `json:"name"`
+	ProfileID       string                        `json:"profile_id"`
+	NodeKeys        []string                      `json:"node_keys"`
+	ProbeSet        monitor.ProbeSetType          `json:"probe_set"`
+	IntervalSeconds int64                         `json:"interval_seconds"`
+	TimeoutSeconds  int64                         `json:"timeout_seconds"`
+	NodeContexts    []MonitorNodeSelectionContext `json:"node_contexts,omitempty"`
 }
 
 // MonitorJobNodeDTO is the public, credential-free projection of a monitored node.
@@ -166,6 +176,10 @@ func (s *AppService) CreateMonitorJobFromRequest(req MonitorJobCreateRequest) (*
 			byKey[node.NodeKey] = node
 		}
 	}
+	contextByKey, err := monitorNodeContextIndex(req)
+	if err != nil {
+		return nil, err
+	}
 
 	selected := make([]monitor.MonitoredNode, 0, len(req.NodeKeys))
 	seen := make(map[string]struct{}, len(req.NodeKeys))
@@ -181,6 +195,10 @@ func (s *AppService) CreateMonitorJobFromRequest(req MonitorJobCreateRequest) (*
 		node, ok := byKey[key]
 		if !ok || len(node.RawConfig) == 0 {
 			return nil, monitor.NewValidationError("所选节点已不存在或订阅配置已变化，请重新选择")
+		}
+		if snapshot, guarded := contextByKey[key]; guarded &&
+			(node.NodeIdentityKey != snapshot.NodeIdentityKey || node.ConfigRevisionKey != snapshot.ConfigRevisionKey) {
+			return nil, monitor.NewValidationError("所选节点的稳定身份或配置 revision 已变化，请返回工作台重新选择")
 		}
 		selected = append(selected, node)
 	}
@@ -199,6 +217,35 @@ func (s *AppService) CreateMonitorJobFromRequest(req MonitorJobCreateRequest) (*
 	}
 	dto := monitorJobDTO(*job, airport.Name)
 	return &dto, nil
+}
+
+func monitorNodeContextIndex(req MonitorJobCreateRequest) (map[string]MonitorNodeSelectionContext, error) {
+	if len(req.NodeContexts) == 0 {
+		return nil, nil
+	}
+	if len(req.NodeContexts) != len(req.NodeKeys) {
+		return nil, monitor.NewValidationError("节点选择上下文不完整，请返回工作台重新选择")
+	}
+
+	indexed := make(map[string]MonitorNodeSelectionContext, len(req.NodeContexts))
+	for _, snapshot := range req.NodeContexts {
+		key := strings.TrimSpace(snapshot.NodeKey)
+		if key == "" || strings.TrimSpace(snapshot.NodeIdentityKey) == "" || strings.TrimSpace(snapshot.ConfigRevisionKey) == "" {
+			return nil, monitor.NewValidationError("节点选择上下文缺少稳定身份或配置 revision，请返回工作台重新选择")
+		}
+		if _, exists := indexed[key]; exists {
+			return nil, monitor.NewValidationError("节点选择上下文不能重复")
+		}
+		snapshot.NodeKey = key
+		indexed[key] = snapshot
+	}
+	for _, rawKey := range req.NodeKeys {
+		key := strings.TrimSpace(rawKey)
+		if _, exists := indexed[key]; !exists {
+			return nil, monitor.NewValidationError("节点选择上下文与所选节点不一致，请返回工作台重新选择")
+		}
+	}
+	return indexed, nil
 }
 
 // ListMonitorJobDTOs returns the safe status projection used by Web and Wails.

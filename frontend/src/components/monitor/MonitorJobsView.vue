@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as api from '../../api/monitor'
 import UiSelect from '../common/UiSelect.vue'
-import type { MonitorJob, MonitorJobNode, MonitorNodeOption, MonitorRun } from '../../types'
+import type { MonitorJob, MonitorJobNode, MonitorJobPrefill, MonitorNodeOption, MonitorNodeSelectionContext, MonitorRun } from '../../types'
+
+const props = defineProps<{ prefill?: MonitorJobPrefill | null }>()
 
 const emit = defineEmits<{
   (event: 'open-timeline', payload: { profileId: string; node: MonitorJobNode }): void
+  (event: 'prefill-consumed'): void
 }>()
 
 const options = ref<MonitorNodeOption[]>([])
@@ -25,6 +28,9 @@ const selectedNodeKeys = ref<string[]>([])
 const probeSet = ref<'light' | 'service' | 'heavy'>('light')
 const intervalSeconds = ref(60)
 const timeoutSeconds = ref(10)
+const prefillActive = ref(false)
+const prefillError = ref('')
+const prefillContexts = ref<Record<string, MonitorNodeSelectionContext>>({})
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 let refreshInFlight = false
@@ -43,11 +49,15 @@ const visibleNodes = computed(() => options.value.filter((node) => node.profileI
 const canCreate = computed(
   () =>
     !creating.value &&
+    !prefillError.value &&
     !!profileId.value &&
     selectedNodeKeys.value.length > 0 &&
     intervalSeconds.value >= 1 &&
     timeoutSeconds.value >= 1
 )
+const selectedNodeNames = computed(() => selectedNodeKeys.value
+  .map((key) => visibleNodes.value.find((node) => node.nodeKey === key)?.displayName || key)
+  .filter(Boolean))
 
 const probeOptions = [
   { value: 'light', label: 'Light（延迟 / 轻量 HTTP）' },
@@ -69,9 +79,65 @@ const timeoutOptions = [
 ]
 
 function selectProfile(next: string | number): void {
+  if (prefillActive.value && String(next) !== profileId.value) {
+    prefillActive.value = false
+    prefillContexts.value = {}
+  }
   profileId.value = String(next)
   const visible = new Set(visibleNodes.value.map((node) => node.nodeKey))
   selectedNodeKeys.value = selectedNodeKeys.value.filter((key) => visible.has(key))
+}
+
+function contextFromOption(node: MonitorNodeOption): MonitorNodeSelectionContext {
+  return {
+    node_key: node.nodeKey,
+    node_identity_key: node.nodeIdentityKey,
+    config_revision_key: node.configRevisionKey,
+  }
+}
+
+function applyPrefill(prefill: MonitorJobPrefill): void {
+  const requestedKeys = [...new Set(prefill.nodeKeys)]
+  const contexts = Object.fromEntries(prefill.nodeContexts.map((context) => [context.node_key, context]))
+  const currentNodes = requestedKeys.map((key) => options.value.find((node) => node.profileId === prefill.profileId && node.nodeKey === key))
+  const missingKey = currentNodes.some((node) => !node)
+  const staleContext = currentNodes.some((node) => {
+    if (!node) return true
+    const context = contexts[node.nodeKey]
+    return !context || context.node_identity_key !== node.nodeIdentityKey || context.config_revision_key !== node.configRevisionKey
+  })
+
+  if (!prefill.profileId || requestedKeys.length === 0 || requestedKeys.length !== prefill.nodeContexts.length || missingKey || staleContext) {
+    prefillActive.value = false
+    prefillError.value = '工作台选择已失效：订阅、节点身份或配置 revision 已变化，请返回工作台重新选择。'
+    selectedNodeKeys.value = []
+    prefillContexts.value = {}
+    emit('prefill-consumed')
+    return
+  }
+
+  profileId.value = prefill.profileId
+  selectedNodeKeys.value = requestedKeys
+  prefillContexts.value = contexts
+  prefillActive.value = true
+  prefillError.value = ''
+  feedback.value = `已从工作台带入 ${selectedNodeNames.value.length} 个节点：${selectedNodeNames.value.join('、')}。请确认创建，任务不会自动启动。`
+  emit('prefill-consumed')
+}
+
+function cancelPrefill(): void {
+  prefillActive.value = false
+  prefillError.value = ''
+  prefillContexts.value = {}
+  selectedNodeKeys.value = []
+  feedback.value = '已取消本次工作台选择，尚未创建 Monitor 任务。'
+}
+
+function selectedNodeContexts(): MonitorNodeSelectionContext[] | undefined {
+  if (!prefillActive.value) return undefined
+  const currentByKey = new Map(options.value.map((node) => [node.nodeKey, contextFromOption(node)]))
+  const contexts = selectedNodeKeys.value.map((key) => prefillContexts.value[key] || currentByKey.get(key))
+  return contexts.every((context): context is MonitorNodeSelectionContext => !!context) ? contexts : undefined
 }
 
 function setProbeSet(value: string | number): void {
@@ -169,21 +235,30 @@ async function reload(showSpinner = false): Promise<void> {
 
 async function createJob(): Promise<void> {
   if (!canCreate.value) return
+  const nodeContexts = selectedNodeContexts()
+  if (prefillActive.value && !nodeContexts) {
+    prefillError.value = '工作台选择上下文已失效，请返回工作台重新选择。'
+    return
+  }
   creating.value = true
   feedback.value = ''
   loadError.value = ''
   try {
-    const created = await api.createMonitorJob({
+    const request = {
       name: name.value.trim(),
       profile_id: profileId.value,
       node_keys: [...selectedNodeKeys.value],
       probe_set: probeSet.value,
       interval_seconds: Number(intervalSeconds.value),
       timeout_seconds: Number(timeoutSeconds.value),
-    })
+      ...(nodeContexts ? { node_contexts: nodeContexts } : {}),
+    }
+    const created = await api.createMonitorJob(request)
     feedback.value = `已创建“${created.name}”，当前状态为已停止；请明确点击“启动”。`
     name.value = ''
     selectedNodeKeys.value = []
+    prefillActive.value = false
+    prefillContexts.value = {}
     await reload()
   } catch (error) {
     loadError.value = `创建失败：${errorMessage(error)}`
@@ -220,8 +295,13 @@ function openTimeline(job: MonitorJob, node: MonitorJobNode): void {
 
 onMounted(async () => {
   await reload(true)
+  if (props.prefill) applyPrefill(props.prefill)
   // Poll only the read model. Leaving this page never calls Stop/Pause.
   refreshTimer = setInterval(() => void reload(), 5000)
+})
+
+watch(() => props.prefill, (prefill) => {
+  if (prefill && options.value.length > 0) applyPrefill(prefill)
 })
 
 onBeforeUnmount(() => {
@@ -254,6 +334,10 @@ onBeforeUnmount(() => {
       <div v-if="feedback" class="rounded border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300">
         {{ feedback }}
       </div>
+      <div v-if="prefillError" class="rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+        {{ prefillError }}
+        <button type="button" class="ml-2 underline" @click="cancelPrefill">清除这次选择</button>
+      </div>
 
       <section class="rounded-lg border border-border bg-card p-4">
         <div class="flex items-center justify-between gap-2">
@@ -264,6 +348,11 @@ onBeforeUnmount(() => {
             </p>
           </div>
           <span v-if="options.length === 0 && !loading" class="text-[11px] text-amber-700 dark:text-amber-300">暂无可运行节点</span>
+        </div>
+
+        <div v-if="prefillActive" class="mt-3 rounded border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs text-blue-800 dark:text-blue-200">
+          工作台已选择：<strong>{{ profileChoices.find((profile) => profile.id === profileId)?.name || profileId }}</strong> · {{ selectedNodeNames.join('、') }}。确认后只创建已停止任务，不会自动发起探测。
+          <button type="button" class="ml-2 underline" :disabled="creating" @click="cancelPrefill">取消本次预填</button>
         </div>
 
         <div class="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[240px_1fr_180px_160px_auto]">
@@ -317,7 +406,7 @@ onBeforeUnmount(() => {
             :disabled="!canCreate"
             class="rounded bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {{ creating ? '创建中…' : '创建（不会自动启动）' }}
+            {{ creating ? '创建中…' : prefillActive ? '确认创建（不会自动启动）' : '创建（不会自动启动）' }}
           </button>
         </div>
       </section>

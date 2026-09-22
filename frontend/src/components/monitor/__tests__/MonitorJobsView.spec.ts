@@ -16,7 +16,7 @@ import {
   fetchMonitorNodeOptions,
   fetchMonitorRuns,
 } from '../../../api/monitor'
-import type { MonitorJob, MonitorNodeOption } from '../../../types'
+import type { MonitorJob, MonitorJobPrefill, MonitorNodeOption } from '../../../types'
 import MonitorJobsView from '../MonitorJobsView.vue'
 
 const mockedOptions = vi.mocked(fetchMonitorNodeOptions)
@@ -35,6 +35,16 @@ const option: MonitorNodeOption = {
   type: 'ss',
   countryCode: 'JP',
   countryFlag: '🇯🇵',
+}
+
+const prefill: MonitorJobPrefill = {
+  profileId: option.profileId,
+  nodeKeys: [option.nodeKey],
+  nodeContexts: [{
+    node_key: option.nodeKey,
+    node_identity_key: option.nodeIdentityKey,
+    config_revision_key: option.configRevisionKey,
+  }],
 }
 
 function job(state: MonitorJob['state'] = 'stopped', blockedReason = ''): MonitorJob {
@@ -125,5 +135,37 @@ describe('MonitorJobsView', () => {
     expect(wrapper.text()).toContain('已阻塞')
     expect(wrapper.text()).toContain('节点配置 revision 已变化，需要重新确认')
     expect(wrapper.findAll('button').some((button) => ['启动', '暂停', '恢复'].includes(button.text().trim()))).toBe(false)
+  })
+
+  it('applies Workbench prefill, supports cancel without creating, and sends the stable context on confirm', async () => {
+    mockedJobs.mockResolvedValue([])
+    wrapper = mount(MonitorJobsView, { props: { prefill } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('工作台已选择')
+    expect((wrapper.find('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(true)
+
+    const cancel = wrapper.findAll('button').find((button) => button.text().includes('取消本次预填'))
+    expect(cancel).toBeDefined()
+    await cancel!.trigger('click')
+    expect(mockedCreate).not.toHaveBeenCalled()
+    expect((wrapper.find('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(false)
+
+    wrapper.unmount()
+    wrapper = mount(MonitorJobsView, { props: { prefill } })
+    await flushPromises()
+    const confirm = wrapper.findAll('button').find((button) => button.text().includes('确认创建（不会自动启动）'))
+    expect(confirm).toBeDefined()
+    await confirm!.trigger('click')
+    await flushPromises()
+    expect(mockedCreate).toHaveBeenCalledWith(expect.objectContaining({
+      node_keys: ['nk-real'],
+      node_contexts: [{
+        node_key: 'nk-real',
+        node_identity_key: 'nid-real',
+        config_revision_key: 'rev-real',
+      }],
+    }))
+    expect(mockedControl).not.toHaveBeenCalled()
   })
 })
