@@ -279,6 +279,8 @@ export function normalizeMonitorJob(wire: RawMonitorJobWire): MonitorJob {
 		timeoutSeconds: Number.isFinite(wire.timeout_seconds) ? wire.timeout_seconds : 0,
 		state: wire.state,
 		blockedReason: wire.blocked_reason ?? '',
+		persistenceState: wire.persistence_state === 'degraded' ? 'degraded' : 'healthy',
+		persistenceError: wire.persistence_error ?? '',
 		createdAt: wire.created_at ?? '',
 		updatedAt: wire.updated_at ?? '',
 	}

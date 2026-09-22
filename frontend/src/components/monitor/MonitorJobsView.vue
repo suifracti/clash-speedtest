@@ -112,6 +112,7 @@ function runLabel(status: MonitorRun['status']): string {
     partial_failed: '部分失败',
     failed: '失败',
     skipped: '跳过（重叠）',
+    persistence_failed: '保存失败（未持久化完整）',
   }[status] ?? status
 }
 
@@ -358,6 +359,10 @@ onBeforeUnmount(() => {
 
             <div v-if="job.state === 'blocked'" class="mt-2 text-[11px] text-red-700 dark:text-red-300">
               无法安全恢复：{{ job.blockedReason || '当前订阅或节点配置已不可用，请重新创建任务。' }}
+            </div>
+
+            <div v-if="job.persistenceState === 'degraded'" class="mt-2 rounded border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-[11px] text-red-700 dark:text-red-300">
+              持久化异常：本轮测速结果可能未完整保存，不能作为完整 durable evidence。{{ job.persistenceError }}
             </div>
 
             <div class="mt-3 border-t border-border pt-2">

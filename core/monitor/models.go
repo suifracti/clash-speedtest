@@ -38,6 +38,14 @@ const (
 	RunStatusPartialFailed RunStatus = "partial_failed"
 	RunStatusFailed        RunStatus = "failed"
 	RunStatusSkipped       RunStatus = "skipped"
+	// RunStatusPersistenceFailed means probe execution may have completed, but
+	// the durable run/sample transaction did not complete successfully.
+	RunStatusPersistenceFailed RunStatus = "persistence_failed"
+)
+
+const (
+	PersistenceStateHealthy  = "healthy"
+	PersistenceStateDegraded = "degraded"
 )
 
 // MonitoredNode represents a proxy node targeted for monitoring.
@@ -64,8 +72,12 @@ type MonitorJob struct {
 	Timeout       time.Duration   `json:"timeout"`
 	State         JobState        `json:"state"`
 	BlockedReason string          `json:"blocked_reason,omitempty"`
-	CreatedAt     time.Time       `json:"created_at"`
-	UpdatedAt     time.Time       `json:"updated_at"`
+	// PersistenceState and PersistenceError are runtime read-model fields. They
+	// are deliberately excluded from MonitorJobDefinition persistence.
+	PersistenceState string    `json:"persistence_state,omitempty"`
+	PersistenceError string    `json:"persistence_error,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 // MonitorJobDefinitionVersion is the version of the credential-free persisted

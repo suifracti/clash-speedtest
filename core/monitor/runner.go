@@ -149,7 +149,9 @@ func (r *Runner) ExecuteRun(ctx context.Context, job *MonitorJob, scheduledAt ti
 
 	if r.store != nil {
 		if err := r.store.SaveMonitorRun(ctx, run); err != nil {
-			return nil, nil, fmt.Errorf("save initial monitor run: %w", err)
+			run.Status = RunStatusPersistenceFailed
+			run.ErrorMessage = fmt.Sprintf("save initial monitor run: %v", err)
+			return run, nil, fmt.Errorf("save initial monitor run: %w", err)
 		}
 	}
 
@@ -227,12 +229,33 @@ func (r *Runner) ExecuteRun(ctx context.Context, job *MonitorJob, scheduledAt ti
 		run.ErrorMessage = "所有目标节点探测均失败"
 	}
 
-	// Persist samples and update run in store
+	// Persist samples and update run in store. A probe result is not a durable
+	// success until both writes report success. Keep the raw identity unchanged
+	// while marking any persistence failure explicitly.
 	if r.store != nil {
+		var persistenceErr error
 		if len(allSamples) > 0 {
-			_ = r.store.SaveMonitorSamples(ctx, allSamples)
+			if err := r.store.SaveMonitorSamples(ctx, allSamples); err != nil {
+				persistenceErr = fmt.Errorf("save monitor samples: %w", err)
+			}
 		}
-		_ = r.store.UpdateMonitorRun(ctx, run)
+		if persistenceErr != nil {
+			run.Status = RunStatusPersistenceFailed
+			run.ErrorMessage = persistenceErr.Error()
+		}
+		if err := r.store.UpdateMonitorRun(ctx, run); err != nil {
+			updateErr := fmt.Errorf("update monitor run: %w", err)
+			if persistenceErr != nil {
+				persistenceErr = fmt.Errorf("%v; %w", persistenceErr, updateErr)
+			} else {
+				persistenceErr = updateErr
+			}
+			run.Status = RunStatusPersistenceFailed
+			run.ErrorMessage = persistenceErr.Error()
+		}
+		if persistenceErr != nil {
+			return run, allSamples, persistenceErr
+		}
 	}
 
 	return run, allSamples, nil
