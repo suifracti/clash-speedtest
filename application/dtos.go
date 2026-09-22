@@ -190,6 +190,8 @@ type AppSettings struct {
 	PreferredBrowser           string                  `json:"preferred_browser"` // "auto", "chrome", "edge", "default", or custom path
 	MonitorRetentionPolicy     monitor.RetentionPolicy `json:"monitor_retention_policy"`
 	MonitorRetentionCustomDays int                     `json:"monitor_retention_custom_days"`
+	MonitorStorageWarningBytes *int64                  `json:"monitor_storage_warning_bytes,omitempty"`
+	MonitorStorageHardBytes    *int64                  `json:"monitor_storage_hard_bytes,omitempty"`
 }
 
 // ControllerConfigDTO configures connection to external proxy controller.

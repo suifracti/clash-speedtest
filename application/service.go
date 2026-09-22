@@ -53,12 +53,10 @@ type AppService struct {
 	decisionState  policy.DecisionState
 
 	// 24/7 Monitor subsystem fields
-	monitorMu                  sync.RWMutex
-	monitorSchedulers          map[string]*monitor.Scheduler
-	monitorRunner              *monitor.Runner
-	monitorLoadErr             error
-	monitorStorageWarningBytes int64
-	monitorStorageHardBytes    int64
+	monitorMu         sync.RWMutex
+	monitorSchedulers map[string]*monitor.Scheduler
+	monitorRunner     *monitor.Runner
+	monitorLoadErr    error
 
 	// latencyPersistenceWG keeps the result-first workbench path from closing
 	// history.db while a just-finished latency result is still being persisted.
@@ -85,15 +83,13 @@ func newAppService(hStore *history.Store, appPaths appdata.AppPaths, profilePath
 		emitter = NewMemoryEventEmitter()
 	}
 	svc := &AppService{
-		historyStore:               hStore,
-		profilePaths:               profilePaths,
-		appPaths:                   appPaths,
-		emitter:                    emitter,
-		decisionEngine:             policy.NewDecisionEngine(),
-		policy:                     policy.DefaultSwitchPolicy(),
-		monitorSchedulers:          make(map[string]*monitor.Scheduler),
-		monitorStorageWarningBytes: 1 << 30,
-		monitorStorageHardBytes:    2 << 30,
+		historyStore:      hStore,
+		profilePaths:      profilePaths,
+		appPaths:          appPaths,
+		emitter:           emitter,
+		decisionEngine:    policy.NewDecisionEngine(),
+		policy:            policy.DefaultSwitchPolicy(),
+		monitorSchedulers: make(map[string]*monitor.Scheduler),
 		controllerCfg: ControllerConfigDTO{
 			Endpoint: "http://127.0.0.1:9090",
 			Mode:     "external",
@@ -1288,15 +1284,20 @@ func (s *AppService) GetSettings() (*AppSettings, error) {
 	p := s.settingsPath()
 	data, err := os.ReadFile(p)
 	if err != nil {
-		return &AppSettings{
+		if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("read settings: %w", err)
+		}
+		settings := &AppSettings{
 			PreferredBrowser:       "default",
 			MonitorRetentionPolicy: monitor.RetentionKeepAll,
-		}, nil
+		}
+		fillDefaultMonitorStorageThresholds(settings)
+		return settings, nil
 	}
 
 	var settings AppSettings
 	if err := json.Unmarshal(data, &settings); err != nil {
-		return &AppSettings{PreferredBrowser: "default", MonitorRetentionPolicy: monitor.RetentionKeepAll}, nil
+		return nil, fmt.Errorf("decode settings: %w", err)
 	}
 	if settings.PreferredBrowser == "" {
 		settings.PreferredBrowser = "default"
@@ -1305,6 +1306,9 @@ func (s *AppService) GetSettings() (*AppSettings, error) {
 		settings.MonitorRetentionPolicy = monitor.RetentionKeepAll
 	}
 	if err := validateMonitorRetentionPreference(settings.MonitorRetentionPolicy, settings.MonitorRetentionCustomDays); err != nil {
+		return nil, err
+	}
+	if err := validateMonitorStorageThresholds(&settings); err != nil {
 		return nil, err
 	}
 	return &settings, nil
@@ -1360,6 +1364,13 @@ func (s *AppService) SaveSettings(settings *AppSettings) error {
 	}
 	data, err := json.MarshalIndent(merged, "", "  ")
 	if err != nil {
+		return err
+	}
+	var effective AppSettings
+	if err := json.Unmarshal(data, &effective); err != nil {
+		return fmt.Errorf("validate Monitor storage settings: %w", err)
+	}
+	if err := validateMonitorStorageThresholds(&effective); err != nil {
 		return err
 	}
 	return os.WriteFile(p, data, 0o600)

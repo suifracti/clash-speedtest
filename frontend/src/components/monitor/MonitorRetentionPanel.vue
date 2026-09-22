@@ -8,17 +8,25 @@ const settings = ref<AppSettings | null>(null)
 const storage = ref<MonitorStorageUsage | null>(null)
 const selectedPolicy = ref<MonitorRetentionPolicy>('keep_all')
 const customDays = ref(90)
+const warningMiB = ref(1024)
+const hardMiB = ref(2048)
 const preview = ref<MonitorRetentionPreview | null>(null)
 const confirmed = ref(false)
 const busy = ref(false)
 const error = ref('')
 const result = ref('')
 let timer: ReturnType<typeof setInterval> | null = null
+const bytesPerMiB = 1024 * 1024
+const maxThresholdMiB = 2 ** 30
 
 const savedPolicy = computed(() => settings.value?.monitor_retention_policy || 'keep_all')
 const hasUnsavedPreference = computed(() => selectedPolicy.value !== savedPolicy.value ||
   (selectedPolicy.value === 'custom' && customDays.value !== (settings.value?.monitor_retention_custom_days || 0)))
 const validCustomDays = computed(() => selectedPolicy.value !== 'custom' || (Number.isInteger(customDays.value) && customDays.value >= 1 && customDays.value <= 36500))
+const hasUnsavedThresholds = computed(() => warningMiB.value * bytesPerMiB !== (settings.value?.monitor_storage_warning_bytes ?? 1 << 30) ||
+  hardMiB.value * bytesPerMiB !== (settings.value?.monitor_storage_hard_bytes ?? 2 ** 31))
+const validThresholds = computed(() => Number.isInteger(warningMiB.value) && Number.isInteger(hardMiB.value) &&
+  warningMiB.value > 0 && warningMiB.value < hardMiB.value && hardMiB.value <= maxThresholdMiB)
 
 function messageFor(errorValue: unknown): string {
   return errorValue instanceof Error ? errorValue.message : String(errorValue || '操作失败')
@@ -40,6 +48,12 @@ function changeDays(event: Event): void {
   confirmed.value = false
 }
 
+function changeThreshold(which: 'warning' | 'hard', event: Event): void {
+  const value = Number((event.target as HTMLInputElement).value)
+  if (which === 'warning') warningMiB.value = value
+  else hardMiB.value = value
+}
+
 async function refreshStorage(): Promise<void> {
   try { storage.value = await fetchMonitorStorageUsage() }
   catch (cause) { error.value = `读取 Monitor 容量失败：${messageFor(cause)}` }
@@ -51,8 +65,29 @@ async function load(): Promise<void> {
     settings.value = loaded
     selectedPolicy.value = loaded.monitor_retention_policy || 'keep_all'
     customDays.value = loaded.monitor_retention_custom_days || 90
+    warningMiB.value = (loaded.monitor_storage_warning_bytes ?? 1 << 30) / bytesPerMiB
+    hardMiB.value = (loaded.monitor_storage_hard_bytes ?? 2 ** 31) / bytesPerMiB
     await refreshStorage()
   } catch (cause) { error.value = `读取保留设置失败：${messageFor(cause)}` }
+}
+
+async function saveThresholds(): Promise<void> {
+  if (!settings.value || !validThresholds.value || busy.value) return
+  busy.value = true
+  error.value = ''
+  result.value = ''
+  try {
+    const next: AppSettings = {
+      ...settings.value,
+      monitor_storage_warning_bytes: warningMiB.value * bytesPerMiB,
+      monitor_storage_hard_bytes: hardMiB.value * bytesPerMiB,
+    }
+    await saveSettings(next)
+    settings.value = next
+    await refreshStorage()
+    result.value = '容量阈值已保存；后台 Monitor 会在后续正常调度时重新判断，不会因此立即探测。'
+  } catch (cause) { error.value = `保存容量阈值失败：${messageFor(cause)}` }
+  finally { busy.value = false }
 }
 
 async function savePreference(): Promise<void> {
@@ -129,10 +164,25 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
     <p class="mt-1 text-content-muted">当前保留偏好：{{ savedPolicy }}。仅作用于 Monitor raw 样本及符合条件的孤儿 run；Workbench 历史、任务定义、legacy JSON 和旧迁移来源不在删除范围内。</p>
 
     <div v-if="storage" class="mt-3 text-content-secondary">
-      SQLite 文件占用 {{ formatBytes(storage.total_bytes) }}（history.db {{ formatBytes(storage.database_bytes) }}、WAL {{ formatBytes(storage.wal_bytes) }}、shm {{ formatBytes(storage.shared_memory_bytes) }}）。
+      SQLite 文件占用 {{ formatBytes(storage.total_bytes) }}（history.db {{ formatBytes(storage.database_bytes) }}、WAL {{ formatBytes(storage.wal_bytes) }}、shm {{ formatBytes(storage.shared_memory_bytes) }}）。这里检测的是 SQLite 文件占用，不是磁盘剩余空间。
       产品告警阈值 {{ formatBytes(storage.warning_bytes) }}，后台采集保护阈值 {{ formatBytes(storage.hard_bytes) }}；它们不是 SQLite 容量上限。
       <span v-if="storage.protected" class="block mt-1 text-red-700">容量保护已生效：新的 Monitor 后台轮次暂停。不会自动删除 raw，也不会把未采集记为节点失败。</span>
       <span v-else-if="storage.warning" class="block mt-1 text-amber-700">容量已接近保护阈值，请检查可用空间和保留偏好。</span>
+    </div>
+
+    <div class="mt-3 rounded border border-border p-3">
+      <p class="font-medium">容量保护阈值</p>
+      <p class="mt-1 text-content-muted">删除历史可能只释放数据库内部可复用空间，不会立即缩小 SQLite 文件。提高保护阈值意味着允许数据库继续增长，并不代表释放了磁盘空间；请确认设备仍有足够可用空间。</p>
+      <div class="mt-2 flex flex-wrap items-end gap-3">
+        <label class="grid gap-1">告警阈值（MiB）
+          <input :value="warningMiB" type="number" min="1" :max="maxThresholdMiB" step="1" :disabled="busy" class="w-32 rounded border border-border bg-card px-2 py-1" @input="changeThreshold('warning', $event)" />
+        </label>
+        <label class="grid gap-1">后台采集保护阈值（MiB）
+          <input :value="hardMiB" type="number" min="2" :max="maxThresholdMiB" step="1" :disabled="busy" class="w-32 rounded border border-border bg-card px-2 py-1" @input="changeThreshold('hard', $event)" />
+        </label>
+        <button type="button" :disabled="busy || !settings || !hasUnsavedThresholds || !validThresholds" class="rounded border border-border px-3 py-1.5 disabled:opacity-50" @click="saveThresholds">保存容量阈值</button>
+      </div>
+      <p v-if="!validThresholds" class="mt-1 text-red-700">请输入正整数 MiB，且告警阈值必须小于保护阈值。</p>
     </div>
 
     <div class="mt-3 flex flex-wrap items-end gap-3">
@@ -150,7 +200,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 
     <div v-if="preview" class="mt-3 rounded border border-amber-500/40 bg-amber-500/10 p-3">
       <p>删除预览（按当前 SQLite 数据）：cutoff {{ new Date(preview.cutoff).toLocaleString() }} 之前的 Monitor 样本 {{ preview.samples_to_delete }} 条、符合条件的孤儿 run {{ preview.runs_to_delete }} 条。</p>
-      <p class="mt-1">仅影响 Monitor 历史；Workbench、任务定义、legacy JSON 不受影响。删除 raw 历史不能自动恢复，删除后数据库文件也不一定立即缩小。</p>
+      <p class="mt-1">仅影响 Monitor 历史；Workbench、任务定义、legacy JSON 不受影响。删除 raw 历史不能自动恢复，删除后可能只得到 SQLite 内部可复用空间，数据库文件不一定缩小。</p>
       <label class="mt-2 flex items-center gap-2"><input v-model="confirmed" type="checkbox" :disabled="busy" />我确认删除预览范围内的 Monitor raw 历史</label>
       <button type="button" :disabled="!confirmed || busy" class="mt-2 rounded border border-amber-700 px-3 py-1.5 disabled:opacity-50" @click="executeDeletion">确认删除 Monitor raw</button>
     </div>

@@ -807,6 +807,10 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.app.SaveSettings(&settings); err != nil {
+		if monitor.IsValidationError(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

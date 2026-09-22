@@ -73,4 +73,27 @@ describe('MonitorRetentionPanel', () => {
     expect(wrapper.find('[role="alert"]').text()).toContain('部分删除')
     expect(wrapper.find('[role="status"]').exists()).toBe(false)
   })
+
+  it('saves a higher capacity threshold without deleting or starting collection', async () => {
+    const safe = { ...storage, warning_bytes: 1536 * 1024 * 1024, hard_bytes: 3072 * 1024 * 1024, protected: false }
+    vi.mocked(fetchMonitorStorageUsage).mockResolvedValueOnce(storage).mockResolvedValue(safe)
+    wrapper = mount(MonitorRetentionPanel)
+    await flushPromises()
+    expect(wrapper.text()).toContain('不是磁盘剩余空间')
+    expect(wrapper.text()).toContain('允许数据库继续增长')
+    const inputs = wrapper.findAll('input[type="number"]')
+    await inputs[0]!.setValue('1536')
+    await inputs[1]!.setValue('3072')
+    await wrapper.findAll('button').find(b => b.text().includes('保存容量阈值'))!.trigger('click')
+    await flushPromises()
+    expect(saveSettings).toHaveBeenCalledWith(expect.objectContaining({
+      monitor_retention_policy: 'keep_all',
+      monitor_storage_warning_bytes: 1536 * 1024 * 1024,
+      monitor_storage_hard_bytes: 3072 * 1024 * 1024,
+    }))
+    expect(fetchMonitorStorageUsage).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).not.toContain('容量保护已生效')
+    expect(applyMonitorRetention).not.toHaveBeenCalled()
+    expect(wrapper.find('[role="status"]').text()).toContain('后续正常调度')
+  })
 })

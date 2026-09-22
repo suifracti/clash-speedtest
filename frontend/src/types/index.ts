@@ -398,6 +398,8 @@ export interface AppSettings {
   preferred_browser: string
   monitor_retention_policy?: MonitorRetentionPolicy
   monitor_retention_custom_days?: number
+  monitor_storage_warning_bytes?: number
+  monitor_storage_hard_bytes?: number
 }
 
 export type MonitorRetentionPolicy = 'keep_all' | '30d' | '90d' | '180d' | 'custom'
