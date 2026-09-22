@@ -48,9 +48,12 @@ func NewScheduler(cfg SchedulerConfig) (*Scheduler, error) {
 		job:    cfg.Job,
 		runner: cfg.Runner,
 		store:  cfg.Store,
-		state:  JobStateStopped,
+		state:  cfg.Job.State,
 	}
-	s.job.State = JobStateStopped
+	if s.state != JobStateBlocked {
+		s.state = JobStateStopped
+		s.job.State = JobStateStopped
+	}
 	return s, nil
 }
 
@@ -88,6 +91,12 @@ func (s *Scheduler) Start(parentCtx context.Context) error {
 
 	if s.stopping {
 		return fmt.Errorf("scheduler is stopping")
+	}
+	if s.state == JobStateBlocked {
+		if s.job.BlockedReason != "" {
+			return fmt.Errorf("monitor job is blocked: %s", s.job.BlockedReason)
+		}
+		return fmt.Errorf("monitor job is blocked")
 	}
 
 	if s.state == JobStateRunning {
@@ -152,7 +161,7 @@ func (s *Scheduler) Resume() error {
 // Follows strict happens-before: stopping = true -> prohibit new runs -> cancel -> Wait().
 func (s *Scheduler) Stop() error {
 	s.mu.Lock()
-	if s.state == JobStateStopped || s.stopping {
+	if s.state == JobStateStopped || s.state == JobStateBlocked || s.stopping {
 		s.mu.Unlock()
 		return nil
 	}
@@ -184,8 +193,13 @@ func (s *Scheduler) TriggerImmediate(ctx context.Context) (*MonitorRun, error) {
 	}
 
 	s.mu.Lock()
-	if s.state == JobStateStopped || s.stopping {
+	blocked := s.state == JobStateBlocked
+	blockedReason := s.job.BlockedReason
+	if s.state == JobStateStopped || blocked || s.stopping {
 		s.mu.Unlock()
+		if blocked && blockedReason != "" {
+			return nil, fmt.Errorf("monitor job is blocked: %s", blockedReason)
+		}
 		return nil, fmt.Errorf("scheduler is stopped or stopping")
 	}
 

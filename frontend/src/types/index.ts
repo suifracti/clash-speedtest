@@ -656,11 +656,12 @@ export interface RawMonitorJobWire {
   interval_seconds: number
   timeout_seconds: number
   state: MonitorJobState
+  blocked_reason?: string
   created_at: string
   updated_at: string
 }
 
-export type MonitorJobState = 'stopped' | 'running' | 'paused'
+export type MonitorJobState = 'stopped' | 'running' | 'paused' | 'blocked'
 
 export interface MonitorJob {
   id: string
@@ -673,6 +674,7 @@ export interface MonitorJob {
   intervalSeconds: number
   timeoutSeconds: number
   state: MonitorJobState
+  blockedReason: string
   createdAt: string
   updatedAt: string
 }

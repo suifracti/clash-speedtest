@@ -326,6 +326,20 @@ func (s *Store) QueryMonitorSamples(ctx context.Context, filter monitor.SampleFi
 	return s.db.QueryMonitorSamples(ctx, filter)
 }
 
+func (s *Store) SaveMonitorJobDefinition(ctx context.Context, definition *monitor.MonitorJobDefinition) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
+	return s.db.SaveMonitorJobDefinition(ctx, definition)
+}
+
+func (s *Store) ListMonitorJobDefinitions(ctx context.Context) ([]*monitor.MonitorJobDefinition, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
+	return s.db.ListMonitorJobDefinitions(ctx)
+}
+
 func (s *Store) GetNodeTimelineSamples(ctx context.Context, nodeKey string, since time.Time) ([]*monitor.MonitorSample, error) {
 	return s.db.GetNodeTimelineSamples(ctx, nodeKey, since)
 }

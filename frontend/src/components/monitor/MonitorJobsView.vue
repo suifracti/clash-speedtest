@@ -89,7 +89,7 @@ function setTimeoutSeconds(value: string | number): void {
 }
 
 function formatState(state: MonitorJob['state']): string {
-  return { stopped: '已停止', running: '运行中', paused: '已暂停' }[state] ?? state
+  return { stopped: '已停止', running: '运行中', paused: '已暂停', blocked: '已阻塞' }[state] ?? state
 }
 
 function stateClass(state: MonitorJob['state']): string {
@@ -97,6 +97,7 @@ function stateClass(state: MonitorJob['state']): string {
     stopped: 'text-content-muted bg-card-subtle border-border',
     running: 'text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border-emerald-500/25',
     paused: 'text-amber-700 dark:text-amber-300 bg-amber-500/10 border-amber-500/25',
+    blocked: 'text-red-700 dark:text-red-300 bg-red-500/10 border-red-500/25',
   }[state]
 }
 
@@ -234,7 +235,7 @@ onBeforeUnmount(() => {
         <div>
           <h2 class="text-base font-semibold text-content-main">持续监测</h2>
           <p class="mt-1 text-xs text-content-muted">
-            观察哪些节点、检查什么、每隔多久，以及最近检查和下一次检查。配置只在本次应用进程内保留；重启后不会恢复任务，也不会把历史样本显示为活任务。
+            观察哪些节点、检查什么、每隔多久，以及最近检查和下一次检查。任务定义会保存；重启后只恢复为停止或阻塞，不会自动启动或产生探测。
           </p>
         </div>
         <button
@@ -347,12 +348,16 @@ onBeforeUnmount(() => {
               <button v-else-if="job.state === 'running'" @click="applyAction(job, 'pause')" :disabled="!!busyJob" class="rounded border border-amber-500/40 px-2 py-1 text-[11px] text-amber-700 hover:bg-amber-500/10 disabled:opacity-50">
                 {{ isBusy(job, 'pause') ? '暂停中…' : '暂停' }}
               </button>
-              <button v-else @click="applyAction(job, 'resume')" :disabled="!!busyJob" class="rounded border border-blue-500/40 px-2 py-1 text-[11px] text-blue-700 hover:bg-blue-500/10 disabled:opacity-50">
+              <button v-else-if="job.state === 'paused'" @click="applyAction(job, 'resume')" :disabled="!!busyJob" class="rounded border border-blue-500/40 px-2 py-1 text-[11px] text-blue-700 hover:bg-blue-500/10 disabled:opacity-50">
                 {{ isBusy(job, 'resume') ? '恢复中…' : '恢复' }}
               </button>
-              <button @click="applyAction(job, 'stop')" :disabled="job.state === 'stopped' || !!busyJob" class="rounded border border-red-500/40 px-2 py-1 text-[11px] text-red-700 hover:bg-red-500/10 disabled:opacity-40">
+              <button @click="applyAction(job, 'stop')" :disabled="job.state === 'stopped' || job.state === 'blocked' || !!busyJob" class="rounded border border-red-500/40 px-2 py-1 text-[11px] text-red-700 hover:bg-red-500/10 disabled:opacity-40">
                 {{ isBusy(job, 'stop') ? '停止中…' : '停止' }}
               </button>
+            </div>
+
+            <div v-if="job.state === 'blocked'" class="mt-2 text-[11px] text-red-700 dark:text-red-300">
+              无法安全恢复：{{ job.blockedReason || '当前订阅或节点配置已不可用，请重新创建任务。' }}
             </div>
 
             <div class="mt-3 border-t border-border pt-2">

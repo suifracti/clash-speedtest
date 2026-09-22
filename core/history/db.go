@@ -95,6 +95,50 @@ CREATE INDEX IF NOT EXISTS idx_workbench_latency_samples_time
     ON workbench_latency_samples(attempt_id, timestamp ASC, seq ASC);
 `
 
+const monitorJobDDL = `
+CREATE TABLE IF NOT EXISTS monitor_job_definitions (
+    job_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    probe_set TEXT NOT NULL,
+    interval_ns INTEGER NOT NULL,
+    timeout_ns INTEGER NOT NULL,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
+    definition_version INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS monitor_job_nodes (
+    job_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,
+    node_key TEXT NOT NULL,
+    node_identity_key TEXT NOT NULL,
+    config_revision_key TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    node_type TEXT NOT NULL,
+    PRIMARY KEY (job_id, ordinal),
+    FOREIGN KEY (job_id) REFERENCES monitor_job_definitions(job_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_monitor_job_nodes_job_id ON monitor_job_nodes(job_id, ordinal);
+`
+
+const schemaMetaDDL = `
+CREATE TABLE IF NOT EXISTS schema_meta (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    schema_version INTEGER NOT NULL
+);
+`
+
+// CurrentSchemaVersion is the SQLite schema authority. Databases without a
+// schema_meta row are the explicitly recognized pre-version legacy schema.
+const CurrentSchemaVersion = 1
+
+var (
+	ErrUnsupportedSchemaVersion = fmt.Errorf("unsupported SQLite schema version")
+	ErrUnrecognizedSchema       = fmt.Errorf("unrecognized SQLite schema")
+)
+
 // DB manages the SQLite single-writer connection pool with WAL mode enabled.
 type DB struct {
 	db              *sql.DB
@@ -119,7 +163,6 @@ func OpenDB(dir string) (*DB, error) {
 
 	// Pragmas for WAL mode, high concurrency reading, and safe busy timeout
 	pragmas := []string{
-		"PRAGMA journal_mode = WAL;",
 		"PRAGMA busy_timeout = 5000;",
 		"PRAGMA synchronous = NORMAL;",
 		"PRAGMA foreign_keys = ON;",
@@ -132,78 +175,273 @@ func OpenDB(dir string) (*DB, error) {
 		}
 	}
 
-	if _, err := db.Exec(ddlSchema); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("initialize sqlite schema: %w", err)
-	}
-
-	// Run idempotent schema migrations to support upgrading from previous DB schema revisions
+	// Initialize or upgrade the schema inside one explicit transaction. This
+	// also rejects unknown future schemas before any DDL is applied.
 	if err := migrateSchema(db); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate sqlite schema: %w", err)
+	}
+	// WAL changes the database header, so only enable it after schema
+	// recognition/migration has succeeded. Unknown schemas therefore remain
+	// untouched by OpenDB.
+	if _, err := db.Exec("PRAGMA journal_mode = WAL;"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("enable sqlite WAL mode: %w", err)
 	}
 
 	return &DB{db: db}, nil
 }
 
-// migrateSchema performs idempotent, backward-compatible schema updates.
-// TODO(schema): Introduce a formal schema version framework in a future milestone (N-01).
 func migrateSchema(db *sql.DB) error {
-	rows, err := db.Query("PRAGMA table_info(monitor_samples);")
+	tx, err := db.Begin()
 	if err != nil {
-		return fmt.Errorf("inspect monitor_samples table_info: %w", err)
+		return fmt.Errorf("begin schema migration: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	hasMeta, version, err := readSchemaVersion(tx)
+	if err != nil {
+		return err
+	}
+	if hasMeta {
+		if version > CurrentSchemaVersion {
+			return fmt.Errorf("%w: found %d, current %d", ErrUnsupportedSchemaVersion, version, CurrentSchemaVersion)
+		}
+		if version < 1 {
+			return fmt.Errorf("%w: schema version %d cannot be upgraded safely", ErrUnrecognizedSchema, version)
+		}
+		if err := validateCurrentSchema(tx); err != nil {
+			return fmt.Errorf("validate schema version %d: %w", version, err)
+		}
+	} else {
+		empty, knownLegacy, err := inspectUnversionedSchema(tx)
+		if err != nil {
+			return err
+		}
+		if !empty && !knownLegacy {
+			return fmt.Errorf("%w: missing schema_meta on an unknown database", ErrUnrecognizedSchema)
+		}
+		if err := installSchemaVersion1(tx); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit schema migration: %w", err)
+	}
+	return nil
+}
+
+func readSchemaVersion(tx *sql.Tx) (bool, int, error) {
+	var exists int
+	if err := tx.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'schema_meta'").Scan(&exists); err != nil {
+		return false, 0, fmt.Errorf("inspect schema_meta: %w", err)
+	}
+	if exists == 0 {
+		return false, 0, nil
+	}
+
+	rows, err := tx.Query("SELECT singleton, schema_version FROM schema_meta")
+	if err != nil {
+		return true, 0, fmt.Errorf("read schema_meta: %w", err)
 	}
 	defer rows.Close()
-
-	hasNodeIdentity := false
-	hasConfigRevision := false
-
+	count := 0
+	version := 0
 	for rows.Next() {
-		var cid int
-		var name, colType string
-		var notNull, pk int
-		var dfltValue sql.NullString
-		if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err != nil {
-			return fmt.Errorf("scan pragma table_info: %w", err)
+		var singleton, current int
+		if err := rows.Scan(&singleton, &current); err != nil {
+			return true, 0, fmt.Errorf("scan schema_meta: %w", err)
 		}
-		if strings.EqualFold(name, "node_identity_key") {
-			hasNodeIdentity = true
+		if singleton != 1 || count != 0 {
+			return true, 0, fmt.Errorf("%w: schema_meta must contain exactly one singleton row", ErrUnrecognizedSchema)
 		}
-		if strings.EqualFold(name, "config_revision_key") {
-			hasConfigRevision = true
+		version = current
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return true, 0, fmt.Errorf("read schema_meta rows: %w", err)
+	}
+	if count != 1 {
+		return true, 0, fmt.Errorf("%w: schema_meta has no singleton row", ErrUnrecognizedSchema)
+	}
+	return true, version, nil
+}
+
+func inspectUnversionedSchema(tx *sql.Tx) (empty, known bool, err error) {
+	allowed := map[string]bool{
+		"monitor_runs":              true,
+		"monitor_samples":           true,
+		"workbench_latency_tests":   true,
+		"workbench_latency_samples": true,
+	}
+	knownTables := 0
+	rows, err := tx.Query("SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND type <> 'index'")
+	if err != nil {
+		return false, false, fmt.Errorf("inspect unversioned schema: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var objectType, name string
+		if err := rows.Scan(&objectType, &name); err != nil {
+			return false, false, fmt.Errorf("scan unversioned schema: %w", err)
 		}
+		if objectType != "table" || !allowed[name] {
+			return false, false, nil
+		}
+		knownTables++
+	}
+	if err := rows.Err(); err != nil {
+		return false, false, fmt.Errorf("read unversioned schema: %w", err)
+	}
+	if knownTables == 0 {
+		return true, false, nil
 	}
 
-	if !hasNodeIdentity {
-		if _, err := db.Exec("ALTER TABLE monitor_samples ADD COLUMN node_identity_key TEXT NOT NULL DEFAULT '';"); err != nil {
+	required := map[string][]string{
+		"monitor_runs":              {"run_id", "job_id", "scheduled_at", "started_at", "status"},
+		"monitor_samples":           {"sample_id", "run_id", "node_key", "profile_id", "timestamp", "success"},
+		"workbench_latency_tests":   {"attempt_id", "profile_id", "node_key", "requested_at", "finished_at"},
+		"workbench_latency_samples": {"attempt_id", "seq", "timestamp"},
+	}
+	for table, columns := range required {
+		present, err := tableExists(tx, table)
+		if err != nil {
+			return false, false, err
+		}
+		if !present {
+			continue
+		}
+		if err := requireColumns(tx, table, columns); err != nil {
+			return false, false, fmt.Errorf("legacy %s: %w", table, err)
+		}
+	}
+	return false, true, nil
+}
+
+func installSchemaVersion1(tx *sql.Tx) error {
+	if _, err := tx.Exec(ddlSchema); err != nil {
+		return fmt.Errorf("initialize base schema: %w", err)
+	}
+	if err := migrateLegacyMonitorColumns(tx); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(monitorJobDDL); err != nil {
+		return fmt.Errorf("initialize monitor job schema: %w", err)
+	}
+	if _, err := tx.Exec(schemaMetaDDL); err != nil {
+		return fmt.Errorf("initialize schema_meta: %w", err)
+	}
+	if _, err := tx.Exec("INSERT INTO schema_meta (singleton, schema_version) VALUES (1, ?)", CurrentSchemaVersion); err != nil {
+		return fmt.Errorf("record schema version: %w", err)
+	}
+	return nil
+}
+
+func migrateLegacyMonitorColumns(tx *sql.Tx) error {
+	present, err := tableExists(tx, "monitor_samples")
+	if err != nil {
+		return err
+	}
+	if !present {
+		return nil
+	}
+	columns, err := tableColumns(tx, "monitor_samples")
+	if err != nil {
+		return err
+	}
+	if !columns["node_identity_key"] {
+		if _, err := tx.Exec("ALTER TABLE monitor_samples ADD COLUMN node_identity_key TEXT NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("migrate add node_identity_key: %w", err)
 		}
-		// Migration Limitation Note (B-01): When upgrading from PR#3, samples only retain the legacy node_key.
-		// If a node had multiple credential revisions during PR#3, the new NodeIdentityKey cannot be mathematically
-		// back-computed from raw samples alone without credentials. Setting node_identity_key = node_key preserves
-		// raw data without destructive migration while QueryMonitorSamplesCursor and GetDerivedStats bridge queries
-		// using both NodeIdentityKey and LegacyNodeKey.
-		_, _ = db.Exec("UPDATE monitor_samples SET node_identity_key = node_key WHERE node_identity_key = '' OR node_identity_key IS NULL;")
+		// PR#3 samples only have node_key; preserve them and let the existing
+		// identity bridge keep those raw facts queryable.
+		if _, err := tx.Exec("UPDATE monitor_samples SET node_identity_key = node_key WHERE node_identity_key = '' OR node_identity_key IS NULL"); err != nil {
+			return fmt.Errorf("backfill node_identity_key: %w", err)
+		}
 	}
-
-	if !hasConfigRevision {
-		if _, err := db.Exec("ALTER TABLE monitor_samples ADD COLUMN config_revision_key TEXT NOT NULL DEFAULT '';"); err != nil {
+	if !columns["config_revision_key"] {
+		if _, err := tx.Exec("ALTER TABLE monitor_samples ADD COLUMN config_revision_key TEXT NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("migrate add config_revision_key: %w", err)
 		}
 	}
-
-	// Ensure all required indexes are present
 	indexes := []string{
-		"CREATE INDEX IF NOT EXISTS idx_samples_node_identity_time ON monitor_samples(node_identity_key, timestamp DESC);",
-		"CREATE INDEX IF NOT EXISTS idx_samples_cursor_desc ON monitor_samples(timestamp DESC, sample_id DESC);",
-		"CREATE INDEX IF NOT EXISTS idx_samples_cursor_asc ON monitor_samples(timestamp ASC, sample_id ASC);",
+		"CREATE INDEX IF NOT EXISTS idx_samples_node_identity_time ON monitor_samples(node_identity_key, timestamp DESC)",
+		"CREATE INDEX IF NOT EXISTS idx_samples_cursor_desc ON monitor_samples(timestamp DESC, sample_id DESC)",
+		"CREATE INDEX IF NOT EXISTS idx_samples_cursor_asc ON monitor_samples(timestamp ASC, sample_id ASC)",
 	}
-	for _, idx := range indexes {
-		if _, err := db.Exec(idx); err != nil {
-			return fmt.Errorf("create index: %w", err)
+	for _, indexDDL := range indexes {
+		if _, err := tx.Exec(indexDDL); err != nil {
+			return fmt.Errorf("create monitor sample index: %w", err)
 		}
 	}
+	return nil
+}
 
+func validateCurrentSchema(tx *sql.Tx) error {
+	tables := map[string][]string{
+		"monitor_runs":              {"run_id", "job_id", "scheduled_at", "started_at", "status"},
+		"monitor_samples":           {"sample_id", "run_id", "node_key", "node_identity_key", "config_revision_key", "profile_id", "timestamp", "success"},
+		"workbench_latency_tests":   {"attempt_id", "profile_id", "node_key", "requested_at", "finished_at"},
+		"workbench_latency_samples": {"attempt_id", "seq", "timestamp"},
+		"monitor_job_definitions":   {"job_id", "profile_id", "probe_set", "interval_ns", "timeout_ns", "definition_version"},
+		"monitor_job_nodes":         {"job_id", "ordinal", "node_key", "node_identity_key", "config_revision_key"},
+	}
+	for table, columns := range tables {
+		present, err := tableExists(tx, table)
+		if err != nil {
+			return err
+		}
+		if !present {
+			return fmt.Errorf("required table %s is missing", table)
+		}
+		if err := requireColumns(tx, table, columns); err != nil {
+			return fmt.Errorf("table %s: %w", table, err)
+		}
+	}
+	return nil
+}
+
+func tableExists(tx *sql.Tx, table string) (bool, error) {
+	var count int
+	if err := tx.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", table).Scan(&count); err != nil {
+		return false, fmt.Errorf("inspect table %s: %w", table, err)
+	}
+	return count == 1, nil
+}
+
+func tableColumns(tx *sql.Tx, table string) (map[string]bool, error) {
+	rows, err := tx.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return nil, fmt.Errorf("inspect columns for %s: %w", table, err)
+	}
+	defer rows.Close()
+	columns := make(map[string]bool)
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, colType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultValue, &pk); err != nil {
+			return nil, fmt.Errorf("scan columns for %s: %w", table, err)
+		}
+		columns[strings.ToLower(name)] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read columns for %s: %w", table, err)
+	}
+	return columns, nil
+}
+
+func requireColumns(tx *sql.Tx, table string, required []string) error {
+	columns, err := tableColumns(tx, table)
+	if err != nil {
+		return err
+	}
+	for _, column := range required {
+		if !columns[strings.ToLower(column)] {
+			return fmt.Errorf("required column %s is missing", column)
+		}
+	}
 	return nil
 }
 
@@ -217,6 +455,140 @@ func (d *DB) Close() error {
 		return err
 	}
 	return nil
+}
+
+// SaveMonitorJobDefinition durably stores the credential-free product
+// definition. Runtime scheduler state and raw node configuration never enter
+// this transaction.
+func (d *DB) SaveMonitorJobDefinition(ctx context.Context, definition *monitor.MonitorJobDefinition) error {
+	if definition == nil {
+		return fmt.Errorf("monitor job definition is nil")
+	}
+	if definition.ID == "" {
+		return fmt.Errorf("monitor job definition id is empty")
+	}
+	version := definition.DefinitionVersion
+	if version == 0 {
+		version = monitor.MonitorJobDefinitionVersion
+	}
+	if version != monitor.MonitorJobDefinitionVersion {
+		return fmt.Errorf("unsupported monitor job definition version %d", version)
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin monitor job definition transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO monitor_job_definitions (
+			job_id, name, profile_id, probe_set, interval_ns, timeout_ns,
+			created_at, updated_at, definition_version
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, definition.ID, definition.Name, definition.ProfileID, string(definition.ProbeSet),
+		definition.Interval.Nanoseconds(), definition.Timeout.Nanoseconds(), definition.CreatedAt.UTC(),
+		definition.UpdatedAt.UTC(), version)
+	if err != nil {
+		return fmt.Errorf("insert monitor job definition %s: %w", definition.ID, err)
+	}
+
+	for ordinal, node := range definition.Nodes {
+		if node.NodeKey == "" || node.NodeIdentityKey == "" || node.ConfigRevisionKey == "" {
+			return fmt.Errorf("monitor job definition %s contains an incomplete node reference", definition.ID)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO monitor_job_nodes (
+				job_id, ordinal, node_key, node_identity_key, config_revision_key,
+				display_name, node_type
+			) VALUES (?, ?, ?, ?, ?, ?, ?)
+		`, definition.ID, ordinal, node.NodeKey, node.NodeIdentityKey, node.ConfigRevisionKey,
+			node.DisplayName, node.Type); err != nil {
+			return fmt.Errorf("insert monitor job node %s/%d: %w", definition.ID, ordinal, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit monitor job definition %s: %w", definition.ID, err)
+	}
+	return nil
+}
+
+// ListMonitorJobDefinitions reads only durable product definitions. The caller
+// must resolve node references against the current canonical profile/cache.
+func (d *DB) ListMonitorJobDefinitions(ctx context.Context) ([]*monitor.MonitorJobDefinition, error) {
+	if d == nil || d.db == nil {
+		return nil, fmt.Errorf("history database is closed")
+	}
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT job_id, name, profile_id, probe_set, interval_ns, timeout_ns,
+		       created_at, updated_at, definition_version
+		FROM monitor_job_definitions
+		ORDER BY created_at ASC, job_id ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("query monitor job definitions: %w", err)
+	}
+	defer rows.Close()
+
+	definitions := make([]*monitor.MonitorJobDefinition, 0)
+	for rows.Next() {
+		var (
+			definition monitor.MonitorJobDefinition
+			probeSet   string
+			intervalNS int64
+			timeoutNS  int64
+		)
+		if err := rows.Scan(&definition.ID, &definition.Name, &definition.ProfileID, &probeSet,
+			&intervalNS, &timeoutNS, &definition.CreatedAt, &definition.UpdatedAt,
+			&definition.DefinitionVersion); err != nil {
+			return nil, fmt.Errorf("scan monitor job definition: %w", err)
+		}
+		definition.ProbeSet = monitor.ProbeSetType(probeSet)
+		definition.Interval = time.Duration(intervalNS)
+		definition.Timeout = time.Duration(timeoutNS)
+		definition.Nodes, err = d.listMonitorJobNodes(ctx, definition.ID)
+		if err != nil {
+			return nil, err
+		}
+		definitions = append(definitions, &definition)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read monitor job definitions: %w", err)
+	}
+	return definitions, nil
+}
+
+func (d *DB) listMonitorJobNodes(ctx context.Context, jobID string) ([]monitor.MonitorJobNodeReference, error) {
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT node_key, node_identity_key, config_revision_key, display_name, node_type
+		FROM monitor_job_nodes
+		WHERE job_id = ?
+		ORDER BY ordinal ASC
+	`, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("query monitor job nodes %s: %w", jobID, err)
+	}
+	defer rows.Close()
+
+	nodes := make([]monitor.MonitorJobNodeReference, 0)
+	for rows.Next() {
+		var node monitor.MonitorJobNodeReference
+		if err := rows.Scan(&node.NodeKey, &node.NodeIdentityKey, &node.ConfigRevisionKey,
+			&node.DisplayName, &node.Type); err != nil {
+			return nil, fmt.Errorf("scan monitor job node %s: %w", jobID, err)
+		}
+		nodes = append(nodes, node)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read monitor job nodes %s: %w", jobID, err)
+	}
+	return nodes, nil
 }
 
 // SaveMonitorRun persists a new MonitorRun record.

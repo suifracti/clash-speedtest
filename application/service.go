@@ -56,6 +56,7 @@ type AppService struct {
 	monitorMu         sync.RWMutex
 	monitorSchedulers map[string]*monitor.Scheduler
 	monitorRunner     *monitor.Runner
+	monitorLoadErr    error
 
 	// latencyPersistenceWG keeps the result-first workbench path from closing
 	// history.db while a just-finished latency result is still being persisted.
@@ -99,6 +100,10 @@ func newAppService(hStore *history.Store, appPaths appdata.AppPaths, profilePath
 		svc.monitorRunner = monitor.NewRunner(monitor.RunnerConfig{
 			Store: hStore,
 		})
+		if err := svc.loadPersistedMonitorJobs(); err != nil {
+			svc.monitorLoadErr = err
+			log.Printf("monitor job definitions were not loaded: %v", err)
+		}
 	}
 
 	// Initialize default Mihomo controller adapter
@@ -1665,11 +1670,8 @@ func (s *AppService) SetMonitorRunner(runner *monitor.Runner) {
 	s.monitorRunner = runner
 }
 
-// CreateMonitorJob registers a new 24/7 monitor job and prepares its scheduler.
-//
-// Persistence Boundary (R-04):
-// MonitorJob configurations are registered in-memory for the lifecycle of the application process.
-// Only execution runs (MonitorRun) and raw probe measurements (MonitorSample) are persisted to SQLite.
+// CreateMonitorJob durably commits a new product definition before exposing its
+// scheduler to the rest of the process. Runtime state remains in memory only.
 //
 // Uniqueness (B-02):
 // A JobID must be unique among registered schedulers. Re-creating a job with an existing JobID
@@ -1706,8 +1708,10 @@ func (s *AppService) CreateMonitorJob(job monitor.MonitorJob) (*monitor.MonitorJ
 	}
 
 	job.State = monitor.JobStateStopped
-	job.CreatedAt = time.Now()
-	job.UpdatedAt = time.Now()
+	job.BlockedReason = ""
+	now := time.Now()
+	job.CreatedAt = now
+	job.UpdatedAt = now
 
 	runner := s.monitorRunner
 	if runner == nil {
@@ -1728,6 +1732,12 @@ func (s *AppService) CreateMonitorJob(job monitor.MonitorJob) (*monitor.MonitorJ
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create monitor scheduler: %w", err)
+	}
+	if s.historyStore == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
+	if err := s.historyStore.SaveMonitorJobDefinition(context.Background(), monitorJobDefinitionFromJob(job)); err != nil {
+		return nil, fmt.Errorf("persist monitor job %s: %w", job.ID, err)
 	}
 
 	s.monitorSchedulers[job.ID] = sched
