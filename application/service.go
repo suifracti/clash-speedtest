@@ -173,6 +173,9 @@ func (s *AppService) Close() error {
 
 // StartBatch starts a batch speed test across specified or all nodes of an airport.
 func (s *AppService) StartBatch(req BatchTestRequest, explicitToken string) error {
+	if s.historyStore == nil {
+		return fmt.Errorf("history store is not initialized; confirm data migration first")
+	}
 	s.mu.Lock()
 	if s.status.IsRunning {
 		s.mu.Unlock()
@@ -711,22 +714,37 @@ func ParseMetricSlice(metrics []string) speedtester.MetricSet {
 // History operations
 
 func (s *AppService) ListHistory() ([]*history.RunSummary, error) {
+	if s.historyStore == nil {
+		return nil, fmt.Errorf("history store is not initialized; confirm data migration first")
+	}
 	return s.historyStore.List()
 }
 
 func (s *AppService) GetHistory(id string) (*history.TestRun, error) {
+	if s.historyStore == nil {
+		return nil, fmt.Errorf("history store is not initialized; confirm data migration first")
+	}
 	return s.historyStore.Get(id)
 }
 
 func (s *AppService) DeleteHistory(id string) error {
+	if s.historyStore == nil {
+		return fmt.Errorf("history store is not initialized; confirm data migration first")
+	}
 	return s.historyStore.Delete(id)
 }
 
 func (s *AppService) GetAirportTimeline(airportID string) (*history.AirportHistory, error) {
+	if s.historyStore == nil {
+		return nil, fmt.Errorf("history store is not initialized; confirm data migration first")
+	}
 	return s.historyStore.GetAirportHistory(airportID)
 }
 
 func (s *AppService) CompareRuns(baseID, targetID string) (*history.RunComparison, error) {
+	if s.historyStore == nil {
+		return nil, fmt.Errorf("history store is not initialized; confirm data migration first")
+	}
 	return s.historyStore.Compare(baseID, targetID)
 }
 
@@ -738,6 +756,7 @@ func (s *AppService) CompareRuns(baseID, targetID string) (*history.RunCompariso
 // summaries. It does not create a store or import anything.
 func (s *AppService) GetProfileSetup() (*ProfileSetupDTO, error) {
 	status := s.profilePaths.InspectSetup()
+	migration, _ := s.GetDataMigration()
 	dto := &ProfileSetupDTO{
 		State:             "needs_choice",
 		Initialized:       status.Initialized,
@@ -747,6 +766,7 @@ func (s *AppService) GetProfileSetup() (*ProfileSetupDTO, error) {
 		SettingsFile:      s.appPaths.SettingsFile,
 		UnfinishedStaging: append([]string(nil), status.UnfinishedStaging...),
 		LockPresent:       status.LockPresent,
+		Migration:         migration,
 	}
 	if dto.DataRoot == "" && s.profilePaths.Dir != "" {
 		dto.DataRoot = filepath.Dir(s.profilePaths.Dir)
@@ -1251,6 +1271,9 @@ func defaultSettingsPath() string {
 }
 
 func (s *AppService) settingsPath() string {
+	if info := s.appPaths.InspectMigration(); info.State == appdata.MigrationStatePending && info.SourceSettingsFile != "" {
+		return info.SourceSettingsFile
+	}
 	if s.appPaths.SettingsFile != "" {
 		return s.appPaths.SettingsFile
 	}

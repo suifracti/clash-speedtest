@@ -4,8 +4,8 @@ import (
 	"embed"
 	"fmt"
 
+	"github.com/faceair/clash-speedtest/application"
 	"github.com/faceair/clash-speedtest/core/appdata"
-	"github.com/faceair/clash-speedtest/core/history"
 	"github.com/faceair/clash-speedtest/core/profiles"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -44,7 +44,7 @@ func Run(cfg RunConfig) error {
 		cfg.AppPaths = appdata.FromLegacy(cfg.ProfilePaths.Dir, cfg.HistoryDir)
 	}
 
-	hStore, err := history.NewStore(cfg.HistoryDir)
+	hStore, err := application.OpenHistoryStore(cfg.AppPaths)
 	if err != nil {
 		return fmt.Errorf("init history store: %w", err)
 	}

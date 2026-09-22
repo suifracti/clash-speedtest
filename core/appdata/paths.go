@@ -14,9 +14,7 @@ const (
 )
 
 // AppPaths is the single path decision shared by the desktop and local Web
-// adapters. ProfileDir is deliberately separate from HistoryDir during the
-// PR1 transition: the default history database stays at its established
-// location until the later history migration task.
+// adapters. All default user data now lives below one stable DATA_ROOT.
 type AppPaths struct {
 	DataRoot     string `json:"data_root"`
 	ProfileDir   string `json:"profile_dir"`
@@ -66,22 +64,8 @@ func Resolve(explicit string) (AppPaths, error) {
 		ProfileDir: filepath.Join(root, "profiles"),
 		Explicit:   explicitMode,
 	}
-	if explicitMode {
-		paths.HistoryDir = filepath.Join(root, "history")
-		paths.SettingsFile = filepath.Join(root, "settings.json")
-		return paths, nil
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil || strings.TrimSpace(home) == "" {
-		if err == nil {
-			err = fmt.Errorf("home directory is empty")
-		}
-		return AppPaths{}, fmt.Errorf("resolve stable user data paths: %w", err)
-	}
-	legacyRoot := filepath.Join(home, ".clash-speedtest")
-	paths.HistoryDir = filepath.Join(legacyRoot, "history")
-	paths.SettingsFile = filepath.Join(legacyRoot, "settings.json")
+	paths.HistoryDir = filepath.Join(root, "history")
+	paths.SettingsFile = filepath.Join(root, "settings.json")
 	return paths, nil
 }
 
@@ -107,6 +91,7 @@ func FromLegacy(profileDir, historyDir string) AppPaths {
 		ProfileDir:   profileDir,
 		HistoryDir:   historyDir,
 		SettingsFile: settingsFile,
+		Explicit:     true,
 	}
 }
 

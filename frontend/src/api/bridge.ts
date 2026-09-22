@@ -99,6 +99,14 @@ export async function fetchProfileSetup(): Promise<ProfileSetup> {
   return res.json()
 }
 
+export async function migrateLegacyData(): Promise<void> {
+  if (isWails()) {
+    return window.go!.desktop!.App!.MigrateLegacyData()
+  }
+  const res = await fetch(`${API_BASE}/api/data/migration`, { method: 'POST' })
+  if (!res.ok) throw new Error(await res.text())
+}
+
 export async function inspectProfileSource(path: string): Promise<ProfileSource> {
   if (isWails()) {
     return window.go!.desktop!.App!.InspectProfileSource(path)

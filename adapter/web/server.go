@@ -71,7 +71,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		cfg.AppPaths = appdata.FromLegacy(cfg.ProfilePaths.Dir, cfg.HistoryDir)
 	}
 
-	hStore, err := history.NewStore(cfg.HistoryDir)
+	hStore, err := application.OpenHistoryStore(cfg.AppPaths)
 	if err != nil {
 		return nil, fmt.Errorf("init history store: %w", err)
 	}
@@ -124,6 +124,7 @@ func (s *Server) buildHandler() http.Handler {
 
 	// REST API routes
 	mux.HandleFunc("GET /api/profile/setup", s.handleGetProfileSetup)
+	mux.HandleFunc("POST /api/data/migration", s.handleMigrateLegacyData)
 	mux.HandleFunc("POST /api/profile/source/inspect", s.handleInspectProfileSource)
 	mux.HandleFunc("POST /api/profile/setup/empty", s.handleInitializeEmptyProfileStore)
 	mux.HandleFunc("POST /api/profile/import", s.handleImportProfileSource)
@@ -378,6 +379,14 @@ func (s *Server) handleGetProfileSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, setup)
+}
+
+func (s *Server) handleMigrateLegacyData(w http.ResponseWriter, r *http.Request) {
+	if err := s.app.MigrateLegacyData(); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
 type profileSourcePathReq struct {

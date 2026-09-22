@@ -19,6 +19,21 @@ export interface ProfileSource {
   error?: string
 }
 
+export interface DataMigration {
+  state: 'ready' | 'pending' | 'conflict' | 'invalid' | 'isolated'
+  source_history_dir?: string
+  target_history_dir: string
+  source_settings_file?: string
+  target_settings_file: string
+  source_has_sqlite: boolean
+  source_json_count: number
+  source_has_settings: boolean
+  target_has_sqlite: boolean
+  target_json_count: number
+  target_has_settings: boolean
+  error?: string
+}
+
 export interface ProfileSetup {
   state: 'ready' | 'needs_choice' | 'error'
   initialized: boolean
@@ -30,6 +45,7 @@ export interface ProfileSetup {
   lock_present: boolean
   error?: string
   sources?: ProfileSource[]
+  migration: DataMigration
 }
 
 export interface NodeItem {

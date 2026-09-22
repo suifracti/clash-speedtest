@@ -147,6 +147,24 @@ type ProfileSourceDTO struct {
 	Error            string   `json:"error,omitempty"`
 }
 
+// DataMigrationDTO is a safe summary of the legacy-to-canonical data root
+// migration. It contains paths and counts only; it never carries database,
+// settings, or subscription contents.
+type DataMigrationDTO struct {
+	State              string `json:"state"` // ready, pending, conflict, invalid, isolated
+	SourceHistoryDir   string `json:"source_history_dir,omitempty"`
+	TargetHistoryDir   string `json:"target_history_dir"`
+	SourceSettingsFile string `json:"source_settings_file,omitempty"`
+	TargetSettingsFile string `json:"target_settings_file"`
+	SourceHasSQLite    bool   `json:"source_has_sqlite"`
+	SourceJSONCount    int    `json:"source_json_count"`
+	SourceHasSettings  bool   `json:"source_has_settings"`
+	TargetHasSQLite    bool   `json:"target_has_sqlite"`
+	TargetJSONCount    int    `json:"target_json_count"`
+	TargetHasSettings  bool   `json:"target_has_settings"`
+	Error              string `json:"error,omitempty"`
+}
+
 // ProfileSetupDTO separates "not yet decided" from a real empty profile
 // store, and gives both Web and Wails the same path/import contract.
 type ProfileSetupDTO struct {
@@ -160,6 +178,7 @@ type ProfileSetupDTO struct {
 	LockPresent       bool               `json:"lock_present"`
 	Error             string             `json:"error,omitempty"`
 	Sources           []ProfileSourceDTO `json:"sources,omitempty"`
+	Migration         DataMigrationDTO   `json:"migration"`
 }
 
 // AppSettings represents user-configurable persistent settings.

@@ -262,9 +262,10 @@ type AirportHistory struct {
 }
 
 type Store struct {
-	dir string
-	mu  sync.RWMutex
-	db  *DB
+	dir       string
+	legacyDir string
+	mu        sync.RWMutex
+	db        *DB
 }
 
 func DefaultHistoryDir() string {
@@ -276,17 +277,30 @@ func DefaultHistoryDir() string {
 }
 
 func NewStore(dir string) (*Store, error) {
+	return NewStoreWithLegacyDir(dir, "")
+}
+
+// NewStoreWithLegacyDir opens the SQLite history database in dir while keeping
+// legacy JSON runs in legacyDir. A blank legacyDir preserves the historical
+// behavior and stores JSON beside the database.
+func NewStoreWithLegacyDir(dir, legacyDir string) (*Store, error) {
 	if dir == "" {
 		dir = DefaultHistoryDir()
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create history dir %q: %w", dir, err)
 	}
+	if legacyDir == "" {
+		legacyDir = dir
+	}
+	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create legacy history dir %q: %w", legacyDir, err)
+	}
 	db, err := OpenDB(dir)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite db: %w", err)
 	}
-	return &Store{dir: dir, db: db}, nil
+	return &Store{dir: dir, legacyDir: legacyDir, db: db}, nil
 }
 
 func (s *Store) Close() error {
@@ -406,6 +420,18 @@ func (s *Store) Dir() string {
 	return s.dir
 }
 
+// LegacyDir returns the directory used by the compatibility JSON history
+// format. Modern SQLite records always live in Dir().
+func (s *Store) LegacyDir() string {
+	if s == nil {
+		return ""
+	}
+	if s.legacyDir == "" {
+		return s.dir
+	}
+	return s.legacyDir
+}
+
 func (s *Store) Save(run *TestRun) (string, error) {
 	if run == nil {
 		return "", fmt.Errorf("run is nil")
@@ -420,7 +446,7 @@ func (s *Store) Save(run *TestRun) (string, error) {
 		run.CreatedAt = time.Now()
 	}
 
-	filePath := filepath.Join(s.dir, run.ID+".json")
+	filePath := filepath.Join(s.LegacyDir(), run.ID+".json")
 	data, err := json.MarshalIndent(run, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("marshal run %s: %w", run.ID, err)
@@ -437,7 +463,7 @@ func (s *Store) Get(id string) (*TestRun, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	filePath := filepath.Join(s.dir, id+".json")
+	filePath := filepath.Join(s.LegacyDir(), id+".json")
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("read run %s: %w", id, err)
@@ -454,7 +480,7 @@ func (s *Store) Delete(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	filePath := filepath.Join(s.dir, id+".json")
+	filePath := filepath.Join(s.LegacyDir(), id+".json")
 	return os.Remove(filePath)
 }
 
@@ -462,7 +488,7 @@ func (s *Store) List() ([]*RunSummary, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	entries, err := os.ReadDir(s.dir)
+	entries, err := os.ReadDir(s.LegacyDir())
 	if err != nil {
 		return nil, fmt.Errorf("read history dir: %w", err)
 	}
@@ -472,7 +498,7 @@ func (s *Store) List() ([]*RunSummary, error) {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
-		filePath := filepath.Join(s.dir, entry.Name())
+		filePath := filepath.Join(s.LegacyDir(), entry.Name())
 		data, err := os.ReadFile(filePath)
 		if err != nil {
 			continue
@@ -532,7 +558,7 @@ func (s *Store) GetAllRuns() ([]*TestRun, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	entries, err := os.ReadDir(s.dir)
+	entries, err := os.ReadDir(s.LegacyDir())
 	if err != nil {
 		return nil, fmt.Errorf("read history dir: %w", err)
 	}
@@ -542,7 +568,7 @@ func (s *Store) GetAllRuns() ([]*TestRun, error) {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
-		filePath := filepath.Join(s.dir, entry.Name())
+		filePath := filepath.Join(s.LegacyDir(), entry.Name())
 		data, err := os.ReadFile(filePath)
 		if err != nil {
 			continue
