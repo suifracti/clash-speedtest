@@ -9,14 +9,22 @@ const store = useWorkbenchStore()
 const newName = ref('')
 const newUrl = ref('')
 const isSubmitting = ref(false)
+const isLoadingURL = ref(false)
 const errorMessage = ref('')
 const editingAirport = ref<Airport | null>(null)
+let editRequestID = 0
 
-function closeModal() {
-  store.isAirportModalOpen = false
+function resetEditor() {
+  editRequestID += 1
   editingAirport.value = null
   newName.value = ''
   newUrl.value = ''
+  isLoadingURL.value = false
+}
+
+function closeModal() {
+  store.isAirportModalOpen = false
+  resetEditor()
   errorMessage.value = ''
 }
 
@@ -35,9 +43,7 @@ async function handleSave() {
       await api.createAirport(newName.value.trim(), newUrl.value.trim())
     }
     await store.loadAirports()
-    newName.value = ''
-    newUrl.value = ''
-    editingAirport.value = null
+    resetEditor()
   } catch (e: any) {
     errorMessage.value = e.message || '保存机场失败'
   } finally {
@@ -45,10 +51,29 @@ async function handleSave() {
   }
 }
 
-function startEdit(ap: Airport) {
+async function startEdit(ap: Airport) {
+  const requestID = ++editRequestID
   editingAirport.value = ap
   newName.value = ap.name
-  newUrl.value = ap.url
+  newUrl.value = ''
+  errorMessage.value = ''
+  isLoadingURL.value = true
+  try {
+    const fullURL = await api.getAirportURL(ap.id)
+    if (requestID !== editRequestID) return
+    newUrl.value = fullURL
+  } catch (e: any) {
+    if (requestID !== editRequestID) return
+    resetEditor()
+    errorMessage.value = e.message || '读取订阅链接失败'
+  } finally {
+    if (requestID === editRequestID) isLoadingURL.value = false
+  }
+}
+
+function cancelEdit() {
+  resetEditor()
+  errorMessage.value = ''
 }
 
 async function handleDelete(id: string) {
@@ -116,14 +141,14 @@ async function handleRefresh(id: string) {
           <div class="flex justify-end gap-2">
             <button
               v-if="editingAirport"
-              @click="editingAirport = null; newName = ''; newUrl = ''"
+              @click="cancelEdit"
               class="px-3 py-1 rounded border border-border hover:bg-card text-content-secondary"
             >
               取消编辑
             </button>
             <button
               @click="handleSave"
-              :disabled="isSubmitting"
+              :disabled="isSubmitting || isLoadingURL"
               class="px-4 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium disabled:opacity-50"
             >
               {{ isSubmitting ? '保存中...' : editingAirport ? '更新' : '添加' }}
@@ -150,8 +175,8 @@ async function handleRefresh(id: string) {
                     {{ ap.node_count }} 节点
                   </span>
                 </div>
-                <span class="text-content-muted font-mono text-[11px] truncate max-w-md" :title="ap.url">
-                  {{ ap.url }}
+                <span class="text-content-muted font-mono text-[11px] truncate max-w-md" :title="ap.url_display">
+                  {{ ap.url_display }}
                 </span>
               </div>
 

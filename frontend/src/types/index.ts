@@ -1,7 +1,8 @@
 export interface Airport {
   id: string
   name: string
-  url: string
+  url_display: string
+  url_configured: boolean
   updated_at?: string
   node_count: number
   has_cache: boolean
