@@ -41,5 +41,15 @@ type LatencyTestSample struct {
 type LatencyTestFilter struct {
 	ProfileID string
 	NodeKey   string
+	Since     *time.Time
+	Until     *time.Time
 	Limit     int
+}
+
+// LatencyTestQueryResult is a bounded, raw-sample-scoped history page.
+// HasMore is true when more matching attempts exist beyond Limit; callers must
+// not present the returned samples as a complete observation window then.
+type LatencyTestQueryResult struct {
+	Tests   []*LatencyTest
+	HasMore bool
 }

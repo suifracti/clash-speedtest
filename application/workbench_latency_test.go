@@ -21,6 +21,81 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+func TestWorkbenchLatencyHistoryWindowProjectsStatsFromRawSamples(t *testing.T) {
+	ctx := context.Background()
+	store, err := history.NewStore(filepath.Join(t.TempDir(), "history"))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	defer store.Close()
+
+	asOf := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	since := asOf.Add(-4 * time.Hour)
+	until := asOf
+	attemptID := "windowed-attempt"
+	if err := store.SaveLatencyTest(ctx, &history.LatencyTest{
+		AttemptID:      attemptID,
+		ProfileID:      "profile-window",
+		NodeKey:        "node-window",
+		TestProject:    WorkbenchLatencyProject,
+		RequestedAt:    since,
+		StartedAt:      since,
+		FinishedAt:     until,
+		Status:         "partial_failed",
+		LatencyMs:      99,
+		PacketLoss:     50,
+		TotalSamples:   4,
+		SuccessSamples: 2,
+		FailureSamples: 2,
+		Samples: []history.LatencyTestSample{
+			{Seq: 1, Timestamp: since.Add(-time.Second), LatencyMs: 9, Success: true},
+			{Seq: 2, Timestamp: since, LatencyMs: 40, Success: true},
+			{Seq: 3, Timestamp: until.Add(-time.Second), LatencyMs: 44, Success: false, Error: "timeout"},
+			{Seq: 4, Timestamp: until, LatencyMs: 80, Success: true},
+		},
+	}); err != nil {
+		t.Fatalf("SaveLatencyTest: %v", err)
+	}
+
+	service := &AppService{historyStore: store}
+	result, err := service.ListWorkbenchLatencyTests(ctx, WorkbenchLatencyHistoryQuery{
+		ProfileID: "profile-window",
+		NodeKey:   "node-window",
+		Since:     &since,
+		Until:     &until,
+	})
+	if err != nil {
+		t.Fatalf("ListWorkbenchLatencyTests: %v", err)
+	}
+	if !result.Complete || result.HasMore || !result.Since.Equal(since) || !result.Until.Equal(until) || !result.AsOf.Equal(until) {
+		t.Fatalf("unexpected frozen window metadata: %+v", result)
+	}
+	if len(result.Tests) != 1 {
+		t.Fatalf("expected one windowed attempt, got %+v", result.Tests)
+	}
+	windowed := result.Tests[0]
+	if len(windowed.Samples) != 2 || windowed.Samples[0].Timestamp != since || windowed.Samples[1].Timestamp != until.Add(-time.Second) {
+		t.Fatalf("unexpected half-open raw samples: %+v", windowed.Samples)
+	}
+	if windowed.TotalSamples != 2 || windowed.SuccessSamples != 1 || windowed.FailureSamples != 1 || windowed.Status != "partial_failed" || windowed.LatencyMs != 40 || windowed.PacketLoss != 50 {
+		t.Fatalf("window stats used non-window samples: %+v", windowed)
+	}
+
+	detail, err := service.GetWorkbenchLatencyTest(ctx, WorkbenchLatencyHistoryDetailQuery{
+		ProfileID: "profile-window",
+		NodeKey:   "node-window",
+		AttemptID: attemptID,
+		Since:     &since,
+		Until:     &until,
+	})
+	if err != nil {
+		t.Fatalf("GetWorkbenchLatencyTest: %v", err)
+	}
+	if len(detail.Samples) != 2 || detail.Samples[0].Timestamp != since || !detail.Samples[1].Timestamp.Before(until) {
+		t.Fatalf("windowed detail leaked raw samples: %+v", detail.Samples)
+	}
+}
+
 func TestWorkbenchLatencyTestUsesStableIdentityPersistsAndSeparatesProfiles(t *testing.T) {
 	proxyA := newLatencyProxy(t, 0)
 	proxyB := newLatencyProxy(t, 0)
@@ -92,8 +167,8 @@ func TestWorkbenchLatencyTestUsesStableIdentityPersistsAndSeparatesProfiles(t *t
 		ProfileID: "profile-a",
 		NodeKey:   optionA.NodeKey,
 	})
-	if err != nil || len(profileAHistory) != 1 {
-		t.Fatalf("expected one profile A history row, got %d, err=%v", len(profileAHistory), err)
+	if err != nil || len(profileAHistory.Tests) != 1 {
+		t.Fatalf("expected one profile A history row, got %d, err=%v", len(profileAHistory.Tests), err)
 	}
 	profileBHistory, err := service.ListWorkbenchLatencyTests(context.Background(), WorkbenchLatencyHistoryQuery{
 		ProfileID: "profile-b",
@@ -102,8 +177,8 @@ func TestWorkbenchLatencyTestUsesStableIdentityPersistsAndSeparatesProfiles(t *t
 	if err != nil {
 		t.Fatalf("profile B history query: %v", err)
 	}
-	if len(profileBHistory) != 0 {
-		t.Fatalf("same display name history leaked across profiles: %+v", profileBHistory)
+	if len(profileBHistory.Tests) != 0 {
+		t.Fatalf("same display name history leaked across profiles: %+v", profileBHistory.Tests)
 	}
 
 	// A cache revision change invalidates the old stable key instead of falling back to a name.

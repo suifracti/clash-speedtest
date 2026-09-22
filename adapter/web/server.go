@@ -970,9 +970,16 @@ func (s *Server) handleRunWorkbenchLatencyTest(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleListWorkbenchLatencyTests(w http.ResponseWriter, r *http.Request) {
+	since, until, err := parseWorkbenchLatencyWindow(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	query := application.WorkbenchLatencyHistoryQuery{
 		ProfileID: r.URL.Query().Get("profile_id"),
 		NodeKey:   r.URL.Query().Get("node_key"),
+		Since:     since,
+		Until:     until,
 	}
 	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
 		limit, err := strconv.Atoi(rawLimit)
@@ -995,10 +1002,17 @@ func (s *Server) handleListWorkbenchLatencyTests(w http.ResponseWriter, r *http.
 }
 
 func (s *Server) handleGetWorkbenchLatencyTest(w http.ResponseWriter, r *http.Request) {
+	since, until, err := parseWorkbenchLatencyWindow(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	query := application.WorkbenchLatencyHistoryDetailQuery{
 		ProfileID: r.URL.Query().Get("profile_id"),
 		NodeKey:   r.URL.Query().Get("node_key"),
 		AttemptID: strings.TrimSpace(r.PathValue("attempt_id")),
+		Since:     since,
+		Until:     until,
 	}
 	if query.AttemptID == "" {
 		writeError(w, http.StatusBadRequest, "attempt_id path param required")
@@ -1014,6 +1028,29 @@ func (s *Server) handleGetWorkbenchLatencyTest(w http.ResponseWriter, r *http.Re
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func parseWorkbenchLatencyWindow(values url.Values) (*time.Time, *time.Time, error) {
+	sinceText := strings.TrimSpace(values.Get("since"))
+	untilText := strings.TrimSpace(values.Get("until"))
+	if (sinceText == "") != (untilText == "") {
+		return nil, nil, fmt.Errorf("since and until must be provided together")
+	}
+	if sinceText == "" {
+		return nil, nil, nil
+	}
+	since, err := time.Parse(time.RFC3339, sinceText)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid since parameter: must be RFC3339")
+	}
+	until, err := time.Parse(time.RFC3339, untilText)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid until parameter: must be RFC3339")
+	}
+	if !since.Before(until) {
+		return nil, nil, fmt.Errorf("since must be before until")
+	}
+	return &since, &until, nil
 }
 
 func (s *Server) handleListMonitorJobs(w http.ResponseWriter, r *http.Request) {

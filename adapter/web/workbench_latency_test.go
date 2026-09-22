@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -102,28 +103,34 @@ func TestWebWorkbenchLatencyContractAndReopen(t *testing.T) {
 		t.Fatalf("reopen NewServer: %v", err)
 	}
 	defer server.Close()
-	historyReq := httptest.NewRequest(http.MethodGet, "/api/workbench/latency-tests?profile_id=profile-web&node_key="+url.QueryEscape(options[0].NodeKey), nil)
+	windowSince := result.Samples[0].Timestamp.Add(-time.Second)
+	windowUntil := result.Samples[len(result.Samples)-1].Timestamp.Add(time.Second)
+	windowQuery := fmt.Sprintf("profile_id=profile-web&node_key=%s&since=%s&until=%s", url.QueryEscape(options[0].NodeKey), url.QueryEscape(windowSince.Format(time.RFC3339Nano)), url.QueryEscape(windowUntil.Format(time.RFC3339Nano)))
+	historyReq := httptest.NewRequest(http.MethodGet, "/api/workbench/latency-tests?"+windowQuery, nil)
 	historyReq.Host = "127.0.0.1:8080"
 	historyRec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(historyRec, historyReq)
 	if historyRec.Code != http.StatusOK {
 		t.Fatalf("history status: %d body=%s", historyRec.Code, historyRec.Body.String())
 	}
-	var rows []application.WorkbenchLatencyTestDTO
-	if err := json.Unmarshal(historyRec.Body.Bytes(), &rows); err != nil || len(rows) != 1 {
-		t.Fatalf("reopened history: %v %+v", err, rows)
+	var historyPage application.WorkbenchLatencyHistoryResult
+	if err := json.Unmarshal(historyRec.Body.Bytes(), &historyPage); err != nil || len(historyPage.Tests) != 1 {
+		t.Fatalf("reopened history: %v %+v", err, historyPage)
 	}
-	if rows[0].AttemptID != result.AttemptID || len(rows[0].Samples) != len(result.Samples) {
-		t.Fatalf("reopened Web history mismatch: %+v", rows)
+	if !historyPage.Complete || historyPage.HasMore || !historyPage.AsOf.Equal(windowUntil.UTC()) {
+		t.Fatalf("unexpected Web history window metadata: %+v", historyPage)
 	}
-	detailReq := httptest.NewRequest(http.MethodGet, "/api/workbench/latency-tests/"+url.PathEscape(result.AttemptID)+"?profile_id=profile-web&node_key="+url.QueryEscape(options[0].NodeKey), nil)
+	if historyPage.Tests[0].AttemptID != result.AttemptID || len(historyPage.Tests[0].Samples) != len(result.Samples) {
+		t.Fatalf("reopened Web history mismatch: %+v", historyPage.Tests)
+	}
+	detailReq := httptest.NewRequest(http.MethodGet, "/api/workbench/latency-tests/"+url.PathEscape(result.AttemptID)+"?"+windowQuery, nil)
 	detailReq.Host = "127.0.0.1:8080"
 	detailRec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(detailRec, detailReq)
 	if detailRec.Code != http.StatusOK {
 		t.Fatalf("scoped detail status: %d body=%s", detailRec.Code, detailRec.Body.String())
 	}
-	wrongScopeReq := httptest.NewRequest(http.MethodGet, "/api/workbench/latency-tests/"+url.PathEscape(result.AttemptID)+"?profile_id=other-profile&node_key="+url.QueryEscape(options[0].NodeKey), nil)
+	wrongScopeReq := httptest.NewRequest(http.MethodGet, "/api/workbench/latency-tests/"+url.PathEscape(result.AttemptID)+"?profile_id=other-profile&node_key="+url.QueryEscape(options[0].NodeKey)+"&since="+url.QueryEscape(windowSince.Format(time.RFC3339Nano))+"&until="+url.QueryEscape(windowUntil.Format(time.RFC3339Nano)), nil)
 	wrongScopeReq.Host = "127.0.0.1:8080"
 	wrongScopeRec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(wrongScopeRec, wrongScopeReq)
@@ -141,11 +148,11 @@ func waitWebLatencyHistory(t *testing.T, handler http.Handler, nodeKey, attemptI
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 		if rec.Code == http.StatusOK {
-			var rows []application.WorkbenchLatencyTestDTO
-			if err := json.Unmarshal(rec.Body.Bytes(), &rows); err == nil {
-				for _, row := range rows {
+			var page application.WorkbenchLatencyHistoryResult
+			if err := json.Unmarshal(rec.Body.Bytes(), &page); err == nil {
+				for _, row := range page.Tests {
 					if row.AttemptID == attemptID && row.PersistenceState == "saved" {
-						return rows
+						return page.Tests
 					}
 				}
 			}

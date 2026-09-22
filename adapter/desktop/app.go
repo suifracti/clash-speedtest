@@ -76,7 +76,7 @@ func (a *App) RunWorkbenchLatencyTest(req application.WorkbenchLatencyTestReques
 	return a.app.RunWorkbenchLatencyTest(a.context(), req)
 }
 
-func (a *App) ListWorkbenchLatencyTests(query application.WorkbenchLatencyHistoryQuery) ([]application.WorkbenchLatencyTestDTO, error) {
+func (a *App) ListWorkbenchLatencyTests(query application.WorkbenchLatencyHistoryQuery) (application.WorkbenchLatencyHistoryResult, error) {
 	return a.app.ListWorkbenchLatencyTests(a.context(), query)
 }
 

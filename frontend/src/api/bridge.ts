@@ -19,6 +19,7 @@ import type {
   WorkbenchLatencyTestRequest,
   WorkbenchLatencyHistoryQuery,
   WorkbenchLatencyHistoryDetailQuery,
+  WorkbenchLatencyHistoryResult,
   WorkbenchLatencyTest,
   ProfileSetup,
   ProfileSource,
@@ -240,16 +241,22 @@ export async function runWorkbenchLatencyTest(req: WorkbenchLatencyTestRequest):
   return res.json()
 }
 
-export async function fetchWorkbenchLatencyHistory(query: WorkbenchLatencyHistoryQuery): Promise<WorkbenchLatencyTest[]> {
-  if (isWails()) {
-    return window.go!.desktop!.App!.ListWorkbenchLatencyTests(query)
-  }
+export function buildWorkbenchLatencyHistoryQuery(query: WorkbenchLatencyHistoryQuery): string {
   const params = new URLSearchParams({
     profile_id: query.profile_id,
     node_key: query.node_key,
+    since: query.since,
+    until: query.until,
   })
   if (query.limit) params.set('limit', String(query.limit))
-  const res = await fetch(`${API_BASE}/api/workbench/latency-tests?${params.toString()}`)
+  return params.toString()
+}
+
+export async function fetchWorkbenchLatencyHistory(query: WorkbenchLatencyHistoryQuery): Promise<WorkbenchLatencyHistoryResult> {
+  if (isWails()) {
+    return window.go!.desktop!.App!.ListWorkbenchLatencyTests(query)
+  }
+  const res = await fetch(`${API_BASE}/api/workbench/latency-tests?${buildWorkbenchLatencyHistoryQuery(query)}`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
@@ -258,7 +265,7 @@ export async function fetchWorkbenchLatencyTest(query: WorkbenchLatencyHistoryDe
   if (isWails()) {
     return window.go!.desktop!.App!.GetWorkbenchLatencyTest(query)
   }
-  const params = new URLSearchParams({ profile_id: query.profile_id, node_key: query.node_key })
+  const params = new URLSearchParams({ profile_id: query.profile_id, node_key: query.node_key, since: query.since, until: query.until })
   const res = await fetch(`${API_BASE}/api/workbench/latency-tests/${encodeURIComponent(query.attempt_id)}?${params.toString()}`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()

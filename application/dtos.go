@@ -38,17 +38,34 @@ type WorkbenchLatencyTestRequest struct {
 
 // WorkbenchLatencyHistoryQuery scopes history to one logical subscription node.
 type WorkbenchLatencyHistoryQuery struct {
-	ProfileID string `json:"profile_id"`
-	NodeKey   string `json:"node_key"`
-	Limit     int    `json:"limit,omitempty"`
+	ProfileID string     `json:"profile_id"`
+	NodeKey   string     `json:"node_key"`
+	Since     *time.Time `json:"since,omitempty"`
+	Until     *time.Time `json:"until,omitempty"`
+	Limit     int        `json:"limit,omitempty"`
 }
 
 // WorkbenchLatencyHistoryDetailQuery binds a detail read to the same logical
 // node scope and immutable attempt ID that produced the history row.
 type WorkbenchLatencyHistoryDetailQuery struct {
-	ProfileID string `json:"profile_id"`
-	NodeKey   string `json:"node_key"`
-	AttemptID string `json:"attempt_id"`
+	ProfileID string     `json:"profile_id"`
+	NodeKey   string     `json:"node_key"`
+	AttemptID string     `json:"attempt_id"`
+	Since     *time.Time `json:"since,omitempty"`
+	Until     *time.Time `json:"until,omitempty"`
+}
+
+// WorkbenchLatencyHistoryResult is one frozen observation-window response.
+// Complete is false when the bounded attempt page has more matching history;
+// the returned samples remain valid for the range but are not full-window
+// statistics in that case.
+type WorkbenchLatencyHistoryResult struct {
+	Tests    []WorkbenchLatencyTestDTO `json:"tests"`
+	Since    time.Time                 `json:"since"`
+	Until    time.Time                 `json:"until"`
+	AsOf     time.Time                 `json:"as_of"`
+	HasMore  bool                      `json:"has_more"`
+	Complete bool                      `json:"complete"`
 }
 
 type WorkbenchLatencySampleDTO struct {
