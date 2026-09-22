@@ -3,14 +3,22 @@ package appdata
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
 func TestResolveDefaultIsIndependentOfWorkingDirectory(t *testing.T) {
-	localAppData := t.TempDir()
+	configuredBase := t.TempDir()
 	firstCWD := t.TempDir()
 	secondCWD := t.TempDir()
-	t.Setenv("LOCALAPPDATA", localAppData)
+	switch runtime.GOOS {
+	case "windows":
+		t.Setenv("LOCALAPPDATA", configuredBase)
+	case "darwin":
+		t.Setenv("HOME", configuredBase)
+	default:
+		t.Setenv("XDG_CONFIG_HOME", configuredBase)
+	}
 	t.Setenv(DataDirEnv, "")
 
 	original, err := os.Getwd()
@@ -34,7 +42,11 @@ func TestResolveDefaultIsIndependentOfWorkingDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wantRoot := filepath.Join(localAppData, AppDirName)
+	wantRoot := configuredBase
+	if runtime.GOOS == "darwin" {
+		wantRoot = filepath.Join(wantRoot, "Library", "Application Support")
+	}
+	wantRoot = filepath.Join(wantRoot, AppDirName)
 	if first.DataRoot != wantRoot || second.DataRoot != wantRoot {
 		t.Fatalf("default data roots drifted: first=%q second=%q want=%q", first.DataRoot, second.DataRoot, wantRoot)
 	}
