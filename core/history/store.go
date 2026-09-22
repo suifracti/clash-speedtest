@@ -357,7 +357,7 @@ func (s *Store) SaveLatencyTest(ctx context.Context, test *LatencyTest) error {
 }
 
 // QueryLatencyTests returns on-demand latency history scoped to one logical node.
-func (s *Store) QueryLatencyTests(ctx context.Context, filter LatencyTestFilter) ([]*LatencyTest, error) {
+func (s *Store) QueryLatencyTests(ctx context.Context, filter LatencyTestFilter) (*LatencyTestQueryResult, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("history store is not initialized")
 	}
@@ -370,6 +370,15 @@ func (s *Store) GetLatencyTest(ctx context.Context, attemptID string) (*LatencyT
 		return nil, fmt.Errorf("history store is not initialized")
 	}
 	return s.db.GetLatencyTest(ctx, attemptID)
+}
+
+// GetLatencyTestInWindow returns one on-demand latency test with raw samples
+// restricted to the requested half-open observation window.
+func (s *Store) GetLatencyTestInWindow(ctx context.Context, attemptID string, since, until *time.Time) (*LatencyTest, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
+	return s.db.GetLatencyTestInWindow(ctx, attemptID, since, until)
 }
 
 // SetTestBatchFailAt injects a batch failure on batch n for testing partial retention semantics.

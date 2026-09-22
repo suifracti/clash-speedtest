@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -141,27 +142,49 @@ func (s *AppService) saveWorkbenchLatencyTest(ctx context.Context, record *histo
 	return s.historyStore.SaveLatencyTest(ctx, record)
 }
 
-// ListWorkbenchLatencyTests returns persisted records for one profile/node pair.
-func (s *AppService) ListWorkbenchLatencyTests(ctx context.Context, query WorkbenchLatencyHistoryQuery) ([]WorkbenchLatencyTestDTO, error) {
+// ListWorkbenchLatencyTests returns one bounded, frozen observation window for
+// one profile/node pair. The core query filters raw samples before applying its
+// attempt limit, so HasMore is an honest completeness signal.
+func (s *AppService) ListWorkbenchLatencyTests(ctx context.Context, query WorkbenchLatencyHistoryQuery) (WorkbenchLatencyHistoryResult, error) {
 	profileID := strings.TrimSpace(query.ProfileID)
 	nodeKey := strings.TrimSpace(query.NodeKey)
 	if profileID == "" || nodeKey == "" {
-		return nil, monitor.NewValidationError("历史查询必须同时提供 profile_id 和 node_key")
+		return WorkbenchLatencyHistoryResult{}, monitor.NewValidationError("历史查询必须同时提供 profile_id 和 node_key")
 	}
 	if s.historyStore == nil {
-		return nil, fmt.Errorf("history store is not initialized")
+		return WorkbenchLatencyHistoryResult{}, fmt.Errorf("history store is not initialized")
 	}
-	tests, err := s.historyStore.QueryLatencyTests(ctx, history.LatencyTestFilter{
+	since, until, err := normalizeWorkbenchLatencyWindow(query.Since, query.Until)
+	if err != nil {
+		return WorkbenchLatencyHistoryResult{}, monitor.NewValidationError(err.Error())
+	}
+	page, err := s.historyStore.QueryLatencyTests(ctx, history.LatencyTestFilter{
 		ProfileID: profileID,
 		NodeKey:   nodeKey,
+		Since:     since,
+		Until:     until,
 		Limit:     query.Limit,
 	})
 	if err != nil {
-		return nil, err
+		return WorkbenchLatencyHistoryResult{}, err
 	}
-	result := make([]WorkbenchLatencyTestDTO, 0, len(tests))
-	for _, test := range tests {
-		result = append(result, workbenchLatencyDTO(*test, "saved", ""))
+	result := WorkbenchLatencyHistoryResult{
+		Tests:    make([]WorkbenchLatencyTestDTO, 0, len(page.Tests)),
+		HasMore:  page.HasMore,
+		Complete: !page.HasMore,
+	}
+	if since != nil {
+		result.Since = *since
+		result.Until = *until
+		result.AsOf = *until
+	}
+	for _, test := range page.Tests {
+		if since != nil {
+			projected := projectLatencyTestForWindow(*test)
+			result.Tests = append(result.Tests, workbenchLatencyDTO(projected, "saved", ""))
+			continue
+		}
+		result.Tests = append(result.Tests, workbenchLatencyDTO(*test, "saved", ""))
 	}
 	return result, nil
 }
@@ -178,15 +201,94 @@ func (s *AppService) GetWorkbenchLatencyTest(ctx context.Context, query Workbenc
 	if profileID == "" || nodeKey == "" || attemptID == "" {
 		return nil, monitor.NewValidationError("历史详情必须同时提供 profile_id、node_key 和 attempt_id")
 	}
-	test, err := s.historyStore.GetLatencyTest(ctx, attemptID)
+	since, until, err := normalizeWorkbenchLatencyWindow(query.Since, query.Until)
+	if err != nil {
+		return nil, monitor.NewValidationError(err.Error())
+	}
+	var test *history.LatencyTest
+	if since != nil {
+		test, err = s.historyStore.GetLatencyTestInWindow(ctx, attemptID, since, until)
+	} else {
+		test, err = s.historyStore.GetLatencyTest(ctx, attemptID)
+	}
 	if err != nil {
 		return nil, err
 	}
 	if test.ProfileID != profileID || test.NodeKey != nodeKey {
 		return nil, monitor.NewValidationError("历史详情不属于当前订阅节点")
 	}
+	if since != nil {
+		projected := projectLatencyTestForWindow(*test)
+		dto := workbenchLatencyDTO(projected, "saved", "")
+		return &dto, nil
+	}
 	dto := workbenchLatencyDTO(*test, "saved", "")
 	return &dto, nil
+}
+
+func normalizeWorkbenchLatencyWindow(since, until *time.Time) (*time.Time, *time.Time, error) {
+	if (since == nil) != (until == nil) {
+		return nil, nil, fmt.Errorf("历史查询必须同时提供 since 和 until")
+	}
+	if since == nil {
+		return nil, nil, nil
+	}
+	normalizedSince := since.UTC()
+	normalizedUntil := until.UTC()
+	if !normalizedSince.Before(normalizedUntil) {
+		return nil, nil, fmt.Errorf("历史查询窗口必须满足 since < until")
+	}
+	return &normalizedSince, &normalizedUntil, nil
+}
+
+// projectLatencyTestForWindow makes aggregate fields truthful for the raw
+// samples returned by a bounded history query. It is a read projection only;
+// persisted measurement fields remain unchanged in SQLite.
+func projectLatencyTestForWindow(test history.LatencyTest) history.LatencyTest {
+	test.Samples = append([]history.LatencyTestSample(nil), test.Samples...)
+	test.TotalSamples = len(test.Samples)
+	test.SuccessSamples = 0
+	test.FailureSamples = 0
+	test.ErrorMessage = ""
+	var successful []int64
+	for _, sample := range test.Samples {
+		if sample.Success {
+			test.SuccessSamples++
+			successful = append(successful, sample.LatencyMs)
+			continue
+		}
+		test.FailureSamples++
+		if test.ErrorMessage == "" {
+			test.ErrorMessage = sample.Error
+		}
+	}
+	if test.TotalSamples == 0 || test.SuccessSamples == 0 {
+		test.Status = "failed"
+		test.LatencyMs = 0
+		test.JitterMs = 0
+	} else {
+		test.Status = "completed"
+		if test.FailureSamples > 0 {
+			test.Status = "partial_failed"
+		}
+		var total int64
+		for _, latency := range successful {
+			total += latency
+		}
+		test.LatencyMs = total / int64(len(successful))
+		var variance float64
+		for _, latency := range successful {
+			diff := float64(latency - test.LatencyMs)
+			variance += diff * diff
+		}
+		test.JitterMs = int64(math.Sqrt(variance / float64(len(successful))))
+	}
+	if test.TotalSamples > 0 {
+		test.PacketLoss = float64(test.FailureSamples) / float64(test.TotalSamples) * 100
+	} else {
+		test.PacketLoss = 0
+	}
+	return test
 }
 
 func (s *AppService) resolveWorkbenchLatencyProxy(profileID, nodeKey string) (monitor.MonitoredNode, string, *speedtester.CProxy, error) {

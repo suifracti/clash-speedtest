@@ -1,5 +1,24 @@
 import type { WorkbenchLatencyTest } from '../../types'
 
+export type LatencyWindowMode = '4h' | '24h'
+
+export interface LatencyWindow {
+  mode: LatencyWindowMode
+  since: string
+  until: string
+}
+
+export function freezeLatencyWindow(mode: LatencyWindowMode, asOf = new Date()): LatencyWindow {
+  const untilMs = asOf.getTime()
+  if (!Number.isFinite(untilMs)) throw new Error('invalid latency observation as-of')
+  const durationMs = mode === '4h' ? 4 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000
+  return {
+    mode,
+    since: new Date(untilMs - durationMs).toISOString(),
+    until: new Date(untilMs).toISOString(),
+  }
+}
+
 export interface LatencyScope {
   profileId: string
   nodeKey: string

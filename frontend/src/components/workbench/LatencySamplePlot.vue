@@ -4,6 +4,8 @@ import type { WorkbenchLatencySample } from '../../types'
 
 const props = withDefaults(defineProps<{
   samples: WorkbenchLatencySample[]
+  windowSince?: string
+  windowUntil?: string
   width?: number
   height?: number
   hoveredIndex: number | null
@@ -32,6 +34,11 @@ const yMax = computed(() => {
 })
 
 const timeBounds = computed(() => {
+  const windowMin = Date.parse(props.windowSince || '')
+  const windowMax = Date.parse(props.windowUntil || '')
+  if (Number.isFinite(windowMin) && Number.isFinite(windowMax) && windowMin < windowMax) {
+    return { min: windowMin, max: windowMax }
+  }
   const times = props.samples
     .map((sample) => Date.parse(sample.timestamp))
     .filter((time) => Number.isFinite(time))

@@ -175,6 +175,8 @@ export interface WorkbenchLatencyTestRequest {
 export interface WorkbenchLatencyHistoryQuery {
   profile_id: string
   node_key: string
+  since: string
+  until: string
   limit?: number
 }
 
@@ -182,6 +184,17 @@ export interface WorkbenchLatencyHistoryDetailQuery {
   profile_id: string
   node_key: string
   attempt_id: string
+  since: string
+  until: string
+}
+
+export interface WorkbenchLatencyHistoryResult {
+  tests: WorkbenchLatencyTest[]
+  since: string
+  until: string
+  as_of: string
+  has_more: boolean
+  complete: boolean
 }
 
 export interface WorkbenchLatencySample {

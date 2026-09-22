@@ -485,9 +485,13 @@ func (d *DB) SaveLatencyTest(ctx context.Context, test *LatencyTest) error {
 // QueryLatencyTests returns persisted on-demand tests scoped to one logical
 // subscription node. Samples are loaded with each record so the UI never has
 // to synthesize a graph from aggregate values.
-func (d *DB) QueryLatencyTests(ctx context.Context, filter LatencyTestFilter) ([]*LatencyTest, error) {
+func (d *DB) QueryLatencyTests(ctx context.Context, filter LatencyTestFilter) (*LatencyTestQueryResult, error) {
 	if strings.TrimSpace(filter.ProfileID) == "" || strings.TrimSpace(filter.NodeKey) == "" {
 		return nil, fmt.Errorf("latency history requires profile_id and node_key")
+	}
+	since, until, err := normalizeLatencyWindow(filter.Since, filter.Until)
+	if err != nil {
+		return nil, err
 	}
 	limit := filter.Limit
 	if limit <= 0 {
@@ -497,16 +501,30 @@ func (d *DB) QueryLatencyTests(ctx context.Context, filter LatencyTestFilter) ([
 		limit = 100
 	}
 
+	where := `t.profile_id = ? AND t.node_key = ?`
+	args := []any{filter.ProfileID, filter.NodeKey}
+	if since != nil {
+		// Scope attempts by raw sample timestamps before applying LIMIT. An
+		// attempt may straddle the boundary and remains eligible when any raw
+		// sample belongs to the requested half-open interval.
+		where += ` AND EXISTS (
+			SELECT 1 FROM workbench_latency_samples AS ws
+			WHERE ws.attempt_id = t.attempt_id
+			  AND ws.timestamp >= ? AND ws.timestamp < ?
+		)`
+		args = append(args, *since, *until)
+	}
+	args = append(args, limit+1)
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT attempt_id, profile_id, node_key, node_identity_key, config_revision_key,
 			display_name, node_type, test_project, requested_at, started_at, finished_at,
 			status, latency_ms, jitter_ms, packet_loss, total_samples,
-			success_samples, failure_samples, error_message
-		FROM workbench_latency_tests
-		WHERE profile_id = ? AND node_key = ?
+			 success_samples, failure_samples, error_message
+		FROM workbench_latency_tests AS t
+		WHERE `+where+`
 		ORDER BY finished_at DESC, attempt_id DESC
 		LIMIT ?
-	`, filter.ProfileID, filter.NodeKey, limit)
+	`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query latency tests: %w", err)
 	}
@@ -523,17 +541,35 @@ func (d *DB) QueryLatencyTests(ctx context.Context, filter LatencyTestFilter) ([
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate latency tests: %w", err)
 	}
+	hasMore := len(tests) > limit
+	if hasMore {
+		tests = tests[:limit]
+	}
 
 	for _, test := range tests {
-		if err := d.loadLatencyTestSamples(ctx, test); err != nil {
+		if err := d.loadLatencyTestSamples(ctx, test, since, until); err != nil {
 			return nil, err
 		}
 	}
-	return tests, nil
+	return &LatencyTestQueryResult{Tests: tests, HasMore: hasMore}, nil
 }
 
 // GetLatencyTest returns one persisted on-demand test by its immutable attempt ID.
 func (d *DB) GetLatencyTest(ctx context.Context, attemptID string) (*LatencyTest, error) {
+	return d.getLatencyTest(ctx, attemptID, nil, nil)
+}
+
+// GetLatencyTestInWindow returns one attempt with only raw samples in the
+// requested half-open observation window.
+func (d *DB) GetLatencyTestInWindow(ctx context.Context, attemptID string, since, until *time.Time) (*LatencyTest, error) {
+	normalizedSince, normalizedUntil, err := normalizeLatencyWindow(since, until)
+	if err != nil {
+		return nil, err
+	}
+	return d.getLatencyTest(ctx, attemptID, normalizedSince, normalizedUntil)
+}
+
+func (d *DB) getLatencyTest(ctx context.Context, attemptID string, since, until *time.Time) (*LatencyTest, error) {
 	attemptID = strings.TrimSpace(attemptID)
 	if attemptID == "" {
 		return nil, fmt.Errorf("latency test attempt_id is empty")
@@ -553,7 +589,7 @@ func (d *DB) GetLatencyTest(ctx context.Context, attemptID string) (*LatencyTest
 		}
 		return nil, fmt.Errorf("get latency test %s: %w", attemptID, err)
 	}
-	if err := d.loadLatencyTestSamples(ctx, test); err != nil {
+	if err := d.loadLatencyTestSamples(ctx, test, since, until); err != nil {
 		return nil, err
 	}
 	return test, nil
@@ -597,13 +633,18 @@ func scanLatencyTest(scanner latencyTestScanner) (*LatencyTest, error) {
 	return test, nil
 }
 
-func (d *DB) loadLatencyTestSamples(ctx context.Context, test *LatencyTest) error {
-	rows, err := d.db.QueryContext(ctx, `
+func (d *DB) loadLatencyTestSamples(ctx context.Context, test *LatencyTest, since, until *time.Time) error {
+	query := `
 		SELECT seq, timestamp, latency_ms, success, error
 		FROM workbench_latency_samples
-		WHERE attempt_id = ?
-		ORDER BY timestamp ASC, seq ASC
-	`, test.AttemptID)
+		WHERE attempt_id = ?`
+	args := []any{test.AttemptID}
+	if since != nil {
+		query += ` AND timestamp >= ? AND timestamp < ?`
+		args = append(args, *since, *until)
+	}
+	query += ` ORDER BY timestamp ASC, seq ASC`
+	rows, err := d.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("query latency samples for %s: %w", test.AttemptID, err)
 	}
@@ -627,6 +668,21 @@ func (d *DB) loadLatencyTestSamples(ctx context.Context, test *LatencyTest) erro
 		return fmt.Errorf("iterate latency samples for %s: %w", test.AttemptID, err)
 	}
 	return nil
+}
+
+func normalizeLatencyWindow(since, until *time.Time) (*time.Time, *time.Time, error) {
+	if (since == nil) != (until == nil) {
+		return nil, nil, fmt.Errorf("latency history requires both since and until")
+	}
+	if since == nil {
+		return nil, nil, nil
+	}
+	normalizedSince := since.UTC()
+	normalizedUntil := until.UTC()
+	if !normalizedSince.Before(normalizedUntil) {
+		return nil, nil, fmt.Errorf("latency history window must satisfy since < until")
+	}
+	return &normalizedSince, &normalizedUntil, nil
 }
 
 // QueryMonitorRuns retrieves recent MonitorRuns for a given job.

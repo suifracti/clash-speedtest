@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   acceptsLatencyDetailResponse,
   acceptsLatencyScopeResponse,
+  freezeLatencyWindow,
   type LatencyAttemptScope,
   type LatencyScope,
 } from '../latencyRequestGuard'
@@ -16,6 +17,25 @@ function deferred<T>() {
 }
 
 describe('latency request ownership', () => {
+  it('freezes rolling UTC since/until from one as-of', () => {
+    const asOf = new Date('2026-09-22T12:34:56.789Z')
+
+    expect(freezeLatencyWindow('4h', asOf)).toEqual({
+      mode: '4h',
+      since: '2026-09-22T08:34:56.789Z',
+      until: '2026-09-22T12:34:56.789Z',
+    })
+    expect(freezeLatencyWindow('24h', asOf)).toEqual({
+      mode: '24h',
+      since: '2026-09-21T12:34:56.789Z',
+      until: '2026-09-22T12:34:56.789Z',
+    })
+  })
+
+  it('rejects a late same-node response after a window request supersedes it', () => {
+    expect(acceptsLatencyScopeResponse(1, 2, scopeA, scopeA)).toBe(false)
+  })
+
   it('rejects a late A history response after the user has moved to B', async () => {
     let latestRequestID = 0
     const requestA = ++latestRequestID

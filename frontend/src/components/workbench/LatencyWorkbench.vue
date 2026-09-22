@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { fetchMonitorNodeOptions } from '../../api/monitor'
 import * as api from '../../api/bridge'
 import UiSelect from '../common/UiSelect.vue'
@@ -7,15 +7,18 @@ import LatencySamplePlot from './LatencySamplePlot.vue'
 import {
   acceptsLatencyDetailResponse,
   acceptsLatencyTestResult,
+  freezeLatencyWindow,
   sameLatencyScope,
   type LatencyAttemptScope,
   type LatencyScope,
+  type LatencyWindow,
+  type LatencyWindowMode,
 } from './latencyRequestGuard'
 import type { MonitorNodeOption, WorkbenchLatencySample, WorkbenchLatencyTest } from '../../types'
 
 type WorkbenchProject = 'latency' | 'throughput' | 'service'
-type WindowMode = 'local' | 'full'
 type IndexMap = Record<string, number | null | undefined>
+type HistoryMeta = { hasMore: boolean; complete: boolean }
 
 const emit = defineEmits<{ (event: 'open-monitor'): void }>()
 const options = ref<MonitorNodeOption[]>([])
@@ -26,7 +29,8 @@ const historyError = ref('')
 const selectedProfileId = ref('all')
 const searchText = ref('')
 const sortBy = ref<'p50' | 'p95' | 'health' | 'name'>('p50')
-const windowMode = ref<WindowMode>('local')
+const windowMode = ref<LatencyWindowMode>('4h')
+const activeWindow = ref<LatencyWindow>(freezeLatencyWindow(windowMode.value))
 const activeProject = ref<WorkbenchProject>('latency')
 const selectedService = ref<'antigravity' | 'public-api' | 'streaming'>('antigravity')
 const selectedKeys = ref<string[]>([])
@@ -34,6 +38,7 @@ const focusedKey = ref('')
 const hoveredByKey = ref<IndexMap>({})
 const pinnedByKey = ref<IndexMap>({})
 const historyByKey = ref<Record<string, WorkbenchLatencyTest[]>>({})
+const historyMetaByKey = ref<Record<string, HistoryMeta>>({})
 const currentByKey = ref<Record<string, WorkbenchLatencyTest | undefined>>({})
 const pendingPersistence = new Map<string, WorkbenchLatencyTest>()
 const expanded = ref(false)
@@ -73,8 +78,8 @@ const profileSelectOptions = computed(() => [
   ...profileOptions.value.map((profile) => ({ value: profile.id, label: `${profile.name}（${profile.count} 节点）` })),
 ])
 const windowSelectOptions = [
-  { value: 'local', label: '最近 4 小时 · 局部' },
-  { value: 'full', label: '最近 24 小时 · 完整' },
+  { value: '4h', label: '最近 4 小时' },
+  { value: '24h', label: '最近 24 小时' },
 ]
 const sortSelectOptions = [
   { value: 'p50', label: 'P50 从低到高' },
@@ -97,19 +102,43 @@ function optionForKey(key: string): MonitorNodeOption | null {
 }
 
 function testsForKey(key: string): WorkbenchLatencyTest[] {
-  const saved = historyByKey.value[key] || []
+  const saved = (historyByKey.value[key] || []).filter((test) => samplesInActiveWindow(test.samples).length > 0)
   const current = currentByKey.value[key]
-  if (!current) return saved
-  return [current, ...saved.filter((test) => test.attempt_id !== current.attempt_id)]
+  const visibleCurrent = current && samplesInActiveWindow(current.samples).length > 0 ? current : undefined
+  if (!visibleCurrent) return saved
+  return [visibleCurrent, ...saved.filter((test) => test.attempt_id !== visibleCurrent.attempt_id)]
 }
 
 function latestTestForKey(key: string): WorkbenchLatencyTest | null {
   return testsForKey(key)[0] || null
 }
 
+function samplesInActiveWindow(samples: WorkbenchLatencySample[] | undefined): WorkbenchLatencySample[] {
+  const sinceMs = Date.parse(activeWindow.value.since)
+  const untilMs = Date.parse(activeWindow.value.until)
+  if (!Number.isFinite(sinceMs) || !Number.isFinite(untilMs)) return []
+  return (samples || []).filter((sample) => {
+    const timestampMs = Date.parse(sample.timestamp)
+    return Number.isFinite(timestampMs) && timestampMs >= sinceMs && timestampMs < untilMs
+  })
+}
+
+function displayTestForActiveWindow(test: WorkbenchLatencyTest): WorkbenchLatencyTest {
+  return { ...test, samples: samplesInActiveWindow(test.samples) }
+}
+
 function samplesForKey(key: string): WorkbenchLatencySample[] {
   const samples = testsForKey(key).flatMap((test) => test.samples || [])
-  return samples.map((sample, index) => ({ ...sample, seq: index + 1 })).sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp))
+  return samplesInActiveWindow(samples).map((sample, index) => ({ ...sample, seq: index + 1 })).sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp))
+}
+
+function historyMetaForKey(key: string): HistoryMeta | null {
+  return historyMetaByKey.value[key] || null
+}
+
+function hasCompleteHistoryWindow(key: string): boolean {
+  const meta = historyMetaForKey(key)
+  return !meta || (meta.complete && !meta.hasMore)
 }
 
 function successfulLatencies(key: string): number[] {
@@ -121,8 +150,8 @@ function percentile(values: number[], fraction: number): number | null {
   return Math.round(values[Math.min(values.length - 1, Math.max(0, Math.ceil(values.length * fraction) - 1))])
 }
 
-function p50ForKey(key: string): number | null { return percentile(successfulLatencies(key), 0.5) }
-function p95ForKey(key: string): number | null { return percentile(successfulLatencies(key), 0.95) }
+function p50ForKey(key: string): number | null { return hasCompleteHistoryWindow(key) ? percentile(successfulLatencies(key), 0.5) : null }
+function p95ForKey(key: string): number | null { return hasCompleteHistoryWindow(key) ? percentile(successfulLatencies(key), 0.95) : null }
 
 function visibleStatus(key: string): 'normal' | 'flaky' | 'failed' | 'nodata' {
   const test = latestTestForKey(key)
@@ -159,10 +188,16 @@ function visibleOptionsForProject(): MonitorNodeOption[] {
 const visibleOptions = computed(visibleOptionsForProject)
 const focusedOption = computed(() => optionForKey(focusedKey.value))
 const focusedTests = computed(() => (focusedKey.value ? testsForKey(focusedKey.value) : []))
-const focusedDisplayedTest = computed(() => detailTest.value || latestTestForKey(focusedKey.value))
+const focusedDisplayedTest = computed(() => {
+  const test = detailTest.value || latestTestForKey(focusedKey.value)
+  return test ? displayTestForActiveWindow(test) : null
+})
 const canRun = computed(() => activeProject.value === 'latency' && selectedKeys.value.length === 1 && !testingKey.value)
 const projectLabel = computed(() => workbenchProjects.find((project) => project.id === activeProject.value)?.label || '延迟与稳定性')
-const windowLabel = computed(() => windowMode.value === 'local' ? '最近 4 小时 · 局部窗口' : '最近 24 小时 · 完整范围')
+const windowLabel = computed(() => windowMode.value === '4h' ? '最近 4 小时' : '最近 24 小时')
+const historyAxisLabels = computed(() => windowMode.value === '4h'
+  ? ['最近 4 小时', '−3h', '−2h', '−1h', '现在']
+  : ['最近 24 小时', '−18h', '−12h', '−6h', '现在'])
 
 function messageFor(error: unknown): string { return error instanceof Error ? error.message : String(error || '请求失败') }
 
@@ -246,7 +281,19 @@ function persistenceLabel(test: WorkbenchLatencyTest | null): string {
 function historySummary(key: string): string {
   const tests = testsForKey(key), samples = samplesForKey(key), failed = samples.filter((sample) => !sample.success).length
   if (!tests.length) return '没有保存记录；完成一次真实延迟测试后会在这里出现。'
+  const meta = historyMetaForKey(key)
+  if (meta?.hasMore || meta?.complete === false) {
+    return `已加载 ${tests.length} 次测试、${samples.length} 条原始样本；${windowLabel.value} 数据未完整加载，暂不计算完整 P50/P95。`
+  }
   return `共 ${tests.length} 次测试，${samples.length} 条原始样本，${failed} 次失败；P50/P95 由这些样本派生。`
+}
+
+function statsLabel(key: string): string {
+  const meta = historyMetaForKey(key)
+  if (meta?.hasMore || meta?.complete === false) return '窗口数据未完整加载'
+  const p50 = p50ForKey(key)
+  const p95 = p95ForKey(key)
+  return p50 === null ? '暂无延迟历史' : `P50 ${p50} ms · P95 ${p95 ?? '—'} ms`
 }
 
 function monitorStatusText(_key: string): string { return '持续监测状态请在“持续监测”查看' }
@@ -283,7 +330,7 @@ function handlePersistenceEvent(type: string, payload: unknown): void {
   }
   currentByKey.value = { ...currentByKey.value, [key]: payload }
   upsertHistory(key, payload)
-  if (focusedKey.value === key && selectedAttemptID.value === payload.attempt_id) detailTest.value = payload
+  if (focusedKey.value === key && selectedAttemptID.value === payload.attempt_id) detailTest.value = displayTestForActiveWindow(payload)
   if (payload.persistence_state === 'failed') testError.value = payload.persistence_error || '测试完成，但历史保存失败'
 }
 
@@ -309,22 +356,39 @@ async function loadOptions(): Promise<void> {
 
 async function loadHistories(nodes: MonitorNodeOption[]): Promise<void> {
   const requestID = ++historyRequestID
-  if (!nodes.length) { historyByKey.value = {}; historyLoading.value = false; return }
+  const requestedWindow = freezeLatencyWindow(windowMode.value)
+  activeWindow.value = requestedWindow
+  if (!nodes.length) {
+    historyByKey.value = {}
+    historyMetaByKey.value = {}
+    historyLoading.value = false
+    return
+  }
   historyLoading.value = true
   const errors: string[] = []
   const entries = await Promise.all(nodes.map(async (node) => {
     const key = scopeKey(node)
     try {
-      const tests = await api.fetchWorkbenchLatencyHistory({ profile_id: node.profileId, node_key: node.nodeKey, limit: 20 })
-      if (tests.some((test) => !testMatchesKey(test, key))) { errors.push(`${node.displayName || node.nodeKey}：响应归属不一致`); return [key, [] as WorkbenchLatencyTest[]] as const }
-      return [key, tests] as const
+      const response = await api.fetchWorkbenchLatencyHistory({
+        profile_id: node.profileId,
+        node_key: node.nodeKey,
+        since: requestedWindow.since,
+        until: requestedWindow.until,
+        limit: 20,
+      })
+      if (response.tests.some((test) => !testMatchesKey(test, key))) {
+        errors.push(`${node.displayName || node.nodeKey}：响应归属不一致`)
+        return { key, tests: [] as WorkbenchLatencyTest[], meta: { hasMore: false, complete: false } as HistoryMeta }
+      }
+      return { key, tests: response.tests, meta: { hasMore: response.has_more, complete: response.complete } as HistoryMeta }
     } catch (error) {
       errors.push(`${node.displayName || node.nodeKey}：${messageFor(error)}`)
-      return [key, [] as WorkbenchLatencyTest[]] as const
+      return { key, tests: [] as WorkbenchLatencyTest[], meta: { hasMore: false, complete: false } as HistoryMeta }
     }
   }))
   if (requestID !== historyRequestID) return
-  historyByKey.value = Object.fromEntries(entries)
+  historyByKey.value = Object.fromEntries(entries.map((entry) => [entry.key, entry.tests]))
+  historyMetaByKey.value = Object.fromEntries(entries.map((entry) => [entry.key, entry.meta]))
   historyError.value = errors.length > 0 ? `部分节点历史读取失败：${errors.slice(0, 2).join('；')}${errors.length > 2 ? '…' : ''}` : ''
   historyLoading.value = false
 }
@@ -335,7 +399,7 @@ function clearSelection(): void { selectedKeys.value = [] }
 function focusNode(key: string): void {
   focusedKey.value = key
   const latest = latestTestForKey(key)
-  detailTest.value = latest
+  detailTest.value = latest ? displayTestForActiveWindow(latest) : null
   selectedAttemptID.value = latest?.attempt_id || ''
   detailError.value = ''
 }
@@ -363,7 +427,7 @@ async function runTest(): Promise<void> {
     currentByKey.value = { ...currentByKey.value, [key]: boundResult }
     upsertHistory(key, boundResult)
     focusNode(key)
-    detailTest.value = boundResult
+    detailTest.value = displayTestForActiveWindow(boundResult)
     selectedAttemptID.value = boundResult.attempt_id
     batchMessage.value = boundResult.persistence_state === 'failed' ? `测试完成，但历史保存失败：${boundResult.persistence_error || '未知原因'}` : boundResult.persistence_state === 'saving' ? '真实结果已返回，历史正在保存……' : '真实结果已返回，历史已保存。'
   } catch (error) {
@@ -380,9 +444,15 @@ async function selectHistory(test: WorkbenchLatencyTest): Promise<void> {
   const requested: LatencyAttemptScope = { ...scope, attemptId: test.attempt_id }
   focusedKey.value = key; selectedAttemptID.value = test.attempt_id; detailTest.value = test; detailError.value = ''; detailLoading.value = true
   try {
-    const loaded = await api.fetchWorkbenchLatencyTest({ profile_id: requested.profileId, node_key: requested.nodeKey, attempt_id: requested.attemptId })
+    const loaded = await api.fetchWorkbenchLatencyTest({
+      profile_id: requested.profileId,
+      node_key: requested.nodeKey,
+      attempt_id: requested.attemptId,
+      since: activeWindow.value.since,
+      until: activeWindow.value.until,
+    })
     if (!acceptsLatencyDetailResponse(requestID, detailRequestID, requested, currentScope(key), selectedAttemptID.value, loaded)) return
-    detailTest.value = loaded
+    detailTest.value = displayTestForActiveWindow(loaded)
     upsertHistory(key, loaded)
   } catch (error) {
     if (acceptsLatencyDetailResponse(requestID, detailRequestID, requested, currentScope(key), selectedAttemptID.value, test)) detailError.value = messageFor(error)
@@ -399,6 +469,22 @@ function projectReadout(key: string): string { return activeProject.value === 'l
 function projectHistoryText(key: string): string { return activeProject.value === 'latency' ? historySummary(key) : projectUnavailableLabel(activeProject.value) }
 function isSelected(key: string): boolean { return selectedKeys.value.includes(key) }
 function isTesting(key: string): boolean { return testingKey.value === key }
+
+watch(windowMode, () => {
+  activeWindow.value = freezeLatencyWindow(windowMode.value)
+  historyRequestID++
+  detailRequestID++
+  historyByKey.value = {}
+  historyMetaByKey.value = {}
+  detailTest.value = null
+  detailError.value = ''
+  detailLoading.value = false
+  selectedAttemptID.value = ''
+  expanded.value = false
+  hoveredByKey.value = {}
+  pinnedByKey.value = {}
+  if (options.value.length > 0) void loadHistories(options.value)
+})
 
 onMounted(async () => { unsubscribeEvents = api.subscribeEvents(handlePersistenceEvent); await loadOptions() })
 onUnmounted(() => { unsubscribeEvents?.(); unsubscribeEvents = null })
@@ -419,7 +505,7 @@ onUnmounted(() => { unsubscribeEvents?.(); unsubscribeEvents = null })
       <span class="scope-separator" aria-hidden="true"></span>
       <label class="scope-control scope-search-control">搜索<input v-model="searchText" class="scope-search" type="search" placeholder="节点、订阅或地区" aria-label="搜索节点、订阅或地区"></label>
       <label class="scope-control">排序<UiSelect v-model="sortBy" variant="scope" aria-label="节点排序" :options="sortSelectOptions" /></label>
-      <span class="live-line">{{ windowLabel }}</span><span class="selection-summary">已选 {{ selectedKeys.length }} 个节点</span>
+      <span class="live-line">{{ windowLabel }} · 截至 {{ formatShortTime(activeWindow.until) }}</span><span class="selection-summary">已选 {{ selectedKeys.length }} 个节点</span>
       <button type="button" class="prototype-button primary scope-refresh" :disabled="optionsLoading" @click="loadOptions">{{ optionsLoading ? '读取中…' : '重新读取' }}</button>
     </section>
 
@@ -433,7 +519,7 @@ onUnmounted(() => { unsubscribeEvents?.(); unsubscribeEvents = null })
 
     <section class="prototype-panel comparison-panel" aria-labelledby="comparison-title">
       <div class="prototype-panel-header"><div><h2 id="comparison-title">节点比较</h2><p>{{ activeProject === 'latency' ? '按同一真实时间轴扫过节点变化；悬停、键盘聚焦或点击都能定位原始样本。' : '当前分类先保留原型中的比较位置；正式接口未提供的数据明确留空。' }}</p></div><button type="button" class="text-action" :disabled="selectedKeys.length === 0" @click="clearSelection">清除选择</button></div>
-      <div class="comparison-head" aria-hidden="true"><div></div><div>节点 / 订阅</div><div>当前读数</div><div>{{ activeProject === 'latency' ? '历史变化 · 真实时间' : projectLabel }}<div class="history-axis"><span>{{ windowMode === 'local' ? '最近 4 小时' : '00:00' }}</span><span>{{ windowMode === 'local' ? '−3h' : '06:00' }}</span><span>{{ windowMode === 'local' ? '−2h' : '12:00' }}</span><span>{{ windowMode === 'local' ? '−1h' : '18:00' }}</span><span>{{ windowMode === 'local' ? '现在' : '24:00' }}</span></div></div></div>
+      <div class="comparison-head" aria-hidden="true"><div></div><div>节点 / 订阅</div><div>当前读数</div><div>{{ activeProject === 'latency' ? '历史变化 · 真实时间' : projectLabel }}<div class="history-axis"><span>{{ historyAxisLabels[0] }}</span><span>{{ historyAxisLabels[1] }}</span><span>{{ historyAxisLabels[2] }}</span><span>{{ historyAxisLabels[3] }}</span><span>{{ historyAxisLabels[4] }}</span></div></div></div>
       <div class="history-legend" aria-label="历史图例"><span>每个点是一条真实原始样本；成功与异常之间不连线</span><span class="legend-item"><i class="legend-mark"></i>成功</span><span class="legend-item"><i class="legend-mark fail"></i>失败</span><span class="legend-item"><i class="legend-mark timeout"></i>超时</span><span class="legend-item"><i class="legend-mark missing"></i>未采样</span></div>
 
       <div v-if="optionsError" class="prototype-state error-state"><strong>节点列表读取失败</strong><span>{{ optionsError }}</span><button type="button" class="prototype-button" @click="loadOptions">重试读取</button></div>
@@ -450,7 +536,7 @@ onUnmounted(() => { unsubscribeEvents?.(); unsubscribeEvents = null })
             <template v-else><span class="row-readout-state">{{ activeProject === 'latency' ? readoutState(scopeKey(node)) : projectLabel }}</span><strong class="row-readout-value" :class="activeProject === 'latency' ? sampleClass(activeSampleFor(scopeKey(node))) : 'nodata'">{{ projectReadout(scopeKey(node)) }}<small v-if="activeProject === 'latency' && activeSampleFor(scopeKey(node))?.success">ms</small></strong><span class="row-readout-time">{{ activeProject === 'latency' ? readoutTime(scopeKey(node)) : '暂无正式记录' }}</span><span class="row-readout-status">{{ activeProject === 'latency' ? readoutStatus(scopeKey(node)) : '未接入，不生成演示结果' }}</span><span class="row-readout-monitor">{{ monitorStatusText(scopeKey(node)) }}</span><span v-if="pinnedByKey[scopeKey(node)] !== null && pinnedByKey[scopeKey(node)] !== undefined" class="pin-control"><button type="button" @click.stop="clearPin(scopeKey(node))">取消固定</button></span></template>
           </div>
           <div class="history-cell">
-            <template v-if="activeProject === 'latency'"><LatencySamplePlot :samples="samplesForKey(scopeKey(node))" :hovered-index="hoveredByKey[scopeKey(node)] ?? null" :pinned-index="pinnedByKey[scopeKey(node)] ?? null" :height="84" @hover="onHover(scopeKey(node), $event)" @pin="onPin(scopeKey(node), $event)" @unpin="clearPin(scopeKey(node))" /><div class="history-summary"><strong>{{ p50ForKey(scopeKey(node)) === null ? '暂无延迟历史' : `P50 ${p50ForKey(scopeKey(node))} ms · P95 ${p95ForKey(scopeKey(node))} ms` }}</strong><span>{{ projectHistoryText(scopeKey(node)) }}</span></div><button type="button" class="history-open" @click.stop="openHistory(scopeKey(node))">展开大图与样本 →</button></template>
+            <template v-if="activeProject === 'latency'"><LatencySamplePlot :samples="samplesForKey(scopeKey(node))" :window-since="activeWindow.since" :window-until="activeWindow.until" :hovered-index="hoveredByKey[scopeKey(node)] ?? null" :pinned-index="pinnedByKey[scopeKey(node)] ?? null" :height="84" @hover="onHover(scopeKey(node), $event)" @pin="onPin(scopeKey(node), $event)" @unpin="clearPin(scopeKey(node))" /><div class="history-summary"><strong>{{ statsLabel(scopeKey(node)) }}</strong><span>{{ projectHistoryText(scopeKey(node)) }}</span></div><button type="button" class="history-open" @click.stop="openHistory(scopeKey(node))">展开大图与样本 →</button></template>
             <template v-else><div class="project-unavailable-cell"><strong>{{ projectReadout(scopeKey(node)) }}</strong><span>{{ projectHistoryText(scopeKey(node)) }}</span></div></template>
           </div>
         </li>
@@ -467,7 +553,7 @@ onUnmounted(() => { unsubscribeEvents?.(); unsubscribeEvents = null })
       <button v-if="focusedDisplayedTest" type="button" class="history-open evidence-expand" @click="expanded = true">展开完整历史与原始样本 →</button>
     </section>
 
-    <div v-if="expanded && focusedDisplayedTest" class="prototype-modal-backdrop" @click.self="closeHistory"><section class="prototype-history-modal" role="dialog" aria-modal="true" aria-labelledby="history-modal-title"><div class="modal-header"><div><p class="prototype-eyebrow">历史证据 · 原始样本</p><h2 id="history-modal-title">{{ focusedOption?.displayName }} · 延迟历史</h2><p>{{ focusedOption?.profileName }} · {{ formatTime(focusedDisplayedTest.started_at) }} – {{ formatTime(focusedDisplayedTest.finished_at) }}</p></div><div class="modal-actions"><button v-if="pinnedByKey[focusedKey] !== null && pinnedByKey[focusedKey] !== undefined" type="button" class="prototype-button" @click="clearPin(focusedKey)">取消固定</button><button type="button" class="close-button" aria-label="关闭历史详情" @click="closeHistory">×</button></div></div><div class="history-controls"><label>时间范围<UiSelect v-model="windowMode" aria-label="历史时间范围" :options="windowSelectOptions" /></label><span>{{ windowLabel }} · 横轴为真实采样时间 · 纵轴为毫秒</span><span v-if="detailLoading">正在读取详情…</span></div><div class="modal-chart"><LatencySamplePlot :samples="focusedDisplayedTest.samples" :hovered-index="hoveredByKey[focusedKey] ?? null" :pinned-index="pinnedByKey[focusedKey] ?? null" :width="1120" :height="300" @hover="onHover(focusedKey, $event)" @pin="onPin(focusedKey, $event)" @unpin="clearPin(focusedKey)" /></div><div class="modal-current"><strong>{{ sampleLabel(activeSampleFor(focusedKey)) }}</strong><span>{{ sampleDetail(activeSampleFor(focusedKey)) }}</span><span>{{ testStatusLabel(focusedDisplayedTest) }} · {{ persistenceLabel(focusedDisplayedTest) }}</span></div><div class="modal-table-wrap"><table><thead><tr><th>样本</th><th>实际时间</th><th>结果</th><th>原因</th></tr></thead><tbody><tr v-for="(sample, index) in focusedDisplayedTest.samples" :key="`${sample.seq}-${sample.timestamp}`" :class="{ selected: activeIndexFor(focusedKey, focusedDisplayedTest.samples) === index }"><td>#{{ sample.seq }}</td><td>{{ formatTime(sample.timestamp) }}</td><td :class="sample.success ? 'success' : 'fail'">{{ sample.success ? `${Math.round(sample.latency_ms)} ms` : sampleLabel(sample) }}</td><td>{{ sample.error || '—' }}</td></tr></tbody></table></div></section></div>
+    <div v-if="expanded && focusedDisplayedTest" class="prototype-modal-backdrop" @click.self="closeHistory"><section class="prototype-history-modal" role="dialog" aria-modal="true" aria-labelledby="history-modal-title"><div class="modal-header"><div><p class="prototype-eyebrow">历史证据 · 原始样本</p><h2 id="history-modal-title">{{ focusedOption?.displayName }} · 延迟历史</h2><p>{{ focusedOption?.profileName }} · {{ formatTime(focusedDisplayedTest.started_at) }} – {{ formatTime(focusedDisplayedTest.finished_at) }}</p></div><div class="modal-actions"><button v-if="pinnedByKey[focusedKey] !== null && pinnedByKey[focusedKey] !== undefined" type="button" class="prototype-button" @click="clearPin(focusedKey)">取消固定</button><button type="button" class="close-button" aria-label="关闭历史详情" @click="closeHistory">×</button></div></div><div class="history-controls"><label>时间范围<UiSelect v-model="windowMode" aria-label="历史时间范围" :options="windowSelectOptions" /></label><span>{{ windowLabel }} · 截至 {{ formatShortTime(activeWindow.until) }} · 横轴为真实采样时间 · 纵轴为毫秒</span><span v-if="detailLoading">正在读取详情…</span></div><div class="modal-chart"><LatencySamplePlot :samples="focusedDisplayedTest.samples" :window-since="activeWindow.since" :window-until="activeWindow.until" :hovered-index="hoveredByKey[focusedKey] ?? null" :pinned-index="pinnedByKey[focusedKey] ?? null" :width="1120" :height="300" @hover="onHover(focusedKey, $event)" @pin="onPin(focusedKey, $event)" @unpin="clearPin(focusedKey)" /></div><div class="modal-current"><strong>{{ sampleLabel(activeSampleFor(focusedKey)) }}</strong><span>{{ sampleDetail(activeSampleFor(focusedKey)) }}</span><span>{{ testStatusLabel(focusedDisplayedTest) }} · {{ persistenceLabel(focusedDisplayedTest) }}</span></div><div class="modal-table-wrap"><table><thead><tr><th>样本</th><th>实际时间</th><th>结果</th><th>原因</th></tr></thead><tbody><tr v-for="(sample, index) in focusedDisplayedTest.samples" :key="`${sample.seq}-${sample.timestamp}`" :class="{ selected: activeIndexFor(focusedKey, focusedDisplayedTest.samples) === index }"><td>#{{ sample.seq }}</td><td>{{ formatTime(sample.timestamp) }}</td><td :class="sample.success ? 'success' : 'fail'">{{ sample.success ? `${Math.round(sample.latency_ms)} ms` : sampleLabel(sample) }}</td><td>{{ sample.error || '—' }}</td></tr></tbody></table></div></section></div>
   </main>
 </template>
 

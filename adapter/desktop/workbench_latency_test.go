@@ -105,7 +105,7 @@ func waitDesktopLatencyHistory(t *testing.T, app *App, nodeKey, attemptID string
 			NodeKey:   nodeKey,
 		})
 		if err == nil {
-			for _, row := range rows {
+			for _, row := range rows.Tests {
 				if row.AttemptID == attemptID && row.PersistenceState == "saved" {
 					return
 				}
