@@ -37,7 +37,7 @@ const option: MonitorNodeOption = {
   countryFlag: '🇯🇵',
 }
 
-function job(state: MonitorJob['state'] = 'stopped'): MonitorJob {
+function job(state: MonitorJob['state'] = 'stopped', blockedReason = ''): MonitorJob {
   return {
     id: 'job-1',
     name: 'UI monitor',
@@ -55,6 +55,7 @@ function job(state: MonitorJob['state'] = 'stopped'): MonitorJob {
     intervalSeconds: 30,
     timeoutSeconds: 5,
     state,
+    blockedReason,
     createdAt: '2026-09-19T00:00:00Z',
     updatedAt: '2026-09-19T00:00:00Z',
   }
@@ -113,5 +114,16 @@ describe('MonitorJobsView', () => {
 
     expect(mockedControl).toHaveBeenCalledWith('job-1', 'start')
     expect(wrapper.text()).toContain('运行中')
+  })
+
+  it('shows an explicit blocked reason without offering an automatic recovery action', async () => {
+    mockedJobs.mockResolvedValue([job('blocked', '节点配置 revision 已变化，需要重新确认')])
+
+    wrapper = mount(MonitorJobsView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('已阻塞')
+    expect(wrapper.text()).toContain('节点配置 revision 已变化，需要重新确认')
+    expect(wrapper.findAll('button').some((button) => ['启动', '暂停', '恢复'].includes(button.text().trim()))).toBe(false)
   })
 })

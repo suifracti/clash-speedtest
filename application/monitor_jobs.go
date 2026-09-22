@@ -1,6 +1,7 @@
 package application
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strconv"
@@ -60,6 +61,7 @@ type MonitorJobDTO struct {
 	IntervalSeconds int64                `json:"interval_seconds"`
 	TimeoutSeconds  int64                `json:"timeout_seconds"`
 	State           monitor.JobState     `json:"state"`
+	BlockedReason   string               `json:"blocked_reason,omitempty"`
 	CreatedAt       time.Time            `json:"created_at"`
 	UpdatedAt       time.Time            `json:"updated_at"`
 }
@@ -124,7 +126,7 @@ func (s *AppService) ListMonitorNodeOptions() ([]MonitorNodeOptionDTO, error) {
 }
 
 // CreateMonitorJobFromRequest resolves node keys against the current cached
-// subscription before registering the in-memory scheduler.
+// subscription before registering and durably saving the scheduler definition.
 func (s *AppService) CreateMonitorJobFromRequest(req MonitorJobCreateRequest) (*MonitorJobDTO, error) {
 	profileID := strings.TrimSpace(req.ProfileID)
 	if profileID == "" {
@@ -199,6 +201,9 @@ func (s *AppService) CreateMonitorJobFromRequest(req MonitorJobCreateRequest) (*
 
 // ListMonitorJobDTOs returns the safe status projection used by Web and Wails.
 func (s *AppService) ListMonitorJobDTOs() ([]MonitorJobDTO, error) {
+	if s.monitorLoadErr != nil {
+		return nil, fmt.Errorf("load monitor job definitions: %w", s.monitorLoadErr)
+	}
 	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
 	if err != nil {
 		return nil, err
@@ -216,6 +221,166 @@ func (s *AppService) ListMonitorJobDTOs() ([]MonitorJobDTO, error) {
 		dtos = append(dtos, monitorJobDTO(job, profileNames[job.ProfileID]))
 	}
 	return dtos, nil
+}
+
+// loadPersistedMonitorJobs reconstructs scheduler objects from durable product
+// definitions. It never starts a scheduler or executes a probe.
+func (s *AppService) loadPersistedMonitorJobs() error {
+	if s.historyStore == nil {
+		return nil
+	}
+	definitions, err := s.historyStore.ListMonitorJobDefinitions(context.Background())
+	if err != nil {
+		return err
+	}
+	if len(definitions) == 0 {
+		return nil
+	}
+
+	profileStore, profileErr := profiles.LoadStore(s.profilePaths.StoreFile())
+	nodeCache := make(map[string][]monitor.MonitoredNode)
+	nodeErrors := make(map[string]error)
+	for _, definition := range definitions {
+		if definition == nil {
+			return fmt.Errorf("monitor job definition is nil")
+		}
+		job := monitor.MonitorJob{
+			ID:        definition.ID,
+			Name:      definition.Name,
+			ProfileID: definition.ProfileID,
+			NodeKeys:  make([]string, 0, len(definition.Nodes)),
+			ProbeSet:  definition.ProbeSet,
+			Interval:  definition.Interval,
+			Timeout:   definition.Timeout,
+			CreatedAt: definition.CreatedAt,
+			UpdatedAt: definition.UpdatedAt,
+		}
+		job.Nodes = monitorNodesFromReferences(definition.Nodes)
+		for _, node := range definition.Nodes {
+			job.NodeKeys = append(job.NodeKeys, node.NodeKey)
+		}
+
+		blockedReason := ""
+		switch {
+		case definition.DefinitionVersion != monitor.MonitorJobDefinitionVersion:
+			blockedReason = fmt.Sprintf("任务定义版本 %d 不受当前版本支持", definition.DefinitionVersion)
+		case profileErr != nil:
+			blockedReason = fmt.Sprintf("当前订阅配置不可用：%v", profileErr)
+		case profileStore == nil || profileStore.Get(definition.ProfileID) == nil:
+			blockedReason = "订阅不存在或已被移除"
+		default:
+			currentNodes, ok := nodeCache[definition.ProfileID]
+			if !ok {
+				currentNodes, nodeErrors[definition.ProfileID] = s.loadMonitorNodes(definition.ProfileID)
+				nodeCache[definition.ProfileID] = currentNodes
+			}
+			if nodeErrors[definition.ProfileID] != nil {
+				blockedReason = fmt.Sprintf("当前订阅节点不可用：%v", nodeErrors[definition.ProfileID])
+			} else {
+				resolved, reason := resolvePersistedMonitorNodes(definition.Nodes, currentNodes)
+				if reason != "" {
+					blockedReason = reason
+				} else {
+					job.Nodes = resolved
+				}
+			}
+		}
+
+		if blockedReason != "" {
+			job.State = monitor.JobStateBlocked
+			job.BlockedReason = blockedReason
+		} else {
+			job.State = monitor.JobStateStopped
+			job.BlockedReason = ""
+		}
+
+		sched, err := monitor.NewScheduler(monitor.SchedulerConfig{
+			Job:    &job,
+			Runner: s.monitorRunner,
+			Store:  s.historyStore,
+		})
+		if err != nil {
+			return fmt.Errorf("restore monitor job %s: %w", definition.ID, err)
+		}
+		if _, exists := s.monitorSchedulers[definition.ID]; exists {
+			return fmt.Errorf("duplicate persisted monitor job %s", definition.ID)
+		}
+		s.monitorSchedulers[definition.ID] = sched
+	}
+	return nil
+}
+
+func monitorNodesFromReferences(references []monitor.MonitorJobNodeReference) []monitor.MonitoredNode {
+	nodes := make([]monitor.MonitoredNode, 0, len(references))
+	for _, reference := range references {
+		nodes = append(nodes, monitor.MonitoredNode{
+			NodeKey:           reference.NodeKey,
+			NodeIdentityKey:   reference.NodeIdentityKey,
+			ConfigRevisionKey: reference.ConfigRevisionKey,
+			DisplayName:       reference.DisplayName,
+			Type:              reference.Type,
+		})
+	}
+	return nodes
+}
+
+func monitorJobDefinitionFromJob(job monitor.MonitorJob) *monitor.MonitorJobDefinition {
+	references := make([]monitor.MonitorJobNodeReference, 0, len(job.Nodes))
+	for _, node := range job.Nodes {
+		references = append(references, monitor.MonitorJobNodeReference{
+			NodeKey:           node.NodeKey,
+			NodeIdentityKey:   node.NodeIdentityKey,
+			ConfigRevisionKey: node.ConfigRevisionKey,
+			DisplayName:       node.DisplayName,
+			Type:              node.Type,
+		})
+	}
+	return &monitor.MonitorJobDefinition{
+		ID:                job.ID,
+		Name:              job.Name,
+		ProfileID:         job.ProfileID,
+		Nodes:             references,
+		ProbeSet:          job.ProbeSet,
+		Interval:          job.Interval,
+		Timeout:           job.Timeout,
+		CreatedAt:         job.CreatedAt,
+		UpdatedAt:         job.UpdatedAt,
+		DefinitionVersion: monitor.MonitorJobDefinitionVersion,
+	}
+}
+
+func resolvePersistedMonitorNodes(references []monitor.MonitorJobNodeReference, current []monitor.MonitoredNode) ([]monitor.MonitoredNode, string) {
+	resolved := make([]monitor.MonitoredNode, 0, len(references))
+	for _, reference := range references {
+		if reference.NodeKey == "" || reference.NodeIdentityKey == "" || reference.ConfigRevisionKey == "" {
+			return nil, "任务包含不完整的稳定节点引用，需要重新配置"
+		}
+		exact := make([]monitor.MonitoredNode, 0, 1)
+		byIdentity := make([]monitor.MonitoredNode, 0, 1)
+		for _, candidate := range current {
+			if candidate.NodeIdentityKey == reference.NodeIdentityKey {
+				byIdentity = append(byIdentity, candidate)
+			}
+			if candidate.NodeKey == reference.NodeKey && candidate.NodeIdentityKey == reference.NodeIdentityKey {
+				exact = append(exact, candidate)
+			}
+		}
+		if len(exact) == 1 {
+			if exact[0].ConfigRevisionKey != reference.ConfigRevisionKey {
+				return nil, fmt.Sprintf("节点 %q 的配置 revision 已变化，需要重新确认", reference.DisplayName)
+			}
+			resolved = append(resolved, exact[0])
+			continue
+		}
+		if len(byIdentity) == 1 && byIdentity[0].ConfigRevisionKey != reference.ConfigRevisionKey {
+			return nil, fmt.Sprintf("节点 %q 的配置 revision 已变化，需要重新确认", reference.DisplayName)
+		}
+		if len(byIdentity) > 1 {
+			return nil, fmt.Sprintf("节点 %q 的稳定身份不再唯一，无法安全恢复", reference.DisplayName)
+		}
+		return nil, fmt.Sprintf("节点 %q 已不存在或不可用", reference.DisplayName)
+	}
+	return resolved, ""
 }
 
 // GetMonitorJobDTO returns the safe status projection for one job.
@@ -303,6 +468,7 @@ func monitorJobDTO(job monitor.MonitorJob, profileName string) MonitorJobDTO {
 		IntervalSeconds: int64(job.Interval / time.Second),
 		TimeoutSeconds:  int64(job.Timeout / time.Second),
 		State:           job.State,
+		BlockedReason:   job.BlockedReason,
 		CreatedAt:       job.CreatedAt,
 		UpdatedAt:       job.UpdatedAt,
 	}

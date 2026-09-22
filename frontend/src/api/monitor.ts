@@ -278,6 +278,7 @@ export function normalizeMonitorJob(wire: RawMonitorJobWire): MonitorJob {
 		intervalSeconds: Number.isFinite(wire.interval_seconds) ? wire.interval_seconds : 0,
 		timeoutSeconds: Number.isFinite(wire.timeout_seconds) ? wire.timeout_seconds : 0,
 		state: wire.state,
+		blockedReason: wire.blocked_reason ?? '',
 		createdAt: wire.created_at ?? '',
 		updatedAt: wire.updated_at ?? '',
 	}
@@ -311,7 +312,7 @@ export async function fetchMonitorNodeOptions(): Promise<MonitorNodeOption[]> {
 	return (Array.isArray(raw) ? raw : []).map(normalizeMonitorNodeOption)
 }
 
-/** Lists the in-memory monitor jobs without exposing subscription credentials. */
+/** Lists persisted monitor definitions and current runtime status without exposing credentials. */
 export async function fetchMonitorJobs(): Promise<MonitorJob[]> {
 	if (isWails()) {
 		const raw = await window.go!.desktop!.App!.ListMonitorJobs()

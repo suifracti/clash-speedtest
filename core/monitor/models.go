@@ -14,6 +14,7 @@ const (
 	JobStateStopped JobState = "stopped"
 	JobStateRunning JobState = "running"
 	JobStatePaused  JobState = "paused"
+	JobStateBlocked JobState = "blocked"
 )
 
 // ProbeSetType defines the intensity and scope of probes executed on each tick.
@@ -53,17 +54,47 @@ type MonitoredNode struct {
 
 // MonitorJob holds the persistent configuration and state of a 24/7 monitoring task.
 type MonitorJob struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
-	ProfileID string          `json:"profile_id"`
-	NodeKeys  []string        `json:"node_keys"`
-	Nodes     []MonitoredNode `json:"nodes"`
-	ProbeSet  ProbeSetType    `json:"probe_set"`
-	Interval  time.Duration   `json:"interval"`
-	Timeout   time.Duration   `json:"timeout"`
-	State     JobState        `json:"state"`
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at"`
+	ID            string          `json:"id"`
+	Name          string          `json:"name"`
+	ProfileID     string          `json:"profile_id"`
+	NodeKeys      []string        `json:"node_keys"`
+	Nodes         []MonitoredNode `json:"nodes"`
+	ProbeSet      ProbeSetType    `json:"probe_set"`
+	Interval      time.Duration   `json:"interval"`
+	Timeout       time.Duration   `json:"timeout"`
+	State         JobState        `json:"state"`
+	BlockedReason string          `json:"blocked_reason,omitempty"`
+	CreatedAt     time.Time       `json:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at"`
+}
+
+// MonitorJobDefinitionVersion is the version of the credential-free persisted
+// definition shape. Runtime scheduler state is deliberately not part of it.
+const MonitorJobDefinitionVersion = 1
+
+// MonitorJobNodeReference is the safe, stable reference stored for one selected
+// node. The current cached profile must be re-resolved before the node can run.
+type MonitorJobNodeReference struct {
+	NodeKey           string `json:"node_key"`
+	NodeIdentityKey   string `json:"node_identity_key"`
+	ConfigRevisionKey string `json:"config_revision_key"`
+	DisplayName       string `json:"display_name"`
+	Type              string `json:"type"`
+}
+
+// MonitorJobDefinition is the durable product definition. It contains no raw
+// proxy configuration, credentials, controller secrets, or scheduler runtime.
+type MonitorJobDefinition struct {
+	ID                string                    `json:"id"`
+	Name              string                    `json:"name"`
+	ProfileID         string                    `json:"profile_id"`
+	Nodes             []MonitorJobNodeReference `json:"nodes"`
+	ProbeSet          ProbeSetType              `json:"probe_set"`
+	Interval          time.Duration             `json:"interval"`
+	Timeout           time.Duration             `json:"timeout"`
+	CreatedAt         time.Time                 `json:"created_at"`
+	UpdatedAt         time.Time                 `json:"updated_at"`
+	DefinitionVersion int                       `json:"definition_version"`
 }
 
 // MonitorRun records the execution metadata of one scheduled monitoring round.
@@ -132,7 +163,7 @@ type CursorFilter struct {
 	Since           *time.Time `json:"since,omitempty"`
 	Until           *time.Time `json:"until,omitempty"`
 	Limit           int        `json:"limit"`
-	OrderDesc       bool       `json:"order_desc"` // true: newest first (default); false: chronological ascending
+	OrderDesc       bool       `json:"order_desc"`       // true: newest first (default); false: chronological ascending
 	Cursor          string     `json:"cursor,omitempty"` // Opaque cursor token
 }
 
