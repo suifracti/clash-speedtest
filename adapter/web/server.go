@@ -130,6 +130,7 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("POST /api/profile/import/discard", s.handleDiscardProfileImport)
 	mux.HandleFunc("GET /api/airports", s.handleGetAirports)
 	mux.HandleFunc("POST /api/airports", s.handleCreateAirport)
+	mux.HandleFunc("GET /api/airports/{id}/url", s.handleGetAirportURL)
 	mux.HandleFunc("PUT /api/airports/{id}", s.handleUpdateAirport)
 	mux.HandleFunc("DELETE /api/airports/{id}", s.handleDeleteAirport)
 	mux.HandleFunc("POST /api/airports/{id}/refresh", s.handleRefreshAirport)
@@ -467,6 +468,16 @@ func (s *Server) handleCreateAirport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, dto)
+}
+
+func (s *Server) handleGetAirportURL(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	airportURL, err := s.app.GetAirportURL(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"url": airportURL})
 }
 
 func (s *Server) handleUpdateAirport(w http.ResponseWriter, r *http.Request) {

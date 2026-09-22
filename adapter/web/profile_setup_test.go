@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/faceair/clash-speedtest/core/appdata"
@@ -22,7 +23,8 @@ func TestProfileSetupWebChainImportsThenReadsCanonicalProfile(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(source, "airports-cache"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(source, "airports.json"), []byte(`{"airports":[{"id":"web-fixture","name":"Web fixture","url":"https://fixture.invalid/sub"}]}`), 0o600); err != nil {
+	fakeURL := "https://fixture.invalid/sub?token=VERY_SECRET_TEST_TOKEN_12345"
+	if err := os.WriteFile(filepath.Join(source, "airports.json"), []byte(`{"airports":[{"id":"web-fixture","name":"Web fixture","url":"`+fakeURL+`"}]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(source, "airports-cache", "web-fixture.yaml"), []byte("proxies:\n  - name: web-node\n    type: ss\n    server: 192.0.2.20\n    port: 8388\n    cipher: aes-128-gcm\n    password: fixture-password\n"), 0o600); err != nil {
@@ -56,6 +58,20 @@ func TestProfileSetupWebChainImportsThenReadsCanonicalProfile(t *testing.T) {
 	items, ok := airportsAsList(airports)
 	if !ok || len(items) != 1 || items[0]["id"] != "web-fixture" {
 		t.Fatalf("Web airport list did not use canonical profile: %+v", airports)
+	}
+	encodedAirports, err := json.Marshal(airports)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encodedAirports), fakeURL) || strings.Contains(string(encodedAirports), "VERY_SECRET_TEST_TOKEN_12345") {
+		t.Fatalf("Web airport list leaked subscription URL: %s", encodedAirports)
+	}
+	if _, present := items[0]["url"]; present {
+		t.Fatalf("Web airport list still exposes the complete url field: %+v", items[0])
+	}
+	revealed := requestJSON(t, handler, http.MethodGet, "/api/airports/web-fixture/url", nil)
+	if revealed["url"] != fakeURL {
+		t.Fatalf("explicit URL read returned %v, want %q", revealed["url"], fakeURL)
 	}
 	nodes := requestJSON(t, handler, http.MethodGet, "/api/airports/web-fixture/nodes", nil)
 	nodeItems, ok := airportsAsList(nodes)

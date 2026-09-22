@@ -149,6 +149,20 @@ export async function fetchAirports(): Promise<Airport[]> {
   return res.json()
 }
 
+// The complete source is read only for an explicit management action such as
+// opening an existing subscription in the edit form. It is not kept in the
+// ordinary airport store/list DTO.
+export async function getAirportURL(id: string): Promise<string> {
+  if (isWails()) {
+    return window.go!.desktop!.App!.GetAirportURL(id)
+  }
+  const res = await fetch(`${API_BASE}/api/airports/${id}/url`)
+  if (!res.ok) throw new Error(await res.text())
+  const payload = await res.json() as { url?: unknown }
+  if (typeof payload.url !== 'string') throw new Error('订阅链接读取失败')
+  return payload.url
+}
+
 export async function createAirport(name: string, url: string): Promise<Airport> {
   if (isWails()) {
     return window.go!.desktop!.App!.CreateAirport(name, url)

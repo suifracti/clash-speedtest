@@ -114,6 +114,12 @@ func (a *App) ListAirports() ([]application.AirportDTO, error) {
 	return a.app.ListAirports()
 }
 
+// GetAirportURL is an explicit management read used by the edit flow. The
+// ordinary AirportDTO intentionally does not contain the complete source.
+func (a *App) GetAirportURL(id string) (string, error) {
+	return a.app.GetAirportURL(id)
+}
+
 func (a *App) CreateAirport(name, url string) (*application.AirportDTO, error) {
 	return a.app.CreateAirport(name, url, a.userAgent)
 }

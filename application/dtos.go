@@ -125,12 +125,13 @@ type TokenStatusDTO struct {
 
 // AirportDTO represents airport subscription status for GUI/API display.
 type AirportDTO struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	URL       string    `json:"url"`
-	UpdatedAt time.Time `json:"updated_at,omitempty"`
-	NodeCount int       `json:"node_count"`
-	HasCache  bool      `json:"has_cache"`
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	URLDisplay    string    `json:"url_display"`
+	URLConfigured bool      `json:"url_configured"`
+	UpdatedAt     time.Time `json:"updated_at,omitempty"`
+	NodeCount     int       `json:"node_count"`
+	HasCache      bool      `json:"has_cache"`
 }
 
 // ProfileSourceDTO is a redacted, user-selectable local source summary. It
