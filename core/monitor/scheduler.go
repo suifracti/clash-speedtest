@@ -13,6 +13,8 @@ type SchedulerConfig struct {
 	Job    *MonitorJob
 	Runner *Runner
 	Store  SampleStore
+	// StorageGuard returns a reason while new background collection is unsafe.
+	StorageGuard func() string
 }
 
 // Scheduler manages the periodic execution and lifecycle of a MonitorJob.
@@ -21,6 +23,7 @@ type Scheduler struct {
 	job           *MonitorJob
 	runner        *Runner
 	store         SampleStore
+	storageGuard  func() string
 	state         JobState
 	stopping      bool
 	ctx           context.Context
@@ -45,10 +48,11 @@ func NewScheduler(cfg SchedulerConfig) (*Scheduler, error) {
 	}
 
 	s := &Scheduler{
-		job:    cfg.Job,
-		runner: cfg.Runner,
-		store:  cfg.Store,
-		state:  cfg.Job.State,
+		job:          cfg.Job,
+		runner:       cfg.Runner,
+		store:        cfg.Store,
+		storageGuard: cfg.StorageGuard,
+		state:        cfg.Job.State,
 	}
 	if s.job.PersistenceState == "" {
 		s.job.PersistenceState = PersistenceStateHealthy
@@ -69,9 +73,27 @@ func (s *Scheduler) State() JobState {
 
 // Job returns a copy of the underlying MonitorJob.
 func (s *Scheduler) Job() MonitorJob {
+	s.checkStorage()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return *s.job
+}
+
+func (s *Scheduler) checkStorage() string {
+	if s.storageGuard == nil {
+		return ""
+	}
+	reason := s.storageGuard()
+	s.mu.Lock()
+	if reason != "" {
+		s.job.StorageState = "storage_protected"
+		s.job.StorageReason = reason
+	} else {
+		s.job.StorageState = "ok"
+		s.job.StorageReason = ""
+	}
+	s.mu.Unlock()
+	return reason
 }
 
 func (s *Scheduler) markPersistenceFailure(err error) {
@@ -107,20 +129,26 @@ func (s *Scheduler) CompletedRuns() int64 {
 // Paused -> Start: resumes existing loop without creating a duplicate goroutine or overwriting cancel.
 // Stopped -> Start: initializes a fresh lifecycle context and loop.
 func (s *Scheduler) Start(parentCtx context.Context) error {
+	if reason := s.checkStorage(); reason != "" {
+		return fmt.Errorf("monitor storage protected: %s", reason)
+	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if s.stopping {
+		s.mu.Unlock()
 		return fmt.Errorf("scheduler is stopping")
 	}
 	if s.state == JobStateBlocked {
-		if s.job.BlockedReason != "" {
-			return fmt.Errorf("monitor job is blocked: %s", s.job.BlockedReason)
+		blockedReason := s.job.BlockedReason
+		s.mu.Unlock()
+		if blockedReason != "" {
+			return fmt.Errorf("monitor job is blocked: %s", blockedReason)
 		}
 		return fmt.Errorf("monitor job is blocked")
 	}
 
 	if s.state == JobStateRunning {
+		s.mu.Unlock()
 		return nil // Already running
 	}
 
@@ -129,6 +157,7 @@ func (s *Scheduler) Start(parentCtx context.Context) error {
 		s.state = JobStateRunning
 		s.job.State = JobStateRunning
 		s.job.UpdatedAt = time.Now()
+		s.mu.Unlock()
 		return nil
 	}
 
@@ -143,7 +172,13 @@ func (s *Scheduler) Start(parentCtx context.Context) error {
 	s.job.UpdatedAt = time.Now()
 
 	s.loopWg.Add(1)
-	go s.scheduleLoop(s.ctx, s.job.Interval)
+	scheduleCtx := s.ctx
+	interval := s.job.Interval
+	s.mu.Unlock()
+	// Claim the initial round before returning. A user may pause immediately
+	// after Start; the already-launched round is allowed to finish normally.
+	s.launchScheduledRound(scheduleCtx, time.Now())
+	go s.scheduleLoop(scheduleCtx, interval)
 
 	return nil
 }
@@ -266,9 +301,6 @@ func (s *Scheduler) scheduleLoop(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	// Run initial round immediately upon start
-	s.launchScheduledRound(ctx, time.Now())
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -290,6 +322,9 @@ func (s *Scheduler) scheduleLoop(ctx context.Context, interval time.Duration) {
 }
 
 func (s *Scheduler) launchScheduledRound(ctx context.Context, scheduledAt time.Time) {
+	if s.checkStorage() != "" {
+		return
+	}
 	s.mu.Lock()
 	if s.state != JobStateRunning || s.stopping {
 		s.mu.Unlock()
@@ -305,6 +340,9 @@ func (s *Scheduler) launchScheduledRound(ctx context.Context, scheduledAt time.T
 }
 
 func (s *Scheduler) executeScheduledRound(ctx context.Context, scheduledAt time.Time) {
+	if s.checkStorage() != "" {
+		return
+	}
 	// Overlap Prevention Guard:
 	// If a previous run is still executing, DO NOT spawn another runner goroutine!
 	if !atomic.CompareAndSwapInt32(&s.isExecuting, 0, 1) {

@@ -74,6 +74,8 @@ type MonitorJobDTO struct {
 	BlockedReason    string               `json:"blocked_reason,omitempty"`
 	PersistenceState string               `json:"persistence_state"`
 	PersistenceError string               `json:"persistence_error,omitempty"`
+	StorageState     string               `json:"storage_state,omitempty"`
+	StorageReason    string               `json:"storage_reason,omitempty"`
 	CreatedAt        time.Time            `json:"created_at"`
 	UpdatedAt        time.Time            `json:"updated_at"`
 }
@@ -344,9 +346,10 @@ func (s *AppService) loadPersistedMonitorJobs() error {
 		}
 
 		sched, err := monitor.NewScheduler(monitor.SchedulerConfig{
-			Job:    &job,
-			Runner: s.monitorRunner,
-			Store:  s.historyStore,
+			Job:          &job,
+			Runner:       s.monitorRunner,
+			Store:        s.historyStore,
+			StorageGuard: s.monitorStorageGuard,
 		})
 		if err != nil {
 			return fmt.Errorf("restore monitor job %s: %w", definition.ID, err)
@@ -520,6 +523,8 @@ func monitorJobDTO(job monitor.MonitorJob, profileName string) MonitorJobDTO {
 		BlockedReason:    job.BlockedReason,
 		PersistenceState: job.PersistenceState,
 		PersistenceError: job.PersistenceError,
+		StorageState:     job.StorageState,
+		StorageReason:    job.StorageReason,
 		CreatedAt:        job.CreatedAt,
 		UpdatedAt:        job.UpdatedAt,
 	}

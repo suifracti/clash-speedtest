@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as api from '../../api/monitor'
 import UiSelect from '../common/UiSelect.vue'
+import MonitorRetentionPanel from './MonitorRetentionPanel.vue'
 import type { MonitorJob, MonitorJobNode, MonitorJobPrefill, MonitorNodeOption, MonitorNodeSelectionContext, MonitorRun } from '../../types'
 
 const props = defineProps<{ prefill?: MonitorJobPrefill | null }>()
@@ -334,6 +335,8 @@ onBeforeUnmount(() => {
       <div v-if="feedback" class="rounded border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300">
         {{ feedback }}
       </div>
+
+      <MonitorRetentionPanel />
       <div v-if="prefillError" class="rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
         {{ prefillError }}
         <button type="button" class="ml-2 underline" @click="cancelPrefill">清除这次选择</button>
@@ -452,6 +455,9 @@ onBeforeUnmount(() => {
 
             <div v-if="job.persistenceState === 'degraded'" class="mt-2 rounded border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-[11px] text-red-700 dark:text-red-300">
               持久化异常：本轮测速结果可能未完整保存，不能作为完整 durable evidence。{{ job.persistenceError }}
+            </div>
+            <div v-if="job.storageState === 'storage_protected'" class="mt-2 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-800">
+              容量保护：{{ job.storageReason }}。这段时间未采集，不代表节点失败。
             </div>
 
             <div class="mt-3 border-t border-border pt-2">

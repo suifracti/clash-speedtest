@@ -76,6 +76,8 @@ type MonitorJob struct {
 	// are deliberately excluded from MonitorJobDefinition persistence.
 	PersistenceState string    `json:"persistence_state,omitempty"`
 	PersistenceError string    `json:"persistence_error,omitempty"`
+	StorageState     string    `json:"storage_state,omitempty"`
+	StorageReason    string    `json:"storage_reason,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
 }
@@ -317,6 +319,29 @@ type RetentionResult struct {
 	DurationMs     int64           `json:"duration_ms"`
 	Partial        bool            `json:"partial"`
 	ErrorMessage   string          `json:"error_message,omitempty"`
+}
+
+// RetentionPreview is a read-only count from the same Monitor tables and
+// cutoff predicate used by ApplyRetention. Counts can change before execution.
+type RetentionPreview struct {
+	Policy          RetentionPolicy `json:"policy"`
+	Cutoff          time.Time       `json:"cutoff"`
+	SamplesToDelete int64           `json:"samples_to_delete"`
+	RunsToDelete    int64           `json:"runs_to_delete"`
+	Storage         StorageUsage    `json:"storage"`
+}
+
+// StorageUsage measures the canonical SQLite files, including WAL and shm.
+// Thresholds are product protection references, not SQLite engine limits.
+type StorageUsage struct {
+	DatabaseBytes     int64 `json:"database_bytes"`
+	WALBytes          int64 `json:"wal_bytes"`
+	SharedMemoryBytes int64 `json:"shared_memory_bytes"`
+	TotalBytes        int64 `json:"total_bytes"`
+	WarningBytes      int64 `json:"warning_bytes"`
+	HardBytes         int64 `json:"hard_bytes"`
+	Warning           bool  `json:"warning"`
+	Protected         bool  `json:"protected"`
 }
 
 // RetentionError indicates that retention pruning failed, optionally with partial progress.
