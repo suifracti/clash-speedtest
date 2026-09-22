@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/faceair/clash-speedtest/application"
+	"github.com/faceair/clash-speedtest/core/appdata"
 	"github.com/faceair/clash-speedtest/core/auth"
 	"github.com/faceair/clash-speedtest/core/controller"
 	"github.com/faceair/clash-speedtest/core/history"
@@ -28,13 +29,19 @@ type App struct {
 
 // NewApp creates a new desktop Wails binding application.
 func NewApp(hStore *history.Store, paths profiles.Paths, userAgent string) *App {
+	return NewAppWithPaths(hStore, appdata.FromLegacy(paths.Dir, ""), userAgent)
+}
+
+// NewAppWithPaths wires the Wails binding to the same resolved paths used by
+// the local Web adapter.
+func NewAppWithPaths(hStore *history.Store, paths appdata.AppPaths, userAgent string) *App {
 	emitter := NewWailsEventEmitter()
-	appSvc := application.NewAppService(hStore, paths, emitter)
+	appSvc := application.NewAppServiceWithPaths(hStore, paths, emitter)
 
 	return &App{
 		app:          appSvc,
 		emitter:      emitter,
-		profilePaths: paths,
+		profilePaths: profiles.Paths{Dir: paths.ProfileDir},
 		userAgent:    userAgent,
 	}
 }
@@ -82,6 +89,26 @@ func (a *App) StopTest() {
 }
 
 // --- Airport Operations ---
+
+func (a *App) GetProfileSetup() (*application.ProfileSetupDTO, error) {
+	return a.app.GetProfileSetup()
+}
+
+func (a *App) InspectProfileSource(path string) (*application.ProfileSourceDTO, error) {
+	return a.app.InspectProfileSource(path)
+}
+
+func (a *App) InitializeEmptyProfileStore() error {
+	return a.app.InitializeEmptyProfileStore()
+}
+
+func (a *App) ImportProfileSource(path string) error {
+	return a.app.ImportProfileSource(a.context(), path)
+}
+
+func (a *App) DiscardProfileImport() error {
+	return a.app.DiscardProfileImport()
+}
 
 func (a *App) ListAirports() ([]application.AirportDTO, error) {
 	return a.app.ListAirports()

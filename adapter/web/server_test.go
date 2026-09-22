@@ -23,7 +23,6 @@ import (
 func TestWebServerEndpoints(t *testing.T) {
 	tmpDir := t.TempDir()
 	profileDir := filepath.Join(tmpDir, "profiles")
-	_ = os.MkdirAll(profileDir, 0o755)
 
 	server, err := NewServer(ServerConfig{
 		Port:         0,
@@ -34,6 +33,9 @@ func TestWebServerEndpoints(t *testing.T) {
 		t.Fatalf("NewServer error: %v", err)
 	}
 	defer server.Close()
+	if err := server.AppService().InitializeEmptyProfileStore(); err != nil {
+		t.Fatalf("initialize empty profile store: %v", err)
+	}
 
 	// 1. Test status endpoint
 	req := httptest.NewRequest(http.MethodGet, "/api/test/status", nil)

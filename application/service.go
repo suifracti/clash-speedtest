@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/faceair/clash-speedtest/adapter/controller/mihomo"
+	"github.com/faceair/clash-speedtest/core/appdata"
 	"github.com/faceair/clash-speedtest/core/auth"
 	"github.com/faceair/clash-speedtest/core/controller"
 	"github.com/faceair/clash-speedtest/core/history"
@@ -31,6 +32,7 @@ import (
 type AppService struct {
 	historyStore      *history.Store
 	profilePaths      profiles.Paths
+	appPaths          appdata.AppPaths
 	emitter           EventEmitter
 	cancelFunc        context.CancelFunc
 	cancelCtx         context.Context
@@ -65,12 +67,24 @@ type AppService struct {
 
 // NewAppService creates a new application service instance.
 func NewAppService(hStore *history.Store, paths profiles.Paths, emitter EventEmitter) *AppService {
+	return newAppService(hStore, appdata.FromLegacy(paths.Dir, ""), paths, emitter)
+}
+
+// NewAppServiceWithPaths creates the production service from the shared path
+// decision used by both the Web and Wails adapters.
+func NewAppServiceWithPaths(hStore *history.Store, paths appdata.AppPaths, emitter EventEmitter) *AppService {
+	profilePaths := profiles.Paths{Dir: paths.ProfileDir}
+	return newAppService(hStore, paths, profilePaths, emitter)
+}
+
+func newAppService(hStore *history.Store, appPaths appdata.AppPaths, profilePaths profiles.Paths, emitter EventEmitter) *AppService {
 	if emitter == nil {
 		emitter = NewMemoryEventEmitter()
 	}
 	svc := &AppService{
 		historyStore:      hStore,
-		profilePaths:      paths,
+		profilePaths:      profilePaths,
+		appPaths:          appPaths,
 		emitter:           emitter,
 		decisionEngine:    policy.NewDecisionEngine(),
 		policy:            policy.DefaultSwitchPolicy(),
@@ -715,16 +729,104 @@ func (s *AppService) CompareRuns(baseID, targetID string) (*history.RunCompariso
 
 // Airport & Profile operations
 
-func (s *AppService) ListAirports() ([]AirportDTO, error) {
-	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
+// GetProfileSetup returns the current canonical profile state and safe source
+// summaries. It does not create a store or import anything.
+func (s *AppService) GetProfileSetup() (*ProfileSetupDTO, error) {
+	status := s.profilePaths.InspectSetup()
+	dto := &ProfileSetupDTO{
+		State:             "needs_choice",
+		Initialized:       status.Initialized,
+		DataRoot:          s.appPaths.DataRoot,
+		ProfileDir:        s.appPaths.ProfileDir,
+		HistoryDir:        s.appPaths.HistoryDir,
+		SettingsFile:      s.appPaths.SettingsFile,
+		UnfinishedStaging: append([]string(nil), status.UnfinishedStaging...),
+		LockPresent:       status.LockPresent,
+	}
+	if dto.DataRoot == "" && s.profilePaths.Dir != "" {
+		dto.DataRoot = filepath.Dir(s.profilePaths.Dir)
+	}
+	if dto.ProfileDir == "" {
+		dto.ProfileDir = s.profilePaths.Dir
+	}
+	if dto.HistoryDir == "" {
+		dto.HistoryDir = history.DefaultHistoryDir()
+	}
+	if dto.SettingsFile == "" {
+		dto.SettingsFile = defaultSettingsPath()
+	}
+
+	if status.Error != "" {
+		dto.State = "error"
+		dto.Error = status.Error
+		return dto, nil
+	}
+	if status.Initialized {
+		dto.State = "ready"
+		dto.Initialized = true
+		return dto, nil
+	}
+
+	for _, source := range profiles.DiscoverSourceCandidates() {
+		dto.Sources = append(dto.Sources, profileSourceDTO(source))
+	}
+	return dto, nil
+}
+
+// InspectProfileSource previews an explicitly selected local source without
+// importing it or touching the canonical data root.
+func (s *AppService) InspectProfileSource(sourcePath string) (*ProfileSourceDTO, error) {
+	source, err := profiles.InspectSource(sourcePath)
 	if err != nil {
 		return nil, err
 	}
+	dto := profileSourceDTO(source)
+	dto.Label = "用户选择"
+	return &dto, nil
+}
 
-	if len(store.Airports) == 0 {
-		if s.profilePaths.ImportLegacyIfEmpty(store) {
-			_ = profiles.SaveStore(s.profilePaths.StoreFile(), store)
-		}
+// InitializeEmptyProfileStore records the explicit user's choice to start
+// with a real empty canonical store.
+func (s *AppService) InitializeEmptyProfileStore() error {
+	return s.profilePaths.InitializeEmpty()
+}
+
+// ImportProfileSource commits only the explicitly selected local source. No
+// network request or subscription refresh is performed here.
+func (s *AppService) ImportProfileSource(ctx context.Context, sourcePath string) error {
+	return s.profilePaths.ImportFrom(ctx, sourcePath)
+}
+
+// DiscardProfileImport removes only unfinished import staging after explicit
+// user recovery action; it never removes canonical profile data.
+func (s *AppService) DiscardProfileImport() error {
+	return s.profilePaths.DiscardUnfinishedImport()
+}
+
+func profileSourceDTO(source profiles.SourceInfo) ProfileSourceDTO {
+	return ProfileSourceDTO{
+		Path:             source.Path,
+		Label:            source.Label,
+		Available:        source.Available,
+		ProfileCount:     source.ProfileCount,
+		CacheCount:       source.CacheCount,
+		Missing:          append([]string(nil), source.Missing...),
+		PossibleTestData: source.PossibleTestData,
+		Error:            source.Error,
+	}
+}
+
+func (s *AppService) ListAirports() ([]AirportDTO, error) {
+	status := s.profilePaths.InspectSetup()
+	if status.Error != "" {
+		return nil, errors.New(status.Error)
+	}
+	if !status.Initialized {
+		return nil, profiles.ErrProfileNotInitialized
+	}
+	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
+	if err != nil {
+		return nil, err
 	}
 
 	dtos := make([]AirportDTO, 0, len(store.Airports))
@@ -1140,8 +1242,15 @@ func defaultSettingsPath() string {
 	return filepath.Join(".", ".clash-speedtest", "settings.json")
 }
 
+func (s *AppService) settingsPath() string {
+	if s.appPaths.SettingsFile != "" {
+		return s.appPaths.SettingsFile
+	}
+	return defaultSettingsPath()
+}
+
 func (s *AppService) GetSettings() (*AppSettings, error) {
-	p := defaultSettingsPath()
+	p := s.settingsPath()
 	data, err := os.ReadFile(p)
 	if err != nil {
 		return &AppSettings{
@@ -1163,15 +1272,15 @@ func (s *AppService) SaveSettings(settings *AppSettings) error {
 	if settings == nil {
 		return nil
 	}
-	p := defaultSettingsPath()
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	p := s.settingsPath()
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p, data, 0o644)
+	return os.WriteFile(p, data, 0o600)
 }
 
 // --- Controller & Smart Orchestrator Methods ---

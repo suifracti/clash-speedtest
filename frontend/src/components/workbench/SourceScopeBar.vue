@@ -34,6 +34,14 @@ async function handleLogin() {
 
     <div class="prototype-tools">
       <button type="button" class="tool-button" @click="store.isAirportModalOpen = true">管理订阅</button>
+      <button
+        type="button"
+        class="tool-button data-root-button"
+        :title="store.profileSetup?.data_root || '查看数据根与初始化状态'"
+        @click="store.isProfileSetupOpen = true"
+      >
+        数据根
+      </button>
       <span v-if="isTokenValid" class="data-status" :title="'已绑定凭据（' + store.tokenStatus.source + '）'">● 凭据有效</span>
       <button v-else type="button" class="tool-button" @click="handleLogin">绑定凭据</button>
       <button type="button" class="tool-button" @click="store.isHistoryModalOpen = true">旧历史矩阵</button>
@@ -54,6 +62,7 @@ async function handleLogin() {
 .tool-button { min-height: 31px; padding: 5px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--card-bg); color: var(--text-secondary); font-size: 11px; }
 .tool-button:hover { border-color: var(--border-subtle); color: var(--primary); }
 .icon-button { min-width: 42px; }
+.data-root-button { max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .data-status { color: var(--success); font-size: 11px; font-weight: 700; }
 @media (max-width: 860px) {
   .prototype-topbar { flex-wrap: wrap; gap: 0 20px; padding: 14px 20px 0; }

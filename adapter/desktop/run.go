@@ -4,6 +4,7 @@ import (
 	"embed"
 	"fmt"
 
+	"github.com/faceair/clash-speedtest/core/appdata"
 	"github.com/faceair/clash-speedtest/core/history"
 	"github.com/faceair/clash-speedtest/core/profiles"
 	"github.com/wailsapp/wails/v2"
@@ -15,6 +16,7 @@ import (
 
 // RunConfig provides initialization parameters for the desktop application.
 type RunConfig struct {
+	AppPaths     appdata.AppPaths
 	ProfilePaths profiles.Paths
 	HistoryDir   string
 	UserAgent    string
@@ -23,8 +25,23 @@ type RunConfig struct {
 
 // Run starts the Wails desktop application window and event loop.
 func Run(cfg RunConfig) error {
-	if cfg.ProfilePaths.Dir == "" {
-		cfg.ProfilePaths = profiles.DefaultPaths()
+	if cfg.AppPaths.ProfileDir != "" {
+		cfg.ProfilePaths = profiles.Paths{Dir: cfg.AppPaths.ProfileDir}
+		if cfg.HistoryDir == "" {
+			cfg.HistoryDir = cfg.AppPaths.HistoryDir
+		}
+	} else if cfg.ProfilePaths.Dir == "" {
+		resolved, err := appdata.Resolve("")
+		if err != nil {
+			return fmt.Errorf("resolve application paths: %w", err)
+		}
+		cfg.AppPaths = resolved
+		cfg.ProfilePaths = profiles.Paths{Dir: resolved.ProfileDir}
+		if cfg.HistoryDir == "" {
+			cfg.HistoryDir = resolved.HistoryDir
+		}
+	} else {
+		cfg.AppPaths = appdata.FromLegacy(cfg.ProfilePaths.Dir, cfg.HistoryDir)
 	}
 
 	hStore, err := history.NewStore(cfg.HistoryDir)
@@ -32,7 +49,7 @@ func Run(cfg RunConfig) error {
 		return fmt.Errorf("init history store: %w", err)
 	}
 
-	app := NewApp(hStore, cfg.ProfilePaths, cfg.UserAgent)
+	app := NewAppWithPaths(hStore, cfg.AppPaths, cfg.UserAgent)
 
 	return wails.Run(&options.App{
 		Title:     "Clash SpeedTest Pro",

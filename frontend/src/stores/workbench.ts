@@ -11,6 +11,7 @@ import type {
   TriageCategory,
   RunSummary,
   TestRun,
+  ProfileSetup,
 } from '../types'
 import * as api from '../api/bridge'
 
@@ -55,6 +56,8 @@ export const useWorkbenchStore = defineStore('workbench', () => {
   const isAirportModalOpen = ref(false)
   const isSettingsModalOpen = ref(false)
   const isDiffModalOpen = ref(false)
+  const profileSetup = ref<ProfileSetup | null>(null)
+  const isProfileSetupOpen = ref(false)
 
   // Getters
   const selectedAirport = computed(() =>
@@ -226,7 +229,21 @@ export const useWorkbenchStore = defineStore('workbench', () => {
   }
 
   // Actions
+  async function loadProfileSetup() {
+    try {
+      profileSetup.value = await api.fetchProfileSetup()
+      if (profileSetup.value.state !== 'ready') {
+        isProfileSetupOpen.value = true
+      }
+    } catch (e) {
+      console.error('Failed to load profile setup:', e)
+    }
+  }
+
   async function loadAirports() {
+    if (profileSetup.value && profileSetup.value.state !== 'ready') {
+      return
+    }
     try {
       airports.value = await api.fetchAirports()
       if (airports.value.length > 0 && !selectedAirportId.value) {
@@ -357,9 +374,12 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     selectedRun,
     isHistoryModalOpen,
     isAirportModalOpen,
+    profileSetup,
+    isProfileSetupOpen,
     isSettingsModalOpen,
     isDiffModalOpen,
     loadAirports,
+    loadProfileSetup,
     loadAirportNodes,
     loadTokenStatus,
     loadHistory,

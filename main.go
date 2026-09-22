@@ -17,6 +17,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/faceair/clash-speedtest/adapter/desktop"
 	"github.com/faceair/clash-speedtest/adapter/web"
+	"github.com/faceair/clash-speedtest/core/appdata"
 	"github.com/faceair/clash-speedtest/core/auth"
 	"github.com/faceair/clash-speedtest/core/ip"
 	"github.com/faceair/clash-speedtest/core/profiles"
@@ -72,6 +73,7 @@ var (
 	antigravityTokenFile = flag.String("antigravity-token-file", "", "OAuth token file for the Antigravity availability check; required when --metrics includes antigravity (file holds a bare Bearer token or an 'Authorization: Bearer ...' line)")
 	guiFlag              = flag.Bool("gui", false, "launch desktop graphical user interface (GUI)")
 	webFlag              = flag.Bool("web", false, "launch web browser interface instead of native desktop window")
+	dataDirFlag          = flag.String("data-dir", "", "absolute isolated data directory (overrides CLASH_SPEEDTEST_DATA_DIR)")
 	cliFlag              = flag.Bool("cli", false, "force terminal CLI interactive mode")
 	portFlag             = flag.Int("port", 0, "port for GUI web server (default: random free port)")
 	browserFlag          = flag.String("browser", "", "preferred browser for GUI: zen, arc, brave, chrome, edge, safari, default, or path to executable")
@@ -124,10 +126,14 @@ func main() {
 	}
 
 	if shouldRunGUI {
+		appPaths, err := appdata.Resolve(*dataDirFlag)
+		if err != nil {
+			log.Fatalf("resolve application data paths: %s", err)
+		}
 		if *webFlag {
-			runGUI(*portFlag, *userAgent, *browserFlag)
+			runGUI(*portFlag, *userAgent, *browserFlag, appPaths)
 		} else {
-			runDesktop(*userAgent, *portFlag, *browserFlag)
+			runDesktop(*userAgent, *portFlag, *browserFlag, appPaths)
 		}
 		return
 	}
@@ -464,7 +470,7 @@ func keepProxies(proxies map[string]*speedtester.CProxy, names []string) map[str
 	return filtered
 }
 
-func runGUI(port int, userAgent string, browser string) {
+func runGUI(port int, userAgent string, browser string, appPaths appdata.AppPaths) {
 	profiles.EnableUTF8Console()
 
 	distFS, err := fs.Sub(desktopAssets, "frontend/dist")
@@ -473,8 +479,8 @@ func runGUI(port int, userAgent string, browser string) {
 	}
 
 	server, err := web.NewServer(web.ServerConfig{
+		AppPaths:      appPaths,
 		Port:          port,
-		ProfilePaths:  profiles.DefaultPaths(),
 		UserAgent:     userAgent,
 		StaticHandler: web.SPAHandler(distFS),
 	})
@@ -532,18 +538,16 @@ func runGUI(port int, userAgent string, browser string) {
 	_ = server.Stop(ctx)
 }
 
-func runDesktop(userAgent string, fallbackPort int, browser string) {
+func runDesktop(userAgent string, fallbackPort int, browser string, appPaths appdata.AppPaths) {
 	profiles.EnableUTF8Console()
 	cfg := desktop.RunConfig{
-		ProfilePaths: profiles.DefaultPaths(),
-		UserAgent:    userAgent,
-		Assets:       desktopAssets,
+		AppPaths:  appPaths,
+		UserAgent: userAgent,
+		Assets:    desktopAssets,
 	}
 	err := desktop.Run(cfg)
 	if err != nil {
 		fmt.Printf("启动 Wails 原生桌面窗口失败 (%v)，正在自动降级至 Web 模式...\n", err)
-		runGUI(fallbackPort, userAgent, browser)
+		runGUI(fallbackPort, userAgent, browser, appPaths)
 	}
 }
-
-
