@@ -94,6 +94,10 @@ func (a *App) GetProfileSetup() (*application.ProfileSetupDTO, error) {
 	return a.app.GetProfileSetup()
 }
 
+func (a *App) MigrateLegacyData() error {
+	return a.app.MigrateLegacyData()
+}
+
 func (a *App) InspectProfileSource(path string) (*application.ProfileSourceDTO, error) {
 	return a.app.InspectProfileSource(path)
 }

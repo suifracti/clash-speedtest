@@ -53,12 +53,12 @@ func TestResolveDefaultIsIndependentOfWorkingDirectory(t *testing.T) {
 	if first.ProfileDir != second.ProfileDir || first.HistoryDir != second.HistoryDir {
 		t.Fatalf("resolved app paths drifted across cwd: first=%+v second=%+v", first, second)
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatal(err)
+	wantHistory := filepath.Join(wantRoot, "history")
+	if first.HistoryDir != wantHistory || second.HistoryDir != wantHistory {
+		t.Fatalf("default history did not use canonical data root: %q / %q", first.HistoryDir, second.HistoryDir)
 	}
-	if first.HistoryDir != filepath.Join(home, ".clash-speedtest", "history") {
-		t.Fatalf("default history moved with profile root: %q", first.HistoryDir)
+	if first.SettingsFile != filepath.Join(wantRoot, "settings.json") {
+		t.Fatalf("default settings did not use canonical data root: %q", first.SettingsFile)
 	}
 }
 

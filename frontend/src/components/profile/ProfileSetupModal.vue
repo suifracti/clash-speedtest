@@ -12,6 +12,27 @@ const errorMessage = ref('')
 
 const setup = computed(() => store.profileSetup)
 
+async function migrateLegacyData() {
+  const migration = setup.value?.migration
+  if (!migration || migration.state !== 'pending') return
+  if (!window.confirm(`确认将旧数据迁移到 canonical 数据根？\n\n来源：${migration.source_history_dir || '无 SQLite 来源'}\n目标：${migration.target_history_dir}\nSQLite：${migration.source_has_sqlite ? '会做一致备份' : '建立空库'}\nlegacy JSON：${migration.source_json_count} 份\n设置：${migration.source_has_settings ? '保留原内容' : '无'}\n\n旧来源会保留，不会刷新订阅。`)) {
+    return
+  }
+  errorMessage.value = ''
+  isBusy.value = true
+  try {
+    await api.migrateLegacyData()
+    await store.loadProfileSetup()
+    await store.loadAirports()
+    closeModal()
+  } catch (e: any) {
+    errorMessage.value = e.message || '迁移失败，旧数据仍保持原 authority'
+    await store.loadProfileSetup()
+  } finally {
+    isBusy.value = false
+  }
+}
+
 function closeModal() {
   store.isProfileSetupOpen = false
   errorMessage.value = ''
@@ -130,6 +151,24 @@ async function discardStaging() {
 
         <div v-if="setup?.state === 'error'" class="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-red-300">
           {{ setup.error }}
+        </div>
+
+        <div v-if="setup?.migration?.state === 'pending'" class="rounded-lg border border-blue-500/30 bg-blue-500/10 p-3 text-blue-100">
+          <div class="font-semibold">发现旧 History / Settings 数据</div>
+          <div class="mt-1 text-blue-200/80">旧数据不会自动迁移。确认后会先做 SQLite 一致备份，再切换到 canonical 数据根；旧来源保留。</div>
+          <div class="mt-2 font-mono text-[11px] break-all">{{ setup.migration.source_history_dir }}</div>
+          <div class="font-mono text-[11px] break-all">→ {{ setup.migration.target_history_dir }}</div>
+          <button @click="migrateLegacyData" :disabled="isBusy" class="mt-3 px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">确认迁移旧数据</button>
+        </div>
+
+        <div v-if="setup?.migration?.state === 'conflict'" class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-amber-200">
+          <div class="font-semibold">canonical 与旧数据同时存在</div>
+          <div class="mt-1">不会自动覆盖、合并或按时间选择。{{ setup.migration.error }}</div>
+        </div>
+
+        <div v-if="setup?.migration?.state === 'invalid'" class="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-red-300">
+          <div class="font-semibold">数据迁移已安全停止</div>
+          <div class="mt-1">检测到无法识别或不完整的数据库，未进行覆盖或部分迁移。{{ setup.migration.error }}</div>
         </div>
 
         <div v-if="setup?.unfinished_staging?.length" class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-amber-200">

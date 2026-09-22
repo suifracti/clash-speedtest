@@ -232,7 +232,10 @@ export const useWorkbenchStore = defineStore('workbench', () => {
   async function loadProfileSetup() {
     try {
       profileSetup.value = await api.fetchProfileSetup()
-      if (profileSetup.value.state !== 'ready') {
+      if (
+        profileSetup.value.state !== 'ready' ||
+        ['pending', 'conflict', 'invalid'].includes(profileSetup.value.migration?.state)
+      ) {
         isProfileSetupOpen.value = true
       }
     } catch (e) {
