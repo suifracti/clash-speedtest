@@ -396,6 +396,45 @@ export interface RunComparison {
 
 export interface AppSettings {
   preferred_browser: string
+  monitor_retention_policy?: MonitorRetentionPolicy
+  monitor_retention_custom_days?: number
+}
+
+export type MonitorRetentionPolicy = 'keep_all' | '30d' | '90d' | '180d' | 'custom'
+
+export interface MonitorRetentionRequest {
+  policy: MonitorRetentionPolicy
+  custom_days?: number
+  cutoff_time?: string
+}
+
+export interface MonitorStorageUsage {
+  database_bytes: number
+  wal_bytes: number
+  shared_memory_bytes: number
+  total_bytes: number
+  warning_bytes: number
+  hard_bytes: number
+  warning: boolean
+  protected: boolean
+}
+
+export interface MonitorRetentionPreview {
+  policy: MonitorRetentionPolicy
+  cutoff: string
+  samples_to_delete: number
+  runs_to_delete: number
+  storage: MonitorStorageUsage
+}
+
+export interface MonitorRetentionResult {
+  policy: MonitorRetentionPolicy
+  cutoff: string
+  samples_deleted: number
+  runs_deleted: number
+  duration_ms: number
+  partial: boolean
+  error_message?: string
 }
 
 export interface ControllerConfig {
@@ -691,6 +730,8 @@ export interface RawMonitorJobWire {
   blocked_reason?: string
   persistence_state?: 'healthy' | 'degraded'
   persistence_error?: string
+  storage_state?: 'ok' | 'storage_protected'
+  storage_reason?: string
   created_at: string
   updated_at: string
 }
@@ -711,6 +752,8 @@ export interface MonitorJob {
   blockedReason: string
   persistenceState?: 'healthy' | 'degraded'
   persistenceError?: string
+  storageState?: 'ok' | 'storage_protected'
+  storageReason?: string
   createdAt: string
   updatedAt: string
 }

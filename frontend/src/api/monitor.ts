@@ -30,6 +30,10 @@ import type {
 	RawMonitorSampleWire,
 	RawMonitorNodeOptionWire,
 	RawMonitorRunWire,
+	MonitorRetentionRequest,
+	MonitorRetentionPreview,
+	MonitorRetentionResult,
+	MonitorStorageUsage,
 	RawSampleCursorPageWire,
 	SampleCursorPage,
 } from '../types'
@@ -281,6 +285,8 @@ export function normalizeMonitorJob(wire: RawMonitorJobWire): MonitorJob {
 		blockedReason: wire.blocked_reason ?? '',
 		persistenceState: wire.persistence_state === 'degraded' ? 'degraded' : 'healthy',
 		persistenceError: wire.persistence_error ?? '',
+		storageState: wire.storage_state === 'storage_protected' ? 'storage_protected' : 'ok',
+		storageReason: wire.storage_reason ?? '',
 		createdAt: wire.created_at ?? '',
 		updatedAt: wire.updated_at ?? '',
 	}
@@ -341,6 +347,35 @@ export async function createMonitorJob(req: MonitorJobCreateRequest): Promise<Mo
 	})
 	if (!res.ok) throw await readError(res)
 	return normalizeMonitorJob((await res.json()) as RawMonitorJobWire)
+}
+
+export async function fetchMonitorStorageUsage(): Promise<MonitorStorageUsage> {
+	if (isWails()) return window.go!.desktop!.App!.GetMonitorStorageUsage()
+	const res = await fetch(`${API_BASE}/api/monitor/storage`)
+	if (!res.ok) throw await readError(res)
+	return res.json()
+}
+
+export async function previewMonitorRetention(req: MonitorRetentionRequest): Promise<MonitorRetentionPreview> {
+	if (isWails()) return window.go!.desktop!.App!.PreviewMonitorRetention(req)
+	const res = await fetch(`${API_BASE}/api/monitor/retention/preview`, {
+		method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req),
+	})
+	if (!res.ok) throw await readError(res)
+	return res.json()
+}
+
+export async function applyMonitorRetention(req: MonitorRetentionRequest): Promise<MonitorRetentionResult> {
+	if (isWails()) return window.go!.desktop!.App!.ApplyRetention(req)
+	const res = await fetch(`${API_BASE}/api/monitor/retention`, {
+		method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req),
+	})
+	if (!res.ok) {
+		const body = await res.json().catch(() => null) as { error?: string; partial?: boolean; samples_deleted?: number; runs_deleted?: number } | null
+		if (body?.partial) throw new Error(`部分删除：已删除 ${body.samples_deleted ?? 0} 条样本、${body.runs_deleted ?? 0} 条 run；${body.error ?? '执行中断'}`)
+		throw new Error(body?.error || `retention failed: ${res.status}`)
+	}
+	return res.json()
 }
 
 export async function fetchMonitorRuns(jobId: string, limit = 5): Promise<MonitorRun[]> {

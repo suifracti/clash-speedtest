@@ -1,6 +1,10 @@
 package application
 
-import "time"
+import (
+	"time"
+
+	"github.com/faceair/clash-speedtest/core/monitor"
+)
 
 // TestConfig defines parameters for running speed and stability tests.
 type TestConfig struct {
@@ -183,7 +187,9 @@ type ProfileSetupDTO struct {
 
 // AppSettings represents user-configurable persistent settings.
 type AppSettings struct {
-	PreferredBrowser string `json:"preferred_browser"` // "auto", "chrome", "edge", "default", or custom path
+	PreferredBrowser           string                  `json:"preferred_browser"` // "auto", "chrome", "edge", "default", or custom path
+	MonitorRetentionPolicy     monitor.RetentionPolicy `json:"monitor_retention_policy"`
+	MonitorRetentionCustomDays int                     `json:"monitor_retention_custom_days"`
 }
 
 // ControllerConfigDTO configures connection to external proxy controller.

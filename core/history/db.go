@@ -1905,34 +1905,9 @@ func (d *DB) ApplyRetention(ctx context.Context, req monitor.RetentionRequest) (
 	}
 
 	start := time.Now()
-	now := time.Now().UTC()
-	var cutoff time.Time
-
-	if req.CutoffTime != nil && !req.CutoffTime.IsZero() {
-		cutoff = req.CutoffTime.UTC()
-		if cutoff.After(now) {
-			return nil, monitor.WrapValidationError(monitor.ErrFutureCutoff)
-		}
-	} else {
-		switch req.Policy {
-		case monitor.Retention30d:
-			cutoff = now.AddDate(0, 0, -30)
-		case monitor.Retention90d:
-			cutoff = now.AddDate(0, 0, -90)
-		case monitor.Retention180d:
-			cutoff = now.AddDate(0, 0, -180)
-		case monitor.RetentionCustom:
-			if req.CustomDays <= 0 || req.CustomDays > 36500 {
-				return nil, monitor.WrapValidationError(monitor.ErrInvalidCustomDays)
-			}
-			cutoff = now.AddDate(0, 0, -req.CustomDays)
-		default:
-			return nil, monitor.WrapValidationError(monitor.ErrInvalidRetentionPolicy)
-		}
-	}
-
-	if cutoff.After(now) {
-		return nil, monitor.WrapValidationError(monitor.ErrFutureCutoff)
+	cutoff, err := retentionCutoff(req, time.Now().UTC())
+	if err != nil {
+		return nil, err
 	}
 
 	const batchSize = 500
@@ -2038,7 +2013,7 @@ func (d *DB) ApplyRetention(ctx context.Context, req monitor.RetentionRequest) (
 	// Prune orphaned completed/failed/partial_failed runs older than cutoff with no remaining samples.
 	// Strictly preserve 'running' (in-flight) and 'skipped' (intentional no-op runs with 0 samples).
 	var runsDeleted int64
-	err := func() error {
+	err = func() error {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 

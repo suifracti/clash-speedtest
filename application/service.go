@@ -53,10 +53,12 @@ type AppService struct {
 	decisionState  policy.DecisionState
 
 	// 24/7 Monitor subsystem fields
-	monitorMu         sync.RWMutex
-	monitorSchedulers map[string]*monitor.Scheduler
-	monitorRunner     *monitor.Runner
-	monitorLoadErr    error
+	monitorMu                  sync.RWMutex
+	monitorSchedulers          map[string]*monitor.Scheduler
+	monitorRunner              *monitor.Runner
+	monitorLoadErr             error
+	monitorStorageWarningBytes int64
+	monitorStorageHardBytes    int64
 
 	// latencyPersistenceWG keeps the result-first workbench path from closing
 	// history.db while a just-finished latency result is still being persisted.
@@ -83,13 +85,15 @@ func newAppService(hStore *history.Store, appPaths appdata.AppPaths, profilePath
 		emitter = NewMemoryEventEmitter()
 	}
 	svc := &AppService{
-		historyStore:      hStore,
-		profilePaths:      profilePaths,
-		appPaths:          appPaths,
-		emitter:           emitter,
-		decisionEngine:    policy.NewDecisionEngine(),
-		policy:            policy.DefaultSwitchPolicy(),
-		monitorSchedulers: make(map[string]*monitor.Scheduler),
+		historyStore:               hStore,
+		profilePaths:               profilePaths,
+		appPaths:                   appPaths,
+		emitter:                    emitter,
+		decisionEngine:             policy.NewDecisionEngine(),
+		policy:                     policy.DefaultSwitchPolicy(),
+		monitorSchedulers:          make(map[string]*monitor.Scheduler),
+		monitorStorageWarningBytes: 1 << 30,
+		monitorStorageHardBytes:    2 << 30,
 		controllerCfg: ControllerConfigDTO{
 			Endpoint: "http://127.0.0.1:9090",
 			Mode:     "external",
@@ -1285,29 +1289,76 @@ func (s *AppService) GetSettings() (*AppSettings, error) {
 	data, err := os.ReadFile(p)
 	if err != nil {
 		return &AppSettings{
-			PreferredBrowser: "default",
+			PreferredBrowser:       "default",
+			MonitorRetentionPolicy: monitor.RetentionKeepAll,
 		}, nil
 	}
 
 	var settings AppSettings
 	if err := json.Unmarshal(data, &settings); err != nil {
-		return &AppSettings{PreferredBrowser: "default"}, nil
+		return &AppSettings{PreferredBrowser: "default", MonitorRetentionPolicy: monitor.RetentionKeepAll}, nil
 	}
 	if settings.PreferredBrowser == "" {
 		settings.PreferredBrowser = "default"
 	}
+	if settings.MonitorRetentionPolicy == "" {
+		settings.MonitorRetentionPolicy = monitor.RetentionKeepAll
+	}
+	if err := validateMonitorRetentionPreference(settings.MonitorRetentionPolicy, settings.MonitorRetentionCustomDays); err != nil {
+		return nil, err
+	}
 	return &settings, nil
+}
+
+func validateMonitorRetentionPreference(policy monitor.RetentionPolicy, customDays int) error {
+	switch policy {
+	case monitor.RetentionKeepAll, monitor.Retention30d, monitor.Retention90d, monitor.Retention180d:
+		return nil
+	case monitor.RetentionCustom:
+		if customDays > 0 && customDays <= 36500 {
+			return nil
+		}
+		return monitor.WrapValidationError(monitor.ErrInvalidCustomDays)
+	default:
+		return monitor.WrapValidationError(monitor.ErrInvalidRetentionPolicy)
+	}
 }
 
 func (s *AppService) SaveSettings(settings *AppSettings) error {
 	if settings == nil {
 		return nil
 	}
+	if settings.MonitorRetentionPolicy == "" {
+		settings.MonitorRetentionPolicy = monitor.RetentionKeepAll
+	}
+	if err := validateMonitorRetentionPreference(settings.MonitorRetentionPolicy, settings.MonitorRetentionCustomDays); err != nil {
+		return err
+	}
 	p := s.settingsPath()
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(settings, "", "  ")
+	// Preserve unrelated settings keys already present in the canonical file.
+	merged := make(map[string]json.RawMessage)
+	if previous, err := os.ReadFile(p); err == nil {
+		if err := json.Unmarshal(previous, &merged); err != nil {
+			return fmt.Errorf("read existing settings: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	known, err := json.Marshal(settings)
+	if err != nil {
+		return err
+	}
+	var updated map[string]json.RawMessage
+	if err := json.Unmarshal(known, &updated); err != nil {
+		return err
+	}
+	for key, value := range updated {
+		merged[key] = value
+	}
+	data, err := json.MarshalIndent(merged, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -1752,9 +1803,10 @@ func (s *AppService) CreateMonitorJob(job monitor.MonitorJob) (*monitor.MonitorJ
 	}
 
 	sched, err := monitor.NewScheduler(monitor.SchedulerConfig{
-		Job:    &job,
-		Runner: runner,
-		Store:  s.historyStore,
+		Job:          &job,
+		Runner:       runner,
+		Store:        s.historyStore,
+		StorageGuard: s.monitorStorageGuard,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create monitor scheduler: %w", err)
@@ -2001,8 +2053,8 @@ func (s *AppService) GetMonitorSampleFacets(ctx context.Context, since, until *t
 
 // ApplyRetention applies a retention policy by pruning historical raw samples and orphaned runs.
 func (s *AppService) ApplyRetention(ctx context.Context, req monitor.RetentionRequest) (*monitor.RetentionResult, error) {
-	if s.historyStore == nil {
-		return nil, fmt.Errorf("history store is not initialized")
+	if err := s.canonicalMonitorHistory(); err != nil {
+		return nil, err
 	}
 	res, err := s.historyStore.ApplyRetention(ctx, req)
 	if err != nil {
