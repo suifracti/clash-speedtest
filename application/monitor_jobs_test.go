@@ -57,9 +57,14 @@ func TestMonitorJobSelectionResolvesCachedConfigAndKeepsPublicDTOCredentialFree(
 	}
 
 	created, err := svc.CreateMonitorJobFromRequest(MonitorJobCreateRequest{
-		Name:            "UI job",
-		ProfileID:       "profile-1",
-		NodeKeys:        []string{options[0].NodeKey},
+		Name:      "UI job",
+		ProfileID: "profile-1",
+		NodeKeys:  []string{options[0].NodeKey},
+		NodeContexts: []MonitorNodeSelectionContext{{
+			NodeKey:           options[0].NodeKey,
+			NodeIdentityKey:   options[0].NodeIdentityKey,
+			ConfigRevisionKey: options[0].ConfigRevisionKey,
+		}},
 		ProbeSet:        monitor.ProbeSetLight,
 		IntervalSeconds: 10,
 		TimeoutSeconds:  5,
@@ -94,5 +99,22 @@ func TestMonitorJobSelectionResolvesCachedConfigAndKeepsPublicDTOCredentialFree(
 		TimeoutSeconds:  5,
 	}); err == nil || !monitor.IsValidationError(err) {
 		t.Fatalf("expected stale/display-name key to be rejected, got %v", err)
+	}
+	if _, err := svc.CreateMonitorJobFromRequest(MonitorJobCreateRequest{
+		ProfileID: "profile-1",
+		NodeKeys:  []string{options[0].NodeKey},
+		NodeContexts: []MonitorNodeSelectionContext{{
+			NodeKey:           options[0].NodeKey,
+			NodeIdentityKey:   options[0].NodeIdentityKey,
+			ConfigRevisionKey: "stale-revision",
+		}},
+		ProbeSet:        monitor.ProbeSetLight,
+		IntervalSeconds: 10,
+		TimeoutSeconds:  5,
+	}); err == nil || !monitor.IsValidationError(err) || !strings.Contains(err.Error(), "revision") {
+		t.Fatalf("expected stale revision to be rejected before create, got %v", err)
+	}
+	if len(svc.ListMonitorJobs()) != 1 {
+		t.Fatalf("stale Workbench context created an extra job: %+v", svc.ListMonitorJobs())
 	}
 }

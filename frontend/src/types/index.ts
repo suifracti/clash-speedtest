@@ -635,6 +635,19 @@ export interface MonitorNodeOption {
   countryFlag: string
 }
 
+/** Stable node context carried from Workbench into an explicit Monitor create. */
+export interface MonitorNodeSelectionContext {
+  node_key: string
+  node_identity_key: string
+  config_revision_key: string
+}
+
+export interface MonitorJobPrefill {
+  profileId: string
+  nodeKeys: string[]
+  nodeContexts: MonitorNodeSelectionContext[]
+}
+
 export interface MonitorJobCreateRequest {
   name: string
   profile_id: string
@@ -644,6 +657,8 @@ export interface MonitorJobCreateRequest {
   interval_seconds: number
   /** Seconds on the UI/API boundary; never nanoseconds. */
   timeout_seconds: number
+  /** Optional Workbench snapshot checked against the current canonical cache. */
+  node_contexts?: MonitorNodeSelectionContext[]
 }
 
 export interface MonitorJobNode {

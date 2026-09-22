@@ -14,13 +14,14 @@ import {
   type LatencyWindow,
   type LatencyWindowMode,
 } from './latencyRequestGuard'
-import type { MonitorNodeOption, WorkbenchLatencySample, WorkbenchLatencyTest } from '../../types'
+import type { MonitorNodeOption, MonitorJobPrefill, WorkbenchLatencySample, WorkbenchLatencyTest } from '../../types'
+import { decideMonitorSelection } from './monitorCreateSelection'
 
 type WorkbenchProject = 'latency' | 'throughput' | 'service'
 type IndexMap = Record<string, number | null | undefined>
 type HistoryMeta = { hasMore: boolean; complete: boolean }
 
-const emit = defineEmits<{ (event: 'open-monitor'): void }>()
+const emit = defineEmits<{ (event: 'open-monitor', payload: MonitorJobPrefill): void }>()
 const options = ref<MonitorNodeOption[]>([])
 const optionsLoading = ref(false)
 const optionsError = ref('')
@@ -186,6 +187,9 @@ function visibleOptionsForProject(): MonitorNodeOption[] {
 }
 
 const visibleOptions = computed(visibleOptionsForProject)
+const monitorSelection = computed(() => decideMonitorSelection(options.value, selectedKeys.value))
+const canOpenMonitor = computed(() => !!monitorSelection.value.prefill)
+const monitorSelectionHint = computed(() => monitorSelection.value.reason)
 const focusedOption = computed(() => optionForKey(focusedKey.value))
 const focusedTests = computed(() => (focusedKey.value ? testsForKey(focusedKey.value) : []))
 const focusedDisplayedTest = computed(() => {
@@ -470,6 +474,15 @@ function projectHistoryText(key: string): string { return activeProject.value ==
 function isSelected(key: string): boolean { return selectedKeys.value.includes(key) }
 function isTesting(key: string): boolean { return testingKey.value === key }
 
+function openMonitor(): void {
+  const prefill = monitorSelection.value.prefill
+  if (!prefill) {
+    batchMessage.value = monitorSelection.value.reason
+    return
+  }
+  emit('open-monitor', prefill)
+}
+
 watch(windowMode, () => {
   activeWindow.value = freezeLatencyWindow(windowMode.value)
   historyRequestID++
@@ -512,7 +525,8 @@ onUnmounted(() => { unsubscribeEvents?.(); unsubscribeEvents = null })
     <section class="prototype-project-bar" aria-label="测试项目">
       <div class="project-bar-heading"><span class="scope-title">测试项目</span><span class="project-bar-note">先选节点；结果直接出现在节点行</span></div>
       <div class="project-tabs" role="tablist" aria-label="切换测试项目"><button v-for="project in workbenchProjects" :key="project.id" type="button" class="project-tab" :class="{ active: activeProject === project.id }" role="tab" :aria-selected="activeProject === project.id" @click="changeProject(project.id)">{{ project.label }}<span v-if="!project.available">尚未接入</span></button></div>
-      <div class="project-bar-actions"><span class="selection-summary">{{ selectedKeys.length }} 个节点</span><button type="button" class="prototype-button primary" :disabled="!canRun" @click="runTest">{{ testingKey ? '测试中…' : '立即测试' }}</button><button type="button" class="prototype-button" :disabled="selectedKeys.length === 0" @click="emit('open-monitor')">加入持续监测</button></div>
+      <div class="project-bar-actions"><span class="selection-summary">{{ selectedKeys.length }} 个节点</span><button type="button" class="prototype-button primary" :disabled="!canRun" @click="runTest">{{ testingKey ? '测试中…' : '立即测试' }}</button><button type="button" class="prototype-button" :disabled="!canOpenMonitor" :title="monitorSelectionHint" @click="openMonitor">加入持续监测</button></div>
+      <div v-if="selectedKeys.length > 0 && !canOpenMonitor" class="batch-test-status blocked">{{ monitorSelectionHint }}</div>
       <div v-if="activeProject === 'service'" class="service-toolbar"><span class="service-toolbar-label">服务</span><UiSelect v-model="selectedService" variant="toolbar" aria-label="选择服务" :options="serviceSelectOptions" /><span class="service-toolbar-note">选择服务同时决定查看与测试目标；未接入服务不可测试</span></div>
       <div class="batch-test-status" :class="{ running: !!testingKey, blocked: activeProject !== 'latency', complete: !!batchMessage && !testingKey }" aria-live="polite">{{ testError || batchMessage || (activeProject === 'latency' ? '延迟结果来自真实单节点测试；失败、超时和未采样不会画成 0ms。' : projectUnavailableLabel(activeProject)) }}</div>
     </section>
@@ -545,7 +559,7 @@ onUnmounted(() => { unsubscribeEvents?.(); unsubscribeEvents = null })
     </section>
 
     <section v-if="focusedOption" class="prototype-panel evidence-panel" aria-labelledby="evidence-title">
-      <div class="prototype-panel-header"><div><h2 id="evidence-title">{{ focusedOption.displayName }}</h2><p>{{ focusedOption.profileName }} · {{ focusedOption.countryCode || '未知地区' }} · 选中后查看同一份原始样本</p></div><div class="evidence-actions"><button type="button" class="prototype-button primary" :disabled="selectedKeys.length !== 1 || !!testingKey" @click="runTest">{{ testingKey ? '测试中…' : '立即测试此节点' }}</button><button type="button" class="prototype-button" @click="emit('open-monitor')">加入持续监测</button></div></div>
+      <div class="prototype-panel-header"><div><h2 id="evidence-title">{{ focusedOption.displayName }}</h2><p>{{ focusedOption.profileName }} · {{ focusedOption.countryCode || '未知地区' }} · 选中后查看同一份原始样本</p></div><div class="evidence-actions"><button type="button" class="prototype-button primary" :disabled="selectedKeys.length !== 1 || !!testingKey" @click="runTest">{{ testingKey ? '测试中…' : '立即测试此节点' }}</button><button type="button" class="prototype-button" :disabled="!canOpenMonitor" :title="monitorSelectionHint" @click="openMonitor">加入持续监测</button></div></div>
       <div v-if="focusedDisplayedTest" class="evidence-grid"><div class="evidence-facts"><span class="fact-label">节点判断</span><strong :class="`health-${visibleStatus(focusedKey)}`">{{ statusLabel(focusedKey) }}</strong><span>{{ historySummary(focusedKey) }}</span><span>任务状态与节点健康分开读取；{{ monitorStatusText(focusedKey) }}</span></div><div class="evidence-facts"><span class="fact-label">当前样本</span><strong>{{ sampleLabel(activeSampleFor(focusedKey)) }}</strong><span>{{ sampleDetail(activeSampleFor(focusedKey)) }}</span><span>{{ focusedDisplayedTest ? `本次 ${testStatusLabel(focusedDisplayedTest)} · ${persistenceLabel(focusedDisplayedTest)}` : '' }}</span></div><div class="evidence-facts"><span class="fact-label">辅助读数</span><strong>P50 {{ p50ForKey(focusedKey) ?? '—' }} <small>ms</small></strong><span>P95 {{ p95ForKey(focusedKey) ?? '—' }} ms</span><span>失败 {{ samplesForKey(focusedKey).filter((sample) => !sample.success).length }} 条</span></div></div>
       <div v-else class="evidence-empty">这个节点还没有真实延迟历史。点击“立即测试此节点”后，结果会先显示，再独立保存。</div>
       <div v-if="detailError" class="inline-error">{{ detailError }}</div>

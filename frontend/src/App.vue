@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useWorkbenchStore } from './stores/workbench'
 import { useTimelineStore } from './stores/timeline'
 import * as api from './api/bridge'
@@ -17,7 +17,7 @@ import MonitorTimelineView from './components/timeline/MonitorTimelineView.vue'
 import MonitorJobsView from './components/monitor/MonitorJobsView.vue'
 import LatencyWorkbench from './components/workbench/LatencyWorkbench.vue'
 import ProfileSetupModal from './components/profile/ProfileSetupModal.vue'
-import type { MonitorJobNode } from './types'
+import type { MonitorJobNode, MonitorJobPrefill } from './types'
 
 const store = useWorkbenchStore()
 
@@ -29,7 +29,21 @@ const store = useWorkbenchStore()
  * releasing the canvas; returning re-reads the newest page from the cursor API.
  */
 const activeView = ref<'workbench' | 'monitor-jobs' | 'timeline'>('workbench')
+const monitorPrefill = ref<MonitorJobPrefill | null>(null)
 const timelineStore = useTimelineStore()
+
+function openMonitorFromWorkbench(prefill: MonitorJobPrefill): void {
+  monitorPrefill.value = prefill
+  activeView.value = 'monitor-jobs'
+}
+
+function clearMonitorPrefill(): void {
+  monitorPrefill.value = null
+}
+
+watch(activeView, (view) => {
+  if (view !== 'monitor-jobs') monitorPrefill.value = null
+})
 
 async function openJobTimeline(payload: { profileId: string; node: MonitorJobNode }): Promise<void> {
 	activeView.value = 'timeline'
@@ -72,7 +86,7 @@ onUnmounted(() => {
     <SourceScopeBar v-model:active-view="activeView" />
 
     <template v-if="activeView === 'workbench'">
-      <LatencyWorkbench @open-monitor="activeView = 'monitor-jobs'" />
+      <LatencyWorkbench @open-monitor="openMonitorFromWorkbench" />
       <details class="legacy-surface app-page">
         <summary>
           既有批量测速（本阶段未改动）
@@ -90,7 +104,7 @@ onUnmounted(() => {
     </template>
 
     <div v-else-if="activeView === 'monitor-jobs'" class="app-page">
-      <MonitorJobsView @open-timeline="openJobTimeline" />
+      <MonitorJobsView :prefill="monitorPrefill" @prefill-consumed="clearMonitorPrefill" @open-timeline="openJobTimeline" />
     </div>
 
     <div v-else class="app-page">
