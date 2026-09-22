@@ -72,6 +72,7 @@ type RunnerConfig struct {
 	Store       SampleStore
 	Dialer      NodeDialer
 	WorkerCount int
+	Budget      *BudgetController
 }
 
 // Runner executes one round of probe checks across a job's nodes using an isolated dialer.
@@ -79,6 +80,7 @@ type Runner struct {
 	store       SampleStore
 	dialer      NodeDialer
 	workerCount int
+	budget      atomic.Pointer[BudgetController]
 }
 
 // NewRunner creates a new Runner instance.
@@ -89,12 +91,16 @@ func NewRunner(cfg RunnerConfig) *Runner {
 	if cfg.WorkerCount <= 0 {
 		cfg.WorkerCount = 4
 	}
-	return &Runner{
+	runner := &Runner{
 		store:       cfg.Store,
 		dialer:      cfg.Dialer,
 		workerCount: cfg.WorkerCount,
 	}
+	runner.budget.Store(cfg.Budget)
+	return runner
 }
+
+func (r *Runner) SetBudget(budget *BudgetController) { r.budget.Store(budget) }
 
 // TargetSpec defines a probe URL target and its expected probe type.
 type TargetSpec struct {
@@ -129,8 +135,30 @@ func GetProbeTargets(pset ProbeSetType) []TargetSpec {
 // ExecuteRun executes probe targets for all nodes in the job, records raw samples,
 // and persists results into the SampleStore.
 func (r *Runner) ExecuteRun(ctx context.Context, job *MonitorJob, scheduledAt time.Time) (*MonitorRun, []*MonitorSample, error) {
+	return r.ExecuteRunWithAdmission(ctx, job, scheduledAt, nil)
+}
+
+// ExecuteRunWithAdmission lets the scheduler distinguish a cancellable wait
+// from an admitted round. Direct runner callers use ExecuteRun.
+func (r *Runner) ExecuteRunWithAdmission(ctx context.Context, job *MonitorJob, scheduledAt time.Time, onAdmitted func() error) (*MonitorRun, []*MonitorSample, error) {
 	if job == nil {
 		return nil, nil, fmt.Errorf("job is nil")
+	}
+	if budget := r.budget.Load(); budget != nil {
+		admittedCtx, release, err := budget.AcquireRound(ctx, job)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer release()
+		ctx = admittedCtx
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, budgetBlock("cancelled", "Monitor 等待已取消，本周期未探测")
+	}
+	if onAdmitted != nil {
+		if err := onAdmitted(); err != nil {
+			return nil, nil, err
+		}
 	}
 
 	runID := newID("run")
@@ -160,11 +188,15 @@ func (r *Runner) ExecuteRun(ctx context.Context, job *MonitorJob, scheduledAt ti
 	if nodeTimeout <= 0 {
 		nodeTimeout = 10 * time.Second
 	}
+	if nodeTimeout > 30*time.Second {
+		nodeTimeout = 30 * time.Second
+	}
 
 	var allSamples []*MonitorSample
 	var sampleMu sync.Mutex
 	var successCount int32
 	var failCount int32
+	var resourceErr error
 
 	// Bounded worker pool
 	nodeChan := make(chan MonitoredNode, len(job.Nodes))
@@ -194,11 +226,17 @@ func (r *Runner) ExecuteRun(ctx context.Context, job *MonitorJob, scheduledAt ti
 					return
 				}
 
-				nodeSamples, nodeSuccess := r.probeNode(ctx, job.ProfileID, node, targets, nodeTimeout, runID)
+				nodeSamples, nodeSuccess, nodeErr := r.probeNode(ctx, job.ProfileID, node, targets, nodeTimeout, runID, job.ProbeSet == ProbeSetHeavy)
 
 				sampleMu.Lock()
 				allSamples = append(allSamples, nodeSamples...)
+				if nodeErr != nil && resourceErr == nil {
+					resourceErr = nodeErr
+				}
 				sampleMu.Unlock()
+				if nodeErr != nil {
+					return
+				}
 
 				if nodeSuccess {
 					atomic.AddInt32(&successCount, 1)
@@ -217,7 +255,10 @@ func (r *Runner) ExecuteRun(ctx context.Context, job *MonitorJob, scheduledAt ti
 	run.FailedNodes = int(failCount)
 
 	// Determine run completion status
-	if ctx.Err() != nil {
+	if resourceErr != nil {
+		run.Status = RunStatusResourceLimited
+		run.ErrorMessage = resourceErr.Error()
+	} else if ctx.Err() != nil {
 		run.Status = RunStatusFailed
 		run.ErrorMessage = ctx.Err().Error()
 	} else if run.FailedNodes == 0 {
@@ -258,10 +299,13 @@ func (r *Runner) ExecuteRun(ctx context.Context, job *MonitorJob, scheduledAt ti
 		}
 	}
 
+	if resourceErr != nil {
+		return run, allSamples, resourceErr
+	}
 	return run, allSamples, nil
 }
 
-func (r *Runner) probeNode(ctx context.Context, profileID string, node MonitoredNode, targets []TargetSpec, timeout time.Duration, runID string) ([]*MonitorSample, bool) {
+func (r *Runner) probeNode(ctx context.Context, profileID string, node MonitoredNode, targets []TargetSpec, timeout time.Duration, runID string, heavy bool) ([]*MonitorSample, bool, error) {
 	PopulateNodeKeys(&node)
 
 	client, err := r.dialer.CreateClient(node, timeout)
@@ -282,7 +326,10 @@ func (r *Runner) probeNode(ctx context.Context, profileID string, node Monitored
 			ErrorClass:          "config_error",
 			ErrorDetail:         err.Error(),
 		}
-		return []*MonitorSample{sample}, false
+		return []*MonitorSample{sample}, false, nil
+	}
+	if budget := r.budget.Load(); budget != nil {
+		client = budgetedClient(client, budget, heavy)
 	}
 
 	var samples []*MonitorSample
@@ -293,14 +340,17 @@ func (r *Runner) probeNode(ctx context.Context, profileID string, node Monitored
 			break
 		}
 
-		sample := r.executeSingleProbe(ctx, client, profileID, node, target, timeout, runID)
+		sample, err := r.executeSingleProbe(ctx, client, profileID, node, target, timeout, runID)
+		if err != nil {
+			return samples, anySuccess, err
+		}
 		samples = append(samples, sample)
 		if sample.Success {
 			anySuccess = true
 		}
 	}
 
-	return samples, anySuccess
+	return samples, anySuccess, nil
 }
 
 func (r *Runner) executeSingleProbe(
@@ -311,7 +361,7 @@ func (r *Runner) executeSingleProbe(
 	target TargetSpec,
 	timeout time.Duration,
 	runID string,
-) *MonitorSample {
+) (*MonitorSample, error) {
 	probeCtx, cancel := context.WithTimeout(parentCtx, timeout)
 	defer cancel()
 
@@ -334,7 +384,7 @@ func (r *Runner) executeSingleProbe(
 	if err != nil {
 		sample.ErrorClass = "invalid_request"
 		sample.ErrorDetail = err.Error()
-		return sample
+		return sample, nil
 	}
 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
@@ -358,15 +408,22 @@ func (r *Runner) executeSingleProbe(
 	latency := time.Since(startTime)
 
 	if err != nil {
+		if _, blocked := AsBudgetBlock(err); blocked {
+			return nil, err
+		}
 		sample.Latency = latency
 		sample.ErrorClass = classifyError(err)
 		sample.ErrorDetail = err.Error()
-		return sample
+		return sample, nil
 	}
 	defer resp.Body.Close()
 
 	// Drain small body up to 64KB
-	_, _ = io.CopyN(io.Discard, resp.Body, 64*1024)
+	if _, err := io.CopyN(io.Discard, resp.Body, 64*1024); err != nil {
+		if _, blocked := AsBudgetBlock(err); blocked {
+			return nil, err
+		}
+	}
 
 	sample.Latency = latency
 	sample.TTFB = ttfbDuration
@@ -383,7 +440,7 @@ func (r *Runner) executeSingleProbe(
 		sample.ErrorDetail = fmt.Sprintf("HTTP status %d", resp.StatusCode)
 	}
 
-	return sample
+	return sample, nil
 }
 
 func classifyError(err error) string {

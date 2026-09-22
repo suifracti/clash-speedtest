@@ -33,11 +33,12 @@ const (
 type RunStatus string
 
 const (
-	RunStatusRunning       RunStatus = "running"
-	RunStatusCompleted     RunStatus = "completed"
-	RunStatusPartialFailed RunStatus = "partial_failed"
-	RunStatusFailed        RunStatus = "failed"
-	RunStatusSkipped       RunStatus = "skipped"
+	RunStatusRunning         RunStatus = "running"
+	RunStatusCompleted       RunStatus = "completed"
+	RunStatusPartialFailed   RunStatus = "partial_failed"
+	RunStatusFailed          RunStatus = "failed"
+	RunStatusSkipped         RunStatus = "skipped"
+	RunStatusResourceLimited RunStatus = "resource_limited"
 	// RunStatusPersistenceFailed means probe execution may have completed, but
 	// the durable run/sample transaction did not complete successfully.
 	RunStatusPersistenceFailed RunStatus = "persistence_failed"
@@ -74,12 +75,16 @@ type MonitorJob struct {
 	BlockedReason string          `json:"blocked_reason,omitempty"`
 	// PersistenceState and PersistenceError are runtime read-model fields. They
 	// are deliberately excluded from MonitorJobDefinition persistence.
-	PersistenceState string    `json:"persistence_state,omitempty"`
-	PersistenceError string    `json:"persistence_error,omitempty"`
-	StorageState     string    `json:"storage_state,omitempty"`
-	StorageReason    string    `json:"storage_reason,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	PersistenceState      string    `json:"persistence_state,omitempty"`
+	PersistenceError      string    `json:"persistence_error,omitempty"`
+	StorageState          string    `json:"storage_state,omitempty"`
+	StorageReason         string    `json:"storage_reason,omitempty"`
+	BudgetState           string    `json:"budget_state,omitempty"`
+	BudgetReason          string    `json:"budget_reason,omitempty"`
+	SkippedRounds         int64     `json:"skipped_rounds,omitempty"`
+	ResourceSkippedRounds int64     `json:"resource_skipped_rounds,omitempty"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
 }
 
 // MonitorJobDefinitionVersion is the version of the credential-free persisted

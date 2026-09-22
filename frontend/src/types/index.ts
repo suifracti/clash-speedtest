@@ -400,6 +400,19 @@ export interface AppSettings {
   monitor_retention_custom_days?: number
   monitor_storage_warning_bytes?: number
   monitor_storage_hard_bytes?: number
+  monitor_budget_max_concurrent?: number
+  monitor_budget_daily_requests?: number
+  monitor_budget_daily_bytes?: number
+  monitor_budget_response_bytes?: number
+}
+
+export interface MonitorBudgetStatus {
+  limits: { max_concurrent: number; daily_requests: number; daily_bytes: number; response_bytes: number }
+  usage: { utc_day: string; requests_used: number; bytes_used: number }
+  reset_at: string
+  active_requests: number
+  blocked_code?: string
+  blocked_reason?: string
 }
 
 export type MonitorRetentionPolicy = 'keep_all' | '30d' | '90d' | '180d' | 'custom'
@@ -734,6 +747,10 @@ export interface RawMonitorJobWire {
   persistence_error?: string
   storage_state?: 'ok' | 'storage_protected'
   storage_reason?: string
+  budget_state?: string
+  budget_reason?: string
+  skipped_rounds?: number
+  resource_skipped_rounds?: number
   created_at: string
   updated_at: string
 }
@@ -756,11 +773,15 @@ export interface MonitorJob {
   persistenceError?: string
   storageState?: 'ok' | 'storage_protected'
   storageReason?: string
+  budgetState?: string
+  budgetReason?: string
+  skippedRounds?: number
+  resourceSkippedRounds?: number
   createdAt: string
   updatedAt: string
 }
 
-export type MonitorRunStatus = 'running' | 'completed' | 'partial_failed' | 'failed' | 'skipped' | 'persistence_failed'
+export type MonitorRunStatus = 'running' | 'completed' | 'partial_failed' | 'failed' | 'skipped' | 'resource_limited' | 'persistence_failed'
 
 export interface MonitorRun {
   runId: string

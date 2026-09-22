@@ -212,16 +212,11 @@ func TestScheduler_OverlapPrevention(t *testing.T) {
 		t.Fatalf("Stop failed: %v", err)
 	}
 
-	// Verify store captured at least one RunStatusSkipped record
-	foundSkippedRecord := false
+	// Overlap skips are bounded runtime counts, not one durable row per tick.
 	for _, r := range mockStore.GetRuns() {
 		if r.Status == RunStatusSkipped {
-			foundSkippedRecord = true
-			break
+			t.Fatalf("overlap skip wrote an unbounded historical row: %+v", r)
 		}
-	}
-	if !foundSkippedRecord {
-		t.Fatalf("Expected at least one RunStatusSkipped record in mockStore, but none found")
 	}
 }
 
@@ -377,6 +372,13 @@ func TestScheduler_TriggerImmediate(t *testing.T) {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer scheduler.Stop()
+	deadline := time.Now().Add(time.Second)
+	for scheduler.CompletedRuns() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if scheduler.CompletedRuns() == 0 {
+		t.Fatal("initial round did not finish before immediate trigger")
+	}
 
 	// 3. Calling with nil context must defensively work with context.Background fallback
 	run, err := scheduler.TriggerImmediate(nil)
@@ -601,5 +603,21 @@ func TestScheduler_TriggerImmediateConcurrentWithStop(t *testing.T) {
 	_, err = scheduler.TriggerImmediate(context.Background())
 	if err == nil {
 		t.Fatalf("Expected TriggerImmediate to fail after Stop(), got nil error")
+	}
+}
+
+func TestScheduler_ExpiredPeriodDoesNotBackfill(t *testing.T) {
+	store := &mockSampleStore{}
+	runner := NewRunner(RunnerConfig{Store: store, Dialer: &mockDialer{}})
+	job := &MonitorJob{ID: "expired", ProfileID: "profile", Interval: time.Minute, Nodes: []MonitoredNode{{NodeKey: "node", Server: "node.invalid", Port: 443}}}
+	scheduler, err := NewScheduler(SchedulerConfig{Job: job, Runner: runner, Store: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 100; i++ {
+		scheduler.launchScheduledRound(context.Background(), time.Now().Add(-24*time.Hour))
+	}
+	if scheduler.SkippedRounds() != 100 || len(store.GetRuns()) != 0 {
+		t.Fatalf("expired periods were enqueued or persisted: skipped=%d runs=%d", scheduler.SkippedRounds(), len(store.GetRuns()))
 	}
 }

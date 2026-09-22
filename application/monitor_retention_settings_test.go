@@ -29,16 +29,27 @@ func TestMonitorRetentionPreferenceUsesCanonicalSettingsWithoutDeletion(t *testi
 	if *initial.MonitorStorageWarningBytes != 1<<30 || *initial.MonitorStorageHardBytes != 2<<30 {
 		t.Fatalf("legacy settings lost 1/2 GiB default thresholds: %+v", initial)
 	}
+	if *initial.MonitorBudgetMaxConcurrent != 4 || *initial.MonitorBudgetDailyRequests != 20000 || *initial.MonitorBudgetDailyBytes != 32<<20 || *initial.MonitorBudgetResponseBytes != 256<<10 {
+		t.Fatalf("legacy settings lost Monitor budget defaults: %+v", initial)
+	}
 	initial.MonitorRetentionPolicy = monitor.RetentionCustom
 	initial.MonitorRetentionCustomDays = 45
+	newRequests := int64(120)
+	initial.MonitorBudgetDailyRequests = &newRequests
 	if err := service.SaveSettings(initial); err != nil {
 		t.Fatal(err)
 	}
 	reopened := NewAppServiceWithPaths(nil, paths, nil)
 	got, err := reopened.GetSettings()
-	if err != nil || got.MonitorRetentionPolicy != monitor.RetentionCustom || got.MonitorRetentionCustomDays != 45 {
+	if err != nil || got.MonitorRetentionPolicy != monitor.RetentionCustom || got.MonitorRetentionCustomDays != 45 || *got.MonitorBudgetDailyRequests != newRequests {
 		t.Fatalf("retention preference not retained: %+v %v", got, err)
 	}
+	invalidRequests := int64(0)
+	got.MonitorBudgetDailyRequests = &invalidRequests
+	if err := reopened.SaveSettings(got); err == nil {
+		t.Fatal("zero request budget was accepted")
+	}
+	got.MonitorBudgetDailyRequests = &newRequests
 	got.MonitorRetentionPolicy = monitor.RetentionKeepAll
 	got.MonitorRetentionCustomDays = 0
 	if err := reopened.SaveSettings(got); err != nil {

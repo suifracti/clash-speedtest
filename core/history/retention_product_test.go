@@ -27,11 +27,12 @@ func TestRetentionPreviewAndCanonicalDeletion(t *testing.T) {
 		{"boundary", cutoff, monitor.RunStatusCompleted},
 		{"recent", cutoff.Add(time.Hour), monitor.RunStatusCompleted},
 		{"running", cutoff.Add(-time.Hour), monitor.RunStatusRunning},
+		{"resource-limited", cutoff.Add(-time.Hour), monitor.RunStatusResourceLimited},
 	} {
 		if err := store.SaveMonitorRun(ctx, &monitor.MonitorRun{RunID: fixture.id, JobID: "job", ScheduledAt: fixture.at, StartedAt: fixture.at, Status: fixture.status}); err != nil {
 			t.Fatal(err)
 		}
-		if fixture.id != "running" {
+		if fixture.id != "running" && fixture.id != "resource-limited" {
 			if err := store.SaveMonitorSamples(ctx, []*monitor.MonitorSample{{SampleID: fixture.id, RunID: fixture.id, NodeKey: "node", Timestamp: fixture.at, Success: true}}); err != nil {
 				t.Fatal(err)
 			}
@@ -55,7 +56,7 @@ func TestRetentionPreviewAndCanonicalDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if preview.SamplesToDelete != 1 || preview.RunsToDelete != 1 {
+	if preview.SamplesToDelete != 1 || preview.RunsToDelete != 2 {
 		t.Fatalf("unexpected DB preview: %+v", preview)
 	}
 	usage, err := store.StorageUsage(1, 1)
@@ -78,7 +79,7 @@ func TestRetentionPreviewAndCanonicalDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.SamplesDeleted != 1 || result.RunsDeleted != 1 || result.Partial {
+	if result.SamplesDeleted != 1 || result.RunsDeleted != 2 || result.Partial {
 		t.Fatalf("unexpected deletion: %+v", result)
 	}
 	if err := store.Close(); err != nil {

@@ -492,6 +492,9 @@ func TestAppService_MonitorJobLifecycle(t *testing.T) {
 	if err != nil || job.State != monitor.JobStateRunning {
 		t.Fatalf("expected running state, got err: %v, job: %+v", err, job)
 	}
+	// Pause may now cancel a round still waiting for its shared permit.
+	// Complete this lifecycle fixture's initial round before exercising Pause.
+	waitForIdleMonitorScheduler(t, hStore, "test_job_1")
 
 	// 3. PauseMonitorJob
 	if err := svc.PauseMonitorJob("test_job_1"); err != nil {
@@ -512,7 +515,6 @@ func TestAppService_MonitorJobLifecycle(t *testing.T) {
 	}
 
 	// 5. Trigger Immediate Run (after the initial scheduled round has finished)
-	waitForIdleMonitorScheduler(t, hStore, "test_job_1")
 	run, err := svc.TriggerMonitorJob("test_job_1")
 	if err != nil {
 		t.Fatalf("TriggerMonitorJob failed: %v", err)

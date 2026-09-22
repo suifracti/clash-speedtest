@@ -15,24 +15,29 @@ type SchedulerConfig struct {
 	Store  SampleStore
 	// StorageGuard returns a reason while new background collection is unsafe.
 	StorageGuard func() string
+	BudgetGuard  func() (string, string)
 }
 
 // Scheduler manages the periodic execution and lifecycle of a MonitorJob.
 type Scheduler struct {
-	mu            sync.Mutex
-	job           *MonitorJob
-	runner        *Runner
-	store         SampleStore
-	storageGuard  func() string
-	state         JobState
-	stopping      bool
-	ctx           context.Context
-	cancel        context.CancelFunc
-	loopWg        sync.WaitGroup
-	runWg         sync.WaitGroup
-	isExecuting   int32 // atomic flag: 1 if runner is active, 0 otherwise
-	skippedRounds int64 // atomic counter for overlapped ticks skipped
-	completedRuns int64 // atomic counter for finished runs
+	mu                    sync.Mutex
+	job                   *MonitorJob
+	runner                *Runner
+	store                 SampleStore
+	storageGuard          func() string
+	budgetGuard           func() (string, string)
+	pendingCancel         context.CancelFunc
+	pendingID             uint64
+	state                 JobState
+	stopping              bool
+	ctx                   context.Context
+	cancel                context.CancelFunc
+	loopWg                sync.WaitGroup
+	runWg                 sync.WaitGroup
+	isExecuting           int32 // atomic flag: 1 if runner is active, 0 otherwise
+	skippedRounds         int64 // atomic counter for overlapped ticks skipped
+	resourceSkippedRounds int64
+	completedRuns         int64 // atomic counter for finished runs
 }
 
 // NewScheduler creates a Scheduler for the specified job.
@@ -52,6 +57,7 @@ func NewScheduler(cfg SchedulerConfig) (*Scheduler, error) {
 		runner:       cfg.Runner,
 		store:        cfg.Store,
 		storageGuard: cfg.StorageGuard,
+		budgetGuard:  cfg.BudgetGuard,
 		state:        cfg.Job.State,
 	}
 	if s.job.PersistenceState == "" {
@@ -74,9 +80,46 @@ func (s *Scheduler) State() JobState {
 // Job returns a copy of the underlying MonitorJob.
 func (s *Scheduler) Job() MonitorJob {
 	s.checkStorage()
+	s.checkBudget()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return *s.job
+	copy := *s.job
+	copy.SkippedRounds = atomic.LoadInt64(&s.skippedRounds)
+	copy.ResourceSkippedRounds = atomic.LoadInt64(&s.resourceSkippedRounds)
+	return copy
+}
+
+func (s *Scheduler) checkBudget() (string, string) {
+	if s.budgetGuard == nil {
+		return "", ""
+	}
+	code, reason := s.budgetGuard()
+	s.mu.Lock()
+	if code != "" {
+		s.job.BudgetState, s.job.BudgetReason = code, reason
+	} else if s.job.BudgetState == "requests_exhausted" || s.job.BudgetState == "bytes_exhausted" || s.job.BudgetState == "budget_settings_invalid" || s.job.BudgetState == "budget_unavailable" {
+		s.job.BudgetState, s.job.BudgetReason = "ok", ""
+	}
+	s.mu.Unlock()
+	return code, reason
+}
+
+func (s *Scheduler) markBudgetBlock(err error) bool {
+	block, ok := AsBudgetBlock(err)
+	if !ok {
+		return false
+	}
+	atomic.AddInt64(&s.resourceSkippedRounds, 1)
+	s.mu.Lock()
+	s.job.BudgetState, s.job.BudgetReason = block.Code, block.Reason
+	s.mu.Unlock()
+	return true
+}
+
+func (s *Scheduler) clearBudgetBlock() {
+	s.mu.Lock()
+	s.job.BudgetState, s.job.BudgetReason = "ok", ""
+	s.mu.Unlock()
 }
 
 func (s *Scheduler) checkStorage() string {
@@ -175,8 +218,8 @@ func (s *Scheduler) Start(parentCtx context.Context) error {
 	scheduleCtx := s.ctx
 	interval := s.job.Interval
 	s.mu.Unlock()
-	// Claim the initial round before returning. A user may pause immediately
-	// after Start; the already-launched round is allowed to finish normally.
+	// Claim the initial round before returning. Pause/Stop can cancel its
+	// pending admission; an already-admitted request follows normal cancellation.
 	s.launchScheduledRound(scheduleCtx, time.Now())
 	go s.scheduleLoop(scheduleCtx, interval)
 
@@ -195,6 +238,10 @@ func (s *Scheduler) Pause() error {
 	s.state = JobStatePaused
 	s.job.State = JobStatePaused
 	s.job.UpdatedAt = time.Now()
+	if s.pendingCancel != nil {
+		s.pendingCancel()
+		s.job.BudgetState, s.job.BudgetReason = "paused_by_user", "用户暂停了尚未开始的 Monitor 等待轮次"
+	}
 	return nil
 }
 
@@ -229,6 +276,9 @@ func (s *Scheduler) Stop() error {
 	if s.cancel != nil {
 		s.cancel()
 	}
+	if s.pendingCancel != nil {
+		s.pendingCancel()
+	}
 	s.mu.Unlock()
 
 	// Wait for background schedule loop and any active runs to finish
@@ -246,6 +296,12 @@ func (s *Scheduler) Stop() error {
 func (s *Scheduler) TriggerImmediate(ctx context.Context) (*MonitorRun, error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if reason := s.checkStorage(); reason != "" {
+		return nil, fmt.Errorf("monitor storage protected: %s", reason)
+	}
+	if code, reason := s.checkBudget(); code != "" {
+		return nil, budgetBlock(code, reason)
 	}
 
 	s.mu.Lock()
@@ -268,6 +324,8 @@ func (s *Scheduler) TriggerImmediate(ctx context.Context) (*MonitorRun, error) {
 	s.runWg.Add(1)
 	schedCtx := s.ctx
 	jobCopy := *s.job
+	s.pendingID++
+	id := s.pendingID
 	s.mu.Unlock()
 
 	defer func() {
@@ -277,6 +335,10 @@ func (s *Scheduler) TriggerImmediate(ctx context.Context) (*MonitorRun, error) {
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	s.mu.Lock()
+	s.pendingCancel = cancel
+	s.mu.Unlock()
+	defer s.clearPending(id)
 
 	if schedCtx != nil {
 		stopAfter := context.AfterFunc(schedCtx, func() {
@@ -285,12 +347,16 @@ func (s *Scheduler) TriggerImmediate(ctx context.Context) (*MonitorRun, error) {
 		defer stopAfter()
 	}
 
-	run, _, err := s.runner.ExecuteRun(runCtx, &jobCopy, time.Now())
+	run, _, err := s.runner.ExecuteRunWithAdmission(runCtx, &jobCopy, time.Now(), func() error { return s.admitPending(id, runCtx) })
 	if err != nil {
+		if s.markBudgetBlock(err) {
+			return run, err
+		}
 		s.markPersistenceFailure(err)
 		return run, err
 	}
 	s.clearPersistenceFailure()
+	s.clearBudgetBlock()
 	atomic.AddInt64(&s.completedRuns, 1)
 	return run, err
 }
@@ -323,6 +389,15 @@ func (s *Scheduler) scheduleLoop(ctx context.Context, interval time.Duration) {
 
 func (s *Scheduler) launchScheduledRound(ctx context.Context, scheduledAt time.Time) {
 	if s.checkStorage() != "" {
+		atomic.AddInt64(&s.resourceSkippedRounds, 1)
+		return
+	}
+	if code, _ := s.checkBudget(); code != "" {
+		atomic.AddInt64(&s.resourceSkippedRounds, 1)
+		return
+	}
+	if time.Since(scheduledAt) > s.job.Interval {
+		atomic.AddInt64(&s.skippedRounds, 1)
 		return
 	}
 	s.mu.Lock()
@@ -330,51 +405,49 @@ func (s *Scheduler) launchScheduledRound(ctx context.Context, scheduledAt time.T
 		s.mu.Unlock()
 		return
 	}
+	if !atomic.CompareAndSwapInt32(&s.isExecuting, 0, 1) {
+		s.mu.Unlock()
+		atomic.AddInt64(&s.skippedRounds, 1)
+		return
+	}
+	roundCtx, cancel := context.WithCancel(ctx)
+	s.pendingID++
+	id := s.pendingID
+	s.pendingCancel = cancel
 	s.runWg.Add(1)
 	s.mu.Unlock()
 
 	go func() {
+		defer cancel()
+		defer s.clearPending(id)
+		defer atomic.StoreInt32(&s.isExecuting, 0)
 		defer s.runWg.Done()
-		s.executeScheduledRound(ctx, scheduledAt)
+		s.executeScheduledRound(roundCtx, scheduledAt, id)
 	}()
 }
 
-func (s *Scheduler) executeScheduledRound(ctx context.Context, scheduledAt time.Time) {
-	if s.checkStorage() != "" {
-		return
+func (s *Scheduler) clearPending(id uint64) {
+	s.mu.Lock()
+	if s.pendingID == id {
+		s.pendingCancel = nil
 	}
-	// Overlap Prevention Guard:
-	// If a previous run is still executing, DO NOT spawn another runner goroutine!
-	if !atomic.CompareAndSwapInt32(&s.isExecuting, 0, 1) {
-		atomic.AddInt64(&s.skippedRounds, 1)
+	s.mu.Unlock()
+}
 
-		// Record skipped run in store for audit observability
-		if s.store != nil {
-			s.mu.Lock()
-			jobID := s.job.ID
-			isStopping := s.stopping
-			state := s.state
-			s.mu.Unlock()
-
-			if !isStopping && state != JobStateStopped {
-				skippedRun := &MonitorRun{
-					RunID:        newID("run_skip"),
-					JobID:        jobID,
-					ScheduledAt:  scheduledAt,
-					StartedAt:    scheduledAt,
-					FinishedAt:   &scheduledAt,
-					Status:       RunStatusSkipped,
-					ErrorMessage: "上一轮监测仍在执行，按防重叠策略跳过本轮",
-				}
-				if err := s.store.SaveMonitorRun(ctx, skippedRun); err != nil {
-					s.markPersistenceFailure(fmt.Errorf("save skipped monitor run: %w", err))
-				}
-			}
-		}
-		return
+func (s *Scheduler) admitPending(id uint64, ctx context.Context) error {
+	if reason := s.checkStorage(); reason != "" {
+		return budgetBlock("storage_protected", reason)
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pendingID != id || s.stopping || s.state != JobStateRunning || ctx.Err() != nil {
+		return budgetBlock("cancelled", "Monitor 等待已取消，本周期未探测")
+	}
+	s.pendingCancel = nil
+	return nil
+}
 
-	defer atomic.StoreInt32(&s.isExecuting, 0)
+func (s *Scheduler) executeScheduledRound(ctx context.Context, scheduledAt time.Time, id uint64) {
 
 	s.mu.Lock()
 	jobCopy := *s.job
@@ -386,11 +459,16 @@ func (s *Scheduler) executeScheduledRound(ctx context.Context, scheduledAt time.
 		return
 	}
 
-	_, _, err := s.runner.ExecuteRun(ctx, &jobCopy, scheduledAt)
+	run, _, err := s.runner.ExecuteRunWithAdmission(ctx, &jobCopy, scheduledAt, func() error { return s.admitPending(id, ctx) })
 	if err != nil {
+		if s.markBudgetBlock(err) {
+			return
+		}
 		s.markPersistenceFailure(err)
 		return
 	}
+	_ = run
 	s.clearPersistenceFailure()
+	s.clearBudgetBlock()
 	atomic.AddInt64(&s.completedRuns, 1)
 }

@@ -57,6 +57,7 @@ type AppService struct {
 	monitorSchedulers map[string]*monitor.Scheduler
 	monitorRunner     *monitor.Runner
 	monitorLoadErr    error
+	monitorBudget     *monitor.BudgetController
 
 	// latencyPersistenceWG keeps the result-first workbench path from closing
 	// history.db while a just-finished latency result is still being persisted.
@@ -68,7 +69,11 @@ type AppService struct {
 
 // NewAppService creates a new application service instance.
 func NewAppService(hStore *history.Store, paths profiles.Paths, emitter EventEmitter) *AppService {
-	return newAppService(hStore, appdata.FromLegacy(paths.Dir, ""), paths, emitter)
+	historyDir := ""
+	if hStore != nil {
+		historyDir = hStore.Dir()
+	}
+	return newAppService(hStore, appdata.FromLegacy(paths.Dir, historyDir), paths, emitter)
 }
 
 // NewAppServiceWithPaths creates the production service from the shared path
@@ -97,8 +102,10 @@ func newAppService(hStore *history.Store, appPaths appdata.AppPaths, profilePath
 	}
 
 	if hStore != nil {
+		svc.monitorBudget = monitor.NewBudgetController(hStore, svc.monitorBudgetLimits, nil)
 		svc.monitorRunner = monitor.NewRunner(monitor.RunnerConfig{
-			Store: hStore,
+			Store:  hStore,
+			Budget: svc.monitorBudget,
 		})
 		if err := svc.loadPersistedMonitorJobs(); err != nil {
 			svc.monitorLoadErr = err
@@ -1292,6 +1299,7 @@ func (s *AppService) GetSettings() (*AppSettings, error) {
 			MonitorRetentionPolicy: monitor.RetentionKeepAll,
 		}
 		fillDefaultMonitorStorageThresholds(settings)
+		fillDefaultMonitorBudget(settings)
 		return settings, nil
 	}
 
@@ -1309,6 +1317,9 @@ func (s *AppService) GetSettings() (*AppSettings, error) {
 		return nil, err
 	}
 	if err := validateMonitorStorageThresholds(&settings); err != nil {
+		return nil, err
+	}
+	if err := validateMonitorBudget(&settings); err != nil {
 		return nil, err
 	}
 	return &settings, nil
@@ -1371,6 +1382,9 @@ func (s *AppService) SaveSettings(settings *AppSettings) error {
 		return fmt.Errorf("validate Monitor storage settings: %w", err)
 	}
 	if err := validateMonitorStorageThresholds(&effective); err != nil {
+		return err
+	}
+	if err := validateMonitorBudget(&effective); err != nil {
 		return err
 	}
 	return os.WriteFile(p, data, 0o600)
@@ -1755,6 +1769,9 @@ func (s *AppService) EvaluateAndAutoSwitch(ctx context.Context, evals []policy.N
 func (s *AppService) SetMonitorRunner(runner *monitor.Runner) {
 	s.monitorMu.Lock()
 	defer s.monitorMu.Unlock()
+	if runner != nil {
+		runner.SetBudget(s.monitorBudget)
+	}
 	s.monitorRunner = runner
 }
 
@@ -1805,7 +1822,8 @@ func (s *AppService) CreateMonitorJob(job monitor.MonitorJob) (*monitor.MonitorJ
 	if runner == nil {
 		if s.historyStore != nil {
 			runner = monitor.NewRunner(monitor.RunnerConfig{
-				Store: s.historyStore,
+				Store:  s.historyStore,
+				Budget: s.monitorBudget,
 			})
 			s.monitorRunner = runner
 		} else {
@@ -1818,6 +1836,7 @@ func (s *AppService) CreateMonitorJob(job monitor.MonitorJob) (*monitor.MonitorJ
 		Runner:       runner,
 		Store:        s.historyStore,
 		StorageGuard: s.monitorStorageGuard,
+		BudgetGuard:  s.monitorBudgetGuard,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create monitor scheduler: %w", err)
