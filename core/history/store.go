@@ -479,6 +479,13 @@ func (s *Store) ListLatencyBatches(ctx context.Context, limit int) ([]LatencyBat
 	return s.db.ListLatencyBatches(ctx, limit)
 }
 
+func (s *Store) ListLatencyBatchesNeedingRecovery(ctx context.Context) ([]LatencyBatch, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
+	return s.db.ListLatencyBatchesNeedingRecovery(ctx)
+}
+
 // SetTestBatchFailAt injects a batch failure on batch n for testing partial retention semantics.
 func (s *Store) SetTestBatchFailAt(n int) {
 	if s.db != nil {

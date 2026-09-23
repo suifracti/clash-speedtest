@@ -199,7 +199,7 @@ const focusedDisplayedTest = computed(() => {
   const test = detailTest.value || latestTestForKey(focusedKey.value)
   return test ? displayTestForActiveWindow(test) : null
 })
-const batchBusy = computed(() => batchStarting.value || !!activeBatch.value && ['queued', 'running', 'cancelling'].includes(activeBatch.value.state))
+const batchBusy = computed(() => batchStarting.value || !!activeBatch.value && ['queued', 'running', 'cancelling', 'saving'].includes(activeBatch.value.state))
 const canRun = computed(() => activeProject.value === 'latency' && selectedKeys.value.length > 0 && !batchBusy.value)
 const selectedProfilesLabel = computed(() => {
   const names = new Map<string, string>()
@@ -504,7 +504,7 @@ async function selectBatch(batchID: string): Promise<void> {
 
 async function cancelBatch(): Promise<void> {
   const batchID = activeBatchID
-  if (!batchID || !batchBusy.value) return
+  if (!batchID || !activeBatch.value || !['queued', 'running'].includes(activeBatch.value.state)) return
   try {
     const cancelling = await api.cancelWorkbenchLatencyBatch(batchID)
     if (activeBatchID === batchID) { activeBatch.value = cancelling; displayedBatch.value = cancelling }
@@ -531,7 +531,7 @@ function batchPersistenceLabel(state: string): string {
 }
 
 function batchStatusLabel(state: string): string {
-  return ({ queued: '等待执行', running: '执行中', cancelling: '正在取消', completed: '完成', completed_with_issues: '完成，含跳过或失败项', completed_with_save_failures: '测量完成，部分保存失败', cancelled: '已取消', cancelled_with_issues: '已取消，含失败项', cancelled_with_save_failures: '已取消，部分结果保存失败', interrupted: '上次运行中断', interrupted_with_issues: '应用退出时中断，含失败项', interrupted_with_save_failures: '应用退出时中断，部分结果保存失败' } as Record<string, string>)[state] || state
+  return ({ queued: '等待执行', running: '执行中', cancelling: '正在取消', saving: '测量已结束，结果保存中', completed: '完成', completed_with_issues: '完成，含跳过或失败项', completed_with_save_failures: '测量完成，部分保存失败', cancelled: '已取消', cancelled_with_issues: '已取消，含失败项', cancelled_with_save_failures: '已取消，部分结果保存失败', interrupted: '上次运行中断', interrupted_with_issues: '应用退出时中断，含失败项', interrupted_with_save_failures: '应用退出时中断，部分结果保存失败' } as Record<string, string>)[state] || state
 }
 
 function isBatchItemRunning(key: string): boolean {
@@ -627,7 +627,7 @@ onUnmounted(() => { unsubscribeEvents?.(); unsubscribeEvents = null })
     <section class="prototype-project-bar" aria-label="测试项目">
       <div class="project-bar-heading"><span class="scope-title">测试项目</span><span class="project-bar-note">先选节点；结果直接出现在节点行</span></div>
       <div class="project-tabs" role="tablist" aria-label="切换测试项目"><button v-for="project in workbenchProjects" :key="project.id" type="button" class="project-tab" :class="{ active: activeProject === project.id }" role="tab" :aria-selected="activeProject === project.id" @click="changeProject(project.id)">{{ project.label }}<span v-if="!project.available">尚未接入</span></button></div>
-      <div class="project-bar-actions"><span class="selection-summary">{{ selectedKeys.length }} 个节点</span><label class="timeout-control">单项超时<select v-model.number="timeoutSeconds" :disabled="batchBusy"><option :value="1">1 秒</option><option :value="3">3 秒</option><option :value="5">5 秒</option><option :value="10">10 秒</option><option :value="30">30 秒</option></select></label><button type="button" class="prototype-button primary" :disabled="!canRun" @click="runTest()">{{ batchBusy ? (activeBatch?.state === 'cancelling' ? '正在取消…' : '批次执行中…') : '测试所选节点' }}</button><button v-if="batchBusy" type="button" class="prototype-button" :disabled="activeBatch?.state === 'cancelling'" @click="cancelBatch">{{ activeBatch?.state === 'cancelling' ? '正在取消…' : '取消本批次' }}</button><button type="button" class="prototype-button" :disabled="!canOpenMonitor" :title="monitorSelectionHint" @click="openMonitor">加入持续监测</button></div>
+      <div class="project-bar-actions"><span class="selection-summary">{{ selectedKeys.length }} 个节点</span><label class="timeout-control">单项超时<select v-model.number="timeoutSeconds" :disabled="batchBusy"><option :value="1">1 秒</option><option :value="3">3 秒</option><option :value="5">5 秒</option><option :value="10">10 秒</option><option :value="30">30 秒</option></select></label><button type="button" class="prototype-button primary" :disabled="!canRun" @click="runTest()">{{ batchBusy ? (activeBatch?.state === 'cancelling' ? '正在取消…' : activeBatch?.state === 'saving' ? '结果保存中…' : '批次执行中…') : '测试所选节点' }}</button><button v-if="batchBusy && activeBatch?.state !== 'saving'" type="button" class="prototype-button" :disabled="activeBatch?.state === 'cancelling'" @click="cancelBatch">{{ activeBatch?.state === 'cancelling' ? '正在取消…' : '取消本批次' }}</button><button type="button" class="prototype-button" :disabled="!canOpenMonitor" :title="monitorSelectionHint" @click="openMonitor">加入持续监测</button></div>
       <div v-if="selectedKeys.length > 0 && !canOpenMonitor" class="batch-test-status blocked">{{ monitorSelectionHint }}</div>
       <div v-if="activeProject === 'service'" class="service-toolbar"><span class="service-toolbar-label">服务</span><UiSelect v-model="selectedService" variant="toolbar" aria-label="选择服务" :options="serviceSelectOptions" /><span class="service-toolbar-note">选择服务同时决定查看与测试目标；未接入服务不可测试</span></div>
       <div class="batch-test-status" :class="{ running: batchBusy, blocked: activeProject !== 'latency', complete: !!batchMessage && !batchBusy }" aria-live="polite">{{ testError || batchMessage || (activeProject === 'latency' ? `将冻结 ${selectedKeys.length} 个节点（${selectedProfilesLabel}），每项执行现有 HTTP 代理延迟探测，超时 ${timeoutSeconds} 秒。切换筛选或勾选不会更改已创建批次。` : projectUnavailableLabel(activeProject)) }}</div>
@@ -638,7 +638,7 @@ onUnmounted(() => { unsubscribeEvents?.(); unsubscribeEvents = null })
       <div v-if="batchHistoryError" class="inline-error">{{ batchHistoryError }}</div>
       <div class="batch-history-list"><button v-for="batch in recentBatches" :key="batch.batch_id" type="button" class="batch-history-record" :class="{ selected: displayedBatch?.batch_id === batch.batch_id }" @click="selectBatch(batch.batch_id)"><span><strong>{{ batchStatusLabel(batch.state) }}</strong><small>{{ formatTime(batch.requested_at) }}</small></span><span>{{ batch.item_count }} 项</span><span>超时 {{ batch.timeout_seconds }} 秒</span></button><span v-if="recentBatches.length === 0" class="batch-history-empty">尚无批量延迟历史。</span></div>
       <div v-if="displayedBatch" class="batch-detail">
-        <div class="batch-detail-heading"><div><strong>批次 {{ displayedBatch.batch_id }}</strong><span>{{ batchStatusLabel(displayedBatch.state) }} · {{ displayedBatch.items?.filter((item) => ['completed', 'failed', 'cancelled', 'skipped_config', 'not_executed', 'interrupted'].includes(item.execution_state)).length || 0 }} / {{ displayedBatch.item_count }} 项已结束</span></div><button v-if="activeBatchID === displayedBatch.batch_id && batchBusy" type="button" class="prototype-button" :disabled="displayedBatch.state === 'cancelling'" @click="cancelBatch">{{ displayedBatch.state === 'cancelling' ? '正在取消…' : '取消本批次' }}</button></div>
+        <div class="batch-detail-heading"><div><strong>批次 {{ displayedBatch.batch_id }}</strong><span>{{ batchStatusLabel(displayedBatch.state) }} · {{ displayedBatch.items?.filter((item) => ['completed', 'failed', 'cancelled', 'skipped_config', 'not_executed', 'interrupted'].includes(item.execution_state)).length || 0 }} / {{ displayedBatch.item_count }} 项已结束</span></div><button v-if="activeBatchID === displayedBatch.batch_id && batchBusy && displayedBatch.state !== 'saving'" type="button" class="prototype-button" :disabled="displayedBatch.state === 'cancelling'" @click="cancelBatch">{{ displayedBatch.state === 'cancelling' ? '正在取消…' : '取消本批次' }}</button></div>
         <div v-for="item in displayedBatch.items || []" :key="item.item_id" class="batch-item-row">
           <div class="batch-item-identity"><strong>{{ item.display_name || item.node_key }}</strong><span>{{ profileOptions.find((profile) => profile.id === item.profile_id)?.name || item.profile_id }} · {{ item.node_type || '节点' }}</span><code>{{ item.node_identity_key }} · rev {{ item.config_revision_key }}</code></div>
           <div class="batch-item-state"><strong>{{ batchExecutionLabel(item.execution_state) }}</strong><span>{{ batchPersistenceLabel(item.persistence_state) }}</span><span v-if="item.error_message" class="batch-error-detail">{{ item.error_message }}</span><span v-if="item.persistence_error" class="batch-error-detail">{{ item.persistence_error }}</span></div>

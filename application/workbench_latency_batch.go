@@ -482,25 +482,25 @@ func (s *AppService) reconcileWorkbenchLatencyBatches() error {
 	if s.historyStore == nil {
 		return nil
 	}
-	batches, err := s.historyStore.ListLatencyBatches(context.Background(), 100)
+	batches, err := s.historyStore.ListLatencyBatchesNeedingRecovery(context.Background())
 	if err != nil {
 		return err
 	}
 	for _, summary := range batches {
-		if summary.State != "queued" && summary.State != "running" && summary.State != "cancelling" {
-			continue
-		}
 		userCancelled := summary.State == "cancelling"
 		batch, err := s.historyStore.GetLatencyBatch(context.Background(), summary.BatchID)
 		if err != nil {
 			return err
 		}
+		wasInterrupted := false
 		for i := range batch.Items {
 			item := &batch.Items[i]
 			if item.ExecutionState == "queued" {
-				item.ExecutionState = "not_executed"
 				if userCancelled {
 					item.ExecutionState = "cancelled"
+				} else {
+					item.ExecutionState = "not_executed"
+					wasInterrupted = true
 				}
 				item.PersistenceState = "not_applicable"
 			}
@@ -521,18 +521,27 @@ func (s *AppService) reconcileWorkbenchLatencyBatches() error {
 				} else {
 					item.ExecutionState = "interrupted"
 					item.PersistenceState = "not_applicable"
+					wasInterrupted = true
 				}
 			}
-			if item.PersistenceState == "saving" && item.Result != nil {
-				item.PersistenceState = "failed"
-				item.PersistenceError = "应用退出时保存未完成；可重试保存"
-				item.ResultStaged = true
+			if item.PersistenceState == "saving" || item.PersistenceState == "pending" {
+				if item.Result != nil {
+					// GetLatencyBatch marks an actually committed attempt as saved.
+					// Anything still staged can be retried using this same attempt ID.
+					item.PersistenceState = "failed"
+					item.PersistenceError = "应用退出时保存未完成；可重试保存"
+					item.ResultStaged = true
+				} else {
+					item.ExecutionState = "interrupted"
+					item.PersistenceState = "not_applicable"
+					wasInterrupted = true
+				}
 			}
 			if err := s.historyStore.UpdateLatencyBatchItem(context.Background(), item); err != nil {
 				return err
 			}
 		}
-		batch.State = "interrupted"
+		batch.State = deriveLatencyBatchState(batch.Items, false, wasInterrupted && !userCancelled)
 		if err := s.historyStore.UpdateLatencyBatchState(context.Background(), batch.BatchID, batch.State); err != nil {
 			return err
 		}
@@ -541,7 +550,7 @@ func (s *AppService) reconcileWorkbenchLatencyBatches() error {
 }
 
 func deriveLatencyBatchState(items []history.LatencyBatchItem, cancelling, shutdown bool) string {
-	queuedOrRunning := false
+	queuedOrRunning, saving := false, false
 	anyCancelled, anyIssue, anySaveFailure := false, false, false
 	for _, item := range items {
 		switch item.ExecutionState {
@@ -555,12 +564,18 @@ func deriveLatencyBatchState(items []history.LatencyBatchItem, cancelling, shutd
 		if item.PersistenceState == "failed" {
 			anySaveFailure = true
 		}
+		if item.PersistenceState == "saving" {
+			saving = true
+		}
 	}
 	if queuedOrRunning {
 		if cancelling {
 			return "cancelling"
 		}
 		return "running"
+	}
+	if saving {
+		return "saving"
 	}
 	if shutdown {
 		if anySaveFailure {

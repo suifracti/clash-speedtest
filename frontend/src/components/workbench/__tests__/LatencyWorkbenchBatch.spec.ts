@@ -51,7 +51,7 @@ function makeBatch(requestID: string, state = 'queued'): WorkbenchLatencyBatch {
     items: nodes.map((node, ordinal) => ({
       item_id: `item-${ordinal}`, batch_id: 'batch-active', ordinal, profile_id: node.profileId, node_key: node.nodeKey,
       node_identity_key: node.nodeIdentityKey, config_revision_key: node.configRevisionKey, display_name: node.displayName, node_type: node.type,
-      execution_state: state === 'queued' ? 'queued' : 'running', persistence_state: 'pending', requested_at: '2026-09-23T12:00:00Z',
+      execution_state: state === 'queued' ? 'queued' : state === 'saving' ? 'completed' : 'running', persistence_state: state === 'saving' ? 'saving' : 'pending', requested_at: '2026-09-23T12:00:00Z',
     })),
   }
 }
@@ -98,6 +98,14 @@ describe('Workbench latency batch UI contract', () => {
     await cancelButton!.trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('正在取消')
+
+    const savingBatch = makeBatch(request.request_id, 'saving')
+    mocks.eventCallback?.('workbench_latency_batch_updated', savingBatch)
+    await flushPromises()
+    expect(wrapper.text()).toContain('测量已结束，结果保存中')
+    expect(wrapper.findAll('button').find((button) => button.text().includes('结果保存中'))?.attributes('disabled')).toBeDefined()
+    expect(wrapper.findAll('button').some((button) => button.text().includes('取消本批次'))).toBe(false)
+    expect(mocks.startBatch).toHaveBeenCalledTimes(1)
 
     mocks.eventCallback?.('workbench_latency_batch_updated', { ...makeBatch('old-request', 'running'), batch_id: 'batch-old' })
     await flushPromises()

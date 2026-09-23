@@ -155,6 +155,52 @@ func TestWorkbenchLatencyBatchPreservesPartialFailureAndRetriesSameAttempt(t *te
 	}
 }
 
+func TestWorkbenchLatencyBatchStaysSavingUntilAttemptCommit(t *testing.T) {
+	service, store, _, options := newWorkbenchBatchFixture(t, 1)
+	service.latencyMeasureHook = func(context.Context, monitor.MonitoredNode, time.Duration) (*speedtester.Result, string, error) {
+		return knownWorkbenchLatencyResult(true), "https://probe.example/__down?bytes=1", nil
+	}
+	saving := make(chan struct{}, 1)
+	releaseSave := make(chan struct{})
+	service.latencySaveHook = func(ctx context.Context, _ *history.LatencyTest) error {
+		saving <- struct{}{}
+		select {
+		case <-releaseSave:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	created, err := service.StartWorkbenchLatencyBatch(context.Background(), WorkbenchLatencyBatchRequest{
+		RequestID: "saving-barrier", TestProject: WorkbenchLatencyProject, TimeoutSeconds: 1,
+		Selections: []WorkbenchLatencyBatchSelection{batchSelection(options[0])},
+	})
+	if err != nil {
+		t.Fatalf("start batch: %v", err)
+	}
+	select {
+	case <-saving:
+	case <-time.After(5 * time.Second):
+		t.Fatal("batch did not reach controlled save")
+	}
+	current, err := store.GetLatencyBatch(context.Background(), created.BatchID)
+	if err != nil {
+		t.Fatalf("get batch during save: %v", err)
+	}
+	if current.State != "saving" || len(current.Items) != 1 || current.Items[0].ExecutionState != "completed" || current.Items[0].PersistenceState != "saving" {
+		t.Fatalf("completed measurement must remain active until its attempt commits: %+v", current)
+	}
+	close(releaseSave)
+	waitWorkbenchLatencyBatch(t, service)
+	finished, err := store.GetLatencyBatch(context.Background(), created.BatchID)
+	if err != nil {
+		t.Fatalf("get completed batch: %v", err)
+	}
+	if finished.State != "completed" || finished.Items[0].PersistenceState != "saved" {
+		t.Fatalf("batch did not finish after attempt commit: %+v", finished)
+	}
+}
+
 func TestWorkbenchLatencyBatchCancellationBoundsConcurrencyAndDeduplicatesRequest(t *testing.T) {
 	service, store, _, options := newWorkbenchBatchFixture(t, 6)
 	release := make(chan struct{})
@@ -311,26 +357,36 @@ func TestWorkbenchLatencyBatchCreationFailureSendsNoRequests(t *testing.T) {
 	}
 }
 
-func TestWorkbenchLatencyBatchReopenMarksPendingItemsWithoutRerunning(t *testing.T) {
-	service, store, paths, options := newWorkbenchBatchFixture(t, 3)
+func TestWorkbenchLatencyBatchReopenRecoversStagedSaveWithoutRerunning(t *testing.T) {
+	service, store, _, options := newWorkbenchBatchFixture(t, 2)
 	now := time.Now().UTC()
-	batch := &history.LatencyBatch{BatchID: "crash-batch", RequestID: "crash-request", TestProject: WorkbenchLatencyProject, TimeoutSeconds: 1, RequestedAt: now, State: "running", Items: []history.LatencyBatchItem{
-		{ItemID: "queued-item", ProfileID: options[0].ProfileID, NodeKey: options[0].NodeKey, NodeIdentityKey: options[0].NodeIdentityKey, ConfigRevisionKey: options[0].ConfigRevisionKey, DisplayName: options[0].DisplayName, NodeType: options[0].Type, ExecutionState: "queued", PersistenceState: "pending", RequestedAt: now},
-		{ItemID: "uncommitted-item", ProfileID: options[1].ProfileID, NodeKey: options[1].NodeKey, NodeIdentityKey: options[1].NodeIdentityKey, ConfigRevisionKey: options[1].ConfigRevisionKey, DisplayName: options[1].DisplayName, NodeType: options[1].Type, ExecutionState: "running", PersistenceState: "saving", AttemptID: "attempt-interrupted", RequestedAt: now, StartedAt: now},
-		{ItemID: "committed-item", ProfileID: options[2].ProfileID, NodeKey: options[2].NodeKey, NodeIdentityKey: options[2].NodeIdentityKey, ConfigRevisionKey: options[2].ConfigRevisionKey, DisplayName: options[2].DisplayName, NodeType: options[2].Type, ExecutionState: "running", PersistenceState: "saving", AttemptID: "attempt-committed", RequestedAt: now, StartedAt: now},
+	batch := &history.LatencyBatch{BatchID: "crash-batch", RequestID: "crash-request", TestProject: WorkbenchLatencyProject, TimeoutSeconds: 1, RequestedAt: now, State: "completed", Items: []history.LatencyBatchItem{
+		{ItemID: "committed-item", ProfileID: options[0].ProfileID, NodeKey: options[0].NodeKey, NodeIdentityKey: options[0].NodeIdentityKey, ConfigRevisionKey: options[0].ConfigRevisionKey, DisplayName: options[0].DisplayName, NodeType: options[0].Type, ExecutionState: "completed", PersistenceState: "saving", AttemptID: "attempt-committed", RequestedAt: now, StartedAt: now, FinishedAt: now},
+		{ItemID: "staged-item", ProfileID: options[1].ProfileID, NodeKey: options[1].NodeKey, NodeIdentityKey: options[1].NodeIdentityKey, ConfigRevisionKey: options[1].ConfigRevisionKey, DisplayName: options[1].DisplayName, NodeType: options[1].Type, ExecutionState: "completed", PersistenceState: "saving", AttemptID: "attempt-staged", RequestedAt: now, StartedAt: now, FinishedAt: now},
 	}}
 	if err := store.CreateLatencyBatch(context.Background(), batch); err != nil {
 		t.Fatalf("create crash fixture: %v", err)
 	}
-	committedNode := monitor.MonitoredNode{NodeKey: options[2].NodeKey, NodeIdentityKey: options[2].NodeIdentityKey, ConfigRevisionKey: options[2].ConfigRevisionKey, DisplayName: options[2].DisplayName, Type: options[2].Type}
-	record := buildWorkbenchLatencyRecord("attempt-committed", options[2].ProfileID, committedNode, WorkbenchLatencyProject, now, now, now, knownWorkbenchLatencyResult(true))
-	record.Source = workbenchLatencySourceBatch
-	record.Method = workbenchLatencyMethod
-	record.MethodVersion = 1
-	record.Target = "https://probe.example/__down?bytes=1"
-	record.Unit = "ms"
-	if err := store.SaveLatencyTest(context.Background(), record); err != nil {
+	makeRecord := func(attemptID string, option MonitorNodeOptionDTO) *history.LatencyTest {
+		node := monitor.MonitoredNode{NodeKey: option.NodeKey, NodeIdentityKey: option.NodeIdentityKey, ConfigRevisionKey: option.ConfigRevisionKey, DisplayName: option.DisplayName, Type: option.Type}
+		record := buildWorkbenchLatencyRecord(attemptID, option.ProfileID, node, WorkbenchLatencyProject, now, now, now, knownWorkbenchLatencyResult(true))
+		record.Source = workbenchLatencySourceBatch
+		record.Method = workbenchLatencyMethod
+		record.MethodVersion = 1
+		record.Target = "https://probe.example/__down?bytes=1"
+		record.Unit = "ms"
+		return record
+	}
+	committedRecord := makeRecord("attempt-committed", options[0])
+	if err := store.SaveLatencyTest(context.Background(), committedRecord); err != nil {
 		t.Fatalf("save committed attempt fixture: %v", err)
+	}
+	stagedRecord := makeRecord("attempt-staged", options[1])
+	stagedItem := batch.Items[1]
+	stagedItem.Result = stagedRecord
+	stagedItem.ResultStaged = true
+	if err := store.UpdateLatencyBatchItem(context.Background(), &stagedItem); err != nil {
+		t.Fatalf("stage uncommitted attempt fixture: %v", err)
 	}
 	var requests atomic.Int32
 	service.latencyMeasureHook = func(context.Context, monitor.MonitoredNode, time.Duration) (*speedtester.Result, string, error) {
@@ -338,27 +394,49 @@ func TestWorkbenchLatencyBatchReopenMarksPendingItemsWithoutRerunning(t *testing
 		return knownWorkbenchLatencyResult(true), "https://probe.example/__down?bytes=1", nil
 	}
 	if err := service.reconcileWorkbenchLatencyBatches(); err != nil {
-		t.Fatalf("reconcile interrupted batch: %v", err)
+		t.Fatalf("reconcile pending save: %v", err)
 	}
 	reopened, err := store.GetLatencyBatch(context.Background(), batch.BatchID)
 	if err != nil {
-		t.Fatalf("get reconciled batch: %v", err)
+		t.Fatalf("get recovered batch: %v", err)
 	}
 	states := map[string]history.LatencyBatchItem{}
 	for _, item := range reopened.Items {
 		states[item.ItemID] = item
 	}
-	if reopened.State != "interrupted" || states["queued-item"].ExecutionState != "not_executed" || states["uncommitted-item"].ExecutionState != "interrupted" {
-		t.Fatalf("unstarted work must stay stopped after reopen: batch=%+v", reopened)
+	if reopened.State != "completed_with_save_failures" {
+		t.Fatalf("completed parent must be recomputed from child save state: state=%s", reopened.State)
 	}
 	committed := states["committed-item"]
 	if committed.ExecutionState != "completed" || committed.PersistenceState != "saved" || committed.Result == nil || len(committed.Result.Samples) != 1 {
-		t.Fatalf("committed raw attempt was not retained: %+v", committed)
+		t.Fatalf("committed attempt must be recognized without another write: %+v", committed)
+	}
+	staged := states["staged-item"]
+	if staged.ExecutionState != "completed" || staged.PersistenceState != "failed" || staged.AttemptID != "attempt-staged" || staged.Result == nil || !staged.ResultStaged {
+		t.Fatalf("staged attempt must be retryable under its original ID: %+v", staged)
 	}
 	if requests.Load() != 0 {
 		t.Fatalf("reopening a batch must never run requests: %d", requests.Load())
 	}
-	_ = paths
+	if _, err := service.RetryWorkbenchLatencyBatchItem(context.Background(), batch.BatchID, staged.ItemID); err != nil {
+		t.Fatalf("retry staged result: %v", err)
+	}
+	final, err := store.GetLatencyBatch(context.Background(), batch.BatchID)
+	if err != nil {
+		t.Fatalf("get after save retry: %v", err)
+	}
+	if final.State != "completed" || final.Items[1].AttemptID != "attempt-staged" || final.Items[1].PersistenceState != "saved" {
+		t.Fatalf("retry must commit the same attempt: %+v", final)
+	}
+	for _, attemptID := range []string{"attempt-committed", "attempt-staged"} {
+		record, err := store.GetLatencyTest(context.Background(), attemptID)
+		if err != nil || len(record.Samples) != 1 {
+			t.Fatalf("attempt %s should have exactly one persisted sample: record=%+v err=%v", attemptID, record, err)
+		}
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("save retry must not remeasure: %d requests", requests.Load())
+	}
 }
 
 func newWorkbenchBatchFixture(t *testing.T, count int) (*AppService, *history.Store, profiles.Paths, []MonitorNodeOptionDTO) {

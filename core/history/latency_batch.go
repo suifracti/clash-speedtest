@@ -204,6 +204,27 @@ func (d *DB) ListLatencyBatches(ctx context.Context, limit int) ([]LatencyBatch,
 	return batches, rows.Err()
 }
 
+// ListLatencyBatchesNeedingRecovery includes stale active parent states and
+// terminal parents whose child item still has unresolved execution or save
+// state. A committed attempt is checked separately when each batch is loaded.
+func (d *DB) ListLatencyBatchesNeedingRecovery(ctx context.Context) ([]LatencyBatch, error) {
+	rows, err := d.db.QueryContext(ctx, `SELECT b.batch_id,b.request_id,b.test_project,b.timeout_seconds,b.requested_at,b.state,(SELECT COUNT(*) FROM workbench_latency_batch_items i WHERE i.batch_id=b.batch_id) FROM workbench_latency_batches b WHERE b.state IN ('queued','running','cancelling','saving') OR EXISTS (SELECT 1 FROM workbench_latency_batch_items i WHERE i.batch_id=b.batch_id AND (i.execution_state IN ('queued','running') OR i.persistence_state IN ('pending','saving'))) ORDER BY b.requested_at DESC,b.batch_id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var batches []LatencyBatch
+	for rows.Next() {
+		var batch LatencyBatch
+		if err := rows.Scan(&batch.BatchID, &batch.RequestID, &batch.TestProject, &batch.TimeoutSeconds, &batch.RequestedAt, &batch.State, &batch.ItemCount); err != nil {
+			return nil, err
+		}
+		batch.RequestedAt = batch.RequestedAt.UTC()
+		batches = append(batches, batch)
+	}
+	return batches, rows.Err()
+}
+
 func nullableText(value string) any {
 	if value == "" {
 		return nil
