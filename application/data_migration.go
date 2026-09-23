@@ -126,9 +126,11 @@ func (s *AppService) resetMonitorRuntime() {
 	s.monitorMu.Lock()
 	s.monitorSchedulers = make(map[string]*monitor.Scheduler)
 	s.monitorRunner = nil
+	s.monitorBudget = nil
 	s.monitorLoadErr = nil
 	if s.historyStore != nil {
-		s.monitorRunner = monitor.NewRunner(monitor.RunnerConfig{Store: s.historyStore})
+		s.monitorBudget = monitor.NewBudgetController(s.historyStore, s.monitorBudgetLimits, nil)
+		s.monitorRunner = monitor.NewRunner(monitor.RunnerConfig{Store: s.historyStore, Budget: s.monitorBudget})
 	}
 	s.monitorMu.Unlock()
 }

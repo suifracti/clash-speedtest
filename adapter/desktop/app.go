@@ -340,6 +340,10 @@ func (a *App) GetMonitorStorageUsage() (*monitor.StorageUsage, error) {
 	return a.app.GetMonitorStorageUsage()
 }
 
+func (a *App) GetMonitorBudgetStatus() (*monitor.BudgetStatus, error) {
+	return a.app.GetMonitorBudgetStatus(a.context())
+}
+
 // GetMonitorSampleFacets returns the distinct filter dimensions present in raw samples.
 // Presentation-only read model used to populate the timeline filter controls.
 func (a *App) GetMonitorSampleFacets(since, until *time.Time) (*monitor.MonitorSampleFacets, error) {

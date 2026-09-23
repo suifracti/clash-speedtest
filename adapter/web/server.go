@@ -185,6 +185,7 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("POST /api/monitor/retention", s.handleApplyRetention)
 	mux.HandleFunc("POST /api/monitor/retention/preview", s.handlePreviewMonitorRetention)
 	mux.HandleFunc("GET /api/monitor/storage", s.handleGetMonitorStorage)
+	mux.HandleFunc("GET /api/monitor/budget", s.handleGetMonitorBudget)
 	mux.HandleFunc("GET /api/monitor/timeline", s.handleGetNodeTimelineSamples)
 	mux.HandleFunc("GET /api/monitor/facets", s.handleGetMonitorFacets)
 
@@ -1451,4 +1452,13 @@ func (s *Server) handleGetMonitorStorage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, usage)
+}
+
+func (s *Server) handleGetMonitorBudget(w http.ResponseWriter, r *http.Request) {
+	status, err := s.app.GetMonitorBudgetStatus(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
 }

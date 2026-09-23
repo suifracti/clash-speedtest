@@ -34,6 +34,7 @@ import type {
 	MonitorRetentionPreview,
 	MonitorRetentionResult,
 	MonitorStorageUsage,
+	MonitorBudgetStatus,
 	RawSampleCursorPageWire,
 	SampleCursorPage,
 } from '../types'
@@ -287,6 +288,10 @@ export function normalizeMonitorJob(wire: RawMonitorJobWire): MonitorJob {
 		persistenceError: wire.persistence_error ?? '',
 		storageState: wire.storage_state === 'storage_protected' ? 'storage_protected' : 'ok',
 		storageReason: wire.storage_reason ?? '',
+		budgetState: wire.budget_state ?? '',
+		budgetReason: wire.budget_reason ?? '',
+		skippedRounds: wire.skipped_rounds ?? 0,
+		resourceSkippedRounds: wire.resource_skipped_rounds ?? 0,
 		createdAt: wire.created_at ?? '',
 		updatedAt: wire.updated_at ?? '',
 	}
@@ -352,6 +357,13 @@ export async function createMonitorJob(req: MonitorJobCreateRequest): Promise<Mo
 export async function fetchMonitorStorageUsage(): Promise<MonitorStorageUsage> {
 	if (isWails()) return window.go!.desktop!.App!.GetMonitorStorageUsage()
 	const res = await fetch(`${API_BASE}/api/monitor/storage`)
+	if (!res.ok) throw await readError(res)
+	return res.json()
+}
+
+export async function fetchMonitorBudgetStatus(): Promise<MonitorBudgetStatus> {
+	if (isWails()) return window.go!.desktop!.App!.GetMonitorBudgetStatus()
+	const res = await fetch(`${API_BASE}/api/monitor/budget`)
 	if (!res.ok) throw await readError(res)
 	return res.json()
 }

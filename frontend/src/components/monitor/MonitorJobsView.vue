@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as api from '../../api/monitor'
 import UiSelect from '../common/UiSelect.vue'
 import MonitorRetentionPanel from './MonitorRetentionPanel.vue'
+import MonitorBudgetPanel from './MonitorBudgetPanel.vue'
 import type { MonitorJob, MonitorJobNode, MonitorJobPrefill, MonitorNodeOption, MonitorNodeSelectionContext, MonitorRun } from '../../types'
 
 const props = defineProps<{ prefill?: MonitorJobPrefill | null }>()
@@ -179,6 +180,7 @@ function runLabel(status: MonitorRun['status']): string {
     partial_failed: '部分失败',
     failed: '失败',
     skipped: '跳过（重叠）',
+    resource_limited: '资源额度限制（未计为节点失败）',
     persistence_failed: '保存失败（未持久化完整）',
   }[status] ?? status
 }
@@ -337,6 +339,7 @@ onBeforeUnmount(() => {
       </div>
 
       <MonitorRetentionPanel />
+      <MonitorBudgetPanel />
       <div v-if="prefillError" class="rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
         {{ prefillError }}
         <button type="button" class="ml-2 underline" @click="cancelPrefill">清除这次选择</button>
@@ -459,6 +462,10 @@ onBeforeUnmount(() => {
             <div v-if="job.storageState === 'storage_protected'" class="mt-2 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-800">
               容量保护：{{ job.storageReason }}。这段时间未采集，不代表节点失败。
             </div>
+            <div v-if="job.budgetState && job.budgetState !== 'ok'" class="mt-2 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-800">
+              Monitor 预算／调度：{{ job.budgetReason }}。未执行的周期不计为节点失败。
+            </div>
+            <p v-if="job.skippedRounds || job.resourceSkippedRounds" class="mt-1 text-[11px] text-content-muted">跳过周期 {{ job.skippedRounds || 0 }}；资源／等待跳过 {{ job.resourceSkippedRounds || 0 }}</p>
 
             <div class="mt-3 border-t border-border pt-2">
               <div class="mb-1 text-[11px] font-medium text-content-secondary">节点与时间轴</div>

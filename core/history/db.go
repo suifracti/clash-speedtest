@@ -130,9 +130,19 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 );
 `
 
+const monitorBudgetDDL = `
+CREATE TABLE monitor_budget_usage (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    utc_day TEXT NOT NULL,
+    requests_used INTEGER NOT NULL DEFAULT 0 CHECK (requests_used >= 0),
+    bytes_used INTEGER NOT NULL DEFAULT 0 CHECK (bytes_used >= 0)
+);
+INSERT INTO monitor_budget_usage (singleton, utc_day, requests_used, bytes_used) VALUES (1, '', 0, 0);
+`
+
 // CurrentSchemaVersion is the SQLite schema authority. Databases without a
 // schema_meta row are the explicitly recognized pre-version legacy schema.
-const CurrentSchemaVersion = 1
+const CurrentSchemaVersion = 2
 
 var (
 	ErrUnsupportedSchemaVersion = fmt.Errorf("unsupported SQLite schema version")
@@ -224,6 +234,18 @@ func migrateSchema(db *sql.DB) error {
 		if err := installSchemaVersion1(tx); err != nil {
 			return err
 		}
+		version = 1
+	}
+	if version == 1 {
+		if _, err := tx.Exec(monitorBudgetDDL); err != nil {
+			return fmt.Errorf("migrate Monitor budget ledger: %w", err)
+		}
+		if _, err := tx.Exec("UPDATE schema_meta SET schema_version = 2 WHERE singleton = 1"); err != nil {
+			return fmt.Errorf("record schema version 2: %w", err)
+		}
+	}
+	if err := validateMonitorBudgetSchema(tx); err != nil {
+		return err
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -332,7 +354,7 @@ func installSchemaVersion1(tx *sql.Tx) error {
 	if _, err := tx.Exec(schemaMetaDDL); err != nil {
 		return fmt.Errorf("initialize schema_meta: %w", err)
 	}
-	if _, err := tx.Exec("INSERT INTO schema_meta (singleton, schema_version) VALUES (1, ?)", CurrentSchemaVersion); err != nil {
+	if _, err := tx.Exec("INSERT INTO schema_meta (singleton, schema_version) VALUES (1, 1)"); err != nil {
 		return fmt.Errorf("record schema version: %w", err)
 	}
 	return nil
@@ -398,6 +420,28 @@ func validateCurrentSchema(tx *sql.Tx) error {
 		if err := requireColumns(tx, table, columns); err != nil {
 			return fmt.Errorf("table %s: %w", table, err)
 		}
+	}
+	return nil
+}
+
+func validateMonitorBudgetSchema(tx *sql.Tx) error {
+	present, err := tableExists(tx, "monitor_budget_usage")
+	if err != nil {
+		return err
+	}
+	if !present {
+		return fmt.Errorf("required table monitor_budget_usage is missing")
+	}
+	if err := requireColumns(tx, "monitor_budget_usage", []string{"singleton", "utc_day", "requests_used", "bytes_used"}); err != nil {
+		return err
+	}
+	var day string
+	var requests, bytes int64
+	if err := tx.QueryRow("SELECT utc_day, requests_used, bytes_used FROM monitor_budget_usage WHERE singleton = 1").Scan(&day, &requests, &bytes); err != nil {
+		return fmt.Errorf("read Monitor budget ledger: %w", err)
+	}
+	if requests < 0 || bytes < 0 {
+		return fmt.Errorf("Monitor budget ledger contains negative usage")
 	}
 	return nil
 }
@@ -2010,7 +2054,7 @@ func (d *DB) ApplyRetention(ctx context.Context, req monitor.RetentionRequest) (
 		time.Sleep(2 * time.Millisecond)
 	}
 
-	// Prune orphaned completed/failed/partial_failed runs older than cutoff with no remaining samples.
+	// Prune orphaned terminal runs older than cutoff with no remaining samples.
 	// Strictly preserve 'running' (in-flight) and 'skipped' (intentional no-op runs with 0 samples).
 	var runsDeleted int64
 	err = func() error {
@@ -2020,7 +2064,7 @@ func (d *DB) ApplyRetention(ctx context.Context, req monitor.RetentionRequest) (
 		res, err := d.db.ExecContext(ctx, `
 			DELETE FROM monitor_runs
 			WHERE scheduled_at < ?
-			  AND status IN ('completed', 'failed', 'partial_failed')
+			  AND status IN ('completed', 'failed', 'partial_failed', 'resource_limited')
 			  AND run_id NOT IN (SELECT DISTINCT run_id FROM monitor_samples)
 		`, cutoff)
 		if err != nil {

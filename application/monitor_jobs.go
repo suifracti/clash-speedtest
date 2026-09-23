@@ -61,23 +61,27 @@ type MonitorJobNodeDTO struct {
 // MonitorJobDTO is the public monitor-job read model. RawConfig is deliberately
 // absent: the scheduler retains it in memory, but neither Web nor Wails needs it.
 type MonitorJobDTO struct {
-	ID               string               `json:"id"`
-	Name             string               `json:"name"`
-	ProfileID        string               `json:"profile_id"`
-	ProfileName      string               `json:"profile_name"`
-	NodeKeys         []string             `json:"node_keys"`
-	Nodes            []MonitorJobNodeDTO  `json:"nodes"`
-	ProbeSet         monitor.ProbeSetType `json:"probe_set"`
-	IntervalSeconds  int64                `json:"interval_seconds"`
-	TimeoutSeconds   int64                `json:"timeout_seconds"`
-	State            monitor.JobState     `json:"state"`
-	BlockedReason    string               `json:"blocked_reason,omitempty"`
-	PersistenceState string               `json:"persistence_state"`
-	PersistenceError string               `json:"persistence_error,omitempty"`
-	StorageState     string               `json:"storage_state,omitempty"`
-	StorageReason    string               `json:"storage_reason,omitempty"`
-	CreatedAt        time.Time            `json:"created_at"`
-	UpdatedAt        time.Time            `json:"updated_at"`
+	ID                    string               `json:"id"`
+	Name                  string               `json:"name"`
+	ProfileID             string               `json:"profile_id"`
+	ProfileName           string               `json:"profile_name"`
+	NodeKeys              []string             `json:"node_keys"`
+	Nodes                 []MonitorJobNodeDTO  `json:"nodes"`
+	ProbeSet              monitor.ProbeSetType `json:"probe_set"`
+	IntervalSeconds       int64                `json:"interval_seconds"`
+	TimeoutSeconds        int64                `json:"timeout_seconds"`
+	State                 monitor.JobState     `json:"state"`
+	BlockedReason         string               `json:"blocked_reason,omitempty"`
+	PersistenceState      string               `json:"persistence_state"`
+	PersistenceError      string               `json:"persistence_error,omitempty"`
+	StorageState          string               `json:"storage_state,omitempty"`
+	StorageReason         string               `json:"storage_reason,omitempty"`
+	BudgetState           string               `json:"budget_state,omitempty"`
+	BudgetReason          string               `json:"budget_reason,omitempty"`
+	SkippedRounds         int64                `json:"skipped_rounds,omitempty"`
+	ResourceSkippedRounds int64                `json:"resource_skipped_rounds,omitempty"`
+	CreatedAt             time.Time            `json:"created_at"`
+	UpdatedAt             time.Time            `json:"updated_at"`
 }
 
 const (
@@ -350,6 +354,7 @@ func (s *AppService) loadPersistedMonitorJobs() error {
 			Runner:       s.monitorRunner,
 			Store:        s.historyStore,
 			StorageGuard: s.monitorStorageGuard,
+			BudgetGuard:  s.monitorBudgetGuard,
 		})
 		if err != nil {
 			return fmt.Errorf("restore monitor job %s: %w", definition.ID, err)
@@ -510,23 +515,27 @@ func monitorJobDTO(job monitor.MonitorJob, profileName string) MonitorJobDTO {
 		}
 	}
 	return MonitorJobDTO{
-		ID:               job.ID,
-		Name:             job.Name,
-		ProfileID:        job.ProfileID,
-		ProfileName:      profileName,
-		NodeKeys:         nodeKeys,
-		Nodes:            nodes,
-		ProbeSet:         job.ProbeSet,
-		IntervalSeconds:  int64(job.Interval / time.Second),
-		TimeoutSeconds:   int64(job.Timeout / time.Second),
-		State:            job.State,
-		BlockedReason:    job.BlockedReason,
-		PersistenceState: job.PersistenceState,
-		PersistenceError: job.PersistenceError,
-		StorageState:     job.StorageState,
-		StorageReason:    job.StorageReason,
-		CreatedAt:        job.CreatedAt,
-		UpdatedAt:        job.UpdatedAt,
+		ID:                    job.ID,
+		Name:                  job.Name,
+		ProfileID:             job.ProfileID,
+		ProfileName:           profileName,
+		NodeKeys:              nodeKeys,
+		Nodes:                 nodes,
+		ProbeSet:              job.ProbeSet,
+		IntervalSeconds:       int64(job.Interval / time.Second),
+		TimeoutSeconds:        int64(job.Timeout / time.Second),
+		State:                 job.State,
+		BlockedReason:         job.BlockedReason,
+		PersistenceState:      job.PersistenceState,
+		PersistenceError:      job.PersistenceError,
+		StorageState:          job.StorageState,
+		StorageReason:         job.StorageReason,
+		BudgetState:           job.BudgetState,
+		BudgetReason:          job.BudgetReason,
+		SkippedRounds:         job.SkippedRounds,
+		ResourceSkippedRounds: job.ResourceSkippedRounds,
+		CreatedAt:             job.CreatedAt,
+		UpdatedAt:             job.UpdatedAt,
 	}
 }
 
