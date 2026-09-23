@@ -108,6 +108,26 @@ func waitRecoveryRuns(t *testing.T, events <-chan monitor.MonitorRun, jobIDs ...
 	return got
 }
 
+func waitRecoveryRunCountWithout(t *testing.T, events <-chan monitor.MonitorRun, targetJobID, forbiddenJobID string, count int) {
+	t.Helper()
+	timer := time.NewTimer(4 * time.Second)
+	defer timer.Stop()
+	completed := 0
+	for completed < count {
+		select {
+		case run := <-events:
+			if run.JobID == forbiddenJobID {
+				t.Fatalf("cancelled recovery job %s ran again in a later cycle: %+v", forbiddenJobID, run)
+			}
+			if run.JobID == targetJobID {
+				completed++
+			}
+		case <-timer.C:
+			t.Fatalf("timed out waiting for %d later runs from %s; received %d", count, targetJobID, completed)
+		}
+	}
+}
+
 func createRecoveryJob(t *testing.T, svc *AppService, profileID string, tier monitor.SamplingTier) (*MonitorJobDTO, string) {
 	t.Helper()
 	options, err := svc.ListMonitorNodeOptions()
@@ -188,6 +208,19 @@ func TestMonitorRecoveryWaitCanBeCancelledByPauseStopDisableAndDelete(t *testing
 	if err := first.Close(); err != nil {
 		t.Fatal(err)
 	}
+	intervalDB, err := sql.Open("sqlite", filepath.Join(historyDir, "history.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for profileID, interval := range map[string]time.Duration{"occupier": 250 * time.Millisecond, "disable": 40 * time.Millisecond} {
+		if _, err := intervalDB.Exec(`UPDATE monitor_job_definitions SET interval_ns = ? WHERE job_id = ?`, interval.Nanoseconds(), jobs[profileID].ID); err != nil {
+			_ = intervalDB.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := intervalDB.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	reopenedStore, err := history.NewStore(historyDir)
 	if err != nil {
@@ -207,6 +240,9 @@ func TestMonitorRecoveryWaitCanBeCancelledByPauseStopDisableAndDelete(t *testing
 	case <-blockedDialer.started:
 	case <-time.After(4 * time.Second):
 		t.Fatal("first recovered request did not enter the controlled transport")
+	}
+	if err := reopened.SetMonitorJobResumeOnLaunch(jobs["occupier"].ID, false); err != nil {
+		t.Fatal(err)
 	}
 	for _, profileID := range []string{"pause", "stop", "disable", "delete"} {
 		job, err := reopened.GetMonitorJob(jobs[profileID].ID)
@@ -230,8 +266,12 @@ func TestMonitorRecoveryWaitCanBeCancelledByPauseStopDisableAndDelete(t *testing
 	stopped, _ := reopened.GetMonitorJob(jobs["stop"].ID)
 	disabled, _ := reopened.GetMonitorJob(jobs["disable"].ID)
 	if paused.DesiredState != monitor.JobStatePaused || stopped.DesiredState != monitor.JobStateStopped ||
-		disabled.State != monitor.JobStateRunning || disabled.DesiredState != monitor.JobStateRunning || disabled.ResumeOnLaunch {
+		disabled.State != monitor.JobStateStopped || disabled.DesiredState != monitor.JobStateRunning || disabled.ResumeOnLaunch {
 		t.Fatalf("cancel actions changed the wrong runtime or durable intent: paused=%+v stopped=%+v disabled=%+v", paused, stopped, disabled)
+	}
+	occupier, _ := reopened.GetMonitorJob(jobs["occupier"].ID)
+	if occupier.State != monitor.JobStateRunning || occupier.DesiredState != monitor.JobStateRunning || occupier.ResumeOnLaunch {
+		t.Fatalf("disabling future recovery stopped an already-admitted task: %+v", occupier)
 	}
 	if _, err := reopened.GetMonitorJob(jobs["delete"].ID); err == nil {
 		t.Fatal("deleted monitor task remains registered")
@@ -241,13 +281,17 @@ func TestMonitorRecoveryWaitCanBeCancelledByPauseStopDisableAndDelete(t *testing
 		t.Fatalf("deleting the task removed its historical run: runs=%+v err=%v", deletedHistory, err)
 	}
 	close(blockedDialer.release)
-	waitRecoveryRuns(t, secondSignals.completed, jobs["occupier"].ID)
-	reopened.StopAllMonitorJobs()
+	waitRecoveryRunCountWithout(t, secondSignals.completed, jobs["occupier"].ID, jobs["disable"].ID, 3)
 	for _, profileID := range []string{"pause", "stop", "disable", "delete"} {
 		if got := blockedDialer.count(nodes[profileID]); got != 0 {
 			t.Fatalf("cancelled %s recovery issued %d requests", profileID, got)
 		}
 	}
+	disabledRuns, err := reopened.QueryMonitorRuns(context.Background(), jobs["disable"].ID, 10)
+	if err != nil || len(disabledRuns) != 1 {
+		t.Fatalf("cancelled recovery created a later run or failure sample: runs=%+v err=%v", disabledRuns, err)
+	}
+	reopened.StopAllMonitorJobs()
 }
 
 func TestMonitorRecoveryRestoresOnlyExplicitlyRunningOptedInJobsOnce(t *testing.T) {
@@ -450,6 +494,23 @@ func TestMonitorRecoveryBlocksRevisionAndBudgetFailuresUntilExplicitStart(t *tes
 	case run := <-secondSignals.completed:
 		t.Fatalf("blocked recovery unexpectedly persisted a run: %+v", run)
 	default:
+	}
+	if err := reopened.StopMonitorJob(revisionJob.ID); err != nil {
+		t.Fatalf("stop should persist stopped intent while preserving the configuration block: %v", err)
+	}
+	stoppedRevision, err := reopened.GetMonitorJob(revisionJob.ID)
+	if err != nil || stoppedRevision.DesiredState != monitor.JobStateStopped || stoppedRevision.State != monitor.JobStateBlocked || !strings.Contains(stoppedRevision.BlockedReason, "revision") {
+		t.Fatalf("Stop cleared the invalid configuration block: job=%+v err=%v", stoppedRevision, err)
+	}
+	if err := reopened.StartMonitorJob(revisionJob.ID); err == nil || !strings.Contains(err.Error(), "revision") {
+		t.Fatalf("Start bypassed the unresolved revision conflict: %v", err)
+	}
+	if got := dialer.count(revisionNode); got != 1 {
+		t.Fatalf("Start after Stop issued a request for invalid configuration: %d", got-1)
+	}
+	stoppedRuns, err := reopened.QueryMonitorRuns(context.Background(), revisionJob.ID, 10)
+	if err != nil || len(stoppedRuns) != 1 {
+		t.Fatalf("blocked Stop/Start created a false run result: runs=%+v err=%v", stoppedRuns, err)
 	}
 	if err := os.Remove(settingsFile); err != nil {
 		t.Fatal(err)

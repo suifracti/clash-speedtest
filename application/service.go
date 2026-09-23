@@ -2026,14 +2026,15 @@ func (s *AppService) SetMonitorJobResumeOnLaunch(jobID string, enabled bool) err
 	}
 	job := sched.Job()
 	cancelledRecoveryAdmission := false
-	if !enabled && job.RecoveryState == monitor.RecoveryStateRestoring {
+	if !enabled {
 		cancelledRecoveryAdmission = sched.CancelPendingRecoveryAdmission()
 	}
 	if err := s.persistMonitorIntent(jobID, enabled, job.DesiredState); err != nil {
 		warning := fmt.Sprintf("应用启动恢复设置未能保存：%v", err)
 		recoveryState, reason := job.RecoveryState, job.RecoveryReason
 		if cancelledRecoveryAdmission {
-			recoveryState, reason = monitor.RecoveryStateActive, ""
+			recoveryState = monitor.RecoveryStateBlocked
+			reason = "本次启动恢复已取消，但设置未能保存；下次启动仍可能按此前保存的意图恢复"
 		}
 		sched.SetLaunchIntent(job.ResumeOnLaunch, job.DesiredState, recoveryState, reason, warning)
 		return fmt.Errorf("%s", warning)

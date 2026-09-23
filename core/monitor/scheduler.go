@@ -175,20 +175,34 @@ func (s *Scheduler) CancelPendingAdmission() bool {
 	return true
 }
 
-// CancelPendingRecoveryAdmission cancels only the first restored round before
-// it is admitted. Later periodic work and already-admitted requests continue.
+// CancelPendingRecoveryAdmission stops a restored scheduler whose first round
+// has not been admitted. Once that round is admitted, it leaves the current
+// scheduler running so disabling future launch recovery does not stop sampling.
 func (s *Scheduler) CancelPendingRecoveryAdmission() bool {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !s.recoveryPending || s.pendingCancel == nil {
+	if !s.recoveryPending {
+		s.mu.Unlock()
 		return false
 	}
+	s.stopping = true
+	s.state = JobStateStopped
+	s.job.State = JobStateStopped
+	s.job.UpdatedAt = time.Now()
 	s.recoveryPending = false
-	if s.state == JobStateRunning {
-		s.job.RecoveryState = RecoveryStateActive
-		s.job.RecoveryReason = ""
+	if s.cancel != nil {
+		s.cancel()
 	}
-	s.pendingCancel()
+	if s.pendingCancel != nil {
+		s.pendingCancel()
+	}
+	s.mu.Unlock()
+
+	s.runWg.Wait()
+	s.loopWg.Wait()
+
+	s.mu.Lock()
+	s.stopping = false
+	s.mu.Unlock()
 	return true
 }
 
@@ -392,9 +406,8 @@ func (s *Scheduler) Stop() error {
 		return nil
 	}
 	if s.state == JobStateBlocked {
-		s.state = JobStateStopped
-		s.job.State = JobStateStopped
-		s.job.BlockedReason = ""
+		// Keep configuration validity separate from the user's stopped intent.
+		// Start must continue to revalidate this blocked job until the cause is fixed.
 		s.job.UpdatedAt = time.Now()
 		s.recoveryPending = false
 		s.mu.Unlock()
