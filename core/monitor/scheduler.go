@@ -307,6 +307,7 @@ func (s *Scheduler) TriggerImmediate(ctx context.Context) (*MonitorRun, error) {
 	s.mu.Lock()
 	blocked := s.state == JobStateBlocked
 	blockedReason := s.job.BlockedReason
+	allowPaused := s.state == JobStatePaused
 	if s.state == JobStateStopped || blocked || s.stopping {
 		s.mu.Unlock()
 		if blocked && blockedReason != "" {
@@ -347,7 +348,7 @@ func (s *Scheduler) TriggerImmediate(ctx context.Context) (*MonitorRun, error) {
 		defer stopAfter()
 	}
 
-	run, _, err := s.runner.ExecuteRunWithAdmission(runCtx, &jobCopy, time.Now(), func() error { return s.admitPending(id, runCtx) })
+	run, _, err := s.runner.ExecuteRunWithAdmission(runCtx, &jobCopy, time.Now(), func() error { return s.admitPending(id, runCtx, allowPaused) })
 	if err != nil {
 		if s.markBudgetBlock(err) {
 			return run, err
@@ -434,13 +435,14 @@ func (s *Scheduler) clearPending(id uint64) {
 	s.mu.Unlock()
 }
 
-func (s *Scheduler) admitPending(id uint64, ctx context.Context) error {
+func (s *Scheduler) admitPending(id uint64, ctx context.Context, allowPaused bool) error {
 	if reason := s.checkStorage(); reason != "" {
 		return budgetBlock("storage_protected", reason)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.pendingID != id || s.stopping || s.state != JobStateRunning || ctx.Err() != nil {
+	stateAllowed := s.state == JobStateRunning || (allowPaused && s.state == JobStatePaused)
+	if s.pendingID != id || s.stopping || !stateAllowed || ctx.Err() != nil {
 		return budgetBlock("cancelled", "Monitor 等待已取消，本周期未探测")
 	}
 	s.pendingCancel = nil
@@ -459,7 +461,7 @@ func (s *Scheduler) executeScheduledRound(ctx context.Context, scheduledAt time.
 		return
 	}
 
-	run, _, err := s.runner.ExecuteRunWithAdmission(ctx, &jobCopy, scheduledAt, func() error { return s.admitPending(id, ctx) })
+	run, _, err := s.runner.ExecuteRunWithAdmission(ctx, &jobCopy, scheduledAt, func() error { return s.admitPending(id, ctx, false) })
 	if err != nil {
 		if s.markBudgetBlock(err) {
 			return

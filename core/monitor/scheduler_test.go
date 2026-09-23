@@ -394,6 +394,18 @@ func TestScheduler_TriggerImmediate(t *testing.T) {
 	if scheduler.CompletedRuns() < 1 {
 		t.Fatalf("Expected CompletedRuns >= 1, got %d", scheduler.CompletedRuns())
 	}
+
+	completedBeforePausedTrigger := scheduler.CompletedRuns()
+	if err := scheduler.Pause(); err != nil {
+		t.Fatalf("Pause before manual trigger failed: %v", err)
+	}
+	pausedRun, err := scheduler.TriggerImmediate(ctx)
+	if err != nil {
+		t.Fatalf("TriggerImmediate while paused failed: %v", err)
+	}
+	if pausedRun == nil || pausedRun.Status != RunStatusCompleted || scheduler.CompletedRuns() != completedBeforePausedTrigger+1 {
+		t.Fatalf("manual trigger while paused did not complete one run: run=%+v completed=%d before=%d", pausedRun, scheduler.CompletedRuns(), completedBeforePausedTrigger)
+	}
 }
 
 func TestScheduler_PausedThenStartNoDuplicateLoop(t *testing.T) {
