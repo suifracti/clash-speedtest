@@ -155,6 +155,9 @@ func TestWorkbenchLatencyTestUsesStableIdentityPersistsAndSeparatesProfiles(t *t
 	if result.PersistenceState != "saving" || result.ProfileID != "profile-a" || result.NodeKey != optionA.NodeKey {
 		t.Fatalf("unexpected saved result: %+v", result)
 	}
+	if result.Source != "workbench_manual" || result.Method != workbenchLatencyMethod || result.MethodVersion != 1 || result.Target == "" || result.Unit != "ms" {
+		t.Fatalf("new attempt must retain truthful source and probe metadata: %+v", result)
+	}
 	if len(result.Samples) == 0 || result.TotalSamples != len(result.Samples) {
 		t.Fatalf("expected raw latency samples, got %+v", result)
 	}
@@ -234,7 +237,7 @@ func TestWorkbenchLatencyTestUsesStableIdentityPersistsAndSeparatesProfiles(t *t
 	if err != nil {
 		t.Fatalf("reopen query: %v", err)
 	}
-	if reopenedHistory.ProfileID != "profile-a" || len(reopenedHistory.Samples) != len(result.Samples) {
+	if reopenedHistory.ProfileID != "profile-a" || len(reopenedHistory.Samples) != len(result.Samples) || reopenedHistory.Source != "workbench_manual" || reopenedHistory.Method != workbenchLatencyMethod || reopenedHistory.Target == "" || reopenedHistory.Unit != "ms" {
 		t.Fatalf("reopened record mismatch: %+v", reopenedHistory)
 	}
 

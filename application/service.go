@@ -63,10 +63,17 @@ type AppService struct {
 
 	// latencyPersistenceWG keeps the result-first workbench path from closing
 	// history.db while a just-finished latency result is still being persisted.
-	latencyPersistenceWG sync.WaitGroup
+	latencyPersistenceWG   sync.WaitGroup
+	workbenchWG            sync.WaitGroup
+	workbenchMu            sync.Mutex
+	workbenchRetryMu       sync.Mutex
+	workbenchActiveBatch   *workbenchLatencyBatchRuntime
+	workbenchActiveSingles int
+	workbenchClosed        bool
 	// latencySaveHook is test-only dependency injection for slow/failing-save
 	// verification. Production uses historyStore.SaveLatencyTest directly.
-	latencySaveHook func(context.Context, *history.LatencyTest) error
+	latencySaveHook    func(context.Context, *history.LatencyTest) error
+	latencyMeasureHook func(context.Context, monitor.MonitoredNode, time.Duration) (*speedtester.Result, string, error)
 }
 
 // NewAppService creates a new application service instance.
@@ -116,6 +123,9 @@ func newAppService(hStore *history.Store, appPaths appdata.AppPaths, profilePath
 				log.Printf("monitor job definitions were not loaded: %v", err)
 			}
 		}
+	}
+	if err := svc.reconcileWorkbenchLatencyBatches(); err != nil {
+		log.Printf("workbench latency batch recovery status was not reconciled: %v", err)
 	}
 
 	// Initialize default Mihomo controller adapter
@@ -175,7 +185,17 @@ func (s *AppService) Stop() {
 
 // Close stops all background tasks and cleanly releases database connections.
 func (s *AppService) Close() error {
+	s.workbenchMu.Lock()
+	s.workbenchClosed = true
+	if s.workbenchActiveBatch != nil {
+		s.workbenchActiveBatch.mu.Lock()
+		s.workbenchActiveBatch.shutdown = true
+		s.workbenchActiveBatch.cancel()
+		s.workbenchActiveBatch.mu.Unlock()
+	}
+	s.workbenchMu.Unlock()
 	s.Stop()
+	s.workbenchWG.Wait()
 	s.latencyPersistenceWG.Wait()
 	if s.historyStore != nil {
 		return s.historyStore.Close()
@@ -483,6 +503,17 @@ func (s *AppService) runBatchTest(ctx context.Context, cancel context.CancelFunc
 
 // TestSingle executes a single node test synchronously.
 func (s *AppService) TestSingle(req SingleTestRequest, token string) (*history.RunNodeResult, error) {
+	metrics := ParseMetricSlice(req.Config.Metrics)
+	// SpeedTester.New falls back to the selected mode when ParseMetricSlice
+	// produces an empty set, and that mode includes latency. Guard that same
+	// fallback here so malformed legacy metric names cannot bypass a batch.
+	if metrics.Latency || metrics.IsZero() {
+		if err := s.beginWorkbenchSingle(); err != nil {
+			return nil, err
+		}
+		defer s.endWorkbenchSingle()
+	}
+
 	airportStore, err := profiles.LoadStore(s.profilePaths.StoreFile())
 	if err != nil {
 		return nil, fmt.Errorf("加载机场配置失败: %w", err)
@@ -498,7 +529,6 @@ func (s *AppService) TestSingle(req SingleTestRequest, token string) (*history.R
 		return nil, fmt.Errorf("机场节点缓存不存在")
 	}
 
-	metrics := ParseMetricSlice(req.Config.Metrics)
 	mode := metrics.ToSpeedMode()
 
 	concurrent := req.Config.Concurrent

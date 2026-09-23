@@ -189,6 +189,57 @@ export interface WorkbenchLatencyTestRequest {
   timeout_seconds: number
 }
 
+export interface WorkbenchLatencyBatchSelection {
+  profile_id: string
+  node_key: string
+  node_identity_key: string
+  config_revision_key: string
+  display_name: string
+  node_type: string
+}
+
+export interface WorkbenchLatencyBatchRequest {
+  request_id: string
+  test_project: 'latency_stability'
+  timeout_seconds: number
+  selections: WorkbenchLatencyBatchSelection[]
+}
+
+export type WorkbenchLatencyBatchExecutionState = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'skipped_config' | 'not_executed' | 'interrupted'
+export type WorkbenchLatencyBatchPersistenceState = 'pending' | 'saving' | 'saved' | 'failed' | 'not_applicable'
+
+export interface WorkbenchLatencyBatchItem {
+  item_id: string
+  batch_id: string
+  ordinal: number
+  profile_id: string
+  node_key: string
+  node_identity_key: string
+  config_revision_key: string
+  display_name: string
+  node_type: string
+  execution_state: WorkbenchLatencyBatchExecutionState
+  persistence_state: WorkbenchLatencyBatchPersistenceState
+  attempt_id?: string
+  requested_at: string
+  started_at?: string
+  finished_at?: string
+  error_message?: string
+  persistence_error?: string
+  result?: WorkbenchLatencyTest
+}
+
+export interface WorkbenchLatencyBatch {
+  batch_id: string
+  request_id: string
+  test_project: 'latency_stability'
+  timeout_seconds: number
+  requested_at: string
+  state: string
+  item_count: number
+  items?: WorkbenchLatencyBatchItem[]
+}
+
 export interface WorkbenchLatencyHistoryQuery {
   profile_id: string
   node_key: string
@@ -233,6 +284,11 @@ export interface WorkbenchLatencyTest {
   display_name: string
   node_type: string
   test_project: 'latency_stability'
+  source?: string
+  method?: string
+  method_version?: number
+  target?: string
+  unit?: string
   requested_at: string
   started_at: string
   finished_at: string

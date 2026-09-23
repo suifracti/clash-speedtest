@@ -437,6 +437,55 @@ func (s *Store) GetLatencyTestInWindow(ctx context.Context, attemptID string, si
 	return s.db.GetLatencyTestInWindow(ctx, attemptID, since, until)
 }
 
+func (s *Store) CreateLatencyBatch(ctx context.Context, batch *LatencyBatch) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
+	return s.db.CreateLatencyBatch(ctx, batch)
+}
+
+func (s *Store) UpdateLatencyBatchItem(ctx context.Context, item *LatencyBatchItem) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
+	return s.db.UpdateLatencyBatchItem(ctx, item)
+}
+
+func (s *Store) UpdateLatencyBatchState(ctx context.Context, batchID, state string) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
+	return s.db.UpdateLatencyBatchState(ctx, batchID, state)
+}
+
+func (s *Store) GetLatencyBatch(ctx context.Context, batchID string) (*LatencyBatch, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
+	return s.db.GetLatencyBatch(ctx, batchID)
+}
+
+func (s *Store) FindLatencyBatchByRequestID(ctx context.Context, requestID string) (*LatencyBatch, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
+	return s.db.FindLatencyBatchByRequestID(ctx, requestID)
+}
+
+func (s *Store) ListLatencyBatches(ctx context.Context, limit int) ([]LatencyBatch, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
+	return s.db.ListLatencyBatches(ctx, limit)
+}
+
+func (s *Store) ListLatencyBatchesNeedingRecovery(ctx context.Context) ([]LatencyBatch, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
+	return s.db.ListLatencyBatchesNeedingRecovery(ctx)
+}
+
 // SetTestBatchFailAt injects a batch failure on batch n for testing partial retention semantics.
 func (s *Store) SetTestBatchFailAt(n int) {
 	if s.db != nil {

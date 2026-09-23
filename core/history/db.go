@@ -140,9 +140,44 @@ CREATE TABLE monitor_budget_usage (
 INSERT INTO monitor_budget_usage (singleton, utc_day, requests_used, bytes_used) VALUES (1, '', 0, 0);
 `
 
+const workbenchLatencyBatchDDL = `
+CREATE TABLE IF NOT EXISTS workbench_latency_batches (
+    batch_id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL UNIQUE,
+    test_project TEXT NOT NULL,
+    timeout_seconds INTEGER NOT NULL,
+    requested_at DATETIME NOT NULL,
+    state TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS workbench_latency_batch_items (
+    item_id TEXT PRIMARY KEY,
+    batch_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,
+    profile_id TEXT NOT NULL,
+    node_key TEXT NOT NULL,
+    node_identity_key TEXT NOT NULL,
+    config_revision_key TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    node_type TEXT NOT NULL,
+    execution_state TEXT NOT NULL,
+    persistence_state TEXT NOT NULL,
+    attempt_id TEXT UNIQUE,
+    requested_at DATETIME NOT NULL,
+    started_at DATETIME,
+    finished_at DATETIME,
+    error_message TEXT NOT NULL DEFAULT '',
+    persistence_error TEXT NOT NULL DEFAULT '',
+    result_json TEXT NOT NULL DEFAULT '',
+    UNIQUE(batch_id, ordinal),
+    FOREIGN KEY(batch_id) REFERENCES workbench_latency_batches(batch_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_workbench_latency_batch_items_batch
+    ON workbench_latency_batch_items(batch_id, ordinal);
+`
+
 // CurrentSchemaVersion is the SQLite schema authority. Databases without a
 // schema_meta row are the explicitly recognized pre-version legacy schema.
-const CurrentSchemaVersion = 4
+const CurrentSchemaVersion = 5
 
 var (
 	ErrUnsupportedSchemaVersion = fmt.Errorf("unsupported SQLite schema version")
@@ -262,6 +297,15 @@ func migrateSchema(db *sql.DB) error {
 			return fmt.Errorf("record schema version 4: %w", err)
 		}
 		version = 4
+	}
+	if version == 4 {
+		if err := migrateWorkbenchLatencyBatchesV5(tx); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("UPDATE schema_meta SET schema_version = 5 WHERE singleton = 1"); err != nil {
+			return fmt.Errorf("record schema version 5: %w", err)
+		}
+		version = 5
 	}
 	if err := validateCurrentSchema(tx, version); err != nil {
 		return fmt.Errorf("validate schema version %d after migration: %w", version, err)
@@ -488,6 +532,11 @@ func validateCurrentSchema(tx *sql.Tx, version int) error {
 	if version >= 4 {
 		tables["monitor_job_definitions"] = append(tables["monitor_job_definitions"], "resume_on_launch", "desired_state")
 	}
+	if version >= 5 {
+		tables["workbench_latency_tests"] = append(tables["workbench_latency_tests"], "source", "method", "method_version", "target", "unit")
+		tables["workbench_latency_batches"] = []string{"batch_id", "request_id", "test_project", "timeout_seconds", "requested_at", "state"}
+		tables["workbench_latency_batch_items"] = []string{"item_id", "batch_id", "ordinal", "profile_id", "node_key", "node_identity_key", "config_revision_key", "display_name", "node_type", "execution_state", "persistence_state", "attempt_id", "requested_at", "started_at", "finished_at", "error_message", "persistence_error", "result_json"}
+	}
 	for table, columns := range tables {
 		present, err := tableExists(tx, table)
 		if err != nil {
@@ -499,6 +548,30 @@ func validateCurrentSchema(tx *sql.Tx, version int) error {
 		if err := requireColumns(tx, table, columns); err != nil {
 			return fmt.Errorf("table %s: %w", table, err)
 		}
+	}
+	return nil
+}
+
+func migrateWorkbenchLatencyBatchesV5(tx *sql.Tx) error {
+	columns, err := tableColumns(tx, "workbench_latency_tests")
+	if err != nil {
+		return err
+	}
+	for _, change := range []struct{ name, ddl string }{
+		{"source", "ALTER TABLE workbench_latency_tests ADD COLUMN source TEXT NOT NULL DEFAULT ''"},
+		{"method", "ALTER TABLE workbench_latency_tests ADD COLUMN method TEXT NOT NULL DEFAULT ''"},
+		{"method_version", "ALTER TABLE workbench_latency_tests ADD COLUMN method_version INTEGER NOT NULL DEFAULT 0"},
+		{"target", "ALTER TABLE workbench_latency_tests ADD COLUMN target TEXT NOT NULL DEFAULT ''"},
+		{"unit", "ALTER TABLE workbench_latency_tests ADD COLUMN unit TEXT NOT NULL DEFAULT ''"},
+	} {
+		if !columns[change.name] {
+			if _, err := tx.Exec(change.ddl); err != nil {
+				return fmt.Errorf("migrate workbench latency %s: %w", change.name, err)
+			}
+		}
+	}
+	if _, err := tx.Exec(workbenchLatencyBatchDDL); err != nil {
+		return fmt.Errorf("create workbench latency batches: %w", err)
 	}
 	return nil
 }
@@ -1080,8 +1153,9 @@ func (d *DB) SaveLatencyTest(ctx context.Context, test *LatencyTest) error {
 			attempt_id, profile_id, node_key, node_identity_key, config_revision_key,
 			display_name, node_type, test_project, requested_at, started_at, finished_at,
 			status, latency_ms, jitter_ms, packet_loss, total_samples,
-			success_samples, failure_samples, error_message
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			success_samples, failure_samples, error_message, source, method,
+			method_version, target, unit
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		test.AttemptID,
 		test.ProfileID,
@@ -1102,6 +1176,11 @@ func (d *DB) SaveLatencyTest(ctx context.Context, test *LatencyTest) error {
 		test.SuccessSamples,
 		test.FailureSamples,
 		test.ErrorMessage,
+		test.Source,
+		test.Method,
+		test.MethodVersion,
+		test.Target,
+		test.Unit,
 	)
 	if err != nil {
 		return fmt.Errorf("insert latency test %s: %w", test.AttemptID, err)
@@ -1177,7 +1256,8 @@ func (d *DB) QueryLatencyTests(ctx context.Context, filter LatencyTestFilter) (*
 		SELECT attempt_id, profile_id, node_key, node_identity_key, config_revision_key,
 			display_name, node_type, test_project, requested_at, started_at, finished_at,
 			status, latency_ms, jitter_ms, packet_loss, total_samples,
-			 success_samples, failure_samples, error_message
+			 success_samples, failure_samples, error_message, source, method,
+			method_version, target, unit
 		FROM workbench_latency_tests AS t
 		WHERE `+where+`
 		ORDER BY finished_at DESC, attempt_id DESC
@@ -1236,7 +1316,8 @@ func (d *DB) getLatencyTest(ctx context.Context, attemptID string, since, until 
 		SELECT attempt_id, profile_id, node_key, node_identity_key, config_revision_key,
 			display_name, node_type, test_project, requested_at, started_at, finished_at,
 			status, latency_ms, jitter_ms, packet_loss, total_samples,
-			success_samples, failure_samples, error_message
+			success_samples, failure_samples, error_message, source, method,
+			method_version, target, unit
 		FROM workbench_latency_tests
 		WHERE attempt_id = ?
 	`, attemptID)
@@ -1281,6 +1362,11 @@ func scanLatencyTest(scanner latencyTestScanner) (*LatencyTest, error) {
 		&test.SuccessSamples,
 		&test.FailureSamples,
 		&errorMessage,
+		&test.Source,
+		&test.Method,
+		&test.MethodVersion,
+		&test.Target,
+		&test.Unit,
 	); err != nil {
 		return nil, err
 	}
