@@ -62,28 +62,34 @@ type MonitorJobNodeDTO struct {
 // MonitorJobDTO is the public monitor-job read model. RawConfig is deliberately
 // absent: the scheduler retains it in memory, but neither Web nor Wails needs it.
 type MonitorJobDTO struct {
-	ID                    string               `json:"id"`
-	Name                  string               `json:"name"`
-	ProfileID             string               `json:"profile_id"`
-	ProfileName           string               `json:"profile_name"`
-	NodeKeys              []string             `json:"node_keys"`
-	Nodes                 []MonitorJobNodeDTO  `json:"nodes"`
-	ProbeSet              monitor.ProbeSetType `json:"probe_set"`
-	SamplingTier          monitor.SamplingTier `json:"sampling_tier"`
-	IntervalSeconds       int64                `json:"interval_seconds"`
-	TimeoutSeconds        int64                `json:"timeout_seconds"`
-	State                 monitor.JobState     `json:"state"`
-	BlockedReason         string               `json:"blocked_reason,omitempty"`
-	PersistenceState      string               `json:"persistence_state"`
-	PersistenceError      string               `json:"persistence_error,omitempty"`
-	StorageState          string               `json:"storage_state,omitempty"`
-	StorageReason         string               `json:"storage_reason,omitempty"`
-	BudgetState           string               `json:"budget_state,omitempty"`
-	BudgetReason          string               `json:"budget_reason,omitempty"`
-	SkippedRounds         int64                `json:"skipped_rounds,omitempty"`
-	ResourceSkippedRounds int64                `json:"resource_skipped_rounds,omitempty"`
-	CreatedAt             time.Time            `json:"created_at"`
-	UpdatedAt             time.Time            `json:"updated_at"`
+	ID                     string                `json:"id"`
+	Name                   string                `json:"name"`
+	ProfileID              string                `json:"profile_id"`
+	ProfileName            string                `json:"profile_name"`
+	NodeKeys               []string              `json:"node_keys"`
+	Nodes                  []MonitorJobNodeDTO   `json:"nodes"`
+	ProbeSet               monitor.ProbeSetType  `json:"probe_set"`
+	SamplingTier           monitor.SamplingTier  `json:"sampling_tier"`
+	IntervalSeconds        int64                 `json:"interval_seconds"`
+	TimeoutSeconds         int64                 `json:"timeout_seconds"`
+	State                  monitor.JobState      `json:"state"`
+	RuntimeState           monitor.JobState      `json:"runtime_state"`
+	ResumeOnLaunch         bool                  `json:"resume_on_launch"`
+	DesiredState           monitor.JobState      `json:"desired_state"`
+	RecoveryState          monitor.RecoveryState `json:"recovery_state"`
+	RecoveryReason         string                `json:"recovery_reason,omitempty"`
+	IntentPersistenceError string                `json:"intent_persistence_error,omitempty"`
+	BlockedReason          string                `json:"blocked_reason,omitempty"`
+	PersistenceState       string                `json:"persistence_state"`
+	PersistenceError       string                `json:"persistence_error,omitempty"`
+	StorageState           string                `json:"storage_state,omitempty"`
+	StorageReason          string                `json:"storage_reason,omitempty"`
+	BudgetState            string                `json:"budget_state,omitempty"`
+	BudgetReason           string                `json:"budget_reason,omitempty"`
+	SkippedRounds          int64                 `json:"skipped_rounds,omitempty"`
+	ResourceSkippedRounds  int64                 `json:"resource_skipped_rounds,omitempty"`
+	CreatedAt              time.Time             `json:"created_at"`
+	UpdatedAt              time.Time             `json:"updated_at"`
 }
 
 const (
@@ -310,17 +316,20 @@ func (s *AppService) loadPersistedMonitorJobs() error {
 			return fmt.Errorf("monitor job definition is nil")
 		}
 		job := monitor.MonitorJob{
-			ID:           definition.ID,
-			Name:         definition.Name,
-			ProfileID:    definition.ProfileID,
-			NodeKeys:     make([]string, 0, len(definition.Nodes)),
-			ProbeSet:     definition.ProbeSet,
-			SamplingTier: definition.SamplingTier,
-			Interval:     definition.Interval,
-			Timeout:      definition.Timeout,
-			CreatedAt:    definition.CreatedAt,
-			UpdatedAt:    definition.UpdatedAt,
+			ID:             definition.ID,
+			Name:           definition.Name,
+			ProfileID:      definition.ProfileID,
+			NodeKeys:       make([]string, 0, len(definition.Nodes)),
+			ProbeSet:       definition.ProbeSet,
+			SamplingTier:   definition.SamplingTier,
+			Interval:       definition.Interval,
+			Timeout:        definition.Timeout,
+			CreatedAt:      definition.CreatedAt,
+			UpdatedAt:      definition.UpdatedAt,
+			ResumeOnLaunch: definition.ResumeOnLaunch,
+			DesiredState:   normalizedDesiredState(definition.DesiredState),
 		}
+		job.RecoveryState = recoveryStateForIntent(job.ResumeOnLaunch, job.DesiredState)
 		job.Nodes = monitorNodesFromReferences(definition.Nodes)
 		for _, node := range definition.Nodes {
 			job.NodeKeys = append(job.NodeKeys, node.NodeKey)
@@ -355,6 +364,10 @@ func (s *AppService) loadPersistedMonitorJobs() error {
 		if blockedReason != "" {
 			job.State = monitor.JobStateBlocked
 			job.BlockedReason = blockedReason
+			if job.ResumeOnLaunch && job.DesiredState == monitor.JobStateRunning {
+				job.RecoveryState = monitor.RecoveryStateBlocked
+				job.RecoveryReason = blockedReason
+			}
 		} else {
 			job.State = monitor.JobStateStopped
 			job.BlockedReason = ""
@@ -415,6 +428,31 @@ func monitorJobDefinitionFromJob(job monitor.MonitorJob) *monitor.MonitorJobDefi
 		CreatedAt:         job.CreatedAt,
 		UpdatedAt:         job.UpdatedAt,
 		DefinitionVersion: monitor.MonitorJobDefinitionVersion,
+		ResumeOnLaunch:    job.ResumeOnLaunch,
+		DesiredState:      normalizedDesiredState(job.DesiredState),
+	}
+}
+
+func normalizedDesiredState(state monitor.JobState) monitor.JobState {
+	switch state {
+	case monitor.JobStateRunning, monitor.JobStatePaused, monitor.JobStateStopped:
+		return state
+	default:
+		return monitor.JobStateStopped
+	}
+}
+
+func recoveryStateForIntent(resume bool, desired monitor.JobState) monitor.RecoveryState {
+	if !resume {
+		return monitor.RecoveryStateDisabled
+	}
+	switch desired {
+	case monitor.JobStatePaused:
+		return monitor.RecoveryStatePaused
+	case monitor.JobStateStopped:
+		return monitor.RecoveryStateStopped
+	default:
+		return monitor.RecoveryStateStopped
 	}
 }
 
@@ -527,28 +565,34 @@ func monitorJobDTO(job monitor.MonitorJob, profileName string) MonitorJobDTO {
 		}
 	}
 	return MonitorJobDTO{
-		ID:                    job.ID,
-		Name:                  job.Name,
-		ProfileID:             job.ProfileID,
-		ProfileName:           profileName,
-		NodeKeys:              nodeKeys,
-		Nodes:                 nodes,
-		ProbeSet:              job.ProbeSet,
-		SamplingTier:          normalizedJobSamplingTier(job.SamplingTier),
-		IntervalSeconds:       int64(job.Interval / time.Second),
-		TimeoutSeconds:        int64(job.Timeout / time.Second),
-		State:                 job.State,
-		BlockedReason:         job.BlockedReason,
-		PersistenceState:      job.PersistenceState,
-		PersistenceError:      job.PersistenceError,
-		StorageState:          job.StorageState,
-		StorageReason:         job.StorageReason,
-		BudgetState:           job.BudgetState,
-		BudgetReason:          job.BudgetReason,
-		SkippedRounds:         job.SkippedRounds,
-		ResourceSkippedRounds: job.ResourceSkippedRounds,
-		CreatedAt:             job.CreatedAt,
-		UpdatedAt:             job.UpdatedAt,
+		ID:                     job.ID,
+		Name:                   job.Name,
+		ProfileID:              job.ProfileID,
+		ProfileName:            profileName,
+		NodeKeys:               nodeKeys,
+		Nodes:                  nodes,
+		ProbeSet:               job.ProbeSet,
+		SamplingTier:           normalizedJobSamplingTier(job.SamplingTier),
+		IntervalSeconds:        int64(job.Interval / time.Second),
+		TimeoutSeconds:         int64(job.Timeout / time.Second),
+		State:                  job.State,
+		RuntimeState:           job.State,
+		ResumeOnLaunch:         job.ResumeOnLaunch,
+		DesiredState:           normalizedDesiredState(job.DesiredState),
+		RecoveryState:          job.RecoveryState,
+		RecoveryReason:         job.RecoveryReason,
+		IntentPersistenceError: job.IntentPersistenceError,
+		BlockedReason:          job.BlockedReason,
+		PersistenceState:       job.PersistenceState,
+		PersistenceError:       job.PersistenceError,
+		StorageState:           job.StorageState,
+		StorageReason:          job.StorageReason,
+		BudgetState:            job.BudgetState,
+		BudgetReason:           job.BudgetReason,
+		SkippedRounds:          job.SkippedRounds,
+		ResourceSkippedRounds:  job.ResourceSkippedRounds,
+		CreatedAt:              job.CreatedAt,
+		UpdatedAt:              job.UpdatedAt,
 	}
 }
 

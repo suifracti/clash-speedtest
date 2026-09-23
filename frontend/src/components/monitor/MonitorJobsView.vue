@@ -26,6 +26,8 @@ const busyJob = ref<{ id: string; action: api.MonitorJobAction } | null>(null)
 const triggeringJobId = ref('')
 const samplingTierDrafts = ref<Record<string, MonitorSamplingTier>>({})
 const savingSamplingTierJobId = ref('')
+const savingRecoveryPreferenceJobId = ref('')
+const deletingJobId = ref('')
 
 const name = ref('')
 const profileId = ref('')
@@ -200,6 +202,17 @@ function samplingTierLabel(tier: MonitorJob['samplingTier']): string {
   return { regular: 'regular 常规', focus: 'focus 关注', sparse: 'sparse 低频' }[tier] ?? tier
 }
 
+function recoveryStatus(job: MonitorJob): string {
+  if (job.recoveryState === 'blocked') return `恢复被阻塞：${job.recoveryReason || job.blockedReason || '需要处理阻塞条件'}`
+  if (job.recoveryState === 'restoring') return '本次启动正在等待共享预算准入'
+  if (job.recoveryState === 'restored') return '本次启动已恢复；首轮只测当前时刻'
+  if (job.desiredState === 'paused') return '上次已暂停，不会自动恢复'
+  if (job.desiredState === 'stopped') return '上次已停止，不会自动恢复'
+  if (!job.resumeOnLaunch) return '应用启动时恢复未启用'
+  if (job.state === 'running') return '本进程正在运行；应用重开时允许恢复'
+  return '已允许应用启动恢复，等待明确运行意图'
+}
+
 function jobSamplingTierDraft(job: MonitorJob): MonitorSamplingTier {
   return samplingTierDrafts.value[job.id] ?? job.samplingTier
 }
@@ -225,6 +238,7 @@ function runLabel(status: MonitorRun['status']): string {
     skipped: '跳过（重叠）',
     resource_limited: '资源额度限制（未计为节点失败）',
     persistence_failed: '保存失败（未持久化完整）',
+    interrupted: '应用未观测期间中断',
   }[status] ?? status
 }
 
@@ -352,6 +366,41 @@ async function saveJobSamplingTier(job: MonitorJob): Promise<void> {
   }
 }
 
+async function setResumeOnLaunch(job: MonitorJob, event: Event): Promise<void> {
+  if (busyJob.value || savingRecoveryPreferenceJobId.value) return
+  const enabled = (event.target as HTMLInputElement).checked
+  savingRecoveryPreferenceJobId.value = job.id
+  feedback.value = ''
+  loadError.value = ''
+  try {
+    await api.updateMonitorJobResumeOnLaunch(job.id, enabled)
+    await reload()
+    feedback.value = `已保存“${job.name}”的应用启动恢复设置；此设置不会启动或停止当前任务。`
+  } catch (error) {
+    loadError.value = `恢复设置保存失败：${errorMessage(error)}`
+    await reload()
+  } finally {
+    savingRecoveryPreferenceJobId.value = ''
+  }
+}
+
+async function deleteJob(job: MonitorJob): Promise<void> {
+  if (busyJob.value || deletingJobId.value || !window.confirm(`删除任务“${job.name}”？历史运行和原始样本会保留。`)) return
+  deletingJobId.value = job.id
+  feedback.value = ''
+  loadError.value = ''
+  try {
+    await api.deleteMonitorJob(job.id)
+    await reload()
+    feedback.value = `已删除任务“${job.name}”；历史运行和原始样本仍保留。`
+  } catch (error) {
+    loadError.value = `删除任务失败：${errorMessage(error)}`
+    await reload()
+  } finally {
+    deletingJobId.value = ''
+  }
+}
+
 async function triggerDiagnostic(job: MonitorJob): Promise<void> {
   if ((job.state !== 'running' && job.state !== 'paused') || busyJob.value || triggeringJobId.value) return
   triggeringJobId.value = job.id
@@ -400,7 +449,7 @@ onBeforeUnmount(() => {
         <div>
           <h2 class="text-base font-semibold text-content-main">持续监测</h2>
           <p class="mt-1 text-xs text-content-muted">
-            观察哪些节点、检查什么、每隔多久，以及最近检查和下一次检查。任务定义会保存；重启后只恢复为停止或阻塞，不会自动启动或产生探测。
+            只有明确启用“应用启动时恢复”且此前明确运行的周期任务才会恢复。恢复只在应用运行时采集，并继续消耗已配置的请求与响应体预算；手动暂停、停止或阻塞条件会阻止恢复。手动诊断永不恢复。
           </p>
         </div>
         <button
@@ -524,9 +573,28 @@ onBeforeUnmount(() => {
               <span class="rounded-full border px-2 py-0.5 text-[11px]" :class="stateClass(job.state)">{{ formatState(job.state) }}</span>
             </div>
 
+            <div class="mt-2 rounded border border-border bg-card px-2 py-2 text-[11px] text-content-secondary">
+              <div>{{ recoveryStatus(job) }}</div>
+              <div class="mt-1">运行意图：{{ formatState(job.desiredState) }} · 本进程状态：{{ formatState(job.runtimeState) }}</div>
+              <label class="mt-2 flex items-start gap-2 text-content-main">
+                <input
+                  type="checkbox"
+                  :checked="job.resumeOnLaunch"
+                  :disabled="!!busyJob || !!savingRecoveryPreferenceJobId"
+                  @change="setResumeOnLaunch(job, $event)"
+                  class="mt-0.5 accent-blue-600"
+                />
+                <span>
+                  <span class="font-medium">应用启动时恢复</span>
+                  <span class="block text-[10px] text-content-muted">只保存许可，不会立即启动；只恢复此前明确运行的周期任务。</span>
+                </span>
+              </label>
+              <div v-if="job.intentPersistenceError" class="mt-1 text-red-700 dark:text-red-300">{{ job.intentPersistenceError }}</div>
+            </div>
+
             <div class="mt-3 flex flex-wrap gap-1.5">
-              <button v-if="job.state === 'stopped'" @click="applyAction(job, 'start')" :disabled="!!busyJob" class="rounded border border-emerald-500/40 px-2 py-1 text-[11px] text-emerald-700 hover:bg-emerald-500/10 disabled:opacity-50">
-                {{ isBusy(job, 'start') ? '启动中…' : '启动' }}
+              <button v-if="job.state === 'stopped' || job.state === 'blocked'" @click="applyAction(job, 'start')" :disabled="!!busyJob" class="rounded border border-emerald-500/40 px-2 py-1 text-[11px] text-emerald-700 hover:bg-emerald-500/10 disabled:opacity-50">
+                {{ isBusy(job, 'start') ? '启动中…' : job.state === 'blocked' ? '重新检查并启动' : '启动' }}
               </button>
               <button v-else-if="job.state === 'running'" @click="applyAction(job, 'pause')" :disabled="!!busyJob" class="rounded border border-amber-500/40 px-2 py-1 text-[11px] text-amber-700 hover:bg-amber-500/10 disabled:opacity-50">
                 {{ isBusy(job, 'pause') ? '暂停中…' : '暂停' }}
@@ -534,8 +602,11 @@ onBeforeUnmount(() => {
               <button v-else-if="job.state === 'paused'" @click="applyAction(job, 'resume')" :disabled="!!busyJob" class="rounded border border-blue-500/40 px-2 py-1 text-[11px] text-blue-700 hover:bg-blue-500/10 disabled:opacity-50">
                 {{ isBusy(job, 'resume') ? '恢复中…' : '恢复' }}
               </button>
-              <button @click="applyAction(job, 'stop')" :disabled="job.state === 'stopped' || job.state === 'blocked' || !!busyJob" class="rounded border border-red-500/40 px-2 py-1 text-[11px] text-red-700 hover:bg-red-500/10 disabled:opacity-40">
+              <button @click="applyAction(job, 'stop')" :disabled="job.desiredState === 'stopped' && job.state !== 'running' && job.state !== 'paused' || !!busyJob" class="rounded border border-red-500/40 px-2 py-1 text-[11px] text-red-700 hover:bg-red-500/10 disabled:opacity-40">
                 {{ isBusy(job, 'stop') ? '停止中…' : '停止' }}
+              </button>
+              <button @click="deleteJob(job)" :disabled="!!busyJob || !!deletingJobId" class="rounded border border-border px-2 py-1 text-[11px] text-content-secondary hover:bg-card disabled:opacity-40">
+                {{ deletingJobId === job.id ? '删除中…' : '删除任务' }}
               </button>
               <button
                 v-if="job.state === 'running' || job.state === 'paused'"
@@ -566,8 +637,8 @@ onBeforeUnmount(() => {
               </button>
             </div>
 
-            <div v-if="job.state === 'blocked'" class="mt-2 text-[11px] text-red-700 dark:text-red-300">
-              无法安全恢复：{{ job.blockedReason || '当前订阅或节点配置已不可用，请重新创建任务。' }}
+            <div v-if="job.state === 'blocked' || job.recoveryState === 'blocked'" class="mt-2 text-[11px] text-red-700 dark:text-red-300">
+              无法安全恢复：{{ job.recoveryReason || job.blockedReason || '当前订阅、节点配置或资源条件不可用，请处理后明确点击启动。' }}
             </div>
 
             <div v-if="job.persistenceState === 'degraded'" class="mt-2 rounded border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-[11px] text-red-700 dark:text-red-300">

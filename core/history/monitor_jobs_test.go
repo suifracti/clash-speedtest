@@ -77,6 +77,39 @@ func TestSQLite_MonitorJobDefinitionPersistsOnlySafeReferences(t *testing.T) {
 	}
 }
 
+func TestSQLite_StartupMarksRunningRunsInterruptedWithoutChangingRawSamples(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Now().UTC()
+	if err := store.SaveMonitorRun(context.Background(), &monitor.MonitorRun{
+		RunID: "unfinished", JobID: "job", ScheduledAt: now.Add(-time.Hour), StartedAt: now.Add(-time.Hour),
+		Status: monitor.RunStatusRunning, SamplingTier: monitor.SamplingTierFocus, TriggerType: monitor.SamplingTriggerScheduled,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveMonitorSamples(context.Background(), []*monitor.MonitorSample{{
+		SampleID: "raw-before-reopen", RunID: "unfinished", NodeKey: "node", NodeIdentityKey: "identity",
+		ConfigRevisionKey: "revision", ProfileID: "profile", DisplayNameSnapshot: "Node", ProbeType: "rtt",
+		Target: "fixture", Timestamp: now.Add(-time.Hour), Success: true,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkRunningMonitorRunsInterrupted(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	runs, err := store.QueryMonitorRuns(context.Background(), "job", 5)
+	if err != nil || len(runs) != 1 || runs[0].Status != monitor.RunStatusInterrupted || runs[0].FinishedAt != nil || runs[0].SamplingTier != monitor.SamplingTierFocus || runs[0].TriggerType != monitor.SamplingTriggerScheduled {
+		t.Fatalf("unfinished run was not preserved as interrupted: %+v err=%v", runs, err)
+	}
+	samples, err := store.QueryMonitorSamples(context.Background(), monitor.SampleFilter{RunID: "unfinished"})
+	if err != nil || len(samples) != 1 || samples[0].SampleID != "raw-before-reopen" || !samples[0].Success {
+		t.Fatalf("interrupted transition changed raw evidence: %+v err=%v", samples, err)
+	}
+}
+
 func TestSQLite_LegacySchemaUpgradeRecordsVersionAndIsIdempotent(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "history.db")

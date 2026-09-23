@@ -10,6 +10,8 @@ vi.mock('../../../api/monitor', () => ({
   fetchMonitorRuns: vi.fn(),
   createMonitorJob: vi.fn(),
   updateMonitorJobSamplingTier: vi.fn(),
+  updateMonitorJobResumeOnLaunch: vi.fn(),
+  deleteMonitorJob: vi.fn(),
   controlMonitorJob: vi.fn(),
   triggerMonitorJob: vi.fn(),
 }))
@@ -18,6 +20,7 @@ import {
   controlMonitorJob,
   createMonitorJob,
   updateMonitorJobSamplingTier,
+  updateMonitorJobResumeOnLaunch,
   fetchMonitorJobs,
   fetchMonitorNodeOptions,
   fetchMonitorRuns,
@@ -31,6 +34,7 @@ const mockedJobs = vi.mocked(fetchMonitorJobs)
 const mockedRuns = vi.mocked(fetchMonitorRuns)
 const mockedCreate = vi.mocked(createMonitorJob)
 const mockedUpdateTier = vi.mocked(updateMonitorJobSamplingTier)
+const mockedUpdateRecovery = vi.mocked(updateMonitorJobResumeOnLaunch)
 const mockedControl = vi.mocked(controlMonitorJob)
 const mockedTrigger = vi.mocked(triggerMonitorJob)
 
@@ -75,6 +79,12 @@ function job(state: MonitorJob['state'] = 'stopped', blockedReason = ''): Monito
     intervalSeconds: 30,
     timeoutSeconds: 5,
     state,
+    runtimeState: state,
+    resumeOnLaunch: state === 'blocked',
+    desiredState: state === 'blocked' ? 'running' : state,
+    recoveryState: state === 'blocked' ? 'blocked' : state === 'running' ? 'active' : state === 'paused' ? 'paused' : 'stopped',
+    recoveryReason: blockedReason,
+    intentPersistenceError: '',
     blockedReason,
     createdAt: '2026-09-19T00:00:00Z',
     updatedAt: '2026-09-19T00:00:00Z',
@@ -89,6 +99,7 @@ beforeEach(() => {
   mockedRuns.mockResolvedValue([])
   mockedCreate.mockResolvedValue(job())
   mockedUpdateTier.mockResolvedValue()
+  mockedUpdateRecovery.mockResolvedValue()
   mockedControl.mockResolvedValue()
   mockedTrigger.mockResolvedValue({
     runId: 'diagnostic-1', jobId: 'job-1', samplingTier: 'diagnostic', triggerType: 'manual',
@@ -104,6 +115,20 @@ afterEach(() => {
 })
 
 describe('MonitorJobsView', () => {
+  it('saves startup recovery permission without starting or stopping the current task', async () => {
+    wrapper = mount(MonitorJobsView)
+    await flushPromises()
+
+    const recoveryLabel = wrapper.findAll('label').find((label) => label.text().includes('应用启动时恢复'))
+    expect(recoveryLabel).toBeDefined()
+    await recoveryLabel!.find('input[type="checkbox"]').setValue(true)
+    await flushPromises()
+
+    expect(mockedUpdateRecovery).toHaveBeenCalledWith('job-1', true)
+    expect(mockedControl).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('此设置不会启动或停止当前任务')
+  })
+
   it('creates from a stable node key and never starts as a side effect', async () => {
     wrapper = mount(MonitorJobsView)
     await flushPromises()
@@ -197,7 +222,7 @@ describe('MonitorJobsView', () => {
     expect(wrapper.text()).toContain('diagnostic 手动诊断')
   })
 
-  it('shows an explicit blocked reason without offering an automatic recovery action', async () => {
+  it('shows an explicit blocked reason and requires a user start to retry', async () => {
     mockedJobs.mockResolvedValue([job('blocked', '节点配置 revision 已变化，需要重新确认')])
 
     wrapper = mount(MonitorJobsView)
@@ -205,7 +230,11 @@ describe('MonitorJobsView', () => {
 
     expect(wrapper.text()).toContain('已阻塞')
     expect(wrapper.text()).toContain('节点配置 revision 已变化，需要重新确认')
-    expect(wrapper.findAll('button').some((button) => ['启动', '暂停', '恢复'].includes(button.text().trim()))).toBe(false)
+    const retry = wrapper.findAll('button').find((button) => button.text().trim() === '重新检查并启动')
+    expect(retry).toBeDefined()
+    await retry!.trigger('click')
+    await flushPromises()
+    expect(mockedControl).toHaveBeenCalledWith('job-1', 'start')
   })
 
   it('applies Workbench prefill, supports cancel without creating, and sends the stable context on confirm', async () => {

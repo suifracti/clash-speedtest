@@ -135,7 +135,7 @@ func TestMonitorSchemaV2UpgradePreservesHistoryBudgetAndDefaults(t *testing.T) {
 	}
 	defer upgraded.Close()
 	var version int
-	if err := upgraded.db.QueryRow("SELECT schema_version FROM schema_meta WHERE singleton=1").Scan(&version); err != nil || version != 3 {
+	if err := upgraded.db.QueryRow("SELECT schema_version FROM schema_meta WHERE singleton=1").Scan(&version); err != nil || version != CurrentSchemaVersion {
 		t.Fatalf("schema version after upgrade = %d, err=%v", version, err)
 	}
 	usage, err := upgraded.MonitorBudgetUsage(context.Background(), "2026-09-23")
@@ -151,7 +151,8 @@ func TestMonitorSchemaV2UpgradePreservesHistoryBudgetAndDefaults(t *testing.T) {
 		t.Fatalf("old raw sample changed or disappeared: samples=%+v err=%v", samples, err)
 	}
 	definitions, err := upgraded.ListMonitorJobDefinitions(context.Background())
-	if err != nil || len(definitions) != 1 || definitions[0].SamplingTier != monitor.SamplingTierRegular || definitions[0].Interval != time.Minute || definitions[0].ProbeSet != monitor.ProbeSetLight {
+	if err != nil || len(definitions) != 1 || definitions[0].SamplingTier != monitor.SamplingTierRegular || definitions[0].Interval != time.Minute || definitions[0].ProbeSet != monitor.ProbeSetLight ||
+		definitions[0].ResumeOnLaunch || definitions[0].DesiredState != monitor.JobStateStopped || definitions[0].DefinitionVersion != monitor.MonitorJobDefinitionVersion {
 		t.Fatalf("old job must stay a compatible regular task: definitions=%+v err=%v", definitions, err)
 	}
 }

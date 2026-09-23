@@ -17,6 +17,18 @@ const (
 	JobStateBlocked JobState = "blocked"
 )
 
+type RecoveryState string
+
+const (
+	RecoveryStateDisabled  RecoveryState = "disabled"
+	RecoveryStateStopped   RecoveryState = "stopped"
+	RecoveryStatePaused    RecoveryState = "paused"
+	RecoveryStateActive    RecoveryState = "active"
+	RecoveryStateRestoring RecoveryState = "restoring"
+	RecoveryStateRestored  RecoveryState = "restored"
+	RecoveryStateBlocked   RecoveryState = "blocked"
+)
+
 // ProbeSetType defines the intensity and scope of probes executed on each tick.
 type ProbeSetType string
 
@@ -61,6 +73,7 @@ const (
 	RunStatusFailed          RunStatus = "failed"
 	RunStatusSkipped         RunStatus = "skipped"
 	RunStatusResourceLimited RunStatus = "resource_limited"
+	RunStatusInterrupted     RunStatus = "interrupted"
 	// RunStatusPersistenceFailed means probe execution may have completed, but
 	// the durable run/sample transaction did not complete successfully.
 	RunStatusPersistenceFailed RunStatus = "persistence_failed"
@@ -94,11 +107,16 @@ type MonitorJob struct {
 	SamplingTier SamplingTier    `json:"sampling_tier"`
 	// NextRunTrigger is set only on a scheduler's copied job for an immediate
 	// user action. It never changes the durable periodic job definition.
-	NextRunTrigger SamplingTriggerType `json:"-"`
-	Interval       time.Duration       `json:"interval"`
-	Timeout        time.Duration       `json:"timeout"`
-	State          JobState            `json:"state"`
-	BlockedReason  string              `json:"blocked_reason,omitempty"`
+	NextRunTrigger         SamplingTriggerType `json:"-"`
+	Interval               time.Duration       `json:"interval"`
+	Timeout                time.Duration       `json:"timeout"`
+	State                  JobState            `json:"state"`
+	BlockedReason          string              `json:"blocked_reason,omitempty"`
+	ResumeOnLaunch         bool                `json:"resume_on_launch"`
+	DesiredState           JobState            `json:"desired_state"`
+	RecoveryState          RecoveryState       `json:"recovery_state,omitempty"`
+	RecoveryReason         string              `json:"recovery_reason,omitempty"`
+	IntentPersistenceError string              `json:"intent_persistence_error,omitempty"`
 	// PersistenceState and PersistenceError are runtime read-model fields. They
 	// are deliberately excluded from MonitorJobDefinition persistence.
 	PersistenceState      string    `json:"persistence_state,omitempty"`
@@ -115,7 +133,7 @@ type MonitorJob struct {
 
 // MonitorJobDefinitionVersion is the version of the credential-free persisted
 // definition shape. Runtime scheduler state is deliberately not part of it.
-const MonitorJobDefinitionVersion = 1
+const MonitorJobDefinitionVersion = 2
 
 // MonitorJobNodeReference is the safe, stable reference stored for one selected
 // node. The current cached profile must be re-resolved before the node can run.
@@ -127,8 +145,9 @@ type MonitorJobNodeReference struct {
 	Type              string `json:"type"`
 }
 
-// MonitorJobDefinition is the durable product definition. It contains no raw
-// proxy configuration, credentials, controller secrets, or scheduler runtime.
+// MonitorJobDefinition is the durable product definition and explicit user
+// launch intent. It contains no raw proxy configuration, credentials,
+// controller secrets, or current-process runtime state.
 type MonitorJobDefinition struct {
 	ID                string                    `json:"id"`
 	Name              string                    `json:"name"`
@@ -141,6 +160,8 @@ type MonitorJobDefinition struct {
 	CreatedAt         time.Time                 `json:"created_at"`
 	UpdatedAt         time.Time                 `json:"updated_at"`
 	DefinitionVersion int                       `json:"definition_version"`
+	ResumeOnLaunch    bool                      `json:"resume_on_launch"`
+	DesiredState      JobState                  `json:"desired_state"`
 }
 
 // MonitorRun records the execution metadata of one scheduled monitoring round.
