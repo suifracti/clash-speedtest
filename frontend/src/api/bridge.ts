@@ -21,6 +21,8 @@ import type {
   WorkbenchLatencyHistoryDetailQuery,
   WorkbenchLatencyHistoryResult,
   WorkbenchLatencyTest,
+  WorkbenchLatencyBatchRequest,
+  WorkbenchLatencyBatch,
   ProfileSetup,
   ProfileSource,
 } from '../types'
@@ -289,6 +291,41 @@ export async function fetchWorkbenchLatencyTest(query: WorkbenchLatencyHistoryDe
   }
   const params = new URLSearchParams({ profile_id: query.profile_id, node_key: query.node_key, since: query.since, until: query.until })
   const res = await fetch(`${API_BASE}/api/workbench/latency-tests/${encodeURIComponent(query.attempt_id)}?${params.toString()}`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function startWorkbenchLatencyBatch(req: WorkbenchLatencyBatchRequest): Promise<WorkbenchLatencyBatch> {
+  if (isWails()) return window.go!.desktop!.App!.StartWorkbenchLatencyBatch(req)
+  const res = await fetch(`${API_BASE}/api/workbench/latency-batches`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req) })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function fetchWorkbenchLatencyBatches(limit = 20): Promise<WorkbenchLatencyBatch[]> {
+  if (isWails()) return window.go!.desktop!.App!.ListWorkbenchLatencyBatches(limit)
+  const res = await fetch(`${API_BASE}/api/workbench/latency-batches?limit=${limit}`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function fetchWorkbenchLatencyBatch(batchID: string): Promise<WorkbenchLatencyBatch> {
+  if (isWails()) return window.go!.desktop!.App!.GetWorkbenchLatencyBatch(batchID)
+  const res = await fetch(`${API_BASE}/api/workbench/latency-batches/${encodeURIComponent(batchID)}`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function cancelWorkbenchLatencyBatch(batchID: string): Promise<WorkbenchLatencyBatch> {
+  if (isWails()) return window.go!.desktop!.App!.CancelWorkbenchLatencyBatch(batchID)
+  const res = await fetch(`${API_BASE}/api/workbench/latency-batches/${encodeURIComponent(batchID)}/cancel`, { method: 'POST' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function retryWorkbenchLatencyBatchItem(batchID: string, itemID: string): Promise<WorkbenchLatencyBatch> {
+  if (isWails()) return window.go!.desktop!.App!.RetryWorkbenchLatencyBatchItem(batchID, itemID)
+  const res = await fetch(`${API_BASE}/api/workbench/latency-batches/${encodeURIComponent(batchID)}/items/${encodeURIComponent(itemID)}/retry-save`, { method: 'POST' })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }

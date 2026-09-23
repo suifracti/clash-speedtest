@@ -6,7 +6,6 @@ import UiSelect from '../common/UiSelect.vue'
 import LatencySamplePlot from './LatencySamplePlot.vue'
 import {
   acceptsLatencyDetailResponse,
-  acceptsLatencyTestResult,
   freezeLatencyWindow,
   sameLatencyScope,
   type LatencyAttemptScope,
@@ -14,7 +13,7 @@ import {
   type LatencyWindow,
   type LatencyWindowMode,
 } from './latencyRequestGuard'
-import type { MonitorNodeOption, MonitorJobPrefill, WorkbenchLatencySample, WorkbenchLatencyTest } from '../../types'
+import type { MonitorNodeOption, MonitorJobPrefill, WorkbenchLatencyBatch, WorkbenchLatencySample, WorkbenchLatencyTest } from '../../types'
 import { decideMonitorSelection } from './monitorCreateSelection'
 
 type WorkbenchProject = 'latency' | 'throughput' | 'service'
@@ -41,21 +40,25 @@ const pinnedByKey = ref<IndexMap>({})
 const historyByKey = ref<Record<string, WorkbenchLatencyTest[]>>({})
 const historyMetaByKey = ref<Record<string, HistoryMeta>>({})
 const currentByKey = ref<Record<string, WorkbenchLatencyTest | undefined>>({})
-const pendingPersistence = new Map<string, WorkbenchLatencyTest>()
 const expanded = ref(false)
 const detailLoading = ref(false)
 const detailError = ref('')
 const detailTest = ref<WorkbenchLatencyTest | null>(null)
 const selectedAttemptID = ref('')
 const testError = ref('')
-const testingKey = ref('')
 const batchMessage = ref('')
+const batchStarting = ref(false)
+const activeBatch = ref<WorkbenchLatencyBatch | null>(null)
+const displayedBatch = ref<WorkbenchLatencyBatch | null>(null)
+const recentBatches = ref<WorkbenchLatencyBatch[]>([])
+const batchHistoryError = ref('')
+const timeoutSeconds = ref(5)
 
 let optionsRequestID = 0
 let historyRequestID = 0
 let detailRequestID = 0
-let runRequestID = 0
-let activeRunID = 0
+let pendingBatchRequestID = ''
+let activeBatchID = ''
 let unsubscribeEvents: (() => void) | null = null
 
 const workbenchProjects = [
@@ -196,7 +199,16 @@ const focusedDisplayedTest = computed(() => {
   const test = detailTest.value || latestTestForKey(focusedKey.value)
   return test ? displayTestForActiveWindow(test) : null
 })
-const canRun = computed(() => activeProject.value === 'latency' && selectedKeys.value.length === 1 && !testingKey.value)
+const batchBusy = computed(() => batchStarting.value || !!activeBatch.value && ['queued', 'running', 'cancelling'].includes(activeBatch.value.state))
+const canRun = computed(() => activeProject.value === 'latency' && selectedKeys.value.length > 0 && !batchBusy.value)
+const selectedProfilesLabel = computed(() => {
+  const names = new Map<string, string>()
+  for (const key of selectedKeys.value) {
+    const option = optionForKey(key)
+    if (option) names.set(option.profileId, option.profileName)
+  }
+  return Array.from(names.values()).join('、') || '无'
+})
 const projectLabel = computed(() => workbenchProjects.find((project) => project.id === activeProject.value)?.label || '延迟与稳定性')
 const windowLabel = computed(() => windowMode.value === '4h' ? '最近 4 小时' : '最近 24 小时')
 const historyAxisLabels = computed(() => windowMode.value === '4h'
@@ -305,16 +317,16 @@ function testMatchesKey(test: WorkbenchLatencyTest, key: string): boolean { cons
 
 function upsertHistory(key: string, test: WorkbenchLatencyTest): void {
   const next = [test, ...(historyByKey.value[key] || []).filter((item) => item.attempt_id !== test.attempt_id)]
-  next.sort((a, b) => Date.parse(b.finished_at) - Date.parse(a.finished_at))
+  next.sort((a, b) => Date.parse(b.finished_at) - Date.parse(a.finished_at) || Date.parse(b.requested_at) - Date.parse(a.requested_at) || b.attempt_id.localeCompare(a.attempt_id))
   historyByKey.value = { ...historyByKey.value, [key]: next }
 }
 
-function takePendingPersistence(test: WorkbenchLatencyTest): WorkbenchLatencyTest {
-  const pending = pendingPersistence.get(test.attempt_id)
-  const key = scopeKey({ profileId: test.profile_id, nodeKey: test.node_key })
-  if (!pending || !testMatchesKey(pending, key)) return test
-  pendingPersistence.delete(test.attempt_id)
-  return pending
+function isNewerWorkbenchLatencyTest(candidate: WorkbenchLatencyTest, current: WorkbenchLatencyTest): boolean {
+  const finished = Date.parse(candidate.finished_at) - Date.parse(current.finished_at)
+  if (finished !== 0) return finished > 0
+  const requested = Date.parse(candidate.requested_at) - Date.parse(current.requested_at)
+  if (requested !== 0) return requested > 0
+  return candidate.attempt_id === current.attempt_id
 }
 
 function isWorkbenchLatencyTestPayload(payload: unknown): payload is WorkbenchLatencyTest {
@@ -324,15 +336,14 @@ function isWorkbenchLatencyTestPayload(payload: unknown): payload is WorkbenchLa
 }
 
 function handlePersistenceEvent(type: string, payload: unknown): void {
+  if (type === 'workbench_latency_batch_updated' && isWorkbenchLatencyBatchPayload(payload)) {
+    handleBatchUpdated(payload)
+    return
+  }
   if (type !== 'workbench_latency_test_persistence_updated' || !isWorkbenchLatencyTestPayload(payload)) return
   const key = scopeKey({ profileId: payload.profile_id, nodeKey: payload.node_key })
-  pendingPersistence.set(payload.attempt_id, payload)
-  while (pendingPersistence.size > 20) {
-    const oldest = pendingPersistence.keys().next().value
-    if (oldest) pendingPersistence.delete(oldest)
-    else break
-  }
-  currentByKey.value = { ...currentByKey.value, [key]: payload }
+  const current = currentByKey.value[key]
+  if (!current || isNewerWorkbenchLatencyTest(payload, current)) currentByKey.value = { ...currentByKey.value, [key]: payload }
   upsertHistory(key, payload)
   if (focusedKey.value === key && selectedAttemptID.value === payload.attempt_id) detailTest.value = displayTestForActiveWindow(payload)
   if (payload.persistence_state === 'failed') testError.value = payload.persistence_error || '测试完成，但历史保存失败'
@@ -351,6 +362,7 @@ async function loadOptions(): Promise<void> {
     selectedKeys.value = selectedKeys.value.filter((key) => validKeys.has(key))
     if (focusedKey.value && !validKeys.has(focusedKey.value)) { focusedKey.value = ''; detailTest.value = null }
     await loadHistories(loaded)
+    await loadRecentBatches()
   } catch (error) {
     if (requestID === optionsRequestID) optionsError.value = messageFor(error)
   } finally {
@@ -412,33 +424,123 @@ function onHover(key: string, index: number | null): void { hoveredByKey.value =
 function onPin(key: string, index: number): void { pinnedByKey.value = { ...pinnedByKey.value, [key]: index }; hoveredByKey.value = { ...hoveredByKey.value, [key]: null } }
 function clearPin(key: string): void { pinnedByKey.value = { ...pinnedByKey.value, [key]: null }; hoveredByKey.value = { ...hoveredByKey.value, [key]: null } }
 
-async function runTest(): Promise<void> {
+async function runTest(onlyKeys?: string[]): Promise<void> {
   if (activeProject.value !== 'latency') { testError.value = '当前正式接口只支持“延迟与稳定性”；吞吐和服务可用性先不显示演示结果。'; return }
-  if (testingKey.value) return
-  if (selectedKeys.value.length !== 1) { testError.value = selectedKeys.value.length === 0 ? '先勾选一个节点，再点击“立即测试”。' : '当前正式接口是单节点闭环，请只保留一个节点后测试。'; return }
-  const key = selectedKeys.value[0], option = optionForKey(key)
-  if (!option) return
-  const scope = { profileId: option.profileId, nodeKey: option.nodeKey }
-  const requestID = ++runRequestID
-  activeRunID = requestID
-  testingKey.value = key
+  if (batchBusy.value) return
+  const frozenKeys = [...(onlyKeys || selectedKeys.value)]
+  if (!frozenKeys.length) { testError.value = '先勾选要测试的节点。'; return }
+  const frozenSelections = frozenKeys.map((key) => optionForKey(key)).filter((option): option is MonitorNodeOption => !!option).map((option) => ({
+    profile_id: option.profileId,
+    node_key: option.nodeKey,
+    node_identity_key: option.nodeIdentityKey,
+    config_revision_key: option.configRevisionKey,
+    display_name: option.displayName,
+    node_type: option.type,
+  }))
+  if (!frozenSelections.length) { testError.value = '选择的节点已不在当前缓存中，请重新加载节点。'; return }
+  const requestID = newWorkbenchRequestID()
+  pendingBatchRequestID = requestID
+  batchStarting.value = true
   testError.value = ''
-  batchMessage.value = `正在测试“${option.displayName}”……`
+  batchMessage.value = `正在创建批次：${frozenSelections.length} 个节点，${new Set(frozenSelections.map((item) => item.profile_id)).size} 个订阅，单项超时 ${timeoutSeconds.value} 秒。`
   try {
-    const result = await api.runWorkbenchLatencyTest({ profile_id: scope.profileId, node_key: scope.nodeKey, test_project: 'latency_stability', timeout_seconds: 5 })
-    if (!acceptsLatencyTestResult(requestID, runRequestID, scope, currentScope(key), result)) return
-    const boundResult = takePendingPersistence(result)
-    currentByKey.value = { ...currentByKey.value, [key]: boundResult }
-    upsertHistory(key, boundResult)
-    focusNode(key)
-    detailTest.value = displayTestForActiveWindow(boundResult)
-    selectedAttemptID.value = boundResult.attempt_id
-    batchMessage.value = boundResult.persistence_state === 'failed' ? `测试完成，但历史保存失败：${boundResult.persistence_error || '未知原因'}` : boundResult.persistence_state === 'saving' ? '真实结果已返回，历史正在保存……' : '真实结果已返回，历史已保存。'
+    const created = await api.startWorkbenchLatencyBatch({ request_id: requestID, test_project: 'latency_stability', timeout_seconds: timeoutSeconds.value, selections: frozenSelections })
+    if (pendingBatchRequestID !== requestID) return
+    if (!activeBatch.value || activeBatch.value.batch_id !== created.batch_id) activeBatch.value = created
+    activeBatchID = created.batch_id
+    displayedBatch.value = activeBatch.value
+    upsertRecentBatch(activeBatch.value)
+    batchMessage.value = `批次已创建，${created.item_count} 个节点已按所选身份冻结。`
   } catch (error) {
-    if (requestID === activeRunID && sameLatencyScope(scope, currentScope(key))) { testError.value = messageFor(error); batchMessage.value = '' }
+    if (pendingBatchRequestID === requestID) { testError.value = messageFor(error); batchMessage.value = '' }
   } finally {
-    if (requestID === activeRunID) { activeRunID = 0; testingKey.value = '' }
+    if (pendingBatchRequestID === requestID) { pendingBatchRequestID = ''; batchStarting.value = false }
   }
+}
+
+function isWorkbenchLatencyBatchPayload(payload: unknown): payload is WorkbenchLatencyBatch {
+  if (!payload || typeof payload !== 'object') return false
+  const batch = payload as Partial<WorkbenchLatencyBatch>
+  return typeof batch.batch_id === 'string' && typeof batch.request_id === 'string' && typeof batch.state === 'string' && Array.isArray(batch.items)
+}
+
+function handleBatchUpdated(batch: WorkbenchLatencyBatch): void {
+  if (batch.request_id === pendingBatchRequestID) {
+    activeBatchID = batch.batch_id
+    activeBatch.value = batch
+    displayedBatch.value = batch
+  } else if (batch.batch_id === activeBatchID) {
+    activeBatch.value = batch
+    if (displayedBatch.value?.batch_id === batch.batch_id) displayedBatch.value = batch
+  } else return
+  upsertRecentBatch(batch)
+  for (const item of batch.items || []) {
+    const result = item.result
+    if (!result) continue
+    const key = scopeKey({ profileId: item.profile_id, nodeKey: item.node_key })
+    const current = currentByKey.value[key]
+    if (!current || isNewerWorkbenchLatencyTest(result, current)) {
+      currentByKey.value = { ...currentByKey.value, [key]: result }
+      upsertHistory(key, result)
+    }
+  }
+}
+
+function upsertRecentBatch(batch: WorkbenchLatencyBatch): void {
+  recentBatches.value = [batch, ...recentBatches.value.filter((item) => item.batch_id !== batch.batch_id)].slice(0, 20)
+}
+
+async function loadRecentBatches(): Promise<void> {
+  try {
+    recentBatches.value = await api.fetchWorkbenchLatencyBatches(20)
+    batchHistoryError.value = ''
+  } catch (error) { batchHistoryError.value = messageFor(error) }
+}
+
+async function selectBatch(batchID: string): Promise<void> {
+  try { displayedBatch.value = await api.fetchWorkbenchLatencyBatch(batchID) }
+  catch (error) { batchHistoryError.value = messageFor(error) }
+}
+
+async function cancelBatch(): Promise<void> {
+  const batchID = activeBatchID
+  if (!batchID || !batchBusy.value) return
+  try {
+    const cancelling = await api.cancelWorkbenchLatencyBatch(batchID)
+    if (activeBatchID === batchID) { activeBatch.value = cancelling; displayedBatch.value = cancelling }
+    batchMessage.value = '正在取消：已开始的探测结束并保存后，未开始项会停止派发。'
+  } catch (error) { testError.value = messageFor(error) }
+}
+
+async function retryBatchSave(item: NonNullable<WorkbenchLatencyBatch['items']>[number]): Promise<void> {
+  if (!displayedBatch.value) return
+  try {
+    const updated = await api.retryWorkbenchLatencyBatchItem(displayedBatch.value.batch_id, item.item_id)
+    displayedBatch.value = updated
+    if (activeBatchID === updated.batch_id) activeBatch.value = updated
+    upsertRecentBatch(updated)
+  } catch (error) { batchHistoryError.value = messageFor(error) }
+}
+
+function batchExecutionLabel(state: string): string {
+  return ({ queued: '排队中', running: '执行中', completed: '完成', failed: '探测失败', cancelled: '已取消', skipped_config: '配置已变化，已跳过', not_executed: '未执行', interrupted: '应用退出时中断' } as Record<string, string>)[state] || state
+}
+
+function batchPersistenceLabel(state: string): string {
+  return ({ pending: '待保存', saving: '保存中', saved: '已保存', failed: '保存失败', not_applicable: '无需保存' } as Record<string, string>)[state] || state
+}
+
+function batchStatusLabel(state: string): string {
+  return ({ queued: '等待执行', running: '执行中', cancelling: '正在取消', completed: '完成', completed_with_issues: '完成，含跳过或失败项', completed_with_save_failures: '测量完成，部分保存失败', cancelled: '已取消', cancelled_with_issues: '已取消，含失败项', cancelled_with_save_failures: '已取消，部分结果保存失败', interrupted: '上次运行中断', interrupted_with_issues: '应用退出时中断，含失败项', interrupted_with_save_failures: '应用退出时中断，部分结果保存失败' } as Record<string, string>)[state] || state
+}
+
+function isBatchItemRunning(key: string): boolean {
+  return !!displayedBatch.value?.items?.some((item) => scopeKey({ profileId: item.profile_id, nodeKey: item.node_key }) === key && item.execution_state === 'running')
+}
+
+function newWorkbenchRequestID(): string {
+  const random = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  return `workbench-${random}`
 }
 
 async function selectHistory(test: WorkbenchLatencyTest): Promise<void> {
@@ -472,7 +574,7 @@ function projectUnavailableLabel(project: WorkbenchProject): string { return pro
 function projectReadout(key: string): string { return activeProject.value === 'latency' ? readoutValue(key) : '未接入' }
 function projectHistoryText(key: string): string { return activeProject.value === 'latency' ? historySummary(key) : projectUnavailableLabel(activeProject.value) }
 function isSelected(key: string): boolean { return selectedKeys.value.includes(key) }
-function isTesting(key: string): boolean { return testingKey.value === key }
+function isTesting(key: string): boolean { return isBatchItemRunning(key) }
 
 function openMonitor(): void {
   const prefill = monitorSelection.value.prefill
@@ -525,10 +627,25 @@ onUnmounted(() => { unsubscribeEvents?.(); unsubscribeEvents = null })
     <section class="prototype-project-bar" aria-label="测试项目">
       <div class="project-bar-heading"><span class="scope-title">测试项目</span><span class="project-bar-note">先选节点；结果直接出现在节点行</span></div>
       <div class="project-tabs" role="tablist" aria-label="切换测试项目"><button v-for="project in workbenchProjects" :key="project.id" type="button" class="project-tab" :class="{ active: activeProject === project.id }" role="tab" :aria-selected="activeProject === project.id" @click="changeProject(project.id)">{{ project.label }}<span v-if="!project.available">尚未接入</span></button></div>
-      <div class="project-bar-actions"><span class="selection-summary">{{ selectedKeys.length }} 个节点</span><button type="button" class="prototype-button primary" :disabled="!canRun" @click="runTest">{{ testingKey ? '测试中…' : '立即测试' }}</button><button type="button" class="prototype-button" :disabled="!canOpenMonitor" :title="monitorSelectionHint" @click="openMonitor">加入持续监测</button></div>
+      <div class="project-bar-actions"><span class="selection-summary">{{ selectedKeys.length }} 个节点</span><label class="timeout-control">单项超时<select v-model.number="timeoutSeconds" :disabled="batchBusy"><option :value="1">1 秒</option><option :value="3">3 秒</option><option :value="5">5 秒</option><option :value="10">10 秒</option><option :value="30">30 秒</option></select></label><button type="button" class="prototype-button primary" :disabled="!canRun" @click="runTest()">{{ batchBusy ? (activeBatch?.state === 'cancelling' ? '正在取消…' : '批次执行中…') : '测试所选节点' }}</button><button v-if="batchBusy" type="button" class="prototype-button" :disabled="activeBatch?.state === 'cancelling'" @click="cancelBatch">{{ activeBatch?.state === 'cancelling' ? '正在取消…' : '取消本批次' }}</button><button type="button" class="prototype-button" :disabled="!canOpenMonitor" :title="monitorSelectionHint" @click="openMonitor">加入持续监测</button></div>
       <div v-if="selectedKeys.length > 0 && !canOpenMonitor" class="batch-test-status blocked">{{ monitorSelectionHint }}</div>
       <div v-if="activeProject === 'service'" class="service-toolbar"><span class="service-toolbar-label">服务</span><UiSelect v-model="selectedService" variant="toolbar" aria-label="选择服务" :options="serviceSelectOptions" /><span class="service-toolbar-note">选择服务同时决定查看与测试目标；未接入服务不可测试</span></div>
-      <div class="batch-test-status" :class="{ running: !!testingKey, blocked: activeProject !== 'latency', complete: !!batchMessage && !testingKey }" aria-live="polite">{{ testError || batchMessage || (activeProject === 'latency' ? '延迟结果来自真实单节点测试；失败、超时和未采样不会画成 0ms。' : projectUnavailableLabel(activeProject)) }}</div>
+      <div class="batch-test-status" :class="{ running: batchBusy, blocked: activeProject !== 'latency', complete: !!batchMessage && !batchBusy }" aria-live="polite">{{ testError || batchMessage || (activeProject === 'latency' ? `将冻结 ${selectedKeys.length} 个节点（${selectedProfilesLabel}），每项执行现有 HTTP 代理延迟探测，超时 ${timeoutSeconds} 秒。切换筛选或勾选不会更改已创建批次。` : projectUnavailableLabel(activeProject)) }}</div>
+    </section>
+
+    <section class="prototype-panel batch-panel" aria-labelledby="latency-batches-title">
+      <div class="prototype-panel-header"><div><h2 id="latency-batches-title">批量延迟与历史批次</h2><p>Workbench 主动测试；与 Monitor 常规证据及预算分开。失败探测、配置跳过和保存状态逐项显示。</p></div><button type="button" class="text-action" @click="loadRecentBatches">重新读取历史</button></div>
+      <div v-if="batchHistoryError" class="inline-error">{{ batchHistoryError }}</div>
+      <div class="batch-history-list"><button v-for="batch in recentBatches" :key="batch.batch_id" type="button" class="batch-history-record" :class="{ selected: displayedBatch?.batch_id === batch.batch_id }" @click="selectBatch(batch.batch_id)"><span><strong>{{ batchStatusLabel(batch.state) }}</strong><small>{{ formatTime(batch.requested_at) }}</small></span><span>{{ batch.item_count }} 项</span><span>超时 {{ batch.timeout_seconds }} 秒</span></button><span v-if="recentBatches.length === 0" class="batch-history-empty">尚无批量延迟历史。</span></div>
+      <div v-if="displayedBatch" class="batch-detail">
+        <div class="batch-detail-heading"><div><strong>批次 {{ displayedBatch.batch_id }}</strong><span>{{ batchStatusLabel(displayedBatch.state) }} · {{ displayedBatch.items?.filter((item) => ['completed', 'failed', 'cancelled', 'skipped_config', 'not_executed', 'interrupted'].includes(item.execution_state)).length || 0 }} / {{ displayedBatch.item_count }} 项已结束</span></div><button v-if="activeBatchID === displayedBatch.batch_id && batchBusy" type="button" class="prototype-button" :disabled="displayedBatch.state === 'cancelling'" @click="cancelBatch">{{ displayedBatch.state === 'cancelling' ? '正在取消…' : '取消本批次' }}</button></div>
+        <div v-for="item in displayedBatch.items || []" :key="item.item_id" class="batch-item-row">
+          <div class="batch-item-identity"><strong>{{ item.display_name || item.node_key }}</strong><span>{{ profileOptions.find((profile) => profile.id === item.profile_id)?.name || item.profile_id }} · {{ item.node_type || '节点' }}</span><code>{{ item.node_identity_key }} · rev {{ item.config_revision_key }}</code></div>
+          <div class="batch-item-state"><strong>{{ batchExecutionLabel(item.execution_state) }}</strong><span>{{ batchPersistenceLabel(item.persistence_state) }}</span><span v-if="item.error_message" class="batch-error-detail">{{ item.error_message }}</span><span v-if="item.persistence_error" class="batch-error-detail">{{ item.persistence_error }}</span></div>
+            <div v-if="item.result" class="batch-item-result"><strong>{{ item.result.success_samples }} 成功 / {{ item.result.failure_samples }} 失败样本</strong><span>延迟 {{ item.result.latency_ms > 0 ? `${Math.round(item.result.latency_ms)} ms` : '无有效值' }} · jitter {{ item.result.jitter_ms }} ms</span><span>{{ item.result.method || '测法未知' }} v{{ item.result.method_version || '—' }} · {{ item.result.target || '目标未知' }} · {{ item.result.unit || '单位未知' }}</span><details class="batch-samples"><summary>原始样本 {{ item.result.samples.length }} 条</summary><span v-for="sample in item.result.samples" :key="`${sample.seq}-${sample.timestamp}`">#{{ sample.seq }} · {{ formatTime(sample.timestamp) }} · {{ sample.success ? `${Math.round(sample.latency_ms)} ms` : sampleLabel(sample) }}<template v-if="sample.error"> · {{ sample.error }}</template></span></details><button v-if="item.persistence_state === 'failed'" type="button" class="text-action" :disabled="batchBusy" @click="retryBatchSave(item)">重试保存（沿用原 attempt）</button></div>
+          <div v-else class="batch-item-result batch-no-result">{{ item.execution_state === 'skipped_config' ? '未发出请求；所选身份或 revision 已失效。' : item.execution_state === 'cancelled' || item.execution_state === 'not_executed' || item.execution_state === 'interrupted' ? '未测，不计作节点探测失败。' : item.error_message || '等待结果' }}</div>
+        </div>
+      </div>
     </section>
 
     <section class="prototype-panel comparison-panel" aria-labelledby="comparison-title">
@@ -559,7 +676,7 @@ onUnmounted(() => { unsubscribeEvents?.(); unsubscribeEvents = null })
     </section>
 
     <section v-if="focusedOption" class="prototype-panel evidence-panel" aria-labelledby="evidence-title">
-      <div class="prototype-panel-header"><div><h2 id="evidence-title">{{ focusedOption.displayName }}</h2><p>{{ focusedOption.profileName }} · {{ focusedOption.countryCode || '未知地区' }} · 选中后查看同一份原始样本</p></div><div class="evidence-actions"><button type="button" class="prototype-button primary" :disabled="selectedKeys.length !== 1 || !!testingKey" @click="runTest">{{ testingKey ? '测试中…' : '立即测试此节点' }}</button><button type="button" class="prototype-button" :disabled="!canOpenMonitor" :title="monitorSelectionHint" @click="openMonitor">加入持续监测</button></div></div>
+      <div class="prototype-panel-header"><div><h2 id="evidence-title">{{ focusedOption.displayName }}</h2><p>{{ focusedOption.profileName }} · {{ focusedOption.countryCode || '未知地区' }} · 选中后查看同一份原始样本</p></div><div class="evidence-actions"><button type="button" class="prototype-button primary" :disabled="batchBusy" @click="runTest([focusedKey])">{{ batchBusy ? '批次执行中…' : '测试此节点' }}</button><button type="button" class="prototype-button" :disabled="!canOpenMonitor" :title="monitorSelectionHint" @click="openMonitor">加入持续监测</button></div></div>
       <div v-if="focusedDisplayedTest" class="evidence-grid"><div class="evidence-facts"><span class="fact-label">节点判断</span><strong :class="`health-${visibleStatus(focusedKey)}`">{{ statusLabel(focusedKey) }}</strong><span>{{ historySummary(focusedKey) }}</span><span>任务状态与节点健康分开读取；{{ monitorStatusText(focusedKey) }}</span></div><div class="evidence-facts"><span class="fact-label">当前样本</span><strong>{{ sampleLabel(activeSampleFor(focusedKey)) }}</strong><span>{{ sampleDetail(activeSampleFor(focusedKey)) }}</span><span>{{ focusedDisplayedTest ? `本次 ${testStatusLabel(focusedDisplayedTest)} · ${persistenceLabel(focusedDisplayedTest)}` : '' }}</span></div><div class="evidence-facts"><span class="fact-label">辅助读数</span><strong>P50 {{ p50ForKey(focusedKey) ?? '—' }} <small>ms</small></strong><span>P95 {{ p95ForKey(focusedKey) ?? '—' }} ms</span><span>失败 {{ samplesForKey(focusedKey).filter((sample) => !sample.success).length }} 条</span></div></div>
       <div v-else class="evidence-empty">这个节点还没有真实延迟历史。点击“立即测试此节点”后，结果会先显示，再独立保存。</div>
       <div v-if="detailError" class="inline-error">{{ detailError }}</div>
@@ -583,6 +700,7 @@ onUnmounted(() => { unsubscribeEvents?.(); unsubscribeEvents = null })
 .scope-search-control { min-width: 190px; }.scope-search { min-width: 190px; padding: 6px 8px; border: 1px solid var(--border-subtle); border-radius: 6px; background: white; color: var(--text-main); font-size: 12px; }.scope-search::placeholder { color: var(--text-muted); }
 .scope-separator { width: 1px; height: 21px; background: var(--border); }.live-line { color: var(--text-secondary); font-size: 11px; }.selection-summary { color: var(--primary); font-size: 11px; font-weight: 700; }.scope-refresh { margin-left: auto; }
 .prototype-button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 7px 12px; border: 1px solid var(--border-subtle); border-radius: 7px; background: white; color: var(--text-main); font-size: 12px; font-weight: 700; }.prototype-button:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }.prototype-button.primary { border-color: var(--primary); background: var(--primary); color: white; }.prototype-button.primary:hover:not(:disabled) { background: var(--primary-hover); color: white; }.prototype-button:disabled { cursor: not-allowed; opacity: .52; }
+.timeout-control { display: inline-flex; align-items: center; gap: 5px; color: var(--text-secondary); font-size: 11px; }.timeout-control select { padding: 5px 7px; border: 1px solid var(--border-subtle); border-radius: 5px; background: white; color: var(--text-main); font-size: 11px; }
 .prototype-project-bar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "heading tabs actions" "service service service" "status status status"; gap: 10px 18px; align-items: center; margin-bottom: 14px; padding: 11px 15px; border: 1px solid var(--border); border-radius: 12px; background: var(--card-bg); }.project-bar-heading { grid-area: heading; display: flex; align-items: baseline; gap: 9px; white-space: nowrap; }.project-bar-note, .batch-test-status { color: var(--text-secondary); font-size: 11px; }.project-tabs { grid-area: tabs; display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }.project-tab { min-height: 32px; padding: 6px 10px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: 12px; font-weight: 700; }.project-tab:hover { border-color: var(--border-subtle); color: var(--text-main); }.project-tab.active { border-color: var(--primary); background: var(--primary-subtle); color: var(--text-main); }.project-tab span { display: block; margin-top: 2px; color: var(--warning); font-size: 9px; font-weight: 600; }.project-bar-actions { grid-area: actions; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }.service-toolbar { grid-area: service; display: flex; align-items: center; gap: 9px; min-width: 0; padding-top: 8px; border-top: 1px solid #edf0f2; color: var(--text-secondary); font-size: 11px; }.service-toolbar-label { color: var(--text-main); font-weight: 750; }.service-toolbar select { max-width: 290px; padding: 5px 24px 5px 7px; border: 1px solid var(--border-subtle); border-radius: 5px; background: white; color: var(--text-main); font-size: 11px; }.service-toolbar-note { color: var(--text-muted); font-size: 10px; }.batch-test-status { grid-area: status; padding-top: 8px; border-top: 1px solid #edf0f2; }.batch-test-status.running { color: var(--primary); }.batch-test-status.complete { color: var(--success); }.batch-test-status.blocked { color: var(--warning); }
 .prototype-panel { border: 1px solid var(--border); border-radius: 12px; background: var(--card-bg); box-shadow: 0 14px 35px rgba(37, 52, 64, .08); }.prototype-panel-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 19px 20px 14px; border-bottom: 1px solid var(--border); }.prototype-panel-header h2 { margin: 0 0 5px; font-size: 17px; letter-spacing: -.02em; }.prototype-panel-header p { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }.text-action { padding: 2px 0; border: 0; background: transparent; color: var(--primary); font-size: 12px; font-weight: 750; }.text-action:disabled { cursor: not-allowed; color: var(--text-muted); }
 .comparison-head { display: grid; grid-template-columns: 34px minmax(230px, .86fr) minmax(150px, .54fr) minmax(560px, 2.5fr); gap: 12px; align-items: end; padding: 12px 20px 9px; border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: 11px; font-weight: 700; }.history-axis { display: flex; justify-content: space-between; margin-top: 8px; color: var(--text-muted); font-size: 10px; font-weight: 500; }.history-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 13px; padding: 8px 20px; border-bottom: 1px solid #edf0f2; color: var(--text-secondary); font-size: 10px; }.legend-item { display: inline-flex; align-items: center; gap: 4px; }.legend-mark { width: 8px; height: 8px; border-radius: 50%; background: var(--success); }.legend-mark.fail { border-radius: 0; background: var(--danger); transform: rotate(45deg); }.legend-mark.timeout { border: 2px solid var(--danger); background: white; border-radius: 2px; }.legend-mark.missing { width: 13px; height: 3px; border-radius: 0; background: var(--text-muted); }
@@ -591,6 +709,9 @@ onUnmounted(() => { unsubscribeEvents?.(); unsubscribeEvents = null })
 .history-cell { min-width: 0; }.history-cell :deep(.relative) { min-height: 84px; }.history-cell :deep(svg) { width: 100%; }.history-summary { min-width: 0; color: var(--text-secondary); font-size: 11px; line-height: 1.5; }.history-summary strong { display: block; color: var(--text-main); font-size: 12px; }.history-summary span { display: block; margin-top: 3px; }.history-open { display: inline-flex; align-items: center; gap: 5px; margin-top: 5px; padding: 0; border: 0; background: transparent; color: var(--primary); font-size: 12px; font-weight: 750; }.project-unavailable-cell { display: flex; flex-direction: column; justify-content: center; min-height: 84px; padding: 12px; border-left: 3px solid var(--border-subtle); background: #fbfcfd; }.project-unavailable-cell strong { color: var(--text-secondary); font-size: 13px; }.project-unavailable-cell span { margin-top: 6px; color: var(--text-muted); font-size: 11px; line-height: 1.45; }.compare-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 10px 20px; border-top: 1px solid var(--border); color: var(--text-secondary); font-size: 11px; }
 .prototype-state { display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 52px 24px; color: var(--text-secondary); text-align: center; font-size: 12px; }.prototype-state strong { color: var(--text-main); font-size: 17px; }.prototype-state.error-state strong { color: var(--danger); }.evidence-panel { margin-top: 14px; }.evidence-actions { display: flex; flex-wrap: wrap; gap: 8px; }.evidence-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; padding: 17px 20px; border-bottom: 1px solid var(--border); }.evidence-facts { display: flex; flex-direction: column; gap: 5px; color: var(--text-secondary); font-size: 12px; line-height: 1.45; }.evidence-facts strong { color: var(--text-main); font-size: 18px; }.evidence-facts small { font-size: 12px; font-weight: 500; }.fact-label, .section-label { color: var(--text-muted); font-size: 11px; font-weight: 700; }.health-normal { color: var(--success) !important; }.health-flaky { color: var(--warning) !important; }.health-failed { color: var(--danger) !important; }.health-nodata { color: var(--text-muted) !important; }.evidence-empty { padding: 30px 20px; color: var(--text-secondary); font-size: 13px; }.inline-error { margin: 12px 20px; padding: 10px 12px; border-left: 3px solid var(--danger); background: var(--danger-bg); color: var(--danger); font-size: 12px; }.evidence-history-list { padding: 16px 20px 0; }.history-record { display: grid; grid-template-columns: minmax(200px, 1fr) 130px 150px; gap: 14px; width: 100%; padding: 10px 0; border: 0; border-top: 1px solid #edf0f2; background: transparent; color: var(--text-secondary); text-align: left; font-size: 12px; }.history-record:first-of-type { margin-top: 9px; }.history-record:hover, .history-record.selected { color: var(--primary); }.history-record strong, .history-record small { display: block; }.history-record small { margin-top: 3px; color: var(--text-secondary); font-size: 11px; }.evidence-expand { margin: 15px 20px 18px; }
 .prototype-modal-backdrop { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 14px; background: rgba(20, 31, 40, .38); }.prototype-history-modal { width: min(1240px, calc(100vw - 28px)); max-height: calc(100vh - 28px); overflow: auto; padding: 24px; border-radius: 13px; background: var(--card-bg); color: var(--text-main); box-shadow: 0 24px 70px rgba(20, 35, 45, .24); }.modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 15px; }.modal-header h2 { max-width: 900px; margin: 6px 0; font-size: 22px; line-height: 1.25; }.modal-header p:not(.prototype-eyebrow) { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }.modal-actions { display: flex; align-items: flex-start; gap: 8px; }.close-button { width: 30px; height: 30px; border: 1px solid var(--border); border-radius: 50%; background: white; color: var(--text-secondary); font-size: 18px; line-height: 1; }.history-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 10px 14px; padding: 12px 13px; border: 1px solid var(--border); background: var(--card-subtle); color: var(--text-secondary); font-size: 11px; }.history-controls label { display: grid; gap: 5px; font-size: 10px; font-weight: 700; }.history-controls select { min-width: 170px; padding: 6px 8px; border: 1px solid var(--border-subtle); border-radius: 6px; background: white; color: var(--text-main); font-size: 11px; }.modal-chart { margin-top: 14px; padding: 16px 10px 10px; border: 1px solid var(--border); background: white; }.modal-current { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 12px; padding: 10px 12px; border-left: 3px solid var(--primary); background: var(--primary-subtle); color: var(--text-secondary); font-size: 12px; }.modal-current strong { color: var(--text-main); }.modal-table-wrap { margin-top: 18px; overflow: auto; border-top: 1px solid var(--border); }.modal-table-wrap table { width: 100%; min-width: 680px; border-collapse: collapse; font-size: 12px; }.modal-table-wrap th, .modal-table-wrap td { padding: 9px 8px; border-bottom: 1px solid var(--border); text-align: left; }.modal-table-wrap th { color: var(--text-secondary); font-weight: 700; }.modal-table-wrap tr.selected { background: #edf6f8; }.modal-table-wrap td.success { color: var(--success); font-weight: 700; }.modal-table-wrap td.fail { color: var(--danger); font-weight: 700; }
+.batch-panel { margin-bottom: 14px; }.batch-history-list { display: flex; flex-direction: column; padding: 0 20px; }.batch-history-record { display: grid; grid-template-columns: minmax(180px, 1fr) 90px 120px; gap: 14px; width: 100%; padding: 9px 0; border: 0; border-bottom: 1px solid #edf0f2; background: transparent; color: var(--text-secondary); text-align: left; font-size: 12px; }.batch-history-record.selected { color: var(--primary); }.batch-history-record strong, .batch-history-record small { display: block; }.batch-history-record small { margin-top: 3px; color: var(--text-muted); }.batch-history-empty { padding: 10px 0 15px; color: var(--text-muted); font-size: 12px; }.batch-detail { padding: 14px 20px 18px; }.batch-detail-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 9px; }.batch-detail-heading strong, .batch-detail-heading span { display: block; }.batch-detail-heading strong { font-size: 13px; }.batch-detail-heading span { margin-top: 3px; color: var(--text-secondary); font-size: 11px; }.batch-item-row { display: grid; grid-template-columns: minmax(180px, .9fr) minmax(160px, .7fr) minmax(220px, 1.4fr); gap: 14px; align-items: start; padding: 11px 0; border-top: 1px solid #edf0f2; font-size: 11px; }.batch-item-identity, .batch-item-state, .batch-item-result { display: flex; flex-direction: column; gap: 4px; min-width: 0; }.batch-item-identity strong, .batch-item-state strong, .batch-item-result strong { color: var(--text-main); font-size: 12px; }.batch-item-identity span, .batch-item-state span, .batch-item-result span, .batch-no-result { color: var(--text-secondary); line-height: 1.4; overflow-wrap: anywhere; }.batch-item-identity code { color: var(--text-muted); font-size: 9px; overflow-wrap: anywhere; }.batch-error-detail { color: var(--danger) !important; }.batch-no-result { color: var(--text-muted); }
+@media (max-width: 860px) { .batch-item-row { grid-template-columns: 1fr 1fr; }.batch-item-result { grid-column: 1 / -1; } }
+@media (max-width: 560px) { .batch-history-record { grid-template-columns: 1fr 70px; }.batch-history-record > :last-child { grid-column: 1 / -1; }.batch-item-row { grid-template-columns: 1fr; }.batch-item-result { grid-column: auto; } }
 @media (max-width: 1120px) { .comparison-head, .node-row { grid-template-columns: 30px minmax(200px, .82fr) minmax(140px, .55fr) minmax(440px, 2.2fr); gap: 8px; } }
 @media (max-width: 860px) { .prototype-page { padding: 23px 17px 40px; }.prototype-page-heading { align-items: flex-start; }.prototype-project-bar { grid-template-columns: 1fr; grid-template-areas: "heading" "tabs" "actions" "service" "status"; }.project-bar-actions { justify-content: flex-start; }.comparison-head, .node-row { grid-template-columns: 30px minmax(180px, .9fr) minmax(132px, .58fr) minmax(360px, 1.7fr); }.evidence-grid { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 560px) { .prototype-page { padding-left: 10px; padding-right: 10px; }.prototype-page-heading { align-items: center; }.prototype-demo-note { max-width: 210px; }.scope-separator, .scope-refresh { display: none; }.scope-control { width: 100%; justify-content: space-between; }.scope-control select { flex: 1; max-width: 220px; }.scope-search-control, .scope-search { width: 100%; }.comparison-head { display: none; }.node-row { grid-template-columns: 28px 1fr; gap: 8px; padding: 12px 16px; }.node-row > :nth-child(3), .node-row > :nth-child(4) { grid-column: 2; }.row-readout { padding: 8px 0 2px; }.history-cell { width: 100%; }.evidence-grid { grid-template-columns: 1fr; }.history-record { grid-template-columns: 1fr 1fr; }.history-record > :last-child { grid-column: 1 / -1; }.prototype-history-modal { padding: 17px; }.history-controls { align-items: flex-start; }.modal-header { flex-direction: column; }.modal-actions { align-self: stretch; justify-content: flex-end; } }

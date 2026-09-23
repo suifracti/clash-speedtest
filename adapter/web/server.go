@@ -196,6 +196,11 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("POST /api/workbench/latency-tests", s.handleRunWorkbenchLatencyTest)
 	mux.HandleFunc("GET /api/workbench/latency-tests", s.handleListWorkbenchLatencyTests)
 	mux.HandleFunc("GET /api/workbench/latency-tests/{attempt_id}", s.handleGetWorkbenchLatencyTest)
+	mux.HandleFunc("POST /api/workbench/latency-batches", s.handleStartWorkbenchLatencyBatch)
+	mux.HandleFunc("GET /api/workbench/latency-batches", s.handleListWorkbenchLatencyBatches)
+	mux.HandleFunc("GET /api/workbench/latency-batches/{batch_id}", s.handleGetWorkbenchLatencyBatch)
+	mux.HandleFunc("POST /api/workbench/latency-batches/{batch_id}/cancel", s.handleCancelWorkbenchLatencyBatch)
+	mux.HandleFunc("POST /api/workbench/latency-batches/{batch_id}/items/{item_id}/retry-save", s.handleRetryWorkbenchLatencyBatchItem)
 
 	// PR#7: read-only evidence → recommendation. There is deliberately NO execution
 	// endpoint here: the recommendation is advisory only and never switches a node.
@@ -1060,6 +1065,72 @@ func (s *Server) handleGetWorkbenchLatencyTest(w http.ResponseWriter, r *http.Re
 			return
 		}
 		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleStartWorkbenchLatencyBatch(w http.ResponseWriter, r *http.Request) {
+	var req application.WorkbenchLatencyBatchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body: "+err.Error())
+		return
+	}
+	result, err := s.app.StartWorkbenchLatencyBatch(r.Context(), req)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if monitor.IsValidationError(err) {
+			status = http.StatusBadRequest
+		}
+		if strings.Contains(err.Error(), "正在运行") {
+			status = http.StatusConflict
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, result)
+}
+
+func (s *Server) handleListWorkbenchLatencyBatches(w http.ResponseWriter, r *http.Request) {
+	limit := 20
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 || parsed > 100 {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 100")
+			return
+		}
+		limit = parsed
+	}
+	result, err := s.app.ListWorkbenchLatencyBatches(r.Context(), limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleGetWorkbenchLatencyBatch(w http.ResponseWriter, r *http.Request) {
+	result, err := s.app.GetWorkbenchLatencyBatch(r.Context(), r.PathValue("batch_id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleCancelWorkbenchLatencyBatch(w http.ResponseWriter, r *http.Request) {
+	result, err := s.app.CancelWorkbenchLatencyBatch(r.PathValue("batch_id"))
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, result)
+}
+
+func (s *Server) handleRetryWorkbenchLatencyBatchItem(w http.ResponseWriter, r *http.Request) {
+	result, err := s.app.RetryWorkbenchLatencyBatchItem(r.Context(), r.PathValue("batch_id"), r.PathValue("item_id"))
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, result)

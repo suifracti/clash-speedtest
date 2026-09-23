@@ -40,6 +40,54 @@ type WorkbenchLatencyTestRequest struct {
 	TimeoutSeconds int64  `json:"timeout_seconds"`
 }
 
+type WorkbenchLatencyBatchSelection struct {
+	ProfileID         string `json:"profile_id"`
+	NodeKey           string `json:"node_key"`
+	NodeIdentityKey   string `json:"node_identity_key"`
+	ConfigRevisionKey string `json:"config_revision_key"`
+	DisplayName       string `json:"display_name"`
+	NodeType          string `json:"node_type"`
+}
+
+type WorkbenchLatencyBatchRequest struct {
+	RequestID      string                           `json:"request_id"`
+	TestProject    string                           `json:"test_project"`
+	TimeoutSeconds int64                            `json:"timeout_seconds"`
+	Selections     []WorkbenchLatencyBatchSelection `json:"selections"`
+}
+
+type WorkbenchLatencyBatchItemDTO struct {
+	ItemID            string                   `json:"item_id"`
+	BatchID           string                   `json:"batch_id"`
+	Ordinal           int                      `json:"ordinal"`
+	ProfileID         string                   `json:"profile_id"`
+	NodeKey           string                   `json:"node_key"`
+	NodeIdentityKey   string                   `json:"node_identity_key"`
+	ConfigRevisionKey string                   `json:"config_revision_key"`
+	DisplayName       string                   `json:"display_name"`
+	NodeType          string                   `json:"node_type"`
+	ExecutionState    string                   `json:"execution_state"`
+	PersistenceState  string                   `json:"persistence_state"`
+	AttemptID         string                   `json:"attempt_id,omitempty"`
+	RequestedAt       time.Time                `json:"requested_at"`
+	StartedAt         time.Time                `json:"started_at,omitempty"`
+	FinishedAt        time.Time                `json:"finished_at,omitempty"`
+	ErrorMessage      string                   `json:"error_message,omitempty"`
+	PersistenceError  string                   `json:"persistence_error,omitempty"`
+	Result            *WorkbenchLatencyTestDTO `json:"result,omitempty"`
+}
+
+type WorkbenchLatencyBatchDTO struct {
+	BatchID        string                         `json:"batch_id"`
+	RequestID      string                         `json:"request_id"`
+	TestProject    string                         `json:"test_project"`
+	TimeoutSeconds int64                          `json:"timeout_seconds"`
+	RequestedAt    time.Time                      `json:"requested_at"`
+	State          string                         `json:"state"`
+	ItemCount      int                            `json:"item_count"`
+	Items          []WorkbenchLatencyBatchItemDTO `json:"items,omitempty"`
+}
+
 // WorkbenchLatencyHistoryQuery scopes history to one logical subscription node.
 type WorkbenchLatencyHistoryQuery struct {
 	ProfileID string     `json:"profile_id"`
@@ -92,6 +140,11 @@ type WorkbenchLatencyTestDTO struct {
 	DisplayName       string                      `json:"display_name"`
 	NodeType          string                      `json:"node_type"`
 	TestProject       string                      `json:"test_project"`
+	Source            string                      `json:"source,omitempty"`
+	Method            string                      `json:"method,omitempty"`
+	MethodVersion     int                         `json:"method_version,omitempty"`
+	Target            string                      `json:"target,omitempty"`
+	Unit              string                      `json:"unit,omitempty"`
 	RequestedAt       time.Time                   `json:"requested_at"`
 	StartedAt         time.Time                   `json:"started_at"`
 	FinishedAt        time.Time                   `json:"finished_at"`

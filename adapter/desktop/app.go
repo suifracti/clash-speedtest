@@ -88,6 +88,26 @@ func (a *App) GetWorkbenchLatencyTest(query application.WorkbenchLatencyHistoryD
 	return a.app.GetWorkbenchLatencyTest(a.context(), query)
 }
 
+func (a *App) StartWorkbenchLatencyBatch(req application.WorkbenchLatencyBatchRequest) (*application.WorkbenchLatencyBatchDTO, error) {
+	return a.app.StartWorkbenchLatencyBatch(a.context(), req)
+}
+
+func (a *App) ListWorkbenchLatencyBatches(limit int) ([]application.WorkbenchLatencyBatchDTO, error) {
+	return a.app.ListWorkbenchLatencyBatches(a.context(), limit)
+}
+
+func (a *App) GetWorkbenchLatencyBatch(batchID string) (*application.WorkbenchLatencyBatchDTO, error) {
+	return a.app.GetWorkbenchLatencyBatch(a.context(), batchID)
+}
+
+func (a *App) CancelWorkbenchLatencyBatch(batchID string) (*application.WorkbenchLatencyBatchDTO, error) {
+	return a.app.CancelWorkbenchLatencyBatch(batchID)
+}
+
+func (a *App) RetryWorkbenchLatencyBatchItem(batchID, itemID string) (*application.WorkbenchLatencyBatchDTO, error) {
+	return a.app.RetryWorkbenchLatencyBatchItem(a.context(), batchID, itemID)
+}
+
 func (a *App) StopTest() {
 	a.app.Stop()
 }

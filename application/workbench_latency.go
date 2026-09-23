@@ -49,6 +49,10 @@ func (s *AppService) RunWorkbenchLatencyTest(ctx context.Context, req WorkbenchL
 	if timeoutSeconds < minWorkbenchLatencyTimeoutSeconds || timeoutSeconds > maxWorkbenchLatencyTimeoutSeconds {
 		return nil, monitor.NewValidationError(fmt.Sprintf("timeout_seconds 必须在 %d 到 %d 之间", minWorkbenchLatencyTimeoutSeconds, maxWorkbenchLatencyTimeoutSeconds))
 	}
+	if err := s.beginWorkbenchSingle(); err != nil {
+		return nil, err
+	}
+	defer s.endWorkbenchSingle()
 
 	selected, executionName, proxy, err := s.resolveWorkbenchLatencyProxy(profileID, nodeKey)
 	if err != nil {
@@ -98,6 +102,11 @@ func (s *AppService) RunWorkbenchLatencyTest(ctx context.Context, req WorkbenchL
 	}
 
 	record := buildWorkbenchLatencyRecord(attemptID, profileID, selected, req.TestProject, requestedAt, startedAt, finishedAt, lastResult)
+	record.Source = "workbench_manual"
+	record.Method = workbenchLatencyMethod
+	record.MethodVersion = 1
+	record.Target = st.LatencyProbeTarget()
+	record.Unit = "ms"
 	dto := workbenchLatencyDTO(*record, "saving", "")
 
 	s.emitter.Emit(Event{
@@ -436,6 +445,11 @@ func workbenchLatencyDTO(test history.LatencyTest, persistenceState, persistence
 		DisplayName:       test.DisplayName,
 		NodeType:          test.NodeType,
 		TestProject:       test.TestProject,
+		Source:            test.Source,
+		Method:            test.Method,
+		MethodVersion:     test.MethodVersion,
+		Target:            test.Target,
+		Unit:              test.Unit,
 		RequestedAt:       test.RequestedAt,
 		StartedAt:         test.StartedAt,
 		FinishedAt:        test.FinishedAt,

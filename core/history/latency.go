@@ -14,6 +14,11 @@ type LatencyTest struct {
 	DisplayName       string              `json:"display_name"`
 	NodeType          string              `json:"node_type"`
 	TestProject       string              `json:"test_project"`
+	Source            string              `json:"source,omitempty"`
+	Method            string              `json:"method,omitempty"`
+	MethodVersion     int                 `json:"method_version,omitempty"`
+	Target            string              `json:"target,omitempty"`
+	Unit              string              `json:"unit,omitempty"`
 	RequestedAt       time.Time           `json:"requested_at"`
 	StartedAt         time.Time           `json:"started_at"`
 	FinishedAt        time.Time           `json:"finished_at"`
@@ -26,6 +31,44 @@ type LatencyTest struct {
 	FailureSamples    int                 `json:"failure_samples"`
 	ErrorMessage      string              `json:"error_message,omitempty"`
 	Samples           []LatencyTestSample `json:"samples"`
+}
+
+// LatencyBatch is a user-confirmed Workbench selection snapshot. RequestID is
+// the idempotency key used when a client retries a create request.
+type LatencyBatch struct {
+	BatchID        string             `json:"batch_id"`
+	RequestID      string             `json:"request_id"`
+	TestProject    string             `json:"test_project"`
+	TimeoutSeconds int64              `json:"timeout_seconds"`
+	RequestedAt    time.Time          `json:"requested_at"`
+	State          string             `json:"state"`
+	ItemCount      int                `json:"item_count"`
+	Items          []LatencyBatchItem `json:"items"`
+}
+
+// LatencyBatchItem keeps execution and history persistence states independent.
+// ResultJSON is a retryable copy of a measured result when saving its attempt
+// failed; it is cleared only after the attempt transaction succeeds.
+type LatencyBatchItem struct {
+	ItemID            string       `json:"item_id"`
+	BatchID           string       `json:"batch_id"`
+	Ordinal           int          `json:"ordinal"`
+	ProfileID         string       `json:"profile_id"`
+	NodeKey           string       `json:"node_key"`
+	NodeIdentityKey   string       `json:"node_identity_key"`
+	ConfigRevisionKey string       `json:"config_revision_key"`
+	DisplayName       string       `json:"display_name"`
+	NodeType          string       `json:"node_type"`
+	ExecutionState    string       `json:"execution_state"`
+	PersistenceState  string       `json:"persistence_state"`
+	AttemptID         string       `json:"attempt_id,omitempty"`
+	RequestedAt       time.Time    `json:"requested_at"`
+	StartedAt         time.Time    `json:"started_at,omitempty"`
+	FinishedAt        time.Time    `json:"finished_at,omitempty"`
+	ErrorMessage      string       `json:"error_message,omitempty"`
+	PersistenceError  string       `json:"persistence_error,omitempty"`
+	Result            *LatencyTest `json:"result,omitempty"`
+	ResultStaged      bool         `json:"-"`
 }
 
 // LatencyTestSample is an immutable raw ping result belonging to one attempt.

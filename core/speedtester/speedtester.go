@@ -483,12 +483,12 @@ type IPInfo struct {
 type StabilityInfo struct {
 	TotalProbes   int      `json:"total_probes"`
 	SuccessProbes int      `json:"success_probes"`
-	StabilityRate float64  `json:"stability_rate"` // e.g. 66.7
-	Flapping      bool     `json:"flapping"`       // true if inconsistent results (偶发送中/负载均衡漂移)
-	ExitIPs       []string `json:"exit_ips"`       // unique IPs detected across probe rounds
+	StabilityRate float64  `json:"stability_rate"`        // e.g. 66.7
+	Flapping      bool     `json:"flapping"`              // true if inconsistent results (偶发送中/负载均衡漂移)
+	ExitIPs       []string `json:"exit_ips"`              // unique IPs detected across probe rounds
 	BlockedIPs    []string `json:"blocked_ips,omitempty"` // IPs identified as blocked/CN by Google
 	FlapReason    string   `json:"flap_reason,omitempty"`
-	GoogleTTFBMs  int64    `json:"google_ttfb_ms"`        // average Google API interaction latency
+	GoogleTTFBMs  int64    `json:"google_ttfb_ms"` // average Google API interaction latency
 	GoogleMinTTFB int64    `json:"google_min_ttfb_ms"`
 	GoogleMaxTTFB int64    `json:"google_max_ttfb_ms"`
 	LatencyGrade  string   `json:"latency_grade,omitempty"` // "fast", "medium", "slow", "laggy"
@@ -901,6 +901,14 @@ func (st *SpeedTester) probeURL() string {
 		return fmt.Sprintf("%s/__down?bytes=1", st.serverBaseURL)
 	}
 	return st.downloadURL
+}
+
+// LatencyProbeTarget returns the concrete target used by latency-only probes.
+func (st *SpeedTester) LatencyProbeTarget() string {
+	if st == nil {
+		return ""
+	}
+	return st.probeURL()
 }
 
 type downloadResult struct {
