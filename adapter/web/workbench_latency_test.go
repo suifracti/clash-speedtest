@@ -91,7 +91,7 @@ func TestWebWorkbenchLatencyContractAndReopen(t *testing.T) {
 	if result.PersistenceState != "saving" || len(result.Samples) == 0 {
 		t.Fatalf("unexpected Web result: %+v", result)
 	}
-	if rows := waitWebLatencyHistory(t, server.Handler(), options[0].NodeKey, result.AttemptID); len(rows) != 1 {
+	if rows := waitWebLatencyHistory(t, server.Handler(), options[0], result.AttemptID); len(rows) != 1 {
 		t.Fatalf("async Web history: %+v", rows)
 	}
 	if err := server.Close(); err != nil {
@@ -105,7 +105,7 @@ func TestWebWorkbenchLatencyContractAndReopen(t *testing.T) {
 	defer server.Close()
 	windowSince := result.Samples[0].Timestamp.Add(-time.Second)
 	windowUntil := result.Samples[len(result.Samples)-1].Timestamp.Add(time.Second)
-	windowQuery := fmt.Sprintf("profile_id=profile-web&node_key=%s&since=%s&until=%s", url.QueryEscape(options[0].NodeKey), url.QueryEscape(windowSince.Format(time.RFC3339Nano)), url.QueryEscape(windowUntil.Format(time.RFC3339Nano)))
+	windowQuery := fmt.Sprintf("profile_id=profile-web&node_key=%s&node_identity_key=%s&config_revision_key=%s&since=%s&until=%s", url.QueryEscape(options[0].NodeKey), url.QueryEscape(options[0].NodeIdentityKey), url.QueryEscape(options[0].ConfigRevisionKey), url.QueryEscape(windowSince.Format(time.RFC3339Nano)), url.QueryEscape(windowUntil.Format(time.RFC3339Nano)))
 	historyReq := httptest.NewRequest(http.MethodGet, "/api/workbench/latency-tests?"+windowQuery, nil)
 	historyReq.Host = "127.0.0.1:8080"
 	historyRec := httptest.NewRecorder()
@@ -130,7 +130,7 @@ func TestWebWorkbenchLatencyContractAndReopen(t *testing.T) {
 	if detailRec.Code != http.StatusOK {
 		t.Fatalf("scoped detail status: %d body=%s", detailRec.Code, detailRec.Body.String())
 	}
-	wrongScopeReq := httptest.NewRequest(http.MethodGet, "/api/workbench/latency-tests/"+url.PathEscape(result.AttemptID)+"?profile_id=other-profile&node_key="+url.QueryEscape(options[0].NodeKey)+"&since="+url.QueryEscape(windowSince.Format(time.RFC3339Nano))+"&until="+url.QueryEscape(windowUntil.Format(time.RFC3339Nano)), nil)
+	wrongScopeReq := httptest.NewRequest(http.MethodGet, "/api/workbench/latency-tests/"+url.PathEscape(result.AttemptID)+"?profile_id=other-profile&node_key="+url.QueryEscape(options[0].NodeKey)+"&node_identity_key="+url.QueryEscape(options[0].NodeIdentityKey)+"&config_revision_key="+url.QueryEscape(options[0].ConfigRevisionKey)+"&since="+url.QueryEscape(windowSince.Format(time.RFC3339Nano))+"&until="+url.QueryEscape(windowUntil.Format(time.RFC3339Nano)), nil)
 	wrongScopeReq.Host = "127.0.0.1:8080"
 	wrongScopeRec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(wrongScopeRec, wrongScopeReq)
@@ -139,11 +139,12 @@ func TestWebWorkbenchLatencyContractAndReopen(t *testing.T) {
 	}
 }
 
-func waitWebLatencyHistory(t *testing.T, handler http.Handler, nodeKey, attemptID string) []application.WorkbenchLatencyTestDTO {
+func waitWebLatencyHistory(t *testing.T, handler http.Handler, option application.MonitorNodeOptionDTO, attemptID string) []application.WorkbenchLatencyTestDTO {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		req := httptest.NewRequest(http.MethodGet, "/api/workbench/latency-tests?profile_id=profile-web&node_key="+url.QueryEscape(nodeKey), nil)
+		query := "profile_id=profile-web&node_key=" + url.QueryEscape(option.NodeKey) + "&node_identity_key=" + url.QueryEscape(option.NodeIdentityKey) + "&config_revision_key=" + url.QueryEscape(option.ConfigRevisionKey)
+		req := httptest.NewRequest(http.MethodGet, "/api/workbench/latency-tests?"+query, nil)
 		req.Host = "127.0.0.1:8080"
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)

@@ -437,6 +437,13 @@ func (s *Store) GetLatencyTestInWindow(ctx context.Context, attemptID string, si
 	return s.db.GetLatencyTestInWindow(ctx, attemptID, since, until)
 }
 
+func (s *Store) ListNodeHistoryRevisions(ctx context.Context, profileID, nodeIdentityKey string) ([]NodeHistoryRevision, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
+	return s.db.ListNodeHistoryRevisions(ctx, profileID, nodeIdentityKey)
+}
+
 func (s *Store) CreateLatencyBatch(ctx context.Context, batch *LatencyBatch) error {
 	if s == nil || s.db == nil {
 		return fmt.Errorf("history store is not initialized")

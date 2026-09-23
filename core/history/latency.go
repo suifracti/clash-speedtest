@@ -82,11 +82,15 @@ type LatencyTestSample struct {
 
 // LatencyTestFilter scopes history to a logical subscription node.
 type LatencyTestFilter struct {
-	ProfileID string
-	NodeKey   string
-	Since     *time.Time
-	Until     *time.Time
-	Limit     int
+	ProfileID         string
+	NodeKey           string
+	NodeIdentityKey   string
+	ConfigRevisionKey string
+	Since             *time.Time
+	Until             *time.Time
+	Limit             int
+	BeforeFinishedAt  *time.Time
+	BeforeAttemptID   string
 }
 
 // LatencyTestQueryResult is a bounded, raw-sample-scoped history page.
@@ -95,4 +99,13 @@ type LatencyTestFilter struct {
 type LatencyTestQueryResult struct {
 	Tests   []*LatencyTest
 	HasMore bool
+}
+
+// NodeHistoryRevision is a safe snapshot of one observed configuration revision
+// for a stable profile/node identity. It contains no proxy configuration.
+type NodeHistoryRevision struct {
+	ConfigRevisionKey string    `json:"config_revision_key"`
+	NodeKey           string    `json:"node_key"`
+	DisplayName       string    `json:"display_name"`
+	LastObservedAt    time.Time `json:"last_observed_at"`
 }

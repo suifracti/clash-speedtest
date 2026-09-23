@@ -19,6 +19,7 @@ func TestMonitorSamplingSourceFiltersStatsPagingAndRunAssociation(t *testing.T) 
 	defer store.Close()
 	ctx := context.Background()
 	now := time.Date(2026, 9, 23, 8, 0, 0, 0, time.UTC)
+	since := now.Add(-5 * time.Minute)
 	job := &monitor.MonitorJobDefinition{
 		ID: "tiered-job", Name: "Tiered", ProfileID: "profile-a", ProbeSet: monitor.ProbeSetLight,
 		SamplingTier: monitor.SamplingTierRegular, Interval: time.Minute, Timeout: 5 * time.Second,
@@ -45,9 +46,11 @@ func TestMonitorSamplingSourceFiltersStatsPagingAndRunAssociation(t *testing.T) 
 	}
 
 	samples := []*monitor.MonitorSample{
-		{SampleID: "regular-ok", RunID: "scheduled-run", NodeKey: "node-a", NodeIdentityKey: "identity-a", ConfigRevisionKey: "rev-a", ProfileID: "profile-a", DisplayNameSnapshot: "A", ProbeType: "rtt", Target: "known", Timestamp: now, Success: true, Latency: 40 * time.Millisecond, ErrorClass: "none"},
+		{SampleID: "regular-ok", RunID: "scheduled-run", NodeKey: "node-a", NodeIdentityKey: "identity-a", ConfigRevisionKey: "rev-a", ProfileID: "profile-a", DisplayNameSnapshot: "A", ProbeType: "rtt", Target: "known", Timestamp: now.Add(-4 * time.Minute), Success: true, Latency: 40 * time.Millisecond, ErrorClass: "none"},
 		{SampleID: "diagnostic-fail", RunID: "diagnostic-run", NodeKey: "node-a", NodeIdentityKey: "identity-a", ConfigRevisionKey: "rev-a", ProfileID: "profile-a", DisplayNameSnapshot: "A", ProbeType: "rtt", Target: "known", Timestamp: now, Success: false, ErrorClass: "timeout"},
 		{SampleID: "legacy-ok", RunID: "legacy-run", NodeKey: "node-a", NodeIdentityKey: "identity-a", ConfigRevisionKey: "rev-a", ProfileID: "profile-a", DisplayNameSnapshot: "A", ProbeType: "rtt", Target: "known", Timestamp: now, Success: true, Latency: 25 * time.Millisecond, ErrorClass: "none"},
+		{SampleID: "other-revision", RunID: "scheduled-run", NodeKey: "node-a-rev-b", NodeIdentityKey: "identity-a", ConfigRevisionKey: "rev-b", ProfileID: "profile-a", DisplayNameSnapshot: "A", ProbeType: "rtt", Target: "known", Timestamp: now.Add(-30 * time.Second), Success: true, Latency: 90 * time.Millisecond, ErrorClass: "none"},
+		{SampleID: "same-name-other-profile", RunID: "scheduled-run", NodeKey: "node-a", NodeIdentityKey: "identity-a", ConfigRevisionKey: "rev-a", ProfileID: "profile-b", DisplayNameSnapshot: "A", ProbeType: "rtt", Target: "known", Timestamp: now.Add(-2 * time.Minute), Success: true, Latency: 110 * time.Millisecond, ErrorClass: "none"},
 	}
 	if err := store.SaveMonitorSamples(ctx, samples); err != nil {
 		t.Fatalf("save raw samples: %v", err)
@@ -58,7 +61,7 @@ func TestMonitorSamplingSourceFiltersStatsPagingAndRunAssociation(t *testing.T) 
 		t.Fatalf("change current job tier: %v", err)
 	}
 	all, err := store.QueryMonitorSamples(ctx, monitor.SampleFilter{NodeIdentityKey: "identity-a", Limit: 10})
-	if err != nil || len(all) != 3 {
+	if err != nil || len(all) != 5 {
 		t.Fatalf("all raw samples must remain visible: count=%d err=%v", len(all), err)
 	}
 	sourceByID := make(map[string]monitor.SamplingTier, len(all))
@@ -70,25 +73,34 @@ func TestMonitorSamplingSourceFiltersStatsPagingAndRunAssociation(t *testing.T) 
 	}
 
 	regularPage, err := store.QueryMonitorSamplesCursor(ctx, monitor.CursorFilter{
-		NodeIdentityKey: "identity-a", SamplingTier: "", RegularObservationOnly: true, Limit: 10, OrderDesc: true,
+		NodeIdentityKey: "identity-a", ConfigRevisionKey: "rev-a", ProfileID: "profile-a", SamplingTier: "", RegularObservationOnly: true, Limit: 1, OrderDesc: true,
 	})
 	if err != nil || len(regularPage.Items) != 1 || regularPage.Items[0].SampleID != "regular-ok" {
 		t.Fatalf("cursor regular-observation filter: page=%+v err=%v", regularPage, err)
 	}
-	regularStats, err := store.GetDerivedStats(ctx, monitor.StatsQuery{NodeIdentityKey: "identity-a", Since: &now, Until: &now, RegularObservationOnly: true})
+	regularStats, err := store.GetDerivedStats(ctx, monitor.StatsQuery{NodeIdentityKey: "identity-a", ConfigRevisionKey: "rev-a", ProfileID: "profile-a", Since: &since, Until: &now, RegularObservationOnly: true})
 	if err != nil {
 		t.Fatalf("regular-observation stats: %v", err)
 	}
 	if regularStats.SampleCount != 1 || regularStats.SuccessCount != 1 || regularStats.FailureCount != 0 || regularStats.SuccessRate != 1 || !regularStats.RegularObservationOnly || len(regularStats.IncludedSamplingTiers) != 1 || regularStats.IncludedSamplingTiers[0] != monitor.SamplingTierRegular {
 		t.Fatalf("diagnostic/unknown sources entered regular stats: %+v", regularStats)
 	}
-	diagnosticStats, err := store.GetDerivedStats(ctx, monitor.StatsQuery{NodeIdentityKey: "identity-a", SamplingTier: monitor.SamplingTierDiagnostic})
+	diagnosticStats, err := store.GetDerivedStats(ctx, monitor.StatsQuery{NodeIdentityKey: "identity-a", ConfigRevisionKey: "rev-a", ProfileID: "profile-a", SamplingTier: monitor.SamplingTierDiagnostic})
 	if err != nil || diagnosticStats.SampleCount != 1 || diagnosticStats.FailureCount != 1 {
 		t.Fatalf("diagnostic stats must remain separately queryable: stats=%+v err=%v", diagnosticStats, err)
 	}
 	legacy, err := store.QueryMonitorSamples(ctx, monitor.SampleFilter{SamplingTier: monitor.SamplingTierLegacyUnknown, Limit: 10})
 	if err != nil || len(legacy) != 1 {
 		t.Fatalf("legacy unknown raw history must remain queryable: count=%d err=%v", len(legacy), err)
+	}
+
+	revisions, err := store.ListNodeHistoryRevisions(ctx, "profile-a", "identity-a")
+	if err != nil || len(revisions) != 2 || revisions[0].ConfigRevisionKey != "rev-a" && revisions[1].ConfigRevisionKey != "rev-a" || revisions[0].ConfigRevisionKey != "rev-b" && revisions[1].ConfigRevisionKey != "rev-b" {
+		t.Fatalf("revision choices must include observed revisions only within profile/identity: %+v err=%v", revisions, err)
+	}
+	profileBRevisions, err := store.ListNodeHistoryRevisions(ctx, "profile-b", "identity-a")
+	if err != nil || len(profileBRevisions) != 1 || profileBRevisions[0].ConfigRevisionKey != "rev-a" {
+		t.Fatalf("same-name profile history crossed revision selector scope: %+v err=%v", profileBRevisions, err)
 	}
 }
 

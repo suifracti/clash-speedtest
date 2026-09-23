@@ -19,6 +19,7 @@ import type {
   WorkbenchLatencyTestRequest,
   WorkbenchLatencyHistoryQuery,
   WorkbenchLatencyHistoryDetailQuery,
+  NodeHistoryRevision,
   WorkbenchLatencyHistoryResult,
   WorkbenchLatencyTest,
   WorkbenchLatencyBatchRequest,
@@ -269,10 +270,16 @@ export function buildWorkbenchLatencyHistoryQuery(query: WorkbenchLatencyHistory
   const params = new URLSearchParams({
     profile_id: query.profile_id,
     node_key: query.node_key,
+    node_identity_key: query.node_identity_key,
+    config_revision_key: query.config_revision_key,
     since: query.since,
     until: query.until,
   })
   if (query.limit) params.set('limit', String(query.limit))
+  if (query.before_finished_at && query.before_attempt_id) {
+    params.set('before_finished_at', query.before_finished_at)
+    params.set('before_attempt_id', query.before_attempt_id)
+  }
   return params.toString()
 }
 
@@ -289,8 +296,18 @@ export async function fetchWorkbenchLatencyTest(query: WorkbenchLatencyHistoryDe
   if (isWails()) {
     return window.go!.desktop!.App!.GetWorkbenchLatencyTest(query)
   }
-  const params = new URLSearchParams({ profile_id: query.profile_id, node_key: query.node_key, since: query.since, until: query.until })
+  const params = new URLSearchParams({ profile_id: query.profile_id, node_key: query.node_key, node_identity_key: query.node_identity_key, config_revision_key: query.config_revision_key })
+  if (query.since) params.set('since', query.since)
+  if (query.until) params.set('until', query.until)
   const res = await fetch(`${API_BASE}/api/workbench/latency-tests/${encodeURIComponent(query.attempt_id)}?${params.toString()}`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function fetchNodeHistoryRevisions(profileId: string, nodeIdentityKey: string): Promise<NodeHistoryRevision[]> {
+  if (isWails()) return window.go!.desktop!.App!.ListNodeHistoryRevisions(profileId, nodeIdentityKey)
+  const params = new URLSearchParams({ profile_id: profileId, node_identity_key: nodeIdentityKey })
+  const res = await fetch(`${API_BASE}/api/history/node-revisions?${params.toString()}`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }

@@ -34,19 +34,21 @@ func TestWorkbenchLatencyHistoryWindowProjectsStatsFromRawSamples(t *testing.T) 
 	until := asOf
 	attemptID := "windowed-attempt"
 	if err := store.SaveLatencyTest(ctx, &history.LatencyTest{
-		AttemptID:      attemptID,
-		ProfileID:      "profile-window",
-		NodeKey:        "node-window",
-		TestProject:    WorkbenchLatencyProject,
-		RequestedAt:    since,
-		StartedAt:      since,
-		FinishedAt:     until,
-		Status:         "partial_failed",
-		LatencyMs:      99,
-		PacketLoss:     50,
-		TotalSamples:   4,
-		SuccessSamples: 2,
-		FailureSamples: 2,
+		AttemptID:         attemptID,
+		ProfileID:         "profile-window",
+		NodeKey:           "node-window",
+		NodeIdentityKey:   "identity-window",
+		ConfigRevisionKey: "revision-window",
+		TestProject:       WorkbenchLatencyProject,
+		RequestedAt:       since,
+		StartedAt:         since,
+		FinishedAt:        until,
+		Status:            "partial_failed",
+		LatencyMs:         99,
+		PacketLoss:        50,
+		TotalSamples:      4,
+		SuccessSamples:    2,
+		FailureSamples:    2,
 		Samples: []history.LatencyTestSample{
 			{Seq: 1, Timestamp: since.Add(-time.Second), LatencyMs: 9, Success: true},
 			{Seq: 2, Timestamp: since, LatencyMs: 40, Success: true},
@@ -59,10 +61,12 @@ func TestWorkbenchLatencyHistoryWindowProjectsStatsFromRawSamples(t *testing.T) 
 
 	service := &AppService{historyStore: store}
 	result, err := service.ListWorkbenchLatencyTests(ctx, WorkbenchLatencyHistoryQuery{
-		ProfileID: "profile-window",
-		NodeKey:   "node-window",
-		Since:     &since,
-		Until:     &until,
+		ProfileID:         "profile-window",
+		NodeKey:           "node-window",
+		NodeIdentityKey:   "identity-window",
+		ConfigRevisionKey: "revision-window",
+		Since:             &since,
+		Until:             &until,
 	})
 	if err != nil {
 		t.Fatalf("ListWorkbenchLatencyTests: %v", err)
@@ -82,17 +86,25 @@ func TestWorkbenchLatencyHistoryWindowProjectsStatsFromRawSamples(t *testing.T) 
 	}
 
 	detail, err := service.GetWorkbenchLatencyTest(ctx, WorkbenchLatencyHistoryDetailQuery{
-		ProfileID: "profile-window",
-		NodeKey:   "node-window",
-		AttemptID: attemptID,
-		Since:     &since,
-		Until:     &until,
+		ProfileID:         "profile-window",
+		NodeKey:           "node-window",
+		NodeIdentityKey:   "identity-window",
+		ConfigRevisionKey: "revision-window",
+		AttemptID:         attemptID,
+		Since:             &since,
+		Until:             &until,
 	})
 	if err != nil {
 		t.Fatalf("GetWorkbenchLatencyTest: %v", err)
 	}
 	if len(detail.Samples) != 2 || detail.Samples[0].Timestamp != since || !detail.Samples[1].Timestamp.Before(until) {
 		t.Fatalf("windowed detail leaked raw samples: %+v", detail.Samples)
+	}
+	if _, err := service.GetWorkbenchLatencyTest(ctx, WorkbenchLatencyHistoryDetailQuery{
+		ProfileID: "profile-window", NodeKey: "node-window", NodeIdentityKey: "identity-window",
+		ConfigRevisionKey: "another-revision", AttemptID: attemptID, Since: &since, Until: &until,
+	}); err == nil {
+		t.Fatal("attempt detail must reject a different configuration revision")
 	}
 }
 
@@ -167,15 +179,19 @@ func TestWorkbenchLatencyTestUsesStableIdentityPersistsAndSeparatesProfiles(t *t
 	}
 
 	profileAHistory, err := service.ListWorkbenchLatencyTests(context.Background(), WorkbenchLatencyHistoryQuery{
-		ProfileID: "profile-a",
-		NodeKey:   optionA.NodeKey,
+		ProfileID:         "profile-a",
+		NodeKey:           optionA.NodeKey,
+		NodeIdentityKey:   optionA.NodeIdentityKey,
+		ConfigRevisionKey: optionA.ConfigRevisionKey,
 	})
 	if err != nil || len(profileAHistory.Tests) != 1 {
 		t.Fatalf("expected one profile A history row, got %d, err=%v", len(profileAHistory.Tests), err)
 	}
 	profileBHistory, err := service.ListWorkbenchLatencyTests(context.Background(), WorkbenchLatencyHistoryQuery{
-		ProfileID: "profile-b",
-		NodeKey:   optionB.NodeKey,
+		ProfileID:         "profile-b",
+		NodeKey:           optionB.NodeKey,
+		NodeIdentityKey:   optionB.NodeIdentityKey,
+		ConfigRevisionKey: optionB.ConfigRevisionKey,
 	})
 	if err != nil {
 		t.Fatalf("profile B history query: %v", err)

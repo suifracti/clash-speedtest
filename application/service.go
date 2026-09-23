@@ -2250,6 +2250,27 @@ func (s *AppService) GetMonitorStats(ctx context.Context, query monitor.StatsQue
 	return s.historyStore.GetDerivedStats(ctx, query)
 }
 
+// ListNodeHistoryRevisions returns observed revision choices for a stable
+// profile/identity without combining the Monitor and Workbench measurements.
+func (s *AppService) ListNodeHistoryRevisions(ctx context.Context, profileID, nodeIdentityKey string) ([]history.NodeHistoryRevision, error) {
+	if s.historyStore == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
+	profileID = strings.TrimSpace(profileID)
+	nodeIdentityKey = strings.TrimSpace(nodeIdentityKey)
+	if profileID == "" || nodeIdentityKey == "" {
+		return nil, monitor.NewValidationError("revision 查询必须提供 profile_id 和 node_identity_key")
+	}
+	revisions, err := s.historyStore.ListNodeHistoryRevisions(ctx, profileID, nodeIdentityKey)
+	if err != nil {
+		return nil, err
+	}
+	if revisions == nil {
+		return []history.NodeHistoryRevision{}, nil
+	}
+	return revisions, nil
+}
+
 // Facet scan bounds. The facet read model is presentation-only, so its cost is bounded by a
 // window rather than by the full retention horizon: the UI only needs the dimensions that are
 // plausibly reachable from the ranges it offers.

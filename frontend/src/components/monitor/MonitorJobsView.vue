@@ -4,12 +4,13 @@ import * as api from '../../api/monitor'
 import UiSelect from '../common/UiSelect.vue'
 import MonitorRetentionPanel from './MonitorRetentionPanel.vue'
 import MonitorBudgetPanel from './MonitorBudgetPanel.vue'
-import type { MonitorJob, MonitorJobNode, MonitorJobPrefill, MonitorNodeOption, MonitorNodeSelectionContext, MonitorRun, MonitorSamplingTier } from '../../types'
+import type { MonitorJob, MonitorJobNode, MonitorJobPrefill, MonitorNodeOption, MonitorNodeSelectionContext, MonitorRun, MonitorSamplingTier, NodeDetailRequest } from '../../types'
 
 const props = defineProps<{ prefill?: MonitorJobPrefill | null }>()
 
 const emit = defineEmits<{
   (event: 'open-timeline', payload: { profileId: string; node: MonitorJobNode }): void
+  (event: 'open-node-detail', payload: NodeDetailRequest): void
   (event: 'prefill-consumed'): void
 }>()
 
@@ -426,6 +427,18 @@ function openTimeline(job: MonitorJob, node: MonitorJobNode): void {
   emit('open-timeline', { profileId: job.profileId, node })
 }
 
+function openNodeDetail(job: MonitorJob, node: MonitorJobNode): void {
+  emit('open-node-detail', {
+    profileId: job.profileId,
+    profileName: job.profileName,
+    nodeKey: node.nodeKey,
+    nodeIdentityKey: node.nodeIdentityKey,
+    configRevisionKey: node.configRevisionKey,
+    displayName: node.displayName,
+    nodeType: node.type,
+  })
+}
+
 onMounted(async () => {
   await reload(true)
   if (props.prefill) applyPrefill(props.prefill)
@@ -657,7 +670,7 @@ onBeforeUnmount(() => {
               <div class="space-y-1">
                 <div v-for="node in job.nodes" :key="node.nodeKey" class="flex flex-wrap items-center justify-between gap-2 text-[11px]">
                   <span class="min-w-0 truncate text-content-main">{{ node.displayName }} <span class="text-content-muted">({{ node.type }})</span></span>
-                  <button @click="openTimeline(job, node)" class="shrink-0 text-brand hover:underline">查看历史记录</button>
+                  <div class="flex shrink-0 items-center gap-3"><button @click="openNodeDetail(job, node)" :disabled="!node.nodeIdentityKey || !node.configRevisionKey" class="text-brand hover:underline disabled:opacity-50">节点详情</button><button @click="openTimeline(job, node)" class="text-brand hover:underline">查看历史记录</button></div>
                 </div>
               </div>
             </div>

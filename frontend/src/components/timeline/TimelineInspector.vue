@@ -8,10 +8,12 @@
 import { computed } from 'vue'
 import { useTimelineStore } from '../../stores/timeline'
 import { sampleSemantic } from '../../utils/timeline/encoding'
-import { shortenKey } from '../../utils/timeline/lanes'
+import { isLegacyBackfilledSample, shortenKey } from '../../utils/timeline/lanes'
 import { formatUtc, formatWallClock, hostTzOffsetMinutes } from '../../utils/timeline/time'
+import type { NodeDetailRequest } from '../../types'
 
 const store = useTimelineStore()
+const emit = defineEmits<{ (event: 'open-node-detail', payload: NodeDetailRequest): void }>()
 
 const sample = computed(() => store.selectedSample)
 
@@ -54,6 +56,13 @@ function stepCandidate(direction: 1 | -1): void {
   <aside class="w-[320px] shrink-0 border-l border-border bg-card flex flex-col overflow-hidden select-none">
     <div class="flex items-center justify-between px-3 py-2 border-b border-border">
       <span class="text-[11px] font-semibold text-content-secondary">样本证据 (Sample Inspector)</span>
+      <button
+        v-if="sample && sample.profileId && sample.nodeIdentityKey && sample.configRevisionKey && !isLegacyBackfilledSample(sample)"
+        type="button"
+        class="ml-auto mr-2 text-[10px] font-semibold text-brand hover:underline"
+        @click="emit('open-node-detail', { profileId: sample.profileId, nodeKey: sample.nodeKey, nodeIdentityKey: sample.nodeIdentityKey, configRevisionKey: sample.configRevisionKey, displayName: sample.displayNameSnapshot, origin: { kind: 'monitor_sample', sampleId: sample.sampleId, observedAt: sample.timestampIso, samplingTier: sample.samplingTier } })"
+      >节点详情</button>
+      <span v-else-if="sample" class="ml-auto mr-2 text-[10px] text-content-muted">旧记录身份不足，保留在旧历史</span>
       <button
         v-if="sample"
         @click="store.clearSelection()"

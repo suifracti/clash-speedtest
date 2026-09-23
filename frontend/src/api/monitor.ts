@@ -138,6 +138,7 @@ export function normalizeFacets(wire: RawMonitorSampleFacetsWire): MonitorSample
 /** Filter shared by the cursor and stats read models. */
 export interface MonitorQueryFilter {
   nodeIdentityKey?: string
+  configRevisionKey?: string
   legacyNodeKey?: string
   nodeKey?: string
   profileId?: string
@@ -164,6 +165,7 @@ function isoOrUndefined(ms: number | null | undefined): string | undefined {
 function toGoCursorFilter(query: MonitorCursorQuery): Record<string, unknown> {
   const filter: Record<string, unknown> = {}
   if (query.nodeIdentityKey) filter.node_identity_key = query.nodeIdentityKey
+  if (query.configRevisionKey) filter.config_revision_key = query.configRevisionKey
   if (query.legacyNodeKey) filter.legacy_node_key = query.legacyNodeKey
   if (query.nodeKey) filter.node_key = query.nodeKey
   if (query.profileId) filter.profile_id = query.profileId
@@ -187,6 +189,7 @@ function toGoCursorFilter(query: MonitorCursorQuery): Record<string, unknown> {
 export function buildCursorQueryString(query: MonitorCursorQuery): string {
   const params = new URLSearchParams()
   if (query.nodeIdentityKey) params.set('node_identity_key', query.nodeIdentityKey)
+  if (query.configRevisionKey) params.set('config_revision_key', query.configRevisionKey)
   if (query.legacyNodeKey) params.set('legacy_node_key', query.legacyNodeKey)
   if (query.nodeKey) params.set('node_key', query.nodeKey)
   if (query.profileId) params.set('profile_id', query.profileId)
@@ -209,6 +212,7 @@ export function buildCursorQueryString(query: MonitorCursorQuery): string {
 function buildStatsQueryString(query: MonitorQueryFilter): string {
   const params = new URLSearchParams()
   if (query.nodeIdentityKey) params.set('node_identity_key', query.nodeIdentityKey)
+  if (query.configRevisionKey) params.set('config_revision_key', query.configRevisionKey)
   if (query.legacyNodeKey) params.set('legacy_node_key', query.legacyNodeKey)
   if (query.nodeKey) params.set('node_key', query.nodeKey)
   if (query.profileId) params.set('profile_id', query.profileId)
@@ -228,6 +232,7 @@ function buildStatsQueryString(query: MonitorQueryFilter): string {
 function toGoStatsQuery(query: MonitorQueryFilter): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   if (query.nodeIdentityKey) out.node_identity_key = query.nodeIdentityKey
+  if (query.configRevisionKey) out.config_revision_key = query.configRevisionKey
   if (query.legacyNodeKey) out.legacy_node_key = query.legacyNodeKey
   if (query.nodeKey) out.node_key = query.nodeKey
   if (query.profileId) out.profile_id = query.profileId

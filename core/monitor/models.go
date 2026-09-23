@@ -231,6 +231,7 @@ type CursorFilter struct {
 	SamplingTier           SamplingTier `json:"sampling_tier,omitempty"`
 	RegularObservationOnly bool         `json:"regular_observation_only,omitempty"`
 	NodeIdentityKey        string       `json:"node_identity_key,omitempty"`
+	ConfigRevisionKey      string       `json:"config_revision_key,omitempty"`
 	LegacyNodeKey          string       `json:"legacy_node_key,omitempty"` // For PR#3 backfilled samples compatibility
 	NodeKey                string       `json:"node_key,omitempty"`
 	ProfileID              string       `json:"profile_id,omitempty"`
@@ -258,6 +259,7 @@ type StatsQuery struct {
 	SamplingTier           SamplingTier `json:"sampling_tier,omitempty"`
 	RegularObservationOnly bool         `json:"regular_observation_only,omitempty"`
 	NodeIdentityKey        string       `json:"node_identity_key,omitempty"`
+	ConfigRevisionKey      string       `json:"config_revision_key,omitempty"`
 	LegacyNodeKey          string       `json:"legacy_node_key,omitempty"` // For PR#3 backfilled samples compatibility
 	NodeKey                string       `json:"node_key,omitempty"`
 	ProfileID              string       `json:"profile_id,omitempty"`

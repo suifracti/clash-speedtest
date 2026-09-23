@@ -13,14 +13,17 @@ import {
   type LatencyWindow,
   type LatencyWindowMode,
 } from './latencyRequestGuard'
-import type { MonitorNodeOption, MonitorJobPrefill, WorkbenchLatencyBatch, WorkbenchLatencySample, WorkbenchLatencyTest } from '../../types'
+import type { MonitorNodeOption, MonitorJobPrefill, NodeDetailOrigin, NodeDetailRequest, WorkbenchLatencyBatch, WorkbenchLatencySample, WorkbenchLatencyTest } from '../../types'
 import { decideMonitorSelection } from './monitorCreateSelection'
 
 type WorkbenchProject = 'latency' | 'throughput' | 'service'
 type IndexMap = Record<string, number | null | undefined>
 type HistoryMeta = { hasMore: boolean; complete: boolean }
 
-const emit = defineEmits<{ (event: 'open-monitor', payload: MonitorJobPrefill): void }>()
+const emit = defineEmits<{
+  (event: 'open-monitor', payload: MonitorJobPrefill): void
+  (event: 'open-node-detail', payload: NodeDetailRequest): void
+}>()
 const options = ref<MonitorNodeOption[]>([])
 const optionsLoading = ref(false)
 const optionsError = ref('')
@@ -313,7 +316,7 @@ function statsLabel(key: string): string {
 }
 
 function monitorStatusText(_key: string): string { return '持续监测状态请在“持续监测”查看' }
-function testMatchesKey(test: WorkbenchLatencyTest, key: string): boolean { const option = optionForKey(key); return !!option && test.profile_id === option.profileId && test.node_key === option.nodeKey }
+function testMatchesKey(test: WorkbenchLatencyTest, key: string): boolean { const option = optionForKey(key); return !!option && test.profile_id === option.profileId && test.node_key === option.nodeKey && test.node_identity_key === option.nodeIdentityKey && test.config_revision_key === option.configRevisionKey }
 
 function upsertHistory(key: string, test: WorkbenchLatencyTest): void {
   const next = [test, ...(historyByKey.value[key] || []).filter((item) => item.attempt_id !== test.attempt_id)]
@@ -388,6 +391,8 @@ async function loadHistories(nodes: MonitorNodeOption[]): Promise<void> {
       const response = await api.fetchWorkbenchLatencyHistory({
         profile_id: node.profileId,
         node_key: node.nodeKey,
+        node_identity_key: node.nodeIdentityKey,
+        config_revision_key: node.configRevisionKey,
         since: requestedWindow.since,
         until: requestedWindow.until,
         limit: 20,
@@ -553,6 +558,8 @@ async function selectHistory(test: WorkbenchLatencyTest): Promise<void> {
     const loaded = await api.fetchWorkbenchLatencyTest({
       profile_id: requested.profileId,
       node_key: requested.nodeKey,
+      node_identity_key: test.node_identity_key,
+      config_revision_key: test.config_revision_key,
       attempt_id: requested.attemptId,
       since: activeWindow.value.since,
       until: activeWindow.value.until,
@@ -575,6 +582,27 @@ function projectReadout(key: string): string { return activeProject.value === 'l
 function projectHistoryText(key: string): string { return activeProject.value === 'latency' ? historySummary(key) : projectUnavailableLabel(activeProject.value) }
 function isSelected(key: string): boolean { return selectedKeys.value.includes(key) }
 function isTesting(key: string): boolean { return isBatchItemRunning(key) }
+
+function openNodeDetail(option: MonitorNodeOption, origin?: NodeDetailOrigin): void {
+  emit('open-node-detail', {
+    profileId: option.profileId, profileName: option.profileName, nodeKey: option.nodeKey,
+    nodeIdentityKey: option.nodeIdentityKey, configRevisionKey: option.configRevisionKey,
+    displayName: option.displayName, nodeType: option.type, origin,
+  })
+}
+
+function openBatchItemDetail(item: NonNullable<WorkbenchLatencyBatch['items']>[number]): void {
+  emit('open-node-detail', {
+    profileId: item.profile_id,
+    profileName: profileOptions.value.find((profile) => profile.id === item.profile_id)?.name || item.profile_id,
+    nodeKey: item.node_key,
+    nodeIdentityKey: item.node_identity_key,
+    configRevisionKey: item.config_revision_key,
+    displayName: item.display_name,
+    nodeType: item.node_type,
+    origin: { kind: 'workbench_batch_item', batchId: item.batch_id, itemId: item.item_id, attemptId: item.attempt_id, observedAt: item.finished_at || item.requested_at, snapshot: item.result },
+  })
+}
 
 function openMonitor(): void {
   const prefill = monitorSelection.value.prefill
@@ -641,7 +669,7 @@ onUnmounted(() => { unsubscribeEvents?.(); unsubscribeEvents = null })
         <div class="batch-detail-heading"><div><strong>批次 {{ displayedBatch.batch_id }}</strong><span>{{ batchStatusLabel(displayedBatch.state) }} · {{ displayedBatch.items?.filter((item) => ['completed', 'failed', 'cancelled', 'skipped_config', 'not_executed', 'interrupted'].includes(item.execution_state)).length || 0 }} / {{ displayedBatch.item_count }} 项已结束</span></div><button v-if="activeBatchID === displayedBatch.batch_id && batchBusy && displayedBatch.state !== 'saving'" type="button" class="prototype-button" :disabled="displayedBatch.state === 'cancelling'" @click="cancelBatch">{{ displayedBatch.state === 'cancelling' ? '正在取消…' : '取消本批次' }}</button></div>
         <div v-for="item in displayedBatch.items || []" :key="item.item_id" class="batch-item-row">
           <div class="batch-item-identity"><strong>{{ item.display_name || item.node_key }}</strong><span>{{ profileOptions.find((profile) => profile.id === item.profile_id)?.name || item.profile_id }} · {{ item.node_type || '节点' }}</span><code>{{ item.node_identity_key }} · rev {{ item.config_revision_key }}</code></div>
-          <div class="batch-item-state"><strong>{{ batchExecutionLabel(item.execution_state) }}</strong><span>{{ batchPersistenceLabel(item.persistence_state) }}</span><span v-if="item.error_message" class="batch-error-detail">{{ item.error_message }}</span><span v-if="item.persistence_error" class="batch-error-detail">{{ item.persistence_error }}</span></div>
+          <div class="batch-item-state"><strong>{{ batchExecutionLabel(item.execution_state) }}</strong><span>{{ batchPersistenceLabel(item.persistence_state) }}</span><span v-if="item.error_message" class="batch-error-detail">{{ item.error_message }}</span><span v-if="item.persistence_error" class="batch-error-detail">{{ item.persistence_error }}</span><button v-if="item.node_identity_key && item.config_revision_key" type="button" class="text-action" @click="openBatchItemDetail(item)">节点详情 / 原批次项</button></div>
             <div v-if="item.result" class="batch-item-result"><strong>{{ item.result.success_samples }} 成功 / {{ item.result.failure_samples }} 失败样本</strong><span>延迟 {{ item.result.latency_ms > 0 ? `${Math.round(item.result.latency_ms)} ms` : '无有效值' }} · jitter {{ item.result.jitter_ms }} ms</span><span>{{ item.result.method || '测法未知' }} v{{ item.result.method_version || '—' }} · {{ item.result.target || '目标未知' }} · {{ item.result.unit || '单位未知' }}</span><details class="batch-samples"><summary>原始样本 {{ item.result.samples.length }} 条</summary><span v-for="sample in item.result.samples" :key="`${sample.seq}-${sample.timestamp}`">#{{ sample.seq }} · {{ formatTime(sample.timestamp) }} · {{ sample.success ? `${Math.round(sample.latency_ms)} ms` : sampleLabel(sample) }}<template v-if="sample.error"> · {{ sample.error }}</template></span></details><button v-if="item.persistence_state === 'failed'" type="button" class="text-action" :disabled="batchBusy" @click="retryBatchSave(item)">重试保存（沿用原 attempt）</button></div>
           <div v-else class="batch-item-result batch-no-result">{{ item.execution_state === 'skipped_config' ? '未发出请求；所选身份或 revision 已失效。' : item.execution_state === 'cancelled' || item.execution_state === 'not_executed' || item.execution_state === 'interrupted' ? '未测，不计作节点探测失败。' : item.error_message || '等待结果' }}</div>
         </div>
@@ -676,7 +704,7 @@ onUnmounted(() => { unsubscribeEvents?.(); unsubscribeEvents = null })
     </section>
 
     <section v-if="focusedOption" class="prototype-panel evidence-panel" aria-labelledby="evidence-title">
-      <div class="prototype-panel-header"><div><h2 id="evidence-title">{{ focusedOption.displayName }}</h2><p>{{ focusedOption.profileName }} · {{ focusedOption.countryCode || '未知地区' }} · 选中后查看同一份原始样本</p></div><div class="evidence-actions"><button type="button" class="prototype-button primary" :disabled="batchBusy" @click="runTest([focusedKey])">{{ batchBusy ? '批次执行中…' : '测试此节点' }}</button><button type="button" class="prototype-button" :disabled="!canOpenMonitor" :title="monitorSelectionHint" @click="openMonitor">加入持续监测</button></div></div>
+      <div class="prototype-panel-header"><div><h2 id="evidence-title">{{ focusedOption.displayName }}</h2><p>{{ focusedOption.profileName }} · {{ focusedOption.countryCode || '未知地区' }} · 选中后查看同一份原始样本</p></div><div class="evidence-actions"><button type="button" class="prototype-button" @click="openNodeDetail(focusedOption, focusedDisplayedTest ? { kind: 'workbench_attempt', attemptId: focusedDisplayedTest.attempt_id, observedAt: focusedDisplayedTest.finished_at, snapshot: focusedDisplayedTest } : undefined)">节点详情</button><button type="button" class="prototype-button primary" :disabled="batchBusy" @click="runTest([focusedKey])">{{ batchBusy ? '批次执行中…' : '测试此节点' }}</button><button type="button" class="prototype-button" :disabled="!canOpenMonitor" :title="monitorSelectionHint" @click="openMonitor">加入持续监测</button></div></div>
       <div v-if="focusedDisplayedTest" class="evidence-grid"><div class="evidence-facts"><span class="fact-label">节点判断</span><strong :class="`health-${visibleStatus(focusedKey)}`">{{ statusLabel(focusedKey) }}</strong><span>{{ historySummary(focusedKey) }}</span><span>任务状态与节点健康分开读取；{{ monitorStatusText(focusedKey) }}</span></div><div class="evidence-facts"><span class="fact-label">当前样本</span><strong>{{ sampleLabel(activeSampleFor(focusedKey)) }}</strong><span>{{ sampleDetail(activeSampleFor(focusedKey)) }}</span><span>{{ focusedDisplayedTest ? `本次 ${testStatusLabel(focusedDisplayedTest)} · ${persistenceLabel(focusedDisplayedTest)}` : '' }}</span></div><div class="evidence-facts"><span class="fact-label">辅助读数</span><strong>P50 {{ p50ForKey(focusedKey) ?? '—' }} <small>ms</small></strong><span>P95 {{ p95ForKey(focusedKey) ?? '—' }} ms</span><span>失败 {{ samplesForKey(focusedKey).filter((sample) => !sample.success).length }} 条</span></div></div>
       <div v-else class="evidence-empty">这个节点还没有真实延迟历史。点击“立即测试此节点”后，结果会先显示，再独立保存。</div>
       <div v-if="detailError" class="inline-error">{{ detailError }}</div>

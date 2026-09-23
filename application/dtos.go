@@ -90,21 +90,27 @@ type WorkbenchLatencyBatchDTO struct {
 
 // WorkbenchLatencyHistoryQuery scopes history to one logical subscription node.
 type WorkbenchLatencyHistoryQuery struct {
-	ProfileID string     `json:"profile_id"`
-	NodeKey   string     `json:"node_key"`
-	Since     *time.Time `json:"since,omitempty"`
-	Until     *time.Time `json:"until,omitempty"`
-	Limit     int        `json:"limit,omitempty"`
+	ProfileID         string     `json:"profile_id"`
+	NodeKey           string     `json:"node_key"`
+	NodeIdentityKey   string     `json:"node_identity_key"`
+	ConfigRevisionKey string     `json:"config_revision_key"`
+	Since             *time.Time `json:"since,omitempty"`
+	Until             *time.Time `json:"until,omitempty"`
+	Limit             int        `json:"limit,omitempty"`
+	BeforeFinishedAt  *time.Time `json:"before_finished_at,omitempty"`
+	BeforeAttemptID   string     `json:"before_attempt_id,omitempty"`
 }
 
 // WorkbenchLatencyHistoryDetailQuery binds a detail read to the same logical
 // node scope and immutable attempt ID that produced the history row.
 type WorkbenchLatencyHistoryDetailQuery struct {
-	ProfileID string     `json:"profile_id"`
-	NodeKey   string     `json:"node_key"`
-	AttemptID string     `json:"attempt_id"`
-	Since     *time.Time `json:"since,omitempty"`
-	Until     *time.Time `json:"until,omitempty"`
+	ProfileID         string     `json:"profile_id"`
+	NodeKey           string     `json:"node_key"`
+	NodeIdentityKey   string     `json:"node_identity_key"`
+	ConfigRevisionKey string     `json:"config_revision_key"`
+	AttemptID         string     `json:"attempt_id"`
+	Since             *time.Time `json:"since,omitempty"`
+	Until             *time.Time `json:"until,omitempty"`
 }
 
 // WorkbenchLatencyHistoryResult is one frozen observation-window response.

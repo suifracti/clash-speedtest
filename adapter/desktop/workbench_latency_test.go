@@ -73,7 +73,7 @@ func TestDesktopWorkbenchLatencyContractAndReopen(t *testing.T) {
 	if result.PersistenceState != "saving" || len(result.Samples) == 0 {
 		t.Fatalf("unexpected Wails result: %+v", result)
 	}
-	waitDesktopLatencyHistory(t, app, options[0].NodeKey, result.AttemptID)
+	waitDesktopLatencyHistory(t, app, options[0], result.AttemptID)
 	app.Shutdown(context.Background())
 
 	reopenedStore, err := history.NewStore(historyDir)
@@ -84,9 +84,11 @@ func TestDesktopWorkbenchLatencyContractAndReopen(t *testing.T) {
 	reopenedApp.Startup(context.Background())
 	defer reopenedApp.Shutdown(context.Background())
 	reopened, err := reopenedApp.GetWorkbenchLatencyTest(application.WorkbenchLatencyHistoryDetailQuery{
-		ProfileID: "profile-wails",
-		NodeKey:   options[0].NodeKey,
-		AttemptID: result.AttemptID,
+		ProfileID:         "profile-wails",
+		NodeKey:           options[0].NodeKey,
+		NodeIdentityKey:   options[0].NodeIdentityKey,
+		ConfigRevisionKey: options[0].ConfigRevisionKey,
+		AttemptID:         result.AttemptID,
 	})
 	if err != nil {
 		t.Fatalf("Wails reopen query: %v", err)
@@ -96,13 +98,15 @@ func TestDesktopWorkbenchLatencyContractAndReopen(t *testing.T) {
 	}
 }
 
-func waitDesktopLatencyHistory(t *testing.T, app *App, nodeKey, attemptID string) {
+func waitDesktopLatencyHistory(t *testing.T, app *App, option application.MonitorNodeOptionDTO, attemptID string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		rows, err := app.ListWorkbenchLatencyTests(application.WorkbenchLatencyHistoryQuery{
-			ProfileID: "profile-wails",
-			NodeKey:   nodeKey,
+			ProfileID:         "profile-wails",
+			NodeKey:           option.NodeKey,
+			NodeIdentityKey:   option.NodeIdentityKey,
+			ConfigRevisionKey: option.ConfigRevisionKey,
 		})
 		if err == nil {
 			for _, row := range rows.Tests {

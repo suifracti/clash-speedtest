@@ -243,17 +243,23 @@ export interface WorkbenchLatencyBatch {
 export interface WorkbenchLatencyHistoryQuery {
   profile_id: string
   node_key: string
+  node_identity_key: string
+  config_revision_key: string
   since: string
   until: string
   limit?: number
+  before_finished_at?: string
+  before_attempt_id?: string
 }
 
 export interface WorkbenchLatencyHistoryDetailQuery {
   profile_id: string
   node_key: string
+  node_identity_key: string
+  config_revision_key: string
   attempt_id: string
-  since: string
-  until: string
+  since?: string
+  until?: string
 }
 
 export interface WorkbenchLatencyHistoryResult {
@@ -263,6 +269,29 @@ export interface WorkbenchLatencyHistoryResult {
   as_of: string
   has_more: boolean
   complete: boolean
+}
+
+export interface NodeHistoryRevision {
+  config_revision_key: string
+  node_key: string
+  display_name: string
+  last_observed_at: string
+}
+
+export type NodeDetailOrigin =
+  | { kind: 'monitor_sample'; sampleId: string; observedAt?: string; samplingTier?: MonitorRunSamplingTier }
+  | { kind: 'workbench_attempt'; attemptId: string; observedAt?: string; snapshot?: WorkbenchLatencyTest }
+  | { kind: 'workbench_batch_item'; batchId: string; itemId: string; attemptId?: string; observedAt?: string; snapshot?: WorkbenchLatencyTest }
+
+export interface NodeDetailRequest {
+  profileId: string
+  profileName?: string
+  nodeKey: string
+  nodeIdentityKey: string
+  configRevisionKey: string
+  displayName: string
+  nodeType?: string
+  origin?: NodeDetailOrigin
 }
 
 export interface WorkbenchLatencySample {

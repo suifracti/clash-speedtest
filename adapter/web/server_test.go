@@ -587,9 +587,9 @@ func TestWebMonitorSamplingSourceFiltersConsistent(t *testing.T) {
 		}
 	}
 	if err := store.SaveMonitorSamples(context.Background(), []*monitor.MonitorSample{
-		{SampleID: "web-regular-sample", RunID: "web-regular", NodeKey: "node", NodeIdentityKey: "identity", ProbeType: "rtt", Target: "known", Timestamp: now, Success: true},
-		{SampleID: "web-diagnostic-sample", RunID: "web-diagnostic", NodeKey: "node", NodeIdentityKey: "identity", ProbeType: "rtt", Target: "known", Timestamp: now, Success: false, ErrorClass: "timeout"},
-		{SampleID: "web-legacy-sample", RunID: "web-legacy", NodeKey: "node", NodeIdentityKey: "identity", ProbeType: "rtt", Target: "known", Timestamp: now, Success: true},
+		{SampleID: "web-regular-sample", RunID: "web-regular", NodeKey: "node", NodeIdentityKey: "identity", ConfigRevisionKey: "rev-a", ProfileID: "profile-a", ProbeType: "rtt", Target: "known", Timestamp: now, Success: true},
+		{SampleID: "web-diagnostic-sample", RunID: "web-diagnostic", NodeKey: "node", NodeIdentityKey: "identity", ConfigRevisionKey: "rev-a", ProfileID: "profile-a", ProbeType: "rtt", Target: "known", Timestamp: now, Success: false, ErrorClass: "timeout"},
+		{SampleID: "web-legacy-sample", RunID: "web-legacy", NodeKey: "node", NodeIdentityKey: "identity", ConfigRevisionKey: "rev-a", ProfileID: "profile-a", ProbeType: "rtt", Target: "known", Timestamp: now, Success: true},
 	}); err != nil {
 		t.Fatalf("save samples: %v", err)
 	}
@@ -622,19 +622,62 @@ func TestWebMonitorSamplingSourceFiltersConsistent(t *testing.T) {
 	}
 
 	var regular monitor.SampleCursorPage
-	serve("/api/monitor/samples/cursor?node_identity_key=identity&regular_observation_only=true&limit=10", &regular)
+	serve("/api/monitor/samples/cursor?node_identity_key=identity&profile_id=profile-a&config_revision_key=rev-a&regular_observation_only=true&limit=10", &regular)
 	if len(regular.Items) != 1 || regular.Items[0].SampleID != "web-regular-sample" || regular.Items[0].SamplingTier != monitor.SamplingTierRegular {
 		t.Fatalf("cursor regular-only filter admitted other sources: %+v", regular.Items)
 	}
 	var stats monitor.DerivedStats
-	serve("/api/monitor/stats?node_identity_key=identity&regular_observation_only=true", &stats)
+	serve("/api/monitor/stats?node_identity_key=identity&profile_id=profile-a&config_revision_key=rev-a&regular_observation_only=true", &stats)
 	if stats.SampleCount != 1 || stats.SuccessCount != 1 || stats.FailureCount != 0 || !stats.RegularObservationOnly {
 		t.Fatalf("regular-only stats do not match cursor source boundary: %+v", stats)
+	}
+	var revisions []history.NodeHistoryRevision
+	serve("/api/history/node-revisions?profile_id=profile-a&node_identity_key=identity", &revisions)
+	if len(revisions) != 1 || revisions[0].ConfigRevisionKey != "rev-a" {
+		t.Fatalf("history revision options were not scoped to saved identity: %+v", revisions)
 	}
 	var diagnostics []*monitor.MonitorSample
 	serve("/api/monitor/samples?sampling_tier=diagnostic&limit=10", &diagnostics)
 	if len(diagnostics) != 1 || diagnostics[0].SampleID != "web-diagnostic-sample" || diagnostics[0].TriggerType != monitor.SamplingTriggerManual {
 		t.Fatalf("diagnostic samples not separately queryable: %+v", diagnostics)
+	}
+}
+
+func TestWebNodeHistoryRevisionsEmptyDatabaseSerializesArray(t *testing.T) {
+	tmpDir := t.TempDir()
+	server, err := NewServer(ServerConfig{
+		Port:         0,
+		ProfilePaths: profiles.Paths{Dir: filepath.Join(tmpDir, "profiles")},
+		HistoryDir:   filepath.Join(tmpDir, "history"),
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer server.Close()
+
+	// This read goes through the real, empty SQLite history store. The Wails
+	// adapter returns this same application slice directly.
+	revisions, err := server.AppService().ListNodeHistoryRevisions(context.Background(), "profile-empty", "identity-empty")
+	if err != nil {
+		t.Fatalf("empty history query: %v", err)
+	}
+	if revisions == nil || len(revisions) != 0 {
+		t.Fatalf("empty application result must be a non-nil empty slice: %#v", revisions)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/history/node-revisions?profile_id=profile-empty&node_identity_key=identity-empty", nil)
+	req.Host = "127.0.0.1:8080"
+	rec := httptest.NewRecorder()
+	server.buildHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("empty revisions endpoint status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != "[]" {
+		t.Fatalf("empty history JSON must be [] rather than null: %s", got)
+	}
+	var decoded []history.NodeHistoryRevision
+	if err := json.Unmarshal(rec.Body.Bytes(), &decoded); err != nil || decoded == nil || len(decoded) != 0 {
+		t.Fatalf("empty history JSON did not decode as an empty array: %#v err=%v", decoded, err)
 	}
 }
 

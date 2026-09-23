@@ -157,8 +157,10 @@ func (s *AppService) saveWorkbenchLatencyTest(ctx context.Context, record *histo
 func (s *AppService) ListWorkbenchLatencyTests(ctx context.Context, query WorkbenchLatencyHistoryQuery) (WorkbenchLatencyHistoryResult, error) {
 	profileID := strings.TrimSpace(query.ProfileID)
 	nodeKey := strings.TrimSpace(query.NodeKey)
-	if profileID == "" || nodeKey == "" {
-		return WorkbenchLatencyHistoryResult{}, monitor.NewValidationError("历史查询必须同时提供 profile_id 和 node_key")
+	nodeIdentityKey := strings.TrimSpace(query.NodeIdentityKey)
+	configRevisionKey := strings.TrimSpace(query.ConfigRevisionKey)
+	if profileID == "" || nodeKey == "" || nodeIdentityKey == "" || configRevisionKey == "" {
+		return WorkbenchLatencyHistoryResult{}, monitor.NewValidationError("历史查询必须同时提供 profile_id、node_key、node_identity_key 和 config_revision_key")
 	}
 	if s.historyStore == nil {
 		return WorkbenchLatencyHistoryResult{}, fmt.Errorf("history store is not initialized")
@@ -168,11 +170,15 @@ func (s *AppService) ListWorkbenchLatencyTests(ctx context.Context, query Workbe
 		return WorkbenchLatencyHistoryResult{}, monitor.NewValidationError(err.Error())
 	}
 	page, err := s.historyStore.QueryLatencyTests(ctx, history.LatencyTestFilter{
-		ProfileID: profileID,
-		NodeKey:   nodeKey,
-		Since:     since,
-		Until:     until,
-		Limit:     query.Limit,
+		ProfileID:         profileID,
+		NodeKey:           nodeKey,
+		NodeIdentityKey:   nodeIdentityKey,
+		ConfigRevisionKey: configRevisionKey,
+		Since:             since,
+		Until:             until,
+		Limit:             query.Limit,
+		BeforeFinishedAt:  query.BeforeFinishedAt,
+		BeforeAttemptID:   strings.TrimSpace(query.BeforeAttemptID),
 	})
 	if err != nil {
 		return WorkbenchLatencyHistoryResult{}, err
@@ -206,9 +212,11 @@ func (s *AppService) GetWorkbenchLatencyTest(ctx context.Context, query Workbenc
 	}
 	profileID := strings.TrimSpace(query.ProfileID)
 	nodeKey := strings.TrimSpace(query.NodeKey)
+	nodeIdentityKey := strings.TrimSpace(query.NodeIdentityKey)
+	configRevisionKey := strings.TrimSpace(query.ConfigRevisionKey)
 	attemptID := strings.TrimSpace(query.AttemptID)
-	if profileID == "" || nodeKey == "" || attemptID == "" {
-		return nil, monitor.NewValidationError("历史详情必须同时提供 profile_id、node_key 和 attempt_id")
+	if profileID == "" || nodeKey == "" || nodeIdentityKey == "" || configRevisionKey == "" || attemptID == "" {
+		return nil, monitor.NewValidationError("历史详情必须同时提供 profile_id、node_key、node_identity_key、config_revision_key 和 attempt_id")
 	}
 	since, until, err := normalizeWorkbenchLatencyWindow(query.Since, query.Until)
 	if err != nil {
@@ -223,7 +231,7 @@ func (s *AppService) GetWorkbenchLatencyTest(ctx context.Context, query Workbenc
 	if err != nil {
 		return nil, err
 	}
-	if test.ProfileID != profileID || test.NodeKey != nodeKey {
+	if test.ProfileID != profileID || test.NodeKey != nodeKey || test.NodeIdentityKey != nodeIdentityKey || test.ConfigRevisionKey != configRevisionKey {
 		return nil, monitor.NewValidationError("历史详情不属于当前订阅节点")
 	}
 	if since != nil {
