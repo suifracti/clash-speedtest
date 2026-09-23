@@ -321,9 +321,10 @@ func collectEvidenceSamples(
 		// NodeIdentityKey / ProfileID / Since qualification is provably identical on every
 		// page of the drain.
 		filter := monitor.CursorFilter{
-			Since:     &since,
-			Limit:     evidenceCursorPageSize,
-			OrderDesc: true,
+			Since:                  &since,
+			Limit:                  evidenceCursorPageSize,
+			OrderDesc:              true,
+			RegularObservationOnly: true,
 		}
 		// Legacy key bridge: history written before the NodeIdentityKey migration stores
 		// node_identity_key = node_key, so it is only reachable when BOTH keys are supplied

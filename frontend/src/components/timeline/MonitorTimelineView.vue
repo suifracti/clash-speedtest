@@ -27,7 +27,7 @@ const store = useTimelineStore()
 
 /** Narrowing filters, i.e. everything except the time range itself. */
 const hasActiveNarrowing = computed(
-  () => !!(store.nodeIdentityKey || store.profileId || store.probeType || store.target)
+  () => !!(store.nodeIdentityKey || store.profileId || store.probeType || store.target || store.samplingTier)
 )
 
 /** Whether storage holds any samples at all, used to tell "empty range" from "empty history". */

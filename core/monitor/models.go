@@ -29,6 +29,28 @@ const (
 	ProbeSetHeavy ProbeSetType = "heavy"
 )
 
+// SamplingTier is the per-job monitoring cadence class. Diagnostic is reserved
+// for explicitly triggered one-off runs, not periodic job definitions.
+type SamplingTier string
+
+const (
+	SamplingTierRegular       SamplingTier = "regular"
+	SamplingTierFocus         SamplingTier = "focus"
+	SamplingTierSparse        SamplingTier = "sparse"
+	SamplingTierDiagnostic    SamplingTier = "diagnostic"
+	SamplingTierLegacyUnknown SamplingTier = "legacy_unknown"
+)
+
+type SamplingTriggerType string
+
+const (
+	SamplingTriggerScheduled     SamplingTriggerType = "scheduled"
+	SamplingTriggerManual        SamplingTriggerType = "manual"
+	SamplingTriggerLegacyUnknown SamplingTriggerType = "legacy_unknown"
+)
+
+const SamplingStrategyVersion = 1
+
 // RunStatus defines the outcome status of a single scheduled monitoring run.
 type RunStatus string
 
@@ -63,16 +85,20 @@ type MonitoredNode struct {
 
 // MonitorJob holds the persistent configuration and state of a 24/7 monitoring task.
 type MonitorJob struct {
-	ID            string          `json:"id"`
-	Name          string          `json:"name"`
-	ProfileID     string          `json:"profile_id"`
-	NodeKeys      []string        `json:"node_keys"`
-	Nodes         []MonitoredNode `json:"nodes"`
-	ProbeSet      ProbeSetType    `json:"probe_set"`
-	Interval      time.Duration   `json:"interval"`
-	Timeout       time.Duration   `json:"timeout"`
-	State         JobState        `json:"state"`
-	BlockedReason string          `json:"blocked_reason,omitempty"`
+	ID           string          `json:"id"`
+	Name         string          `json:"name"`
+	ProfileID    string          `json:"profile_id"`
+	NodeKeys     []string        `json:"node_keys"`
+	Nodes        []MonitoredNode `json:"nodes"`
+	ProbeSet     ProbeSetType    `json:"probe_set"`
+	SamplingTier SamplingTier    `json:"sampling_tier"`
+	// NextRunTrigger is set only on a scheduler's copied job for an immediate
+	// user action. It never changes the durable periodic job definition.
+	NextRunTrigger SamplingTriggerType `json:"-"`
+	Interval       time.Duration       `json:"interval"`
+	Timeout        time.Duration       `json:"timeout"`
+	State          JobState            `json:"state"`
+	BlockedReason  string              `json:"blocked_reason,omitempty"`
 	// PersistenceState and PersistenceError are runtime read-model fields. They
 	// are deliberately excluded from MonitorJobDefinition persistence.
 	PersistenceState      string    `json:"persistence_state,omitempty"`
@@ -109,6 +135,7 @@ type MonitorJobDefinition struct {
 	ProfileID         string                    `json:"profile_id"`
 	Nodes             []MonitorJobNodeReference `json:"nodes"`
 	ProbeSet          ProbeSetType              `json:"probe_set"`
+	SamplingTier      SamplingTier              `json:"sampling_tier"`
 	Interval          time.Duration             `json:"interval"`
 	Timeout           time.Duration             `json:"timeout"`
 	CreatedAt         time.Time                 `json:"created_at"`
@@ -118,72 +145,82 @@ type MonitorJobDefinition struct {
 
 // MonitorRun records the execution metadata of one scheduled monitoring round.
 type MonitorRun struct {
-	RunID        string     `json:"run_id"`
-	JobID        string     `json:"job_id"`
-	ScheduledAt  time.Time  `json:"scheduled_at"`
-	StartedAt    time.Time  `json:"started_at"`
-	FinishedAt   *time.Time `json:"finished_at,omitempty"`
-	Status       RunStatus  `json:"status"`
-	TotalNodes   int        `json:"total_nodes"`
-	SuccessNodes int        `json:"success_nodes"`
-	FailedNodes  int        `json:"failed_nodes"`
-	ErrorMessage string     `json:"error_message,omitempty"`
+	RunID                   string              `json:"run_id"`
+	JobID                   string              `json:"job_id"`
+	SamplingTier            SamplingTier        `json:"sampling_tier"`
+	TriggerType             SamplingTriggerType `json:"trigger_type"`
+	SamplingStrategyVersion int                 `json:"sampling_strategy_version"`
+	ScheduledAt             time.Time           `json:"scheduled_at"`
+	StartedAt               time.Time           `json:"started_at"`
+	FinishedAt              *time.Time          `json:"finished_at,omitempty"`
+	Status                  RunStatus           `json:"status"`
+	TotalNodes              int                 `json:"total_nodes"`
+	SuccessNodes            int                 `json:"success_nodes"`
+	FailedNodes             int                 `json:"failed_nodes"`
+	ErrorMessage            string              `json:"error_message,omitempty"`
 }
 
 // MonitorSample records an individual, immutable probe sample at an exact timestamp.
 // Aggregated metrics must never replace these raw samples.
 type MonitorSample struct {
-	SampleID            string         `json:"sample_id"`
-	RunID               string         `json:"run_id"`
-	NodeKey             string         `json:"node_key"`            // Backward-compatible composite key
-	NodeIdentityKey     string         `json:"node_identity_key"`   // Pure transport endpoint identity
-	ConfigRevisionKey   string         `json:"config_revision_key"` // Config & credential revision digest
-	ProfileID           string         `json:"profile_id"`
-	DisplayNameSnapshot string         `json:"display_name_snapshot"`
-	ProbeType           string         `json:"probe_type"` // "rtt", "ttfb", "http_status", "exit_ip", "ai_check"
-	Target              string         `json:"target"`     // e.g. "https://cp.cloudflare.com/generate_204"
-	Timestamp           time.Time      `json:"timestamp"`
-	Success             bool           `json:"success"`
-	Latency             time.Duration  `json:"latency"`
-	TTFB                time.Duration  `json:"ttfb"`
-	ErrorClass          string         `json:"error_class"` // "none", "timeout", "conn_refused", "dns_error", "tls_error", "blocked", "http_status_error"
-	ErrorDetail         string         `json:"error_detail,omitempty"`
-	ExitIP              string         `json:"exit_ip,omitempty"`
-	ExitRegion          string         `json:"exit_region,omitempty"`
-	Metadata            map[string]any `json:"metadata,omitempty"`
+	SampleID                string              `json:"sample_id"`
+	RunID                   string              `json:"run_id"`
+	SamplingTier            SamplingTier        `json:"sampling_tier"`
+	TriggerType             SamplingTriggerType `json:"trigger_type"`
+	SamplingStrategyVersion int                 `json:"sampling_strategy_version"`
+	NodeKey                 string              `json:"node_key"`            // Backward-compatible composite key
+	NodeIdentityKey         string              `json:"node_identity_key"`   // Pure transport endpoint identity
+	ConfigRevisionKey       string              `json:"config_revision_key"` // Config & credential revision digest
+	ProfileID               string              `json:"profile_id"`
+	DisplayNameSnapshot     string              `json:"display_name_snapshot"`
+	ProbeType               string              `json:"probe_type"` // "rtt", "ttfb", "http_status", "exit_ip", "ai_check"
+	Target                  string              `json:"target"`     // e.g. "https://cp.cloudflare.com/generate_204"
+	Timestamp               time.Time           `json:"timestamp"`
+	Success                 bool                `json:"success"`
+	Latency                 time.Duration       `json:"latency"`
+	TTFB                    time.Duration       `json:"ttfb"`
+	ErrorClass              string              `json:"error_class"` // "none", "timeout", "conn_refused", "dns_error", "tls_error", "blocked", "http_status_error"
+	ErrorDetail             string              `json:"error_detail,omitempty"`
+	ExitIP                  string              `json:"exit_ip,omitempty"`
+	ExitRegion              string              `json:"exit_region,omitempty"`
+	Metadata                map[string]any      `json:"metadata,omitempty"`
 }
 
 // SampleFilter specifies query criteria for retrieving raw samples from persistence using OFFSET.
 type SampleFilter struct {
-	JobID           string
-	RunID           string
-	NodeKey         string
-	NodeIdentityKey string
-	ProfileID       string
-	ProbeType       string
-	Target          string
-	Success         *bool
-	Since           *time.Time
-	Until           *time.Time
-	Limit           int
-	Offset          int
-	OrderDesc       bool // true: newest first; false: chronological ascending
+	JobID                  string
+	RunID                  string
+	SamplingTier           SamplingTier
+	RegularObservationOnly bool
+	NodeKey                string
+	NodeIdentityKey        string
+	ProfileID              string
+	ProbeType              string
+	Target                 string
+	Success                *bool
+	Since                  *time.Time
+	Until                  *time.Time
+	Limit                  int
+	Offset                 int
+	OrderDesc              bool // true: newest first; false: chronological ascending
 }
 
 // CursorFilter specifies query criteria for keyset/cursor-based sample pagination.
 type CursorFilter struct {
-	NodeIdentityKey string     `json:"node_identity_key,omitempty"`
-	LegacyNodeKey   string     `json:"legacy_node_key,omitempty"` // For PR#3 backfilled samples compatibility
-	NodeKey         string     `json:"node_key,omitempty"`
-	ProfileID       string     `json:"profile_id,omitempty"`
-	ProbeType       string     `json:"probe_type,omitempty"`
-	Target          string     `json:"target,omitempty"`
-	Success         *bool      `json:"success,omitempty"`
-	Since           *time.Time `json:"since,omitempty"`
-	Until           *time.Time `json:"until,omitempty"`
-	Limit           int        `json:"limit"`
-	OrderDesc       bool       `json:"order_desc"`       // true: newest first (default); false: chronological ascending
-	Cursor          string     `json:"cursor,omitempty"` // Opaque cursor token
+	SamplingTier           SamplingTier `json:"sampling_tier,omitempty"`
+	RegularObservationOnly bool         `json:"regular_observation_only,omitempty"`
+	NodeIdentityKey        string       `json:"node_identity_key,omitempty"`
+	LegacyNodeKey          string       `json:"legacy_node_key,omitempty"` // For PR#3 backfilled samples compatibility
+	NodeKey                string       `json:"node_key,omitempty"`
+	ProfileID              string       `json:"profile_id,omitempty"`
+	ProbeType              string       `json:"probe_type,omitempty"`
+	Target                 string       `json:"target,omitempty"`
+	Success                *bool        `json:"success,omitempty"`
+	Since                  *time.Time   `json:"since,omitempty"`
+	Until                  *time.Time   `json:"until,omitempty"`
+	Limit                  int          `json:"limit"`
+	OrderDesc              bool         `json:"order_desc"`       // true: newest first (default); false: chronological ascending
+	Cursor                 string       `json:"cursor,omitempty"` // Opaque cursor token
 }
 
 // SampleCursorPage represents a page of MonitorSample results using keyset pagination.
@@ -197,14 +234,16 @@ type SampleCursorPage struct {
 
 // StatsQuery defines filtering criteria for deriving statistical metrics over raw samples.
 type StatsQuery struct {
-	NodeIdentityKey string     `json:"node_identity_key,omitempty"`
-	LegacyNodeKey   string     `json:"legacy_node_key,omitempty"` // For PR#3 backfilled samples compatibility
-	NodeKey         string     `json:"node_key,omitempty"`
-	ProfileID       string     `json:"profile_id,omitempty"`
-	ProbeType       string     `json:"probe_type,omitempty"`
-	Target          string     `json:"target,omitempty"`
-	Since           *time.Time `json:"since,omitempty"`
-	Until           *time.Time `json:"until,omitempty"`
+	SamplingTier           SamplingTier `json:"sampling_tier,omitempty"`
+	RegularObservationOnly bool         `json:"regular_observation_only,omitempty"`
+	NodeIdentityKey        string       `json:"node_identity_key,omitempty"`
+	LegacyNodeKey          string       `json:"legacy_node_key,omitempty"` // For PR#3 backfilled samples compatibility
+	NodeKey                string       `json:"node_key,omitempty"`
+	ProfileID              string       `json:"profile_id,omitempty"`
+	ProbeType              string       `json:"probe_type,omitempty"`
+	Target                 string       `json:"target,omitempty"`
+	Since                  *time.Time   `json:"since,omitempty"`
+	Until                  *time.Time   `json:"until,omitempty"`
 }
 
 // Validation errors for client request inputs (mapped to HTTP 400 Bad Request in Web adapter).
@@ -255,24 +294,26 @@ func IsValidationError(err error) bool {
 
 // DerivedStats contains aggregated metrics computed on-the-fly from raw immutable samples.
 type DerivedStats struct {
-	SampleCount     int64            `json:"sample_count"`
-	SuccessCount    int64            `json:"success_count"`
-	FailureCount    int64            `json:"failure_count"`
-	SuccessRate     float64          `json:"success_rate"` // 0.0 to 1.0
-	LatencyMinMs    *int64           `json:"latency_min_ms"`
-	LatencyP50Ms    *int64           `json:"latency_p50_ms"`
-	LatencyP95Ms    *int64           `json:"latency_p95_ms"`
-	LatencyMaxMs    *int64           `json:"latency_max_ms"`
-	TTFBP50Ms       *int64           `json:"ttfb_p50_ms"`
-	TTFBP95Ms       *int64           `json:"ttfb_p95_ms"`
-	ErrorBreakdown  map[string]int64 `json:"error_breakdown"`
-	FirstSampleAt   *time.Time       `json:"first_sample_at"`
-	LastSampleAt    *time.Time       `json:"last_sample_at"`
-	ObservedSince   *time.Time       `json:"observed_since"`
-	ObservedUntil   *time.Time       `json:"observed_until"`
-	NodeIdentityKey string           `json:"node_identity_key,omitempty"`
-	NodeKey         string           `json:"node_key,omitempty"`
-	ProbeType       string           `json:"probe_type,omitempty"`
+	SampleCount            int64            `json:"sample_count"`
+	IncludedSamplingTiers  []SamplingTier   `json:"included_sampling_tiers"`
+	RegularObservationOnly bool             `json:"regular_observation_only"`
+	SuccessCount           int64            `json:"success_count"`
+	FailureCount           int64            `json:"failure_count"`
+	SuccessRate            float64          `json:"success_rate"` // 0.0 to 1.0
+	LatencyMinMs           *int64           `json:"latency_min_ms"`
+	LatencyP50Ms           *int64           `json:"latency_p50_ms"`
+	LatencyP95Ms           *int64           `json:"latency_p95_ms"`
+	LatencyMaxMs           *int64           `json:"latency_max_ms"`
+	TTFBP50Ms              *int64           `json:"ttfb_p50_ms"`
+	TTFBP95Ms              *int64           `json:"ttfb_p95_ms"`
+	ErrorBreakdown         map[string]int64 `json:"error_breakdown"`
+	FirstSampleAt          *time.Time       `json:"first_sample_at"`
+	LastSampleAt           *time.Time       `json:"last_sample_at"`
+	ObservedSince          *time.Time       `json:"observed_since"`
+	ObservedUntil          *time.Time       `json:"observed_until"`
+	NodeIdentityKey        string           `json:"node_identity_key,omitempty"`
+	NodeKey                string           `json:"node_key,omitempty"`
+	ProbeType              string           `json:"probe_type,omitempty"`
 }
 
 // FacetNode describes one distinct node identity observed among persisted raw samples.

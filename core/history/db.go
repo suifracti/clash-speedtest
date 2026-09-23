@@ -142,7 +142,7 @@ INSERT INTO monitor_budget_usage (singleton, utc_day, requests_used, bytes_used)
 
 // CurrentSchemaVersion is the SQLite schema authority. Databases without a
 // schema_meta row are the explicitly recognized pre-version legacy schema.
-const CurrentSchemaVersion = 2
+const CurrentSchemaVersion = 3
 
 var (
 	ErrUnsupportedSchemaVersion = fmt.Errorf("unsupported SQLite schema version")
@@ -220,7 +220,7 @@ func migrateSchema(db *sql.DB) error {
 		if version < 1 {
 			return fmt.Errorf("%w: schema version %d cannot be upgraded safely", ErrUnrecognizedSchema, version)
 		}
-		if err := validateCurrentSchema(tx); err != nil {
+		if err := validateCurrentSchema(tx, version); err != nil {
 			return fmt.Errorf("validate schema version %d: %w", version, err)
 		}
 	} else {
@@ -243,6 +243,19 @@ func migrateSchema(db *sql.DB) error {
 		if _, err := tx.Exec("UPDATE schema_meta SET schema_version = 2 WHERE singleton = 1"); err != nil {
 			return fmt.Errorf("record schema version 2: %w", err)
 		}
+		version = 2
+	}
+	if version == 2 {
+		if err := migrateSamplingSourceV3(tx); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("UPDATE schema_meta SET schema_version = 3 WHERE singleton = 1"); err != nil {
+			return fmt.Errorf("record schema version 3: %w", err)
+		}
+		version = 3
+	}
+	if err := validateCurrentSchema(tx, version); err != nil {
+		return fmt.Errorf("validate schema version %d after migration: %w", version, err)
 	}
 	if err := validateMonitorBudgetSchema(tx); err != nil {
 		return err
@@ -400,7 +413,34 @@ func migrateLegacyMonitorColumns(tx *sql.Tx) error {
 	return nil
 }
 
-func validateCurrentSchema(tx *sql.Tx) error {
+func migrateSamplingSourceV3(tx *sql.Tx) error {
+	for _, change := range []struct {
+		table  string
+		column string
+		ddl    string
+	}{
+		{"monitor_job_definitions", "sampling_tier", "ALTER TABLE monitor_job_definitions ADD COLUMN sampling_tier TEXT NOT NULL DEFAULT 'regular'"},
+		{"monitor_runs", "sampling_tier", "ALTER TABLE monitor_runs ADD COLUMN sampling_tier TEXT NOT NULL DEFAULT 'legacy_unknown'"},
+		{"monitor_runs", "trigger_type", "ALTER TABLE monitor_runs ADD COLUMN trigger_type TEXT NOT NULL DEFAULT 'legacy_unknown'"},
+		{"monitor_runs", "sampling_strategy_version", "ALTER TABLE monitor_runs ADD COLUMN sampling_strategy_version INTEGER NOT NULL DEFAULT 0"},
+	} {
+		columns, err := tableColumns(tx, change.table)
+		if err != nil {
+			return err
+		}
+		if !columns[change.column] {
+			if _, err := tx.Exec(change.ddl); err != nil {
+				return fmt.Errorf("migrate %s.%s: %w", change.table, change.column, err)
+			}
+		}
+	}
+	if _, err := tx.Exec("CREATE INDEX IF NOT EXISTS idx_runs_sampling_source_time ON monitor_runs(sampling_tier, trigger_type, scheduled_at DESC)"); err != nil {
+		return fmt.Errorf("create monitor sampling source index: %w", err)
+	}
+	return nil
+}
+
+func validateCurrentSchema(tx *sql.Tx, version int) error {
 	tables := map[string][]string{
 		"monitor_runs":              {"run_id", "job_id", "scheduled_at", "started_at", "status"},
 		"monitor_samples":           {"sample_id", "run_id", "node_key", "node_identity_key", "config_revision_key", "profile_id", "timestamp", "success"},
@@ -408,6 +448,10 @@ func validateCurrentSchema(tx *sql.Tx) error {
 		"workbench_latency_samples": {"attempt_id", "seq", "timestamp"},
 		"monitor_job_definitions":   {"job_id", "profile_id", "probe_set", "interval_ns", "timeout_ns", "definition_version"},
 		"monitor_job_nodes":         {"job_id", "ordinal", "node_key", "node_identity_key", "config_revision_key"},
+	}
+	if version >= 3 {
+		tables["monitor_runs"] = append(tables["monitor_runs"], "sampling_tier", "trigger_type", "sampling_strategy_version")
+		tables["monitor_job_definitions"] = append(tables["monitor_job_definitions"], "sampling_tier")
 	}
 	for table, columns := range tables {
 		present, err := tableExists(tx, table)
@@ -518,6 +562,13 @@ func (d *DB) SaveMonitorJobDefinition(ctx context.Context, definition *monitor.M
 	if version != monitor.MonitorJobDefinitionVersion {
 		return fmt.Errorf("unsupported monitor job definition version %d", version)
 	}
+	tier := definition.SamplingTier
+	if tier == "" {
+		tier = monitor.SamplingTierRegular
+	}
+	if tier != monitor.SamplingTierRegular && tier != monitor.SamplingTierFocus && tier != monitor.SamplingTierSparse {
+		return fmt.Errorf("unsupported periodic monitor sampling tier %q", tier)
+	}
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -533,11 +584,11 @@ func (d *DB) SaveMonitorJobDefinition(ctx context.Context, definition *monitor.M
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO monitor_job_definitions (
 			job_id, name, profile_id, probe_set, interval_ns, timeout_ns,
-			created_at, updated_at, definition_version
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			created_at, updated_at, definition_version, sampling_tier
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, definition.ID, definition.Name, definition.ProfileID, string(definition.ProbeSet),
 		definition.Interval.Nanoseconds(), definition.Timeout.Nanoseconds(), definition.CreatedAt.UTC(),
-		definition.UpdatedAt.UTC(), version)
+		definition.UpdatedAt.UTC(), version, string(tier))
 	if err != nil {
 		return fmt.Errorf("insert monitor job definition %s: %w", definition.ID, err)
 	}
@@ -563,6 +614,47 @@ func (d *DB) SaveMonitorJobDefinition(ctx context.Context, definition *monitor.M
 	return nil
 }
 
+// UpdateMonitorJobSamplingTier changes only the persisted cadence class. It
+// leaves the selected nodes, interval, probe set, and runtime state untouched.
+func (d *DB) UpdateMonitorJobSamplingTier(ctx context.Context, jobID string, tier monitor.SamplingTier, updatedAt time.Time) error {
+	if strings.TrimSpace(jobID) == "" {
+		return fmt.Errorf("monitor job definition id is empty")
+	}
+	if tier != monitor.SamplingTierRegular && tier != monitor.SamplingTierFocus && tier != monitor.SamplingTierSparse {
+		return fmt.Errorf("unsupported periodic monitor sampling tier %q", tier)
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin monitor sampling tier update: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `
+		UPDATE monitor_job_definitions
+		SET sampling_tier = ?, updated_at = ?
+		WHERE job_id = ?
+	`, string(tier), updatedAt.UTC(), jobID)
+	if err != nil {
+		return fmt.Errorf("update monitor job %s sampling tier: %w", jobID, err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check monitor job %s sampling tier update: %w", jobID, err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("monitor job definition %s not found", jobID)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit monitor job %s sampling tier update: %w", jobID, err)
+	}
+	return nil
+}
+
 // ListMonitorJobDefinitions reads only durable product definitions. The caller
 // must resolve node references against the current canonical profile/cache.
 func (d *DB) ListMonitorJobDefinitions(ctx context.Context) ([]*monitor.MonitorJobDefinition, error) {
@@ -571,7 +663,7 @@ func (d *DB) ListMonitorJobDefinitions(ctx context.Context) ([]*monitor.MonitorJ
 	}
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT job_id, name, profile_id, probe_set, interval_ns, timeout_ns,
-		       created_at, updated_at, definition_version
+		       created_at, updated_at, definition_version, sampling_tier
 		FROM monitor_job_definitions
 		ORDER BY created_at ASC, job_id ASC
 	`)
@@ -583,17 +675,19 @@ func (d *DB) ListMonitorJobDefinitions(ctx context.Context) ([]*monitor.MonitorJ
 	definitions := make([]*monitor.MonitorJobDefinition, 0)
 	for rows.Next() {
 		var (
-			definition monitor.MonitorJobDefinition
-			probeSet   string
-			intervalNS int64
-			timeoutNS  int64
+			definition   monitor.MonitorJobDefinition
+			probeSet     string
+			samplingTier string
+			intervalNS   int64
+			timeoutNS    int64
 		)
 		if err := rows.Scan(&definition.ID, &definition.Name, &definition.ProfileID, &probeSet,
 			&intervalNS, &timeoutNS, &definition.CreatedAt, &definition.UpdatedAt,
-			&definition.DefinitionVersion); err != nil {
+			&definition.DefinitionVersion, &samplingTier); err != nil {
 			return nil, fmt.Errorf("scan monitor job definition: %w", err)
 		}
 		definition.ProbeSet = monitor.ProbeSetType(probeSet)
+		definition.SamplingTier = monitor.SamplingTier(samplingTier)
 		definition.Interval = time.Duration(intervalNS)
 		definition.Timeout = time.Duration(timeoutNS)
 		definition.Nodes, err = d.listMonitorJobNodes(ctx, definition.ID)
@@ -640,6 +734,18 @@ func (d *DB) SaveMonitorRun(ctx context.Context, run *monitor.MonitorRun) error 
 	if run == nil {
 		return fmt.Errorf("run is nil")
 	}
+	tier := run.SamplingTier
+	if tier == "" {
+		tier = monitor.SamplingTierRegular
+	}
+	trigger := run.TriggerType
+	if trigger == "" {
+		trigger = monitor.SamplingTriggerScheduled
+	}
+	strategyVersion := run.SamplingStrategyVersion
+	if strategyVersion == 0 {
+		strategyVersion = monitor.SamplingStrategyVersion
+	}
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -647,8 +753,9 @@ func (d *DB) SaveMonitorRun(ctx context.Context, run *monitor.MonitorRun) error 
 	query := `
 		INSERT INTO monitor_runs (
 			run_id, job_id, scheduled_at, started_at, finished_at,
-			status, total_nodes, success_nodes, failed_nodes, error_message
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			status, total_nodes, success_nodes, failed_nodes, error_message,
+			sampling_tier, trigger_type, sampling_strategy_version
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	var finishedAt any
@@ -667,6 +774,9 @@ func (d *DB) SaveMonitorRun(ctx context.Context, run *monitor.MonitorRun) error 
 		run.SuccessNodes,
 		run.FailedNodes,
 		run.ErrorMessage,
+		string(tier),
+		string(trigger),
+		strategyVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("insert monitor_run %s: %w", run.RunID, err)
@@ -1111,10 +1221,10 @@ func (d *DB) QueryMonitorRuns(ctx context.Context, jobID string, limit int) ([]*
 	var args []any
 
 	if jobID != "" {
-		query = "SELECT run_id, job_id, scheduled_at, started_at, finished_at, status, total_nodes, success_nodes, failed_nodes, error_message FROM monitor_runs WHERE job_id = ? ORDER BY scheduled_at DESC LIMIT ?"
+		query = "SELECT run_id, job_id, scheduled_at, started_at, finished_at, status, total_nodes, success_nodes, failed_nodes, error_message, sampling_tier, trigger_type, sampling_strategy_version FROM monitor_runs WHERE job_id = ? ORDER BY scheduled_at DESC LIMIT ?"
 		args = []any{jobID, limit}
 	} else {
-		query = "SELECT run_id, job_id, scheduled_at, started_at, finished_at, status, total_nodes, success_nodes, failed_nodes, error_message FROM monitor_runs ORDER BY scheduled_at DESC LIMIT ?"
+		query = "SELECT run_id, job_id, scheduled_at, started_at, finished_at, status, total_nodes, success_nodes, failed_nodes, error_message, sampling_tier, trigger_type, sampling_strategy_version FROM monitor_runs ORDER BY scheduled_at DESC LIMIT ?"
 		args = []any{limit}
 	}
 
@@ -1130,6 +1240,7 @@ func (d *DB) QueryMonitorRuns(ctx context.Context, jobID string, limit int) ([]*
 		var finishedAt sql.NullTime
 		var errDetail sql.NullString
 		var statusStr string
+		var tier, trigger string
 
 		err := rows.Scan(
 			&r.RunID,
@@ -1142,6 +1253,9 @@ func (d *DB) QueryMonitorRuns(ctx context.Context, jobID string, limit int) ([]*
 			&r.SuccessNodes,
 			&r.FailedNodes,
 			&errDetail,
+			&tier,
+			&trigger,
+			&r.SamplingStrategyVersion,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan monitor_run: %w", err)
@@ -1155,6 +1269,8 @@ func (d *DB) QueryMonitorRuns(ctx context.Context, jobID string, limit int) ([]*
 			r.ErrorMessage = errDetail.String
 		}
 		r.Status = monitor.RunStatus(statusStr)
+		r.SamplingTier = monitor.SamplingTier(tier)
+		r.TriggerType = monitor.SamplingTriggerType(trigger)
 		runs = append(runs, &r)
 	}
 	return runs, rows.Err()
@@ -1165,44 +1281,49 @@ func (d *DB) QueryMonitorSamples(ctx context.Context, filter monitor.SampleFilte
 	var whereClauses []string
 	var args []any
 
+	if filter.JobID != "" {
+		whereClauses = append(whereClauses, "r.job_id = ?")
+		args = append(args, filter.JobID)
+	}
 	if filter.RunID != "" {
-		whereClauses = append(whereClauses, "run_id = ?")
+		whereClauses = append(whereClauses, "s.run_id = ?")
 		args = append(args, filter.RunID)
 	}
 	if filter.NodeKey != "" {
-		whereClauses = append(whereClauses, "node_key = ?")
+		whereClauses = append(whereClauses, "s.node_key = ?")
 		args = append(args, filter.NodeKey)
 	}
 	if filter.NodeIdentityKey != "" {
-		whereClauses = append(whereClauses, "node_identity_key = ?")
+		whereClauses = append(whereClauses, "s.node_identity_key = ?")
 		args = append(args, filter.NodeIdentityKey)
 	}
 	if filter.ProfileID != "" {
-		whereClauses = append(whereClauses, "profile_id = ?")
+		whereClauses = append(whereClauses, "s.profile_id = ?")
 		args = append(args, filter.ProfileID)
 	}
 	if filter.ProbeType != "" {
-		whereClauses = append(whereClauses, "probe_type = ?")
+		whereClauses = append(whereClauses, "s.probe_type = ?")
 		args = append(args, filter.ProbeType)
 	}
 	if filter.Target != "" {
-		whereClauses = append(whereClauses, "target = ?")
+		whereClauses = append(whereClauses, "s.target = ?")
 		args = append(args, filter.Target)
 	}
+	appendSamplingSourceFilter(&whereClauses, &args, filter.SamplingTier, filter.RegularObservationOnly)
 	if filter.Success != nil {
 		successVal := 0
 		if *filter.Success {
 			successVal = 1
 		}
-		whereClauses = append(whereClauses, "success = ?")
+		whereClauses = append(whereClauses, "s.success = ?")
 		args = append(args, successVal)
 	}
 	if filter.Since != nil {
-		whereClauses = append(whereClauses, "timestamp >= ?")
+		whereClauses = append(whereClauses, "s.timestamp >= ?")
 		args = append(args, filter.Since.UTC())
 	}
 	if filter.Until != nil {
-		whereClauses = append(whereClauses, "timestamp <= ?")
+		whereClauses = append(whereClauses, "s.timestamp <= ?")
 		args = append(args, filter.Until.UTC())
 	}
 
@@ -1225,13 +1346,15 @@ func (d *DB) QueryMonitorSamples(ctx context.Context, filter monitor.SampleFilte
 	}
 
 	query := fmt.Sprintf(`
-		SELECT sample_id, run_id, node_key, node_identity_key, config_revision_key,
-		       profile_id, display_name_snapshot, probe_type, target, timestamp,
-		       success, latency_ms, ttfb_ms, error_class, error_detail,
-		       exit_ip, exit_region, metadata_json
-		FROM monitor_samples
+		SELECT s.sample_id, s.run_id, s.node_key, s.node_identity_key, s.config_revision_key,
+		       s.profile_id, s.display_name_snapshot, s.probe_type, s.target, s.timestamp,
+		       s.success, s.latency_ms, s.ttfb_ms, s.error_class, s.error_detail,
+	       s.exit_ip, s.exit_region, s.metadata_json,
+	       COALESCE(r.sampling_tier, 'legacy_unknown'), COALESCE(r.trigger_type, 'legacy_unknown'),
+	       COALESCE(r.sampling_strategy_version, 0)
+	FROM monitor_samples AS s LEFT JOIN monitor_runs AS r ON r.run_id = s.run_id
 		%s
-		ORDER BY timestamp %s, sample_id %s
+		ORDER BY s.timestamp %s, s.sample_id %s
 		LIMIT ? OFFSET ?
 	`, whereSQL, orderDir, orderDir)
 
@@ -1245,58 +1368,74 @@ func (d *DB) QueryMonitorSamples(ctx context.Context, filter monitor.SampleFilte
 
 	var samples []*monitor.MonitorSample
 	for rows.Next() {
-		var s monitor.MonitorSample
-		var successInt int
-		var latMs, ttfbMs int64
-		var errDetail, exitIP, exitRegion, metaJSON sql.NullString
-
-		err := rows.Scan(
-			&s.SampleID,
-			&s.RunID,
-			&s.NodeKey,
-			&s.NodeIdentityKey,
-			&s.ConfigRevisionKey,
-			&s.ProfileID,
-			&s.DisplayNameSnapshot,
-			&s.ProbeType,
-			&s.Target,
-			&s.Timestamp,
-			&successInt,
-			&latMs,
-			&ttfbMs,
-			&s.ErrorClass,
-			&errDetail,
-			&exitIP,
-			&exitRegion,
-			&metaJSON,
-		)
+		sample, err := scanMonitorSample(rows)
 		if err != nil {
 			return nil, fmt.Errorf("scan monitor_sample: %w", err)
 		}
-
-		s.Success = successInt == 1
-		s.Latency = time.Duration(latMs) * time.Millisecond
-		s.TTFB = time.Duration(ttfbMs) * time.Millisecond
-
-		if errDetail.Valid {
-			s.ErrorDetail = errDetail.String
-		}
-		if exitIP.Valid {
-			s.ExitIP = exitIP.String
-		}
-		if exitRegion.Valid {
-			s.ExitRegion = exitRegion.String
-		}
-		if metaJSON.Valid && metaJSON.String != "" {
-			var m map[string]any
-			if err := json.Unmarshal([]byte(metaJSON.String), &m); err == nil {
-				s.Metadata = m
-			}
-		}
-
-		samples = append(samples, &s)
+		samples = append(samples, sample)
 	}
 	return samples, rows.Err()
+}
+
+func appendSamplingSourceFilter(whereClauses *[]string, args *[]any, tier monitor.SamplingTier, regularOnly bool) {
+	if tier != "" {
+		*whereClauses = append(*whereClauses, "COALESCE(r.sampling_tier, 'legacy_unknown') = ?")
+		*args = append(*args, string(tier))
+	}
+	if regularOnly {
+		*whereClauses = append(*whereClauses,
+			"r.sampling_tier IN ('regular', 'focus', 'sparse') AND r.trigger_type = 'scheduled'")
+	}
+}
+
+type monitorSampleScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanMonitorSample(scanner monitorSampleScanner) (*monitor.MonitorSample, error) {
+	var sample monitor.MonitorSample
+	var successInt int
+	var latMs, ttfbMs int64
+	var errDetail, exitIP, exitRegion, metaJSON sql.NullString
+	var tier, trigger sql.NullString
+	var strategyVersion int
+	if err := scanner.Scan(
+		&sample.SampleID, &sample.RunID, &sample.NodeKey, &sample.NodeIdentityKey,
+		&sample.ConfigRevisionKey, &sample.ProfileID, &sample.DisplayNameSnapshot,
+		&sample.ProbeType, &sample.Target, &sample.Timestamp, &successInt, &latMs,
+		&ttfbMs, &sample.ErrorClass, &errDetail, &exitIP, &exitRegion, &metaJSON,
+		&tier, &trigger, &strategyVersion,
+	); err != nil {
+		return nil, err
+	}
+	sample.Success = successInt == 1
+	sample.Latency = time.Duration(latMs) * time.Millisecond
+	sample.TTFB = time.Duration(ttfbMs) * time.Millisecond
+	sample.SamplingTier = monitor.SamplingTierLegacyUnknown
+	if tier.Valid && tier.String != "" {
+		sample.SamplingTier = monitor.SamplingTier(tier.String)
+	}
+	sample.TriggerType = monitor.SamplingTriggerLegacyUnknown
+	if trigger.Valid && trigger.String != "" {
+		sample.TriggerType = monitor.SamplingTriggerType(trigger.String)
+	}
+	sample.SamplingStrategyVersion = strategyVersion
+	if errDetail.Valid {
+		sample.ErrorDetail = errDetail.String
+	}
+	if exitIP.Valid {
+		sample.ExitIP = exitIP.String
+	}
+	if exitRegion.Valid {
+		sample.ExitRegion = exitRegion.String
+	}
+	if metaJSON.Valid && metaJSON.String != "" {
+		var metadata map[string]any
+		if err := json.Unmarshal([]byte(metaJSON.String), &metadata); err == nil {
+			sample.Metadata = metadata
+		}
+	}
+	return &sample, nil
 }
 
 // GetNodeTimelineSamples retrieves chronologically ordered raw samples for a specific node since a given time.
@@ -1380,45 +1519,46 @@ func (d *DB) QueryMonitorSamplesCursor(ctx context.Context, filter monitor.Curso
 
 	// B-01 Legacy Key Bridge:
 	if filter.NodeIdentityKey != "" && filter.LegacyNodeKey != "" {
-		whereClauses = append(whereClauses, "((node_identity_key = ?) OR (node_identity_key = node_key AND node_key = ?))")
+		whereClauses = append(whereClauses, "((s.node_identity_key = ?) OR (s.node_identity_key = s.node_key AND s.node_key = ?))")
 		args = append(args, filter.NodeIdentityKey, filter.LegacyNodeKey)
 	} else if filter.NodeIdentityKey != "" {
-		whereClauses = append(whereClauses, "node_identity_key = ?")
+		whereClauses = append(whereClauses, "s.node_identity_key = ?")
 		args = append(args, filter.NodeIdentityKey)
 	} else if filter.LegacyNodeKey != "" {
-		whereClauses = append(whereClauses, "node_key = ?")
+		whereClauses = append(whereClauses, "s.node_key = ?")
 		args = append(args, filter.LegacyNodeKey)
 	}
 	if filter.NodeKey != "" {
-		whereClauses = append(whereClauses, "node_key = ?")
+		whereClauses = append(whereClauses, "s.node_key = ?")
 		args = append(args, filter.NodeKey)
 	}
 	if filter.ProfileID != "" {
-		whereClauses = append(whereClauses, "profile_id = ?")
+		whereClauses = append(whereClauses, "s.profile_id = ?")
 		args = append(args, filter.ProfileID)
 	}
 	if filter.ProbeType != "" {
-		whereClauses = append(whereClauses, "probe_type = ?")
+		whereClauses = append(whereClauses, "s.probe_type = ?")
 		args = append(args, filter.ProbeType)
 	}
 	if filter.Target != "" {
-		whereClauses = append(whereClauses, "target = ?")
+		whereClauses = append(whereClauses, "s.target = ?")
 		args = append(args, filter.Target)
 	}
+	appendSamplingSourceFilter(&whereClauses, &args, filter.SamplingTier, filter.RegularObservationOnly)
 	if filter.Success != nil {
 		successVal := 0
 		if *filter.Success {
 			successVal = 1
 		}
-		whereClauses = append(whereClauses, "success = ?")
+		whereClauses = append(whereClauses, "s.success = ?")
 		args = append(args, successVal)
 	}
 	if filter.Since != nil {
-		whereClauses = append(whereClauses, "timestamp >= ?")
+		whereClauses = append(whereClauses, "s.timestamp >= ?")
 		args = append(args, filter.Since.UTC())
 	}
 	if filter.Until != nil {
-		whereClauses = append(whereClauses, "timestamp <= ?")
+		whereClauses = append(whereClauses, "s.timestamp <= ?")
 		args = append(args, filter.Until.UTC())
 	}
 
@@ -1435,10 +1575,10 @@ func (d *DB) QueryMonitorSamplesCursor(ctx context.Context, filter monitor.Curso
 		}
 		if !curTime.IsZero() && curID != "" {
 			if orderDir == "DESC" {
-				whereClauses = append(whereClauses, "((timestamp < ?) OR (timestamp = ? AND sample_id < ?))")
+				whereClauses = append(whereClauses, "((s.timestamp < ?) OR (s.timestamp = ? AND s.sample_id < ?))")
 				args = append(args, curTime.UTC(), curTime.UTC(), curID)
 			} else {
-				whereClauses = append(whereClauses, "((timestamp > ?) OR (timestamp = ? AND sample_id > ?))")
+				whereClauses = append(whereClauses, "((s.timestamp > ?) OR (s.timestamp = ? AND s.sample_id > ?))")
 				args = append(args, curTime.UTC(), curTime.UTC(), curID)
 			}
 		}
@@ -1456,13 +1596,15 @@ func (d *DB) QueryMonitorSamplesCursor(ctx context.Context, filter monitor.Curso
 
 	// Read limit + 1 to detect has_more without an extra COUNT query
 	query := fmt.Sprintf(`
-		SELECT sample_id, run_id, node_key, node_identity_key, config_revision_key,
-		       profile_id, display_name_snapshot, probe_type, target, timestamp,
-		       success, latency_ms, ttfb_ms, error_class, error_detail,
-		       exit_ip, exit_region, metadata_json
-		FROM monitor_samples
+	SELECT s.sample_id, s.run_id, s.node_key, s.node_identity_key, s.config_revision_key,
+	       s.profile_id, s.display_name_snapshot, s.probe_type, s.target, s.timestamp,
+	       s.success, s.latency_ms, s.ttfb_ms, s.error_class, s.error_detail,
+	       s.exit_ip, s.exit_region, s.metadata_json,
+	       COALESCE(r.sampling_tier, 'legacy_unknown'), COALESCE(r.trigger_type, 'legacy_unknown'),
+	       COALESCE(r.sampling_strategy_version, 0)
+	FROM monitor_samples AS s LEFT JOIN monitor_runs AS r ON r.run_id = s.run_id
 		%s
-		ORDER BY timestamp %s, sample_id %s
+		ORDER BY s.timestamp %s, s.sample_id %s
 		LIMIT ?
 	`, whereSQL, orderDir, orderDir)
 
@@ -1476,56 +1618,11 @@ func (d *DB) QueryMonitorSamplesCursor(ctx context.Context, filter monitor.Curso
 
 	samples := make([]*monitor.MonitorSample, 0)
 	for rows.Next() {
-		var s monitor.MonitorSample
-		var successInt int
-		var latMs, ttfbMs int64
-		var errDetail, exitIP, exitRegion, metaJSON sql.NullString
-
-		err := rows.Scan(
-			&s.SampleID,
-			&s.RunID,
-			&s.NodeKey,
-			&s.NodeIdentityKey,
-			&s.ConfigRevisionKey,
-			&s.ProfileID,
-			&s.DisplayNameSnapshot,
-			&s.ProbeType,
-			&s.Target,
-			&s.Timestamp,
-			&successInt,
-			&latMs,
-			&ttfbMs,
-			&s.ErrorClass,
-			&errDetail,
-			&exitIP,
-			&exitRegion,
-			&metaJSON,
-		)
+		sample, err := scanMonitorSample(rows)
 		if err != nil {
 			return nil, fmt.Errorf("scan monitor_sample cursor: %w", err)
 		}
-
-		s.Success = successInt == 1
-		s.Latency = time.Duration(latMs) * time.Millisecond
-		s.TTFB = time.Duration(ttfbMs) * time.Millisecond
-
-		if errDetail.Valid {
-			s.ErrorDetail = errDetail.String
-		}
-		if exitIP.Valid {
-			s.ExitIP = exitIP.String
-		}
-		if exitRegion.Valid {
-			s.ExitRegion = exitRegion.String
-		}
-		if metaJSON.Valid && metaJSON.String != "" {
-			var m map[string]any
-			if err := json.Unmarshal([]byte(metaJSON.String), &m); err == nil {
-				s.Metadata = m
-			}
-		}
-
-		samples = append(samples, &s)
+		samples = append(samples, sample)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -1567,37 +1664,38 @@ func (d *DB) GetDerivedStats(ctx context.Context, q monitor.StatsQuery) (*monito
 	var args []any
 
 	if q.NodeIdentityKey != "" && q.LegacyNodeKey != "" {
-		whereClauses = append(whereClauses, "((node_identity_key = ?) OR (node_identity_key = node_key AND node_key = ?))")
+		whereClauses = append(whereClauses, "((s.node_identity_key = ?) OR (s.node_identity_key = s.node_key AND s.node_key = ?))")
 		args = append(args, q.NodeIdentityKey, q.LegacyNodeKey)
 	} else if q.NodeIdentityKey != "" {
-		whereClauses = append(whereClauses, "node_identity_key = ?")
+		whereClauses = append(whereClauses, "s.node_identity_key = ?")
 		args = append(args, q.NodeIdentityKey)
 	} else if q.LegacyNodeKey != "" {
-		whereClauses = append(whereClauses, "node_key = ?")
+		whereClauses = append(whereClauses, "s.node_key = ?")
 		args = append(args, q.LegacyNodeKey)
 	}
 	if q.NodeKey != "" {
-		whereClauses = append(whereClauses, "node_key = ?")
+		whereClauses = append(whereClauses, "s.node_key = ?")
 		args = append(args, q.NodeKey)
 	}
 	if q.ProfileID != "" {
-		whereClauses = append(whereClauses, "profile_id = ?")
+		whereClauses = append(whereClauses, "s.profile_id = ?")
 		args = append(args, q.ProfileID)
 	}
 	if q.ProbeType != "" {
-		whereClauses = append(whereClauses, "probe_type = ?")
+		whereClauses = append(whereClauses, "s.probe_type = ?")
 		args = append(args, q.ProbeType)
 	}
 	if q.Target != "" {
-		whereClauses = append(whereClauses, "target = ?")
+		whereClauses = append(whereClauses, "s.target = ?")
 		args = append(args, q.Target)
 	}
+	appendSamplingSourceFilter(&whereClauses, &args, q.SamplingTier, q.RegularObservationOnly)
 	if q.Since != nil {
-		whereClauses = append(whereClauses, "timestamp >= ?")
+		whereClauses = append(whereClauses, "s.timestamp >= ?")
 		args = append(args, q.Since.UTC())
 	}
 	if q.Until != nil {
-		whereClauses = append(whereClauses, "timestamp <= ?")
+		whereClauses = append(whereClauses, "s.timestamp <= ?")
 		args = append(args, q.Until.UTC())
 	}
 
@@ -1608,12 +1706,12 @@ func (d *DB) GetDerivedStats(ctx context.Context, q monitor.StatsQuery) (*monito
 
 	// 1. Summary counts and first/last timestamps via SQL aggregate
 	summaryQuery := fmt.Sprintf(`
-		SELECT COUNT(*),
-		       COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0),
-		       COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0),
-		       MIN(timestamp),
-		       MAX(timestamp)
-		FROM monitor_samples
+		SELECT COUNT(s.sample_id),
+	       COALESCE(SUM(CASE WHEN s.success = 1 THEN 1 ELSE 0 END), 0),
+	       COALESCE(SUM(CASE WHEN s.success = 0 THEN 1 ELSE 0 END), 0),
+	       MIN(s.timestamp),
+	       MAX(s.timestamp)
+	FROM monitor_samples AS s LEFT JOIN monitor_runs AS r ON r.run_id = s.run_id
 		%s
 	`, whereSQL)
 
@@ -1638,14 +1736,37 @@ func (d *DB) GetDerivedStats(ctx context.Context, q monitor.StatsQuery) (*monito
 	}
 
 	stats := &monitor.DerivedStats{
-		SampleCount:     totalCount,
-		SuccessCount:    successCount,
-		FailureCount:    failureCount,
-		ErrorBreakdown:  make(map[string]int64),
-		NodeIdentityKey: q.NodeIdentityKey,
-		NodeKey:         q.NodeKey,
-		ProbeType:       q.ProbeType,
+		SampleCount:            totalCount,
+		RegularObservationOnly: q.RegularObservationOnly,
+		SuccessCount:           successCount,
+		FailureCount:           failureCount,
+		ErrorBreakdown:         make(map[string]int64),
+		NodeIdentityKey:        q.NodeIdentityKey,
+		NodeKey:                q.NodeKey,
+		ProbeType:              q.ProbeType,
 	}
+	tierRows, tierErr := d.db.QueryContext(ctx, fmt.Sprintf(`
+		SELECT DISTINCT COALESCE(r.sampling_tier, 'legacy_unknown')
+		FROM monitor_samples AS s LEFT JOIN monitor_runs AS r ON r.run_id = s.run_id
+		%s
+		ORDER BY 1
+	`, whereSQL), args...)
+	if tierErr != nil {
+		return nil, fmt.Errorf("query included sampling tiers: %w", tierErr)
+	}
+	for tierRows.Next() {
+		var tier string
+		if err := tierRows.Scan(&tier); err != nil {
+			_ = tierRows.Close()
+			return nil, fmt.Errorf("scan included sampling tier: %w", err)
+		}
+		stats.IncludedSamplingTiers = append(stats.IncludedSamplingTiers, monitor.SamplingTier(tier))
+	}
+	if err := tierRows.Err(); err != nil {
+		_ = tierRows.Close()
+		return nil, fmt.Errorf("read included sampling tiers: %w", err)
+	}
+	_ = tierRows.Close()
 
 	if q.Since != nil {
 		stats.ObservedSince = q.Since
@@ -1681,15 +1802,15 @@ func (d *DB) GetDerivedStats(ctx context.Context, q monitor.StatsQuery) (*monito
 	if failureCount > 0 {
 		errWhere := whereSQL
 		if errWhere == "" {
-			errWhere = "WHERE success = 0"
+			errWhere = "WHERE s.success = 0"
 		} else {
-			errWhere += " AND success = 0"
+			errWhere += " AND s.success = 0"
 		}
 		errQuery := fmt.Sprintf(`
-			SELECT error_class, COUNT(*)
-			FROM monitor_samples
+			SELECT s.error_class, COUNT(*)
+		FROM monitor_samples AS s LEFT JOIN monitor_runs AS r ON r.run_id = s.run_id
 			%s
-			GROUP BY error_class
+			GROUP BY s.error_class
 		`, errWhere)
 
 		rows, err := d.db.QueryContext(ctx, errQuery, args...)
@@ -1713,14 +1834,14 @@ func (d *DB) GetDerivedStats(ctx context.Context, q monitor.StatsQuery) (*monito
 	if successCount > 0 {
 		latWhere := whereSQL
 		if latWhere == "" {
-			latWhere = "WHERE success = 1 AND latency_ms > 0"
+			latWhere = "WHERE s.success = 1 AND s.latency_ms > 0"
 		} else {
-			latWhere += " AND success = 1 AND latency_ms > 0"
+			latWhere += " AND s.success = 1 AND s.latency_ms > 0"
 		}
 
 		var validLatCount int64
 		var minLat, maxLat sql.NullInt64
-		latSummaryQuery := fmt.Sprintf(`SELECT COUNT(*), MIN(latency_ms), MAX(latency_ms) FROM monitor_samples %s`, latWhere)
+		latSummaryQuery := fmt.Sprintf(`SELECT COUNT(s.sample_id), MIN(s.latency_ms), MAX(s.latency_ms) FROM monitor_samples AS s LEFT JOIN monitor_runs AS r ON r.run_id = s.run_id %s`, latWhere)
 		if err := d.db.QueryRowContext(ctx, latSummaryQuery, args...).Scan(&validLatCount, &minLat, &maxLat); err == nil && validLatCount > 0 {
 			if minLat.Valid {
 				v := minLat.Int64
@@ -1737,7 +1858,7 @@ func (d *DB) GetDerivedStats(ctx context.Context, q monitor.StatsQuery) (*monito
 				rank50 = 0
 			}
 			var p50Val int64
-			p50Query := fmt.Sprintf(`SELECT latency_ms FROM monitor_samples %s ORDER BY latency_ms ASC LIMIT 1 OFFSET ?`, latWhere)
+			p50Query := fmt.Sprintf(`SELECT s.latency_ms FROM monitor_samples AS s LEFT JOIN monitor_runs AS r ON r.run_id = s.run_id %s ORDER BY s.latency_ms ASC LIMIT 1 OFFSET ?`, latWhere)
 			p50Args := append(append([]any{}, args...), rank50)
 			if err := d.db.QueryRowContext(ctx, p50Query, p50Args...).Scan(&p50Val); err == nil {
 				stats.LatencyP50Ms = &p50Val
@@ -1749,7 +1870,7 @@ func (d *DB) GetDerivedStats(ctx context.Context, q monitor.StatsQuery) (*monito
 				rank95 = 0
 			}
 			var p95Val int64
-			p95Query := fmt.Sprintf(`SELECT latency_ms FROM monitor_samples %s ORDER BY latency_ms ASC LIMIT 1 OFFSET ?`, latWhere)
+			p95Query := fmt.Sprintf(`SELECT s.latency_ms FROM monitor_samples AS s LEFT JOIN monitor_runs AS r ON r.run_id = s.run_id %s ORDER BY s.latency_ms ASC LIMIT 1 OFFSET ?`, latWhere)
 			p95Args := append(append([]any{}, args...), rank95)
 			if err := d.db.QueryRowContext(ctx, p95Query, p95Args...).Scan(&p95Val); err == nil {
 				stats.LatencyP95Ms = &p95Val
@@ -1759,13 +1880,13 @@ func (d *DB) GetDerivedStats(ctx context.Context, q monitor.StatsQuery) (*monito
 		// 4. Exact Percentiles for TTFB (exclude non-HTTP evidence where ttfb_ms <= 0 or NULL)
 		ttfbWhere := whereSQL
 		if ttfbWhere == "" {
-			ttfbWhere = "WHERE success = 1 AND ttfb_ms > 0"
+			ttfbWhere = "WHERE s.success = 1 AND s.ttfb_ms > 0"
 		} else {
-			ttfbWhere += " AND success = 1 AND ttfb_ms > 0"
+			ttfbWhere += " AND s.success = 1 AND s.ttfb_ms > 0"
 		}
 
 		var validTTFBCount int64
-		ttfbCountQuery := fmt.Sprintf(`SELECT COUNT(*) FROM monitor_samples %s`, ttfbWhere)
+		ttfbCountQuery := fmt.Sprintf(`SELECT COUNT(s.sample_id) FROM monitor_samples AS s LEFT JOIN monitor_runs AS r ON r.run_id = s.run_id %s`, ttfbWhere)
 		if err := d.db.QueryRowContext(ctx, ttfbCountQuery, args...).Scan(&validTTFBCount); err == nil && validTTFBCount > 0 {
 			// TTFB P50
 			ttfbRank50 := int(math.Ceil(0.50*float64(validTTFBCount))) - 1
@@ -1773,7 +1894,7 @@ func (d *DB) GetDerivedStats(ctx context.Context, q monitor.StatsQuery) (*monito
 				ttfbRank50 = 0
 			}
 			var ttfbP50Val int64
-			ttfbP50Query := fmt.Sprintf(`SELECT ttfb_ms FROM monitor_samples %s ORDER BY ttfb_ms ASC LIMIT 1 OFFSET ?`, ttfbWhere)
+			ttfbP50Query := fmt.Sprintf(`SELECT s.ttfb_ms FROM monitor_samples AS s LEFT JOIN monitor_runs AS r ON r.run_id = s.run_id %s ORDER BY s.ttfb_ms ASC LIMIT 1 OFFSET ?`, ttfbWhere)
 			ttfbP50Args := append(append([]any{}, args...), ttfbRank50)
 			if err := d.db.QueryRowContext(ctx, ttfbP50Query, ttfbP50Args...).Scan(&ttfbP50Val); err == nil {
 				stats.TTFBP50Ms = &ttfbP50Val
@@ -1785,7 +1906,7 @@ func (d *DB) GetDerivedStats(ctx context.Context, q monitor.StatsQuery) (*monito
 				ttfbRank95 = 0
 			}
 			var ttfbP95Val int64
-			ttfbP95Query := fmt.Sprintf(`SELECT ttfb_ms FROM monitor_samples %s ORDER BY ttfb_ms ASC LIMIT 1 OFFSET ?`, ttfbWhere)
+			ttfbP95Query := fmt.Sprintf(`SELECT s.ttfb_ms FROM monitor_samples AS s LEFT JOIN monitor_runs AS r ON r.run_id = s.run_id %s ORDER BY s.ttfb_ms ASC LIMIT 1 OFFSET ?`, ttfbWhere)
 			ttfbP95Args := append(append([]any{}, args...), ttfbRank95)
 			if err := d.db.QueryRowContext(ctx, ttfbP95Query, ttfbP95Args...).Scan(&ttfbP95Val); err == nil {
 				stats.TTFBP95Ms = &ttfbP95Val

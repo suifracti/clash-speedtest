@@ -163,16 +163,32 @@ func (r *Runner) ExecuteRunWithAdmission(ctx context.Context, job *MonitorJob, s
 
 	runID := newID("run")
 	startedAt := time.Now()
+	tier := job.SamplingTier
+	if tier != SamplingTierFocus && tier != SamplingTierSparse {
+		tier = SamplingTierRegular
+	}
+	trigger := job.NextRunTrigger
+	if trigger == "" {
+		trigger = SamplingTriggerScheduled
+	}
+	if trigger == SamplingTriggerManual {
+		tier = SamplingTierDiagnostic
+	} else {
+		trigger = SamplingTriggerScheduled
+	}
 
 	run := &MonitorRun{
-		RunID:        runID,
-		JobID:        job.ID,
-		ScheduledAt:  scheduledAt,
-		StartedAt:    startedAt,
-		Status:       RunStatusRunning,
-		TotalNodes:   len(job.Nodes),
-		SuccessNodes: 0,
-		FailedNodes:  0,
+		RunID:                   runID,
+		JobID:                   job.ID,
+		SamplingTier:            tier,
+		TriggerType:             trigger,
+		SamplingStrategyVersion: SamplingStrategyVersion,
+		ScheduledAt:             scheduledAt,
+		StartedAt:               startedAt,
+		Status:                  RunStatusRunning,
+		TotalNodes:              len(job.Nodes),
+		SuccessNodes:            0,
+		FailedNodes:             0,
 	}
 
 	if r.store != nil {
@@ -226,7 +242,7 @@ func (r *Runner) ExecuteRunWithAdmission(ctx context.Context, job *MonitorJob, s
 					return
 				}
 
-				nodeSamples, nodeSuccess, nodeErr := r.probeNode(ctx, job.ProfileID, node, targets, nodeTimeout, runID, job.ProbeSet == ProbeSetHeavy)
+				nodeSamples, nodeSuccess, nodeErr := r.probeNode(ctx, job.ProfileID, node, targets, nodeTimeout, runID, job.ProbeSet == ProbeSetHeavy, admissionPriorityFor(job))
 
 				sampleMu.Lock()
 				allSamples = append(allSamples, nodeSamples...)
@@ -305,7 +321,7 @@ func (r *Runner) ExecuteRunWithAdmission(ctx context.Context, job *MonitorJob, s
 	return run, allSamples, nil
 }
 
-func (r *Runner) probeNode(ctx context.Context, profileID string, node MonitoredNode, targets []TargetSpec, timeout time.Duration, runID string, heavy bool) ([]*MonitorSample, bool, error) {
+func (r *Runner) probeNode(ctx context.Context, profileID string, node MonitoredNode, targets []TargetSpec, timeout time.Duration, runID string, heavy bool, priority int) ([]*MonitorSample, bool, error) {
 	PopulateNodeKeys(&node)
 
 	client, err := r.dialer.CreateClient(node, timeout)
@@ -329,7 +345,7 @@ func (r *Runner) probeNode(ctx context.Context, profileID string, node Monitored
 		return []*MonitorSample{sample}, false, nil
 	}
 	if budget := r.budget.Load(); budget != nil {
-		client = budgetedClient(client, budget, heavy)
+		client = budgetedClient(client, budget, heavy, priority)
 	}
 
 	var samples []*MonitorSample

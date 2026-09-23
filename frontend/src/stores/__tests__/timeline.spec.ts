@@ -23,6 +23,9 @@ function sample(id: string, timestampMs: number, overrides: Partial<MonitorSampl
   return {
     sampleId: id,
     runId: 'run_1',
+    samplingTier: 'regular',
+    triggerType: 'scheduled',
+    samplingStrategyVersion: 1,
     nodeKey: 'nk_jp01',
     nodeIdentityKey: 'nid_jp01',
     configRevisionKey: 'rev_1',
@@ -47,6 +50,8 @@ function page(items: MonitorSample[], nextCursor = '', hasMore = false) {
 function emptyStats(): DerivedStats {
   return {
     sampleCount: 0,
+    includedSamplingTiers: [],
+    regularObservationOnly: false,
     successCount: 0,
     failureCount: 0,
     successRate: 0,

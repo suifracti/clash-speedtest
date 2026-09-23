@@ -51,6 +51,9 @@ func NewScheduler(cfg SchedulerConfig) (*Scheduler, error) {
 	if cfg.Job.Interval <= 0 {
 		cfg.Job.Interval = 5 * time.Minute
 	}
+	if cfg.Job.SamplingTier == "" {
+		cfg.Job.SamplingTier = SamplingTierRegular
+	}
 
 	s := &Scheduler{
 		job:          cfg.Job,
@@ -87,6 +90,22 @@ func (s *Scheduler) Job() MonitorJob {
 	copy.SkippedRounds = atomic.LoadInt64(&s.skippedRounds)
 	copy.ResourceSkippedRounds = atomic.LoadInt64(&s.resourceSkippedRounds)
 	return copy
+}
+
+// UpdateSamplingTier changes only the periodic sampling tier. It does not
+// change lifecycle state or start a stopped/paused scheduler.
+func (s *Scheduler) UpdateSamplingTier(tier SamplingTier, updatedAt time.Time) error {
+	if tier != SamplingTierRegular && tier != SamplingTierFocus && tier != SamplingTierSparse {
+		return fmt.Errorf("unsupported periodic monitor sampling tier %q", tier)
+	}
+	if updatedAt.IsZero() {
+		updatedAt = time.Now()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.job.SamplingTier = tier
+	s.job.UpdatedAt = updatedAt
+	return nil
 }
 
 func (s *Scheduler) checkBudget() (string, string) {
@@ -325,6 +344,8 @@ func (s *Scheduler) TriggerImmediate(ctx context.Context) (*MonitorRun, error) {
 	s.runWg.Add(1)
 	schedCtx := s.ctx
 	jobCopy := *s.job
+	jobCopy.SamplingTier = SamplingTierDiagnostic
+	jobCopy.NextRunTrigger = SamplingTriggerManual
 	s.pendingID++
 	id := s.pendingID
 	s.mu.Unlock()

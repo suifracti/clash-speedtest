@@ -1804,6 +1804,12 @@ func (s *AppService) CreateMonitorJob(job monitor.MonitorJob) (*monitor.MonitorJ
 	if job.ProbeSet == "" {
 		job.ProbeSet = monitor.ProbeSetLight
 	}
+	if job.SamplingTier == "" {
+		job.SamplingTier = monitor.SamplingTierRegular
+	}
+	if job.SamplingTier != monitor.SamplingTierRegular && job.SamplingTier != monitor.SamplingTierFocus && job.SamplingTier != monitor.SamplingTierSparse {
+		return nil, monitor.NewValidationError("sampling_tier 必须是 regular、focus 或 sparse")
+	}
 
 	// Compute NodeKeys, NodeIdentityKeys, and ConfigRevisionKeys for all nodes
 	monitor.PopulateNodesKeys(job.Nodes)
@@ -1975,6 +1981,39 @@ func (s *AppService) GetMonitorJob(jobID string) (*monitor.MonitorJob, error) {
 
 	job := sched.Job()
 	return &job, nil
+}
+
+// UpdateMonitorJobSamplingTier persists a periodic source setting without
+// changing a job's interval, selected nodes, probe set, or lifecycle state.
+func (s *AppService) UpdateMonitorJobSamplingTier(jobID string, tier monitor.SamplingTier) error {
+	if tier != monitor.SamplingTierRegular && tier != monitor.SamplingTierFocus && tier != monitor.SamplingTierSparse {
+		return monitor.NewValidationError("sampling_tier 必须是 regular、focus 或 sparse")
+	}
+	if s.historyStore == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
+
+	s.monitorMu.Lock()
+	defer s.monitorMu.Unlock()
+	sched, ok := s.monitorSchedulers[jobID]
+	if !ok {
+		return fmt.Errorf("monitor job %s not found", jobID)
+	}
+	updatedAt := time.Now()
+	if err := s.historyStore.UpdateMonitorJobSamplingTier(context.Background(), jobID, tier, updatedAt); err != nil {
+		return fmt.Errorf("persist monitor job %s sampling tier: %w", jobID, err)
+	}
+	if err := sched.UpdateSamplingTier(tier, updatedAt); err != nil {
+		return fmt.Errorf("update monitor job %s runtime sampling tier: %w", jobID, err)
+	}
+	s.emitter.Emit(Event{
+		Type: "monitor_job_updated",
+		Payload: map[string]any{
+			"job_id":        jobID,
+			"sampling_tier": tier,
+		},
+	})
+	return nil
 }
 
 // ListMonitorJobs returns all configured monitor jobs.

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/faceair/clash-speedtest/application"
+	"github.com/faceair/clash-speedtest/core/history"
 	"github.com/faceair/clash-speedtest/core/monitor"
 	"github.com/faceair/clash-speedtest/core/profiles"
 )
@@ -565,6 +566,112 @@ func TestWebServer_MonitorHistoryEndpoints(t *testing.T) {
 	}
 	if retResult.Policy != monitor.RetentionKeepAll || retResult.SamplesDeleted != 0 {
 		t.Errorf("unexpected retention result: %+v", retResult)
+	}
+}
+
+func TestWebMonitorSamplingSourceFiltersConsistent(t *testing.T) {
+	tmpDir := t.TempDir()
+	historyDir := filepath.Join(tmpDir, "history")
+	store, err := history.NewStore(historyDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 23, 8, 0, 0, 0, time.UTC)
+	for _, run := range []*monitor.MonitorRun{
+		{RunID: "web-regular", JobID: "job", SamplingTier: monitor.SamplingTierRegular, TriggerType: monitor.SamplingTriggerScheduled, SamplingStrategyVersion: monitor.SamplingStrategyVersion, ScheduledAt: now, StartedAt: now, Status: monitor.RunStatusCompleted},
+		{RunID: "web-diagnostic", JobID: "job", SamplingTier: monitor.SamplingTierDiagnostic, TriggerType: monitor.SamplingTriggerManual, SamplingStrategyVersion: monitor.SamplingStrategyVersion, ScheduledAt: now, StartedAt: now, Status: monitor.RunStatusFailed},
+		{RunID: "web-legacy", JobID: "job", SamplingTier: monitor.SamplingTierLegacyUnknown, TriggerType: monitor.SamplingTriggerLegacyUnknown, ScheduledAt: now, StartedAt: now, Status: monitor.RunStatusCompleted},
+	} {
+		if err := store.SaveMonitorRun(context.Background(), run); err != nil {
+			t.Fatalf("save %s: %v", run.RunID, err)
+		}
+	}
+	if err := store.SaveMonitorSamples(context.Background(), []*monitor.MonitorSample{
+		{SampleID: "web-regular-sample", RunID: "web-regular", NodeKey: "node", NodeIdentityKey: "identity", ProbeType: "rtt", Target: "known", Timestamp: now, Success: true},
+		{SampleID: "web-diagnostic-sample", RunID: "web-diagnostic", NodeKey: "node", NodeIdentityKey: "identity", ProbeType: "rtt", Target: "known", Timestamp: now, Success: false, ErrorClass: "timeout"},
+		{SampleID: "web-legacy-sample", RunID: "web-legacy", NodeKey: "node", NodeIdentityKey: "identity", ProbeType: "rtt", Target: "known", Timestamp: now, Success: true},
+	}); err != nil {
+		t.Fatalf("save samples: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	server, err := NewServer(ServerConfig{
+		Port:         0,
+		ProfilePaths: profiles.Paths{Dir: filepath.Join(tmpDir, "profiles")},
+		HistoryDir:   historyDir,
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer server.Close()
+	handler := server.buildHandler()
+	serve := func(path string, target any) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = "127.0.0.1:8080"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s: status=%d body=%s", path, rec.Code, rec.Body.String())
+		}
+		if err := json.NewDecoder(rec.Body).Decode(target); err != nil {
+			t.Fatalf("decode %s: %v", path, err)
+		}
+	}
+
+	var regular monitor.SampleCursorPage
+	serve("/api/monitor/samples/cursor?node_identity_key=identity&regular_observation_only=true&limit=10", &regular)
+	if len(regular.Items) != 1 || regular.Items[0].SampleID != "web-regular-sample" || regular.Items[0].SamplingTier != monitor.SamplingTierRegular {
+		t.Fatalf("cursor regular-only filter admitted other sources: %+v", regular.Items)
+	}
+	var stats monitor.DerivedStats
+	serve("/api/monitor/stats?node_identity_key=identity&regular_observation_only=true", &stats)
+	if stats.SampleCount != 1 || stats.SuccessCount != 1 || stats.FailureCount != 0 || !stats.RegularObservationOnly {
+		t.Fatalf("regular-only stats do not match cursor source boundary: %+v", stats)
+	}
+	var diagnostics []*monitor.MonitorSample
+	serve("/api/monitor/samples?sampling_tier=diagnostic&limit=10", &diagnostics)
+	if len(diagnostics) != 1 || diagnostics[0].SampleID != "web-diagnostic-sample" || diagnostics[0].TriggerType != monitor.SamplingTriggerManual {
+		t.Fatalf("diagnostic samples not separately queryable: %+v", diagnostics)
+	}
+}
+
+func TestWebMonitorSamplingTierUpdatePreservesStoppedState(t *testing.T) {
+	tmpDir := t.TempDir()
+	server, err := NewServer(ServerConfig{
+		Port:         0,
+		ProfilePaths: profiles.Paths{Dir: filepath.Join(tmpDir, "profiles")},
+		HistoryDir:   filepath.Join(tmpDir, "history"),
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer server.Close()
+	if _, err := server.AppService().CreateMonitorJob(monitor.MonitorJob{
+		ID: "tier-update", Name: "Tier update", ProbeSet: monitor.ProbeSetLight,
+		SamplingTier: monitor.SamplingTierRegular, Interval: 3 * time.Minute,
+	}); err != nil {
+		t.Fatalf("create stopped job: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/monitor/jobs/tier-update/sampling-tier", strings.NewReader(`{"sampling_tier":"focus"}`))
+	request.Host = "127.0.0.1:8080"
+	request.Header.Set("Origin", "http://127.0.0.1:8080")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.buildHandler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("update sampling tier: status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	job, err := server.AppService().GetMonitorJob("tier-update")
+	if err != nil {
+		t.Fatalf("read updated job: %v", err)
+	}
+	if job.State != monitor.JobStateStopped || job.SamplingTier != monitor.SamplingTierFocus || job.Interval != 3*time.Minute {
+		t.Fatalf("sampling-tier save changed stopped state or cadence: %+v", job)
 	}
 }
 

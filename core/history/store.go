@@ -347,6 +347,13 @@ func (s *Store) SaveMonitorJobDefinition(ctx context.Context, definition *monito
 	return s.db.SaveMonitorJobDefinition(ctx, definition)
 }
 
+func (s *Store) UpdateMonitorJobSamplingTier(ctx context.Context, jobID string, tier monitor.SamplingTier, updatedAt time.Time) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
+	return s.db.UpdateMonitorJobSamplingTier(ctx, jobID, tier, updatedAt)
+}
+
 func (s *Store) ListMonitorJobDefinitions(ctx context.Context) ([]*monitor.MonitorJobDefinition, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("history store is not initialized")

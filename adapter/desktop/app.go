@@ -280,6 +280,10 @@ func (a *App) CreateMonitorJob(req application.MonitorJobCreateRequest) (*applic
 	return a.app.CreateMonitorJobFromRequest(req)
 }
 
+func (a *App) UpdateMonitorJobSamplingTier(jobID string, tier monitor.SamplingTier) error {
+	return a.app.UpdateMonitorJobSamplingTier(jobID, tier)
+}
+
 func (a *App) StartMonitorJob(jobID string) error {
 	return a.app.StartMonitorJob(jobID)
 }

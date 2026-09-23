@@ -66,31 +66,42 @@ func budgetContextError(ctx context.Context, err error) error {
 }
 
 const (
-	budgetStagger       = 100 * time.Millisecond
-	budgetMaxRoundWait  = 5 * time.Second
-	budgetMaxPermitWait = 5 * time.Second
+	budgetStagger                = 100 * time.Millisecond
+	budgetMaxRoundWait           = 5 * time.Second
+	budgetMaxPermitWait          = 5 * time.Second
+	sparseFairnessGrantLimit     = 4
+	diagnosticFairnessGrantLimit = 3
 )
+
+type admissionWaiter struct {
+	priority int
+	heavy    bool
+	ready    chan struct{}
+	granted  bool
+}
 
 // BudgetController is shared by every Monitor runner/scheduler in one AppService.
 // SQLite remains the durable authority for usage across restarts.
 type BudgetController struct {
-	ledger       BudgetLedger
-	limits       func() (BudgetLimits, error)
-	now          func() time.Time
-	mu           sync.Mutex
-	active       int
-	heavy        int
-	identity     map[string]bool
-	nextRound    time.Time
-	changed      chan struct{}
-	storeFailure error
+	ledger                BudgetLedger
+	limits                func() (BudgetLimits, error)
+	now                   func() time.Time
+	mu                    sync.Mutex
+	active                int
+	heavy                 int
+	identity              map[string]bool
+	nextRound             time.Time
+	waiters               []*admissionWaiter
+	nonSparseGrantStreak  int
+	diagnosticGrantStreak int
+	storeFailure          error
 }
 
 func NewBudgetController(ledger BudgetLedger, limits func() (BudgetLimits, error), now func() time.Time) *BudgetController {
 	if now == nil {
 		now = time.Now
 	}
-	return &BudgetController{ledger: ledger, limits: limits, now: now, identity: make(map[string]bool), changed: make(chan struct{})}
+	return &BudgetController{ledger: ledger, limits: limits, now: now, identity: make(map[string]bool)}
 }
 
 func (b *BudgetController) failStore(err error) error {
@@ -234,7 +245,8 @@ func (b *BudgetController) AcquireRound(ctx context.Context, job *MonitorJob) (c
 	}
 	// Reserve the first HTTP hop before the run is recorded. A denied or
 	// expired wait must not leave an empty durable run that looks like a probe.
-	releaseRequest, responseMax, reservedDay, err := b.acquireRequest(ctx, job.ProbeSet == ProbeSetHeavy)
+	priority := admissionPriorityFor(job)
+	releaseRequest, responseMax, reservedDay, err := b.acquireRequest(ctx, job.ProbeSet == ProbeSetHeavy, priority)
 	if err != nil {
 		releaseIdentity()
 		return nil, nil, err
@@ -261,39 +273,146 @@ type roundCredit struct {
 	responseMax int64
 }
 
-func (b *BudgetController) signalLocked() { close(b.changed); b.changed = make(chan struct{}) }
+func admissionPriorityFor(job *MonitorJob) int {
+	if job == nil || job.NextRunTrigger == SamplingTriggerManual || job.SamplingTier == SamplingTierDiagnostic {
+		return 2
+	}
+	if job.SamplingTier == SamplingTierSparse {
+		return 0
+	}
+	return 1
+}
 
-func (b *BudgetController) acquireRequest(ctx context.Context, heavy bool) (func(), int64, string, error) {
+func (b *BudgetController) chooseWaiterLocked() int {
+	contains := func(priority int) bool {
+		for _, waiter := range b.waiters {
+			if waiter.priority == priority {
+				return true
+			}
+		}
+		return false
+	}
+	findEligible := func(priority int) int {
+		for i, waiter := range b.waiters {
+			if waiter.priority == priority && (!waiter.heavy || b.heavy == 0) {
+				return i
+			}
+		}
+		return -1
+	}
+
+	if contains(0) && b.nonSparseGrantStreak >= sparseFairnessGrantLimit {
+		if index := findEligible(0); index >= 0 {
+			return index
+		}
+	}
+	if contains(1) && contains(2) && b.diagnosticGrantStreak >= diagnosticFairnessGrantLimit {
+		if index := findEligible(1); index >= 0 {
+			return index
+		}
+	}
+	for priority := 2; priority >= 0; priority-- {
+		if index := findEligible(priority); index >= 0 {
+			return index
+		}
+	}
+	return -1
+}
+
+func (b *BudgetController) dispatchWaitersLocked(limits BudgetLimits) {
+	for b.active < limits.MaxConcurrent && len(b.waiters) > 0 {
+		index := b.chooseWaiterLocked()
+		if index < 0 {
+			return
+		}
+		waiter := b.waiters[index]
+		waitingSparse, waitingNormal, waitingDiagnostic := false, false, false
+		for _, pending := range b.waiters {
+			switch pending.priority {
+			case 0:
+				waitingSparse = true
+			case 1:
+				waitingNormal = true
+			case 2:
+				waitingDiagnostic = true
+			}
+		}
+		b.waiters = append(b.waiters[:index], b.waiters[index+1:]...)
+		b.active++
+		if waiter.heavy {
+			b.heavy++
+		}
+		waiter.granted = true
+		close(waiter.ready)
+
+		if waitingSparse {
+			if waiter.priority == 0 {
+				b.nonSparseGrantStreak = 0
+			} else {
+				b.nonSparseGrantStreak++
+			}
+		} else {
+			b.nonSparseGrantStreak = 0
+		}
+		if waitingNormal && waitingDiagnostic {
+			if waiter.priority == 2 {
+				b.diagnosticGrantStreak++
+			} else if waiter.priority == 1 {
+				b.diagnosticGrantStreak = 0
+			}
+		} else {
+			b.diagnosticGrantStreak = 0
+		}
+	}
+}
+
+func (b *BudgetController) removeWaiter(waiter *admissionWaiter, limits BudgetLimits) {
+	b.mu.Lock()
+	if waiter.granted {
+		b.active--
+		if waiter.heavy {
+			b.heavy--
+		}
+		waiter.granted = false
+	} else {
+		for i, pending := range b.waiters {
+			if pending == waiter {
+				b.waiters = append(b.waiters[:i], b.waiters[i+1:]...)
+				break
+			}
+		}
+	}
+	b.dispatchWaitersLocked(limits)
+	b.mu.Unlock()
+}
+
+func (b *BudgetController) acquireRequest(ctx context.Context, heavy bool, priority int) (func(), int64, string, error) {
 	deadline := time.NewTimer(budgetMaxPermitWait)
 	defer deadline.Stop()
-	var limits BudgetLimits
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil, 0, "", budgetBlock("cancelled", "Monitor 请求等待已取消")
-		}
-		var err error
-		limits, err = b.config()
-		if err != nil {
-			return nil, 0, "", err
-		}
-		b.mu.Lock()
-		if b.active < limits.MaxConcurrent && (!heavy || b.heavy == 0) {
-			b.active++
-			if heavy {
-				b.heavy++
-			}
-			b.mu.Unlock()
-			break
-		}
-		changed := b.changed
-		b.mu.Unlock()
-		select {
-		case <-ctx.Done():
-			return nil, 0, "", budgetBlock("cancelled", "Monitor 请求等待已取消")
-		case <-deadline.C:
-			return nil, 0, "", budgetBlock("wait_expired", "Monitor 全局并发等待已过期，本请求未发出")
-		case <-changed:
-		}
+	if err := ctx.Err(); err != nil {
+		return nil, 0, "", budgetBlock("cancelled", "Monitor 请求等待已取消")
+	}
+	limits, err := b.config()
+	if err != nil {
+		return nil, 0, "", err
+	}
+	waiter := &admissionWaiter{priority: priority, heavy: heavy, ready: make(chan struct{})}
+	b.mu.Lock()
+	b.waiters = append(b.waiters, waiter)
+	b.dispatchWaitersLocked(limits)
+	b.mu.Unlock()
+	select {
+	case <-waiter.ready:
+	case <-ctx.Done():
+		b.removeWaiter(waiter, limits)
+		return nil, 0, "", budgetBlock("cancelled", "Monitor 请求等待已取消")
+	case <-deadline.C:
+		b.removeWaiter(waiter, limits)
+		return nil, 0, "", budgetBlock("wait_expired", "Monitor 全局并发等待已过期，本请求未发出")
+	}
+	if err := ctx.Err(); err != nil {
+		b.removeWaiter(waiter, limits)
+		return nil, 0, "", budgetBlock("cancelled", "Monitor 请求等待已取消")
 	}
 	release := sync.OnceFunc(func() {
 		b.mu.Lock()
@@ -301,7 +420,7 @@ func (b *BudgetController) acquireRequest(ctx context.Context, heavy bool) (func
 		if heavy {
 			b.heavy--
 		}
-		b.signalLocked()
+		b.dispatchWaitersLocked(limits)
 		b.mu.Unlock()
 	})
 	if err := b.failure(); err != nil {
@@ -341,9 +460,10 @@ func (b *BudgetController) reserveBytes(ctx context.Context, n int64) (string, i
 }
 
 type budgetTransport struct {
-	base   http.RoundTripper
-	budget *BudgetController
-	heavy  bool
+	base     http.RoundTripper
+	budget   *BudgetController
+	heavy    bool
+	priority int
 }
 
 func (t *budgetTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -354,7 +474,7 @@ func (t *budgetTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		release, responseMax = credit.release, credit.responseMax
 	} else {
 		var err error
-		release, responseMax, _, err = t.budget.acquireRequest(req.Context(), t.heavy)
+		release, responseMax, _, err = t.budget.acquireRequest(req.Context(), t.heavy, t.priority)
 		if err != nil {
 			return nil, err
 		}
@@ -416,13 +536,13 @@ func (b *budgetBody) Close() error {
 	return b.ReadCloser.Close()
 }
 
-func budgetedClient(client *http.Client, budget *BudgetController, heavy bool) *http.Client {
+func budgetedClient(client *http.Client, budget *BudgetController, heavy bool, priority int) *http.Client {
 	copy := *client
 	base := client.Transport
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	copy.Transport = &budgetTransport{base: base, budget: budget, heavy: heavy}
+	copy.Transport = &budgetTransport{base: base, budget: budget, heavy: heavy, priority: priority}
 	previousRedirect := client.CheckRedirect
 	copy.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) > 3 {

@@ -72,7 +72,7 @@ func TestMonitorJobSelectionResolvesCachedConfigAndKeepsPublicDTOCredentialFree(
 	if err != nil {
 		t.Fatalf("CreateMonitorJobFromRequest: %v", err)
 	}
-	if created.IntervalSeconds != 10 || created.TimeoutSeconds != 5 || created.State != monitor.JobStateStopped {
+	if created.IntervalSeconds != 10 || created.TimeoutSeconds != 5 || created.State != monitor.JobStateStopped || created.SamplingTier != monitor.SamplingTierRegular {
 		t.Fatalf("unexpected public job DTO: %+v", created)
 	}
 	createdJSON, err := json.Marshal(created)

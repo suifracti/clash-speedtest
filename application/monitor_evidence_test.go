@@ -57,12 +57,23 @@ func insertEvidenceSamples(
 	errClass string,
 ) {
 	t.Helper()
+	runID := "run_" + tag + "_rtt"
+	startedAt := now.Add(-age)
+	finishedAt := startedAt.Add(time.Duration(count) * step)
+	if err := hStore.SaveMonitorRun(context.Background(), &monitor.MonitorRun{
+		RunID: runID, JobID: "evidence-fixture", SamplingTier: monitor.SamplingTierRegular,
+		TriggerType: monitor.SamplingTriggerScheduled, SamplingStrategyVersion: monitor.SamplingStrategyVersion,
+		ScheduledAt: startedAt, StartedAt: startedAt, FinishedAt: &finishedAt,
+		Status: monitor.RunStatusCompleted, TotalNodes: 1, SuccessNodes: 1,
+	}); err != nil {
+		t.Fatalf("save scheduled evidence run: %v", err)
+	}
 	samples := make([]*monitor.MonitorSample, 0, count)
 	for i := 0; i < count; i++ {
 		ts := now.Add(-age).Add(-time.Duration(count-1-i) * step)
 		samples = append(samples, &monitor.MonitorSample{
 			SampleID:            fmt.Sprintf("s_%s_%s_%d", tag, node.NodeKey, i),
-			RunID:               "run_" + tag,
+			RunID:               runID,
 			NodeKey:             node.NodeKey,
 			NodeIdentityKey:     node.NodeIdentityKey,
 			ConfigRevisionKey:   node.ConfigRevisionKey,
@@ -92,12 +103,23 @@ func insertBlockedServiceSamples(
 	count int,
 ) {
 	t.Helper()
+	runID := "run_" + tag + "_blocked"
+	startedAt := now.Add(-age)
+	finishedAt := startedAt.Add(time.Duration(count) * step)
+	if err := hStore.SaveMonitorRun(context.Background(), &monitor.MonitorRun{
+		RunID: runID, JobID: "evidence-fixture", SamplingTier: monitor.SamplingTierRegular,
+		TriggerType: monitor.SamplingTriggerScheduled, SamplingStrategyVersion: monitor.SamplingStrategyVersion,
+		ScheduledAt: startedAt, StartedAt: startedAt, FinishedAt: &finishedAt,
+		Status: monitor.RunStatusCompleted, TotalNodes: 1, SuccessNodes: 0, FailedNodes: 1,
+	}); err != nil {
+		t.Fatalf("save blocked-service evidence run: %v", err)
+	}
 	samples := make([]*monitor.MonitorSample, 0, count)
 	for i := 0; i < count; i++ {
 		ts := now.Add(-age).Add(-time.Duration(count-1-i) * step)
 		samples = append(samples, &monitor.MonitorSample{
 			SampleID:            fmt.Sprintf("s_%s_blocked_%d", tag, i),
-			RunID:               "run_" + tag,
+			RunID:               runID,
 			NodeKey:             node.NodeKey,
 			NodeIdentityKey:     node.NodeIdentityKey,
 			ConfigRevisionKey:   node.ConfigRevisionKey,

@@ -173,6 +173,7 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("POST /api/monitor/jobs", s.handleCreateMonitorJob)
 	mux.HandleFunc("GET /api/monitor/jobs", s.handleListMonitorJobs)
 	mux.HandleFunc("GET /api/monitor/jobs/{id}", s.handleGetMonitorJob)
+	mux.HandleFunc("POST /api/monitor/jobs/{id}/sampling-tier", s.handleUpdateMonitorJobSamplingTier)
 	mux.HandleFunc("POST /api/monitor/jobs/{id}/start", s.handleStartMonitorJob)
 	mux.HandleFunc("POST /api/monitor/jobs/{id}/pause", s.handlePauseMonitorJob)
 	mux.HandleFunc("POST /api/monitor/jobs/{id}/resume", s.handleResumeMonitorJob)
@@ -1099,6 +1100,29 @@ func (s *Server) handleGetMonitorJob(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, job)
 }
 
+func (s *Server) handleUpdateMonitorJobSamplingTier(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SamplingTier monitor.SamplingTier `json:"sampling_tier"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body: "+err.Error())
+		return
+	}
+	if err := s.app.UpdateMonitorJobSamplingTier(r.PathValue("id"), req.SamplingTier); err != nil {
+		if monitor.IsValidationError(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if strings.Contains(err.Error(), "not found") {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
+}
+
 func (s *Server) handleStartMonitorJob(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := s.app.StartMonitorJob(id); err != nil {
@@ -1164,10 +1188,13 @@ func (s *Server) handleQueryMonitorRuns(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleQueryMonitorSamples(w http.ResponseWriter, r *http.Request) {
 	filter := monitor.SampleFilter{
-		RunID:     r.URL.Query().Get("run_id"),
-		NodeKey:   r.URL.Query().Get("node_key"),
-		ProfileID: r.URL.Query().Get("profile_id"),
-		ProbeType: r.URL.Query().Get("probe_type"),
+		RunID:                  r.URL.Query().Get("run_id"),
+		JobID:                  r.URL.Query().Get("job_id"),
+		NodeKey:                r.URL.Query().Get("node_key"),
+		ProfileID:              r.URL.Query().Get("profile_id"),
+		ProbeType:              r.URL.Query().Get("probe_type"),
+		SamplingTier:           monitor.SamplingTier(r.URL.Query().Get("sampling_tier")),
+		RegularObservationOnly: r.URL.Query().Get("regular_observation_only") == "true" || r.URL.Query().Get("regular_observation_only") == "1",
 	}
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
 		if limit, err := strconv.Atoi(limitStr); err == nil {
@@ -1289,13 +1316,15 @@ func (s *Server) handleGetMonitorFacets(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleQueryMonitorSamplesCursor(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	filter := monitor.CursorFilter{
-		NodeIdentityKey: q.Get("node_identity_key"),
-		LegacyNodeKey:   q.Get("legacy_node_key"),
-		NodeKey:         q.Get("node_key"),
-		ProfileID:       q.Get("profile_id"),
-		ProbeType:       q.Get("probe_type"),
-		Target:          q.Get("target"),
-		Cursor:          q.Get("cursor"),
+		NodeIdentityKey:        q.Get("node_identity_key"),
+		LegacyNodeKey:          q.Get("legacy_node_key"),
+		NodeKey:                q.Get("node_key"),
+		ProfileID:              q.Get("profile_id"),
+		ProbeType:              q.Get("probe_type"),
+		Target:                 q.Get("target"),
+		Cursor:                 q.Get("cursor"),
+		SamplingTier:           monitor.SamplingTier(q.Get("sampling_tier")),
+		RegularObservationOnly: q.Get("regular_observation_only") == "true" || q.Get("regular_observation_only") == "1",
 	}
 
 	if filter.Cursor != "" && len(filter.Cursor) > 512 {
@@ -1356,12 +1385,14 @@ func (s *Server) handleQueryMonitorSamplesCursor(w http.ResponseWriter, r *http.
 func (s *Server) handleGetMonitorStats(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	query := monitor.StatsQuery{
-		NodeIdentityKey: q.Get("node_identity_key"),
-		LegacyNodeKey:   q.Get("legacy_node_key"),
-		NodeKey:         q.Get("node_key"),
-		ProfileID:       q.Get("profile_id"),
-		ProbeType:       q.Get("probe_type"),
-		Target:          q.Get("target"),
+		NodeIdentityKey:        q.Get("node_identity_key"),
+		LegacyNodeKey:          q.Get("legacy_node_key"),
+		NodeKey:                q.Get("node_key"),
+		ProfileID:              q.Get("profile_id"),
+		ProbeType:              q.Get("probe_type"),
+		Target:                 q.Get("target"),
+		SamplingTier:           monitor.SamplingTier(q.Get("sampling_tier")),
+		RegularObservationOnly: q.Get("regular_observation_only") == "true" || q.Get("regular_observation_only") == "1",
 	}
 	if sinceStr := q.Get("since"); sinceStr != "" {
 		t, err := time.Parse(time.RFC3339, sinceStr)

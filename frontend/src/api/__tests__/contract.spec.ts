@@ -46,6 +46,7 @@ describe('Go wire JSON -> Frontend decoder DTO contract', () => {
         type: 'ss',
       }],
       probe_set: 'light',
+      sampling_tier: 'focus',
       interval_seconds: 30,
       timeout_seconds: 5,
       state: 'stopped',
@@ -55,6 +56,9 @@ describe('Go wire JSON -> Frontend decoder DTO contract', () => {
     const run: RawMonitorRunWire = {
       run_id: 'run-1',
       job_id: 'job-1',
+      sampling_tier: 'diagnostic',
+      trigger_type: 'manual',
+      sampling_strategy_version: 1,
       scheduled_at: '2026-09-19T00:00:00Z',
       started_at: '2026-09-19T00:00:00Z',
       status: 'completed',
@@ -66,8 +70,20 @@ describe('Go wire JSON -> Frontend decoder DTO contract', () => {
     expect(normalizeMonitorNodeOption(option).nodeKey).toBe('nk-stable')
     expect(normalizeMonitorJob(job).intervalSeconds).toBe(30)
     expect(normalizeMonitorJob(job).timeoutSeconds).toBe(5)
+    expect(normalizeMonitorJob(job).samplingTier).toBe('focus')
     expect(normalizeMonitorJob(job).nodes[0].nodeIdentityKey).toBe('nid-stable')
     expect(normalizeMonitorRun(run).successNodes).toBe(1)
+    expect(normalizeMonitorRun(run).samplingTier).toBe('diagnostic')
+    expect(normalizeMonitorRun(run).triggerType).toBe('manual')
+  })
+
+  it('keeps sampling tiers limited to periodic job values at the frontend boundary', () => {
+    const regular = normalizeMonitorJob({
+      id: 'legacy-job', name: 'Legacy', profile_id: 'profile-1', profile_name: 'Stable subscription',
+      node_keys: [], nodes: [], probe_set: 'light', interval_seconds: 60, timeout_seconds: 5,
+      state: 'stopped', created_at: '2026-09-19T00:00:00Z', updated_at: '2026-09-19T00:00:00Z',
+    })
+    expect(regular.samplingTier).toBe('regular')
   })
 
   it('correctly decodes Go time.Duration integer nanoseconds to floating milliseconds', () => {
@@ -86,6 +102,9 @@ describe('Go wire JSON -> Frontend decoder DTO contract', () => {
     const wireJson: RawMonitorSampleWire = {
       sample_id: 's_wire_001',
       run_id: 'r_wire_01',
+      sampling_tier: 'regular',
+      trigger_type: 'scheduled',
+      sampling_strategy_version: 1,
       node_key: 'nk_wire_tokyo',
       node_identity_key: 'nid_wire_tokyo',
       config_revision_key: 'rev_hash_abc123',
@@ -108,6 +127,8 @@ describe('Go wire JSON -> Frontend decoder DTO contract', () => {
 
     expect(decoded.sampleId).toBe('s_wire_001')
     expect(decoded.runId).toBe('r_wire_01')
+    expect(decoded.samplingTier).toBe('regular')
+    expect(decoded.triggerType).toBe('scheduled')
     expect(decoded.nodeKey).toBe('nk_wire_tokyo')
     expect(decoded.nodeIdentityKey).toBe('nid_wire_tokyo')
     expect(decoded.configRevisionKey).toBe('rev_hash_abc123')
@@ -191,6 +212,8 @@ describe('Go wire JSON -> Frontend decoder DTO contract', () => {
   it('decodes RawDerivedStatsWire matching GetDerivedStats SQL response', () => {
     const wireStats: RawDerivedStatsWire = {
       sample_count: 240,
+      included_sampling_tiers: ['regular', 'focus'],
+      regular_observation_only: true,
       success_count: 236,
       failure_count: 4,
       success_rate: 0.9833,
@@ -209,6 +232,8 @@ describe('Go wire JSON -> Frontend decoder DTO contract', () => {
 
     const decoded = normalizeDerivedStats(wireStats)
     expect(decoded.sampleCount).toBe(240)
+    expect(decoded.includedSamplingTiers).toEqual(['regular', 'focus'])
+    expect(decoded.regularObservationOnly).toBe(true)
     expect(decoded.successCount).toBe(236)
     expect(decoded.failureCount).toBe(4)
     expect(decoded.successRate).toBeCloseTo(0.9833, 4)

@@ -106,6 +106,9 @@ function stepCandidate(direction: 1 | -1): void {
         </span>
         <span class="font-mono text-content-secondary">{{ semantic?.errorClass }}</span>
       </div>
+      <div class="rounded border border-border bg-card-subtle px-2 py-1 text-[10px] text-content-secondary">
+        采样来源：{{ sample.samplingTier }} · {{ sample.triggerType === 'manual' ? '手动触发' : sample.triggerType === 'scheduled' ? '周期触发' : '旧触发未知' }} · 策略 v{{ sample.samplingStrategyVersion }}
+      </div>
       <p v-if="semantic && semantic.outcome !== 'success'" class="text-content-muted leading-relaxed -mt-1.5">
         {{ semantic.detail }}
       </p>

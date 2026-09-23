@@ -58,6 +58,7 @@ func TestMonitorJobDefinitionReopensStoppedWithoutStarting(t *testing.T) {
 		ProfileID:       "profile-1",
 		NodeKeys:        []string{options[0].NodeKey},
 		ProbeSet:        monitor.ProbeSetService,
+		SamplingTier:    monitor.SamplingTierFocus,
 		IntervalSeconds: 30,
 		TimeoutSeconds:  5,
 	})
@@ -66,6 +67,16 @@ func TestMonitorJobDefinitionReopensStoppedWithoutStarting(t *testing.T) {
 	}
 	if created.State != monitor.JobStateStopped {
 		t.Fatalf("created job state = %s, want stopped", created.State)
+	}
+	if err := svc.UpdateMonitorJobSamplingTier(created.ID, monitor.SamplingTierSparse); err != nil {
+		t.Fatalf("UpdateMonitorJobSamplingTier: %v", err)
+	}
+	updated, err := svc.GetMonitorJob(created.ID)
+	if err != nil {
+		t.Fatalf("GetMonitorJob after tier update: %v", err)
+	}
+	if updated.State != monitor.JobStateStopped || updated.SamplingTier != monitor.SamplingTierSparse || updated.Interval != 30*time.Second || updated.ProbeSet != monitor.ProbeSetService || len(updated.Nodes) != 1 {
+		t.Fatalf("tier save changed lifecycle or unrelated job configuration: %+v", updated)
 	}
 	if err := svc.Close(); err != nil {
 		t.Fatalf("close first AppService: %v", err)
@@ -84,7 +95,7 @@ func TestMonitorJobDefinitionReopensStoppedWithoutStarting(t *testing.T) {
 	if loaded.State != monitor.JobStateStopped || loaded.BlockedReason != "" {
 		t.Fatalf("reopened job state = %s reason=%q, want stopped without reason", loaded.State, loaded.BlockedReason)
 	}
-	if loaded.ID != created.ID || loaded.ProfileID != created.ProfileID || loaded.ProbeSet != monitor.ProbeSetService ||
+	if loaded.ID != created.ID || loaded.ProfileID != created.ProfileID || loaded.ProbeSet != monitor.ProbeSetService || loaded.SamplingTier != monitor.SamplingTierSparse ||
 		loaded.Interval != 30*time.Second || loaded.Timeout != 5*time.Second || len(loaded.Nodes) != 1 {
 		t.Fatalf("reopened definition lost product fields: %+v", loaded)
 	}
