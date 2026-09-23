@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -64,23 +65,30 @@ type AppService struct {
 
 	// latencyPersistenceWG keeps the result-first workbench path from closing
 	// history.db while a just-finished latency result is still being persisted.
-	latencyPersistenceWG           sync.WaitGroup
-	workbenchWG                    sync.WaitGroup
-	workbenchMu                    sync.Mutex
-	workbenchRetryMu               sync.Mutex
-	workbenchActiveBatch           *workbenchLatencyBatchRuntime
-	workbenchActiveSingles         int
-	workbenchClosed                bool
-	publicServiceMu                sync.Mutex
-	publicServiceActive            map[string]*publicServiceRuntime
-	publicServiceClosed            bool
-	publicServiceTransition        bool
-	publicServiceWG                sync.WaitGroup
-	publicServiceChecker           publicservice.Checker
-	publicServiceAttemptCreateHook func(context.Context, *history.PublicServiceAttempt) error
-	publicServiceStageHook         func(context.Context, string, string, history.PublicServiceMeasurement) error
-	publicServiceSaveHook          func(context.Context, string) error
-	publicServiceResolveHook       func(string, string) (monitor.MonitoredNode, error)
+	latencyPersistenceWG               sync.WaitGroup
+	workbenchWG                        sync.WaitGroup
+	workbenchMu                        sync.Mutex
+	workbenchRetryMu                   sync.Mutex
+	workbenchActiveBatch               *workbenchLatencyBatchRuntime
+	workbenchActiveDownload            *workbenchDownloadRuntime
+	workbenchActiveSingles             int
+	workbenchPublicServiceStarting     int
+	workbenchClosed                    bool
+	publicServiceMu                    sync.Mutex
+	publicServiceActive                map[string]*publicServiceRuntime
+	publicServiceClosed                bool
+	publicServiceTransition            bool
+	publicServiceWG                    sync.WaitGroup
+	publicServiceChecker               publicservice.Checker
+	publicServiceAttemptCreateHook     func(context.Context, *history.PublicServiceAttempt) error
+	publicServiceStageHook             func(context.Context, string, string, history.PublicServiceMeasurement) error
+	publicServiceSaveHook              func(context.Context, string) error
+	publicServiceResolveHook           func(string, string) (monitor.MonitoredNode, error)
+	workbenchDownloadAttemptCreateHook func(context.Context, *history.WorkbenchDownloadAttempt) error
+	workbenchDownloadStageHook         func(context.Context, string, string, history.WorkbenchDownloadMeasurement) error
+	workbenchDownloadSaveHook          func(context.Context, string) error
+	workbenchDownloadResolveHook       func(string, string) (monitor.MonitoredNode, *speedtester.CProxy, error)
+	workbenchDownloadClientFactory     func(*speedtester.SpeedTester, *speedtester.CProxy, time.Duration) (*http.Client, error)
 	// latencySaveHook is test-only dependency injection for slow/failing-save
 	// verification. Production uses historyStore.SaveLatencyTest directly.
 	latencySaveHook    func(context.Context, *history.LatencyTest) error
@@ -141,6 +149,9 @@ func newAppService(hStore *history.Store, appPaths appdata.AppPaths, profilePath
 	}
 	if err := svc.reconcileWorkbenchPublicServiceAttempts(); err != nil {
 		log.Printf("workbench public-service recovery status was not reconciled: %v", err)
+	}
+	if err := svc.reconcileWorkbenchDownloadAttempts(); err != nil {
+		log.Printf("workbench download recovery status was not reconciled: %v", err)
 	}
 
 	// Initialize default Mihomo controller adapter
@@ -207,6 +218,12 @@ func (s *AppService) Close() error {
 		s.workbenchActiveBatch.shutdown = true
 		s.workbenchActiveBatch.cancel()
 		s.workbenchActiveBatch.mu.Unlock()
+	}
+	if s.workbenchActiveDownload != nil {
+		s.workbenchActiveDownload.mu.Lock()
+		s.workbenchActiveDownload.shutdown = true
+		s.workbenchActiveDownload.mu.Unlock()
+		s.workbenchActiveDownload.cancel()
 	}
 	s.workbenchMu.Unlock()
 	s.publicServiceMu.Lock()

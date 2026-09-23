@@ -206,9 +206,39 @@ CREATE TABLE IF NOT EXISTS workbench_public_service_results (
 );
 `
 
+const workbenchDownloadDDL = `
+CREATE TABLE IF NOT EXISTS workbench_download_attempts (
+    attempt_id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL UNIQUE,
+    profile_id TEXT NOT NULL,
+    node_key TEXT NOT NULL,
+    node_identity_key TEXT NOT NULL,
+    config_revision_key TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    node_type TEXT NOT NULL,
+    source TEXT NOT NULL,
+    requested_at DATETIME NOT NULL,
+    started_at DATETIME,
+    finished_at DATETIME,
+    execution_state TEXT NOT NULL,
+    persistence_state TEXT NOT NULL,
+    persistence_error TEXT NOT NULL DEFAULT '',
+    rule_snapshot_json TEXT NOT NULL,
+    staged_result_json TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_workbench_download_scope
+    ON workbench_download_attempts(profile_id, node_identity_key, config_revision_key, requested_at DESC);
+CREATE TABLE IF NOT EXISTS workbench_download_results (
+    attempt_id TEXT PRIMARY KEY,
+    result_json TEXT NOT NULL,
+    saved_at DATETIME NOT NULL,
+    FOREIGN KEY(attempt_id) REFERENCES workbench_download_attempts(attempt_id) ON DELETE CASCADE
+);
+`
+
 // CurrentSchemaVersion is the SQLite schema authority. Databases without a
 // schema_meta row are the explicitly recognized pre-version legacy schema.
-const CurrentSchemaVersion = 6
+const CurrentSchemaVersion = 7
 
 var (
 	ErrUnsupportedSchemaVersion = fmt.Errorf("unsupported SQLite schema version")
@@ -346,6 +376,15 @@ func migrateSchema(db *sql.DB) error {
 			return fmt.Errorf("record schema version 6: %w", err)
 		}
 		version = 6
+	}
+	if version == 6 {
+		if _, err := tx.Exec(workbenchDownloadDDL); err != nil {
+			return fmt.Errorf("migrate Workbench download history: %w", err)
+		}
+		if _, err := tx.Exec("UPDATE schema_meta SET schema_version = 7 WHERE singleton = 1"); err != nil {
+			return fmt.Errorf("record schema version 7: %w", err)
+		}
+		version = 7
 	}
 	if err := validateCurrentSchema(tx, version); err != nil {
 		return fmt.Errorf("validate schema version %d after migration: %w", version, err)
@@ -584,6 +623,14 @@ func validateCurrentSchema(tx *sql.Tx, version int) error {
 			"persistence_state", "rule_snapshot_json", "staged_result_json",
 		}
 		tables["workbench_public_service_results"] = []string{"attempt_id", "result_json", "saved_at"}
+	}
+	if version >= 7 {
+		tables["workbench_download_attempts"] = []string{
+			"attempt_id", "request_id", "profile_id", "node_key", "node_identity_key", "config_revision_key",
+			"display_name", "node_type", "source", "requested_at", "execution_state", "persistence_state",
+			"rule_snapshot_json", "staged_result_json",
+		}
+		tables["workbench_download_results"] = []string{"attempt_id", "result_json", "saved_at"}
 	}
 	for table, columns := range tables {
 		present, err := tableExists(tx, table)

@@ -208,6 +208,11 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("GET /api/workbench/public-service-tests/{attempt_id}", s.handleGetWorkbenchPublicServiceAttempt)
 	mux.HandleFunc("POST /api/workbench/public-service-tests/{attempt_id}/cancel", s.handleCancelWorkbenchPublicServiceTest)
 	mux.HandleFunc("POST /api/workbench/public-service-tests/{attempt_id}/retry-save", s.handleRetrySaveWorkbenchPublicServiceTest)
+	mux.HandleFunc("POST /api/workbench/download-tests", s.handleStartWorkbenchDownloadTest)
+	mux.HandleFunc("GET /api/workbench/download-tests", s.handleListWorkbenchDownloadTests)
+	mux.HandleFunc("GET /api/workbench/download-tests/{attempt_id}", s.handleGetWorkbenchDownloadAttempt)
+	mux.HandleFunc("POST /api/workbench/download-tests/{attempt_id}/cancel", s.handleCancelWorkbenchDownloadTest)
+	mux.HandleFunc("POST /api/workbench/download-tests/{attempt_id}/retry-save", s.handleRetrySaveWorkbenchDownloadTest)
 
 	// PR#7: read-only evidence → recommendation. There is deliberately NO execution
 	// endpoint here: the recommendation is advisory only and never switches a node.
@@ -1255,6 +1260,116 @@ func (s *Server) handleRetrySaveWorkbenchPublicServiceTest(w http.ResponseWriter
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleStartWorkbenchDownloadTest(w http.ResponseWriter, r *http.Request) {
+	var req application.WorkbenchDownloadTestRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body: "+err.Error())
+		return
+	}
+	result, err := s.app.StartWorkbenchDownloadTest(r.Context(), req)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if monitor.IsValidationError(err) {
+			status = http.StatusBadRequest
+		} else if strings.Contains(err.Error(), "正在运行") || strings.Contains(err.Error(), "暂不可启动") {
+			status = http.StatusConflict
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, result)
+}
+
+func (s *Server) handleListWorkbenchDownloadTests(w http.ResponseWriter, r *http.Request) {
+	query, err := parseWorkbenchDownloadQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	result, err := s.app.ListWorkbenchDownloadTests(r.Context(), query)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if monitor.IsValidationError(err) {
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleGetWorkbenchDownloadAttempt(w http.ResponseWriter, r *http.Request) {
+	query, err := parseWorkbenchDownloadQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	result, err := s.app.GetWorkbenchDownloadAttempt(r.Context(), r.PathValue("attempt_id"), query)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleCancelWorkbenchDownloadTest(w http.ResponseWriter, r *http.Request) {
+	query, err := parseWorkbenchDownloadQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	result, err := s.app.CancelWorkbenchDownloadTest(r.Context(), r.PathValue("attempt_id"), query)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, result)
+}
+
+func (s *Server) handleRetrySaveWorkbenchDownloadTest(w http.ResponseWriter, r *http.Request) {
+	query, err := parseWorkbenchDownloadQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	result, err := s.app.RetrySaveWorkbenchDownloadTest(r.Context(), r.PathValue("attempt_id"), query)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func parseWorkbenchDownloadQuery(values url.Values) (application.WorkbenchDownloadHistoryQuery, error) {
+	since, until, err := parseWorkbenchLatencyWindow(values)
+	if err != nil {
+		return application.WorkbenchDownloadHistoryQuery{}, err
+	}
+	query := application.WorkbenchDownloadHistoryQuery{
+		ProfileID: values.Get("profile_id"), NodeKey: values.Get("node_key"),
+		NodeIdentityKey: values.Get("node_identity_key"), ConfigRevisionKey: values.Get("config_revision_key"),
+		Since: since, Until: until,
+	}
+	if raw := values.Get("limit"); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit <= 0 || limit > 100 {
+			return application.WorkbenchDownloadHistoryQuery{}, fmt.Errorf("limit must be between 1 and 100")
+		}
+		query.Limit = limit
+	}
+	if beforeAt, beforeID := values.Get("before_at"), strings.TrimSpace(values.Get("before_attempt_id")); beforeAt != "" || beforeID != "" {
+		if beforeAt == "" || beforeID == "" {
+			return application.WorkbenchDownloadHistoryQuery{}, fmt.Errorf("history cursor requires before_at and before_attempt_id")
+		}
+		parsed, err := time.Parse(time.RFC3339, beforeAt)
+		if err != nil {
+			return application.WorkbenchDownloadHistoryQuery{}, fmt.Errorf("invalid before_at parameter: must be RFC3339")
+		}
+		query.BeforeAt, query.BeforeAttemptID = &parsed, beforeID
+	}
+	return query, nil
 }
 
 func parseWorkbenchPublicServiceQuery(values url.Values) (application.WorkbenchPublicServiceHistoryQuery, error) {

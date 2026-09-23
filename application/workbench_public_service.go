@@ -58,6 +58,20 @@ func (s *AppService) StartWorkbenchPublicServiceTest(_ context.Context, req Work
 	}
 	rule.TimeoutSeconds = int(timeoutSeconds)
 	ruleSnapshot := publicServiceRuleSnapshot(rule, timeoutSeconds)
+	prior, priorErr := s.historyStore.GetPublicServiceAttemptByRequestID(context.Background(), requestID)
+	if priorErr == nil {
+		if err := validateWorkbenchPublicServiceRequest(prior, profileID, nodeKey, identityKey, revisionKey, serviceID, timeoutSeconds); err != nil {
+			return nil, err
+		}
+		return prior, nil
+	}
+	if priorErr != history.ErrPublicServiceAttemptNotFound {
+		return nil, fmt.Errorf("检查公共服务请求身份失败: %w", priorErr)
+	}
+	if err := s.reserveWorkbenchPublicServiceStart(); err != nil {
+		return nil, err
+	}
+	defer s.releaseWorkbenchPublicServiceStart()
 
 	s.publicServiceMu.Lock()
 	if s.publicServiceClosed {
@@ -68,12 +82,11 @@ func (s *AppService) StartWorkbenchPublicServiceTest(_ context.Context, req Work
 		s.publicServiceMu.Unlock()
 		return nil, fmt.Errorf("应用数据正在迁移，不能开始公共服务检测")
 	}
-	prior, priorErr := s.historyStore.GetPublicServiceAttemptByRequestID(context.Background(), requestID)
+	prior, priorErr = s.historyStore.GetPublicServiceAttemptByRequestID(context.Background(), requestID)
 	if priorErr == nil {
 		s.publicServiceMu.Unlock()
-		if prior.ProfileID != profileID || prior.NodeKey != nodeKey || prior.NodeIdentityKey != identityKey ||
-			prior.ConfigRevisionKey != revisionKey || prior.ServiceID != serviceID || prior.Rule.TimeoutSeconds != timeoutSeconds {
-			return nil, monitor.NewValidationError("request_id 已用于另一组检测参数")
+		if err := validateWorkbenchPublicServiceRequest(prior, profileID, nodeKey, identityKey, revisionKey, serviceID, timeoutSeconds); err != nil {
+			return nil, err
 		}
 		return prior, nil
 	}
@@ -333,7 +346,13 @@ func (s *AppService) reconcileWorkbenchPublicServiceAttempts() error {
 }
 
 func (s *AppService) beginPublicServiceStorageTransition() error {
+	s.workbenchMu.Lock()
+	if s.workbenchActiveDownload != nil || s.workbenchPublicServiceStarting > 0 {
+		s.workbenchMu.Unlock()
+		return fmt.Errorf("请先完成正在启动或运行的 Workbench 下载/公共服务检测")
+	}
 	s.publicServiceMu.Lock()
+	defer s.workbenchMu.Unlock()
 	defer s.publicServiceMu.Unlock()
 	if s.publicServiceClosed || s.publicServiceTransition {
 		return fmt.Errorf("公共服务检测正在关闭或切换存储")
@@ -342,6 +361,14 @@ func (s *AppService) beginPublicServiceStorageTransition() error {
 		return fmt.Errorf("请先完成或取消正在运行的公共服务检测")
 	}
 	s.publicServiceTransition = true
+	return nil
+}
+
+func validateWorkbenchPublicServiceRequest(prior *history.PublicServiceAttempt, profileID, nodeKey, identityKey, revisionKey, serviceID string, timeoutSeconds int64) error {
+	if prior.ProfileID != profileID || prior.NodeKey != nodeKey || prior.NodeIdentityKey != identityKey ||
+		prior.ConfigRevisionKey != revisionKey || prior.ServiceID != serviceID || prior.Rule.TimeoutSeconds != timeoutSeconds {
+		return monitor.NewValidationError("request_id 已用于另一组检测参数")
+	}
 	return nil
 }
 

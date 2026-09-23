@@ -72,6 +72,36 @@ type WorkbenchPublicServiceHistoryResult struct {
 	Complete bool                            `json:"complete"`
 }
 
+type WorkbenchDownloadTestRequest struct {
+	RequestID         string `json:"request_id"`
+	ProfileID         string `json:"profile_id"`
+	NodeKey           string `json:"node_key"`
+	NodeIdentityKey   string `json:"node_identity_key"`
+	ConfigRevisionKey string `json:"config_revision_key"`
+	MaximumBytes      int64  `json:"maximum_bytes,omitempty"`
+	TimeoutSeconds    int64  `json:"timeout_seconds,omitempty"`
+}
+
+type WorkbenchDownloadHistoryQuery struct {
+	ProfileID         string     `json:"profile_id"`
+	NodeKey           string     `json:"node_key"`
+	NodeIdentityKey   string     `json:"node_identity_key"`
+	ConfigRevisionKey string     `json:"config_revision_key"`
+	Since             *time.Time `json:"since,omitempty"`
+	Until             *time.Time `json:"until,omitempty"`
+	Limit             int        `json:"limit,omitempty"`
+	BeforeAt          *time.Time `json:"before_at,omitempty"`
+	BeforeAttemptID   string     `json:"before_attempt_id,omitempty"`
+}
+
+type WorkbenchDownloadHistoryResult struct {
+	Attempts []*history.WorkbenchDownloadAttempt `json:"attempts"`
+	Since    time.Time                           `json:"since,omitempty"`
+	Until    time.Time                           `json:"until,omitempty"`
+	HasMore  bool                                `json:"has_more"`
+	Complete bool                                `json:"complete"`
+}
+
 type WorkbenchLatencyBatchSelection struct {
 	ProfileID         string `json:"profile_id"`
 	NodeKey           string `json:"node_key"`

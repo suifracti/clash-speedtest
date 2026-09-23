@@ -283,6 +283,7 @@ export type NodeDetailOrigin =
   | { kind: 'workbench_attempt'; attemptId: string; observedAt?: string; snapshot?: WorkbenchLatencyTest }
   | { kind: 'workbench_batch_item'; batchId: string; itemId: string; attemptId?: string; observedAt?: string; snapshot?: WorkbenchLatencyTest }
   | { kind: 'public_service_attempt'; attemptId: string; serviceId: string; observedAt?: string; snapshot?: WorkbenchPublicServiceAttempt }
+  | { kind: 'workbench_download_attempt'; attemptId: string; observedAt?: string; snapshot?: WorkbenchDownloadAttempt }
 
 export interface NodeDetailRequest {
   profileId: string
@@ -406,6 +407,86 @@ export interface WorkbenchPublicServiceHistoryQuery {
 
 export interface WorkbenchPublicServiceHistoryResult {
   attempts: WorkbenchPublicServiceAttempt[]
+  since?: string
+  until?: string
+  has_more: boolean
+  complete: boolean
+}
+
+export interface WorkbenchDownloadTestRequest {
+  request_id: string
+  profile_id: string
+  node_key: string
+  node_identity_key: string
+  config_revision_key: string
+  maximum_bytes?: number
+  timeout_seconds?: number
+}
+
+export interface WorkbenchDownloadRule {
+  rule_version: number
+  target_url: string
+  method: string
+  maximum_bytes: number
+  maximum_duration_ns: number
+  sample_every_bytes: number
+  sample_every_ns: number
+}
+
+export interface WorkbenchDownloadSample {
+  elapsed_ns: number
+  interval_ns: number
+  delta_bytes: number
+  cumulative_bytes: number
+  speed_mbps?: number
+}
+
+export interface WorkbenchDownloadMeasurement {
+  outcome: string
+  http_status?: number
+  bytes_read: number
+  started_at: string
+  finished_at: string
+  duration_ns: number
+  failure_phase?: string
+  error_message?: string
+  samples: WorkbenchDownloadSample[]
+}
+
+export interface WorkbenchDownloadAttempt {
+  attempt_id: string
+  request_id: string
+  profile_id: string
+  node_key: string
+  node_identity_key: string
+  config_revision_key: string
+  display_name: string
+  node_type: string
+  source: string
+  requested_at: string
+  started_at?: string
+  finished_at?: string
+  execution_state: string
+  persistence_state: string
+  persistence_error?: string
+  rule: WorkbenchDownloadRule
+  result?: WorkbenchDownloadMeasurement
+}
+
+export interface WorkbenchDownloadHistoryQuery {
+  profile_id: string
+  node_key: string
+  node_identity_key: string
+  config_revision_key: string
+  since?: string
+  until?: string
+  limit?: number
+  before_at?: string
+  before_attempt_id?: string
+}
+
+export interface WorkbenchDownloadHistoryResult {
+  attempts: WorkbenchDownloadAttempt[]
   since?: string
   until?: string
   has_more: boolean

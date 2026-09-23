@@ -362,6 +362,50 @@ func (s *Store) QueryPublicServiceAttempts(ctx context.Context, filter PublicSer
 	return s.db.QueryPublicServiceAttempts(ctx, filter)
 }
 
+func (s *Store) CreateWorkbenchDownloadAttempt(ctx context.Context, attempt *WorkbenchDownloadAttempt) error {
+	return s.db.CreateWorkbenchDownloadAttempt(ctx, attempt)
+}
+
+func (s *Store) BeginWorkbenchDownloadAttempt(ctx context.Context, attemptID string, startedAt time.Time) error {
+	return s.db.BeginWorkbenchDownloadAttempt(ctx, attemptID, startedAt)
+}
+
+func (s *Store) RequestWorkbenchDownloadCancellation(ctx context.Context, attemptID string) (bool, error) {
+	return s.db.RequestWorkbenchDownloadCancellation(ctx, attemptID)
+}
+
+func (s *Store) StageWorkbenchDownloadResult(ctx context.Context, attemptID, executionState string, result WorkbenchDownloadMeasurement) error {
+	return s.db.StageWorkbenchDownloadResult(ctx, attemptID, executionState, result)
+}
+
+func (s *Store) MarkWorkbenchDownloadStageFailed(ctx context.Context, attemptID, executionState string, finishedAt time.Time, message string) error {
+	return s.db.MarkWorkbenchDownloadStageFailed(ctx, attemptID, executionState, finishedAt, message)
+}
+
+func (s *Store) MarkWorkbenchDownloadSaveFailed(ctx context.Context, attemptID, message string) error {
+	return s.db.MarkWorkbenchDownloadSaveFailed(ctx, attemptID, message)
+}
+
+func (s *Store) CommitWorkbenchDownloadResult(ctx context.Context, attemptID string) error {
+	return s.db.CommitWorkbenchDownloadResult(ctx, attemptID)
+}
+
+func (s *Store) ReconcileWorkbenchDownloadAttempts(ctx context.Context) error {
+	return s.db.ReconcileWorkbenchDownloadAttempts(ctx)
+}
+
+func (s *Store) GetWorkbenchDownloadAttemptByRequestID(ctx context.Context, requestID string) (*WorkbenchDownloadAttempt, error) {
+	return s.db.GetWorkbenchDownloadAttemptByRequestID(ctx, requestID)
+}
+
+func (s *Store) GetWorkbenchDownloadAttempt(ctx context.Context, attemptID string, filter WorkbenchDownloadFilter) (*WorkbenchDownloadAttempt, error) {
+	return s.db.GetWorkbenchDownloadAttempt(ctx, attemptID, filter)
+}
+
+func (s *Store) QueryWorkbenchDownloadAttempts(ctx context.Context, filter WorkbenchDownloadFilter) (*WorkbenchDownloadQueryResult, error) {
+	return s.db.QueryWorkbenchDownloadAttempts(ctx, filter)
+}
+
 // SampleStore interface implementation delegating to SQLite DB
 
 func (s *Store) SaveMonitorRun(ctx context.Context, run *monitor.MonitorRun) error {

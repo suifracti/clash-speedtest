@@ -10,9 +10,12 @@ const bridgeMocks = vi.hoisted(() => ({
   fetchWorkbenchLatencyBatch: vi.fn(),
   fetchWorkbenchPublicServiceHistory: vi.fn(),
   fetchWorkbenchPublicServiceAttempt: vi.fn(),
+  fetchWorkbenchDownloadHistory: vi.fn(),
+  fetchWorkbenchDownloadAttempt: vi.fn(),
   startWorkbenchLatencyBatch: vi.fn(),
   runWorkbenchLatencyTest: vi.fn(),
   startWorkbenchPublicServiceTest: vi.fn(),
+  startWorkbenchDownloadTest: vi.fn(),
 }))
 const monitorMocks = vi.hoisted(() => ({
   fetchMonitorNodeOptions: vi.fn(),
@@ -72,6 +75,18 @@ function publicServiceAttempt(attemptId: string, revision = 'rev-a', serviceId =
   }
 }
 
+function downloadAttempt(attemptId: string, revision = 'rev-a') {
+  return {
+    attempt_id: attemptId, request_id: `request-${attemptId}`, profile_id: 'profile-a', node_key: revision === 'rev-a' ? 'node-a' : 'node-a-rev-b',
+    node_identity_key: 'identity-a', config_revision_key: revision, display_name: '同名节点', node_type: 'http',
+    source: 'workbench_manual_download', requested_at: '2026-09-23T09:00:00Z', started_at: '2026-09-23T09:00:00Z', finished_at: '2026-09-23T09:00:02Z',
+    execution_state: 'completed', persistence_state: 'saved',
+    rule: { rule_version: 1, target_url: 'https://speed.cloudflare.com/__down?bytes=1000001', method: 'GET', maximum_bytes: 1_000_000, maximum_duration_ns: 10_000_000_000, sample_every_bytes: 262_144, sample_every_ns: 100_000_000 },
+    result: { outcome: 'byte_limit', bytes_read: 1_000_000, started_at: '2026-09-23T09:00:00Z', finished_at: '2026-09-23T09:00:02Z', duration_ns: 2_000_000_000,
+      samples: [{ elapsed_ns: 2_000_000_000, interval_ns: 2_000_000_000, delta_bytes: 1_000_000, cumulative_bytes: 1_000_000, speed_mbps: 4 }] },
+  }
+}
+
 function setupDefaults(): void {
   monitorMocks.fetchMonitorNodeOptions.mockResolvedValue([{
     profileId: 'profile-a', profileName: '订阅 A', nodeKey: 'node-a', nodeIdentityKey: 'identity-a',
@@ -89,6 +104,8 @@ function setupDefaults(): void {
   bridgeMocks.fetchWorkbenchLatencyTest.mockResolvedValue(latencyTest('attempt-origin'))
   bridgeMocks.fetchWorkbenchPublicServiceHistory.mockResolvedValue({ attempts: [], since: '', until: '', has_more: false, complete: true })
   bridgeMocks.fetchWorkbenchPublicServiceAttempt.mockResolvedValue(publicServiceAttempt('service-origin'))
+  bridgeMocks.fetchWorkbenchDownloadHistory.mockResolvedValue({ attempts: [], since: '', until: '', has_more: false, complete: true })
+  bridgeMocks.fetchWorkbenchDownloadAttempt.mockResolvedValue(downloadAttempt('download-origin'))
   bridgeMocks.fetchWorkbenchLatencyBatch.mockResolvedValue({ batch_id: 'batch-a', request_id: 'req', test_project: 'latency_stability', timeout_seconds: 5, requested_at: '', state: 'completed', item_count: 1, items: [] })
 }
 
@@ -234,5 +251,45 @@ describe('NodeDetailView', () => {
     expect(wrapper.text()).toContain('service-rev-b')
     expect(wrapper.text()).not.toContain('stale-service-rev-a')
     expect(bridgeMocks.fetchWorkbenchPublicServiceHistory).toHaveBeenLastCalledWith(expect.objectContaining({ config_revision_key: 'rev-b' }))
+  })
+
+  it('queries and displays download facts by exact identity and revision without starting a test', async () => {
+    const attempt = downloadAttempt('download-history')
+    bridgeMocks.fetchWorkbenchDownloadHistory.mockResolvedValue({ attempts: [attempt], since: '', until: '', has_more: false, complete: true })
+    wrapper = mount(NodeDetailView, { props: { scope: baseScope } })
+    await flushPromises()
+
+    expect(bridgeMocks.fetchWorkbenchDownloadHistory).toHaveBeenCalledWith(expect.objectContaining({
+      profile_id: 'profile-a', node_key: 'node-a', node_identity_key: 'identity-a', config_revision_key: 'rev-a', limit: 50,
+    }))
+    expect(wrapper.text()).toContain('Workbench 下载测量')
+    expect(wrapper.text()).toContain('byte_limit')
+    expect(wrapper.text()).toContain('4.00 Mbps')
+    expect(bridgeMocks.startWorkbenchDownloadTest).not.toHaveBeenCalled()
+    expect(monitorMocks.triggerMonitorJob).not.toHaveBeenCalled()
+  })
+
+  it('loads a download-origin attempt from its immutable snapshot and ignores older revision history', async () => {
+    const originAttempt = downloadAttempt('download-origin')
+    let releaseOld!: (page: { attempts: ReturnType<typeof downloadAttempt>[]; since: string; until: string; has_more: boolean; complete: boolean }) => void
+    bridgeMocks.fetchWorkbenchDownloadHistory.mockImplementationOnce(() => new Promise((resolve) => { releaseOld = resolve }))
+    bridgeMocks.fetchWorkbenchDownloadHistory.mockResolvedValueOnce({ attempts: [downloadAttempt('download-rev-b', 'rev-b')], since: '', until: '', has_more: false, complete: true })
+    bridgeMocks.fetchWorkbenchDownloadAttempt.mockResolvedValue(originAttempt)
+    const scope: NodeDetailRequest = {
+      ...baseScope,
+      origin: { kind: 'workbench_download_attempt', attemptId: originAttempt.attempt_id, observedAt: originAttempt.result.finished_at, snapshot: originAttempt as any },
+    }
+    wrapper = mount(NodeDetailView, { props: { scope } })
+    await flushPromises()
+    await wrapper.get('select[aria-label="配置 revision"]').setValue('rev-b')
+    await flushPromises()
+    releaseOld({ attempts: [downloadAttempt('stale-download-rev-a')], since: '', until: '', has_more: false, complete: true })
+    await flushPromises()
+
+    expect(bridgeMocks.fetchWorkbenchDownloadAttempt).toHaveBeenCalledWith('download-origin', expect.objectContaining({ node_identity_key: 'identity-a', config_revision_key: 'rev-a' }))
+    expect(wrapper.text()).toContain('download-rev-b')
+    expect(wrapper.text()).not.toContain('stale-download-rev-a')
+    expect(wrapper.text()).toContain('原始下载测量')
+    expect(bridgeMocks.startWorkbenchDownloadTest).not.toHaveBeenCalled()
   })
 })

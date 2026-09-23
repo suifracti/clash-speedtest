@@ -113,6 +113,26 @@ func (a *App) RetrySaveWorkbenchPublicServiceTest(attemptID string, query applic
 	return a.app.RetrySaveWorkbenchPublicServiceTest(a.context(), attemptID, query)
 }
 
+func (a *App) StartWorkbenchDownloadTest(req application.WorkbenchDownloadTestRequest) (*history.WorkbenchDownloadAttempt, error) {
+	return a.app.StartWorkbenchDownloadTest(a.context(), req)
+}
+
+func (a *App) ListWorkbenchDownloadTests(query application.WorkbenchDownloadHistoryQuery) (application.WorkbenchDownloadHistoryResult, error) {
+	return a.app.ListWorkbenchDownloadTests(a.context(), query)
+}
+
+func (a *App) GetWorkbenchDownloadAttempt(attemptID string, query application.WorkbenchDownloadHistoryQuery) (*history.WorkbenchDownloadAttempt, error) {
+	return a.app.GetWorkbenchDownloadAttempt(a.context(), attemptID, query)
+}
+
+func (a *App) CancelWorkbenchDownloadTest(attemptID string, query application.WorkbenchDownloadHistoryQuery) (*history.WorkbenchDownloadAttempt, error) {
+	return a.app.CancelWorkbenchDownloadTest(a.context(), attemptID, query)
+}
+
+func (a *App) RetrySaveWorkbenchDownloadTest(attemptID string, query application.WorkbenchDownloadHistoryQuery) (*history.WorkbenchDownloadAttempt, error) {
+	return a.app.RetrySaveWorkbenchDownloadTest(a.context(), attemptID, query)
+}
+
 func (a *App) ListNodeHistoryRevisions(profileID, nodeIdentityKey string) ([]history.NodeHistoryRevision, error) {
 	return a.app.ListNodeHistoryRevisions(a.context(), profileID, nodeIdentityKey)
 }
