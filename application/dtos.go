@@ -3,6 +3,7 @@ package application
 import (
 	"time"
 
+	"github.com/faceair/clash-speedtest/core/history"
 	"github.com/faceair/clash-speedtest/core/monitor"
 )
 
@@ -38,6 +39,37 @@ type WorkbenchLatencyTestRequest struct {
 	NodeKey        string `json:"node_key"`
 	TestProject    string `json:"test_project"`
 	TimeoutSeconds int64  `json:"timeout_seconds"`
+}
+
+type WorkbenchPublicServiceTestRequest struct {
+	RequestID         string `json:"request_id"`
+	ProfileID         string `json:"profile_id"`
+	NodeKey           string `json:"node_key"`
+	NodeIdentityKey   string `json:"node_identity_key"`
+	ConfigRevisionKey string `json:"config_revision_key"`
+	ServiceID         string `json:"service_id"`
+	TimeoutSeconds    int64  `json:"timeout_seconds,omitempty"`
+}
+
+type WorkbenchPublicServiceHistoryQuery struct {
+	ProfileID         string     `json:"profile_id"`
+	NodeKey           string     `json:"node_key"`
+	NodeIdentityKey   string     `json:"node_identity_key"`
+	ConfigRevisionKey string     `json:"config_revision_key"`
+	ServiceID         string     `json:"service_id,omitempty"`
+	Since             *time.Time `json:"since,omitempty"`
+	Until             *time.Time `json:"until,omitempty"`
+	Limit             int        `json:"limit,omitempty"`
+	BeforeAt          *time.Time `json:"before_at,omitempty"`
+	BeforeAttemptID   string     `json:"before_attempt_id,omitempty"`
+}
+
+type WorkbenchPublicServiceHistoryResult struct {
+	Attempts []*history.PublicServiceAttempt `json:"attempts"`
+	Since    time.Time                       `json:"since,omitempty"`
+	Until    time.Time                       `json:"until,omitempty"`
+	HasMore  bool                            `json:"has_more"`
+	Complete bool                            `json:"complete"`
 }
 
 type WorkbenchLatencyBatchSelection struct {

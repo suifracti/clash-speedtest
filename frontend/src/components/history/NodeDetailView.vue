@@ -12,6 +12,7 @@ import type {
   WorkbenchLatencyBatch,
   WorkbenchLatencyBatchItem,
   WorkbenchLatencyTest,
+  WorkbenchPublicServiceAttempt,
 } from '../../types'
 
 const props = defineProps<{ scope: NodeDetailRequest }>()
@@ -46,7 +47,15 @@ const workbenchLoading = ref(false)
 const workbenchMoreLoading = ref(false)
 const workbenchError = ref('')
 const workbenchLoaded = ref(false)
+const publicServiceRows = ref<WorkbenchPublicServiceAttempt[]>([])
+const publicServiceHasMore = ref(false)
+const publicServiceLoading = ref(false)
+const publicServiceMoreLoading = ref(false)
+const publicServiceError = ref('')
+const publicServiceLoaded = ref(false)
+const selectedPublicServiceID = ref(props.scope.origin?.kind === 'public_service_attempt' ? props.scope.origin.serviceId : '')
 const originTest = ref<WorkbenchLatencyTest | null>(null)
+const originPublicServiceAttempt = ref<WorkbenchPublicServiceAttempt | null>(null)
 const originBatch = ref<WorkbenchLatencyBatch | null>(null)
 const originBatchItem = ref<WorkbenchLatencyBatchItem | null>(null)
 const originError = ref('')
@@ -134,6 +143,21 @@ function latencyQuery(cursor?: WorkbenchLatencyTest) {
   }
 }
 
+function publicServiceQuery(cursor?: WorkbenchPublicServiceAttempt) {
+  const cursorAt = cursor?.result?.finished_at || cursor?.finished_at || cursor?.started_at || cursor?.requested_at
+  return {
+    profile_id: props.scope.profileId,
+    node_key: activeNodeKey.value,
+    node_identity_key: props.scope.nodeIdentityKey,
+    config_revision_key: selectedRevision.value,
+    ...(selectedPublicServiceID.value ? { service_id: selectedPublicServiceID.value } : {}),
+    since: new Date(window.value.sinceMs).toISOString(),
+    until: new Date(window.value.untilMs).toISOString(),
+    limit: 50,
+    ...(cursor && cursorAt ? { before_at: cursorAt, before_attempt_id: cursor.attempt_id } : {}),
+  }
+}
+
 function matchesActiveRequest(token: number): boolean { return token === generation }
 
 async function load(): Promise<void> {
@@ -151,6 +175,12 @@ async function load(): Promise<void> {
   workbenchLoading.value = true
   workbenchError.value = ''
   workbenchLoaded.value = false
+  publicServiceRows.value = []
+  publicServiceHasMore.value = false
+  publicServiceLoading.value = true
+  publicServiceMoreLoading.value = false
+  publicServiceError.value = ''
+  publicServiceLoaded.value = false
   monitorMoreLoading.value = false
   workbenchMoreLoading.value = false
   revisionError.value = ''
@@ -159,8 +189,10 @@ async function load(): Promise<void> {
   if (!props.scope.profileId || !props.scope.nodeKey || !props.scope.nodeIdentityKey || !props.scope.configRevisionKey) {
     monitorError.value = 'profile、node_key、稳定 identity 或 revision 不完整；请从既有 legacy 历史入口查看。'
     workbenchError.value = monitorError.value
+    publicServiceError.value = monitorError.value
     monitorLoading.value = false
     workbenchLoading.value = false
+    publicServiceLoading.value = false
     return
   }
 
@@ -232,6 +264,25 @@ async function load(): Promise<void> {
         }
       }
     })(),
+    (async () => {
+      try {
+        const page = await bridge.fetchWorkbenchPublicServiceHistory(publicServiceQuery())
+        if (!matchesActiveRequest(token)) return
+        if (page.attempts.some((attempt) => attempt.profile_id !== props.scope.profileId || attempt.node_key !== activeNodeKey.value || attempt.node_identity_key !== props.scope.nodeIdentityKey || attempt.config_revision_key !== selectedRevision.value || (selectedPublicServiceID.value && attempt.service_id !== selectedPublicServiceID.value))) {
+          publicServiceError.value = '响应中的 profile / identity / revision / service 与当前详情不一致。'
+        } else {
+          publicServiceRows.value = page.attempts
+          publicServiceHasMore.value = page.has_more
+        }
+      } catch (error) {
+        if (matchesActiveRequest(token)) publicServiceError.value = errorText(error)
+      } finally {
+        if (matchesActiveRequest(token)) {
+          publicServiceLoading.value = false
+          publicServiceLoaded.value = !publicServiceError.value
+        }
+      }
+    })(),
     loadOrigin(token),
   ]
   await Promise.all(tasks)
@@ -239,6 +290,7 @@ async function load(): Promise<void> {
 
 async function loadOrigin(token: number): Promise<void> {
   originTest.value = null
+  originPublicServiceAttempt.value = null
   originBatch.value = null
   originBatchItem.value = null
   originError.value = ''
@@ -247,6 +299,26 @@ async function loadOrigin(token: number): Promise<void> {
   if (!origin || origin.kind === 'monitor_sample') return
   if (selectedRevision.value !== props.scope.configRevisionKey) {
     originRevisionMismatch.value = true
+    return
+  }
+  if (origin.kind === 'public_service_attempt') {
+    if (origin.snapshot) originPublicServiceAttempt.value = origin.snapshot
+    try {
+      const attempt = await bridge.fetchWorkbenchPublicServiceAttempt(origin.attemptId, {
+        profile_id: props.scope.profileId, node_key: props.scope.nodeKey, node_identity_key: props.scope.nodeIdentityKey,
+        config_revision_key: selectedRevision.value, service_id: origin.serviceId,
+      })
+      if (!matchesActiveRequest(token)) return
+      if (attempt.profile_id !== props.scope.profileId || attempt.node_identity_key !== props.scope.nodeIdentityKey || attempt.config_revision_key !== selectedRevision.value || attempt.service_id !== origin.serviceId) {
+        originError.value = '原始服务 attempt 的身份、revision 或 service 不匹配。'
+        return
+      }
+      originPublicServiceAttempt.value = attempt
+    } catch (error) {
+      if (matchesActiveRequest(token)) originError.value = originPublicServiceAttempt.value
+        ? `原始服务 attempt 尚未能从历史库读取，当前显示入口快照：${errorText(error)}`
+        : errorText(error)
+    }
     return
   }
   if (origin.snapshot) originTest.value = origin.snapshot
@@ -280,6 +352,37 @@ async function loadOrigin(token: number): Promise<void> {
       ? `原始 attempt 尚未能从历史库读取，当前显示入口快照：${errorText(error)}`
       : errorText(error)
   }
+}
+
+async function loadMorePublicService(): Promise<void> {
+  if (publicServiceMoreLoading.value || !publicServiceHasMore.value) return
+  const token = generation
+  const cursor = publicServiceRows.value[publicServiceRows.value.length - 1]
+  if (!cursor) return
+  publicServiceMoreLoading.value = true
+  try {
+    const page = await bridge.fetchWorkbenchPublicServiceHistory(publicServiceQuery(cursor))
+    if (!matchesActiveRequest(token)) return
+    if (page.attempts.some((attempt) => attempt.profile_id !== props.scope.profileId || attempt.node_key !== activeNodeKey.value || attempt.node_identity_key !== props.scope.nodeIdentityKey || attempt.config_revision_key !== selectedRevision.value || (selectedPublicServiceID.value && attempt.service_id !== selectedPublicServiceID.value))) {
+      publicServiceError.value = '响应中的 profile / identity / revision / service 与当前详情不一致。'
+      return
+    }
+    const seen = new Set(publicServiceRows.value.map((attempt) => attempt.attempt_id))
+    publicServiceRows.value = [...publicServiceRows.value, ...page.attempts.filter((attempt) => !seen.has(attempt.attempt_id))]
+    publicServiceHasMore.value = page.has_more
+  } catch (error) {
+    if (matchesActiveRequest(token)) publicServiceError.value = errorText(error)
+  } finally {
+    if (matchesActiveRequest(token)) publicServiceMoreLoading.value = false
+  }
+}
+
+function publicServiceExecutionLabel(state: string): string {
+  return ({ queued: '等待执行', running: '执行中', cancelling: '正在取消', completed: '已完成', failed: '未符合判据', cancelled: '已取消', interrupted: '应用退出时中断' } as Record<string, string>)[state] || '状态未知'
+}
+
+function publicServiceOutcomeLabel(outcome?: string): string {
+  return ({ matched: '符合判据', http_rejected: 'HTTP 状态不符合判据', rate_limited: '目标响应指示请求受限', redirect: '重定向未跟随', timed_out: '超时', cancelled: '用户取消', transport_error: '代理/传输失败，阶段未知', criteria_mismatch: '响应未符合判据' } as Record<string, string>)[outcome || ''] || '无测量结果'
 }
 
 async function loadMoreMonitor(): Promise<void> {
@@ -386,16 +489,18 @@ onBeforeUnmount(() => { generation++ })
       </section>
 
       <section v-if="props.scope.origin && props.scope.origin.kind !== 'monitor_sample'" class="node-detail-origin">
-        <h3>原始 Workbench 来源</h3>
+        <h3>{{ props.scope.origin.kind === 'public_service_attempt' ? '原始公共服务检测' : '原始 Workbench 来源' }}</h3>
+        <p v-if="props.scope.origin.kind === 'public_service_attempt'">服务 {{ props.scope.origin.serviceId }} · Attempt {{ props.scope.origin.attemptId }}</p>
         <p v-if="props.scope.origin.kind === 'workbench_batch_item'">Batch {{ props.scope.origin.batchId }} · Item {{ props.scope.origin.itemId }} · Attempt {{ props.scope.origin.attemptId || '无 attempt' }}</p>
-        <p v-else>Attempt {{ props.scope.origin.attemptId }}</p>
+        <p v-else-if="props.scope.origin.kind === 'workbench_attempt'">Attempt {{ props.scope.origin.attemptId }}</p>
         <p v-if="originRevisionMismatch" class="node-detail-warning">当前查看的是另一 revision；入口 attempt/batch 仍属于打开详情时的 revision。</p>
         <p v-else-if="originError" class="node-detail-error">来源读取失败：{{ originError }}</p>
         <template v-else-if="originBatchItem">
           <p>执行：{{ originBatchItem.execution_state }} · 保存：{{ originBatchItem.persistence_state }}<template v-if="originBatchItem.error_message"> · {{ originBatchItem.error_message }}</template><template v-if="originBatchItem.persistence_error"> · {{ originBatchItem.persistence_error }}</template></p>
         </template>
         <template v-if="originTest"><p>测法 {{ originTest.method || '未知' }} v{{ originTest.method_version || '未知' }} · target {{ originTest.target || '未知' }} · 单位 {{ originTest.unit || '未知' }} · attempt {{ originTest.attempt_id }}</p><p>{{ originTest.success_samples }} 成功 / {{ originTest.failure_samples }} 失败 · {{ originTest.latency_ms }} ms · jitter {{ originTest.jitter_ms }} ms · {{ originTest.persistence_state }}</p></template>
-        <span v-if="!originBatchItem && !originTest && !originError && !originRevisionMismatch">正在读取原始 attempt/batch…</span>
+        <template v-if="originPublicServiceAttempt"><p>{{ originPublicServiceAttempt.rule.method }} {{ originPublicServiceAttempt.rule.target_url }} · 规则 v{{ originPublicServiceAttempt.rule.rule_version }} · {{ originPublicServiceAttempt.rule.success_criterion }}</p><p>执行 {{ publicServiceExecutionLabel(originPublicServiceAttempt.execution_state) }} · 保存 {{ originPublicServiceAttempt.persistence_state }}<template v-if="originPublicServiceAttempt.persistence_error"> · {{ originPublicServiceAttempt.persistence_error }}</template></p><p v-if="originPublicServiceAttempt.result">{{ publicServiceOutcomeLabel(originPublicServiceAttempt.result.outcome) }} · HTTP {{ originPublicServiceAttempt.result.http_status ?? '无响应' }} · {{ originPublicServiceAttempt.result.duration_ms }} ms · 已读取 {{ originPublicServiceAttempt.result.bytes_read }} 字节<template v-if="originPublicServiceAttempt.result.failure_phase"> · {{ originPublicServiceAttempt.result.failure_phase }}</template><template v-if="originPublicServiceAttempt.result.error_message"> · {{ originPublicServiceAttempt.result.error_message }}</template></p></template>
+        <span v-if="!originBatchItem && !originTest && !originPublicServiceAttempt && !originError && !originRevisionMismatch">正在读取原始 attempt…</span>
       </section>
 
       <section class="node-detail-section">
@@ -433,6 +538,22 @@ onBeforeUnmount(() => { generation++ })
           <details><summary>查看样本图与 {{ test.samples.length }} 条原始样本</summary><LatencySamplePlot :samples="test.samples" :window-since="test.started_at" :window-until="test.finished_at" :hovered-index="null" :pinned-index="null" :height="100" /><ol><li v-for="sample in test.samples" :key="`${test.attempt_id}-${sample.seq}`">{{ timeText(sample.timestamp) }} · {{ sample.success ? `${sample.latency_ms} ms` : `失败 · ${sample.error || '原因未知'}` }} · #{{ sample.seq }}</li></ol></details>
         </div>
         <button v-if="workbenchHasMore" type="button" class="node-detail-more" :disabled="workbenchMoreLoading" @click="loadMoreWorkbench">{{ workbenchMoreLoading ? '正在加载…' : '加载更多 Workbench attempt' }}</button>
+      </section>
+
+      <section class="node-detail-section">
+        <div class="node-detail-section-heading"><div><h3>Workbench 公共服务检测</h3><p>独立 attempt 历史；与延迟、Monitor 统计和推荐证据分开。读取详情不会发起请求。</p></div><label>服务
+          <select v-model="selectedPublicServiceID" aria-label="公共服务历史筛选" @change="changeFilters"><option value="">全部已接入服务</option><option value="cloudflare_204">Cloudflare 204 连通性</option><option value="google_204">Google 204 连通性</option><option value="github_api_root">GitHub 公共 API 根端点</option></select>
+        </label></div>
+        <p class="node-detail-note">请求窗口 {{ windowLabel }} · {{ new Date(window.sinceMs).toLocaleString() }} – {{ new Date(window.untilMs).toLocaleString() }}；结果只表示对应固定目标是否符合保存的判据，不表示完整业务可用性。</p>
+        <div v-if="publicServiceError" class="node-detail-error">公共服务历史读取失败：{{ publicServiceError }}</div>
+        <p v-else-if="publicServiceLoaded && publicServiceRows.length === 0 && !publicServiceHasMore" class="node-detail-empty">此 profile、稳定身份、revision、服务与请求窗口内没有检测记录。</p>
+        <p v-if="publicServiceLoaded && publicServiceHasMore" class="node-detail-warning">已加载 {{ publicServiceRows.length }} 条记录；当前请求窗口仍有更多历史。</p>
+        <div v-if="publicServiceLoading" class="node-detail-empty">正在读取公共服务历史…</div>
+        <div v-for="attempt in publicServiceRows" :key="attempt.attempt_id" class="node-detail-attempt" :class="{ 'node-detail-highlight': props.scope.origin?.kind === 'public_service_attempt' && props.scope.origin.attemptId === attempt.attempt_id }">
+          <div><strong>{{ attempt.rule.name }} · {{ timeText(attempt.result?.finished_at || attempt.finished_at || attempt.started_at || attempt.requested_at) }}</strong><span>执行 {{ publicServiceExecutionLabel(attempt.execution_state) }} · 保存 {{ attempt.persistence_state }}<template v-if="attempt.persistence_error"> · {{ attempt.persistence_error }}</template></span><small>来源 {{ attempt.source }} · {{ attempt.rule.method }} {{ attempt.rule.target_url }} · 规则 v{{ attempt.rule.rule_version }}</small><small>{{ attempt.rule.success_criterion }} · {{ attempt.rule.redirect_policy === 'do_not_follow' ? '不跟随重定向' : attempt.rule.redirect_policy }}</small></div>
+          <div class="node-detail-attempt-metrics"><b>{{ publicServiceOutcomeLabel(attempt.result?.outcome) }}</b><span>HTTP {{ attempt.result?.http_status ?? '无响应' }} · {{ attempt.result?.duration_ms ?? '—' }} ms · 已读取 {{ attempt.result?.bytes_read ?? 0 }} 字节</span><span v-if="attempt.result?.failure_phase">失败位置 {{ attempt.result.failure_phase }}<template v-if="attempt.result.error_message"> · {{ attempt.result.error_message }}</template></span><span>attempt {{ attempt.attempt_id }}</span></div>
+        </div>
+        <button v-if="publicServiceHasMore" type="button" class="node-detail-more" :disabled="publicServiceMoreLoading" @click="loadMorePublicService">{{ publicServiceMoreLoading ? '正在加载…' : '加载更多公共服务检测' }}</button>
       </section>
     </main>
   </div>

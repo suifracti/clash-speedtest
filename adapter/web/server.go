@@ -202,6 +202,12 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("GET /api/workbench/latency-batches/{batch_id}", s.handleGetWorkbenchLatencyBatch)
 	mux.HandleFunc("POST /api/workbench/latency-batches/{batch_id}/cancel", s.handleCancelWorkbenchLatencyBatch)
 	mux.HandleFunc("POST /api/workbench/latency-batches/{batch_id}/items/{item_id}/retry-save", s.handleRetryWorkbenchLatencyBatchItem)
+	mux.HandleFunc("GET /api/workbench/public-service-catalog", s.handleListWorkbenchPublicServiceCatalog)
+	mux.HandleFunc("POST /api/workbench/public-service-tests", s.handleStartWorkbenchPublicServiceTest)
+	mux.HandleFunc("GET /api/workbench/public-service-tests", s.handleListWorkbenchPublicServiceTests)
+	mux.HandleFunc("GET /api/workbench/public-service-tests/{attempt_id}", s.handleGetWorkbenchPublicServiceAttempt)
+	mux.HandleFunc("POST /api/workbench/public-service-tests/{attempt_id}/cancel", s.handleCancelWorkbenchPublicServiceTest)
+	mux.HandleFunc("POST /api/workbench/public-service-tests/{attempt_id}/retry-save", s.handleRetrySaveWorkbenchPublicServiceTest)
 
 	// PR#7: read-only evidence → recommendation. There is deliberately NO execution
 	// endpoint here: the recommendation is advisory only and never switches a node.
@@ -1165,6 +1171,121 @@ func (s *Server) handleRetryWorkbenchLatencyBatchItem(w http.ResponseWriter, r *
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleListWorkbenchPublicServiceCatalog(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.app.ListWorkbenchPublicServiceCatalog())
+}
+
+func (s *Server) handleStartWorkbenchPublicServiceTest(w http.ResponseWriter, r *http.Request) {
+	var req application.WorkbenchPublicServiceTestRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body: "+err.Error())
+		return
+	}
+	result, err := s.app.StartWorkbenchPublicServiceTest(r.Context(), req)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if monitor.IsValidationError(err) {
+			status = http.StatusBadRequest
+		} else if strings.Contains(err.Error(), "正在运行") {
+			status = http.StatusConflict
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, result)
+}
+
+func (s *Server) handleListWorkbenchPublicServiceTests(w http.ResponseWriter, r *http.Request) {
+	query, err := parseWorkbenchPublicServiceQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	result, err := s.app.ListWorkbenchPublicServiceTests(r.Context(), query)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if monitor.IsValidationError(err) {
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleGetWorkbenchPublicServiceAttempt(w http.ResponseWriter, r *http.Request) {
+	query, err := parseWorkbenchPublicServiceQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	result, err := s.app.GetWorkbenchPublicServiceAttempt(r.Context(), r.PathValue("attempt_id"), query)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleCancelWorkbenchPublicServiceTest(w http.ResponseWriter, r *http.Request) {
+	query, err := parseWorkbenchPublicServiceQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	result, err := s.app.CancelWorkbenchPublicServiceTest(r.Context(), r.PathValue("attempt_id"), query)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, result)
+}
+
+func (s *Server) handleRetrySaveWorkbenchPublicServiceTest(w http.ResponseWriter, r *http.Request) {
+	query, err := parseWorkbenchPublicServiceQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	result, err := s.app.RetrySaveWorkbenchPublicServiceTest(r.Context(), r.PathValue("attempt_id"), query)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func parseWorkbenchPublicServiceQuery(values url.Values) (application.WorkbenchPublicServiceHistoryQuery, error) {
+	since, until, err := parseWorkbenchLatencyWindow(values)
+	if err != nil {
+		return application.WorkbenchPublicServiceHistoryQuery{}, err
+	}
+	query := application.WorkbenchPublicServiceHistoryQuery{
+		ProfileID: values.Get("profile_id"), NodeKey: values.Get("node_key"),
+		NodeIdentityKey: values.Get("node_identity_key"), ConfigRevisionKey: values.Get("config_revision_key"),
+		ServiceID: values.Get("service_id"), Since: since, Until: until,
+	}
+	if raw := values.Get("limit"); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit <= 0 || limit > 100 {
+			return application.WorkbenchPublicServiceHistoryQuery{}, fmt.Errorf("limit must be between 1 and 100")
+		}
+		query.Limit = limit
+	}
+	if beforeAt, beforeID := values.Get("before_at"), strings.TrimSpace(values.Get("before_attempt_id")); beforeAt != "" || beforeID != "" {
+		if beforeAt == "" || beforeID == "" {
+			return application.WorkbenchPublicServiceHistoryQuery{}, fmt.Errorf("history cursor requires before_at and before_attempt_id")
+		}
+		parsed, err := time.Parse(time.RFC3339, beforeAt)
+		if err != nil {
+			return application.WorkbenchPublicServiceHistoryQuery{}, fmt.Errorf("invalid before_at parameter: must be RFC3339")
+		}
+		query.BeforeAt = &parsed
+		query.BeforeAttemptID = beforeID
+	}
+	return query, nil
 }
 
 func parseWorkbenchLatencyWindow(values url.Values) (*time.Time, *time.Time, error) {

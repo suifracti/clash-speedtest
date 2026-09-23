@@ -175,9 +175,40 @@ CREATE INDEX IF NOT EXISTS idx_workbench_latency_batch_items_batch
     ON workbench_latency_batch_items(batch_id, ordinal);
 `
 
+const workbenchPublicServiceDDL = `
+CREATE TABLE IF NOT EXISTS workbench_public_service_attempts (
+    attempt_id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL UNIQUE,
+    profile_id TEXT NOT NULL,
+    node_key TEXT NOT NULL,
+    node_identity_key TEXT NOT NULL,
+    config_revision_key TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    node_type TEXT NOT NULL,
+    source TEXT NOT NULL,
+    service_id TEXT NOT NULL,
+    requested_at DATETIME NOT NULL,
+    started_at DATETIME,
+    finished_at DATETIME,
+    execution_state TEXT NOT NULL,
+    persistence_state TEXT NOT NULL,
+    persistence_error TEXT NOT NULL DEFAULT '',
+    rule_snapshot_json TEXT NOT NULL,
+    staged_result_json TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_workbench_public_service_scope
+    ON workbench_public_service_attempts(profile_id, node_identity_key, config_revision_key, service_id, requested_at DESC);
+CREATE TABLE IF NOT EXISTS workbench_public_service_results (
+    attempt_id TEXT PRIMARY KEY,
+    result_json TEXT NOT NULL,
+    saved_at DATETIME NOT NULL,
+    FOREIGN KEY(attempt_id) REFERENCES workbench_public_service_attempts(attempt_id) ON DELETE CASCADE
+);
+`
+
 // CurrentSchemaVersion is the SQLite schema authority. Databases without a
 // schema_meta row are the explicitly recognized pre-version legacy schema.
-const CurrentSchemaVersion = 5
+const CurrentSchemaVersion = 6
 
 var (
 	ErrUnsupportedSchemaVersion = fmt.Errorf("unsupported SQLite schema version")
@@ -306,6 +337,15 @@ func migrateSchema(db *sql.DB) error {
 			return fmt.Errorf("record schema version 5: %w", err)
 		}
 		version = 5
+	}
+	if version == 5 {
+		if _, err := tx.Exec(workbenchPublicServiceDDL); err != nil {
+			return fmt.Errorf("migrate Workbench public-service history: %w", err)
+		}
+		if _, err := tx.Exec("UPDATE schema_meta SET schema_version = 6 WHERE singleton = 1"); err != nil {
+			return fmt.Errorf("record schema version 6: %w", err)
+		}
+		version = 6
 	}
 	if err := validateCurrentSchema(tx, version); err != nil {
 		return fmt.Errorf("validate schema version %d after migration: %w", version, err)
@@ -536,6 +576,14 @@ func validateCurrentSchema(tx *sql.Tx, version int) error {
 		tables["workbench_latency_tests"] = append(tables["workbench_latency_tests"], "source", "method", "method_version", "target", "unit")
 		tables["workbench_latency_batches"] = []string{"batch_id", "request_id", "test_project", "timeout_seconds", "requested_at", "state"}
 		tables["workbench_latency_batch_items"] = []string{"item_id", "batch_id", "ordinal", "profile_id", "node_key", "node_identity_key", "config_revision_key", "display_name", "node_type", "execution_state", "persistence_state", "attempt_id", "requested_at", "started_at", "finished_at", "error_message", "persistence_error", "result_json"}
+	}
+	if version >= 6 {
+		tables["workbench_public_service_attempts"] = []string{
+			"attempt_id", "request_id", "profile_id", "node_key", "node_identity_key", "config_revision_key",
+			"display_name", "node_type", "source", "service_id", "requested_at", "execution_state",
+			"persistence_state", "rule_snapshot_json", "staged_result_json",
+		}
+		tables["workbench_public_service_results"] = []string{"attempt_id", "result_json", "saved_at"}
 	}
 	for table, columns := range tables {
 		present, err := tableExists(tx, table)

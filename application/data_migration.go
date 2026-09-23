@@ -76,6 +76,10 @@ func (s *AppService) MigrateLegacyData() error {
 		}
 		return fmt.Errorf("data migration is not pending: %s", info.State)
 	}
+	if err := s.beginPublicServiceStorageTransition(); err != nil {
+		return err
+	}
+	defer s.endPublicServiceStorageTransition()
 
 	s.StopAllMonitorJobs()
 	s.latencyPersistenceWG.Wait()
