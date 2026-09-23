@@ -191,6 +191,7 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("GET /api/monitor/budget", s.handleGetMonitorBudget)
 	mux.HandleFunc("GET /api/monitor/timeline", s.handleGetNodeTimelineSamples)
 	mux.HandleFunc("GET /api/monitor/facets", s.handleGetMonitorFacets)
+	mux.HandleFunc("GET /api/history/node-revisions", s.handleListNodeHistoryRevisions)
 
 	// Workbench: stable-identity, single-node latency history.
 	mux.HandleFunc("POST /api/workbench/latency-tests", s.handleRunWorkbenchLatencyTest)
@@ -1016,10 +1017,12 @@ func (s *Server) handleListWorkbenchLatencyTests(w http.ResponseWriter, r *http.
 		return
 	}
 	query := application.WorkbenchLatencyHistoryQuery{
-		ProfileID: r.URL.Query().Get("profile_id"),
-		NodeKey:   r.URL.Query().Get("node_key"),
-		Since:     since,
-		Until:     until,
+		ProfileID:         r.URL.Query().Get("profile_id"),
+		NodeKey:           r.URL.Query().Get("node_key"),
+		NodeIdentityKey:   r.URL.Query().Get("node_identity_key"),
+		ConfigRevisionKey: r.URL.Query().Get("config_revision_key"),
+		Since:             since,
+		Until:             until,
 	}
 	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
 		limit, err := strconv.Atoi(rawLimit)
@@ -1028,6 +1031,19 @@ func (s *Server) handleListWorkbenchLatencyTests(w http.ResponseWriter, r *http.
 			return
 		}
 		query.Limit = limit
+	}
+	if beforeAt, beforeID := r.URL.Query().Get("before_finished_at"), r.URL.Query().Get("before_attempt_id"); beforeAt != "" || beforeID != "" {
+		if beforeAt == "" || strings.TrimSpace(beforeID) == "" {
+			writeError(w, http.StatusBadRequest, "history cursor requires before_finished_at and before_attempt_id")
+			return
+		}
+		parsed, err := time.Parse(time.RFC3339, beforeAt)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid before_finished_at parameter: must be RFC3339")
+			return
+		}
+		query.BeforeFinishedAt = &parsed
+		query.BeforeAttemptID = strings.TrimSpace(beforeID)
 	}
 	results, err := s.app.ListWorkbenchLatencyTests(r.Context(), query)
 	if err != nil {
@@ -1048,11 +1064,13 @@ func (s *Server) handleGetWorkbenchLatencyTest(w http.ResponseWriter, r *http.Re
 		return
 	}
 	query := application.WorkbenchLatencyHistoryDetailQuery{
-		ProfileID: r.URL.Query().Get("profile_id"),
-		NodeKey:   r.URL.Query().Get("node_key"),
-		AttemptID: strings.TrimSpace(r.PathValue("attempt_id")),
-		Since:     since,
-		Until:     until,
+		ProfileID:         r.URL.Query().Get("profile_id"),
+		NodeKey:           r.URL.Query().Get("node_key"),
+		NodeIdentityKey:   r.URL.Query().Get("node_identity_key"),
+		ConfigRevisionKey: r.URL.Query().Get("config_revision_key"),
+		AttemptID:         strings.TrimSpace(r.PathValue("attempt_id")),
+		Since:             since,
+		Until:             until,
 	}
 	if query.AttemptID == "" {
 		writeError(w, http.StatusBadRequest, "attempt_id path param required")
@@ -1068,6 +1086,19 @@ func (s *Server) handleGetWorkbenchLatencyTest(w http.ResponseWriter, r *http.Re
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleListNodeHistoryRevisions(w http.ResponseWriter, r *http.Request) {
+	revisions, err := s.app.ListNodeHistoryRevisions(r.Context(), r.URL.Query().Get("profile_id"), r.URL.Query().Get("node_identity_key"))
+	if err != nil {
+		if monitor.IsValidationError(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, revisions)
 }
 
 func (s *Server) handleStartWorkbenchLatencyBatch(w http.ResponseWriter, r *http.Request) {
@@ -1426,6 +1457,7 @@ func (s *Server) handleQueryMonitorSamplesCursor(w http.ResponseWriter, r *http.
 	q := r.URL.Query()
 	filter := monitor.CursorFilter{
 		NodeIdentityKey:        q.Get("node_identity_key"),
+		ConfigRevisionKey:      q.Get("config_revision_key"),
 		LegacyNodeKey:          q.Get("legacy_node_key"),
 		NodeKey:                q.Get("node_key"),
 		ProfileID:              q.Get("profile_id"),
@@ -1495,6 +1527,7 @@ func (s *Server) handleGetMonitorStats(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	query := monitor.StatsQuery{
 		NodeIdentityKey:        q.Get("node_identity_key"),
+		ConfigRevisionKey:      q.Get("config_revision_key"),
 		LegacyNodeKey:          q.Get("legacy_node_key"),
 		NodeKey:                q.Get("node_key"),
 		ProfileID:              q.Get("profile_id"),

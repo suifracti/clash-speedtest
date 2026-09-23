@@ -238,3 +238,52 @@ func TestQueryLatencyTestsFiltersRawSamplesBeforeLimitAndScopesProfiles(t *testi
 		t.Fatalf("same node key crossed profile boundary: %+v", profileB.Tests)
 	}
 }
+
+func TestLatencyHistoryScopesIdentityAndRevisionBeforeCursorLimit(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Date(2026, 9, 23, 9, 0, 0, 0, time.UTC)
+	save := func(profile, identity, revision, attempt string, finished time.Time, latency int64) {
+		t.Helper()
+		if err := store.SaveLatencyTest(ctx, &LatencyTest{
+			AttemptID: attempt, ProfileID: profile, NodeKey: "same-node-key", NodeIdentityKey: identity,
+			ConfigRevisionKey: revision, DisplayName: "同名节点", TestProject: "latency_stability",
+			RequestedAt: finished, StartedAt: finished, FinishedAt: finished, Status: "completed",
+			TotalSamples: 1, SuccessSamples: 1,
+			Samples: []LatencyTestSample{{Seq: 1, Timestamp: finished, LatencyMs: latency, Success: true}},
+		}); err != nil {
+			t.Fatalf("SaveLatencyTest %s: %v", attempt, err)
+		}
+	}
+	save("profile-a", "identity-a", "rev-a", "wanted-newest", now.Add(-time.Minute), 21)
+	save("profile-a", "identity-a", "rev-a", "wanted-older", now.Add(-2*time.Minute), 22)
+	save("profile-a", "identity-a", "rev-b", "different-revision", now, 90)
+	save("profile-b", "identity-a", "rev-a", "different-profile", now.Add(-30*time.Second), 100)
+	save("profile-a", "identity-other", "rev-a", "different-identity", now.Add(-45*time.Second), 110)
+
+	page, err := store.QueryLatencyTests(ctx, LatencyTestFilter{
+		ProfileID: "profile-a", NodeKey: "same-node-key", NodeIdentityKey: "identity-a", ConfigRevisionKey: "rev-a", Limit: 1,
+	})
+	if err != nil {
+		t.Fatalf("first page: %v", err)
+	}
+	if len(page.Tests) != 1 || page.Tests[0].AttemptID != "wanted-newest" || !page.HasMore {
+		t.Fatalf("identity/revision filters must run before the bounded page: page=%+v", page)
+	}
+	finished := page.Tests[0].FinishedAt
+	next, err := store.QueryLatencyTests(ctx, LatencyTestFilter{
+		ProfileID: "profile-a", NodeKey: "same-node-key", NodeIdentityKey: "identity-a", ConfigRevisionKey: "rev-a",
+		Limit: 1, BeforeFinishedAt: &finished, BeforeAttemptID: page.Tests[0].AttemptID,
+	})
+	if err != nil {
+		t.Fatalf("cursor page: %v", err)
+	}
+	if len(next.Tests) != 1 || next.Tests[0].AttemptID != "wanted-older" || next.HasMore {
+		t.Fatalf("stable timestamp/attempt cursor crossed scope or skipped a row: page=%+v", next)
+	}
+}

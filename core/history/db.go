@@ -1240,6 +1240,14 @@ func (d *DB) QueryLatencyTests(ctx context.Context, filter LatencyTestFilter) (*
 
 	where := `t.profile_id = ? AND t.node_key = ?`
 	args := []any{filter.ProfileID, filter.NodeKey}
+	if filter.NodeIdentityKey != "" {
+		where += ` AND t.node_identity_key = ?`
+		args = append(args, filter.NodeIdentityKey)
+	}
+	if filter.ConfigRevisionKey != "" {
+		where += ` AND t.config_revision_key = ?`
+		args = append(args, filter.ConfigRevisionKey)
+	}
 	if since != nil {
 		// Scope attempts by raw sample timestamps before applying LIMIT. An
 		// attempt may straddle the boundary and remains eligible when any raw
@@ -1250,6 +1258,13 @@ func (d *DB) QueryLatencyTests(ctx context.Context, filter LatencyTestFilter) (*
 			  AND ws.timestamp >= ? AND ws.timestamp < ?
 		)`
 		args = append(args, *since, *until)
+	}
+	if (filter.BeforeFinishedAt == nil) != (filter.BeforeAttemptID == "") {
+		return nil, fmt.Errorf("latency history cursor requires before_finished_at and before_attempt_id")
+	}
+	if filter.BeforeFinishedAt != nil {
+		where += ` AND (t.finished_at < ? OR (t.finished_at = ? AND t.attempt_id < ?))`
+		args = append(args, filter.BeforeFinishedAt.UTC(), filter.BeforeFinishedAt.UTC(), filter.BeforeAttemptID)
 	}
 	args = append(args, limit+1)
 	rows, err := d.db.QueryContext(ctx, `
@@ -1305,6 +1320,51 @@ func (d *DB) GetLatencyTestInWindow(ctx context.Context, attemptID string, since
 		return nil, err
 	}
 	return d.getLatencyTest(ctx, attemptID, normalizedSince, normalizedUntil)
+}
+
+// ListNodeHistoryRevisions enumerates observed revisions for one stable node
+// identity across the independent Monitor and Workbench history domains.
+func (d *DB) ListNodeHistoryRevisions(ctx context.Context, profileID, nodeIdentityKey string) ([]NodeHistoryRevision, error) {
+	if strings.TrimSpace(profileID) == "" || strings.TrimSpace(nodeIdentityKey) == "" {
+		return nil, fmt.Errorf("node history revisions require profile_id and node_identity_key")
+	}
+	rows, err := d.db.QueryContext(ctx, `
+		WITH history AS (
+			SELECT config_revision_key, node_key, display_name_snapshot AS display_name,
+				timestamp AS observed_at, sample_id AS record_id
+			FROM monitor_samples
+			WHERE profile_id = ? AND node_identity_key = ? AND config_revision_key <> ''
+			UNION ALL
+			SELECT config_revision_key, node_key, display_name,
+				finished_at AS observed_at, attempt_id AS record_id
+			FROM workbench_latency_tests
+			WHERE profile_id = ? AND node_identity_key = ? AND config_revision_key <> ''
+		), ranked AS (
+			SELECT config_revision_key, node_key, display_name, observed_at,
+				ROW_NUMBER() OVER (PARTITION BY config_revision_key ORDER BY observed_at DESC, record_id DESC) AS revision_rank
+			FROM history
+		)
+		SELECT config_revision_key, node_key, display_name, observed_at
+		FROM ranked WHERE revision_rank = 1
+		ORDER BY observed_at DESC, config_revision_key
+	`, profileID, nodeIdentityKey, profileID, nodeIdentityKey)
+	if err != nil {
+		return nil, fmt.Errorf("list node history revisions: %w", err)
+	}
+	defer rows.Close()
+	var revisions []NodeHistoryRevision
+	for rows.Next() {
+		var item NodeHistoryRevision
+		if err := rows.Scan(&item.ConfigRevisionKey, &item.NodeKey, &item.DisplayName, &item.LastObservedAt); err != nil {
+			return nil, fmt.Errorf("scan node history revision: %w", err)
+		}
+		item.LastObservedAt = item.LastObservedAt.UTC()
+		revisions = append(revisions, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate node history revisions: %w", err)
+	}
+	return revisions, nil
 }
 
 func (d *DB) getLatencyTest(ctx context.Context, attemptID string, since, until *time.Time) (*LatencyTest, error) {
@@ -1750,6 +1810,10 @@ func (d *DB) QueryMonitorSamplesCursor(ctx context.Context, filter monitor.Curso
 		whereClauses = append(whereClauses, "s.node_key = ?")
 		args = append(args, filter.NodeKey)
 	}
+	if filter.ConfigRevisionKey != "" {
+		whereClauses = append(whereClauses, "s.config_revision_key = ?")
+		args = append(args, filter.ConfigRevisionKey)
+	}
 	if filter.ProfileID != "" {
 		whereClauses = append(whereClauses, "s.profile_id = ?")
 		args = append(args, filter.ProfileID)
@@ -1894,6 +1958,10 @@ func (d *DB) GetDerivedStats(ctx context.Context, q monitor.StatsQuery) (*monito
 	if q.NodeKey != "" {
 		whereClauses = append(whereClauses, "s.node_key = ?")
 		args = append(args, q.NodeKey)
+	}
+	if q.ConfigRevisionKey != "" {
+		whereClauses = append(whereClauses, "s.config_revision_key = ?")
+		args = append(args, q.ConfigRevisionKey)
 	}
 	if q.ProfileID != "" {
 		whereClauses = append(whereClauses, "s.profile_id = ?")

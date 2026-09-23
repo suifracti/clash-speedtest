@@ -587,9 +587,9 @@ func TestWebMonitorSamplingSourceFiltersConsistent(t *testing.T) {
 		}
 	}
 	if err := store.SaveMonitorSamples(context.Background(), []*monitor.MonitorSample{
-		{SampleID: "web-regular-sample", RunID: "web-regular", NodeKey: "node", NodeIdentityKey: "identity", ProbeType: "rtt", Target: "known", Timestamp: now, Success: true},
-		{SampleID: "web-diagnostic-sample", RunID: "web-diagnostic", NodeKey: "node", NodeIdentityKey: "identity", ProbeType: "rtt", Target: "known", Timestamp: now, Success: false, ErrorClass: "timeout"},
-		{SampleID: "web-legacy-sample", RunID: "web-legacy", NodeKey: "node", NodeIdentityKey: "identity", ProbeType: "rtt", Target: "known", Timestamp: now, Success: true},
+		{SampleID: "web-regular-sample", RunID: "web-regular", NodeKey: "node", NodeIdentityKey: "identity", ConfigRevisionKey: "rev-a", ProfileID: "profile-a", ProbeType: "rtt", Target: "known", Timestamp: now, Success: true},
+		{SampleID: "web-diagnostic-sample", RunID: "web-diagnostic", NodeKey: "node", NodeIdentityKey: "identity", ConfigRevisionKey: "rev-a", ProfileID: "profile-a", ProbeType: "rtt", Target: "known", Timestamp: now, Success: false, ErrorClass: "timeout"},
+		{SampleID: "web-legacy-sample", RunID: "web-legacy", NodeKey: "node", NodeIdentityKey: "identity", ConfigRevisionKey: "rev-a", ProfileID: "profile-a", ProbeType: "rtt", Target: "known", Timestamp: now, Success: true},
 	}); err != nil {
 		t.Fatalf("save samples: %v", err)
 	}
@@ -622,14 +622,19 @@ func TestWebMonitorSamplingSourceFiltersConsistent(t *testing.T) {
 	}
 
 	var regular monitor.SampleCursorPage
-	serve("/api/monitor/samples/cursor?node_identity_key=identity&regular_observation_only=true&limit=10", &regular)
+	serve("/api/monitor/samples/cursor?node_identity_key=identity&profile_id=profile-a&config_revision_key=rev-a&regular_observation_only=true&limit=10", &regular)
 	if len(regular.Items) != 1 || regular.Items[0].SampleID != "web-regular-sample" || regular.Items[0].SamplingTier != monitor.SamplingTierRegular {
 		t.Fatalf("cursor regular-only filter admitted other sources: %+v", regular.Items)
 	}
 	var stats monitor.DerivedStats
-	serve("/api/monitor/stats?node_identity_key=identity&regular_observation_only=true", &stats)
+	serve("/api/monitor/stats?node_identity_key=identity&profile_id=profile-a&config_revision_key=rev-a&regular_observation_only=true", &stats)
 	if stats.SampleCount != 1 || stats.SuccessCount != 1 || stats.FailureCount != 0 || !stats.RegularObservationOnly {
 		t.Fatalf("regular-only stats do not match cursor source boundary: %+v", stats)
+	}
+	var revisions []history.NodeHistoryRevision
+	serve("/api/history/node-revisions?profile_id=profile-a&node_identity_key=identity", &revisions)
+	if len(revisions) != 1 || revisions[0].ConfigRevisionKey != "rev-a" {
+		t.Fatalf("history revision options were not scoped to saved identity: %+v", revisions)
 	}
 	var diagnostics []*monitor.MonitorSample
 	serve("/api/monitor/samples?sampling_tier=diagnostic&limit=10", &diagnostics)

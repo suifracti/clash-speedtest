@@ -16,8 +16,9 @@ import PreferencesModal from './components/settings/PreferencesModal.vue'
 import MonitorTimelineView from './components/timeline/MonitorTimelineView.vue'
 import MonitorJobsView from './components/monitor/MonitorJobsView.vue'
 import LatencyWorkbench from './components/workbench/LatencyWorkbench.vue'
+import NodeDetailView from './components/history/NodeDetailView.vue'
 import ProfileSetupModal from './components/profile/ProfileSetupModal.vue'
-import type { MonitorJobNode, MonitorJobPrefill } from './types'
+import type { MonitorJobNode, MonitorJobPrefill, NodeDetailRequest } from './types'
 
 const store = useWorkbenchStore()
 
@@ -30,6 +31,8 @@ const store = useWorkbenchStore()
  */
 const activeView = ref<'workbench' | 'monitor-jobs' | 'timeline'>('workbench')
 const monitorPrefill = ref<MonitorJobPrefill | null>(null)
+const nodeDetail = ref<NodeDetailRequest | null>(null)
+const nodeDetailKey = ref(0)
 const timelineStore = useTimelineStore()
 
 function openMonitorFromWorkbench(prefill: MonitorJobPrefill): void {
@@ -40,6 +43,13 @@ function openMonitorFromWorkbench(prefill: MonitorJobPrefill): void {
 function clearMonitorPrefill(): void {
   monitorPrefill.value = null
 }
+
+function openNodeDetail(request: NodeDetailRequest): void {
+  nodeDetail.value = request
+  nodeDetailKey.value += 1
+}
+
+function closeNodeDetail(): void { nodeDetail.value = null }
 
 watch(activeView, (view) => {
   if (view !== 'monitor-jobs') monitorPrefill.value = null
@@ -86,7 +96,7 @@ onUnmounted(() => {
     <SourceScopeBar v-model:active-view="activeView" />
 
     <template v-if="activeView === 'workbench'">
-      <LatencyWorkbench @open-monitor="openMonitorFromWorkbench" />
+      <LatencyWorkbench @open-monitor="openMonitorFromWorkbench" @open-node-detail="openNodeDetail" />
       <details class="legacy-surface app-page">
         <summary>
           既有批量测速（本阶段未改动）
@@ -104,11 +114,11 @@ onUnmounted(() => {
     </template>
 
     <div v-else-if="activeView === 'monitor-jobs'" class="app-page">
-      <MonitorJobsView :prefill="monitorPrefill" @prefill-consumed="clearMonitorPrefill" @open-timeline="openJobTimeline" />
+      <MonitorJobsView :prefill="monitorPrefill" @prefill-consumed="clearMonitorPrefill" @open-timeline="openJobTimeline" @open-node-detail="openNodeDetail" />
     </div>
 
     <div v-else class="app-page">
-      <MonitorTimelineView />
+      <MonitorTimelineView @open-node-detail="openNodeDetail" />
     </div>
 
     <!-- Modals -->
@@ -116,5 +126,6 @@ onUnmounted(() => {
     <ProfileSetupModal />
     <AirportConsolidatedMatrix />
     <PreferencesModal />
+    <NodeDetailView v-if="nodeDetail" :key="nodeDetailKey" :scope="nodeDetail" @close="closeNodeDetail" />
   </div>
 </template>

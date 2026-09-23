@@ -22,8 +22,10 @@ import TimelineFilterBar from './TimelineFilterBar.vue'
 import TimelineEvidenceBar from './TimelineEvidenceBar.vue'
 import SampleTimeline from './SampleTimeline.vue'
 import TimelineInspector from './TimelineInspector.vue'
+import type { NodeDetailRequest } from '../../types'
 
 const store = useTimelineStore()
+const emit = defineEmits<{ (event: 'open-node-detail', payload: NodeDetailRequest): void }>()
 
 /** Narrowing filters, i.e. everything except the time range itself. */
 const hasActiveNarrowing = computed(
@@ -195,7 +197,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Stable evidence entry point: click-selected, keyboard reachable -->
-      <TimelineInspector />
+      <TimelineInspector @open-node-detail="emit('open-node-detail', $event)" />
     </main>
   </div>
 </template>

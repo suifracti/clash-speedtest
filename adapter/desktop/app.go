@@ -88,6 +88,10 @@ func (a *App) GetWorkbenchLatencyTest(query application.WorkbenchLatencyHistoryD
 	return a.app.GetWorkbenchLatencyTest(a.context(), query)
 }
 
+func (a *App) ListNodeHistoryRevisions(profileID, nodeIdentityKey string) ([]history.NodeHistoryRevision, error) {
+	return a.app.ListNodeHistoryRevisions(a.context(), profileID, nodeIdentityKey)
+}
+
 func (a *App) StartWorkbenchLatencyBatch(req application.WorkbenchLatencyBatchRequest) (*application.WorkbenchLatencyBatchDTO, error) {
 	return a.app.StartWorkbenchLatencyBatch(a.context(), req)
 }
