@@ -643,6 +643,44 @@ func TestWebMonitorSamplingSourceFiltersConsistent(t *testing.T) {
 	}
 }
 
+func TestWebNodeHistoryRevisionsEmptyDatabaseSerializesArray(t *testing.T) {
+	tmpDir := t.TempDir()
+	server, err := NewServer(ServerConfig{
+		Port:         0,
+		ProfilePaths: profiles.Paths{Dir: filepath.Join(tmpDir, "profiles")},
+		HistoryDir:   filepath.Join(tmpDir, "history"),
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer server.Close()
+
+	// This read goes through the real, empty SQLite history store. The Wails
+	// adapter returns this same application slice directly.
+	revisions, err := server.AppService().ListNodeHistoryRevisions(context.Background(), "profile-empty", "identity-empty")
+	if err != nil {
+		t.Fatalf("empty history query: %v", err)
+	}
+	if revisions == nil || len(revisions) != 0 {
+		t.Fatalf("empty application result must be a non-nil empty slice: %#v", revisions)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/history/node-revisions?profile_id=profile-empty&node_identity_key=identity-empty", nil)
+	req.Host = "127.0.0.1:8080"
+	rec := httptest.NewRecorder()
+	server.buildHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("empty revisions endpoint status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != "[]" {
+		t.Fatalf("empty history JSON must be [] rather than null: %s", got)
+	}
+	var decoded []history.NodeHistoryRevision
+	if err := json.Unmarshal(rec.Body.Bytes(), &decoded); err != nil || decoded == nil || len(decoded) != 0 {
+		t.Fatalf("empty history JSON did not decode as an empty array: %#v err=%v", decoded, err)
+	}
+}
+
 func TestWebMonitorSamplingTierUpdatePreservesStoppedState(t *testing.T) {
 	tmpDir := t.TempDir()
 	server, err := NewServer(ServerConfig{

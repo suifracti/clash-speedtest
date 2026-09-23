@@ -177,7 +177,7 @@ async function load(): Promise<void> {
     (async () => {
       try {
         const result = await bridge.fetchNodeHistoryRevisions(props.scope.profileId, props.scope.nodeIdentityKey)
-        if (matchesActiveRequest(token)) revisions.value = result
+        if (matchesActiveRequest(token)) revisions.value = Array.isArray(result) ? result : []
       } catch (error) {
         if (matchesActiveRequest(token)) revisionError.value = errorText(error)
       }
@@ -408,7 +408,7 @@ onBeforeUnmount(() => { generation++ })
         <p class="node-detail-note">这里仅列已保存的 Monitor 原始样本。没有样本表示该窗口未观测；不会据此推断节点失败，也不把未采集、资源跳过或运行中断填入样本分母。</p>
         <div v-if="monitorStatsError" class="node-detail-error">Monitor 统计读取失败：{{ monitorStatsError }}</div>
         <div v-else-if="selectedSource !== 'all' && monitorStats" class="node-detail-stats">
-          <strong>{{ monitorStats.sampleCount }} 个样本</strong><span>{{ monitorStats.successCount }} 成功 / {{ monitorStats.failureCount }} 探测失败</span><span>纳入来源 {{ monitorStats.includedSamplingTiers.join('、') || '无' }}</span><span>成功率 {{ (monitorStats.successRate * 100).toFixed(1) }}%</span><span>P50 {{ monitorStats.latencyP50Ms ?? '—' }} ms · P95 {{ monitorStats.latencyP95Ms ?? '—' }} ms</span><span>请求窗口 {{ windowLabel }}</span><span>实际样本 {{ timeText(monitorStats.firstSampleAtMs) }} – {{ timeText(monitorStats.lastSampleAtMs) }}</span>
+          <strong>{{ monitorStats.sampleCount }} 个样本</strong><span>{{ monitorStats.successCount }} 成功 / {{ monitorStats.failureCount }} 探测失败</span><span>纳入来源 {{ monitorStats.includedSamplingTiers.join('、') || '无' }}</span><span>成功率 {{ (monitorStats.successRate * 100).toFixed(1) }}%</span><span>P50 {{ monitorStats.latencyP50Ms ?? '—' }} ms · P95 {{ monitorStats.latencyP95Ms ?? '—' }} ms</span><span>请求窗口 {{ windowLabel }}</span><span>实际样本 {{ monitorStats.sampleCount > 0 ? `${timeText(monitorStats.firstSampleAtMs)} – ${timeText(monitorStats.lastSampleAtMs)}` : '无样本' }}</span>
         </div>
         <div v-else-if="selectedSource === 'all'" class="node-detail-note">全部历史浏览模式不合并不同来源的统计。</div>
         <div v-if="monitorError" class="node-detail-error">Monitor raw 读取失败：{{ monitorError }}</div>

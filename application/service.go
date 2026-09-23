@@ -2261,7 +2261,14 @@ func (s *AppService) ListNodeHistoryRevisions(ctx context.Context, profileID, no
 	if profileID == "" || nodeIdentityKey == "" {
 		return nil, monitor.NewValidationError("revision 查询必须提供 profile_id 和 node_identity_key")
 	}
-	return s.historyStore.ListNodeHistoryRevisions(ctx, profileID, nodeIdentityKey)
+	revisions, err := s.historyStore.ListNodeHistoryRevisions(ctx, profileID, nodeIdentityKey)
+	if err != nil {
+		return nil, err
+	}
+	if revisions == nil {
+		return []history.NodeHistoryRevision{}, nil
+	}
+	return revisions, nil
 }
 
 // Facet scan bounds. The facet read model is presentation-only, so its cost is bounded by a

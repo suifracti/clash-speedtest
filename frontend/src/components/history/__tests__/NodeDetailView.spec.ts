@@ -113,13 +113,40 @@ describe('NodeDetailView', () => {
   it('keeps deleted-profile history readable and never reports failed Monitor reads as an empty history', async () => {
     monitorMocks.fetchMonitorNodeOptions.mockResolvedValue([])
     monitorMocks.queryMonitorSamplesCursor.mockRejectedValue(new Error('database unavailable'))
+    bridgeMocks.fetchNodeHistoryRevisions.mockRejectedValue(new Error('revision database unavailable'))
     wrapper = mount(NodeDetailView, { props: { scope: baseScope } })
     await flushPromises()
 
     expect(wrapper.text()).toContain('历史节点 · 当前订阅缓存中不可用')
     expect(wrapper.text()).toContain('Monitor raw 读取失败：database unavailable')
+    expect(wrapper.text()).toContain('revision 列表读取失败：revision database unavailable')
     expect(wrapper.text()).not.toContain('所选身份、revision、来源和窗口内没有 raw 样本')
     expect(wrapper.text()).toContain('attempt-a')
+  })
+
+  it('renders a node with no history when revision reads return null without starting measurements', async () => {
+    monitorMocks.fetchMonitorNodeOptions.mockResolvedValue([])
+    monitorMocks.fetchMonitorStats.mockResolvedValue({ ...stats(), sampleCount: 0, successCount: 0, failureCount: 0, successRate: 0, includedSamplingTiers: [], firstSampleAtMs: 0, lastSampleAtMs: 0 })
+    monitorMocks.queryMonitorSamplesCursor.mockResolvedValue({ items: [], nextCursor: '', hasMore: false, limit: 50 })
+    bridgeMocks.fetchNodeHistoryRevisions.mockResolvedValue(null)
+    bridgeMocks.fetchWorkbenchLatencyHistory.mockResolvedValue({ tests: [], since: '', until: '', as_of: '', has_more: false, complete: true })
+    const scope = { ...baseScope, nodeKey: 'new-node', configRevisionKey: 'entry-revision', displayName: '新节点' }
+    wrapper = mount(NodeDetailView, { props: { scope } })
+    await flushPromises()
+
+    const revisionSelect = wrapper.get('select[aria-label="配置 revision"]')
+    expect(revisionSelect.find('option[value="entry-revision"]').exists()).toBe(true)
+    expect(revisionSelect.text()).toContain('当前/入口版本')
+    expect(wrapper.text()).toContain('所选身份、revision、来源和窗口内没有 raw 样本')
+    expect(wrapper.text()).toContain('此身份、revision 和请求窗口内没有已保存 attempt')
+    expect(wrapper.text()).toContain('实际样本 无样本')
+    expect(wrapper.text()).not.toContain('1970')
+    expect(wrapper.text()).not.toContain('revision 列表读取失败')
+    expect(bridgeMocks.fetchWorkbenchLatencyHistory).toHaveBeenCalledWith(expect.objectContaining({ profile_id: 'profile-a', node_identity_key: 'identity-a', config_revision_key: 'entry-revision' }))
+    expect(monitorMocks.queryMonitorSamplesCursor).toHaveBeenCalledWith(expect.objectContaining({ profileId: 'profile-a', nodeIdentityKey: 'identity-a', configRevisionKey: 'entry-revision' }))
+    expect(bridgeMocks.startWorkbenchLatencyBatch).not.toHaveBeenCalled()
+    expect(bridgeMocks.runWorkbenchLatencyTest).not.toHaveBeenCalled()
+    expect(monitorMocks.triggerMonitorJob).not.toHaveBeenCalled()
   })
 
   it('ignores an older source response after the user changes the source filter', async () => {

@@ -1352,7 +1352,7 @@ func (d *DB) ListNodeHistoryRevisions(ctx context.Context, profileID, nodeIdenti
 		return nil, fmt.Errorf("list node history revisions: %w", err)
 	}
 	defer rows.Close()
-	var revisions []NodeHistoryRevision
+	revisions := make([]NodeHistoryRevision, 0)
 	for rows.Next() {
 		var item NodeHistoryRevision
 		if err := rows.Scan(&item.ConfigRevisionKey, &item.NodeKey, &item.DisplayName, &item.LastObservedAt); err != nil {
