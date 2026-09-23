@@ -15,6 +15,9 @@ export function makeSample(overrides: Partial<MonitorSample> = {}): MonitorSampl
   return {
     sampleId: `s_${String(seq).padStart(4, '0')}`,
     runId: 'run_1',
+    samplingTier: 'regular',
+    triggerType: 'scheduled',
+    samplingStrategyVersion: 1,
     nodeKey: 'nk_jp01',
     nodeIdentityKey: 'nid_jp01',
     configRevisionKey: 'rev_1',

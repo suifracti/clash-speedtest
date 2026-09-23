@@ -44,6 +44,7 @@ type MonitorJobCreateRequest struct {
 	ProfileID       string                        `json:"profile_id"`
 	NodeKeys        []string                      `json:"node_keys"`
 	ProbeSet        monitor.ProbeSetType          `json:"probe_set"`
+	SamplingTier    monitor.SamplingTier          `json:"sampling_tier"`
 	IntervalSeconds int64                         `json:"interval_seconds"`
 	TimeoutSeconds  int64                         `json:"timeout_seconds"`
 	NodeContexts    []MonitorNodeSelectionContext `json:"node_contexts,omitempty"`
@@ -68,6 +69,7 @@ type MonitorJobDTO struct {
 	NodeKeys              []string             `json:"node_keys"`
 	Nodes                 []MonitorJobNodeDTO  `json:"nodes"`
 	ProbeSet              monitor.ProbeSetType `json:"probe_set"`
+	SamplingTier          monitor.SamplingTier `json:"sampling_tier"`
 	IntervalSeconds       int64                `json:"interval_seconds"`
 	TimeoutSeconds        int64                `json:"timeout_seconds"`
 	State                 monitor.JobState     `json:"state"`
@@ -156,6 +158,13 @@ func (s *AppService) CreateMonitorJobFromRequest(req MonitorJobCreateRequest) (*
 	if !validMonitorProbeSet(req.ProbeSet) {
 		return nil, monitor.NewValidationError("probe_set 必须是 light、service 或 heavy")
 	}
+	tier := req.SamplingTier
+	if tier == "" {
+		tier = monitor.SamplingTierRegular
+	}
+	if !validMonitorSamplingTier(tier) {
+		return nil, monitor.NewValidationError("sampling_tier 必须是 regular、focus 或 sparse")
+	}
 	if req.IntervalSeconds < minMonitorIntervalSeconds || req.IntervalSeconds > maxMonitorIntervalSeconds {
 		return nil, monitor.NewValidationError(fmt.Sprintf("interval_seconds 必须在 %d 到 %d 之间", minMonitorIntervalSeconds, maxMonitorIntervalSeconds))
 	}
@@ -210,13 +219,14 @@ func (s *AppService) CreateMonitorJobFromRequest(req MonitorJobCreateRequest) (*
 	}
 
 	job, err := s.CreateMonitorJob(monitor.MonitorJob{
-		Name:      strings.TrimSpace(req.Name),
-		ProfileID: profileID,
-		NodeKeys:  append([]string(nil), req.NodeKeys...),
-		Nodes:     selected,
-		ProbeSet:  req.ProbeSet,
-		Interval:  time.Duration(req.IntervalSeconds) * time.Second,
-		Timeout:   time.Duration(req.TimeoutSeconds) * time.Second,
+		Name:         strings.TrimSpace(req.Name),
+		ProfileID:    profileID,
+		NodeKeys:     append([]string(nil), req.NodeKeys...),
+		Nodes:        selected,
+		ProbeSet:     req.ProbeSet,
+		SamplingTier: tier,
+		Interval:     time.Duration(req.IntervalSeconds) * time.Second,
+		Timeout:      time.Duration(req.TimeoutSeconds) * time.Second,
 	})
 	if err != nil {
 		return nil, err
@@ -300,15 +310,16 @@ func (s *AppService) loadPersistedMonitorJobs() error {
 			return fmt.Errorf("monitor job definition is nil")
 		}
 		job := monitor.MonitorJob{
-			ID:        definition.ID,
-			Name:      definition.Name,
-			ProfileID: definition.ProfileID,
-			NodeKeys:  make([]string, 0, len(definition.Nodes)),
-			ProbeSet:  definition.ProbeSet,
-			Interval:  definition.Interval,
-			Timeout:   definition.Timeout,
-			CreatedAt: definition.CreatedAt,
-			UpdatedAt: definition.UpdatedAt,
+			ID:           definition.ID,
+			Name:         definition.Name,
+			ProfileID:    definition.ProfileID,
+			NodeKeys:     make([]string, 0, len(definition.Nodes)),
+			ProbeSet:     definition.ProbeSet,
+			SamplingTier: definition.SamplingTier,
+			Interval:     definition.Interval,
+			Timeout:      definition.Timeout,
+			CreatedAt:    definition.CreatedAt,
+			UpdatedAt:    definition.UpdatedAt,
 		}
 		job.Nodes = monitorNodesFromReferences(definition.Nodes)
 		for _, node := range definition.Nodes {
@@ -398,6 +409,7 @@ func monitorJobDefinitionFromJob(job monitor.MonitorJob) *monitor.MonitorJobDefi
 		ProfileID:         job.ProfileID,
 		Nodes:             references,
 		ProbeSet:          job.ProbeSet,
+		SamplingTier:      job.SamplingTier,
 		Interval:          job.Interval,
 		Timeout:           job.Timeout,
 		CreatedAt:         job.CreatedAt,
@@ -522,6 +534,7 @@ func monitorJobDTO(job monitor.MonitorJob, profileName string) MonitorJobDTO {
 		NodeKeys:              nodeKeys,
 		Nodes:                 nodes,
 		ProbeSet:              job.ProbeSet,
+		SamplingTier:          normalizedJobSamplingTier(job.SamplingTier),
 		IntervalSeconds:       int64(job.Interval / time.Second),
 		TimeoutSeconds:        int64(job.Timeout / time.Second),
 		State:                 job.State,
@@ -546,6 +559,17 @@ func validMonitorProbeSet(probeSet monitor.ProbeSetType) bool {
 	default:
 		return false
 	}
+}
+
+func validMonitorSamplingTier(tier monitor.SamplingTier) bool {
+	return tier == monitor.SamplingTierRegular || tier == monitor.SamplingTierFocus || tier == monitor.SamplingTierSparse
+}
+
+func normalizedJobSamplingTier(tier monitor.SamplingTier) monitor.SamplingTier {
+	if !validMonitorSamplingTier(tier) {
+		return monitor.SamplingTierRegular
+	}
+	return tier
 }
 
 func configString(config map[string]any, key string) string {

@@ -35,6 +35,7 @@ import type {
 	MonitorRetentionResult,
 	MonitorStorageUsage,
 	MonitorBudgetStatus,
+	MonitorSamplingTier,
 	RawSampleCursorPageWire,
 	SampleCursorPage,
 } from '../types'
@@ -59,6 +60,9 @@ export function normalizeMonitorSample(wire: RawMonitorSampleWire): MonitorSampl
   return {
     sampleId: wire.sample_id,
     runId: wire.run_id,
+    samplingTier: wire.sampling_tier ?? 'legacy_unknown',
+    triggerType: wire.trigger_type ?? 'legacy_unknown',
+    samplingStrategyVersion: wire.sampling_strategy_version ?? 0,
     nodeKey: wire.node_key ?? '',
     nodeIdentityKey: wire.node_identity_key ?? '',
     configRevisionKey: wire.config_revision_key ?? '',
@@ -92,6 +96,8 @@ export function normalizeCursorPage(wire: RawSampleCursorPageWire): SampleCursor
 export function normalizeDerivedStats(wire: RawDerivedStatsWire): DerivedStats {
   return {
     sampleCount: wire.sample_count ?? 0,
+    includedSamplingTiers: Array.isArray(wire.included_sampling_tiers) ? wire.included_sampling_tiers : [],
+    regularObservationOnly: !!wire.regular_observation_only,
     successCount: wire.success_count ?? 0,
     failureCount: wire.failure_count ?? 0,
     successRate: typeof wire.success_rate === 'number' ? wire.success_rate : 0,
@@ -137,6 +143,8 @@ export interface MonitorQueryFilter {
   profileId?: string
   probeType?: string
   target?: string
+  samplingTier?: 'regular' | 'focus' | 'sparse' | 'diagnostic' | 'legacy_unknown'
+  regularObservationOnly?: boolean
   sinceMs?: number | null
   untilMs?: number | null
 }
@@ -161,6 +169,8 @@ function toGoCursorFilter(query: MonitorCursorQuery): Record<string, unknown> {
   if (query.profileId) filter.profile_id = query.profileId
   if (query.probeType) filter.probe_type = query.probeType
   if (query.target) filter.target = query.target
+  if (query.samplingTier) filter.sampling_tier = query.samplingTier
+  if (query.regularObservationOnly) filter.regular_observation_only = true
   if (query.limit !== undefined) filter.limit = query.limit
   filter.order_desc = query.orderDesc !== false
   if (query.cursor) filter.cursor = query.cursor
@@ -182,6 +192,8 @@ export function buildCursorQueryString(query: MonitorCursorQuery): string {
   if (query.profileId) params.set('profile_id', query.profileId)
   if (query.probeType) params.set('probe_type', query.probeType)
   if (query.target) params.set('target', query.target)
+  if (query.samplingTier) params.set('sampling_tier', query.samplingTier)
+  if (query.regularObservationOnly) params.set('regular_observation_only', 'true')
   if (query.limit !== undefined) params.set('limit', String(query.limit))
   params.set('order_desc', query.orderDesc === false ? 'false' : 'true')
   if (query.cursor) params.set('cursor', query.cursor)
@@ -202,6 +214,8 @@ function buildStatsQueryString(query: MonitorQueryFilter): string {
   if (query.profileId) params.set('profile_id', query.profileId)
   if (query.probeType) params.set('probe_type', query.probeType)
   if (query.target) params.set('target', query.target)
+  if (query.samplingTier) params.set('sampling_tier', query.samplingTier)
+  if (query.regularObservationOnly) params.set('regular_observation_only', 'true')
 
   const since = isoOrUndefined(query.sinceMs)
   if (since) params.set('since', since)
@@ -219,6 +233,8 @@ function toGoStatsQuery(query: MonitorQueryFilter): Record<string, unknown> {
   if (query.profileId) out.profile_id = query.profileId
   if (query.probeType) out.probe_type = query.probeType
   if (query.target) out.target = query.target
+  if (query.samplingTier) out.sampling_tier = query.samplingTier
+  if (query.regularObservationOnly) out.regular_observation_only = true
 
   const since = isoOrUndefined(query.sinceMs)
   if (since) out.since = since
@@ -280,6 +296,7 @@ export function normalizeMonitorJob(wire: RawMonitorJobWire): MonitorJob {
 		nodeKeys: Array.isArray(wire.node_keys) ? wire.node_keys : [],
 		nodes: (Array.isArray(wire.nodes) ? wire.nodes : []).map(normalizeMonitorJobNode),
 		probeSet: wire.probe_set,
+		samplingTier: wire.sampling_tier ?? 'regular',
 		intervalSeconds: Number.isFinite(wire.interval_seconds) ? wire.interval_seconds : 0,
 		timeoutSeconds: Number.isFinite(wire.timeout_seconds) ? wire.timeout_seconds : 0,
 		state: wire.state,
@@ -301,6 +318,9 @@ export function normalizeMonitorRun(wire: RawMonitorRunWire): MonitorRun {
 	return {
 		runId: wire.run_id ?? '',
 		jobId: wire.job_id ?? '',
+		samplingTier: wire.sampling_tier ?? 'legacy_unknown',
+		triggerType: wire.trigger_type ?? 'legacy_unknown',
+		samplingStrategyVersion: wire.sampling_strategy_version ?? 0,
 		scheduledAt: wire.scheduled_at ?? '',
 		startedAt: wire.started_at ?? '',
 		finishedAt: wire.finished_at,
@@ -352,6 +372,21 @@ export async function createMonitorJob(req: MonitorJobCreateRequest): Promise<Mo
 	})
 	if (!res.ok) throw await readError(res)
 	return normalizeMonitorJob((await res.json()) as RawMonitorJobWire)
+}
+
+/** Updates only a job's periodic sampling tier; lifecycle state is unchanged. */
+export async function updateMonitorJobSamplingTier(jobId: string, tier: MonitorSamplingTier): Promise<void> {
+	if (isWails()) {
+		await window.go!.desktop!.App!.UpdateMonitorJobSamplingTier(jobId, tier)
+		return
+	}
+
+	const res = await fetch(`${API_BASE}/api/monitor/jobs/${encodeURIComponent(jobId)}/sampling-tier`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ sampling_tier: tier }),
+	})
+	if (!res.ok) throw await readError(res)
 }
 
 export async function fetchMonitorStorageUsage(): Promise<MonitorStorageUsage> {
@@ -419,6 +454,17 @@ export async function controlMonitorJob(jobId: string, action: MonitorJobAction)
 		method: 'POST',
 	})
 	if (!res.ok) throw await readError(res)
+}
+
+/** Runs one explicit diagnostic round without changing the periodic scheduler state. */
+export async function triggerMonitorJob(jobId: string): Promise<MonitorRun> {
+	if (isWails()) {
+		const raw = await window.go!.desktop!.App!.TriggerMonitorJob(jobId)
+		return normalizeMonitorRun(raw as RawMonitorRunWire)
+	}
+	const res = await fetch(`${API_BASE}/api/monitor/jobs/${encodeURIComponent(jobId)}/trigger`, { method: 'POST' })
+	if (!res.ok) throw await readError(res)
+	return normalizeMonitorRun((await res.json()) as RawMonitorRunWire)
 }
 
 /** Reads one page of raw samples via the single-direction keyset cursor. */

@@ -23,6 +23,20 @@ const current = computed(() => store.latestSample)
 
 const currentSemantic = computed(() => (current.value ? sampleSemantic(current.value) : null))
 
+const statsScopeLabel = computed(() => {
+  if (store.samplingTier) return `来源：${store.samplingTier}`
+  return '常规观测：regular / focus / sparse；已排除 diagnostic 与 legacy_unknown'
+})
+
+function includedTierLabel(stats: DerivedStats | null): string {
+  return stats?.includedSamplingTiers.length ? stats.includedSamplingTiers.join('、') : '无'
+}
+
+function observedRangeLabel(stats: DerivedStats | null): string {
+  if (!stats?.firstSampleAtMs || !stats.lastSampleAtMs) return '无样本时间范围'
+  return `${new Date(stats.firstSampleAtMs).toLocaleString()} → ${new Date(stats.lastSampleAtMs).toLocaleString()}`
+}
+
 const rangeWindowLabel = computed(() => {
   const start = formatWallClock(store.domainStartMs, tzOffsetMinutes.value)
   const end = formatWallClock(store.domainEndMs, tzOffsetMinutes.value)
@@ -91,6 +105,7 @@ function topErrors(stats: DerivedStats | null): { label: string; count: number }
         <span class="text-[10px] text-content-muted font-mono truncate">{{ rangeWindowLabel }}</span>
       </div>
       <template v-if="store.rangeStats">
+        <div class="text-[10px] leading-snug text-content-muted">{{ statsScopeLabel }}</div>
         <div class="grid grid-cols-2 gap-x-2 gap-y-0.5 font-mono">
           <span class="text-content-muted">样本</span>
           <span class="text-right text-content-main">{{ store.rangeStats.sampleCount }}</span>
@@ -105,6 +120,10 @@ function topErrors(stats: DerivedStats | null): { label: string; count: number }
             {{ errorTotal(store.rangeStats) }}
           </span>
         </div>
+        <div class="text-[10px] leading-snug text-content-muted">
+          纳入层级：{{ includedTierLabel(store.rangeStats) }} · 样本加权结果，不代表时间可用率或公平节点排名
+        </div>
+        <div class="text-[10px] leading-snug text-content-muted">实际样本范围：{{ observedRangeLabel(store.rangeStats) }}</div>
         <div v-if="topErrors(store.rangeStats).length > 0" class="flex flex-wrap gap-1 pt-0.5">
           <span
             v-for="e in topErrors(store.rangeStats)"

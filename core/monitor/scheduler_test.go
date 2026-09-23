@@ -406,6 +406,35 @@ func TestScheduler_TriggerImmediate(t *testing.T) {
 	if pausedRun == nil || pausedRun.Status != RunStatusCompleted || scheduler.CompletedRuns() != completedBeforePausedTrigger+1 {
 		t.Fatalf("manual trigger while paused did not complete one run: run=%+v completed=%d before=%d", pausedRun, scheduler.CompletedRuns(), completedBeforePausedTrigger)
 	}
+	if pausedRun.SamplingTier != SamplingTierDiagnostic || pausedRun.TriggerType != SamplingTriggerManual || pausedRun.SamplingStrategyVersion != SamplingStrategyVersion {
+		t.Fatalf("paused manual run did not freeze diagnostic source metadata: %+v", pausedRun)
+	}
+}
+
+func TestScheduler_UpdateSamplingTierPreservesPausedState(t *testing.T) {
+	scheduler, err := NewScheduler(SchedulerConfig{
+		Job:    &MonitorJob{ID: "update-paused", Interval: time.Minute, SamplingTier: SamplingTierRegular},
+		Runner: NewRunner(RunnerConfig{Store: &mockSampleStore{}}),
+	})
+	if err != nil {
+		t.Fatalf("NewScheduler: %v", err)
+	}
+
+	// Put the scheduler through its state transition without launching a ticker or run.
+	scheduler.mu.Lock()
+	scheduler.state = JobStateRunning
+	scheduler.job.State = JobStateRunning
+	scheduler.mu.Unlock()
+	if err := scheduler.Pause(); err != nil {
+		t.Fatalf("Pause: %v", err)
+	}
+	if err := scheduler.UpdateSamplingTier(SamplingTierSparse, time.Now()); err != nil {
+		t.Fatalf("UpdateSamplingTier: %v", err)
+	}
+	job := scheduler.Job()
+	if job.State != JobStatePaused || job.SamplingTier != SamplingTierSparse || job.Interval != time.Minute {
+		t.Fatalf("sampling-tier update changed paused state or interval: %+v", job)
+	}
 }
 
 func TestScheduler_PausedThenStartNoDuplicateLoop(t *testing.T) {

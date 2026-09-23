@@ -96,3 +96,39 @@ func TestAppService_GetMonitorRecommendation_EvidenceWindowCoversFreshnessHorizo
 		t.Fatalf("with a single node there is no candidate, expected stay, got %s", rec.Decision)
 	}
 }
+
+func TestAppService_GetMonitorRecommendation_ExcludesDiagnosticRunEvidence(t *testing.T) {
+	svc, hStore := newEvidenceTestService(t)
+	job := registerEvidenceJob(t, svc)
+	now := time.Now()
+	node := job.Nodes[0]
+	insertEvidenceSamples(t, hStore, node, job.ProfileID, "source-filter", now, 10*time.Second, time.Second, 3, true, 80, "")
+	diagnosticAt := now.Add(-10 * time.Second)
+	if err := hStore.SaveMonitorRun(context.Background(), &monitor.MonitorRun{
+		RunID: "diagnostic-only-run", JobID: job.ID, SamplingTier: monitor.SamplingTierDiagnostic,
+		TriggerType: monitor.SamplingTriggerManual, SamplingStrategyVersion: monitor.SamplingStrategyVersion,
+		ScheduledAt: diagnosticAt, StartedAt: diagnosticAt, Status: monitor.RunStatusFailed,
+		TotalNodes: 1, FailedNodes: 1,
+	}); err != nil {
+		t.Fatalf("save diagnostic run: %v", err)
+	}
+	if err := hStore.SaveMonitorSamples(context.Background(), []*monitor.MonitorSample{{
+		SampleID: "diagnostic-failure", RunID: "diagnostic-only-run", NodeKey: node.NodeKey,
+		NodeIdentityKey: node.NodeIdentityKey, ConfigRevisionKey: node.ConfigRevisionKey,
+		ProfileID: job.ProfileID, DisplayNameSnapshot: node.DisplayName, ProbeType: "rtt",
+		Target: "https://cp.cloudflare.com/generate_204", Timestamp: diagnosticAt,
+		Success: false, ErrorClass: "timeout",
+	}}); err != nil {
+		t.Fatalf("save diagnostic sample: %v", err)
+	}
+
+	rec, err := svc.GetMonitorRecommendation(context.Background(), MonitorRecommendationRequest{
+		JobID: job.ID, CurrentNodeKey: node.NodeKey,
+	})
+	if err != nil {
+		t.Fatalf("GetMonitorRecommendation: %v", err)
+	}
+	if rec.SampleCount != 3 || rec.CurrentNode == nil || rec.CurrentNode.SampleCount != 3 {
+		t.Fatalf("diagnostic sample entered regular recommendation evidence: total=%d current=%+v", rec.SampleCount, rec.CurrentNode)
+	}
+}

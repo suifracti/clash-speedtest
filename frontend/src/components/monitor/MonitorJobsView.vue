@@ -4,7 +4,7 @@ import * as api from '../../api/monitor'
 import UiSelect from '../common/UiSelect.vue'
 import MonitorRetentionPanel from './MonitorRetentionPanel.vue'
 import MonitorBudgetPanel from './MonitorBudgetPanel.vue'
-import type { MonitorJob, MonitorJobNode, MonitorJobPrefill, MonitorNodeOption, MonitorNodeSelectionContext, MonitorRun } from '../../types'
+import type { MonitorJob, MonitorJobNode, MonitorJobPrefill, MonitorNodeOption, MonitorNodeSelectionContext, MonitorRun, MonitorSamplingTier } from '../../types'
 
 const props = defineProps<{ prefill?: MonitorJobPrefill | null }>()
 
@@ -23,12 +23,17 @@ const loadError = ref('')
 const feedback = ref('')
 const creating = ref(false)
 const busyJob = ref<{ id: string; action: api.MonitorJobAction } | null>(null)
+const triggeringJobId = ref('')
+const samplingTierDrafts = ref<Record<string, MonitorSamplingTier>>({})
+const savingSamplingTierJobId = ref('')
 
 const name = ref('')
 const profileId = ref('')
 const selectedNodeKeys = ref<string[]>([])
 const probeSet = ref<'light' | 'service' | 'heavy'>('light')
+const samplingTier = ref<'regular' | 'focus' | 'sparse'>('regular')
 const intervalSeconds = ref(60)
+const intervalManuallySet = ref(false)
 const timeoutSeconds = ref(10)
 const prefillActive = ref(false)
 const prefillError = ref('')
@@ -70,8 +75,15 @@ const intervalOptions = [
   { value: 10, label: '10 秒' },
   { value: 30, label: '30 秒' },
   { value: 60, label: '1 分钟' },
+  { value: 120, label: '2 分钟' },
   { value: 300, label: '5 分钟' },
   { value: 900, label: '15 分钟' },
+  { value: 1800, label: '30 分钟' },
+]
+const samplingTierOptions = [
+  { value: 'regular', label: 'regular（兼容既有周期观察）' },
+  { value: 'focus', label: 'focus（关注任务，建议 2 分钟）' },
+  { value: 'sparse', label: 'sparse（低频任务，建议 30 分钟）' },
 ]
 const timeoutOptions = [
   { value: 5, label: '5 秒' },
@@ -146,9 +158,20 @@ function setProbeSet(value: string | number): void {
   if (value === 'light' || value === 'service' || value === 'heavy') probeSet.value = value
 }
 
+function setSamplingTier(value: string | number): void {
+  if (value !== 'regular' && value !== 'focus' && value !== 'sparse') return
+  samplingTier.value = value
+  if (!intervalManuallySet.value) {
+    intervalSeconds.value = value === 'focus' ? 120 : value === 'sparse' ? 1800 : 60
+  }
+}
+
 function setIntervalSeconds(value: string | number): void {
   const next = Number(value)
-  if (Number.isFinite(next)) intervalSeconds.value = next
+  if (Number.isFinite(next)) {
+    intervalSeconds.value = next
+    intervalManuallySet.value = true
+  }
 }
 
 function setTimeoutSeconds(value: string | number): void {
@@ -171,6 +194,26 @@ function stateClass(state: MonitorJob['state']): string {
 
 function probeLabel(probe: MonitorJob['probeSet']): string {
   return { light: '轻量连通性', service: '服务响应', heavy: '完整探针组合' }[probe] ?? probe
+}
+
+function samplingTierLabel(tier: MonitorJob['samplingTier']): string {
+  return { regular: 'regular 常规', focus: 'focus 关注', sparse: 'sparse 低频' }[tier] ?? tier
+}
+
+function jobSamplingTierDraft(job: MonitorJob): MonitorSamplingTier {
+  return samplingTierDrafts.value[job.id] ?? job.samplingTier
+}
+
+function setJobSamplingTierDraft(job: MonitorJob, value: string | number): void {
+  const tier = String(value)
+  if (tier !== 'regular' && tier !== 'focus' && tier !== 'sparse') return
+  samplingTierDrafts.value = { ...samplingTierDrafts.value, [job.id]: tier }
+}
+
+function runSourceLabel(run: MonitorRun): string {
+  const tier = run.samplingTier === 'legacy_unknown' ? '旧来源未知' : run.samplingTier
+  const trigger = run.triggerType === 'manual' ? '手动触发' : run.triggerType === 'scheduled' ? '周期触发' : '旧触发未知'
+  return `${tier} · ${trigger}`
 }
 
 function runLabel(status: MonitorRun['status']): string {
@@ -252,6 +295,7 @@ async function createJob(): Promise<void> {
       profile_id: profileId.value,
       node_keys: [...selectedNodeKeys.value],
       probe_set: probeSet.value,
+      sampling_tier: samplingTier.value,
       interval_seconds: Number(intervalSeconds.value),
       timeout_seconds: Number(timeoutSeconds.value),
       ...(nodeContexts ? { node_contexts: nodeContexts } : {}),
@@ -285,6 +329,43 @@ async function applyAction(job: MonitorJob, action: api.MonitorJobAction): Promi
     await reload()
   } finally {
     busyJob.value = null
+  }
+}
+
+async function saveJobSamplingTier(job: MonitorJob): Promise<void> {
+  const tier = jobSamplingTierDraft(job)
+  if (tier === job.samplingTier || savingSamplingTierJobId.value || busyJob.value) return
+  savingSamplingTierJobId.value = job.id
+  feedback.value = ''
+  loadError.value = ''
+  try {
+    await api.updateMonitorJobSamplingTier(job.id, tier)
+    const drafts = { ...samplingTierDrafts.value }
+    delete drafts[job.id]
+    samplingTierDrafts.value = drafts
+    await reload()
+    feedback.value = `已保存“${job.name}”的 ${samplingTierLabel(tier)} 层级；任务仍为${formatState(job.state)}，未启动或恢复周期。`
+  } catch (error) {
+    loadError.value = `保存层级失败：${errorMessage(error)}`
+  } finally {
+    savingSamplingTierJobId.value = ''
+  }
+}
+
+async function triggerDiagnostic(job: MonitorJob): Promise<void> {
+  if ((job.state !== 'running' && job.state !== 'paused') || busyJob.value || triggeringJobId.value) return
+  triggeringJobId.value = job.id
+  feedback.value = ''
+  loadError.value = ''
+  try {
+    const run = await api.triggerMonitorJob(job.id)
+    await reload()
+    feedback.value = `已完成一次 diagnostic 手动诊断（${run.runId}）；任务仍为${formatState(job.state)}，周期设置未改变。`
+  } catch (error) {
+    loadError.value = `手动诊断失败：${errorMessage(error)}`
+    await reload()
+  } finally {
+    triggeringJobId.value = ''
   }
 }
 
@@ -361,7 +442,7 @@ onBeforeUnmount(() => {
           <button type="button" class="ml-2 underline" :disabled="creating" @click="cancelPrefill">取消本次预填</button>
         </div>
 
-        <div class="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[240px_1fr_180px_160px_auto]">
+        <div class="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[240px_1fr_180px_280px_160px_160px]">
           <label class="flex flex-col gap-1 text-xs">
             <span class="font-medium text-content-secondary">订阅</span>
             <UiSelect
@@ -389,6 +470,12 @@ onBeforeUnmount(() => {
           <label class="flex flex-col gap-1 text-xs">
             <span class="font-medium text-content-secondary">探针</span>
             <UiSelect :model-value="probeSet" @update:model-value="setProbeSet" :disabled="creating" aria-label="选择探针" :options="probeOptions" />
+          </label>
+
+          <label class="flex flex-col gap-1 text-xs">
+            <span class="font-medium text-content-secondary">周期采样层级</span>
+            <UiSelect :model-value="samplingTier" @update:model-value="setSamplingTier" :disabled="creating" aria-label="选择周期采样层级" :options="samplingTierOptions" />
+            <span class="text-[10px] text-content-muted">仅适用于新建任务；建议间隔可自行调整。诊断只通过手动触发记录。</span>
           </label>
 
           <label class="flex flex-col gap-1 text-xs">
@@ -432,7 +519,7 @@ onBeforeUnmount(() => {
             <div class="flex flex-wrap items-start justify-between gap-2">
               <div class="min-w-0">
                 <h4 class="truncate text-sm font-semibold">{{ job.name }}</h4>
-                <p class="mt-1 truncate text-[11px] text-content-muted">{{ job.profileName || job.profileId }} · {{ probeLabel(job.probeSet) }} · 每 {{ job.intervalSeconds }} 秒 · 超时 {{ job.timeoutSeconds }} 秒</p>
+                <p class="mt-1 truncate text-[11px] text-content-muted">{{ job.profileName || job.profileId }} · {{ samplingTierLabel(job.samplingTier) }} · {{ probeLabel(job.probeSet) }} · 每 {{ job.intervalSeconds }} 秒 · 超时 {{ job.timeoutSeconds }} 秒</p>
               </div>
               <span class="rounded-full border px-2 py-0.5 text-[11px]" :class="stateClass(job.state)">{{ formatState(job.state) }}</span>
             </div>
@@ -449,6 +536,33 @@ onBeforeUnmount(() => {
               </button>
               <button @click="applyAction(job, 'stop')" :disabled="job.state === 'stopped' || job.state === 'blocked' || !!busyJob" class="rounded border border-red-500/40 px-2 py-1 text-[11px] text-red-700 hover:bg-red-500/10 disabled:opacity-40">
                 {{ isBusy(job, 'stop') ? '停止中…' : '停止' }}
+              </button>
+              <button
+                v-if="job.state === 'running' || job.state === 'paused'"
+                @click="triggerDiagnostic(job)"
+                :disabled="!!busyJob || !!triggeringJobId"
+                class="rounded border border-violet-500/40 px-2 py-1 text-[11px] text-violet-700 hover:bg-violet-500/10 disabled:opacity-50"
+              >
+                {{ triggeringJobId === job.id ? '诊断中…' : '手动诊断（一次）' }}
+              </button>
+            </div>
+
+            <div class="mt-2 flex flex-wrap items-center gap-2">
+              <label class="text-[11px] text-content-secondary" :for="`sampling-tier-${job.id}`">周期层级</label>
+              <UiSelect
+                :id="`sampling-tier-${job.id}`"
+                :model-value="jobSamplingTierDraft(job)"
+                @update:model-value="setJobSamplingTierDraft(job, $event)"
+                :disabled="!!busyJob || !!savingSamplingTierJobId"
+                :aria-label="`${job.name} 的周期采样层级`"
+                :options="samplingTierOptions"
+              />
+              <button
+                @click="saveJobSamplingTier(job)"
+                :disabled="jobSamplingTierDraft(job) === job.samplingTier || !!busyJob || !!savingSamplingTierJobId"
+                class="rounded border border-border px-2 py-1 text-[11px] text-content-secondary hover:bg-card disabled:opacity-40"
+              >
+                {{ savingSamplingTierJobId === job.id ? '保存中…' : '保存层级' }}
               </button>
             </div>
 
@@ -484,6 +598,7 @@ onBeforeUnmount(() => {
               <div v-else class="space-y-1">
                 <div v-for="run in recentRuns[job.id]" :key="run.runId" class="flex flex-wrap items-center justify-between gap-2 text-[11px]">
                   <span class="text-content-muted">{{ formatTime(run.startedAt) }}</span>
+                  <span class="rounded border border-border px-1 py-0.5 text-content-secondary">{{ runSourceLabel(run) }}</span>
                   <span :class="run.status === 'completed' ? 'text-emerald-700 dark:text-emerald-300' : run.status === 'running' ? 'text-blue-700 dark:text-blue-300' : 'text-amber-700 dark:text-amber-300'">{{ runLabel(run.status) }}</span>
                   <span class="text-content-muted">{{ run.successNodes }}/{{ run.totalNodes }} 节点成功</span>
                   <span v-if="run.errorMessage" class="max-w-full truncate text-red-600 dark:text-red-400" :title="run.errorMessage">{{ run.errorMessage }}</span>

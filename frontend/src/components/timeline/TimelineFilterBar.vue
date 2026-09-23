@@ -44,6 +44,14 @@ const targetOptions = computed(() => [
   { value: '', label: '全部' },
   ...store.availableTargets.map((target) => ({ value: target, label: shortTarget(target) })),
 ])
+const samplingTierOptions = [
+  { value: '', label: '全部来源' },
+  { value: 'regular', label: 'regular' },
+  { value: 'focus', label: 'focus' },
+  { value: 'sparse', label: 'sparse' },
+  { value: 'diagnostic', label: 'diagnostic（手动诊断）' },
+  { value: 'legacy_unknown', label: 'legacy_unknown（旧来源未知）' },
+]
 
 function setSelectedNode(value: string | number): void {
   selectedNode.value = String(value)
@@ -59,6 +67,10 @@ function setProbeTypeFilter(value: string | number): void {
 
 function setTargetFilter(value: string | number): void {
   store.setTargetFilter(String(value))
+}
+
+function setSamplingTierFilter(value: string | number): void {
+	store.setSamplingTierFilter(String(value) as '' | 'regular' | 'focus' | 'sparse' | 'diagnostic' | 'legacy_unknown')
 }
 
 function toLocalInputValue(ms: number): string {
@@ -165,6 +177,12 @@ function shortTarget(target: string): string {
     <label class="flex items-center gap-1.5">
       <span class="text-content-muted">Target</span>
       <UiSelect :model-value="store.target" @update:model-value="setTargetFilter" aria-label="选择目标" :options="targetOptions" />
+    </label>
+
+    <!-- Sampling source -->
+    <label class="flex items-center gap-1.5">
+      <span class="text-content-muted">来源</span>
+      <UiSelect :model-value="store.samplingTier" @update:model-value="setSamplingTierFilter" aria-label="按采样来源筛选" :options="samplingTierOptions" />
     </label>
 
     <!-- Timezone + reset -->

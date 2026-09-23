@@ -530,6 +530,9 @@ export interface SwitchEvent {
 export interface RawMonitorSampleWire {
   sample_id: string
   run_id: string
+  sampling_tier?: MonitorRunSamplingTier
+  trigger_type?: MonitorSamplingTrigger
+  sampling_strategy_version?: number
   node_key: string
   node_identity_key: string
   config_revision_key: string
@@ -552,6 +555,9 @@ export interface RawMonitorSampleWire {
 export interface MonitorSample {
   sampleId: string
   runId: string
+  samplingTier: MonitorRunSamplingTier
+  triggerType: MonitorSamplingTrigger
+  samplingStrategyVersion: number
   nodeKey: string
   nodeIdentityKey: string
   configRevisionKey: string
@@ -591,6 +597,8 @@ export interface SampleCursorPage {
 
 export interface RawDerivedStatsWire {
   sample_count: number
+  included_sampling_tiers?: MonitorRunSamplingTier[] | null
+  regular_observation_only?: boolean
   success_count: number
   failure_count: number
   success_rate: number
@@ -612,6 +620,8 @@ export interface RawDerivedStatsWire {
 
 export interface DerivedStats {
   sampleCount: number
+  includedSamplingTiers: MonitorRunSamplingTier[]
+  regularObservationOnly: boolean
   successCount: number
   failureCount: number
   successRate: number
@@ -707,6 +717,7 @@ export interface MonitorJobCreateRequest {
   profile_id: string
   node_keys: string[]
   probe_set: 'light' | 'service' | 'heavy'
+  sampling_tier: MonitorSamplingTier
   /** Seconds on the UI/API boundary; never nanoseconds. */
   interval_seconds: number
   /** Seconds on the UI/API boundary; never nanoseconds. */
@@ -739,6 +750,7 @@ export interface RawMonitorJobWire {
   node_keys: string[]
   nodes: RawMonitorJobNodeWire[] | null
   probe_set: 'light' | 'service' | 'heavy'
+  sampling_tier?: MonitorSamplingTier
   interval_seconds: number
   timeout_seconds: number
   state: MonitorJobState
@@ -765,6 +777,7 @@ export interface MonitorJob {
   nodeKeys: string[]
   nodes: MonitorJobNode[]
   probeSet: 'light' | 'service' | 'heavy'
+  samplingTier: MonitorSamplingTier
   intervalSeconds: number
   timeoutSeconds: number
   state: MonitorJobState
@@ -783,9 +796,16 @@ export interface MonitorJob {
 
 export type MonitorRunStatus = 'running' | 'completed' | 'partial_failed' | 'failed' | 'skipped' | 'resource_limited' | 'persistence_failed'
 
+export type MonitorSamplingTier = 'regular' | 'focus' | 'sparse'
+export type MonitorRunSamplingTier = MonitorSamplingTier | 'diagnostic' | 'legacy_unknown'
+export type MonitorSamplingTrigger = 'scheduled' | 'manual' | 'legacy_unknown'
+
 export interface MonitorRun {
   runId: string
   jobId: string
+  samplingTier: MonitorRunSamplingTier
+  triggerType: MonitorSamplingTrigger
+  samplingStrategyVersion: number
   scheduledAt: string
   startedAt: string
   finishedAt?: string
@@ -799,6 +819,9 @@ export interface MonitorRun {
 export interface RawMonitorRunWire {
   run_id: string
   job_id: string
+  sampling_tier?: MonitorRunSamplingTier
+  trigger_type?: MonitorSamplingTrigger
+  sampling_strategy_version?: number
   scheduled_at: string
   started_at: string
   finished_at?: string

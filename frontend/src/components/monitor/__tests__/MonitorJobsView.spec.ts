@@ -9,24 +9,30 @@ vi.mock('../../../api/monitor', () => ({
   fetchMonitorJobs: vi.fn(),
   fetchMonitorRuns: vi.fn(),
   createMonitorJob: vi.fn(),
+  updateMonitorJobSamplingTier: vi.fn(),
   controlMonitorJob: vi.fn(),
+  triggerMonitorJob: vi.fn(),
 }))
 
 import {
   controlMonitorJob,
   createMonitorJob,
+  updateMonitorJobSamplingTier,
   fetchMonitorJobs,
   fetchMonitorNodeOptions,
   fetchMonitorRuns,
+  triggerMonitorJob,
 } from '../../../api/monitor'
-import type { MonitorJob, MonitorJobPrefill, MonitorNodeOption } from '../../../types'
+import type { MonitorJob, MonitorJobPrefill, MonitorNodeOption, MonitorRun } from '../../../types'
 import MonitorJobsView from '../MonitorJobsView.vue'
 
 const mockedOptions = vi.mocked(fetchMonitorNodeOptions)
 const mockedJobs = vi.mocked(fetchMonitorJobs)
 const mockedRuns = vi.mocked(fetchMonitorRuns)
 const mockedCreate = vi.mocked(createMonitorJob)
+const mockedUpdateTier = vi.mocked(updateMonitorJobSamplingTier)
 const mockedControl = vi.mocked(controlMonitorJob)
+const mockedTrigger = vi.mocked(triggerMonitorJob)
 
 const option: MonitorNodeOption = {
   profileId: 'profile-1',
@@ -65,6 +71,7 @@ function job(state: MonitorJob['state'] = 'stopped', blockedReason = ''): Monito
       type: option.type,
     }],
     probeSet: 'light',
+    samplingTier: 'regular',
     intervalSeconds: 30,
     timeoutSeconds: 5,
     state,
@@ -81,7 +88,13 @@ beforeEach(() => {
   mockedJobs.mockResolvedValue([job()])
   mockedRuns.mockResolvedValue([])
   mockedCreate.mockResolvedValue(job())
+  mockedUpdateTier.mockResolvedValue()
   mockedControl.mockResolvedValue()
+  mockedTrigger.mockResolvedValue({
+    runId: 'diagnostic-1', jobId: 'job-1', samplingTier: 'diagnostic', triggerType: 'manual',
+    samplingStrategyVersion: 1, scheduledAt: '2026-09-23T00:00:00Z', startedAt: '2026-09-23T00:00:00Z',
+    status: 'completed', totalNodes: 1, successNodes: 1, failedNodes: 0,
+  } satisfies MonitorRun)
 })
 
 afterEach(() => {
@@ -107,7 +120,27 @@ describe('MonitorJobsView', () => {
       node_keys: ['nk-real'],
       interval_seconds: 60,
       timeout_seconds: 10,
+      sampling_tier: 'regular',
     }))
+    expect(mockedControl).not.toHaveBeenCalled()
+  })
+
+  it('suggests two minutes for a new focus task and persists the selected tier', async () => {
+    wrapper = mount(MonitorJobsView)
+    await flushPromises()
+    await wrapper.find('input[type="checkbox"]').setValue(true)
+
+    await wrapper.get('[aria-label="选择周期采样层级"]').trigger('click')
+    const focusOption = Array.from(document.body.querySelectorAll('[role="option"]'))
+      .find((item) => item.textContent?.includes('focus')) as HTMLButtonElement | undefined
+    expect(focusOption).toBeDefined()
+    focusOption!.click()
+    await flushPromises()
+
+    const createButton = wrapper.findAll('button').find((button) => button.text().includes('创建（不会自动启动）'))
+    await createButton!.trigger('click')
+    await flushPromises()
+    expect(mockedCreate).toHaveBeenCalledWith(expect.objectContaining({ sampling_tier: 'focus', interval_seconds: 120 }))
     expect(mockedControl).not.toHaveBeenCalled()
   })
 
@@ -127,6 +160,41 @@ describe('MonitorJobsView', () => {
 
     expect(mockedControl).toHaveBeenCalledWith('job-1', 'start')
     expect(wrapper.text()).toContain('运行中')
+  })
+
+  it('saves a paused job tier without resuming or starting it', async () => {
+    mockedJobs.mockResolvedValue([job('paused')])
+    wrapper = mount(MonitorJobsView)
+    await flushPromises()
+
+    await wrapper.get('[aria-label="UI monitor 的周期采样层级"]').trigger('click')
+    const sparseOption = Array.from(document.body.querySelectorAll('[role="option"]'))
+      .find((item) => item.textContent?.includes('sparse')) as HTMLButtonElement | undefined
+    expect(sparseOption).toBeDefined()
+    sparseOption!.click()
+    await flushPromises()
+    const saveButton = wrapper.findAll('button').find((button) => button.text().trim() === '保存层级')
+    expect(saveButton).toBeDefined()
+    await saveButton!.trigger('click')
+    await flushPromises()
+
+    expect(mockedUpdateTier).toHaveBeenCalledWith('job-1', 'sparse')
+    expect(mockedControl).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('任务仍为已暂停')
+    expect(wrapper.text()).toContain('已暂停')
+  })
+
+  it('runs a paused task diagnostic once without resuming or starting its schedule', async () => {
+    mockedJobs.mockResolvedValue([job('paused')])
+    wrapper = mount(MonitorJobsView)
+    await flushPromises()
+    const diagnostic = wrapper.findAll('button').find((button) => button.text().includes('手动诊断（一次）'))
+    expect(diagnostic).toBeDefined()
+    await diagnostic!.trigger('click')
+    await flushPromises()
+    expect(mockedTrigger).toHaveBeenCalledWith('job-1')
+    expect(mockedControl).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('diagnostic 手动诊断')
   })
 
   it('shows an explicit blocked reason without offering an automatic recovery action', async () => {

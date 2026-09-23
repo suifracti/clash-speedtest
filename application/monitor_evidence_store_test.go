@@ -143,6 +143,9 @@ func TestCollectEvidenceSamples_FilterIsIdenticalOnEveryPage(t *testing.T) {
 	}
 
 	first := store.filters[0]
+	if !first.RegularObservationOnly {
+		t.Fatal("recommendation evidence query must exclude diagnostic and unknown sources")
+	}
 	for i, filter := range store.filters {
 		if filter.NodeIdentityKey != first.NodeIdentityKey {
 			t.Fatalf("page %d drifted NodeIdentityKey: %q vs %q", i+1, filter.NodeIdentityKey, first.NodeIdentityKey)
@@ -158,6 +161,9 @@ func TestCollectEvidenceSamples_FilterIsIdenticalOnEveryPage(t *testing.T) {
 		}
 		if filter.OrderDesc != first.OrderDesc {
 			t.Fatalf("page %d drifted OrderDesc", i+1)
+		}
+		if filter.RegularObservationOnly != first.RegularObservationOnly {
+			t.Fatalf("page %d drifted source qualification", i+1)
 		}
 		if filter.Since == nil || first.Since == nil || !filter.Since.Equal(*first.Since) {
 			t.Fatalf("page %d drifted Since", i+1)

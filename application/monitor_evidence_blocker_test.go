@@ -147,6 +147,13 @@ func TestAppService_GetMonitorRecommendation_ReadsCompleteMultiPageEvidence(t *t
 	const sampleCount = 2500 // 2500 rows / 1000 per page => at least 3 pages
 
 	now := time.Now()
+	if err := hStore.SaveMonitorRun(context.Background(), &monitor.MonitorRun{
+		RunID: "run_paged", JobID: job.ID, SamplingTier: monitor.SamplingTierRegular,
+		TriggerType: monitor.SamplingTriggerScheduled, SamplingStrategyVersion: monitor.SamplingStrategyVersion,
+		ScheduledAt: now, StartedAt: now, Status: monitor.RunStatusCompleted, TotalNodes: 2, SuccessNodes: 2,
+	}); err != nil {
+		t.Fatalf("SaveMonitorRun: %v", err)
+	}
 	hkSamples, hkTruth := buildPagedSeries(
 		job.Nodes[0], now, sampleCount,
 		func(i int) int { return 100 + (i%7)*10 },

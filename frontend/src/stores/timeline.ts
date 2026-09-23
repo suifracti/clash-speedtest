@@ -68,6 +68,7 @@ export const useTimelineStore = defineStore('timeline', () => {
   const profileId = ref('')
   const probeType = ref('')
   const target = ref('')
+  const samplingTier = ref<'' | 'regular' | 'focus' | 'sparse' | 'diagnostic' | 'legacy_unknown'>('')
   const useUtc = ref(false)
 
   /**
@@ -85,6 +86,7 @@ export const useTimelineStore = defineStore('timeline', () => {
       profileId.value,
       probeType.value,
       target.value,
+      samplingTier.value,
       'order:desc',
     ].join('\u0001')
   )
@@ -265,6 +267,7 @@ export const useTimelineStore = defineStore('timeline', () => {
       profileId: profileId.value || undefined,
       probeType: probeType.value || undefined,
       target: target.value || undefined,
+      samplingTier: samplingTier.value || undefined,
       sinceMs: domainStartMs.value,
       untilMs: domainEndMs.value,
     }
@@ -547,12 +550,13 @@ export const useTimelineStore = defineStore('timeline', () => {
     statsError.value = null
     const now = Date.now()
     const base = currentFilter()
+    const statsBase = samplingTier.value ? base : { ...base, samplingTier: undefined, regularObservationOnly: true }
 
     try {
       const [range, day, week] = await Promise.all([
-        fetchMonitorStats({ ...base, sinceMs: domainStartMs.value, untilMs: domainEndMs.value }),
-        fetchMonitorStats({ ...base, sinceMs: now - DAY, untilMs: now }),
-        fetchMonitorStats({ ...base, sinceMs: now - 7 * DAY, untilMs: now }),
+        fetchMonitorStats({ ...statsBase, sinceMs: domainStartMs.value, untilMs: domainEndMs.value }),
+        fetchMonitorStats({ ...statsBase, sinceMs: now - DAY, untilMs: now }),
+        fetchMonitorStats({ ...statsBase, sinceMs: now - 7 * DAY, untilMs: now }),
       ])
       rangeStats.value = range
       evidence24h.value = day
@@ -620,6 +624,13 @@ export const useTimelineStore = defineStore('timeline', () => {
     return reload()
   }
 
+  function setSamplingTierFilter(value: '' | 'regular' | 'focus' | 'sparse' | 'diagnostic' | 'legacy_unknown'): Promise<void> {
+    if (samplingTier.value === value) return Promise.resolve()
+    resetContinuationState()
+    samplingTier.value = value
+    return reload()
+  }
+
   function resetFilters(): Promise<void> {
     resetContinuationState()
     nodeIdentityKey.value = ''
@@ -627,6 +638,7 @@ export const useTimelineStore = defineStore('timeline', () => {
     profileId.value = ''
     probeType.value = ''
     target.value = ''
+    samplingTier.value = ''
     rangeKey.value = '24h'
     return reload()
   }
@@ -785,6 +797,7 @@ export const useTimelineStore = defineStore('timeline', () => {
     profileId,
     probeType,
     target,
+    samplingTier,
     useUtc,
     filtersSignature,
     // facets
@@ -851,6 +864,7 @@ export const useTimelineStore = defineStore('timeline', () => {
     setProfileFilter,
     setProbeTypeFilter,
     setTargetFilter,
+    setSamplingTierFilter,
     resetFilters,
     zoom,
     pan,
