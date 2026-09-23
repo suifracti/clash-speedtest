@@ -53,11 +53,13 @@ type AppService struct {
 	decisionState  policy.DecisionState
 
 	// 24/7 Monitor subsystem fields
-	monitorMu         sync.RWMutex
-	monitorSchedulers map[string]*monitor.Scheduler
-	monitorRunner     *monitor.Runner
-	monitorLoadErr    error
-	monitorBudget     *monitor.BudgetController
+	monitorMu              sync.RWMutex
+	monitorSchedulers      map[string]*monitor.Scheduler
+	monitorRunner          *monitor.Runner
+	monitorLoadErr         error
+	monitorBudget          *monitor.BudgetController
+	monitorRecoveryMu      sync.Mutex
+	monitorRecoveryStarted bool
 
 	// latencyPersistenceWG keeps the result-first workbench path from closing
 	// history.db while a just-finished latency result is still being persisted.
@@ -107,9 +109,12 @@ func newAppService(hStore *history.Store, appPaths appdata.AppPaths, profilePath
 			Store:  hStore,
 			Budget: svc.monitorBudget,
 		})
-		if err := svc.loadPersistedMonitorJobs(); err != nil {
-			svc.monitorLoadErr = err
-			log.Printf("monitor job definitions were not loaded: %v", err)
+		migrationState := appPaths.InspectMigration().State
+		if migrationState == appdata.MigrationStateReady || migrationState == appdata.MigrationStateIsolated {
+			if err := svc.loadPersistedMonitorJobs(); err != nil {
+				svc.monitorLoadErr = err
+				log.Printf("monitor job definitions were not loaded: %v", err)
+			}
 		}
 	}
 
@@ -1771,6 +1776,9 @@ func (s *AppService) SetMonitorRunner(runner *monitor.Runner) {
 	defer s.monitorMu.Unlock()
 	if runner != nil {
 		runner.SetBudget(s.monitorBudget)
+		for _, sched := range s.monitorSchedulers {
+			_ = sched.SetRunner(runner)
+		}
 	}
 	s.monitorRunner = runner
 }
@@ -1820,6 +1828,11 @@ func (s *AppService) CreateMonitorJob(job monitor.MonitorJob) (*monitor.MonitorJ
 
 	job.State = monitor.JobStateStopped
 	job.BlockedReason = ""
+	job.ResumeOnLaunch = false
+	job.DesiredState = monitor.JobStateStopped
+	job.RecoveryState = monitor.RecoveryStateDisabled
+	job.RecoveryReason = ""
+	job.IntentPersistenceError = ""
 	now := time.Now()
 	job.CreatedAt = now
 	job.UpdatedAt = now
@@ -1868,92 +1881,218 @@ func (s *AppService) CreateMonitorJob(job monitor.MonitorJob) (*monitor.MonitorJ
 	return &job, nil
 }
 
-// StartMonitorJob starts the scheduler loop for the given job.
+// StartMonitorJob starts the periodic scheduler only after its desired running
+// intent is durable. A stopped runtime never becomes launchable from stale run
+// history alone.
 func (s *AppService) StartMonitorJob(jobID string) error {
-	s.monitorMu.RLock()
+	s.monitorMu.Lock()
 	sched, ok := s.monitorSchedulers[jobID]
-	s.monitorMu.RUnlock()
 	if !ok {
+		s.monitorMu.Unlock()
 		return fmt.Errorf("monitor job %s not found", jobID)
 	}
-
+	before := sched.Job()
+	if before.State == monitor.JobStateBlocked {
+		if err := s.refreshBlockedMonitorJob(sched); err != nil {
+			s.monitorMu.Unlock()
+			return fmt.Errorf("monitor job is blocked: %w", err)
+		}
+		before = sched.Job()
+		if before.State == monitor.JobStateBlocked {
+			s.monitorMu.Unlock()
+			return fmt.Errorf("monitor job is blocked: %s", before.BlockedReason)
+		}
+	}
+	if err := s.persistMonitorIntent(jobID, before.ResumeOnLaunch, monitor.JobStateRunning); err != nil {
+		s.monitorMu.Unlock()
+		return fmt.Errorf("persist start intent for monitor job %s: %w", jobID, err)
+	}
+	sched.SetLaunchIntent(before.ResumeOnLaunch, monitor.JobStateRunning, monitor.RecoveryStateActive, "", "")
 	if err := sched.Start(context.Background()); err != nil {
+		rollbackErr := s.persistMonitorIntent(jobID, before.ResumeOnLaunch, before.DesiredState)
+		s.monitorMu.Unlock()
+		if rollbackErr != nil {
+			warning := fmt.Sprintf("启动失败且之前的恢复意图回滚失败；已保存的运行意图仍可能影响下次启动。原因：%v", rollbackErr)
+			sched.SetLaunchIntent(before.ResumeOnLaunch, before.DesiredState, monitor.RecoveryStateBlocked, warning, warning)
+			return fmt.Errorf("start monitor job %s failed (%v); %s", jobID, err, warning)
+		}
+		sched.SetLaunchIntent(before.ResumeOnLaunch, before.DesiredState, before.RecoveryState, before.RecoveryReason, "")
 		return fmt.Errorf("start monitor job %s: %w", jobID, err)
 	}
+	s.monitorMu.Unlock()
 
-	s.emitter.Emit(Event{
-		Type: "monitor_job_started",
-		Payload: map[string]any{
-			"job_id": jobID,
-		},
-	})
+	s.emitter.Emit(Event{Type: "monitor_job_started", Payload: map[string]any{"job_id": jobID}})
 	return nil
 }
 
-// PauseMonitorJob pauses execution of the monitor job without stopping the scheduler.
+// PauseMonitorJob cancels waiting admission before persisting the paused intent.
 func (s *AppService) PauseMonitorJob(jobID string) error {
-	s.monitorMu.RLock()
+	s.monitorMu.Lock()
 	sched, ok := s.monitorSchedulers[jobID]
-	s.monitorMu.RUnlock()
 	if !ok {
+		s.monitorMu.Unlock()
 		return fmt.Errorf("monitor job %s not found", jobID)
 	}
-
+	before := sched.Job()
 	if err := sched.Pause(); err != nil {
+		s.monitorMu.Unlock()
 		return fmt.Errorf("pause monitor job %s: %w", jobID, err)
 	}
-
-	s.emitter.Emit(Event{
-		Type: "monitor_job_paused",
-		Payload: map[string]any{
-			"job_id": jobID,
-		},
-	})
+	if err := s.persistMonitorIntent(jobID, before.ResumeOnLaunch, monitor.JobStatePaused); err != nil {
+		warning := monitorIntentFailureWarning("暂停", before, err)
+		sched.SetLaunchIntent(before.ResumeOnLaunch, before.DesiredState, monitor.RecoveryStateBlocked, warning, warning)
+		s.monitorMu.Unlock()
+		return fmt.Errorf("pause monitor job %s: %s", jobID, warning)
+	}
+	sched.SetLaunchIntent(before.ResumeOnLaunch, monitor.JobStatePaused, monitor.RecoveryStatePaused, "", "")
+	s.monitorMu.Unlock()
+	s.emitter.Emit(Event{Type: "monitor_job_paused", Payload: map[string]any{"job_id": jobID}})
 	return nil
 }
 
-// ResumeMonitorJob resumes a paused monitor job.
+// ResumeMonitorJob records an explicit running intent before resuming a loop.
 func (s *AppService) ResumeMonitorJob(jobID string) error {
-	s.monitorMu.RLock()
+	s.monitorMu.Lock()
 	sched, ok := s.monitorSchedulers[jobID]
-	s.monitorMu.RUnlock()
 	if !ok {
+		s.monitorMu.Unlock()
 		return fmt.Errorf("monitor job %s not found", jobID)
 	}
-
+	before := sched.Job()
+	if before.State == monitor.JobStateBlocked {
+		if err := s.refreshBlockedMonitorJob(sched); err != nil {
+			s.monitorMu.Unlock()
+			return fmt.Errorf("monitor job is blocked: %w", err)
+		}
+		before = sched.Job()
+		if before.State == monitor.JobStateBlocked {
+			s.monitorMu.Unlock()
+			return fmt.Errorf("monitor job is blocked: %s", before.BlockedReason)
+		}
+	}
+	if err := s.persistMonitorIntent(jobID, before.ResumeOnLaunch, monitor.JobStateRunning); err != nil {
+		s.monitorMu.Unlock()
+		return fmt.Errorf("persist resume intent for monitor job %s: %w", jobID, err)
+	}
+	sched.SetLaunchIntent(before.ResumeOnLaunch, monitor.JobStateRunning, monitor.RecoveryStateActive, "", "")
 	if err := sched.Resume(); err != nil {
+		rollbackErr := s.persistMonitorIntent(jobID, before.ResumeOnLaunch, before.DesiredState)
+		s.monitorMu.Unlock()
+		if rollbackErr != nil {
+			warning := fmt.Sprintf("恢复失败且之前的运行意图回滚失败；已保存的运行意图仍可能影响下次启动。原因：%v", rollbackErr)
+			sched.SetLaunchIntent(before.ResumeOnLaunch, before.DesiredState, monitor.RecoveryStateBlocked, warning, warning)
+			return fmt.Errorf("resume monitor job %s failed (%v); %s", jobID, err, warning)
+		}
+		sched.SetLaunchIntent(before.ResumeOnLaunch, before.DesiredState, before.RecoveryState, before.RecoveryReason, "")
 		return fmt.Errorf("resume monitor job %s: %w", jobID, err)
 	}
-
-	s.emitter.Emit(Event{
-		Type: "monitor_job_resumed",
-		Payload: map[string]any{
-			"job_id": jobID,
-		},
-	})
+	s.monitorMu.Unlock()
+	s.emitter.Emit(Event{Type: "monitor_job_resumed", Payload: map[string]any{"job_id": jobID}})
 	return nil
 }
 
-// StopMonitorJob stops the scheduler and waits for in-flight tasks to exit cleanly.
+// StopMonitorJob stops current work before saving the user's stopped intent.
 func (s *AppService) StopMonitorJob(jobID string) error {
-	s.monitorMu.RLock()
+	s.monitorMu.Lock()
 	sched, ok := s.monitorSchedulers[jobID]
-	s.monitorMu.RUnlock()
+	if !ok {
+		s.monitorMu.Unlock()
+		return fmt.Errorf("monitor job %s not found", jobID)
+	}
+	before := sched.Job()
+	if err := sched.Stop(); err != nil {
+		s.monitorMu.Unlock()
+		return fmt.Errorf("stop monitor job %s: %w", jobID, err)
+	}
+	if err := s.persistMonitorIntent(jobID, before.ResumeOnLaunch, monitor.JobStateStopped); err != nil {
+		warning := monitorIntentFailureWarning("停止", before, err)
+		sched.SetLaunchIntent(before.ResumeOnLaunch, before.DesiredState, monitor.RecoveryStateBlocked, warning, warning)
+		s.monitorMu.Unlock()
+		return fmt.Errorf("stop monitor job %s: %s", jobID, warning)
+	}
+	state := recoveryStateForIntent(before.ResumeOnLaunch, monitor.JobStateStopped)
+	sched.SetLaunchIntent(before.ResumeOnLaunch, monitor.JobStateStopped, state, "", "")
+	s.monitorMu.Unlock()
+	s.emitter.Emit(Event{Type: "monitor_job_stopped", Payload: map[string]any{"job_id": jobID}})
+	return nil
+}
+
+func (s *AppService) SetMonitorJobResumeOnLaunch(jobID string, enabled bool) error {
+	s.monitorMu.Lock()
+	defer s.monitorMu.Unlock()
+	sched, ok := s.monitorSchedulers[jobID]
 	if !ok {
 		return fmt.Errorf("monitor job %s not found", jobID)
 	}
-
-	if err := sched.Stop(); err != nil {
-		return fmt.Errorf("stop monitor job %s: %w", jobID, err)
+	job := sched.Job()
+	cancelledRecoveryAdmission := false
+	if !enabled && job.RecoveryState == monitor.RecoveryStateRestoring {
+		cancelledRecoveryAdmission = sched.CancelPendingRecoveryAdmission()
 	}
-
-	s.emitter.Emit(Event{
-		Type: "monitor_job_stopped",
-		Payload: map[string]any{
-			"job_id": jobID,
-		},
-	})
+	if err := s.persistMonitorIntent(jobID, enabled, job.DesiredState); err != nil {
+		warning := fmt.Sprintf("应用启动恢复设置未能保存：%v", err)
+		recoveryState, reason := job.RecoveryState, job.RecoveryReason
+		if cancelledRecoveryAdmission {
+			recoveryState, reason = monitor.RecoveryStateActive, ""
+		}
+		sched.SetLaunchIntent(job.ResumeOnLaunch, job.DesiredState, recoveryState, reason, warning)
+		return fmt.Errorf("%s", warning)
+	}
+	state := job.RecoveryState
+	if !enabled {
+		state = monitor.RecoveryStateDisabled
+	} else if job.DesiredState == monitor.JobStatePaused {
+		state = monitor.RecoveryStatePaused
+	} else if job.DesiredState == monitor.JobStateStopped {
+		state = monitor.RecoveryStateStopped
+	}
+	sched.SetLaunchIntent(enabled, job.DesiredState, state, "", "")
+	s.emitter.Emit(Event{Type: "monitor_job_recovery_preference_updated", Payload: map[string]any{"job_id": jobID, "enabled": enabled}})
 	return nil
+}
+
+// DeleteMonitorJob cancels runtime work, durably clears launch intent, then
+// deletes only the definition. Historical runs and raw samples remain queryable.
+func (s *AppService) DeleteMonitorJob(jobID string) error {
+	s.monitorMu.Lock()
+	defer s.monitorMu.Unlock()
+	sched, ok := s.monitorSchedulers[jobID]
+	if !ok {
+		return fmt.Errorf("monitor job %s not found", jobID)
+	}
+	job := sched.Job()
+	if err := sched.Stop(); err != nil {
+		return fmt.Errorf("stop monitor job %s before deletion: %w", jobID, err)
+	}
+	if err := s.persistMonitorIntent(jobID, job.ResumeOnLaunch, monitor.JobStateStopped); err != nil {
+		warning := monitorIntentFailureWarning("停止并删除", job, err)
+		sched.SetLaunchIntent(job.ResumeOnLaunch, job.DesiredState, monitor.RecoveryStateBlocked, warning, warning)
+		return fmt.Errorf("%s", warning)
+	}
+	if err := s.historyStore.DeleteMonitorJobDefinition(context.Background(), jobID); err != nil {
+		sched.SetLaunchIntent(job.ResumeOnLaunch, monitor.JobStateStopped, recoveryStateForIntent(job.ResumeOnLaunch, monitor.JobStateStopped), "", "")
+		return fmt.Errorf("delete monitor job %s: %w", jobID, err)
+	}
+	delete(s.monitorSchedulers, jobID)
+	s.emitter.Emit(Event{Type: "monitor_job_deleted", Payload: map[string]any{"job_id": jobID}})
+	return nil
+}
+
+func (s *AppService) persistMonitorIntent(jobID string, resumeOnLaunch bool, desired monitor.JobState) error {
+	if s.historyStore == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
+	return s.historyStore.UpdateMonitorJobLaunchIntent(context.Background(), jobID, resumeOnLaunch, desired, time.Now())
+}
+
+func monitorIntentFailureWarning(action string, previous monitor.MonitorJob, err error) string {
+	message := fmt.Sprintf("当前进程已%s，但新的恢复意图未能保存", action)
+	if previous.ResumeOnLaunch && previous.DesiredState == monitor.JobStateRunning {
+		message += "；下次启动仍可能按此前保存的运行意图恢复"
+	} else {
+		message += "；下次启动将按此前保存的恢复设置和运行意图决定是否恢复"
+	}
+	return fmt.Sprintf("%s。原因：%v", message, err)
 }
 
 // StopAllMonitorJobs stops all configured monitor schedulers.

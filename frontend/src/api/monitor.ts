@@ -300,6 +300,12 @@ export function normalizeMonitorJob(wire: RawMonitorJobWire): MonitorJob {
 		intervalSeconds: Number.isFinite(wire.interval_seconds) ? wire.interval_seconds : 0,
 		timeoutSeconds: Number.isFinite(wire.timeout_seconds) ? wire.timeout_seconds : 0,
 		state: wire.state,
+		runtimeState: wire.runtime_state ?? wire.state,
+		resumeOnLaunch: wire.resume_on_launch ?? false,
+		desiredState: wire.desired_state ?? 'stopped',
+		recoveryState: wire.recovery_state ?? (wire.resume_on_launch ? 'stopped' : 'disabled'),
+		recoveryReason: wire.recovery_reason ?? '',
+		intentPersistenceError: wire.intent_persistence_error ?? '',
 		blockedReason: wire.blocked_reason ?? '',
 		persistenceState: wire.persistence_state === 'degraded' ? 'degraded' : 'healthy',
 		persistenceError: wire.persistence_error ?? '',
@@ -386,6 +392,29 @@ export async function updateMonitorJobSamplingTier(jobId: string, tier: MonitorS
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ sampling_tier: tier }),
 	})
+	if (!res.ok) throw await readError(res)
+}
+
+/** Saves launch recovery permission without starting or stopping the current scheduler. */
+export async function updateMonitorJobResumeOnLaunch(jobId: string, enabled: boolean): Promise<void> {
+	if (isWails()) {
+		await window.go!.desktop!.App!.SetMonitorJobResumeOnLaunch(jobId, enabled)
+		return
+	}
+	const res = await fetch(`${API_BASE}/api/monitor/jobs/${encodeURIComponent(jobId)}/resume-on-launch`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ enabled }),
+	})
+	if (!res.ok) throw await readError(res)
+}
+
+export async function deleteMonitorJob(jobId: string): Promise<void> {
+	if (isWails()) {
+		await window.go!.desktop!.App!.DeleteMonitorJob(jobId)
+		return
+	}
+	const res = await fetch(`${API_BASE}/api/monitor/jobs/${encodeURIComponent(jobId)}`, { method: 'DELETE' })
 	if (!res.ok) throw await readError(res)
 }
 

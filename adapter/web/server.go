@@ -174,6 +174,8 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("GET /api/monitor/jobs", s.handleListMonitorJobs)
 	mux.HandleFunc("GET /api/monitor/jobs/{id}", s.handleGetMonitorJob)
 	mux.HandleFunc("POST /api/monitor/jobs/{id}/sampling-tier", s.handleUpdateMonitorJobSamplingTier)
+	mux.HandleFunc("POST /api/monitor/jobs/{id}/resume-on-launch", s.handleSetMonitorJobResumeOnLaunch)
+	mux.HandleFunc("DELETE /api/monitor/jobs/{id}", s.handleDeleteMonitorJob)
 	mux.HandleFunc("POST /api/monitor/jobs/{id}/start", s.handleStartMonitorJob)
 	mux.HandleFunc("POST /api/monitor/jobs/{id}/pause", s.handlePauseMonitorJob)
 	mux.HandleFunc("POST /api/monitor/jobs/{id}/resume", s.handleResumeMonitorJob)
@@ -216,6 +218,11 @@ func (s *Server) Start() error {
 		return fmt.Errorf("listen on port %d: %w", s.config.Port, err)
 	}
 	s.port = listener.Addr().(*net.TCPAddr).Port
+	if s.app != nil {
+		if err := s.app.RecoverMonitorJobs(context.Background()); err != nil {
+			log.Printf("Monitor startup recovery did not run: %v", err)
+		}
+	}
 
 	s.httpServer = &http.Server{
 		Handler:      s.buildHandler(),
@@ -1121,6 +1128,37 @@ func (s *Server) handleUpdateMonitorJobSamplingTier(w http.ResponseWriter, r *ht
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
+}
+
+func (s *Server) handleSetMonitorJobResumeOnLaunch(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body: "+err.Error())
+		return
+	}
+	if err := s.app.SetMonitorJobResumeOnLaunch(r.PathValue("id"), req.Enabled); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
+}
+
+func (s *Server) handleDeleteMonitorJob(w http.ResponseWriter, r *http.Request) {
+	if err := s.app.DeleteMonitorJob(r.PathValue("id")); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleStartMonitorJob(w http.ResponseWriter, r *http.Request) {

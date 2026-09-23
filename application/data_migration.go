@@ -60,7 +60,8 @@ func (s *AppService) GetDataMigration() (DataMigrationDTO, error) {
 // MigrateLegacyData switches the service from the old production root to the
 // canonical root only after the staged migration has committed. Rebuilt
 // monitor definitions are stopped/blocked by the normal startup loader; this
-// method never starts a scheduler or sends a probe.
+// method recovers opted-in running Monitor jobs only after the canonical data
+// root is ready and their profile, budget, and capacity gates are rechecked.
 func (s *AppService) MigrateLegacyData() error {
 	if s.Status().IsRunning {
 		return fmt.Errorf("请先停止正在运行的测速任务")
@@ -103,7 +104,7 @@ func (s *AppService) MigrateLegacyData() error {
 			return fmt.Errorf("reload monitor job definitions after migration: %w", err)
 		}
 	}
-	return nil
+	return s.RecoverMonitorJobs(context.Background())
 }
 
 func (s *AppService) restoreHistoryAfterMigrationFailure() {
@@ -115,7 +116,8 @@ func (s *AppService) restoreHistoryAfterMigrationFailure() {
 	}
 	s.historyStore = store
 	s.resetMonitorRuntime()
-	if store != nil {
+	state := s.appPaths.InspectMigration().State
+	if store != nil && (state == appdata.MigrationStateReady || state == appdata.MigrationStateIsolated) {
 		if err := s.loadPersistedMonitorJobs(); err != nil {
 			s.monitorLoadErr = err
 		}
@@ -133,4 +135,7 @@ func (s *AppService) resetMonitorRuntime() {
 		s.monitorRunner = monitor.NewRunner(monitor.RunnerConfig{Store: s.historyStore, Budget: s.monitorBudget})
 	}
 	s.monitorMu.Unlock()
+	s.monitorRecoveryMu.Lock()
+	s.monitorRecoveryStarted = false
+	s.monitorRecoveryMu.Unlock()
 }

@@ -328,6 +328,13 @@ func (s *Store) UpdateMonitorRun(ctx context.Context, run *monitor.MonitorRun) e
 	return s.db.UpdateMonitorRun(ctx, run)
 }
 
+func (s *Store) MarkRunningMonitorRunsInterrupted(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
+	return s.db.MarkRunningMonitorRunsInterrupted(ctx)
+}
+
 func (s *Store) SaveMonitorSamples(ctx context.Context, samples []*monitor.MonitorSample) error {
 	return s.db.SaveMonitorSamples(ctx, samples)
 }
@@ -352,6 +359,20 @@ func (s *Store) UpdateMonitorJobSamplingTier(ctx context.Context, jobID string, 
 		return fmt.Errorf("history store is not initialized")
 	}
 	return s.db.UpdateMonitorJobSamplingTier(ctx, jobID, tier, updatedAt)
+}
+
+func (s *Store) UpdateMonitorJobLaunchIntent(ctx context.Context, jobID string, resumeOnLaunch bool, desired monitor.JobState, updatedAt time.Time) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
+	return s.db.UpdateMonitorJobLaunchIntent(ctx, jobID, resumeOnLaunch, desired, updatedAt)
+}
+
+func (s *Store) DeleteMonitorJobDefinition(ctx context.Context, jobID string) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
+	return s.db.DeleteMonitorJobDefinition(ctx, jobID)
 }
 
 func (s *Store) ListMonitorJobDefinitions(ctx context.Context) ([]*monitor.MonitorJobDefinition, error) {

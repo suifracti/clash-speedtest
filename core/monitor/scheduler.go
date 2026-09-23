@@ -28,6 +28,7 @@ type Scheduler struct {
 	budgetGuard           func() (string, string)
 	pendingCancel         context.CancelFunc
 	pendingID             uint64
+	recoveryPending       bool
 	state                 JobState
 	stopping              bool
 	ctx                   context.Context
@@ -105,6 +106,108 @@ func (s *Scheduler) UpdateSamplingTier(tier SamplingTier, updatedAt time.Time) e
 	defer s.mu.Unlock()
 	s.job.SamplingTier = tier
 	s.job.UpdatedAt = updatedAt
+	return nil
+}
+
+func (s *Scheduler) SetRunner(runner *Runner) error {
+	if runner == nil {
+		return fmt.Errorf("runner is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state == JobStateRunning || s.stopping || atomic.LoadInt32(&s.isExecuting) != 0 {
+		return fmt.Errorf("cannot replace runner while monitor job is active")
+	}
+	s.runner = runner
+	return nil
+}
+
+// SetLaunchIntent updates the durable user intent as reflected by the current
+// process. Callers persist these values before reporting success.
+func (s *Scheduler) SetLaunchIntent(resumeOnLaunch bool, desired JobState, recoveryState RecoveryState, recoveryReason, persistenceError string) {
+	s.mu.Lock()
+	s.job.ResumeOnLaunch = resumeOnLaunch
+	s.job.DesiredState = desired
+	s.job.RecoveryState = recoveryState
+	s.job.RecoveryReason = recoveryReason
+	s.job.IntentPersistenceError = persistenceError
+	s.mu.Unlock()
+}
+
+// UpdateRecoveryResolution refreshes nodes from the current profile/cache
+// before startup recovery. It never remaps by display name.
+func (s *Scheduler) UpdateRecoveryResolution(nodes []MonitoredNode, blockedReason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state == JobStateRunning || s.stopping || atomic.LoadInt32(&s.isExecuting) != 0 {
+		return fmt.Errorf("cannot refresh a monitor job while it is active")
+	}
+	if blockedReason != "" {
+		s.state = JobStateBlocked
+		s.job.State = JobStateBlocked
+		s.job.BlockedReason = blockedReason
+		s.job.RecoveryState = RecoveryStateBlocked
+		s.job.RecoveryReason = blockedReason
+		return nil
+	}
+	s.job.Nodes = append([]MonitoredNode(nil), nodes...)
+	s.job.NodeKeys = make([]string, len(nodes))
+	for i, node := range nodes {
+		s.job.NodeKeys[i] = node.NodeKey
+	}
+	s.job.BlockedReason = ""
+	if s.state == JobStateBlocked {
+		s.state = JobStateStopped
+		s.job.State = JobStateStopped
+	}
+	return nil
+}
+
+// CancelPendingAdmission invalidates a not-yet-admitted scheduled round while
+// leaving an already-running scheduler and admitted request alone.
+func (s *Scheduler) CancelPendingAdmission() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pendingCancel == nil {
+		return false
+	}
+	s.pendingCancel()
+	return true
+}
+
+// CancelPendingRecoveryAdmission cancels only the first restored round before
+// it is admitted. Later periodic work and already-admitted requests continue.
+func (s *Scheduler) CancelPendingRecoveryAdmission() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.recoveryPending || s.pendingCancel == nil {
+		return false
+	}
+	s.recoveryPending = false
+	if s.state == JobStateRunning {
+		s.job.RecoveryState = RecoveryStateActive
+		s.job.RecoveryReason = ""
+	}
+	s.pendingCancel()
+	return true
+}
+
+// StartRecovered marks the initial scheduled round as restart recovery while
+// using the scheduler's existing fair admission and cancellation path.
+func (s *Scheduler) StartRecovered(parentCtx context.Context) error {
+	s.mu.Lock()
+	if s.state == JobStateRunning {
+		s.mu.Unlock()
+		return nil
+	}
+	s.recoveryPending = true
+	s.mu.Unlock()
+	if err := s.Start(parentCtx); err != nil {
+		s.mu.Lock()
+		s.recoveryPending = false
+		s.mu.Unlock()
+		return err
+	}
 	return nil
 }
 
@@ -258,6 +361,7 @@ func (s *Scheduler) Pause() error {
 	s.job.State = JobStatePaused
 	s.job.UpdatedAt = time.Now()
 	if s.pendingCancel != nil {
+		s.recoveryPending = false
 		s.pendingCancel()
 		s.job.BudgetState, s.job.BudgetReason = "paused_by_user", "用户暂停了尚未开始的 Monitor 等待轮次"
 	}
@@ -283,7 +387,16 @@ func (s *Scheduler) Resume() error {
 // Follows strict happens-before: stopping = true -> prohibit new runs -> cancel -> Wait().
 func (s *Scheduler) Stop() error {
 	s.mu.Lock()
-	if s.state == JobStateStopped || s.state == JobStateBlocked || s.stopping {
+	if s.state == JobStateStopped || s.stopping {
+		s.mu.Unlock()
+		return nil
+	}
+	if s.state == JobStateBlocked {
+		s.state = JobStateStopped
+		s.job.State = JobStateStopped
+		s.job.BlockedReason = ""
+		s.job.UpdatedAt = time.Now()
+		s.recoveryPending = false
 		s.mu.Unlock()
 		return nil
 	}
@@ -296,6 +409,7 @@ func (s *Scheduler) Stop() error {
 		s.cancel()
 	}
 	if s.pendingCancel != nil {
+		s.recoveryPending = false
 		s.pendingCancel()
 	}
 	s.mu.Unlock()
@@ -410,11 +524,13 @@ func (s *Scheduler) scheduleLoop(ctx context.Context, interval time.Duration) {
 }
 
 func (s *Scheduler) launchScheduledRound(ctx context.Context, scheduledAt time.Time) {
-	if s.checkStorage() != "" {
+	if reason := s.checkStorage(); reason != "" {
+		s.blockRecoveryStart(reason)
 		atomic.AddInt64(&s.resourceSkippedRounds, 1)
 		return
 	}
-	if code, _ := s.checkBudget(); code != "" {
+	if code, reason := s.checkBudget(); code != "" {
+		s.blockRecoveryStart(reason)
 		atomic.AddInt64(&s.resourceSkippedRounds, 1)
 		return
 	}
@@ -432,6 +548,7 @@ func (s *Scheduler) launchScheduledRound(ctx context.Context, scheduledAt time.T
 		atomic.AddInt64(&s.skippedRounds, 1)
 		return
 	}
+	recoveryRound := s.recoveryPending
 	roundCtx, cancel := context.WithCancel(ctx)
 	s.pendingID++
 	id := s.pendingID
@@ -444,14 +561,31 @@ func (s *Scheduler) launchScheduledRound(ctx context.Context, scheduledAt time.T
 		defer s.clearPending(id)
 		defer atomic.StoreInt32(&s.isExecuting, 0)
 		defer s.runWg.Done()
-		s.executeScheduledRound(roundCtx, scheduledAt, id)
+		s.executeScheduledRound(roundCtx, scheduledAt, id, recoveryRound)
 	}()
+}
+
+func (s *Scheduler) blockRecoveryStart(reason string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.recoveryPending || s.state != JobStateRunning || !s.job.ResumeOnLaunch || s.job.DesiredState != JobStateRunning {
+		return
+	}
+	s.recoveryPending = false
+	s.state = JobStateStopped
+	s.job.State = JobStateStopped
+	s.job.RecoveryState = RecoveryStateBlocked
+	s.job.RecoveryReason = reason
+	if s.cancel != nil {
+		s.cancel()
+	}
 }
 
 func (s *Scheduler) clearPending(id uint64) {
 	s.mu.Lock()
 	if s.pendingID == id {
 		s.pendingCancel = nil
+		s.recoveryPending = false
 	}
 	s.mu.Unlock()
 }
@@ -467,10 +601,15 @@ func (s *Scheduler) admitPending(id uint64, ctx context.Context, allowPaused boo
 		return budgetBlock("cancelled", "Monitor 等待已取消，本周期未探测")
 	}
 	s.pendingCancel = nil
+	if s.recoveryPending {
+		s.recoveryPending = false
+		s.job.RecoveryState = RecoveryStateRestored
+		s.job.RecoveryReason = ""
+	}
 	return nil
 }
 
-func (s *Scheduler) executeScheduledRound(ctx context.Context, scheduledAt time.Time, id uint64) {
+func (s *Scheduler) executeScheduledRound(ctx context.Context, scheduledAt time.Time, id uint64, recoveryRound bool) {
 
 	s.mu.Lock()
 	jobCopy := *s.job
@@ -485,6 +624,9 @@ func (s *Scheduler) executeScheduledRound(ctx context.Context, scheduledAt time.
 	run, _, err := s.runner.ExecuteRunWithAdmission(ctx, &jobCopy, scheduledAt, func() error { return s.admitPending(id, ctx, false) })
 	if err != nil {
 		if s.markBudgetBlock(err) {
+			if recoveryRound {
+				s.blockRecoveryStartAfterAdmissionFailure(err.Error())
+			}
 			return
 		}
 		s.markPersistenceFailure(err)
@@ -494,4 +636,19 @@ func (s *Scheduler) executeScheduledRound(ctx context.Context, scheduledAt time.
 	s.clearPersistenceFailure()
 	s.clearBudgetBlock()
 	atomic.AddInt64(&s.completedRuns, 1)
+}
+
+func (s *Scheduler) blockRecoveryStartAfterAdmissionFailure(reason string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state != JobStateRunning || !s.job.ResumeOnLaunch || s.job.DesiredState != JobStateRunning || s.job.RecoveryState != RecoveryStateRestoring {
+		return
+	}
+	s.state = JobStateStopped
+	s.job.State = JobStateStopped
+	s.job.RecoveryState = RecoveryStateBlocked
+	s.job.RecoveryReason = reason
+	if s.cancel != nil {
+		s.cancel()
+	}
 }

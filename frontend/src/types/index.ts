@@ -754,6 +754,12 @@ export interface RawMonitorJobWire {
   interval_seconds: number
   timeout_seconds: number
   state: MonitorJobState
+  runtime_state?: MonitorJobState
+  resume_on_launch?: boolean
+  desired_state?: MonitorJobState
+  recovery_state?: MonitorRecoveryState
+  recovery_reason?: string
+  intent_persistence_error?: string
   blocked_reason?: string
   persistence_state?: 'healthy' | 'degraded'
   persistence_error?: string
@@ -768,6 +774,7 @@ export interface RawMonitorJobWire {
 }
 
 export type MonitorJobState = 'stopped' | 'running' | 'paused' | 'blocked'
+export type MonitorRecoveryState = 'disabled' | 'stopped' | 'paused' | 'active' | 'restoring' | 'restored' | 'blocked'
 
 export interface MonitorJob {
   id: string
@@ -781,6 +788,12 @@ export interface MonitorJob {
   intervalSeconds: number
   timeoutSeconds: number
   state: MonitorJobState
+  runtimeState: MonitorJobState
+  resumeOnLaunch: boolean
+  desiredState: MonitorJobState
+  recoveryState: MonitorRecoveryState
+  recoveryReason: string
+  intentPersistenceError: string
   blockedReason: string
   persistenceState?: 'healthy' | 'degraded'
   persistenceError?: string
@@ -794,7 +807,7 @@ export interface MonitorJob {
   updatedAt: string
 }
 
-export type MonitorRunStatus = 'running' | 'completed' | 'partial_failed' | 'failed' | 'skipped' | 'resource_limited' | 'persistence_failed'
+export type MonitorRunStatus = 'running' | 'completed' | 'partial_failed' | 'failed' | 'skipped' | 'resource_limited' | 'interrupted' | 'persistence_failed'
 
 export type MonitorSamplingTier = 'regular' | 'focus' | 'sparse'
 export type MonitorRunSamplingTier = MonitorSamplingTier | 'diagnostic' | 'legacy_unknown'

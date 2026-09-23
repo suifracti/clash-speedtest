@@ -142,7 +142,7 @@ INSERT INTO monitor_budget_usage (singleton, utc_day, requests_used, bytes_used)
 
 // CurrentSchemaVersion is the SQLite schema authority. Databases without a
 // schema_meta row are the explicitly recognized pre-version legacy schema.
-const CurrentSchemaVersion = 3
+const CurrentSchemaVersion = 4
 
 var (
 	ErrUnsupportedSchemaVersion = fmt.Errorf("unsupported SQLite schema version")
@@ -253,6 +253,15 @@ func migrateSchema(db *sql.DB) error {
 			return fmt.Errorf("record schema version 3: %w", err)
 		}
 		version = 3
+	}
+	if version == 3 {
+		if err := migrateMonitorLaunchRecoveryV4(tx); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("UPDATE schema_meta SET schema_version = 4 WHERE singleton = 1"); err != nil {
+			return fmt.Errorf("record schema version 4: %w", err)
+		}
+		version = 4
 	}
 	if err := validateCurrentSchema(tx, version); err != nil {
 		return fmt.Errorf("validate schema version %d after migration: %w", version, err)
@@ -440,6 +449,29 @@ func migrateSamplingSourceV3(tx *sql.Tx) error {
 	return nil
 }
 
+func migrateMonitorLaunchRecoveryV4(tx *sql.Tx) error {
+	columns, err := tableColumns(tx, "monitor_job_definitions")
+	if err != nil {
+		return err
+	}
+	if !columns["resume_on_launch"] {
+		if _, err := tx.Exec("ALTER TABLE monitor_job_definitions ADD COLUMN resume_on_launch INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return fmt.Errorf("migrate monitor resume preference: %w", err)
+		}
+	}
+	if !columns["desired_state"] {
+		if _, err := tx.Exec("ALTER TABLE monitor_job_definitions ADD COLUMN desired_state TEXT NOT NULL DEFAULT 'stopped'"); err != nil {
+			return fmt.Errorf("migrate monitor desired state: %w", err)
+		}
+	}
+	// Schema v3 definitions predate explicit launch intent. Preserve their
+	// effective stopped behavior and do not infer consent from old run rows.
+	if _, err := tx.Exec("UPDATE monitor_job_definitions SET definition_version = ? WHERE definition_version < ?", monitor.MonitorJobDefinitionVersion, monitor.MonitorJobDefinitionVersion); err != nil {
+		return fmt.Errorf("upgrade monitor job definition version: %w", err)
+	}
+	return nil
+}
+
 func validateCurrentSchema(tx *sql.Tx, version int) error {
 	tables := map[string][]string{
 		"monitor_runs":              {"run_id", "job_id", "scheduled_at", "started_at", "status"},
@@ -452,6 +484,9 @@ func validateCurrentSchema(tx *sql.Tx, version int) error {
 	if version >= 3 {
 		tables["monitor_runs"] = append(tables["monitor_runs"], "sampling_tier", "trigger_type", "sampling_strategy_version")
 		tables["monitor_job_definitions"] = append(tables["monitor_job_definitions"], "sampling_tier")
+	}
+	if version >= 4 {
+		tables["monitor_job_definitions"] = append(tables["monitor_job_definitions"], "resume_on_launch", "desired_state")
 	}
 	for table, columns := range tables {
 		present, err := tableExists(tx, table)
@@ -584,11 +619,13 @@ func (d *DB) SaveMonitorJobDefinition(ctx context.Context, definition *monitor.M
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO monitor_job_definitions (
 			job_id, name, profile_id, probe_set, interval_ns, timeout_ns,
-			created_at, updated_at, definition_version, sampling_tier
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			created_at, updated_at, definition_version, sampling_tier,
+			resume_on_launch, desired_state
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, definition.ID, definition.Name, definition.ProfileID, string(definition.ProbeSet),
 		definition.Interval.Nanoseconds(), definition.Timeout.Nanoseconds(), definition.CreatedAt.UTC(),
-		definition.UpdatedAt.UTC(), version, string(tier))
+		definition.UpdatedAt.UTC(), version, string(tier), definition.ResumeOnLaunch,
+		string(normalizedMonitorDesiredState(definition.DesiredState)))
 	if err != nil {
 		return fmt.Errorf("insert monitor job definition %s: %w", definition.ID, err)
 	}
@@ -610,6 +647,73 @@ func (d *DB) SaveMonitorJobDefinition(ctx context.Context, definition *monitor.M
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit monitor job definition %s: %w", definition.ID, err)
+	}
+	return nil
+}
+
+func normalizedMonitorDesiredState(state monitor.JobState) monitor.JobState {
+	switch state {
+	case monitor.JobStateRunning, monitor.JobStatePaused, monitor.JobStateStopped:
+		return state
+	default:
+		return monitor.JobStateStopped
+	}
+}
+
+// UpdateMonitorJobLaunchIntent persists user-controlled launch permission and
+// desired lifecycle state together. Runtime scheduler state is never written.
+func (d *DB) UpdateMonitorJobLaunchIntent(ctx context.Context, jobID string, resumeOnLaunch bool, desired monitor.JobState, updatedAt time.Time) error {
+	if strings.TrimSpace(jobID) == "" {
+		return fmt.Errorf("monitor job definition id is empty")
+	}
+	if desired != monitor.JobStateRunning && desired != monitor.JobStatePaused && desired != monitor.JobStateStopped {
+		return fmt.Errorf("unsupported monitor desired state %q", desired)
+	}
+	if updatedAt.IsZero() {
+		updatedAt = time.Now()
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
+	result, err := d.db.ExecContext(ctx, `
+		UPDATE monitor_job_definitions
+		SET resume_on_launch = ?, desired_state = ?, updated_at = ?
+		WHERE job_id = ?
+	`, resumeOnLaunch, string(desired), updatedAt.UTC(), jobID)
+	if err != nil {
+		return fmt.Errorf("update monitor job %s launch intent: %w", jobID, err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check monitor job %s launch intent: %w", jobID, err)
+	}
+	if changed == 0 {
+		return fmt.Errorf("monitor job definition %s not found", jobID)
+	}
+	return nil
+}
+
+func (d *DB) DeleteMonitorJobDefinition(ctx context.Context, jobID string) error {
+	if strings.TrimSpace(jobID) == "" {
+		return fmt.Errorf("monitor job definition id is empty")
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
+	result, err := d.db.ExecContext(ctx, `DELETE FROM monitor_job_definitions WHERE job_id = ?`, jobID)
+	if err != nil {
+		return fmt.Errorf("delete monitor job definition %s: %w", jobID, err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check monitor job %s deletion: %w", jobID, err)
+	}
+	if changed == 0 {
+		return fmt.Errorf("monitor job definition %s not found", jobID)
 	}
 	return nil
 }
@@ -663,7 +767,8 @@ func (d *DB) ListMonitorJobDefinitions(ctx context.Context) ([]*monitor.MonitorJ
 	}
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT job_id, name, profile_id, probe_set, interval_ns, timeout_ns,
-		       created_at, updated_at, definition_version, sampling_tier
+		       created_at, updated_at, definition_version, sampling_tier,
+		       resume_on_launch, desired_state
 		FROM monitor_job_definitions
 		ORDER BY created_at ASC, job_id ASC
 	`)
@@ -678,16 +783,18 @@ func (d *DB) ListMonitorJobDefinitions(ctx context.Context) ([]*monitor.MonitorJ
 			definition   monitor.MonitorJobDefinition
 			probeSet     string
 			samplingTier string
+			desiredState string
 			intervalNS   int64
 			timeoutNS    int64
 		)
 		if err := rows.Scan(&definition.ID, &definition.Name, &definition.ProfileID, &probeSet,
 			&intervalNS, &timeoutNS, &definition.CreatedAt, &definition.UpdatedAt,
-			&definition.DefinitionVersion, &samplingTier); err != nil {
+			&definition.DefinitionVersion, &samplingTier, &definition.ResumeOnLaunch, &desiredState); err != nil {
 			return nil, fmt.Errorf("scan monitor job definition: %w", err)
 		}
 		definition.ProbeSet = monitor.ProbeSetType(probeSet)
 		definition.SamplingTier = monitor.SamplingTier(samplingTier)
+		definition.DesiredState = normalizedMonitorDesiredState(monitor.JobState(desiredState))
 		definition.Interval = time.Duration(intervalNS)
 		definition.Timeout = time.Duration(timeoutNS)
 		definition.Nodes, err = d.listMonitorJobNodes(ctx, definition.ID)
@@ -824,6 +931,31 @@ func (d *DB) UpdateMonitorRun(ctx context.Context, run *monitor.MonitorRun) erro
 	rows, _ := res.RowsAffected()
 	if rows == 0 {
 		return fmt.Errorf("monitor_run %s not found for update", run.RunID)
+	}
+	return nil
+}
+
+// MarkRunningMonitorRunsInterrupted closes stale runtime rows without changing
+// their timestamps or any raw samples. The precise interruption time is not
+// inferred from a later application launch.
+func (d *DB) MarkRunningMonitorRunsInterrupted(ctx context.Context) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
+	_, err := d.db.ExecContext(ctx, `
+		UPDATE monitor_runs
+		SET status = ?,
+		    error_message = CASE
+		        WHEN error_message IS NULL OR error_message = '' THEN ?
+		        ELSE error_message || '; ' || ?
+	    END
+		WHERE status = ?
+	`, string(monitor.RunStatusInterrupted), "应用未观测期间该轮被中断；无法确定实际中断时间",
+		"应用未观测期间该轮被中断；无法确定实际中断时间", string(monitor.RunStatusRunning))
+	if err != nil {
+		return fmt.Errorf("mark unfinished monitor runs interrupted: %w", err)
 	}
 	return nil
 }

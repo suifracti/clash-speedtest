@@ -3,6 +3,7 @@ package desktop
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 
@@ -50,6 +51,9 @@ func NewAppWithPaths(hStore *history.Store, paths appdata.AppPaths, userAgent st
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
 	a.emitter.SetContext(ctx)
+	if err := a.app.RecoverMonitorJobs(ctx); err != nil {
+		log.Printf("Monitor startup recovery did not run: %v", err)
+	}
 }
 
 // Shutdown is called by Wails on termination.
@@ -282,6 +286,14 @@ func (a *App) CreateMonitorJob(req application.MonitorJobCreateRequest) (*applic
 
 func (a *App) UpdateMonitorJobSamplingTier(jobID string, tier monitor.SamplingTier) error {
 	return a.app.UpdateMonitorJobSamplingTier(jobID, tier)
+}
+
+func (a *App) SetMonitorJobResumeOnLaunch(jobID string, enabled bool) error {
+	return a.app.SetMonitorJobResumeOnLaunch(jobID, enabled)
+}
+
+func (a *App) DeleteMonitorJob(jobID string) error {
+	return a.app.DeleteMonitorJob(jobID)
 }
 
 func (a *App) StartMonitorJob(jobID string) error {
