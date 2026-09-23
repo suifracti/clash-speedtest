@@ -319,8 +319,8 @@ func (b *BudgetController) chooseWaiterLocked() int {
 	return -1
 }
 
-func (b *BudgetController) dispatchWaitersLocked(limits BudgetLimits) {
-	for b.active < limits.MaxConcurrent && len(b.waiters) > 0 {
+func (b *BudgetController) dispatchWaitersLocked(maxConcurrent int) {
+	for b.active < maxConcurrent && len(b.waiters) > 0 {
 		index := b.chooseWaiterLocked()
 		if index < 0 {
 			return
@@ -366,7 +366,21 @@ func (b *BudgetController) dispatchWaitersLocked(limits BudgetLimits) {
 	}
 }
 
-func (b *BudgetController) removeWaiter(waiter *admissionWaiter, limits BudgetLimits) {
+// dispatchWaiters reads the limits for each admission decision without holding
+// b.mu. In particular, a request's release closure must not carry a stale
+// concurrency limit forward to the next waiter.
+func (b *BudgetController) dispatchWaiters() error {
+	limits, err := b.config()
+	if err != nil {
+		return err
+	}
+	b.mu.Lock()
+	b.dispatchWaitersLocked(limits.MaxConcurrent)
+	b.mu.Unlock()
+	return nil
+}
+
+func (b *BudgetController) removeWaiter(waiter *admissionWaiter) {
 	b.mu.Lock()
 	if waiter.granted {
 		b.active--
@@ -382,8 +396,10 @@ func (b *BudgetController) removeWaiter(waiter *admissionWaiter, limits BudgetLi
 			}
 		}
 	}
-	b.dispatchWaitersLocked(limits)
 	b.mu.Unlock()
+	// Re-read settings outside the lock. If settings are unavailable, leave
+	// remaining waiters queued rather than granting from a stale snapshot.
+	_ = b.dispatchWaiters()
 }
 
 func (b *BudgetController) acquireRequest(ctx context.Context, heavy bool, priority int) (func(), int64, string, error) {
@@ -392,26 +408,28 @@ func (b *BudgetController) acquireRequest(ctx context.Context, heavy bool, prior
 	if err := ctx.Err(); err != nil {
 		return nil, 0, "", budgetBlock("cancelled", "Monitor 请求等待已取消")
 	}
-	limits, err := b.config()
-	if err != nil {
+	if _, err := b.config(); err != nil {
 		return nil, 0, "", err
 	}
 	waiter := &admissionWaiter{priority: priority, heavy: heavy, ready: make(chan struct{})}
 	b.mu.Lock()
 	b.waiters = append(b.waiters, waiter)
-	b.dispatchWaitersLocked(limits)
 	b.mu.Unlock()
+	if err := b.dispatchWaiters(); err != nil {
+		b.removeWaiter(waiter)
+		return nil, 0, "", err
+	}
 	select {
 	case <-waiter.ready:
 	case <-ctx.Done():
-		b.removeWaiter(waiter, limits)
+		b.removeWaiter(waiter)
 		return nil, 0, "", budgetBlock("cancelled", "Monitor 请求等待已取消")
 	case <-deadline.C:
-		b.removeWaiter(waiter, limits)
+		b.removeWaiter(waiter)
 		return nil, 0, "", budgetBlock("wait_expired", "Monitor 全局并发等待已过期，本请求未发出")
 	}
 	if err := ctx.Err(); err != nil {
-		b.removeWaiter(waiter, limits)
+		b.removeWaiter(waiter)
 		return nil, 0, "", budgetBlock("cancelled", "Monitor 请求等待已取消")
 	}
 	release := sync.OnceFunc(func() {
@@ -420,10 +438,11 @@ func (b *BudgetController) acquireRequest(ctx context.Context, heavy bool, prior
 		if heavy {
 			b.heavy--
 		}
-		b.dispatchWaitersLocked(limits)
 		b.mu.Unlock()
+		_ = b.dispatchWaiters()
 	})
-	if err := b.failure(); err != nil {
+	limits, err := b.config()
+	if err != nil {
 		release()
 		return nil, 0, "", err
 	}

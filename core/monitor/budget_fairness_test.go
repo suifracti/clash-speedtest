@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -11,6 +12,25 @@ import (
 type fairnessLedger struct {
 	mu    sync.Mutex
 	usage BudgetUsage
+}
+
+type mutableBudgetConfig struct {
+	mu     sync.RWMutex
+	limits BudgetLimits
+	err    error
+}
+
+func (c *mutableBudgetConfig) read() (BudgetLimits, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.limits, c.err
+}
+
+func (c *mutableBudgetConfig) set(limits BudgetLimits, err error) {
+	c.mu.Lock()
+	c.limits = limits
+	c.err = err
+	c.mu.Unlock()
 }
 
 func (l *fairnessLedger) MonitorBudgetUsage(_ context.Context, day string) (BudgetUsage, error) {
@@ -169,6 +189,147 @@ func TestBudgetAdmissionCancellationRemovesWaiterWithoutRequest(t *testing.T) {
 	status, err := b.Status(context.Background())
 	if err != nil || status.ActiveRequests != 0 {
 		t.Fatalf("cancelled admission leaked permit: status=%+v err=%v", status, err)
+	}
+}
+
+func TestBudgetAdmissionUsesReducedConcurrencyForQueuedWaiters(t *testing.T) {
+	limits := BudgetLimits{MaxConcurrent: 4, DailyRequests: 20, DailyBytes: 100, ResponseBytes: 10}
+	config := &mutableBudgetConfig{limits: limits}
+	ledger := &fairnessLedger{}
+	b := NewBudgetController(ledger, config.read, func() time.Time {
+		return time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	})
+	var held []func()
+	for i := 0; i < 4; i++ {
+		release, _, _, err := b.acquireRequest(context.Background(), false, 1)
+		if err != nil {
+			t.Fatalf("initial request %d failed: %v", i, err)
+		}
+		held = append(held, release)
+	}
+	type outcome struct {
+		release func()
+		err     error
+	}
+	result := make(chan outcome, 1)
+	go func() {
+		release, _, _, err := b.acquireRequest(context.Background(), false, 1)
+		result <- outcome{release: release, err: err}
+	}()
+	waitForBudgetWaiters(t, b, 1)
+
+	limits.MaxConcurrent = 1
+	config.set(limits, nil)
+	for i := 0; i < 3; i++ {
+		held[i]()
+	}
+	assertBudgetAdmissionState(t, b, 1, 1)
+	select {
+	case got := <-result:
+		if got.release != nil {
+			got.release()
+		}
+		t.Fatalf("waiter was admitted while one request still met the reduced limit: err=%v", got.err)
+	default:
+	}
+
+	held[3]()
+	select {
+	case got := <-result:
+		if got.err != nil {
+			t.Fatalf("waiter failed after concurrency became available: %v", got.err)
+		}
+		got.release()
+	case <-time.After(time.Second):
+		t.Fatal("waiter was not admitted after active requests fell below the reduced limit")
+	}
+	assertBudgetAdmissionState(t, b, 0, 0)
+}
+
+func TestBudgetAdmissionUsesReducedDailyLimitForQueuedWaiter(t *testing.T) {
+	limits := BudgetLimits{MaxConcurrent: 1, DailyRequests: 10, DailyBytes: 100, ResponseBytes: 10}
+	config := &mutableBudgetConfig{limits: limits}
+	ledger := &fairnessLedger{}
+	b := NewBudgetController(ledger, config.read, func() time.Time {
+		return time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	})
+	hold, _, _, err := b.acquireRequest(context.Background(), false, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		release, _, _, err := b.acquireRequest(context.Background(), false, 1)
+		if err == nil {
+			release()
+		}
+		result <- err
+	}()
+	waitForBudgetWaiters(t, b, 1)
+
+	limits.DailyRequests = 1
+	config.set(limits, nil)
+	hold()
+	select {
+	case err := <-result:
+		block, ok := AsBudgetBlock(err)
+		if !ok || block.Code != "requests_exhausted" {
+			t.Fatalf("queued request ignored the reduced daily limit: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("queued request did not finish after acquiring the available concurrency permit")
+	}
+	usage, err := ledger.MonitorBudgetUsage(context.Background(), "2026-09-23")
+	if err != nil || usage.RequestsUsed != 1 {
+		t.Fatalf("rejected waiter consumed request quota: usage=%+v err=%v", usage, err)
+	}
+	assertBudgetAdmissionState(t, b, 0, 0)
+}
+
+func TestBudgetAdmissionDoesNotUseStaleLimitsAfterConfigReadFailure(t *testing.T) {
+	limits := BudgetLimits{MaxConcurrent: 1, DailyRequests: 10, DailyBytes: 100, ResponseBytes: 10}
+	config := &mutableBudgetConfig{limits: limits}
+	ledger := &fairnessLedger{}
+	b := NewBudgetController(ledger, config.read, func() time.Time {
+		return time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	})
+	hold, _, _, err := b.acquireRequest(context.Background(), false, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, _, _, err := b.acquireRequest(ctx, false, 1)
+		result <- err
+	}()
+	waitForBudgetWaiters(t, b, 1)
+
+	config.set(limits, errors.New("settings unavailable"))
+	hold()
+	assertBudgetAdmissionState(t, b, 0, 1)
+	cancel()
+	select {
+	case err := <-result:
+		if block, ok := AsBudgetBlock(err); !ok || block.Code != "cancelled" {
+			t.Fatalf("queued waiter returned %v after cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("queued waiter did not cancel promptly")
+	}
+	usage, err := ledger.MonitorBudgetUsage(context.Background(), "2026-09-23")
+	if err != nil || usage.RequestsUsed != 1 {
+		t.Fatalf("config read failure allowed a stale request reservation: usage=%+v err=%v", usage, err)
+	}
+	assertBudgetAdmissionState(t, b, 0, 0)
+}
+
+func assertBudgetAdmissionState(t *testing.T, b *BudgetController, active, waiters int) {
+	t.Helper()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.active != active || len(b.waiters) != waiters {
+		t.Fatalf("unexpected admission state: active=%d waiters=%d, want active=%d waiters=%d", b.active, len(b.waiters), active, waiters)
 	}
 }
 
