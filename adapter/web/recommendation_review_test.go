@@ -104,6 +104,13 @@ func TestWebServer_MonitorRecommendation_ConfiguredModeRespectedAndPreviewOptIn(
 	}
 
 	now := time.Now()
+	if err := server.AppService().HistoryStore().SaveMonitorRun(context.Background(), &monitor.MonitorRun{
+		RunID: "run_mode", JobID: jobID, SamplingTier: monitor.SamplingTierRegular,
+		TriggerType: monitor.SamplingTriggerScheduled, SamplingStrategyVersion: monitor.SamplingStrategyVersion,
+		ScheduledAt: now, StartedAt: now, Status: monitor.RunStatusCompleted, TotalNodes: 2, SuccessNodes: 2,
+	}); err != nil {
+		t.Fatalf("save regular monitor run: %v", err)
+	}
 	saveSamples := func(nodeKey, identityKey, revisionKey, displayName string, latencyMs int) {
 		t.Helper()
 		samples := make([]*monitor.MonitorSample, 0, 5)

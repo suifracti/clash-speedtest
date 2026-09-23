@@ -150,6 +150,13 @@ func TestWebServer_MonitorRecommendation_ReadOnlyEndpoint(t *testing.T) {
 
 	// 3. Persist raw monitor evidence directly (no monitor run is triggered).
 	now := time.Now()
+	if err := server.AppService().HistoryStore().SaveMonitorRun(context.Background(), &monitor.MonitorRun{
+		RunID: "run_web", JobID: jobID, SamplingTier: monitor.SamplingTierRegular,
+		TriggerType: monitor.SamplingTriggerScheduled, SamplingStrategyVersion: monitor.SamplingStrategyVersion,
+		ScheduledAt: now, StartedAt: now, Status: monitor.RunStatusCompleted, TotalNodes: 2, SuccessNodes: 2,
+	}); err != nil {
+		t.Fatalf("save regular monitor run: %v", err)
+	}
 	saveSamples := func(nodeKey, nodeIdentityKey, configRevisionKey, displayName string, latencyMs int) {
 		t.Helper()
 		samples := make([]*monitor.MonitorSample, 0, 5)
