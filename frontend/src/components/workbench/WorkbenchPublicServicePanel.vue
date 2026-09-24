@@ -1,20 +1,30 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as api from '../../api/bridge'
-import type { MonitorNodeOption, NodeDetailRequest, WorkbenchPublicServiceAttempt, WorkbenchPublicServiceHistoryQuery, WorkbenchPublicServiceRule } from '../../types'
+import type { MonitorNodeOption, NodeDetailRequest, WorkbenchPublicServiceAttempt, WorkbenchPublicServiceHistoryQuery, WorkbenchPublicServiceRule, WorkbenchSaveRetryRequest } from '../../types'
 
-const props = defineProps<{ node: MonitorNodeOption | null }>()
-const emit = defineEmits<{ (event: 'open-node-detail', payload: NodeDetailRequest): void }>()
+const props = defineProps<{ node: MonitorNodeOption | null; saveRetryRequest?: WorkbenchSaveRetryRequest | null }>()
+const emit = defineEmits<{
+  (event: 'open-node-detail', payload: NodeDetailRequest): void
+  (event: 'save-retry-request-resolved', attemptID: string): void
+}>()
 
 const catalog = ref<WorkbenchPublicServiceRule[]>([])
 const catalogError = ref('')
 const selectedServiceID = ref('cloudflare_204')
 const timeoutSeconds = ref(10)
 const attempt = ref<WorkbenchPublicServiceAttempt | null>(null)
+const retryableAttempts = ref<WorkbenchPublicServiceAttempt[]>([])
+const retryableHasMore = ref(false)
+const retryableLoading = ref(false)
+const retryableError = ref('')
 const error = ref('')
 const refreshing = ref(false)
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 let requestToken = 0
+let retryableRequestToken = 0
+let saveRetryLoadToken = 0
+const retryableCursor = ref<WorkbenchPublicServiceAttempt | null>(null)
 
 type ServiceOption = { value: string; label: string; disabled?: boolean }
 const serviceOptions = computed<ServiceOption[]>(() => [
@@ -37,6 +47,14 @@ onMounted(async () => {
   }
 })
 
+watch(() => [props.node?.profileId, props.node?.nodeKey, props.node?.nodeIdentityKey, props.node?.configRevisionKey].join('\u0000'), () => {
+  void loadRetryableAttempts()
+}, { immediate: true })
+
+watch(() => props.saveRetryRequest, (request) => {
+  if (request?.domain === 'public_service') void loadSaveRetryRequest(request)
+}, { immediate: true })
+
 onBeforeUnmount(() => {
   requestToken += 1
   if (pollTimer) clearTimeout(pollTimer)
@@ -54,6 +72,104 @@ function attemptQuery(value: WorkbenchPublicServiceAttempt): WorkbenchPublicServ
     config_revision_key: value.config_revision_key,
     service_id: value.service_id,
   }
+}
+
+function retryRequestQuery(request: WorkbenchSaveRetryRequest): WorkbenchPublicServiceHistoryQuery {
+  return {
+    profile_id: request.profile_id,
+    node_key: request.node_key,
+    node_identity_key: request.node_identity_key,
+    config_revision_key: request.config_revision_key,
+    service_id: request.service_id,
+  }
+}
+
+function historyCursor(attempt: WorkbenchPublicServiceAttempt): { before_at: string; before_attempt_id: string } {
+  return {
+    before_at: attempt.result?.finished_at || attempt.finished_at || attempt.started_at || attempt.requested_at,
+    before_attempt_id: attempt.attempt_id,
+  }
+}
+
+async function loadRetryableAttempts(append = false): Promise<void> {
+  const node = props.node
+  if (!node) {
+    retryableRequestToken++
+    retryableAttempts.value = []
+    retryableHasMore.value = false
+    retryableCursor.value = null
+    return
+  }
+  const token = ++retryableRequestToken
+  retryableLoading.value = true
+  retryableError.value = ''
+  if (!append) {
+    retryableAttempts.value = []
+    retryableHasMore.value = false
+    retryableCursor.value = null
+  }
+  const query: WorkbenchPublicServiceHistoryQuery = {
+    profile_id: node.profileId,
+    node_key: node.nodeKey,
+    node_identity_key: node.nodeIdentityKey,
+    config_revision_key: node.configRevisionKey,
+    limit: 25,
+    ...(append && retryableCursor.value ? historyCursor(retryableCursor.value) : {}),
+  }
+  try {
+    const page = await api.fetchWorkbenchPublicServiceHistory(query)
+    if (token !== retryableRequestToken) return
+    const retryable = page.attempts.filter((item) => item.persistence_state === 'failed' && !!item.result)
+    const existingIDs = new Set(retryableAttempts.value.map((item) => item.attempt_id))
+    retryableAttempts.value = append
+      ? [...retryableAttempts.value, ...retryable.filter((item) => !existingIDs.has(item.attempt_id))]
+      : retryable
+    retryableHasMore.value = page.has_more
+    retryableCursor.value = page.attempts[page.attempts.length - 1] || retryableCursor.value
+  } catch (cause) {
+    if (token === retryableRequestToken) retryableError.value = `读取可重试保存历史失败：${messageFor(cause)}`
+  } finally {
+    if (token === retryableRequestToken) retryableLoading.value = false
+  }
+}
+
+function selectRetryableAttempt(value: WorkbenchPublicServiceAttempt): void {
+  if (value.persistence_state !== 'failed' || !value.result) return
+  requestToken++
+  if (pollTimer) clearTimeout(pollTimer)
+  selectedServiceID.value = value.service_id
+  attempt.value = value
+  error.value = ''
+}
+
+async function loadSaveRetryRequest(request: WorkbenchSaveRetryRequest): Promise<void> {
+  const token = ++saveRetryLoadToken
+  requestToken++
+  if (pollTimer) clearTimeout(pollTimer)
+  refreshing.value = true
+  error.value = ''
+  try {
+    const loaded = await api.fetchWorkbenchPublicServiceAttempt(request.attempt_id, retryRequestQuery(request))
+    if (token !== saveRetryLoadToken) return
+    if (loaded.attempt_id !== request.attempt_id || loaded.profile_id !== request.profile_id || loaded.node_key !== request.node_key ||
+      loaded.node_identity_key !== request.node_identity_key || loaded.config_revision_key !== request.config_revision_key ||
+      (request.service_id && loaded.service_id !== request.service_id)) {
+      error.value = '待处理 attempt 的身份范围不一致；未执行保存或检测。'
+      return
+    }
+    selectedServiceID.value = loaded.service_id
+    attempt.value = loaded
+    emit('save-retry-request-resolved', loaded.attempt_id)
+  } catch (cause) {
+    if (token === saveRetryLoadToken) error.value = `读取待处理 attempt 失败：${messageFor(cause)}`
+  } finally {
+    if (token === saveRetryLoadToken) refreshing.value = false
+  }
+}
+
+function retryLoadSaveRetryRequest(): void {
+  const request = props.saveRetryRequest
+  if (request?.domain === 'public_service') void loadSaveRetryRequest(request)
 }
 
 function newRequestID(): string {
@@ -206,7 +322,15 @@ function openDetail(): void {
     <p v-if="catalogError" class="public-service-error">固定服务目录读取失败：{{ catalogError }}</p>
     <p v-else-if="selectedRule" class="public-service-rule">{{ selectedRule.method }} {{ selectedRule.target_url }} · 规则 v{{ selectedRule.rule_version }} · {{ selectedRule.success_criterion }} · 不跟随重定向 · 响应体最多读取 {{ selectedRule.maximum_body_bytes / 1024 }} KiB · 无账号、cookie 或认证头。</p>
     <p class="public-service-note">仅表示该固定目标是否符合列明的 HTTP 判据。未符合判据不能单独证明节点失效或地区封锁；GitHub 根端点符合判据也不代表登录、仓库读写或其他功能可用。</p>
+    <section v-if="retryableAttempts.length || retryableLoading || retryableError || retryableHasMore" class="public-service-retry-list" aria-label="可重试保存的服务检测">
+      <div><strong>可重试保存的结果</strong><p>选择已有 attempt 后，明确点击重试保存；不会重新检测。</p></div>
+      <button v-for="item in retryableAttempts" :key="item.attempt_id" type="button" class="public-service-button" :aria-pressed="attempt?.attempt_id === item.attempt_id" @click="selectRetryableAttempt(item)">{{ item.rule.name }} · {{ new Date(item.result?.finished_at || item.requested_at).toLocaleString() }} · {{ item.attempt_id }}</button>
+      <span v-if="retryableLoading" class="public-service-note">正在读取历史…</span>
+      <span v-if="retryableError" class="public-service-error">{{ retryableError }}</span>
+      <button v-if="retryableHasMore" type="button" class="public-service-button" :disabled="retryableLoading" @click="loadRetryableAttempts(true)">加载更多待处理历史</button>
+    </section>
     <p v-if="error" class="public-service-error">{{ error }}</p>
+    <button v-if="saveRetryRequest?.domain === 'public_service' && error" type="button" class="public-service-button" :disabled="refreshing" @click="retryLoadSaveRetryRequest">重新读取指定 attempt</button>
     <div v-if="attempt" class="public-service-result" aria-live="polite">
       <div class="public-service-result-heading"><strong>{{ attempt.rule.name }} · {{ executionLabel(attempt.execution_state) }}</strong><span>{{ persistenceLabel(attempt.persistence_state, !!attempt.result) }}</span></div>
       <p>{{ attempt.display_name || attempt.node_key }} · {{ attempt.profile_id }} · revision {{ attempt.config_revision_key }} · attempt {{ attempt.attempt_id }}</p>
@@ -224,4 +348,5 @@ function openDetail(): void {
 .public-service-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 9px 12px; margin: 12px 0 5px; }.public-service-controls label { display: grid; gap: 5px; min-width: 150px; color: var(--text-secondary, #596873); font-size: 10px; font-weight: 700; }.public-service-controls select { min-height: 31px; padding: 5px 8px; border: 1px solid var(--border, #d6dde1); border-radius: 5px; background: white; color: var(--text-main, #1f2933); font-size: 11px; }.public-service-node { display: inline-flex; align-items: center; min-height: 31px; padding: 0 8px; border: 1px solid var(--border, #d6dde1); border-radius: 5px; color: var(--text-main, #1f2933); font-size: 11px; font-weight: 500; }.public-service-node.muted { color: var(--text-muted, #78868f); }
 .public-service-primary, .public-service-button { min-height: 31px; padding: 6px 10px; border: 1px solid var(--border, #d6dde1); border-radius: 5px; background: white; color: var(--primary, #256b78); font-size: 11px; font-weight: 700; }.public-service-primary { border-color: var(--primary, #256b78); background: var(--primary, #256b78); color: white; }.public-service-primary:disabled, .public-service-button:disabled { cursor: not-allowed; opacity: .55; }
 .public-service-rule { overflow-wrap: anywhere; }.public-service-note { color: var(--text-muted, #75838c); }.public-service-error { margin: 7px 0; color: #a32f36; font-size: 11px; overflow-wrap: anywhere; }.public-service-result { margin-top: 11px; padding: 10px 12px; border: 1px solid var(--border, #d6dde1); border-radius: 7px; background: var(--card-subtle, #f8fafb); }.public-service-result-heading { display: flex; justify-content: space-between; gap: 10px; color: var(--text-main, #1f2933); font-size: 12px; }.public-service-result-heading span { color: var(--text-secondary, #596873); font-weight: 500; }.public-service-result-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
+.public-service-retry-list { display: grid; justify-items: start; gap: 6px; margin: 10px 0; padding: 10px 12px; border: 1px solid var(--border, #d5dce0); border-radius: 7px; background: var(--card-subtle, #f8fafb); }.public-service-retry-list p { margin: 3px 0; color: var(--text-secondary, #5a6872); font-size: 11px; }
 </style>

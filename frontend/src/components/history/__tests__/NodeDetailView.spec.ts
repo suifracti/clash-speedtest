@@ -198,7 +198,7 @@ describe('NodeDetailView', () => {
   })
 
   it('loads the service-origin attempt and filters read-only history by identity, revision, and service', async () => {
-    const attempt = publicServiceAttempt('service-origin')
+    const attempt = { ...publicServiceAttempt('service-origin'), persistence_state: 'failed' }
     bridgeMocks.fetchWorkbenchPublicServiceHistory.mockResolvedValue({ attempts: [attempt], since: '', until: '', has_more: false, complete: true })
     bridgeMocks.fetchWorkbenchPublicServiceAttempt.mockResolvedValue(attempt)
     const scope: NodeDetailRequest = {
@@ -217,6 +217,13 @@ describe('NodeDetailView', () => {
     expect(wrapper.text()).toContain('GitHub 公共 API 根端点')
     expect(wrapper.text()).toContain('符合判据')
     expect(wrapper.text()).toContain('attempt service-origin')
+    const handoff = wrapper.findAll('button').find((button) => button.text().includes('返回 Workbench 重试保存'))
+    expect(handoff).toBeDefined()
+    await handoff!.trigger('click')
+    expect(wrapper.emitted('open-workbench-save-retry')?.[0]?.[0]).toEqual({
+      domain: 'public_service', attempt_id: 'service-origin', profile_id: 'profile-a', node_key: 'node-a',
+      node_identity_key: 'identity-a', config_revision_key: 'rev-a', service_id: 'github_api_root',
+    })
     expect(bridgeMocks.startWorkbenchPublicServiceTest).not.toHaveBeenCalled()
   })
 

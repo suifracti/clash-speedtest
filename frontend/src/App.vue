@@ -18,7 +18,7 @@ import MonitorJobsView from './components/monitor/MonitorJobsView.vue'
 import LatencyWorkbench from './components/workbench/LatencyWorkbench.vue'
 import NodeDetailView from './components/history/NodeDetailView.vue'
 import ProfileSetupModal from './components/profile/ProfileSetupModal.vue'
-import type { MonitorJobNode, MonitorJobPrefill, NodeDetailRequest } from './types'
+import type { MonitorJobNode, MonitorJobPrefill, NodeDetailRequest, WorkbenchSaveRetryRequest } from './types'
 
 const store = useWorkbenchStore()
 
@@ -33,6 +33,7 @@ const activeView = ref<'workbench' | 'monitor-jobs' | 'timeline'>('workbench')
 const monitorPrefill = ref<MonitorJobPrefill | null>(null)
 const nodeDetail = ref<NodeDetailRequest | null>(null)
 const nodeDetailKey = ref(0)
+const workbenchSaveRetry = ref<WorkbenchSaveRetryRequest | null>(null)
 const timelineStore = useTimelineStore()
 
 function openMonitorFromWorkbench(prefill: MonitorJobPrefill): void {
@@ -50,6 +51,16 @@ function openNodeDetail(request: NodeDetailRequest): void {
 }
 
 function closeNodeDetail(): void { nodeDetail.value = null }
+
+function openWorkbenchSaveRetry(request: WorkbenchSaveRetryRequest): void {
+  workbenchSaveRetry.value = request
+  nodeDetail.value = null
+  activeView.value = 'workbench'
+}
+
+function clearWorkbenchSaveRetry(attemptID: string): void {
+  if (workbenchSaveRetry.value?.attempt_id === attemptID) workbenchSaveRetry.value = null
+}
 
 watch(activeView, (view) => {
   if (view !== 'monitor-jobs') monitorPrefill.value = null
@@ -96,7 +107,7 @@ onUnmounted(() => {
     <SourceScopeBar v-model:active-view="activeView" />
 
     <template v-if="activeView === 'workbench'">
-      <LatencyWorkbench @open-monitor="openMonitorFromWorkbench" @open-node-detail="openNodeDetail" />
+      <LatencyWorkbench :save-retry-request="workbenchSaveRetry" @save-retry-request-resolved="clearWorkbenchSaveRetry" @open-monitor="openMonitorFromWorkbench" @open-node-detail="openNodeDetail" />
       <details class="legacy-surface app-page">
         <summary>
           既有批量测速（本阶段未改动）
@@ -126,6 +137,6 @@ onUnmounted(() => {
     <ProfileSetupModal />
     <AirportConsolidatedMatrix />
     <PreferencesModal />
-    <NodeDetailView v-if="nodeDetail" :key="nodeDetailKey" :scope="nodeDetail" @close="closeNodeDetail" />
+    <NodeDetailView v-if="nodeDetail" :key="nodeDetailKey" :scope="nodeDetail" @close="closeNodeDetail" @open-workbench-save-retry="openWorkbenchSaveRetry" />
   </div>
 </template>
