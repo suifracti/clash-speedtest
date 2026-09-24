@@ -13,6 +13,7 @@ import type {
   WorkbenchLatencyBatchItem,
   WorkbenchLatencyTest,
   WorkbenchPublicServiceAttempt,
+  WorkbenchDownloadAttempt,
   WorkbenchSaveRetryRequest,
 } from '../../types'
 
@@ -57,9 +58,16 @@ const publicServiceLoading = ref(false)
 const publicServiceMoreLoading = ref(false)
 const publicServiceError = ref('')
 const publicServiceLoaded = ref(false)
+const downloadRows = ref<WorkbenchDownloadAttempt[]>([])
+const downloadHasMore = ref(false)
+const downloadLoading = ref(false)
+const downloadMoreLoading = ref(false)
+const downloadError = ref('')
+const downloadLoaded = ref(false)
 const selectedPublicServiceID = ref(props.scope.origin?.kind === 'public_service_attempt' ? props.scope.origin.serviceId : '')
 const originTest = ref<WorkbenchLatencyTest | null>(null)
 const originPublicServiceAttempt = ref<WorkbenchPublicServiceAttempt | null>(null)
+const originDownloadAttempt = ref<WorkbenchDownloadAttempt | null>(null)
 const originBatch = ref<WorkbenchLatencyBatch | null>(null)
 const originBatchItem = ref<WorkbenchLatencyBatchItem | null>(null)
 const originError = ref('')
@@ -162,6 +170,20 @@ function publicServiceQuery(cursor?: WorkbenchPublicServiceAttempt) {
   }
 }
 
+function downloadQuery(cursor?: WorkbenchDownloadAttempt) {
+  const cursorAt = cursor?.result?.finished_at || cursor?.finished_at || cursor?.started_at || cursor?.requested_at
+  return {
+    profile_id: props.scope.profileId,
+    node_key: activeNodeKey.value,
+    node_identity_key: props.scope.nodeIdentityKey,
+    config_revision_key: selectedRevision.value,
+    since: new Date(window.value.sinceMs).toISOString(),
+    until: new Date(window.value.untilMs).toISOString(),
+    limit: 50,
+    ...(cursor && cursorAt ? { before_at: cursorAt, before_attempt_id: cursor.attempt_id } : {}),
+  }
+}
+
 function matchesActiveRequest(token: number): boolean { return token === generation }
 
 async function load(): Promise<void> {
@@ -185,6 +207,12 @@ async function load(): Promise<void> {
   publicServiceMoreLoading.value = false
   publicServiceError.value = ''
   publicServiceLoaded.value = false
+  downloadRows.value = []
+  downloadHasMore.value = false
+  downloadLoading.value = true
+  downloadMoreLoading.value = false
+  downloadError.value = ''
+  downloadLoaded.value = false
   monitorMoreLoading.value = false
   workbenchMoreLoading.value = false
   revisionError.value = ''
@@ -194,9 +222,11 @@ async function load(): Promise<void> {
     monitorError.value = 'profile、node_key、稳定 identity 或 revision 不完整；请从既有 legacy 历史入口查看。'
     workbenchError.value = monitorError.value
     publicServiceError.value = monitorError.value
+    downloadError.value = monitorError.value
     monitorLoading.value = false
     workbenchLoading.value = false
     publicServiceLoading.value = false
+    downloadLoading.value = false
     return
   }
 
@@ -287,6 +317,22 @@ async function load(): Promise<void> {
         }
       }
     })(),
+    (async () => {
+      try {
+        const page = await bridge.fetchWorkbenchDownloadHistory(downloadQuery())
+        if (!matchesActiveRequest(token)) return
+        if (page.attempts.some((attempt) => attempt.profile_id !== props.scope.profileId || attempt.node_key !== activeNodeKey.value || attempt.node_identity_key !== props.scope.nodeIdentityKey || attempt.config_revision_key !== selectedRevision.value)) {
+          downloadError.value = '响应中的 profile / identity / revision 与当前详情不一致。'
+        } else {
+          downloadRows.value = page.attempts
+          downloadHasMore.value = page.has_more
+        }
+      } catch (error) {
+        if (matchesActiveRequest(token)) downloadError.value = errorText(error)
+      } finally {
+        if (matchesActiveRequest(token)) { downloadLoading.value = false; downloadLoaded.value = !downloadError.value }
+      }
+    })(),
     loadOrigin(token),
   ]
   await Promise.all(tasks)
@@ -295,6 +341,7 @@ async function load(): Promise<void> {
 async function loadOrigin(token: number): Promise<void> {
   originTest.value = null
   originPublicServiceAttempt.value = null
+  originDownloadAttempt.value = null
   originBatch.value = null
   originBatchItem.value = null
   originError.value = ''
@@ -321,6 +368,26 @@ async function loadOrigin(token: number): Promise<void> {
     } catch (error) {
       if (matchesActiveRequest(token)) originError.value = originPublicServiceAttempt.value
         ? `原始服务 attempt 尚未能从历史库读取，当前显示入口快照：${errorText(error)}`
+        : errorText(error)
+    }
+    return
+  }
+  if (origin.kind === 'workbench_download_attempt') {
+    if (origin.snapshot) originDownloadAttempt.value = origin.snapshot
+    try {
+      const attempt = await bridge.fetchWorkbenchDownloadAttempt(origin.attemptId, {
+        profile_id: props.scope.profileId, node_key: props.scope.nodeKey, node_identity_key: props.scope.nodeIdentityKey,
+        config_revision_key: selectedRevision.value,
+      })
+      if (!matchesActiveRequest(token)) return
+      if (attempt.profile_id !== props.scope.profileId || attempt.node_key !== props.scope.nodeKey || attempt.node_identity_key !== props.scope.nodeIdentityKey || attempt.config_revision_key !== selectedRevision.value) {
+        originError.value = '原始下载 attempt 的身份或 revision 不匹配。'
+        return
+      }
+      originDownloadAttempt.value = attempt
+    } catch (error) {
+      if (matchesActiveRequest(token)) originError.value = originDownloadAttempt.value
+        ? `原始下载 attempt 尚未能从历史库读取，当前显示入口快照：${errorText(error)}`
         : errorText(error)
     }
     return
@@ -379,6 +446,27 @@ async function loadMorePublicService(): Promise<void> {
   } finally {
     if (matchesActiveRequest(token)) publicServiceMoreLoading.value = false
   }
+}
+
+async function loadMoreDownload(): Promise<void> {
+  if (downloadMoreLoading.value || !downloadHasMore.value) return
+  const token = generation
+  const cursor = downloadRows.value[downloadRows.value.length - 1]
+  if (!cursor) return
+  downloadMoreLoading.value = true
+  try {
+    const page = await bridge.fetchWorkbenchDownloadHistory(downloadQuery(cursor))
+    if (!matchesActiveRequest(token)) return
+    if (page.attempts.some((attempt) => attempt.profile_id !== props.scope.profileId || attempt.node_key !== activeNodeKey.value || attempt.node_identity_key !== props.scope.nodeIdentityKey || attempt.config_revision_key !== selectedRevision.value)) {
+      downloadError.value = '响应中的 profile / identity / revision 与当前详情不一致。'
+      return
+    }
+    const seen = new Set(downloadRows.value.map((attempt) => attempt.attempt_id))
+    downloadRows.value = [...downloadRows.value, ...page.attempts.filter((attempt) => !seen.has(attempt.attempt_id))]
+    downloadHasMore.value = page.has_more
+  } catch (error) {
+    if (matchesActiveRequest(token)) downloadError.value = errorText(error)
+  } finally { if (matchesActiveRequest(token)) downloadMoreLoading.value = false }
 }
 
 function publicServiceExecutionLabel(state: string): string {
@@ -450,6 +538,7 @@ function timeText(value: string | number | null | undefined): string {
   const date = typeof value === 'number' ? new Date(value) : new Date(value)
   return Number.isNaN(date.getTime()) ? '未知' : date.toLocaleString()
 }
+function downloadLimitText(bytes: number): string { return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(0)} MiB` : `${bytes.toLocaleString()} 字节` }
 function tierText(tier: string, trigger: string): string {
   const label: Record<string, string> = { regular: 'regular', focus: 'focus', sparse: 'sparse', diagnostic: 'diagnostic', legacy_unknown: '来源未知' }
   const triggerLabel: Record<string, string> = { scheduled: '周期', manual: '手动', legacy_unknown: '触发未知' }
@@ -463,6 +552,15 @@ function openPublicServiceSaveRetry(attempt: WorkbenchPublicServiceAttempt): voi
     domain: 'public_service', attempt_id: attempt.attempt_id, profile_id: attempt.profile_id,
     node_key: attempt.node_key, node_identity_key: attempt.node_identity_key,
     config_revision_key: attempt.config_revision_key, service_id: attempt.service_id,
+  })
+}
+
+function openDownloadSaveRetry(attempt: WorkbenchDownloadAttempt): void {
+  if (attempt.persistence_state !== 'failed' || !attempt.result) return
+  emit('open-workbench-save-retry', {
+    domain: 'download', attempt_id: attempt.attempt_id, profile_id: attempt.profile_id,
+    node_key: attempt.node_key, node_identity_key: attempt.node_identity_key,
+    config_revision_key: attempt.config_revision_key,
   })
 }
 
@@ -502,8 +600,9 @@ onBeforeUnmount(() => { generation++ })
       </section>
 
       <section v-if="props.scope.origin && props.scope.origin.kind !== 'monitor_sample'" class="node-detail-origin">
-        <h3>{{ props.scope.origin.kind === 'public_service_attempt' ? '原始公共服务检测' : '原始 Workbench 来源' }}</h3>
+        <h3>{{ props.scope.origin.kind === 'public_service_attempt' ? '原始公共服务检测' : props.scope.origin.kind === 'workbench_download_attempt' ? '原始下载测量' : '原始 Workbench 来源' }}</h3>
         <p v-if="props.scope.origin.kind === 'public_service_attempt'">服务 {{ props.scope.origin.serviceId }} · Attempt {{ props.scope.origin.attemptId }}</p>
+        <p v-if="props.scope.origin.kind === 'workbench_download_attempt'">固定目标下载 · Attempt {{ props.scope.origin.attemptId }}</p>
         <p v-if="props.scope.origin.kind === 'workbench_batch_item'">Batch {{ props.scope.origin.batchId }} · Item {{ props.scope.origin.itemId }} · Attempt {{ props.scope.origin.attemptId || '无 attempt' }}</p>
         <p v-else-if="props.scope.origin.kind === 'workbench_attempt'">Attempt {{ props.scope.origin.attemptId }}</p>
         <p v-if="originRevisionMismatch" class="node-detail-warning">当前查看的是另一 revision；入口 attempt/batch 仍属于打开详情时的 revision。</p>
@@ -513,7 +612,8 @@ onBeforeUnmount(() => { generation++ })
         </template>
         <template v-if="originTest"><p>测法 {{ originTest.method || '未知' }} v{{ originTest.method_version || '未知' }} · target {{ originTest.target || '未知' }} · 单位 {{ originTest.unit || '未知' }} · attempt {{ originTest.attempt_id }}</p><p>{{ originTest.success_samples }} 成功 / {{ originTest.failure_samples }} 失败 · {{ originTest.latency_ms }} ms · jitter {{ originTest.jitter_ms }} ms · {{ originTest.persistence_state }}</p></template>
         <template v-if="originPublicServiceAttempt"><p>{{ originPublicServiceAttempt.rule.method }} {{ originPublicServiceAttempt.rule.target_url }} · 规则 v{{ originPublicServiceAttempt.rule.rule_version }} · {{ originPublicServiceAttempt.rule.success_criterion }}</p><p>执行 {{ publicServiceExecutionLabel(originPublicServiceAttempt.execution_state) }} · 保存 {{ originPublicServiceAttempt.persistence_state }}<template v-if="originPublicServiceAttempt.persistence_error"> · {{ originPublicServiceAttempt.persistence_error }}</template></p><p v-if="originPublicServiceAttempt.result">{{ publicServiceOutcomeLabel(originPublicServiceAttempt.result.outcome) }} · HTTP {{ originPublicServiceAttempt.result.http_status ?? '无响应' }} · {{ originPublicServiceAttempt.result.duration_ms }} ms · 已读取 {{ originPublicServiceAttempt.result.bytes_read }} 字节<template v-if="originPublicServiceAttempt.result.failure_phase"> · {{ originPublicServiceAttempt.result.failure_phase }}</template><template v-if="originPublicServiceAttempt.result.error_message"> · {{ originPublicServiceAttempt.result.error_message }}</template></p><button v-if="originPublicServiceAttempt.persistence_state === 'failed' && originPublicServiceAttempt.result" type="button" class="node-detail-more" @click="openPublicServiceSaveRetry(originPublicServiceAttempt)">返回 Workbench 重试保存（不重新检测）</button></template>
-        <span v-if="!originBatchItem && !originTest && !originPublicServiceAttempt && !originError && !originRevisionMismatch">正在读取原始 attempt…</span>
+        <template v-if="originDownloadAttempt"><p>{{ originDownloadAttempt.rule.method }} {{ originDownloadAttempt.rule.target_url }} · 规则 v{{ originDownloadAttempt.rule.rule_version }} · 上限 {{ downloadLimitText(originDownloadAttempt.rule.maximum_bytes) }} / {{ (originDownloadAttempt.rule.maximum_duration_ns / 1e9).toFixed(0) }} 秒</p><p>执行 {{ originDownloadAttempt.execution_state }} · 保存 {{ originDownloadAttempt.persistence_state }}<template v-if="originDownloadAttempt.persistence_error"> · {{ originDownloadAttempt.persistence_error }}</template></p><p v-if="originDownloadAttempt.result">{{ originDownloadAttempt.result.outcome }} · 已读取 {{ originDownloadAttempt.result.bytes_read }} 字节 · {{ (originDownloadAttempt.result.duration_ns / 1e9).toFixed(2) }} 秒<template v-if="originDownloadAttempt.result.failure_phase"> · {{ originDownloadAttempt.result.failure_phase }}</template><template v-if="originDownloadAttempt.result.error_message"> · {{ originDownloadAttempt.result.error_message }}</template></p><button v-if="originDownloadAttempt.persistence_state === 'failed' && originDownloadAttempt.result" type="button" class="node-detail-more" @click="openDownloadSaveRetry(originDownloadAttempt)">返回 Workbench 重试保存（不重新下载）</button></template>
+        <span v-if="!originBatchItem && !originTest && !originPublicServiceAttempt && !originDownloadAttempt && !originError && !originRevisionMismatch">正在读取原始 attempt…</span>
       </section>
 
       <section class="node-detail-section">
@@ -567,6 +667,21 @@ onBeforeUnmount(() => { generation++ })
           <div class="node-detail-attempt-metrics"><b>{{ publicServiceOutcomeLabel(attempt.result?.outcome) }}</b><span>HTTP {{ attempt.result?.http_status ?? '无响应' }} · {{ attempt.result?.duration_ms ?? '—' }} ms · 已读取 {{ attempt.result?.bytes_read ?? 0 }} 字节</span><span v-if="attempt.result?.failure_phase">失败位置 {{ attempt.result.failure_phase }}<template v-if="attempt.result.error_message"> · {{ attempt.result.error_message }}</template></span><span>attempt {{ attempt.attempt_id }}</span><button v-if="attempt.persistence_state === 'failed' && attempt.result" type="button" class="node-detail-more" @click="openPublicServiceSaveRetry(attempt)">返回 Workbench 重试保存（不重新检测）</button></div>
         </div>
         <button v-if="publicServiceHasMore" type="button" class="node-detail-more" :disabled="publicServiceMoreLoading" @click="loadMorePublicService">{{ publicServiceMoreLoading ? '正在加载…' : '加载更多公共服务检测' }}</button>
+      </section>
+
+      <section class="node-detail-section">
+        <div class="node-detail-section-heading"><div><h3>Workbench 下载测量</h3><p>独立的手动响应体测量；与延迟、公共服务、Monitor 和推荐证据分开。</p></div></div>
+        <p class="node-detail-note">请求窗口 {{ windowLabel }} · {{ new Date(window.sinceMs).toLocaleString() }} – {{ new Date(window.untilMs).toLocaleString() }}。读取字节数不代表系统总流量或完整文件下载。</p>
+        <div v-if="downloadError" class="node-detail-error">下载历史读取失败：{{ downloadError }}</div>
+        <p v-else-if="downloadLoaded && downloadRows.length === 0 && !downloadHasMore" class="node-detail-empty">此 profile、稳定身份、revision 与请求窗口内没有下载测量记录。</p>
+        <p v-if="downloadLoaded && downloadHasMore" class="node-detail-warning">已加载 {{ downloadRows.length }} 次下载测量；当前窗口仍有更多记录。</p>
+        <div v-if="downloadLoading" class="node-detail-empty">正在读取下载历史…</div>
+        <div v-for="attempt in downloadRows" :key="attempt.attempt_id" class="node-detail-attempt" :class="{ 'node-detail-highlight': props.scope.origin?.kind === 'workbench_download_attempt' && props.scope.origin.attemptId === attempt.attempt_id }">
+          <div><strong>{{ timeText(attempt.result?.finished_at || attempt.finished_at || attempt.started_at || attempt.requested_at) }} · {{ attempt.execution_state }}</strong><span>保存 {{ attempt.persistence_state }}<template v-if="attempt.persistence_error"> · {{ attempt.persistence_error }}</template></span><small>来源 {{ attempt.source }} · {{ attempt.rule.method }} {{ attempt.rule.target_url }} · 规则 v{{ attempt.rule.rule_version }}</small><small>读取上限 {{ downloadLimitText(attempt.rule.maximum_bytes) }} · 时长上限 {{ (attempt.rule.maximum_duration_ns / 1e9).toFixed(0) }} 秒</small></div>
+          <div class="node-detail-attempt-metrics"><b>{{ attempt.result?.outcome || (attempt.execution_state === 'interrupted' ? '应用退出时中断；未自动重测' : '尚无测量结果') }}</b><span v-if="attempt.result">{{ attempt.result.bytes_read.toLocaleString() }} 字节 · {{ (attempt.result.duration_ns / 1e9).toFixed(2) }} 秒<template v-if="attempt.result.http_status"> · HTTP {{ attempt.result.http_status }}</template></span><span v-if="attempt.result?.failure_phase">结束位置 {{ attempt.result.failure_phase }}<template v-if="attempt.result.error_message"> · {{ attempt.result.error_message }}</template></span><span>attempt {{ attempt.attempt_id }}</span><button v-if="attempt.persistence_state === 'failed' && attempt.result" type="button" class="node-detail-more" @click="openDownloadSaveRetry(attempt)">返回 Workbench 重试保存（不重新下载）</button></div>
+          <details v-if="attempt.result?.samples.length"><summary>实际过程样本 {{ attempt.result.samples.length }} 条</summary><ol><li v-for="sample in attempt.result.samples" :key="sample.cumulative_bytes">{{ (sample.elapsed_ns / 1e9).toFixed(2) }} 秒 · +{{ sample.delta_bytes.toLocaleString() }} 字节 · 累计 {{ sample.cumulative_bytes.toLocaleString() }} 字节<template v-if="sample.speed_mbps !== undefined"> · {{ sample.speed_mbps.toFixed(2) }} Mbps</template></li></ol></details>
+        </div>
+        <button v-if="downloadHasMore" type="button" class="node-detail-more" :disabled="downloadMoreLoading" @click="loadMoreDownload">{{ downloadMoreLoading ? '正在加载…' : '加载更多下载测量' }}</button>
       </section>
     </main>
   </div>

@@ -29,6 +29,10 @@ import type {
   WorkbenchPublicServiceHistoryResult,
   WorkbenchPublicServiceRule,
   WorkbenchPublicServiceTestRequest,
+  WorkbenchDownloadAttempt,
+  WorkbenchDownloadHistoryQuery,
+  WorkbenchDownloadHistoryResult,
+  WorkbenchDownloadTestRequest,
   ProfileSetup,
   ProfileSource,
 } from '../types'
@@ -66,6 +70,8 @@ export function subscribeEvents(onEvent: (type: string, payload: any) => void): 
       'single_test_completed',
       'workbench_latency_test_completed',
       'workbench_latency_test_persistence_updated',
+      'workbench_download_progress',
+      'workbench_download_attempt_updated',
       'antigravity_token_updated',
       'antigravity_login_failed',
       'controller_status_changed',
@@ -410,6 +416,50 @@ export async function cancelWorkbenchPublicServiceTest(attemptID: string, query:
 export async function retrySaveWorkbenchPublicServiceTest(attemptID: string, query: WorkbenchPublicServiceHistoryQuery): Promise<WorkbenchPublicServiceAttempt> {
   if (isWails()) return window.go!.desktop!.App!.RetrySaveWorkbenchPublicServiceTest(attemptID, query)
   const res = await fetch(`${API_BASE}/api/workbench/public-service-tests/${encodeURIComponent(attemptID)}/retry-save?${buildWorkbenchPublicServiceHistoryQuery(query)}`, { method: 'POST' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function startWorkbenchDownloadTest(req: WorkbenchDownloadTestRequest): Promise<WorkbenchDownloadAttempt> {
+  if (isWails()) return window.go!.desktop!.App!.StartWorkbenchDownloadTest(req)
+  const res = await fetch(`${API_BASE}/api/workbench/download-tests`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req) })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export function buildWorkbenchDownloadHistoryQuery(query: WorkbenchDownloadHistoryQuery): string {
+  const params = new URLSearchParams({ profile_id: query.profile_id, node_key: query.node_key, node_identity_key: query.node_identity_key, config_revision_key: query.config_revision_key })
+  if (query.since) params.set('since', query.since)
+  if (query.until) params.set('until', query.until)
+  if (query.limit) params.set('limit', String(query.limit))
+  if (query.before_at && query.before_attempt_id) { params.set('before_at', query.before_at); params.set('before_attempt_id', query.before_attempt_id) }
+  return params.toString()
+}
+
+export async function fetchWorkbenchDownloadHistory(query: WorkbenchDownloadHistoryQuery): Promise<WorkbenchDownloadHistoryResult> {
+  if (isWails()) return window.go!.desktop!.App!.ListWorkbenchDownloadTests(query)
+  const res = await fetch(`${API_BASE}/api/workbench/download-tests?${buildWorkbenchDownloadHistoryQuery(query)}`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function fetchWorkbenchDownloadAttempt(attemptID: string, query: WorkbenchDownloadHistoryQuery): Promise<WorkbenchDownloadAttempt> {
+  if (isWails()) return window.go!.desktop!.App!.GetWorkbenchDownloadAttempt(attemptID, query)
+  const res = await fetch(`${API_BASE}/api/workbench/download-tests/${encodeURIComponent(attemptID)}?${buildWorkbenchDownloadHistoryQuery(query)}`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function cancelWorkbenchDownloadTest(attemptID: string, query: WorkbenchDownloadHistoryQuery): Promise<WorkbenchDownloadAttempt> {
+  if (isWails()) return window.go!.desktop!.App!.CancelWorkbenchDownloadTest(attemptID, query)
+  const res = await fetch(`${API_BASE}/api/workbench/download-tests/${encodeURIComponent(attemptID)}/cancel?${buildWorkbenchDownloadHistoryQuery(query)}`, { method: 'POST' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function retrySaveWorkbenchDownloadTest(attemptID: string, query: WorkbenchDownloadHistoryQuery): Promise<WorkbenchDownloadAttempt> {
+  if (isWails()) return window.go!.desktop!.App!.RetrySaveWorkbenchDownloadTest(attemptID, query)
+  const res = await fetch(`${API_BASE}/api/workbench/download-tests/${encodeURIComponent(attemptID)}/retry-save?${buildWorkbenchDownloadHistoryQuery(query)}`, { method: 'POST' })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }

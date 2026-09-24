@@ -39,6 +39,9 @@ func (s *AppService) beginWorkbenchSingle() error {
 	if s.workbenchActiveBatch != nil {
 		return fmt.Errorf("批量延迟操作正在运行，单节点延迟操作暂不可启动")
 	}
+	if s.workbenchActiveDownload != nil {
+		return fmt.Errorf("下载测量正在运行，其他 Workbench 主动测试暂不可启动")
+	}
 	s.workbenchActiveSingles++
 	s.workbenchWG.Add(1)
 	return nil
@@ -118,7 +121,7 @@ func (s *AppService) StartWorkbenchLatencyBatch(_ context.Context, req Workbench
 		s.workbenchMu.Unlock()
 		return workbenchLatencyBatchDTO(*prior), nil
 	}
-	if s.workbenchActiveBatch != nil || s.workbenchActiveSingles > 0 {
+	if s.workbenchActiveBatch != nil || s.workbenchActiveSingles > 0 || s.workbenchActiveDownload != nil {
 		s.workbenchMu.Unlock()
 		return nil, fmt.Errorf("已有 Workbench 延迟测试正在运行")
 	}
