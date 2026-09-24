@@ -14,10 +14,14 @@ import type {
   WorkbenchLatencyTest,
   WorkbenchPublicServiceAttempt,
   WorkbenchDownloadAttempt,
+  WorkbenchSaveRetryRequest,
 } from '../../types'
 
 const props = defineProps<{ scope: NodeDetailRequest }>()
-const emit = defineEmits<{ (event: 'close'): void }>()
+const emit = defineEmits<{
+  (event: 'close'): void
+  (event: 'open-workbench-save-retry', payload: WorkbenchSaveRetryRequest): void
+}>()
 
 type SourceView = 'regular_observation' | 'regular' | 'focus' | 'sparse' | 'diagnostic' | 'legacy_unknown' | 'all'
 type WindowView = 'context' | '24h' | '7d' | '30d'
@@ -542,6 +546,24 @@ function tierText(tier: string, trigger: string): string {
 }
 function close(): void { generation++; emit('close') }
 
+function openPublicServiceSaveRetry(attempt: WorkbenchPublicServiceAttempt): void {
+  if (attempt.persistence_state !== 'failed' || !attempt.result) return
+  emit('open-workbench-save-retry', {
+    domain: 'public_service', attempt_id: attempt.attempt_id, profile_id: attempt.profile_id,
+    node_key: attempt.node_key, node_identity_key: attempt.node_identity_key,
+    config_revision_key: attempt.config_revision_key, service_id: attempt.service_id,
+  })
+}
+
+function openDownloadSaveRetry(attempt: WorkbenchDownloadAttempt): void {
+  if (attempt.persistence_state !== 'failed' || !attempt.result) return
+  emit('open-workbench-save-retry', {
+    domain: 'download', attempt_id: attempt.attempt_id, profile_id: attempt.profile_id,
+    node_key: attempt.node_key, node_identity_key: attempt.node_identity_key,
+    config_revision_key: attempt.config_revision_key,
+  })
+}
+
 onMounted(() => { void load() })
 onBeforeUnmount(() => { generation++ })
 </script>
@@ -590,7 +612,8 @@ onBeforeUnmount(() => { generation++ })
         </template>
         <template v-if="originTest"><p>测法 {{ originTest.method || '未知' }} v{{ originTest.method_version || '未知' }} · target {{ originTest.target || '未知' }} · 单位 {{ originTest.unit || '未知' }} · attempt {{ originTest.attempt_id }}</p><p>{{ originTest.success_samples }} 成功 / {{ originTest.failure_samples }} 失败 · {{ originTest.latency_ms }} ms · jitter {{ originTest.jitter_ms }} ms · {{ originTest.persistence_state }}</p></template>
         <template v-if="originPublicServiceAttempt"><p>{{ originPublicServiceAttempt.rule.method }} {{ originPublicServiceAttempt.rule.target_url }} · 规则 v{{ originPublicServiceAttempt.rule.rule_version }} · {{ originPublicServiceAttempt.rule.success_criterion }}</p><p>执行 {{ publicServiceExecutionLabel(originPublicServiceAttempt.execution_state) }} · 保存 {{ originPublicServiceAttempt.persistence_state }}<template v-if="originPublicServiceAttempt.persistence_error"> · {{ originPublicServiceAttempt.persistence_error }}</template></p><p v-if="originPublicServiceAttempt.result">{{ publicServiceOutcomeLabel(originPublicServiceAttempt.result.outcome) }} · HTTP {{ originPublicServiceAttempt.result.http_status ?? '无响应' }} · {{ originPublicServiceAttempt.result.duration_ms }} ms · 已读取 {{ originPublicServiceAttempt.result.bytes_read }} 字节<template v-if="originPublicServiceAttempt.result.failure_phase"> · {{ originPublicServiceAttempt.result.failure_phase }}</template><template v-if="originPublicServiceAttempt.result.error_message"> · {{ originPublicServiceAttempt.result.error_message }}</template></p></template>
-        <template v-if="originDownloadAttempt"><p>{{ originDownloadAttempt.rule.method }} {{ originDownloadAttempt.rule.target_url }} · 规则 v{{ originDownloadAttempt.rule.rule_version }} · 上限 {{ downloadLimitText(originDownloadAttempt.rule.maximum_bytes) }} / {{ (originDownloadAttempt.rule.maximum_duration_ns / 1e9).toFixed(0) }} 秒</p><p>执行 {{ originDownloadAttempt.execution_state }} · 保存 {{ originDownloadAttempt.persistence_state }}<template v-if="originDownloadAttempt.persistence_error"> · {{ originDownloadAttempt.persistence_error }}</template></p><p v-if="originDownloadAttempt.result">{{ originDownloadAttempt.result.outcome }} · 已读取 {{ originDownloadAttempt.result.bytes_read }} 字节 · {{ (originDownloadAttempt.result.duration_ns / 1e9).toFixed(2) }} 秒<template v-if="originDownloadAttempt.result.failure_phase"> · {{ originDownloadAttempt.result.failure_phase }}</template><template v-if="originDownloadAttempt.result.error_message"> · {{ originDownloadAttempt.result.error_message }}</template></p></template>
+        <template v-if="originPublicServiceAttempt"><p>{{ originPublicServiceAttempt.rule.method }} {{ originPublicServiceAttempt.rule.target_url }} · 规则 v{{ originPublicServiceAttempt.rule.rule_version }} · {{ originPublicServiceAttempt.rule.success_criterion }}</p><p>执行 {{ publicServiceExecutionLabel(originPublicServiceAttempt.execution_state) }} · 保存 {{ originPublicServiceAttempt.persistence_state }}<template v-if="originPublicServiceAttempt.persistence_error"> · {{ originPublicServiceAttempt.persistence_error }}</template></p><p v-if="originPublicServiceAttempt.result">{{ publicServiceOutcomeLabel(originPublicServiceAttempt.result.outcome) }} · HTTP {{ originPublicServiceAttempt.result.http_status ?? '无响应' }} · {{ originPublicServiceAttempt.result.duration_ms }} ms · 已读取 {{ originPublicServiceAttempt.result.bytes_read }} 字节<template v-if="originPublicServiceAttempt.result.failure_phase"> · {{ originPublicServiceAttempt.result.failure_phase }}</template><template v-if="originPublicServiceAttempt.result.error_message"> · {{ originPublicServiceAttempt.result.error_message }}</template></p><button v-if="originPublicServiceAttempt.persistence_state === 'failed' && originPublicServiceAttempt.result" type="button" class="node-detail-more" @click="openPublicServiceSaveRetry(originPublicServiceAttempt)">返回 Workbench 重试保存（不重新检测）</button></template>
+        <template v-if="originDownloadAttempt"><p>{{ originDownloadAttempt.rule.method }} {{ originDownloadAttempt.rule.target_url }} · 规则 v{{ originDownloadAttempt.rule.rule_version }} · 上限 {{ downloadLimitText(originDownloadAttempt.rule.maximum_bytes) }} / {{ (originDownloadAttempt.rule.maximum_duration_ns / 1e9).toFixed(0) }} 秒</p><p>执行 {{ originDownloadAttempt.execution_state }} · 保存 {{ originDownloadAttempt.persistence_state }}<template v-if="originDownloadAttempt.persistence_error"> · {{ originDownloadAttempt.persistence_error }}</template></p><p v-if="originDownloadAttempt.result">{{ originDownloadAttempt.result.outcome }} · 已读取 {{ originDownloadAttempt.result.bytes_read }} 字节 · {{ (originDownloadAttempt.result.duration_ns / 1e9).toFixed(2) }} 秒<template v-if="originDownloadAttempt.result.failure_phase"> · {{ originDownloadAttempt.result.failure_phase }}</template><template v-if="originDownloadAttempt.result.error_message"> · {{ originDownloadAttempt.result.error_message }}</template></p><button v-if="originDownloadAttempt.persistence_state === 'failed' && originDownloadAttempt.result" type="button" class="node-detail-more" @click="openDownloadSaveRetry(originDownloadAttempt)">返回 Workbench 重试保存（不重新下载）</button></template>
         <span v-if="!originBatchItem && !originTest && !originPublicServiceAttempt && !originDownloadAttempt && !originError && !originRevisionMismatch">正在读取原始 attempt…</span>
       </section>
 
@@ -642,7 +665,7 @@ onBeforeUnmount(() => { generation++ })
         <div v-if="publicServiceLoading" class="node-detail-empty">正在读取公共服务历史…</div>
         <div v-for="attempt in publicServiceRows" :key="attempt.attempt_id" class="node-detail-attempt" :class="{ 'node-detail-highlight': props.scope.origin?.kind === 'public_service_attempt' && props.scope.origin.attemptId === attempt.attempt_id }">
           <div><strong>{{ attempt.rule.name }} · {{ timeText(attempt.result?.finished_at || attempt.finished_at || attempt.started_at || attempt.requested_at) }}</strong><span>执行 {{ publicServiceExecutionLabel(attempt.execution_state) }} · 保存 {{ attempt.persistence_state }}<template v-if="attempt.persistence_error"> · {{ attempt.persistence_error }}</template></span><small>来源 {{ attempt.source }} · {{ attempt.rule.method }} {{ attempt.rule.target_url }} · 规则 v{{ attempt.rule.rule_version }}</small><small>{{ attempt.rule.success_criterion }} · {{ attempt.rule.redirect_policy === 'do_not_follow' ? '不跟随重定向' : attempt.rule.redirect_policy }}</small></div>
-          <div class="node-detail-attempt-metrics"><b>{{ publicServiceOutcomeLabel(attempt.result?.outcome) }}</b><span>HTTP {{ attempt.result?.http_status ?? '无响应' }} · {{ attempt.result?.duration_ms ?? '—' }} ms · 已读取 {{ attempt.result?.bytes_read ?? 0 }} 字节</span><span v-if="attempt.result?.failure_phase">失败位置 {{ attempt.result.failure_phase }}<template v-if="attempt.result.error_message"> · {{ attempt.result.error_message }}</template></span><span>attempt {{ attempt.attempt_id }}</span></div>
+          <div class="node-detail-attempt-metrics"><b>{{ publicServiceOutcomeLabel(attempt.result?.outcome) }}</b><span>HTTP {{ attempt.result?.http_status ?? '无响应' }} · {{ attempt.result?.duration_ms ?? '—' }} ms · 已读取 {{ attempt.result?.bytes_read ?? 0 }} 字节</span><span v-if="attempt.result?.failure_phase">失败位置 {{ attempt.result.failure_phase }}<template v-if="attempt.result.error_message"> · {{ attempt.result.error_message }}</template></span><span>attempt {{ attempt.attempt_id }}</span><button v-if="attempt.persistence_state === 'failed' && attempt.result" type="button" class="node-detail-more" @click="openPublicServiceSaveRetry(attempt)">返回 Workbench 重试保存（不重新检测）</button></div>
         </div>
         <button v-if="publicServiceHasMore" type="button" class="node-detail-more" :disabled="publicServiceMoreLoading" @click="loadMorePublicService">{{ publicServiceMoreLoading ? '正在加载…' : '加载更多公共服务检测' }}</button>
       </section>
@@ -656,7 +679,7 @@ onBeforeUnmount(() => { generation++ })
         <div v-if="downloadLoading" class="node-detail-empty">正在读取下载历史…</div>
         <div v-for="attempt in downloadRows" :key="attempt.attempt_id" class="node-detail-attempt" :class="{ 'node-detail-highlight': props.scope.origin?.kind === 'workbench_download_attempt' && props.scope.origin.attemptId === attempt.attempt_id }">
           <div><strong>{{ timeText(attempt.result?.finished_at || attempt.finished_at || attempt.started_at || attempt.requested_at) }} · {{ attempt.execution_state }}</strong><span>保存 {{ attempt.persistence_state }}<template v-if="attempt.persistence_error"> · {{ attempt.persistence_error }}</template></span><small>来源 {{ attempt.source }} · {{ attempt.rule.method }} {{ attempt.rule.target_url }} · 规则 v{{ attempt.rule.rule_version }}</small><small>读取上限 {{ downloadLimitText(attempt.rule.maximum_bytes) }} · 时长上限 {{ (attempt.rule.maximum_duration_ns / 1e9).toFixed(0) }} 秒</small></div>
-          <div class="node-detail-attempt-metrics"><b>{{ attempt.result?.outcome || (attempt.execution_state === 'interrupted' ? '应用退出时中断；未自动重测' : '尚无测量结果') }}</b><span v-if="attempt.result">{{ attempt.result.bytes_read.toLocaleString() }} 字节 · {{ (attempt.result.duration_ns / 1e9).toFixed(2) }} 秒<template v-if="attempt.result.http_status"> · HTTP {{ attempt.result.http_status }}</template></span><span v-if="attempt.result?.failure_phase">结束位置 {{ attempt.result.failure_phase }}<template v-if="attempt.result.error_message"> · {{ attempt.result.error_message }}</template></span><span>attempt {{ attempt.attempt_id }}</span></div>
+          <div class="node-detail-attempt-metrics"><b>{{ attempt.result?.outcome || (attempt.execution_state === 'interrupted' ? '应用退出时中断；未自动重测' : '尚无测量结果') }}</b><span v-if="attempt.result">{{ attempt.result.bytes_read.toLocaleString() }} 字节 · {{ (attempt.result.duration_ns / 1e9).toFixed(2) }} 秒<template v-if="attempt.result.http_status"> · HTTP {{ attempt.result.http_status }}</template></span><span v-if="attempt.result?.failure_phase">结束位置 {{ attempt.result.failure_phase }}<template v-if="attempt.result.error_message"> · {{ attempt.result.error_message }}</template></span><span>attempt {{ attempt.attempt_id }}</span><button v-if="attempt.persistence_state === 'failed' && attempt.result" type="button" class="node-detail-more" @click="openDownloadSaveRetry(attempt)">返回 Workbench 重试保存（不重新下载）</button></div>
           <details v-if="attempt.result?.samples.length"><summary>实际过程样本 {{ attempt.result.samples.length }} 条</summary><ol><li v-for="sample in attempt.result.samples" :key="sample.cumulative_bytes">{{ (sample.elapsed_ns / 1e9).toFixed(2) }} 秒 · +{{ sample.delta_bytes.toLocaleString() }} 字节 · 累计 {{ sample.cumulative_bytes.toLocaleString() }} 字节<template v-if="sample.speed_mbps !== undefined"> · {{ sample.speed_mbps.toFixed(2) }} Mbps</template></li></ol></details>
         </div>
         <button v-if="downloadHasMore" type="button" class="node-detail-more" :disabled="downloadMoreLoading" @click="loadMoreDownload">{{ downloadMoreLoading ? '正在加载…' : '加载更多下载测量' }}</button>

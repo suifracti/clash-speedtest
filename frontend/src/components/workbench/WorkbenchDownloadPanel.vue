@@ -1,19 +1,28 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as api from '../../api/bridge'
-import type { MonitorNodeOption, NodeDetailRequest, WorkbenchDownloadAttempt, WorkbenchDownloadHistoryQuery } from '../../types'
+import type { MonitorNodeOption, NodeDetailRequest, WorkbenchDownloadAttempt, WorkbenchDownloadHistoryQuery, WorkbenchSaveRetryRequest } from '../../types'
 
-const props = defineProps<{ node: MonitorNodeOption | null }>()
-const emit = defineEmits<{ (event: 'open-node-detail', payload: NodeDetailRequest): void }>()
+const props = defineProps<{ node: MonitorNodeOption | null; saveRetryRequest?: WorkbenchSaveRetryRequest | null }>()
+const emit = defineEmits<{
+  (event: 'open-node-detail', payload: NodeDetailRequest): void
+  (event: 'save-retry-request-resolved', attemptID: string): void
+}>()
 
 const attempt = ref<WorkbenchDownloadAttempt | null>(null)
+const failedAttempts = ref<WorkbenchDownloadAttempt[]>([])
 const error = ref('')
+const historyError = ref('')
 const reading = ref(false)
+const historyLoading = ref(false)
+const historyHasMore = ref(false)
+const historyCursor = ref<WorkbenchDownloadAttempt | null>(null)
 const timeoutSeconds = ref(10)
 const maximumMiB = ref(20)
 const progressBytes = ref(0)
 const progressSamples = ref<{ elapsed_ns: number; interval_ns: number; delta_bytes: number; cumulative_bytes: number; speed_mbps?: number }[]>([])
 let requestToken = 0
+let historyToken = 0
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 let unsubscribeEvents: (() => void) | null = null
 
@@ -31,7 +40,25 @@ function queryFor(value: WorkbenchDownloadAttempt): WorkbenchDownloadHistoryQuer
 function matchesNode(value: WorkbenchDownloadAttempt, node: MonitorNodeOption): boolean {
   return value.profile_id === node.profileId && value.node_key === node.nodeKey && value.node_identity_key === node.nodeIdentityKey && value.config_revision_key === node.configRevisionKey
 }
+function sameNodeScope(left: MonitorNodeOption | null, right: MonitorNodeOption): boolean {
+  return !!left && left.profileId === right.profileId && left.nodeKey === right.nodeKey &&
+    left.nodeIdentityKey === right.nodeIdentityKey && left.configRevisionKey === right.configRevisionKey
+}
+function sameRetryScope(value: WorkbenchDownloadAttempt, request: WorkbenchSaveRetryRequest): boolean {
+  return value.attempt_id === request.attempt_id && value.profile_id === request.profile_id && value.node_key === request.node_key &&
+    value.node_identity_key === request.node_identity_key && value.config_revision_key === request.config_revision_key
+}
 function isActive(value: WorkbenchDownloadAttempt): boolean { return ['queued', 'running', 'cancelling'].includes(value.execution_state) || value.persistence_state === 'saving' }
+
+function historyQuery(node: MonitorNodeOption, cursor?: WorkbenchDownloadAttempt): WorkbenchDownloadHistoryQuery {
+  const query: WorkbenchDownloadHistoryQuery = {
+    profile_id: node.profileId, node_key: node.nodeKey, node_identity_key: node.nodeIdentityKey,
+    config_revision_key: node.configRevisionKey, limit: 25,
+  }
+  const beforeAt = cursor?.result?.finished_at || cursor?.finished_at || cursor?.started_at || cursor?.requested_at
+  if (cursor && beforeAt) { query.before_at = beforeAt; query.before_attempt_id = cursor.attempt_id }
+  return query
+}
 
 function schedulePoll(attemptID: string, token: number, delay = 650): void {
   if (pollTimer) clearTimeout(pollTimer)
@@ -52,6 +79,82 @@ async function restoreActive(node: MonitorNodeOption): Promise<void> {
   } catch {
     // This read only restores a still-active request. History errors are shown on Node Detail.
   }
+}
+
+async function loadFailedHistory(node: MonitorNodeOption, append = false): Promise<void> {
+  const token = append ? historyToken : ++historyToken
+  const cursor = append ? historyCursor.value || undefined : undefined
+  if (append && !cursor) return
+  historyLoading.value = true
+  historyError.value = ''
+  try {
+    const page = await api.fetchWorkbenchDownloadHistory(historyQuery(node, cursor))
+    if (token !== historyToken || !sameNodeScope(props.node, node)) return
+    if (page.attempts.some((item) => !matchesNode(item, node))) {
+      historyError.value = '待保存历史响应的 profile、identity 或 revision 与当前节点不一致。'
+      return
+    }
+    const retryable = page.attempts.filter((item) => item.persistence_state === 'failed' && !!item.result)
+    if (append) {
+      const seen = new Set(failedAttempts.value.map((item) => item.attempt_id))
+      failedAttempts.value = [...failedAttempts.value, ...retryable.filter((item) => !seen.has(item.attempt_id))]
+    } else failedAttempts.value = retryable
+    historyCursor.value = page.attempts[page.attempts.length - 1] || historyCursor.value
+    historyHasMore.value = page.has_more
+  } catch (cause) {
+    if (token === historyToken) historyError.value = messageFor(cause)
+  } finally {
+    if (token === historyToken) historyLoading.value = false
+  }
+}
+
+async function selectFailedAttempt(candidate: WorkbenchDownloadAttempt): Promise<void> {
+  const token = ++requestToken
+  if (pollTimer) clearTimeout(pollTimer)
+  reading.value = true
+  error.value = ''
+  try {
+    const latest = await api.fetchWorkbenchDownloadAttempt(candidate.attempt_id, queryFor(candidate))
+    if (token !== requestToken) return
+    if (!matchesAttempt(latest, candidate)) { error.value = '待保存结果的身份范围不一致。'; return }
+    attempt.value = latest
+    progressBytes.value = latest.result?.bytes_read || 0
+    progressSamples.value = latest.result?.samples || []
+  } catch (cause) {
+    if (token === requestToken) error.value = messageFor(cause)
+  } finally {
+    if (token === requestToken) reading.value = false
+  }
+}
+
+async function loadSaveRetryRequest(request: WorkbenchSaveRetryRequest): Promise<void> {
+  if (request.domain !== 'download') return
+  const token = ++requestToken
+  if (pollTimer) clearTimeout(pollTimer)
+  reading.value = true
+  error.value = ''
+  try {
+    const query: WorkbenchDownloadHistoryQuery = {
+      profile_id: request.profile_id, node_key: request.node_key,
+      node_identity_key: request.node_identity_key, config_revision_key: request.config_revision_key,
+    }
+    const latest = await api.fetchWorkbenchDownloadAttempt(request.attempt_id, query)
+    if (token !== requestToken) return
+    if (!sameRetryScope(latest, request)) { error.value = '待保存结果的身份范围与历史记录不一致。'; return }
+    attempt.value = latest
+    progressBytes.value = latest.result?.bytes_read || 0
+    progressSamples.value = latest.result?.samples || []
+    emit('save-retry-request-resolved', request.attempt_id)
+  } catch (cause) {
+    if (token === requestToken) error.value = `读取待保存结果失败：${messageFor(cause)}`
+  } finally {
+    if (token === requestToken) reading.value = false
+  }
+}
+
+function retryLoadSaveRetryRequest(): void {
+  const request = props.saveRetryRequest
+  if (request?.domain === 'download') void loadSaveRetryRequest(request)
 }
 
 async function start(): Promise<void> {
@@ -119,7 +222,10 @@ async function retrySave(): Promise<void> {
   if (!current || !saveFailed.value) return
   reading.value = true
   error.value = ''
-  try { attempt.value = await api.retrySaveWorkbenchDownloadTest(current.attempt_id, queryFor(current)) }
+  try {
+    attempt.value = await api.retrySaveWorkbenchDownloadTest(current.attempt_id, queryFor(current))
+    if (attempt.value.persistence_state === 'saved') failedAttempts.value = failedAttempts.value.filter((item) => item.attempt_id !== current.attempt_id)
+  }
   catch (cause) { error.value = messageFor(cause) }
   finally { reading.value = false }
 }
@@ -168,8 +274,19 @@ function openDetail(): void {
   })
 }
 
-watch(() => props.node, (node) => {
-  if (node && !attempt.value) {
+watch(() => props.saveRetryRequest, (request) => {
+  if (request?.domain === 'download') void loadSaveRetryRequest(request)
+}, { immediate: true })
+watch(() => props.node && `${props.node.profileId}\u0000${props.node.nodeKey}\u0000${props.node.nodeIdentityKey}\u0000${props.node.configRevisionKey}`, () => {
+  const node = props.node
+  historyToken++
+  failedAttempts.value = []
+  historyHasMore.value = false
+  historyCursor.value = null
+  historyError.value = ''
+  if (!node) return
+  void loadFailedHistory(node)
+  if (!attempt.value && props.saveRetryRequest?.domain !== 'download') {
     reading.value = false
     void restoreActive(node)
   }
@@ -190,6 +307,16 @@ onBeforeUnmount(() => { requestToken++; if (pollTimer) clearTimeout(pollTimer); 
     </div>
     <p class="download-rule">GET {{ attempt?.rule.target_url || 'https://speed.cloudflare.com/__down?bytes=（读取上限+1）' }} · 规则 v{{ attempt?.rule.rule_version || 1 }} · 最多 {{ attempt ? limitText(attempt.rule.maximum_bytes) : `${maximumMiB} MiB` }} / {{ attempt ? (attempt.rule.maximum_duration_ns / 1e9).toFixed(0) : timeoutSeconds }} 秒 · 不使用 Monitor 预算，不进入 Monitor 推荐证据。</p>
     <p class="download-note">采样仅由实际收到的响应体字节和单调时钟计算；达到上限或用户取消都不表示节点故障。无有效样本时不显示 0 Mbps。</p>
+    <div v-if="failedAttempts.length || historyLoading || historyError" class="download-retry-history" aria-label="待重试保存的下载历史">
+      <strong>可重试保存的历史结果</strong>
+      <p v-if="historyError" class="download-error">读取待保存历史失败：{{ historyError }}</p>
+      <p v-else-if="historyLoading && failedAttempts.length === 0" class="download-note">正在读取此节点 revision 的待保存结果…</p>
+      <button v-for="candidate in failedAttempts" :key="candidate.attempt_id" type="button" class="download-button" :aria-pressed="attempt?.attempt_id === candidate.attempt_id" :disabled="reading" @click="selectFailedAttempt(candidate)">
+        选择 {{ timeText(candidate.result?.finished_at || candidate.finished_at || candidate.started_at || candidate.requested_at) }} · attempt {{ candidate.attempt_id }}
+      </button>
+      <button v-if="historyHasMore" type="button" class="download-button" :disabled="historyLoading" @click="props.node && loadFailedHistory(props.node, true)">{{ historyLoading ? '正在加载…' : '加载更多待保存结果' }}</button>
+    </div>
+    <button v-if="saveRetryRequest?.domain === 'download' && error" type="button" class="download-button" :disabled="reading" @click="retryLoadSaveRetryRequest">重新读取指定 attempt</button>
     <p v-if="error" class="download-error">{{ error }}</p>
     <div v-if="attempt" class="download-result" aria-live="polite">
       <div class="download-result-heading"><strong>{{ executionLabel(attempt.execution_state) }}</strong><span>{{ persistenceLabel(attempt.persistence_state) }}</span></div>
@@ -207,5 +334,5 @@ onBeforeUnmount(() => { requestToken++; if (pollTimer) clearTimeout(pollTimer); 
 .download-panel { margin-bottom: 14px; padding: 15px 18px; border: 1px solid var(--border, #d6dde1); border-radius: 10px; background: var(--card-bg, #fff); color: var(--text-main, #1f2933); }
 .download-panel h2 { margin: 0 0 4px; font-size: 15px; }.download-panel header p, .download-rule, .download-note, .download-result p { margin: 4px 0; color: var(--text-secondary, #596873); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
 .download-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 9px 12px; margin: 12px 0 5px; }.download-controls label { display: grid; gap: 5px; min-width: 150px; color: var(--text-secondary, #596873); font-size: 10px; font-weight: 700; }.download-controls select { min-height: 31px; padding: 5px 8px; border: 1px solid var(--border, #d6dde1); border-radius: 5px; background: white; color: var(--text-main, #1f2933); font-size: 11px; }.download-node { display: inline-flex; align-items: center; min-height: 31px; padding: 0 8px; border: 1px solid var(--border, #d6dde1); border-radius: 5px; color: var(--text-main, #1f2933); font-size: 11px; font-weight: 500; }.download-node.muted { color: var(--text-muted, #78868f); }
-.download-primary, .download-button { min-height: 31px; padding: 6px 10px; border: 1px solid var(--border, #d6dde1); border-radius: 5px; background: white; color: var(--primary, #256b78); font-size: 11px; font-weight: 700; }.download-primary { border-color: var(--primary, #256b78); background: var(--primary, #256b78); color: white; }.download-primary:disabled, .download-button:disabled { cursor: not-allowed; opacity: .55; }.download-note { color: var(--text-muted, #75838c); }.download-error { margin: 7px 0; color: #a32f36; font-size: 11px; overflow-wrap: anywhere; }.download-result { margin-top: 11px; padding: 10px 12px; border: 1px solid var(--border, #d6dde1); border-radius: 7px; background: var(--card-subtle, #f8fafb); }.download-result-heading, .download-actions { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; color: var(--text-main, #1f2933); font-size: 12px; }.download-actions { justify-content: flex-start; margin-top: 8px; }.download-result details { margin-top: 8px; color: var(--text-secondary, #596873); font-size: 11px; }.download-result details summary { cursor: pointer; color: var(--primary, #256b78); }.download-result ol { display: grid; gap: 5px; margin: 7px 0; padding-left: 20px; }
+.download-primary, .download-button { min-height: 31px; padding: 6px 10px; border: 1px solid var(--border, #d6dde1); border-radius: 5px; background: white; color: var(--primary, #256b78); font-size: 11px; font-weight: 700; }.download-primary { border-color: var(--primary, #256b78); background: var(--primary, #256b78); color: white; }.download-primary:disabled, .download-button:disabled { cursor: not-allowed; opacity: .55; }.download-note { color: var(--text-muted, #75838c); }.download-error { margin: 7px 0; color: #a32f36; font-size: 11px; overflow-wrap: anywhere; }.download-retry-history { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 9px; padding: 8px 10px; border: 1px solid var(--border, #d6dde1); border-radius: 7px; background: var(--card-subtle, #f8fafb); color: var(--text-secondary, #596873); font-size: 11px; }.download-retry-history strong, .download-retry-history p { width: 100%; margin: 0; }.download-retry-history strong { color: var(--text-main, #1f2933); }.download-result { margin-top: 11px; padding: 10px 12px; border: 1px solid var(--border, #d6dde1); border-radius: 7px; background: var(--card-subtle, #f8fafb); }.download-result-heading, .download-actions { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; color: var(--text-main, #1f2933); font-size: 12px; }.download-actions { justify-content: flex-start; margin-top: 8px; }.download-result details { margin-top: 8px; color: var(--text-secondary, #596873); font-size: 11px; }.download-result details summary { cursor: pointer; color: var(--primary, #256b78); }.download-result ol { display: grid; gap: 5px; margin: 7px 0; padding-left: 20px; }
 </style>

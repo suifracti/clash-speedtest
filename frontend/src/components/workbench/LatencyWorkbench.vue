@@ -15,17 +15,20 @@ import {
   type LatencyWindow,
   type LatencyWindowMode,
 } from './latencyRequestGuard'
-import type { MonitorNodeOption, MonitorJobPrefill, NodeDetailOrigin, NodeDetailRequest, WorkbenchLatencyBatch, WorkbenchLatencySample, WorkbenchLatencyTest } from '../../types'
+import type { MonitorNodeOption, MonitorJobPrefill, NodeDetailOrigin, NodeDetailRequest, WorkbenchLatencyBatch, WorkbenchLatencySample, WorkbenchLatencyTest, WorkbenchSaveRetryRequest } from '../../types'
 import { decideMonitorSelection } from './monitorCreateSelection'
 
 type WorkbenchProject = 'latency' | 'throughput' | 'service'
 type IndexMap = Record<string, number | null | undefined>
 type HistoryMeta = { hasMore: boolean; complete: boolean }
 
+const props = defineProps<{ saveRetryRequest?: WorkbenchSaveRetryRequest | null }>()
 const emit = defineEmits<{
   (event: 'open-monitor', payload: MonitorJobPrefill): void
   (event: 'open-node-detail', payload: NodeDetailRequest): void
+  (event: 'save-retry-request-resolved', attemptID: string): void
 }>()
+const pendingSaveRetry = ref<WorkbenchSaveRetryRequest | null>(null)
 const options = ref<MonitorNodeOption[]>([])
 const optionsLoading = ref(false)
 const optionsError = ref('')
@@ -629,6 +632,18 @@ watch(windowMode, () => {
   if (options.value.length > 0) void loadHistories(options.value)
 })
 
+watch(() => props.saveRetryRequest, (request) => {
+  if (!request) return
+  pendingSaveRetry.value = request
+  activeProject.value = request.domain === 'public_service' ? 'service' : 'throughput'
+}, { immediate: true })
+
+function resolveSaveRetryRequest(attemptID: string): void {
+  if (pendingSaveRetry.value?.attempt_id !== attemptID) return
+  pendingSaveRetry.value = null
+  emit('save-retry-request-resolved', attemptID)
+}
+
 onMounted(async () => { unsubscribeEvents = api.subscribeEvents(handlePersistenceEvent); await loadOptions() })
 onUnmounted(() => { unsubscribeEvents?.(); unsubscribeEvents = null })
 </script>
@@ -660,8 +675,8 @@ onUnmounted(() => { unsubscribeEvents?.(); unsubscribeEvents = null })
       <div class="batch-test-status" :class="{ running: batchBusy, complete: !!batchMessage && !batchBusy }" aria-live="polite">{{ testError || batchMessage || (activeProject === 'latency' ? `将冻结 ${selectedKeys.length} 个节点（${selectedProfilesLabel}），每项执行现有 HTTP 代理延迟探测，超时 ${timeoutSeconds} 秒。切换筛选或勾选不会更改已创建批次。` : projectUnavailableLabel(activeProject)) }}</div>
     </section>
 
-    <WorkbenchPublicServicePanel v-if="activeProject === 'service'" :node="publicServiceNode" @open-node-detail="emit('open-node-detail', $event)" />
-    <WorkbenchDownloadPanel v-show="activeProject === 'throughput'" :node="downloadNode" @open-node-detail="emit('open-node-detail', $event)" />
+    <WorkbenchPublicServicePanel v-if="activeProject === 'service'" :node="publicServiceNode" :save-retry-request="pendingSaveRetry?.domain === 'public_service' ? pendingSaveRetry : null" @save-retry-request-resolved="resolveSaveRetryRequest" @open-node-detail="emit('open-node-detail', $event)" />
+    <WorkbenchDownloadPanel v-show="activeProject === 'throughput'" :node="downloadNode" :save-retry-request="pendingSaveRetry?.domain === 'download' ? pendingSaveRetry : null" @save-retry-request-resolved="resolveSaveRetryRequest" @open-node-detail="emit('open-node-detail', $event)" />
 
     <section class="prototype-panel batch-panel" aria-labelledby="latency-batches-title">
       <div class="prototype-panel-header"><div><h2 id="latency-batches-title">批量延迟与历史批次</h2><p>Workbench 主动测试；与 Monitor 常规证据及预算分开。失败探测、配置跳过和保存状态逐项显示。</p></div><button type="button" class="text-action" @click="loadRecentBatches">重新读取历史</button></div>

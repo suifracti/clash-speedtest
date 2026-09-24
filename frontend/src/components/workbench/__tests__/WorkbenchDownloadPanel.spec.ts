@@ -87,6 +87,39 @@ describe('WorkbenchDownloadPanel', () => {
     })
   })
 
+  it('after remount selects a recovered staged result and retries its original save without measuring again', async () => {
+    const result = { outcome: 'byte_limit', bytes_read: 1000, started_at: '2026-09-23T09:00:00Z', finished_at: '2026-09-23T09:00:01Z', duration_ns: 1_000_000_000, samples: [{ elapsed_ns: 1_000_000_000, interval_ns: 1_000_000_000, delta_bytes: 1000, cumulative_bytes: 1000 }] }
+    const recovered = attempt({ execution_state: 'completed', persistence_state: 'failed', persistence_error: '启动后暂存结果可重试', result })
+    apiMocks.fetchWorkbenchDownloadHistory.mockResolvedValue({ attempts: [recovered], since: '', until: '', has_more: false, complete: true })
+    apiMocks.fetchWorkbenchDownloadAttempt.mockResolvedValue(recovered)
+    apiMocks.retrySaveWorkbenchDownloadTest.mockResolvedValue(attempt({ execution_state: 'completed', persistence_state: 'saved', result }))
+
+    wrapper = mount(WorkbenchDownloadPanel, { props: { node } })
+    await flushPromises()
+    wrapper.unmount()
+    wrapper = null
+
+    wrapper = mount(WorkbenchDownloadPanel, { props: { node } })
+    await flushPromises()
+    const savedAttempt = wrapper.findAll('button').find((button) => button.text().includes('选择') && button.text().includes('download-a'))
+    expect(savedAttempt).toBeDefined()
+    await savedAttempt!.trigger('click')
+    await flushPromises()
+    expect(apiMocks.fetchWorkbenchDownloadAttempt).toHaveBeenCalledWith('download-a', expect.objectContaining({
+      profile_id: 'profile-a', node_key: 'node-a', node_identity_key: 'identity-a', config_revision_key: 'revision-a',
+    }))
+    const retry = wrapper.findAll('button').find((button) => button.text().includes('重试保存（不重新下载）'))
+    expect(retry).toBeDefined()
+    await retry!.trigger('click')
+    await flushPromises()
+
+    expect(apiMocks.retrySaveWorkbenchDownloadTest).toHaveBeenCalledWith('download-a', expect.objectContaining({
+      profile_id: 'profile-a', node_identity_key: 'identity-a', config_revision_key: 'revision-a',
+    }))
+    expect(apiMocks.startWorkbenchDownloadTest).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('已保存')
+  })
+
   it('ignores a late start response after the selected node changes', async () => {
     let resolveStart!: (value: WorkbenchDownloadAttempt) => void
     apiMocks.startWorkbenchDownloadTest.mockImplementationOnce(() => new Promise((resolve) => { resolveStart = resolve }))

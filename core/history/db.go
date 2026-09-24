@@ -1426,13 +1426,23 @@ func (d *DB) ListNodeHistoryRevisions(ctx context.Context, profileID, nodeIdenti
 	rows, err := d.db.QueryContext(ctx, `
 		WITH history AS (
 			SELECT config_revision_key, node_key, display_name_snapshot AS display_name,
-				timestamp AS observed_at, sample_id AS record_id
+				CAST(timestamp AS TEXT) AS observed_at, sample_id AS record_id
 			FROM monitor_samples
 			WHERE profile_id = ? AND node_identity_key = ? AND config_revision_key <> ''
 			UNION ALL
 			SELECT config_revision_key, node_key, display_name,
-				finished_at AS observed_at, attempt_id AS record_id
+				COALESCE(CAST(finished_at AS TEXT), CAST(started_at AS TEXT), CAST(requested_at AS TEXT)) AS observed_at, attempt_id AS record_id
 			FROM workbench_latency_tests
+			WHERE profile_id = ? AND node_identity_key = ? AND config_revision_key <> ''
+			UNION ALL
+			SELECT config_revision_key, node_key, display_name,
+				COALESCE(CAST(finished_at AS TEXT), CAST(started_at AS TEXT), CAST(requested_at AS TEXT)) AS observed_at, attempt_id AS record_id
+			FROM workbench_public_service_attempts
+			WHERE profile_id = ? AND node_identity_key = ? AND config_revision_key <> ''
+			UNION ALL
+			SELECT config_revision_key, node_key, display_name,
+				COALESCE(CAST(finished_at AS TEXT), CAST(started_at AS TEXT), CAST(requested_at AS TEXT)) AS observed_at, attempt_id AS record_id
+			FROM workbench_download_attempts
 			WHERE profile_id = ? AND node_identity_key = ? AND config_revision_key <> ''
 		), ranked AS (
 			SELECT config_revision_key, node_key, display_name, observed_at,
@@ -1442,7 +1452,7 @@ func (d *DB) ListNodeHistoryRevisions(ctx context.Context, profileID, nodeIdenti
 		SELECT config_revision_key, node_key, display_name, observed_at
 		FROM ranked WHERE revision_rank = 1
 		ORDER BY observed_at DESC, config_revision_key
-	`, profileID, nodeIdentityKey, profileID, nodeIdentityKey)
+	`, profileID, nodeIdentityKey, profileID, nodeIdentityKey, profileID, nodeIdentityKey, profileID, nodeIdentityKey)
 	if err != nil {
 		return nil, fmt.Errorf("list node history revisions: %w", err)
 	}
@@ -1450,10 +1460,15 @@ func (d *DB) ListNodeHistoryRevisions(ctx context.Context, profileID, nodeIdenti
 	revisions := make([]NodeHistoryRevision, 0)
 	for rows.Next() {
 		var item NodeHistoryRevision
-		if err := rows.Scan(&item.ConfigRevisionKey, &item.NodeKey, &item.DisplayName, &item.LastObservedAt); err != nil {
+		var observedAt string
+		if err := rows.Scan(&item.ConfigRevisionKey, &item.NodeKey, &item.DisplayName, &observedAt); err != nil {
 			return nil, fmt.Errorf("scan node history revision: %w", err)
 		}
-		item.LastObservedAt = item.LastObservedAt.UTC()
+		parsedObservedAt, err := parseSQLiteTime(observedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse node history revision timestamp: %w", err)
+		}
+		item.LastObservedAt = parsedObservedAt.UTC()
 		revisions = append(revisions, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -2306,6 +2321,7 @@ func parseSQLiteTime(s string) (time.Time, error) {
 		"2006-01-02 15:04:05.999999999",
 		"2006-01-02 15:04:05-07:00",
 		"2006-01-02 15:04:05",
+		"2006-01-02 15:04:05 -0700 MST",
 	}
 	for _, f := range formats {
 		if t, err := time.Parse(f, s); err == nil {

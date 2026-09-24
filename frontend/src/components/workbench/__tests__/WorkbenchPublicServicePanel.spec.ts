@@ -5,6 +5,7 @@ import type { MonitorNodeOption, WorkbenchPublicServiceAttempt, WorkbenchPublicS
 
 const apiMocks = vi.hoisted(() => ({
   listWorkbenchPublicServiceCatalog: vi.fn(),
+  fetchWorkbenchPublicServiceHistory: vi.fn(),
   startWorkbenchPublicServiceTest: vi.fn(),
   fetchWorkbenchPublicServiceAttempt: vi.fn(),
   cancelWorkbenchPublicServiceTest: vi.fn(),
@@ -40,6 +41,7 @@ let wrapper: VueWrapper | null = null
 beforeEach(() => {
   vi.clearAllMocks()
   apiMocks.listWorkbenchPublicServiceCatalog.mockResolvedValue([rule])
+  apiMocks.fetchWorkbenchPublicServiceHistory.mockResolvedValue({ attempts: [], since: '', until: '', has_more: false, complete: true })
   apiMocks.startWorkbenchPublicServiceTest.mockResolvedValue(attempt())
   apiMocks.fetchWorkbenchPublicServiceAttempt.mockResolvedValue(attempt())
   apiMocks.cancelWorkbenchPublicServiceTest.mockResolvedValue(attempt({ execution_state: 'cancelling' }))
@@ -85,6 +87,35 @@ describe('WorkbenchPublicServicePanel', () => {
     expect(apiMocks.retrySaveWorkbenchPublicServiceTest).toHaveBeenCalledWith('attempt-a', expect.objectContaining({ service_id: 'cloudflare_204' }))
     expect(apiMocks.startWorkbenchPublicServiceTest).toHaveBeenCalledTimes(1)
     expect(wrapper.text()).toContain('已保存')
+  })
+
+  it('after remount, selects a reconciled staged attempt and retries its save without a new request', async () => {
+    wrapper = mount(WorkbenchPublicServicePanel, { props: { node } })
+    await flushPromises()
+    wrapper.unmount()
+
+    const staged = attempt({
+      execution_state: 'interrupted', persistence_state: 'failed', persistence_error: '应用退出时保存未完成',
+      result: { outcome: 'matched', http_status: 204, bytes_read: 0, started_at: '2026-09-23T09:00:00Z', finished_at: '2026-09-23T09:00:01Z', duration_ms: 1000 },
+    })
+    apiMocks.fetchWorkbenchPublicServiceHistory.mockResolvedValue({ attempts: [staged], since: '', until: '', has_more: false, complete: true })
+    apiMocks.retrySaveWorkbenchPublicServiceTest.mockResolvedValue({ ...staged, persistence_state: 'saved', persistence_error: '' })
+    apiMocks.startWorkbenchPublicServiceTest.mockClear()
+    wrapper = mount(WorkbenchPublicServicePanel, { props: { node } })
+    await flushPromises()
+
+    const choice = wrapper.findAll('button').find((button) => button.text().includes('attempt-a'))
+    expect(choice).toBeDefined()
+    await choice!.trigger('click')
+    const retry = wrapper.findAll('button').find((button) => button.text().includes('重试保存'))
+    expect(retry).toBeDefined()
+    await retry!.trigger('click')
+    await flushPromises()
+
+    expect(apiMocks.retrySaveWorkbenchPublicServiceTest).toHaveBeenCalledWith('attempt-a', expect.objectContaining({
+      profile_id: 'profile-a', node_identity_key: 'identity-a', config_revision_key: 'revision-a', service_id: 'cloudflare_204',
+    }))
+    expect(apiMocks.startWorkbenchPublicServiceTest).not.toHaveBeenCalled()
   })
 
   it('shows an unstaged-result failure as terminal and does not offer a save retry without a result', async () => {

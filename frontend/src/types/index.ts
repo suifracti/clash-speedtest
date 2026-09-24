@@ -405,6 +405,16 @@ export interface WorkbenchPublicServiceHistoryQuery {
   before_attempt_id?: string
 }
 
+export interface WorkbenchSaveRetryRequest {
+  domain: 'public_service' | 'download'
+  attempt_id: string
+  profile_id: string
+  node_key: string
+  node_identity_key: string
+  config_revision_key: string
+  service_id?: string
+}
+
 export interface WorkbenchPublicServiceHistoryResult {
   attempts: WorkbenchPublicServiceAttempt[]
   since?: string

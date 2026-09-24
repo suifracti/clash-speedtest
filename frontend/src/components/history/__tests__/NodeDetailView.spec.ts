@@ -215,7 +215,7 @@ describe('NodeDetailView', () => {
   })
 
   it('loads the service-origin attempt and filters read-only history by identity, revision, and service', async () => {
-    const attempt = publicServiceAttempt('service-origin')
+    const attempt = { ...publicServiceAttempt('service-origin'), persistence_state: 'failed' }
     bridgeMocks.fetchWorkbenchPublicServiceHistory.mockResolvedValue({ attempts: [attempt], since: '', until: '', has_more: false, complete: true })
     bridgeMocks.fetchWorkbenchPublicServiceAttempt.mockResolvedValue(attempt)
     const scope: NodeDetailRequest = {
@@ -234,6 +234,13 @@ describe('NodeDetailView', () => {
     expect(wrapper.text()).toContain('GitHub 公共 API 根端点')
     expect(wrapper.text()).toContain('符合判据')
     expect(wrapper.text()).toContain('attempt service-origin')
+    const handoff = wrapper.findAll('button').find((button) => button.text().includes('返回 Workbench 重试保存'))
+    expect(handoff).toBeDefined()
+    await handoff!.trigger('click')
+    expect(wrapper.emitted('open-workbench-save-retry')?.[0]?.[0]).toEqual({
+      domain: 'public_service', attempt_id: 'service-origin', profile_id: 'profile-a', node_key: 'node-a',
+      node_identity_key: 'identity-a', config_revision_key: 'rev-a', service_id: 'github_api_root',
+    })
     expect(bridgeMocks.startWorkbenchPublicServiceTest).not.toHaveBeenCalled()
   })
 
@@ -270,7 +277,7 @@ describe('NodeDetailView', () => {
   })
 
   it('loads a download-origin attempt from its immutable snapshot and ignores older revision history', async () => {
-    const originAttempt = downloadAttempt('download-origin')
+    const originAttempt = { ...downloadAttempt('download-origin'), persistence_state: 'failed' }
     let releaseOld!: (page: { attempts: ReturnType<typeof downloadAttempt>[]; since: string; until: string; has_more: boolean; complete: boolean }) => void
     bridgeMocks.fetchWorkbenchDownloadHistory.mockImplementationOnce(() => new Promise((resolve) => { releaseOld = resolve }))
     bridgeMocks.fetchWorkbenchDownloadHistory.mockResolvedValueOnce({ attempts: [downloadAttempt('download-rev-b', 'rev-b')], since: '', until: '', has_more: false, complete: true })
@@ -281,6 +288,13 @@ describe('NodeDetailView', () => {
     }
     wrapper = mount(NodeDetailView, { props: { scope } })
     await flushPromises()
+    const handoff = wrapper.findAll('button').find((button) => button.text().includes('返回 Workbench 重试保存'))
+    expect(handoff).toBeDefined()
+    await handoff!.trigger('click')
+    expect(wrapper.emitted('open-workbench-save-retry')?.[0]?.[0]).toEqual({
+      domain: 'download', attempt_id: 'download-origin', profile_id: 'profile-a', node_key: 'node-a',
+      node_identity_key: 'identity-a', config_revision_key: 'rev-a',
+    })
     await wrapper.get('select[aria-label="配置 revision"]').setValue('rev-b')
     await flushPromises()
     releaseOld({ attempts: [downloadAttempt('stale-download-rev-a')], since: '', until: '', has_more: false, complete: true })
