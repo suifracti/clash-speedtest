@@ -307,7 +307,7 @@ onBeforeUnmount(() => { requestToken++; if (pollTimer) clearTimeout(pollTimer); 
     </div>
     <p class="download-rule">GET {{ attempt?.rule.target_url || 'https://speed.cloudflare.com/__down?bytes=（读取上限+1）' }} · 规则 v{{ attempt?.rule.rule_version || 1 }} · 最多 {{ attempt ? limitText(attempt.rule.maximum_bytes) : `${maximumMiB} MiB` }} / {{ attempt ? (attempt.rule.maximum_duration_ns / 1e9).toFixed(0) : timeoutSeconds }} 秒 · 不使用 Monitor 预算，不进入 Monitor 推荐证据。</p>
     <p class="download-note">采样仅由实际收到的响应体字节和单调时钟计算；达到上限或用户取消都不表示节点故障。无有效样本时不显示 0 Mbps。</p>
-    <div v-if="failedAttempts.length || historyLoading || historyError" class="download-retry-history" aria-label="待重试保存的下载历史">
+    <div v-if="failedAttempts.length || historyHasMore || historyLoading || historyError" class="download-retry-history" aria-label="待重试保存的下载历史">
       <strong>可重试保存的历史结果</strong>
       <p v-if="historyError" class="download-error">读取待保存历史失败：{{ historyError }}</p>
       <p v-else-if="historyLoading && failedAttempts.length === 0" class="download-note">正在读取此节点 revision 的待保存结果…</p>
