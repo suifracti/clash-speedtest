@@ -282,6 +282,7 @@ export type NodeDetailOrigin =
   | { kind: 'monitor_sample'; sampleId: string; observedAt?: string; samplingTier?: MonitorRunSamplingTier }
   | { kind: 'workbench_attempt'; attemptId: string; observedAt?: string; snapshot?: WorkbenchLatencyTest }
   | { kind: 'workbench_batch_item'; batchId: string; itemId: string; attemptId?: string; observedAt?: string; snapshot?: WorkbenchLatencyTest }
+  | { kind: 'public_service_attempt'; attemptId: string; serviceId: string; observedAt?: string; snapshot?: WorkbenchPublicServiceAttempt }
 
 export interface NodeDetailRequest {
   profileId: string
@@ -332,6 +333,93 @@ export interface WorkbenchLatencyTest {
   samples: WorkbenchLatencySample[]
   persistence_state: 'saving' | 'saved' | 'failed'
   persistence_error?: string
+}
+
+export interface WorkbenchPublicServiceRule {
+  service_id: string
+  name: string
+  rule_version: number
+  target_url: string
+  method: string
+  success_criterion: string
+  redirect_policy: string
+  timeout_seconds: number
+  maximum_body_bytes: number
+  accept?: string
+  api_version_header?: string
+}
+
+export interface WorkbenchPublicServiceTestRequest {
+  request_id: string
+  profile_id: string
+  node_key: string
+  node_identity_key: string
+  config_revision_key: string
+  service_id: string
+  timeout_seconds?: number
+}
+
+export interface WorkbenchPublicServiceMeasurement {
+  outcome: string
+  http_status?: number
+  bytes_read: number
+  started_at: string
+  finished_at: string
+  duration_ms: number
+  failure_phase?: string
+  error_message?: string
+}
+
+export interface WorkbenchPublicServiceAttempt {
+  attempt_id: string
+  request_id: string
+  profile_id: string
+  node_key: string
+  node_identity_key: string
+  config_revision_key: string
+  display_name: string
+  node_type: string
+  source: string
+  service_id: string
+  rule: WorkbenchPublicServiceRule
+  requested_at: string
+  started_at?: string
+  finished_at?: string
+  execution_state: string
+  persistence_state: string
+  persistence_error?: string
+  result?: WorkbenchPublicServiceMeasurement
+}
+
+export interface WorkbenchPublicServiceHistoryQuery {
+  profile_id: string
+  node_key: string
+  node_identity_key: string
+  config_revision_key: string
+  service_id?: string
+  since?: string
+  until?: string
+  limit?: number
+  before_at?: string
+  before_attempt_id?: string
+}
+
+export interface WorkbenchSaveRetryRequest {
+  domain: 'public_service' | 'download'
+  attempt_id: string
+  profile_id: string
+  node_key: string
+  node_identity_key: string
+  config_revision_key: string
+  service_id?: string
+}
+
+export interface WorkbenchPublicServiceHistoryResult {
+  attempts: WorkbenchPublicServiceAttempt[]
+  since?: string
+  until?: string
+  has_more: boolean
+  complete: boolean
 }
 
 export interface TestStatus {

@@ -24,6 +24,11 @@ import type {
   WorkbenchLatencyTest,
   WorkbenchLatencyBatchRequest,
   WorkbenchLatencyBatch,
+  WorkbenchPublicServiceAttempt,
+  WorkbenchPublicServiceHistoryQuery,
+  WorkbenchPublicServiceHistoryResult,
+  WorkbenchPublicServiceRule,
+  WorkbenchPublicServiceTestRequest,
   ProfileSetup,
   ProfileSource,
 } from '../types'
@@ -343,6 +348,68 @@ export async function cancelWorkbenchLatencyBatch(batchID: string): Promise<Work
 export async function retryWorkbenchLatencyBatchItem(batchID: string, itemID: string): Promise<WorkbenchLatencyBatch> {
   if (isWails()) return window.go!.desktop!.App!.RetryWorkbenchLatencyBatchItem(batchID, itemID)
   const res = await fetch(`${API_BASE}/api/workbench/latency-batches/${encodeURIComponent(batchID)}/items/${encodeURIComponent(itemID)}/retry-save`, { method: 'POST' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function listWorkbenchPublicServiceCatalog(): Promise<WorkbenchPublicServiceRule[]> {
+  if (isWails()) return window.go!.desktop!.App!.ListWorkbenchPublicServiceCatalog()
+  const res = await fetch(`${API_BASE}/api/workbench/public-service-catalog`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function startWorkbenchPublicServiceTest(req: WorkbenchPublicServiceTestRequest): Promise<WorkbenchPublicServiceAttempt> {
+  if (isWails()) return window.go!.desktop!.App!.StartWorkbenchPublicServiceTest(req)
+  const res = await fetch(`${API_BASE}/api/workbench/public-service-tests`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export function buildWorkbenchPublicServiceHistoryQuery(query: WorkbenchPublicServiceHistoryQuery): string {
+  const params = new URLSearchParams({
+    profile_id: query.profile_id,
+    node_key: query.node_key,
+    node_identity_key: query.node_identity_key,
+    config_revision_key: query.config_revision_key,
+  })
+  if (query.service_id) params.set('service_id', query.service_id)
+  if (query.since) params.set('since', query.since)
+  if (query.until) params.set('until', query.until)
+  if (query.limit) params.set('limit', String(query.limit))
+  if (query.before_at && query.before_attempt_id) {
+    params.set('before_at', query.before_at)
+    params.set('before_attempt_id', query.before_attempt_id)
+  }
+  return params.toString()
+}
+
+export async function fetchWorkbenchPublicServiceHistory(query: WorkbenchPublicServiceHistoryQuery): Promise<WorkbenchPublicServiceHistoryResult> {
+  if (isWails()) return window.go!.desktop!.App!.ListWorkbenchPublicServiceTests(query)
+  const res = await fetch(`${API_BASE}/api/workbench/public-service-tests?${buildWorkbenchPublicServiceHistoryQuery(query)}`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function fetchWorkbenchPublicServiceAttempt(attemptID: string, query: WorkbenchPublicServiceHistoryQuery): Promise<WorkbenchPublicServiceAttempt> {
+  if (isWails()) return window.go!.desktop!.App!.GetWorkbenchPublicServiceAttempt(attemptID, query)
+  const res = await fetch(`${API_BASE}/api/workbench/public-service-tests/${encodeURIComponent(attemptID)}?${buildWorkbenchPublicServiceHistoryQuery(query)}`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function cancelWorkbenchPublicServiceTest(attemptID: string, query: WorkbenchPublicServiceHistoryQuery): Promise<WorkbenchPublicServiceAttempt> {
+  if (isWails()) return window.go!.desktop!.App!.CancelWorkbenchPublicServiceTest(attemptID, query)
+  const res = await fetch(`${API_BASE}/api/workbench/public-service-tests/${encodeURIComponent(attemptID)}/cancel?${buildWorkbenchPublicServiceHistoryQuery(query)}`, { method: 'POST' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function retrySaveWorkbenchPublicServiceTest(attemptID: string, query: WorkbenchPublicServiceHistoryQuery): Promise<WorkbenchPublicServiceAttempt> {
+  if (isWails()) return window.go!.desktop!.App!.RetrySaveWorkbenchPublicServiceTest(attemptID, query)
+  const res = await fetch(`${API_BASE}/api/workbench/public-service-tests/${encodeURIComponent(attemptID)}/retry-save?${buildWorkbenchPublicServiceHistoryQuery(query)}`, { method: 'POST' })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }

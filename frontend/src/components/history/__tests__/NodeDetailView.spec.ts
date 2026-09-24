@@ -8,8 +8,11 @@ const bridgeMocks = vi.hoisted(() => ({
   fetchWorkbenchLatencyHistory: vi.fn(),
   fetchWorkbenchLatencyTest: vi.fn(),
   fetchWorkbenchLatencyBatch: vi.fn(),
+  fetchWorkbenchPublicServiceHistory: vi.fn(),
+  fetchWorkbenchPublicServiceAttempt: vi.fn(),
   startWorkbenchLatencyBatch: vi.fn(),
   runWorkbenchLatencyTest: vi.fn(),
+  startWorkbenchPublicServiceTest: vi.fn(),
 }))
 const monitorMocks = vi.hoisted(() => ({
   fetchMonitorNodeOptions: vi.fn(),
@@ -57,6 +60,18 @@ function latencyTest(attemptId: string) {
   }
 }
 
+function publicServiceAttempt(attemptId: string, revision = 'rev-a', serviceId = 'github_api_root') {
+  return {
+    attempt_id: attemptId, request_id: `request-${attemptId}`, profile_id: 'profile-a', node_key: 'node-a',
+    node_identity_key: 'identity-a', config_revision_key: revision, display_name: '同名节点', node_type: 'http',
+    source: 'workbench_public_service', service_id: serviceId,
+    rule: { service_id: serviceId, name: 'GitHub 公共 API 根端点', rule_version: 1, target_url: 'https://api.github.com/', method: 'GET', success_criterion: 'HTTP 200 and root index JSON', redirect_policy: 'do_not_follow', timeout_seconds: 10, maximum_body_bytes: 65536 },
+    requested_at: '2026-09-23T09:00:00Z', started_at: '2026-09-23T09:00:00Z', finished_at: '2026-09-23T09:00:01Z',
+    execution_state: 'completed', persistence_state: 'saved',
+    result: { outcome: 'matched', http_status: 200, bytes_read: 128, started_at: '2026-09-23T09:00:00Z', finished_at: '2026-09-23T09:00:01Z', duration_ms: 1000 },
+  }
+}
+
 function setupDefaults(): void {
   monitorMocks.fetchMonitorNodeOptions.mockResolvedValue([{
     profileId: 'profile-a', profileName: '订阅 A', nodeKey: 'node-a', nodeIdentityKey: 'identity-a',
@@ -72,6 +87,8 @@ function setupDefaults(): void {
   ])
   bridgeMocks.fetchWorkbenchLatencyHistory.mockResolvedValue({ tests: [latencyTest('attempt-a')], since: '', until: '', as_of: '', has_more: false, complete: true })
   bridgeMocks.fetchWorkbenchLatencyTest.mockResolvedValue(latencyTest('attempt-origin'))
+  bridgeMocks.fetchWorkbenchPublicServiceHistory.mockResolvedValue({ attempts: [], since: '', until: '', has_more: false, complete: true })
+  bridgeMocks.fetchWorkbenchPublicServiceAttempt.mockResolvedValue(publicServiceAttempt('service-origin'))
   bridgeMocks.fetchWorkbenchLatencyBatch.mockResolvedValue({ batch_id: 'batch-a', request_id: 'req', test_project: 'latency_stability', timeout_seconds: 5, requested_at: '', state: 'completed', item_count: 1, items: [] })
 }
 
@@ -178,5 +195,51 @@ describe('NodeDetailView', () => {
     expect(wrapper.text()).toContain('current-rev-b')
     expect(wrapper.text()).not.toContain('stale-rev-a')
     expect(monitorMocks.queryMonitorSamplesCursor).toHaveBeenLastCalledWith(expect.objectContaining({ configRevisionKey: 'rev-b' }))
+  })
+
+  it('loads the service-origin attempt and filters read-only history by identity, revision, and service', async () => {
+    const attempt = { ...publicServiceAttempt('service-origin'), persistence_state: 'failed' }
+    bridgeMocks.fetchWorkbenchPublicServiceHistory.mockResolvedValue({ attempts: [attempt], since: '', until: '', has_more: false, complete: true })
+    bridgeMocks.fetchWorkbenchPublicServiceAttempt.mockResolvedValue(attempt)
+    const scope: NodeDetailRequest = {
+      ...baseScope,
+      origin: { kind: 'public_service_attempt', attemptId: attempt.attempt_id, serviceId: attempt.service_id, observedAt: attempt.result.finished_at, snapshot: attempt },
+    }
+    wrapper = mount(NodeDetailView, { props: { scope } })
+    await flushPromises()
+
+    expect(bridgeMocks.fetchWorkbenchPublicServiceHistory).toHaveBeenCalledWith(expect.objectContaining({
+      profile_id: 'profile-a', node_key: 'node-a', node_identity_key: 'identity-a', config_revision_key: 'rev-a', service_id: 'github_api_root',
+    }))
+    expect(bridgeMocks.fetchWorkbenchPublicServiceAttempt).toHaveBeenCalledWith('service-origin', expect.objectContaining({
+      profile_id: 'profile-a', node_identity_key: 'identity-a', config_revision_key: 'rev-a', service_id: 'github_api_root',
+    }))
+    expect(wrapper.text()).toContain('GitHub 公共 API 根端点')
+    expect(wrapper.text()).toContain('符合判据')
+    expect(wrapper.text()).toContain('attempt service-origin')
+    const handoff = wrapper.findAll('button').find((button) => button.text().includes('返回 Workbench 重试保存'))
+    expect(handoff).toBeDefined()
+    await handoff!.trigger('click')
+    expect(wrapper.emitted('open-workbench-save-retry')?.[0]?.[0]).toEqual({
+      domain: 'public_service', attempt_id: 'service-origin', profile_id: 'profile-a', node_key: 'node-a',
+      node_identity_key: 'identity-a', config_revision_key: 'rev-a', service_id: 'github_api_root',
+    })
+    expect(bridgeMocks.startWorkbenchPublicServiceTest).not.toHaveBeenCalled()
+  })
+
+  it('ignores a late service-history page after the revision changes', async () => {
+    let releaseOld!: (page: { attempts: ReturnType<typeof publicServiceAttempt>[]; since: string; until: string; has_more: boolean; complete: boolean }) => void
+    bridgeMocks.fetchWorkbenchPublicServiceHistory.mockImplementationOnce(() => new Promise((resolve) => { releaseOld = resolve }))
+    bridgeMocks.fetchWorkbenchPublicServiceHistory.mockResolvedValueOnce({ attempts: [{ ...publicServiceAttempt('service-rev-b', 'rev-b'), node_key: 'node-a-rev-b' }], since: '', until: '', has_more: false, complete: true })
+    wrapper = mount(NodeDetailView, { props: { scope: baseScope } })
+    await flushPromises()
+    await wrapper.get('select[aria-label="配置 revision"]').setValue('rev-b')
+    await flushPromises()
+    releaseOld({ attempts: [publicServiceAttempt('stale-service-rev-a')], since: '', until: '', has_more: false, complete: true })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('service-rev-b')
+    expect(wrapper.text()).not.toContain('stale-service-rev-a')
+    expect(bridgeMocks.fetchWorkbenchPublicServiceHistory).toHaveBeenLastCalledWith(expect.objectContaining({ config_revision_key: 'rev-b' }))
   })
 })

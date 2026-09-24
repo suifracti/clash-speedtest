@@ -23,6 +23,7 @@ import (
 	"github.com/faceair/clash-speedtest/core/monitor"
 	"github.com/faceair/clash-speedtest/core/policy"
 	"github.com/faceair/clash-speedtest/core/profiles"
+	"github.com/faceair/clash-speedtest/core/publicservice"
 	"github.com/faceair/clash-speedtest/core/speedtester"
 	"gopkg.in/yaml.v2"
 )
@@ -63,13 +64,23 @@ type AppService struct {
 
 	// latencyPersistenceWG keeps the result-first workbench path from closing
 	// history.db while a just-finished latency result is still being persisted.
-	latencyPersistenceWG   sync.WaitGroup
-	workbenchWG            sync.WaitGroup
-	workbenchMu            sync.Mutex
-	workbenchRetryMu       sync.Mutex
-	workbenchActiveBatch   *workbenchLatencyBatchRuntime
-	workbenchActiveSingles int
-	workbenchClosed        bool
+	latencyPersistenceWG           sync.WaitGroup
+	workbenchWG                    sync.WaitGroup
+	workbenchMu                    sync.Mutex
+	workbenchRetryMu               sync.Mutex
+	workbenchActiveBatch           *workbenchLatencyBatchRuntime
+	workbenchActiveSingles         int
+	workbenchClosed                bool
+	publicServiceMu                sync.Mutex
+	publicServiceActive            map[string]*publicServiceRuntime
+	publicServiceClosed            bool
+	publicServiceTransition        bool
+	publicServiceWG                sync.WaitGroup
+	publicServiceChecker           publicservice.Checker
+	publicServiceAttemptCreateHook func(context.Context, *history.PublicServiceAttempt) error
+	publicServiceStageHook         func(context.Context, string, string, history.PublicServiceMeasurement) error
+	publicServiceSaveHook          func(context.Context, string) error
+	publicServiceResolveHook       func(string, string) (monitor.MonitoredNode, error)
 	// latencySaveHook is test-only dependency injection for slow/failing-save
 	// verification. Production uses historyStore.SaveLatencyTest directly.
 	latencySaveHook    func(context.Context, *history.LatencyTest) error
@@ -97,13 +108,14 @@ func newAppService(hStore *history.Store, appPaths appdata.AppPaths, profilePath
 		emitter = NewMemoryEventEmitter()
 	}
 	svc := &AppService{
-		historyStore:      hStore,
-		profilePaths:      profilePaths,
-		appPaths:          appPaths,
-		emitter:           emitter,
-		decisionEngine:    policy.NewDecisionEngine(),
-		policy:            policy.DefaultSwitchPolicy(),
-		monitorSchedulers: make(map[string]*monitor.Scheduler),
+		historyStore:        hStore,
+		profilePaths:        profilePaths,
+		appPaths:            appPaths,
+		emitter:             emitter,
+		decisionEngine:      policy.NewDecisionEngine(),
+		policy:              policy.DefaultSwitchPolicy(),
+		monitorSchedulers:   make(map[string]*monitor.Scheduler),
+		publicServiceActive: make(map[string]*publicServiceRuntime),
 		controllerCfg: ControllerConfigDTO{
 			Endpoint: "http://127.0.0.1:9090",
 			Mode:     "external",
@@ -126,6 +138,9 @@ func newAppService(hStore *history.Store, appPaths appdata.AppPaths, profilePath
 	}
 	if err := svc.reconcileWorkbenchLatencyBatches(); err != nil {
 		log.Printf("workbench latency batch recovery status was not reconciled: %v", err)
+	}
+	if err := svc.reconcileWorkbenchPublicServiceAttempts(); err != nil {
+		log.Printf("workbench public-service recovery status was not reconciled: %v", err)
 	}
 
 	// Initialize default Mihomo controller adapter
@@ -194,8 +209,15 @@ func (s *AppService) Close() error {
 		s.workbenchActiveBatch.mu.Unlock()
 	}
 	s.workbenchMu.Unlock()
+	s.publicServiceMu.Lock()
+	s.publicServiceClosed = true
+	for _, active := range s.publicServiceActive {
+		active.cancel()
+	}
+	s.publicServiceMu.Unlock()
 	s.Stop()
 	s.workbenchWG.Wait()
+	s.publicServiceWG.Wait()
 	s.latencyPersistenceWG.Wait()
 	if s.historyStore != nil {
 		return s.historyStore.Close()

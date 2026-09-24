@@ -4,6 +4,7 @@ import { fetchMonitorNodeOptions } from '../../api/monitor'
 import * as api from '../../api/bridge'
 import UiSelect from '../common/UiSelect.vue'
 import LatencySamplePlot from './LatencySamplePlot.vue'
+import WorkbenchPublicServicePanel from './WorkbenchPublicServicePanel.vue'
 import {
   acceptsLatencyDetailResponse,
   freezeLatencyWindow,
@@ -13,17 +14,20 @@ import {
   type LatencyWindow,
   type LatencyWindowMode,
 } from './latencyRequestGuard'
-import type { MonitorNodeOption, MonitorJobPrefill, NodeDetailOrigin, NodeDetailRequest, WorkbenchLatencyBatch, WorkbenchLatencySample, WorkbenchLatencyTest } from '../../types'
+import type { MonitorNodeOption, MonitorJobPrefill, NodeDetailOrigin, NodeDetailRequest, WorkbenchLatencyBatch, WorkbenchLatencySample, WorkbenchLatencyTest, WorkbenchSaveRetryRequest } from '../../types'
 import { decideMonitorSelection } from './monitorCreateSelection'
 
 type WorkbenchProject = 'latency' | 'throughput' | 'service'
 type IndexMap = Record<string, number | null | undefined>
 type HistoryMeta = { hasMore: boolean; complete: boolean }
 
+const props = defineProps<{ saveRetryRequest?: WorkbenchSaveRetryRequest | null }>()
 const emit = defineEmits<{
   (event: 'open-monitor', payload: MonitorJobPrefill): void
   (event: 'open-node-detail', payload: NodeDetailRequest): void
+  (event: 'save-retry-request-resolved', attemptID: string): void
 }>()
+const pendingSaveRetry = ref<WorkbenchSaveRetryRequest | null>(null)
 const options = ref<MonitorNodeOption[]>([])
 const optionsLoading = ref(false)
 const optionsError = ref('')
@@ -35,7 +39,6 @@ const sortBy = ref<'p50' | 'p95' | 'health' | 'name'>('p50')
 const windowMode = ref<LatencyWindowMode>('4h')
 const activeWindow = ref<LatencyWindow>(freezeLatencyWindow(windowMode.value))
 const activeProject = ref<WorkbenchProject>('latency')
-const selectedService = ref<'antigravity' | 'public-api' | 'streaming'>('antigravity')
 const selectedKeys = ref<string[]>([])
 const focusedKey = ref('')
 const hoveredByKey = ref<IndexMap>({})
@@ -67,7 +70,7 @@ let unsubscribeEvents: (() => void) | null = null
 const workbenchProjects = [
   { id: 'latency' as const, label: '延迟与稳定性', available: true },
   { id: 'throughput' as const, label: '吞吐', available: false },
-  { id: 'service' as const, label: '服务可用性', available: false },
+  { id: 'service' as const, label: '公共服务即时检测', available: true },
 ]
 
 const profileOptions = computed(() => {
@@ -94,12 +97,6 @@ const sortSelectOptions = [
   { value: 'health', label: '健康优先' },
   { value: 'name', label: '名称' },
 ]
-const serviceSelectOptions = [
-  { value: 'antigravity', label: 'Antigravity · 已支持接口待接入工作台' },
-  { value: 'public-api', label: '公共服务 · 未接入', disabled: true },
-  { value: 'streaming', label: '流媒体 · 未接入', disabled: true },
-]
-
 function scopeKey(option: Pick<MonitorNodeOption, 'profileId' | 'nodeKey'>): string {
   return `${option.profileId}\u0000${option.nodeKey}`
 }
@@ -197,6 +194,7 @@ const monitorSelection = computed(() => decideMonitorSelection(options.value, se
 const canOpenMonitor = computed(() => !!monitorSelection.value.prefill)
 const monitorSelectionHint = computed(() => monitorSelection.value.reason)
 const focusedOption = computed(() => optionForKey(focusedKey.value))
+const publicServiceNode = computed(() => selectedKeys.value.length === 1 ? optionForKey(selectedKeys.value[0]) : null)
 const focusedTests = computed(() => (focusedKey.value ? testsForKey(focusedKey.value) : []))
 const focusedDisplayedTest = computed(() => {
   const test = detailTest.value || latestTestForKey(focusedKey.value)
@@ -577,8 +575,8 @@ async function selectHistory(test: WorkbenchLatencyTest): Promise<void> {
 function openHistory(key: string): void { focusNode(key); if (!latestTestForKey(key)) { detailError.value = '这个节点还没有保存历史；完成一次真实延迟测试后再展开。'; return }; expanded.value = true }
 function closeHistory(): void { expanded.value = false; detailError.value = '' }
 function changeProject(project: WorkbenchProject): void { activeProject.value = project; batchMessage.value = ''; testError.value = '' }
-function projectUnavailableLabel(project: WorkbenchProject): string { return project === 'throughput' ? '吞吐历史暂未接入正式工作台接口' : selectedService.value === 'antigravity' ? 'Antigravity 服务历史暂未接入正式工作台接口' : '该服务未接入，不能生成测试结果' }
-function projectReadout(key: string): string { return activeProject.value === 'latency' ? readoutValue(key) : '未接入' }
+function projectUnavailableLabel(project: WorkbenchProject): string { return project === 'throughput' ? '吞吐历史暂未接入正式工作台接口' : '公共服务检测需要只勾选一个节点；具体判据与保存状态显示在上方。' }
+function projectReadout(key: string): string { return activeProject.value === 'latency' ? readoutValue(key) : activeProject.value === 'service' ? '查看上方检测区' : '未接入' }
 function projectHistoryText(key: string): string { return activeProject.value === 'latency' ? historySummary(key) : projectUnavailableLabel(activeProject.value) }
 function isSelected(key: string): boolean { return selectedKeys.value.includes(key) }
 function isTesting(key: string): boolean { return isBatchItemRunning(key) }
@@ -629,6 +627,18 @@ watch(windowMode, () => {
   if (options.value.length > 0) void loadHistories(options.value)
 })
 
+watch(() => props.saveRetryRequest, (request) => {
+  if (!request) return
+  pendingSaveRetry.value = request
+  activeProject.value = request.domain === 'public_service' ? 'service' : 'throughput'
+}, { immediate: true })
+
+function resolveSaveRetryRequest(attemptID: string): void {
+  if (pendingSaveRetry.value?.attempt_id !== attemptID) return
+  pendingSaveRetry.value = null
+  emit('save-retry-request-resolved', attemptID)
+}
+
 onMounted(async () => { unsubscribeEvents = api.subscribeEvents(handlePersistenceEvent); await loadOptions() })
 onUnmounted(() => { unsubscribeEvents?.(); unsubscribeEvents = null })
 </script>
@@ -655,11 +665,12 @@ onUnmounted(() => { unsubscribeEvents?.(); unsubscribeEvents = null })
     <section class="prototype-project-bar" aria-label="测试项目">
       <div class="project-bar-heading"><span class="scope-title">测试项目</span><span class="project-bar-note">先选节点；结果直接出现在节点行</span></div>
       <div class="project-tabs" role="tablist" aria-label="切换测试项目"><button v-for="project in workbenchProjects" :key="project.id" type="button" class="project-tab" :class="{ active: activeProject === project.id }" role="tab" :aria-selected="activeProject === project.id" @click="changeProject(project.id)">{{ project.label }}<span v-if="!project.available">尚未接入</span></button></div>
-      <div class="project-bar-actions"><span class="selection-summary">{{ selectedKeys.length }} 个节点</span><label class="timeout-control">单项超时<select v-model.number="timeoutSeconds" :disabled="batchBusy"><option :value="1">1 秒</option><option :value="3">3 秒</option><option :value="5">5 秒</option><option :value="10">10 秒</option><option :value="30">30 秒</option></select></label><button type="button" class="prototype-button primary" :disabled="!canRun" @click="runTest()">{{ batchBusy ? (activeBatch?.state === 'cancelling' ? '正在取消…' : activeBatch?.state === 'saving' ? '结果保存中…' : '批次执行中…') : '测试所选节点' }}</button><button v-if="batchBusy && activeBatch?.state !== 'saving'" type="button" class="prototype-button" :disabled="activeBatch?.state === 'cancelling'" @click="cancelBatch">{{ activeBatch?.state === 'cancelling' ? '正在取消…' : '取消本批次' }}</button><button type="button" class="prototype-button" :disabled="!canOpenMonitor" :title="monitorSelectionHint" @click="openMonitor">加入持续监测</button></div>
+      <div class="project-bar-actions"><span class="selection-summary">{{ selectedKeys.length }} 个节点</span><template v-if="activeProject === 'latency'"><label class="timeout-control">单项超时<select v-model.number="timeoutSeconds" :disabled="batchBusy"><option :value="1">1 秒</option><option :value="3">3 秒</option><option :value="5">5 秒</option><option :value="10">10 秒</option><option :value="30">30 秒</option></select></label><button type="button" class="prototype-button primary" :disabled="!canRun" @click="runTest()">{{ batchBusy ? (activeBatch?.state === 'cancelling' ? '正在取消…' : activeBatch?.state === 'saving' ? '结果保存中…' : '批次执行中…') : '测试所选节点' }}</button><button v-if="batchBusy && activeBatch?.state !== 'saving'" type="button" class="prototype-button" :disabled="activeBatch?.state === 'cancelling'" @click="cancelBatch">{{ activeBatch?.state === 'cancelling' ? '正在取消…' : '取消本批次' }}</button></template><button type="button" class="prototype-button" :disabled="!canOpenMonitor" :title="monitorSelectionHint" @click="openMonitor">加入持续监测</button></div>
       <div v-if="selectedKeys.length > 0 && !canOpenMonitor" class="batch-test-status blocked">{{ monitorSelectionHint }}</div>
-      <div v-if="activeProject === 'service'" class="service-toolbar"><span class="service-toolbar-label">服务</span><UiSelect v-model="selectedService" variant="toolbar" aria-label="选择服务" :options="serviceSelectOptions" /><span class="service-toolbar-note">选择服务同时决定查看与测试目标；未接入服务不可测试</span></div>
-      <div class="batch-test-status" :class="{ running: batchBusy, blocked: activeProject !== 'latency', complete: !!batchMessage && !batchBusy }" aria-live="polite">{{ testError || batchMessage || (activeProject === 'latency' ? `将冻结 ${selectedKeys.length} 个节点（${selectedProfilesLabel}），每项执行现有 HTTP 代理延迟探测，超时 ${timeoutSeconds} 秒。切换筛选或勾选不会更改已创建批次。` : projectUnavailableLabel(activeProject)) }}</div>
+      <div class="batch-test-status" :class="{ running: batchBusy, blocked: activeProject === 'throughput', complete: !!batchMessage && !batchBusy }" aria-live="polite">{{ testError || batchMessage || (activeProject === 'latency' ? `将冻结 ${selectedKeys.length} 个节点（${selectedProfilesLabel}），每项执行现有 HTTP 代理延迟探测，超时 ${timeoutSeconds} 秒。切换筛选或勾选不会更改已创建批次。` : projectUnavailableLabel(activeProject)) }}</div>
     </section>
+
+    <WorkbenchPublicServicePanel v-if="activeProject === 'service'" :node="publicServiceNode" :save-retry-request="pendingSaveRetry?.domain === 'public_service' ? pendingSaveRetry : null" @save-retry-request-resolved="resolveSaveRetryRequest" @open-node-detail="emit('open-node-detail', $event)" />
 
     <section class="prototype-panel batch-panel" aria-labelledby="latency-batches-title">
       <div class="prototype-panel-header"><div><h2 id="latency-batches-title">批量延迟与历史批次</h2><p>Workbench 主动测试；与 Monitor 常规证据及预算分开。失败探测、配置跳过和保存状态逐项显示。</p></div><button type="button" class="text-action" @click="loadRecentBatches">重新读取历史</button></div>
@@ -704,7 +715,7 @@ onUnmounted(() => { unsubscribeEvents?.(); unsubscribeEvents = null })
     </section>
 
     <section v-if="focusedOption" class="prototype-panel evidence-panel" aria-labelledby="evidence-title">
-      <div class="prototype-panel-header"><div><h2 id="evidence-title">{{ focusedOption.displayName }}</h2><p>{{ focusedOption.profileName }} · {{ focusedOption.countryCode || '未知地区' }} · 选中后查看同一份原始样本</p></div><div class="evidence-actions"><button type="button" class="prototype-button" @click="openNodeDetail(focusedOption, focusedDisplayedTest ? { kind: 'workbench_attempt', attemptId: focusedDisplayedTest.attempt_id, observedAt: focusedDisplayedTest.finished_at, snapshot: focusedDisplayedTest } : undefined)">节点详情</button><button type="button" class="prototype-button primary" :disabled="batchBusy" @click="runTest([focusedKey])">{{ batchBusy ? '批次执行中…' : '测试此节点' }}</button><button type="button" class="prototype-button" :disabled="!canOpenMonitor" :title="monitorSelectionHint" @click="openMonitor">加入持续监测</button></div></div>
+      <div class="prototype-panel-header"><div><h2 id="evidence-title">{{ focusedOption.displayName }}</h2><p>{{ focusedOption.profileName }} · {{ focusedOption.countryCode || '未知地区' }} · 选中后查看同一份原始样本</p></div><div class="evidence-actions"><button type="button" class="prototype-button" @click="openNodeDetail(focusedOption, focusedDisplayedTest ? { kind: 'workbench_attempt', attemptId: focusedDisplayedTest.attempt_id, observedAt: focusedDisplayedTest.finished_at, snapshot: focusedDisplayedTest } : undefined)">节点详情</button><button v-if="activeProject === 'latency'" type="button" class="prototype-button primary" :disabled="batchBusy" @click="runTest([focusedKey])">{{ batchBusy ? '批次执行中…' : '测试此节点' }}</button><button type="button" class="prototype-button" :disabled="!canOpenMonitor" :title="monitorSelectionHint" @click="openMonitor">加入持续监测</button></div></div>
       <div v-if="focusedDisplayedTest" class="evidence-grid"><div class="evidence-facts"><span class="fact-label">节点判断</span><strong :class="`health-${visibleStatus(focusedKey)}`">{{ statusLabel(focusedKey) }}</strong><span>{{ historySummary(focusedKey) }}</span><span>任务状态与节点健康分开读取；{{ monitorStatusText(focusedKey) }}</span></div><div class="evidence-facts"><span class="fact-label">当前样本</span><strong>{{ sampleLabel(activeSampleFor(focusedKey)) }}</strong><span>{{ sampleDetail(activeSampleFor(focusedKey)) }}</span><span>{{ focusedDisplayedTest ? `本次 ${testStatusLabel(focusedDisplayedTest)} · ${persistenceLabel(focusedDisplayedTest)}` : '' }}</span></div><div class="evidence-facts"><span class="fact-label">辅助读数</span><strong>P50 {{ p50ForKey(focusedKey) ?? '—' }} <small>ms</small></strong><span>P95 {{ p95ForKey(focusedKey) ?? '—' }} ms</span><span>失败 {{ samplesForKey(focusedKey).filter((sample) => !sample.success).length }} 条</span></div></div>
       <div v-else class="evidence-empty">这个节点还没有真实延迟历史。点击“立即测试此节点”后，结果会先显示，再独立保存。</div>
       <div v-if="detailError" class="inline-error">{{ detailError }}</div>

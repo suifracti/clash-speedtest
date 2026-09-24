@@ -17,6 +17,7 @@ import (
 	"github.com/faceair/clash-speedtest/core/monitor"
 	"github.com/faceair/clash-speedtest/core/policy"
 	"github.com/faceair/clash-speedtest/core/profiles"
+	"github.com/faceair/clash-speedtest/core/publicservice"
 )
 
 // App is the desktop adapter struct exposed to the Vue 3 frontend via Wails IPC.
@@ -86,6 +87,30 @@ func (a *App) ListWorkbenchLatencyTests(query application.WorkbenchLatencyHistor
 
 func (a *App) GetWorkbenchLatencyTest(query application.WorkbenchLatencyHistoryDetailQuery) (*application.WorkbenchLatencyTestDTO, error) {
 	return a.app.GetWorkbenchLatencyTest(a.context(), query)
+}
+
+func (a *App) ListWorkbenchPublicServiceCatalog() []publicservice.Rule {
+	return a.app.ListWorkbenchPublicServiceCatalog()
+}
+
+func (a *App) StartWorkbenchPublicServiceTest(req application.WorkbenchPublicServiceTestRequest) (*history.PublicServiceAttempt, error) {
+	return a.app.StartWorkbenchPublicServiceTest(a.context(), req)
+}
+
+func (a *App) ListWorkbenchPublicServiceTests(query application.WorkbenchPublicServiceHistoryQuery) (application.WorkbenchPublicServiceHistoryResult, error) {
+	return a.app.ListWorkbenchPublicServiceTests(a.context(), query)
+}
+
+func (a *App) GetWorkbenchPublicServiceAttempt(attemptID string, query application.WorkbenchPublicServiceHistoryQuery) (*history.PublicServiceAttempt, error) {
+	return a.app.GetWorkbenchPublicServiceAttempt(a.context(), attemptID, query)
+}
+
+func (a *App) CancelWorkbenchPublicServiceTest(attemptID string, query application.WorkbenchPublicServiceHistoryQuery) (*history.PublicServiceAttempt, error) {
+	return a.app.CancelWorkbenchPublicServiceTest(a.context(), attemptID, query)
+}
+
+func (a *App) RetrySaveWorkbenchPublicServiceTest(attemptID string, query application.WorkbenchPublicServiceHistoryQuery) (*history.PublicServiceAttempt, error) {
+	return a.app.RetrySaveWorkbenchPublicServiceTest(a.context(), attemptID, query)
 }
 
 func (a *App) ListNodeHistoryRevisions(profileID, nodeIdentityKey string) ([]history.NodeHistoryRevision, error) {

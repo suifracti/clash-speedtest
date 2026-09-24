@@ -318,6 +318,50 @@ func (s *Store) DB() *DB {
 	return s.db
 }
 
+func (s *Store) CreatePublicServiceAttempt(ctx context.Context, attempt *PublicServiceAttempt) error {
+	return s.db.CreatePublicServiceAttempt(ctx, attempt)
+}
+
+func (s *Store) BeginPublicServiceAttempt(ctx context.Context, attemptID string, startedAt time.Time) error {
+	return s.db.BeginPublicServiceAttempt(ctx, attemptID, startedAt)
+}
+
+func (s *Store) RequestPublicServiceCancellation(ctx context.Context, attemptID string) (bool, error) {
+	return s.db.RequestPublicServiceCancellation(ctx, attemptID)
+}
+
+func (s *Store) StagePublicServiceResult(ctx context.Context, attemptID, executionState string, measurement PublicServiceMeasurement) error {
+	return s.db.StagePublicServiceResult(ctx, attemptID, executionState, measurement)
+}
+
+func (s *Store) MarkPublicServiceStageFailed(ctx context.Context, attemptID, executionState string, finishedAt time.Time, safeMessage string) error {
+	return s.db.MarkPublicServiceStageFailed(ctx, attemptID, executionState, finishedAt, safeMessage)
+}
+
+func (s *Store) MarkPublicServiceSaveFailed(ctx context.Context, attemptID, safeMessage string) error {
+	return s.db.MarkPublicServiceSaveFailed(ctx, attemptID, safeMessage)
+}
+
+func (s *Store) CommitPublicServiceResult(ctx context.Context, attemptID string) error {
+	return s.db.CommitPublicServiceResult(ctx, attemptID)
+}
+
+func (s *Store) ReconcilePublicServiceAttempts(ctx context.Context) error {
+	return s.db.ReconcilePublicServiceAttempts(ctx)
+}
+
+func (s *Store) GetPublicServiceAttemptByRequestID(ctx context.Context, requestID string) (*PublicServiceAttempt, error) {
+	return s.db.GetPublicServiceAttemptByRequestID(ctx, requestID)
+}
+
+func (s *Store) GetPublicServiceAttempt(ctx context.Context, attemptID string, filter PublicServiceFilter) (*PublicServiceAttempt, error) {
+	return s.db.GetPublicServiceAttempt(ctx, attemptID, filter)
+}
+
+func (s *Store) QueryPublicServiceAttempts(ctx context.Context, filter PublicServiceFilter) (*PublicServiceQueryResult, error) {
+	return s.db.QueryPublicServiceAttempts(ctx, filter)
+}
+
 // SampleStore interface implementation delegating to SQLite DB
 
 func (s *Store) SaveMonitorRun(ctx context.Context, run *monitor.MonitorRun) error {
