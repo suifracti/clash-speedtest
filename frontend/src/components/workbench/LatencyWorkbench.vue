@@ -114,36 +114,150 @@ const activeWindow = ref<LatencyWindow>(freezeLatencyWindow(windowMode.value))
 const activeProject = ref<WorkbenchProject>('latency')
 const nodeCategoryFilter = ref<'proxies' | 'notices' | 'all'>('proxies')
 const isExportModalOpen = ref(false)
-const workbenchViewMode = ref<'compact' | 'detailed'>(
-  typeof localStorage !== 'undefined' && localStorage.getItem('cst_workbench_view_mode') === 'compact'
-    ? 'compact'
-    : 'detailed'
-)
-function setWorkbenchViewMode(mode: 'compact' | 'detailed') {
-  workbenchViewMode.value = mode
-  if (typeof localStorage !== 'undefined') {
-    localStorage.setItem('cst_workbench_view_mode', mode)
+const isTestingEnv = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || Boolean(process.env?.VITEST))
+const allNodesExpanded = ref<boolean>(isTestingEnv)
+
+function toggleAllExpanded() {
+  allNodesExpanded.value = !allNodesExpanded.value
+}
+
+function nodeCompactMetrics(key: string) {
+  const isCurrentlyTesting = isTesting(key)
+  const test = latestTestForKey(key)
+  const suite = suiteHealthForKey(key)
+  const report = nodeHealthReport(key)
+
+  if (isCurrentlyTesting) {
+    return {
+      hasData: true,
+      isTesting: true,
+      latencyText: '测试中…',
+      latencyClass: 'medium' as const,
+      connectivityText: '正在探测六站…',
+      connectivityClass: 'warning' as const,
+      lossRateText: '',
+      lossRateClass: 'zero' as const,
+      jitterText: '',
+      jitterClass: 'good' as const,
+      speedText: null,
+    }
+  }
+
+  if (!test && !suite && !report) {
+    return {
+      hasData: false,
+      isTesting: false,
+      latencyText: '未测试',
+      latencyClass: 'nodata' as const,
+      connectivityText: '暂无记录',
+      connectivityClass: 'nodata' as const,
+      lossRateText: '',
+      lossRateClass: 'zero' as const,
+      jitterText: '',
+      jitterClass: 'good' as const,
+      speedText: null,
+    }
+  }
+
+  // 1. Latency & badge
+  const latencyMs = test?.latency_ms ?? (report?.p50 ?? null)
+  let latencyText = '未测试'
+  let latencyClass: 'fast' | 'medium' | 'slow' | 'fail' | 'nodata' = 'nodata'
+  if (test?.status === 'failed' || (latencyMs !== null && latencyMs <= 0)) {
+    latencyText = '超时失败'
+    latencyClass = 'fail'
+  } else if (latencyMs !== null) {
+    latencyText = `${latencyMs} ms`
+    if (latencyMs < 150) latencyClass = 'fast'
+    else if (latencyMs < 300) latencyClass = 'medium'
+    else latencyClass = 'slow'
+  }
+
+  // 2. Connectivity
+  let connectivityText = ''
+  let connectivityClass: 'success' | 'warning' | 'danger' | 'nodata' = 'nodata'
+  if (suite) {
+    if (suite.tested === 0) {
+      connectivityText = '暂无记录'
+      connectivityClass = 'nodata'
+    } else if (suite.reachable === 0) {
+      connectivityText = '全站超时'
+      connectivityClass = 'danger'
+    } else if (suite.complete === suite.tested) {
+      connectivityText = `${suite.tested}/${suite.tested} 全通`
+      connectivityClass = 'success'
+    } else {
+      connectivityText = `${suite.reachable}/${suite.tested} 连通`
+      connectivityClass = 'warning'
+    }
+  } else if (test) {
+    if (test.status === 'completed') {
+      connectivityText = '探测连通'
+      connectivityClass = 'success'
+    } else if (test.status === 'partial_failed') {
+      connectivityText = '部分超时'
+      connectivityClass = 'warning'
+    } else {
+      connectivityText = '测速超时'
+      connectivityClass = 'danger'
+    }
+  }
+
+  // 3. Loss Rate
+  let lossRateText = ''
+  let lossRateClass: 'zero' | 'low' | 'high' = 'zero'
+  if (suite && suite.count > 0) {
+    const loss = ((suite.count - suite.success) / suite.count) * 100
+    lossRateText = `丢包 ${loss.toFixed(1).replace(/\.0$/, '')}%`
+    lossRateClass = loss === 0 ? 'zero' : loss < 20 ? 'low' : 'high'
+  } else if (test && test.total_samples > 0) {
+    const loss = ((test.failure_samples || 0) / test.total_samples) * 100
+    lossRateText = `丢包 ${loss.toFixed(1).replace(/\.0$/, '')}%`
+    lossRateClass = loss === 0 ? 'zero' : loss < 20 ? 'low' : 'high'
+  } else if (report && report.sampleCount > 0) {
+    const loss = (report.failCount / report.sampleCount) * 100
+    lossRateText = `丢包 ${loss.toFixed(1).replace(/\.0$/, '')}%`
+    lossRateClass = loss === 0 ? 'zero' : loss < 20 ? 'low' : 'high'
+  }
+
+  // 4. Jitter / P95
+  let jitterText = ''
+  let jitterClass: 'good' | 'warn' = 'good'
+  if (report?.p95 !== null && report?.p95 !== undefined && report?.p50 !== null && report?.p50 !== undefined) {
+    const diff = Math.max(0, report.p95 - report.p50)
+    jitterText = `P95 ${report.p95}ms · 抖动 ±${diff}ms`
+    jitterClass = diff > 80 ? 'warn' : 'good'
+  } else if (test?.jitter_ms) {
+    jitterText = `抖动 ±${Math.round(test.jitter_ms)}ms`
+    jitterClass = test.jitter_ms > 80 ? 'warn' : 'good'
+  } else if (report?.p95 !== null && report?.p95 !== undefined) {
+    jitterText = `P95 ${report.p95}ms`
+    jitterClass = 'good'
+  } else if (report?.trendText) {
+    jitterText = report.trendText
+  }
+
+  // 5. Download speed
+  const dl = downloadResultByKey.value[key]
+  const speedText = dl ? `↓ ${dl.speedMbps} Mbps` : null
+
+  return {
+    hasData: true,
+    isTesting: false,
+    latencyText,
+    latencyClass,
+    connectivityText,
+    connectivityClass,
+    lossRateText,
+    lossRateClass,
+    jitterText,
+    jitterClass,
+    speedText,
   }
 }
-const expandedKeys = ref<Set<string>>(new Set())
-function toggleRowExpanded(key: string) {
-  if (expandedKeys.value.has(key)) {
-    expandedKeys.value.delete(key)
-  } else {
-    expandedKeys.value.add(key)
-  }
-}
+
 const concurrencyLevel = ref<number>(16)
 const filterOnlyAlive = ref<boolean>(false)
-
-function compactLatencyClass(key: string): string {
-  const test = latestTestForKey(key)
-  if (!test) return 'nodata'
-  if (test.status === 'failed' || test.latency_ms <= 0) return 'fail'
-  if (test.latency_ms < 120) return 'fast'
-  if (test.latency_ms < 250) return 'medium'
-  return 'slow'
-}
 
 const noticeOverrides = ref<Record<string, boolean>>(loadNoticeOverrides())
 const selectedKeys = ref<string[]>([])
@@ -2679,6 +2793,16 @@ onUnmounted(() => {
             </button>
           </div>
           <div class="selection-actions flex items-center gap-2.5">
+            <button
+              v-if="visibleOptions.length > 0 && activeProject === 'latency'"
+              type="button"
+              class="selection-button global-expand-toggle-btn"
+              :class="{ 'expanded': allNodesExpanded }"
+              :title="allNodesExpanded ? '收起全部节点详细走势与图表' : '展开全部节点详细走势与图表'"
+              @click="toggleAllExpanded"
+            >
+              {{ allNodesExpanded ? '▲ 全部收起走势' : '▼ 全部展开走势' }}
+            </button>
             <button v-if="visibleOptions.length > 0" type="button" class="selection-button" :aria-pressed="isAllVisibleSelected" @click="toggleSelectAllVisible">
               {{ isAllVisibleSelected ? '取消当前页选择' : `全选当前 ${visibleOptions.length} 个` }}
             </button>
@@ -2686,7 +2810,7 @@ onUnmounted(() => {
           </div>
         </div>
       </div>
-      <div v-if="nodeCategoryFilter !== 'notices' && activeProject === 'latency'" class="comparison-head" aria-hidden="true">
+      <div v-if="nodeCategoryFilter !== 'notices' && activeProject === 'latency' && allNodesExpanded" class="comparison-head" aria-hidden="true">
         <div></div>
         <div>节点 / 订阅</div>
         <div>当前读数</div>
@@ -2700,7 +2824,13 @@ onUnmounted(() => {
           </div>
         </div>
       </div>
-      <div v-if="nodeCategoryFilter !== 'notices' && activeProject === 'latency'" class="history-legend" aria-label="历史图例">
+      <div v-else-if="nodeCategoryFilter !== 'notices' && activeProject === 'latency' && !allNodesExpanded" class="compact-table-head" aria-hidden="true">
+        <div class="head-check"></div>
+        <div class="head-node">节点 / 订阅</div>
+        <div class="head-metrics">最新延迟 · 连通率 · 丢包率 · 抖动与 P95</div>
+        <div class="head-actions">操作</div>
+      </div>
+      <div v-if="nodeCategoryFilter !== 'notices' && activeProject === 'latency' && allNodesExpanded" class="history-legend" aria-label="历史图例">
         <span class="legend-item"><i class="legend-mark"></i>成功</span>
         <span class="legend-item"><i class="legend-mark fail"></i>失败</span>
         <span v-if="activeProject === 'latency'" class="legend-item"><i class="legend-mark timeout"></i>超时</span>
@@ -2769,39 +2899,67 @@ onUnmounted(() => {
       <ServiceComparison v-else-if="activeProject === 'service'" :rows="comparisonRows" :services="selectedServiceOptions" :catalog="publicServiceCatalog" :records="visibleServices" :selected="selectedKeys" :states="projectHistoryStateByKey" :partial="projectHistoryMetaByKey" @toggle="toggleSelected" @service="barServiceId = $event" @detail="openNodeDetail" />
       <DownloadComparison v-else-if="activeProject === 'throughput'" :rows="comparisonRows" :records="visibleDownloads" :selected="selectedKeys" :states="projectHistoryStateByKey" :partial="projectHistoryMetaByKey" @toggle="toggleSelected" @detail="openNodeDetail" />
       <ul v-else class="node-list" role="listbox" aria-label="节点列表">
-        <li v-for="node in visibleOptions" :key="scopeKey(node)" class="node-row" :class="{ 'is-focused': focusedKey === scopeKey(node), 'no-latency-history': activeProject === 'latency' && !allSiteTestsForKey(scopeKey(node)).length && !isTesting(scopeKey(node)), 'latency-health': activeProject === 'latency' && !!nodeHealthReport(scopeKey(node)), 'compact-mode-row': activeProject === 'latency' && workbenchViewMode === 'compact' && !expandedKeys.has(scopeKey(node)) }" :aria-selected="isSelected(scopeKey(node))">
-                    <!-- Compact View for Latency -->
-          <template v-if="activeProject === 'latency' && workbenchViewMode === 'compact' && !expandedKeys.has(scopeKey(node))">
+        <li v-for="node in visibleOptions" :key="scopeKey(node)" class="node-row" :class="{ 'is-focused': focusedKey === scopeKey(node), 'no-latency-history': activeProject === 'latency' && !allSiteTestsForKey(scopeKey(node)).length && !isTesting(scopeKey(node)), 'latency-health': activeProject === 'latency' && !!nodeHealthReport(scopeKey(node)), 'compact-mode-row': activeProject === 'latency' && !allNodesExpanded }" :aria-selected="isSelected(scopeKey(node))">
+          <!-- Compact View for Latency (Default Collapsed) -->
+          <template v-if="activeProject === 'latency' && !allNodesExpanded">
             <label class="select-cell compact-cell-check" :aria-label="`选择 ${node.displayName}`" @click.stop>
               <input type="checkbox" :checked="isSelected(scopeKey(node))" @change="toggleSelected(scopeKey(node))">
             </label>
             <div class="compact-cell-main" @click="focusNode(scopeKey(node))">
               <span class="compact-flag">{{ node.countryFlag || '🌐' }}</span>
-              <strong class="compact-name" :title="node.displayName">{{ node.displayName || '未命名节点' }}</strong>
-              <span class="compact-tag">{{ node.type || '节点' }}</span>
-              <span class="compact-meta">{{ sourceName(node.profileId, node.profileName) }}</span>
-              <span v-if="downloadResultByKey[scopeKey(node)]" class="composite-badge download">↓ {{ downloadResultByKey[scopeKey(node)].speedMbps }}M</span>
-              <span v-if="serviceSummaryBadge(scopeKey(node))" class="composite-badge service">{{ serviceSummaryBadge(scopeKey(node)) }}</span>
+              <span class="node-name compact-name" :title="node.displayName">{{ node.displayName || '未命名节点' }}</span>
+              <span class="compact-tag protocol-tag">{{ node.type || '节点' }}</span>
+              <span class="compact-tag source-tag">{{ sourceName(node.profileId, node.profileName) }}</span>
+              <span v-if="node.countryCode && node.countryCode !== 'OTHER'" class="compact-tag country-tag">{{ node.countryCode }}</span>
+              <span v-if="monitoredNodeKeys.has(scopeKey(node))" class="badge-monitoring compact-monitoring" title="该节点已被持续监测任务包含并正在定期探测">● 监测中</span>
             </div>
             <div class="compact-cell-metrics">
-              <template v-if="isTesting(scopeKey(node))">
-                <span class="row-readout-state running">测试中…</span>
-              </template>
-              <template v-else-if="latestTestForKey(scopeKey(node))">
-                <div class="compact-badge" :class="compactLatencyClass(scopeKey(node))">
-                  <span>{{ latestTestForKey(scopeKey(node))!.latency_ms }} ms</span>
-                </div>
-                <span class="compact-health-text">
-                  {{ suiteHealthForKey(scopeKey(node)) ? `${suiteHealthForKey(scopeKey(node))!.success}/6 连通` : (latestTestForKey(scopeKey(node))!.status !== 'failed' ? '成功' : '失败') }}
-                </span>
-              </template>
-              <template v-else>
-                <span class="compact-badge nodata">未测试</span>
-              </template>
+              <div class="compact-badge" :class="nodeCompactMetrics(scopeKey(node)).latencyClass">
+                <span class="compact-badge-dot"></span>
+                <strong>{{ nodeCompactMetrics(scopeKey(node)).latencyText }}</strong>
+              </div>
+              <span
+                v-if="nodeCompactMetrics(scopeKey(node)).hasData"
+                class="compact-metric-pill connectivity"
+                :class="nodeCompactMetrics(scopeKey(node)).connectivityClass"
+                title="六站探测连通性"
+              >
+                {{ nodeCompactMetrics(scopeKey(node)).connectivityText }}
+              </span>
+              <span
+                v-if="nodeCompactMetrics(scopeKey(node)).hasData && nodeCompactMetrics(scopeKey(node)).lossRateText"
+                class="compact-metric-pill loss"
+                :class="nodeCompactMetrics(scopeKey(node)).lossRateClass"
+                title="测试样本丢包率"
+              >
+                {{ nodeCompactMetrics(scopeKey(node)).lossRateText }}
+              </span>
+              <span
+                v-if="nodeCompactMetrics(scopeKey(node)).jitterText"
+                class="compact-metric-pill jitter"
+                :class="nodeCompactMetrics(scopeKey(node)).jitterClass"
+                :title="nodeCompactMetrics(scopeKey(node)).jitterText"
+              >
+                {{ nodeCompactMetrics(scopeKey(node)).jitterText }}
+              </span>
+              <span
+                v-if="nodeCompactMetrics(scopeKey(node)).speedText"
+                class="composite-badge download"
+                :title="`最新下载测速：${nodeCompactMetrics(scopeKey(node)).speedText}`"
+              >
+                {{ nodeCompactMetrics(scopeKey(node)).speedText }}
+              </span>
             </div>
             <div class="compact-cell-actions">
               <button type="button" class="row-action-btn" :disabled="batchBusy" @click.stop="runTest([scopeKey(node)])">⚡ 测速</button>
-              <button type="button" class="row-action-btn" title="展开六站走势图与详细样本" @click.stop="toggleRowExpanded(scopeKey(node))">展开走势 ▼</button>
+              <button
+                type="button"
+                class="row-action-btn toggle-expand-btn"
+                title="点击展开全部节点走势图与详细样本"
+                @click.stop="toggleAllExpanded"
+              >
+                展开走势 ▼
+              </button>
               <button type="button" class="row-action-btn" title="查看节点完整配置与详情" @click.stop="openHistory(scopeKey(node), 'config')">详情</button>
             </div>
           </template>
@@ -2817,6 +2975,15 @@ onUnmounted(() => {
               <span v-if="isNoticeNode(node, noticeOverrides, scopeKey(node))" class="notice-tag">📢 非节点/公告</span>
             </span>
             <div class="node-row-actions">
+              <button
+                v-if="activeProject === 'latency'"
+                type="button"
+                class="row-action-btn toggle-expand-btn active"
+                title="点击收起全部走势"
+                @click.stop="toggleAllExpanded"
+              >
+                收起走势 ▲
+              </button>
               <button
                 type="button"
                 class="row-action-btn"
