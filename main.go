@@ -77,6 +77,8 @@ var (
 	dataDirFlag          = flag.String("data-dir", "", "absolute isolated data directory (overrides CLASH_SPEEDTEST_DATA_DIR)")
 	cliFlag              = flag.Bool("cli", false, "force terminal CLI interactive mode")
 	portFlag             = flag.Int("port", 0, "port for GUI web server (default: random free port)")
+	publicIPv6Flag       = flag.String("public-ipv6", "", "explicitly expose the full unauthenticated web console on this IPv6 address (trusted sharing only)")
+	listenFlag           = flag.String("listen", "::", "web listen address (default: all IPv6/IPv4 interfaces; use 127.0.0.1 for local only)")
 	browserFlag          = flag.String("browser", "", "preferred browser for GUI: zen, arc, brave, chrome, edge, safari, default, none, or path to executable")
 )
 
@@ -482,6 +484,8 @@ func runGUI(port int, userAgent string, browser string, appPaths appdata.AppPath
 	server, err := web.NewServer(web.ServerConfig{
 		AppPaths:      appPaths,
 		Port:          port,
+		PublicIPv6:    *publicIPv6Flag,
+		ListenAddress: *listenFlag,
 		UserAgent:     userAgent,
 		StaticHandler: web.SPAHandler(distFS),
 	})

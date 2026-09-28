@@ -35,6 +35,8 @@ import (
 type ServerConfig struct {
 	AppPaths      appdata.AppPaths
 	Port          int
+	PublicIPv6    string
+	ListenAddress string
 	ProfilePaths  profiles.Paths
 	HistoryDir    string
 	UserAgent     string
@@ -55,6 +57,13 @@ type Server struct {
 
 // NewServer constructs a new web adapter Server.
 func NewServer(cfg ServerConfig) (*Server, error) {
+	if cfg.PublicIPv6 != "" {
+		ip := net.ParseIP(cfg.PublicIPv6)
+		if ip == nil || ip.To4() != nil || !ip.IsGlobalUnicast() || ip.IsPrivate() {
+			return nil, fmt.Errorf("public-ipv6 must be a global IPv6 literal")
+		}
+		cfg.PublicIPv6 = ip.String()
+	}
 	if cfg.AppPaths.ProfileDir != "" {
 		cfg.ProfilePaths = profiles.Paths{Dir: cfg.AppPaths.ProfileDir}
 		if cfg.HistoryDir == "" {
@@ -239,11 +248,25 @@ func (s *Server) buildHandler() http.Handler {
 		mux.Handle("/", s.config.StaticHandler)
 	}
 
+	if s.config.PublicIPv6 != "" {
+		return securityMiddlewareForHost(mux, net.JoinHostPort(s.config.PublicIPv6, strconv.Itoa(s.port)))
+	}
+	if s.config.ListenAddress != "" && !isLoopbackHost(s.config.ListenAddress) {
+		return securityMiddlewareForHost(mux, "*")
+	}
 	return securityMiddleware(mux)
 }
 
 func (s *Server) Start() error {
-	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", s.config.Port))
+	bindHost := "127.0.0.1"
+	if s.config.ListenAddress != "" {
+		bindHost = s.config.ListenAddress
+	}
+	if s.config.PublicIPv6 != "" {
+		bindHost = "::"
+		log.Printf("WARNING: full unauthenticated web console exposed via IPv6; use only with trusted users")
+	}
+	listener, err := net.Listen("tcp", net.JoinHostPort(bindHost, strconv.Itoa(s.config.Port)))
 	if err != nil {
 		return fmt.Errorf("listen on port %d: %w", s.config.Port, err)
 	}
@@ -341,20 +364,36 @@ func isMutatingMethod(method string) bool {
 // securityMiddleware enforces loopback Host validation, CSRF defenses on mutating endpoints,
 // and rejects untrusted origins (no CORS wildcard allowed).
 func securityMiddleware(next http.Handler) http.Handler {
+	return securityMiddlewareForHost(next, "")
+}
+
+func securityMiddlewareForHost(next http.Handler, publicHost string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		allowedHost := publicHost
+		if allowedHost == "*" {
+			allowedHost = r.Host
+		}
 		// 1. Host header validation: local server must only be accessed via loopback host.
 		// Protects against DNS rebinding attacks.
-		if !isLoopbackHost(r.Host) {
+		if !isLoopbackHost(r.Host) && (allowedHost == "" || r.Host != allowedHost) {
 			http.Error(w, "Forbidden: invalid or non-loopback Host header", http.StatusForbidden)
 			return
 		}
 
 		origin := r.Header.Get("Origin")
+		trustedOrigin := func(raw string) bool {
+			u, err := url.Parse(raw)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
+				return false
+			}
+			if isLoopbackHost(r.Host) {
+				return isLoopbackHost(u.Hostname())
+			}
+			return allowedHost != "" && u.Host == allowedHost
+		}
 		var isLoopbackOrigin bool
 		if origin != "" {
-			if u, err := url.Parse(origin); err == nil {
-				isLoopbackOrigin = isLoopbackHost(u.Hostname())
-			}
+			isLoopbackOrigin = trustedOrigin(origin)
 		}
 
 		// 2. CORS preflight (OPTIONS)
@@ -380,7 +419,7 @@ func securityMiddleware(next http.Handler) http.Handler {
 				return
 			}
 			if ref := r.Header.Get("Referer"); ref != "" {
-				if u, err := url.Parse(ref); err != nil || !isLoopbackHost(u.Hostname()) {
+				if !trustedOrigin(ref) {
 					http.Error(w, "Forbidden: untrusted referer for mutating request", http.StatusForbidden)
 					return
 				}
