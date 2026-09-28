@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import * as api from '../../api/bridge'
 import type { MonitorNodeOption } from '../../types'
+import UiSelect from '../common/UiSelect.vue'
 
 const props = defineProps<{
   visible: boolean
@@ -16,6 +17,11 @@ const emit = defineEmits<{
 
 const groupName = ref('PROXY')
 const exportScope = ref<'selected' | 'top10' | 'all_alive'>('selected')
+const exportScopeOptions = computed(() => [
+  { value: 'selected', label: `当前勾选节点 (${props.selectedKeys.length} 个)`, disabled: props.selectedKeys.length === 0 },
+  { value: 'top10', label: '最低延迟 Top 10 节点' },
+  { value: 'all_alive', label: '所有存活可用节点' },
+])
 const yamlContent = ref('')
 const loading = ref(false)
 const error = ref('')
@@ -146,13 +152,7 @@ const subscriptionUrl = computed(() => {
         <div class="export-config-bar">
           <label class="config-item">
             <span>导出范围</span>
-            <select v-model="exportScope">
-              <option value="selected" :disabled="selectedKeys.length === 0">
-                当前勾选节点 ({{ selectedKeys.length }} 个)
-              </option>
-              <option value="top10">最低延迟 Top 10 节点</option>
-              <option value="all_alive">所有存活可用节点</option>
-            </select>
+            <UiSelect v-model="exportScope" aria-label="导出范围" :options="exportScopeOptions" />
           </label>
 
           <label class="config-item">

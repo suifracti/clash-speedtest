@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { serviceOutcomeLabel } from "../../utils/serviceOutcome"
+import { serviceOutcomeLabel, serviceDetailLabel } from "../../utils/serviceOutcome"
 import { baselineLatencyTest, latencySiteResults, suiteHealth } from '../../utils/latencyTargets'
 import MultiSiteLatencyTrend from './MultiSiteLatencyTrend.vue'
 import InteractiveTrendSparkline, { type TrendPoint } from './InteractiveTrendSparkline.vue'
@@ -11,6 +11,7 @@ import UiSelect, { type UiSelectOption } from '../common/UiSelect.vue'
 import LatencySamplePlot from './LatencySamplePlot.vue'
 import MetricHistoryPlot, { type MetricHistoryPoint } from './MetricHistoryPlot.vue'
 import ServiceComparison from './ServiceComparison.vue'
+import ServiceHistoryTooltip from './ServiceHistoryTooltip.vue'
 import ServiceCatalogPicker from './ServiceCatalogPicker.vue'
 import TestPlanDialog, { type TestPlan } from './TestPlanDialog.vue'
 import { serviceTitle } from '../../utils/servicePresentation'
@@ -142,21 +143,170 @@ interface NodeUnlockPill {
   title: string
 }
 
+const serviceShortNames: Record<string, string> = {
+  antigravity: '反重力',
+  chatgpt_web: 'ChatGPT',
+  youtube_premium: 'YouTube',
+  netflix_unlock: 'Netflix',
+  cloudflare_204: 'Cloudflare',
+  google_204: 'Google',
+  github_api_root: 'GitHub',
+  grok_web: 'Grok',
+  cloudflare_trace: 'CF出口',
+  exit_ipv4: 'IPv4',
+  exit_ipv6: 'IPv6',
+  ping0_ip_quality: 'Ping0',
+  ippure_ip_quality: 'IPPure',
+  apple_captive: 'Apple',
+  microsoft_connect: '微软',
+  firefox_portal: 'Firefox',
+  abema_jp: 'Abema',
+  tver_jp: 'TVer',
+  nhk_plus_jp: 'NHK',
+  unext_jp: 'U-NEXT',
+  bbc_iplayer_uk: 'BBC',
+  naver_kr: 'Naver',
+  docker_registry: 'Docker',
+  xai_api: 'xAI',
+  prime_video: 'PrimeVideo',
+  hulu_jp_unlock: 'HuluJP',
+  fod_unlock: 'FOD',
+  google_search: 'Google搜索',
+  cloudflare_doh: 'DoH',
+}
+
+function readPersistedServiceIds(): string[] {
+  try {
+    if (typeof localStorage !== 'undefined' && !isTestingEnv) {
+      const raw = localStorage.getItem('speedtest.selected-service-ids')
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed
+      }
+    }
+  } catch {}
+  return ['antigravity', 'chatgpt_web', 'youtube_premium', 'netflix_unlock']
+}
+
+const selectedServiceIds = ref<string[]>(readPersistedServiceIds())
+watch(selectedServiceIds, (ids) => {
+  try {
+    if (typeof localStorage !== 'undefined' && !isTestingEnv) {
+      localStorage.setItem('speedtest.selected-service-ids', JSON.stringify(ids))
+    }
+  } catch {}
+}, { deep: true })
+
+const publicServiceCatalog = ref<WorkbenchPublicServiceRule[]>([])
+
+const activeSyncServices = computed(() => {
+  const ids = selectedServiceIds.value.length
+    ? selectedServiceIds.value
+    : ['antigravity', 'chatgpt_web', 'youtube_premium', 'netflix_unlock']
+  return ids.map(id => {
+    const shortName = serviceShortNames[id] || publicServiceCatalog.value.find(c => c.service_id === id)?.name || id
+    return { id, name: shortName }
+  })
+})
+
 const activePillTestingKey = ref<string>('')
 
+interface ActivePillDetail {
+  node: MonitorNodeOption
+  serviceId: string
+  serviceName: string
+  status: 'good' | 'bad' | 'warn' | 'untested' | 'testing'
+  label: string
+  durationMs?: number
+  httpStatus?: number
+  timestamp?: string
+  outcome?: string
+  attempt?: WorkbenchPublicServiceAttempt
+  details?: Record<string, any>
+  isRetesting?: boolean
+}
+const activePillDetail = ref<ActivePillDetail | null>(null)
+
+function onPillClick(node: MonitorNodeOption, pill: NodeUnlockPill): void {
+  if (pill.status === 'untested') {
+    void triggerQuickServiceTest(node, pill.id)
+    return
+  }
+  const key = scopeKey(node)
+  const liveMap = serviceResultsByKey.value[key]
+  const history = serviceHistoryByKey.value[key]
+  const live = liveMap?.[pill.id]
+  const latestAttempt = history
+    ?.filter(a => a.service_id === pill.id)
+    .sort((a, b) => Date.parse(b.result?.finished_at || b.finished_at || b.requested_at) - Date.parse(a.result?.finished_at || a.finished_at || a.requested_at))[0]
+
+  activePillDetail.value = {
+    node,
+    serviceId: pill.id,
+    serviceName: pill.name,
+    status: pill.status,
+    label: pill.label,
+    durationMs: live?.durationMs ?? latestAttempt?.result?.duration_ms,
+    httpStatus: live?.httpStatus ?? latestAttempt?.result?.http_status,
+    timestamp: live?.timestamp ?? latestAttempt?.result?.finished_at ?? latestAttempt?.finished_at,
+    outcome: live?.outcome ?? latestAttempt?.result?.outcome,
+    attempt: latestAttempt,
+    details: latestAttempt?.result?.details,
+  }
+}
+
+async function retestFromPillDetail(): Promise<void> {
+  if (!activePillDetail.value) return
+  const { node, serviceId } = activePillDetail.value
+  activePillDetail.value.isRetesting = true
+  try {
+    await triggerQuickServiceTest(node, serviceId)
+    const key = scopeKey(node)
+    const live = serviceResultsByKey.value[key]?.[serviceId]
+    const history = serviceHistoryByKey.value[key]
+    const latestAttempt = history
+      ?.filter(a => a.service_id === serviceId)
+      .sort((a, b) => Date.parse(b.result?.finished_at || b.finished_at || b.requested_at) - Date.parse(a.result?.finished_at || a.finished_at || a.requested_at))[0]
+    if (activePillDetail.value) {
+      activePillDetail.value.durationMs = live?.durationMs ?? latestAttempt?.result?.duration_ms
+      activePillDetail.value.httpStatus = live?.httpStatus ?? latestAttempt?.result?.http_status
+      activePillDetail.value.timestamp = live?.timestamp ?? latestAttempt?.result?.finished_at ?? latestAttempt?.finished_at
+      activePillDetail.value.outcome = live?.outcome ?? latestAttempt?.result?.outcome
+      activePillDetail.value.details = latestAttempt?.result?.details
+      activePillDetail.value.attempt = latestAttempt
+    }
+  } finally {
+    if (activePillDetail.value) {
+      activePillDetail.value.isRetesting = false
+    }
+  }
+}
+
+function goToServiceComparisonFor(serviceId: string, node?: MonitorNodeOption | null): void {
+  activePillDetail.value = null
+  changeProject('service')
+  barServiceId.value = serviceId
+  if (!selectedServiceIds.value.includes(serviceId)) {
+    selectedServiceIds.value = [...selectedServiceIds.value, serviceId]
+  }
+  if (node) {
+    focusNode(scopeKey(node))
+  }
+}
+
 function nodeCompactUnlockPills(key: string): NodeUnlockPill[] {
-  const coreServices = [
-    { id: 'antigravity', name: '反重力' },
-    { id: 'chatgpt_web', name: 'ChatGPT' },
-    { id: 'youtube_premium', name: 'YouTube' },
-    { id: 'netflix_unlock', name: 'Netflix' },
-  ]
+  const coreServices = activeSyncServices.value
 
   const liveMap = serviceResultsByKey.value[key]
   const history = serviceHistoryByKey.value[key]
 
   return coreServices.map(svc => {
-    if (activePillTestingKey.value === `${key}:${svc.id}`) {
+    const live = liveMap?.[svc.id]
+    const latestAttempt = history
+      ?.filter(a => a.service_id === svc.id)
+      .sort((a, b) => Date.parse(b.result?.finished_at || b.finished_at || b.requested_at) - Date.parse(a.result?.finished_at || a.finished_at || a.requested_at))[0]
+
+    if (activePillTestingKey.value === `${key}:${svc.id}` || latestAttempt?.execution_state === 'running' || latestAttempt?.execution_state === 'queued') {
       return {
         id: svc.id,
         name: svc.name,
@@ -166,12 +316,7 @@ function nodeCompactUnlockPills(key: string): NodeUnlockPill[] {
       }
     }
 
-    const live = liveMap?.[svc.id]
-    const latestAttempt = history
-      ?.filter(a => a.service_id === svc.id)
-      .sort((a, b) => Date.parse(b.result?.finished_at || b.finished_at || b.requested_at) - Date.parse(a.result?.finished_at || a.finished_at || a.requested_at))[0]
-
-    const outcome = live?.outcome || latestAttempt?.result?.outcome
+    const outcome = live?.outcome || latestAttempt?.result?.outcome || (latestAttempt?.execution_state === 'failed' ? 'failed' : undefined)
 
     if (!outcome) {
       return {
@@ -193,7 +338,7 @@ function nodeCompactUnlockPills(key: string): NodeUnlockPill[] {
         name: svc.name,
         status: 'good',
         label,
-        title: `${svc.name}：${serviceOutcomeLabel(outcome)} (点击重新检测)`,
+        title: `${svc.name}：${serviceOutcomeLabel(outcome)} (点击查看详情)`,
       }
     }
 
@@ -207,7 +352,7 @@ function nodeCompactUnlockPills(key: string): NodeUnlockPill[] {
         name: svc.name,
         status: 'warn',
         label,
-        title: `${svc.name}：${serviceOutcomeLabel(outcome)} (点击重新检测)`,
+        title: `${svc.name}：${serviceOutcomeLabel(outcome)} (点击查看详情)`,
       }
     }
 
@@ -222,9 +367,40 @@ function nodeCompactUnlockPills(key: string): NodeUnlockPill[] {
       name: svc.name,
       status: 'bad',
       label,
-      title: `${svc.name}：${serviceOutcomeLabel(outcome)} (点击重新检测)`,
+      title: `${svc.name}：${serviceOutcomeLabel(outcome)} (点击查看详情)`,
     }
   })
+}
+
+const activeMorePillsKey = ref<string>('')
+function toggleMorePills(key: string): void {
+  activeMorePillsKey.value = activeMorePillsKey.value === key ? '' : key
+}
+
+interface NodePillGroup {
+  visible: NodeUnlockPill[]
+  remaining: NodeUnlockPill[]
+  totalCount: number
+}
+
+function nodeGroupedUnlockPills(key: string): NodePillGroup {
+  const all = nodeCompactUnlockPills(key)
+  if (all.length <= 4) {
+    return { visible: all, remaining: [], totalCount: all.length }
+  }
+  const statusWeight: Record<string, number> = {
+    testing: 5,
+    good: 4,
+    warn: 3,
+    bad: 2,
+    untested: 1,
+  }
+  const sorted = [...all].sort((a, b) => (statusWeight[b.status] || 0) - (statusWeight[a.status] || 0))
+  return {
+    visible: sorted.slice(0, 3),
+    remaining: sorted.slice(3),
+    totalCount: all.length,
+  }
 }
 
 async function triggerQuickServiceTest(node: MonitorNodeOption, serviceId: string): Promise<void> {
@@ -574,7 +750,6 @@ const barDownloadMaxMiB = ref(20)
 const barDownloadTimeout = ref(10)
 
 const barServiceId = ref('cloudflare_204')
-const selectedServiceIds = ref<string[]>(['cloudflare_204', 'google_204', 'github_api_root'])
 const selectedServiceOptions = computed(() => barServiceOptions.value.filter(s => selectedServiceIds.value.includes(String(s.value))))
 const testPlan = ref<TestPlan | null>(null)
 let resolveTestPlan: ((confirmed: boolean) => void) | null = null
@@ -591,7 +766,6 @@ function answerTestPlan(confirmed: boolean) {
 onUnmounted(() => answerTestPlan(false))
 const barServiceTimeout = ref(10)
 const barServiceRepeatCount = ref(1)
-const publicServiceCatalog = ref<WorkbenchPublicServiceRule[]>([])
 
 const barServiceOptions = computed<UiSelectOption[]>(() => publicServiceCatalog.value.length
   ? publicServiceCatalog.value.map(rule => ({ value: rule.service_id, label: `${rule.category || '服务'} · ${rule.name}` }))
@@ -632,12 +806,120 @@ const serviceTimeoutOptions: UiSelectOption[] = [
   { value: 20, label: '20 秒' },
 ]
 
+const concurrencyOptions: UiSelectOption[] = [
+  { value: 16, label: '16 并发 (极速)' },
+  { value: 8, label: '8 并发 (平衡)' },
+  { value: 4, label: '4 并发 (温和)' },
+]
+
 const showCompositeModal = ref(false)
 const compositeRunning = ref(false)
 const compositeCancelled = ref(false)
 const compositeStatusTitle = ref('')
 const compositeStatusDetail = ref('')
 const compositeActiveNodeKey = ref('')
+
+interface BatchQueueItem {
+  id: string
+  nodeKey: string
+  displayName: string
+  countryFlag?: string
+  countryCode?: string
+  serviceName: string
+  serviceId?: string
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  durationMs?: number
+  httpStatus?: number
+  outcome?: string
+  summary?: string
+  error?: string
+}
+
+const batchQueueItems = ref<BatchQueueItem[]>([])
+const showBatchQueueDrawer = ref(false)
+const batchQueueFilter = ref<'all' | 'running' | 'queued' | 'completed' | 'failed'>('all')
+
+const batchQueueCompleted = computed(() => batchQueueItems.value.filter(i => i.status === 'completed').length)
+const batchQueueFailed = computed(() => batchQueueItems.value.filter(i => i.status === 'failed').length)
+const batchQueueRunning = computed(() => batchQueueItems.value.filter(i => i.status === 'running').length)
+const batchQueueQueued = computed(() => batchQueueItems.value.filter(i => i.status === 'queued').length)
+const batchQueueTotal = computed(() => batchQueueItems.value.length)
+const batchQueuePercent = computed(() => {
+  if (!batchQueueTotal.value) return 0
+  const done = batchQueueCompleted.value + batchQueueFailed.value
+  return Math.min(100, Math.round((done / batchQueueTotal.value) * 100))
+})
+const filteredBatchQueueItems = computed(() => {
+  if (batchQueueFilter.value === 'all') return batchQueueItems.value
+  return batchQueueItems.value.filter(i => i.status === batchQueueFilter.value)
+})
+
+// Tooltip state for compact service pills
+const pillTooltipState = ref({
+  visible: false,
+  x: 0,
+  y: 0,
+  serviceName: '',
+  serviceId: '',
+  nodeName: '',
+  nodeFlag: '🌐',
+  countryCode: '',
+  history: [] as WorkbenchPublicServiceAttempt[],
+  ruleEvidence: '',
+})
+
+let pillTooltipTimer: any = null
+
+function onCompactPillHover(event: MouseEvent, node: MonitorNodeOption, pill: { id: string; name: string }) {
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  clearTimeout(pillTooltipTimer)
+  const nodeKey = scopeKey(node)
+  const attempts = (serviceHistoryByKey.value[nodeKey] || []).filter(a => a.service_id === pill.id)
+  const matchedRule = publicServiceCatalog.value.find(r => r.service_id === pill.id)
+  pillTooltipState.value = {
+    visible: true,
+    x: rect.left + rect.width / 2,
+    y: rect.top,
+    serviceName: pill.name,
+    serviceId: pill.id,
+    nodeName: node.displayName,
+    nodeFlag: node.countryFlag || '🌐',
+    countryCode: node.countryCode || '',
+    history: attempts,
+    ruleEvidence: matchedRule?.category || '服务检测',
+  }
+}
+
+function onCompactPillLeave() {
+  clearTimeout(pillTooltipTimer)
+  pillTooltipTimer = setTimeout(() => {
+    pillTooltipState.value.visible = false
+  }, 120)
+}
+
+function nodeFlappingInfo(key: string): { isFlapping: boolean; exitIPs: string[]; reason: string } {
+  const attempts = serviceHistoryByKey.value[key] || []
+  if (attempts.length >= 2) {
+    const ips = new Set<string>()
+    let changes = 0
+    for (let i = 0; i < attempts.length; i++) {
+      const ip = attempts[i].result?.details?.ip
+      if (ip && ip.trim()) ips.add(ip.trim())
+      if (i > 0 && attempts[i].service_id === attempts[i - 1].service_id && attempts[i].result?.outcome !== attempts[i - 1].result?.outcome) {
+        changes++
+      }
+    }
+    if (ips.size > 1 || changes > 0) {
+      return {
+        isFlapping: true,
+        exitIPs: [...ips],
+        reason: ips.size > 1 ? `发现多出口落地 IP 漂移 (${ips.size} 个出口)` : `服务状态发生跳变震荡 (${changes} 次)`,
+      }
+    }
+  }
+  return { isFlapping: false, exitIPs: [], reason: '' }
+}
+
 
 const compositeIncludeLatency = ref(true)
 const compositeLatencySampleCount = ref(6)
@@ -979,6 +1261,7 @@ function toggleRowMenu(key: string): void {
 }
 function closeRowMenu(): void {
   openMenuKey.value = null
+  activeMorePillsKey.value = ''
 }
 
 const undoNoticeToast = ref<{
@@ -1869,8 +2152,50 @@ async function startCompositeTest(): Promise<void> {
 
   if (!await confirmTestPlan({ title: '确认组合测试与流量', nodes: targetNodes.length, rounds: plan.compositeDownloadRepeatCount, repeatSummary: [plan.compositeIncludeLatency ? `延迟 ${plan.compositeLatencySampleCount} 次` : '', plan.compositeIncludeDownload ? `下载 ${plan.compositeDownloadRepeatCount} 次` : '', plan.compositeIncludeService ? `每项服务 ${plan.compositeServiceRepeatCount} 次` : ''].filter(Boolean).join(' · '), downloadMiB: plan.compositeIncludeDownload ? targetNodes.length * plan.compositeDownloadRepeatCount * plan.compositeDownloadMaxMiB : 0, services: [...(plan.compositeIncludeLatency ? ['延迟与稳定性'] : []), ...(plan.compositeIncludeService ? plan.compositeSelectedServices.map(publicServiceName) : [])], antigravity: plan.compositeIncludeService && plan.compositeSelectedServices.includes('antigravity') })) return
   if (compositeRunning.value || batchBusy.value) return
+
+  batchQueueItems.value = []
+  for (const node of targetNodes) {
+    if (plan.compositeIncludeLatency) {
+      batchQueueItems.value.push({
+        id: `${scopeKey(node)}-latency`,
+        nodeKey: scopeKey(node),
+        displayName: node.displayName || node.nodeKey,
+        countryFlag: node.countryFlag || '🌐',
+        countryCode: node.countryCode || '',
+        serviceName: '延迟与稳定性',
+        status: 'queued',
+      })
+    }
+    if (plan.compositeIncludeDownload) {
+      batchQueueItems.value.push({
+        id: `${scopeKey(node)}-download`,
+        nodeKey: scopeKey(node),
+        displayName: node.displayName || node.nodeKey,
+        countryFlag: node.countryFlag || '🌐',
+        countryCode: node.countryCode || '',
+        serviceName: `下载测速 (${plan.compositeDownloadMaxMiB}MB)`,
+        status: 'queued',
+      })
+    }
+    if (plan.compositeIncludeService) {
+      for (const svcId of plan.compositeSelectedServices) {
+        batchQueueItems.value.push({
+          id: `${scopeKey(node)}-${svcId}`,
+          nodeKey: scopeKey(node),
+          displayName: node.displayName || node.nodeKey,
+          countryFlag: node.countryFlag || '🌐',
+          countryCode: node.countryCode || '',
+          serviceName: publicServiceName(svcId),
+          serviceId: svcId,
+          status: 'queued',
+        })
+      }
+    }
+  }
+
   compositeRunning.value = true
   try {
+
     // 1. Latency test
     if (plan.compositeIncludeLatency && !compositeCancelled.value) {
       compositeStatusTitle.value = '组合测试 · 延迟探测中'
@@ -2174,8 +2499,8 @@ async function runDownloadBatch(params?: { repeatCount?: number; maximumMiB?: nu
   }
 }
 
-async function runServiceBatch(params?: { serviceId?: string; serviceIds?: string[]; repeatCount?: number; timeoutSeconds?: number }): Promise<void> {
-  const targetKeys = [...selectedKeys.value]
+async function runServiceBatch(params?: { serviceId?: string; serviceIds?: string[]; repeatCount?: number; timeoutSeconds?: number; keys?: string[] }): Promise<void> {
+  const targetKeys = params?.keys && params.keys.length ? params.keys : [...selectedKeys.value]
   const targetNodes = runnableNodesForKeys(targetKeys)
   if (!targetNodes.length || compositeRunning.value || batchBusy.value) return
 
@@ -2185,6 +2510,22 @@ async function runServiceBatch(params?: { serviceId?: string; serviceIds?: strin
   const timeoutSec = params?.timeoutSeconds ?? 10
   if (!await confirmTestPlan({ title: '确认服务检查', nodes: targetNodes.length, rounds: repeatCount, downloadMiB: 0, services: serviceIds.map(publicServiceName), antigravity: serviceIds.includes('antigravity') })) return
   if (compositeRunning.value || batchBusy.value) return
+
+  batchQueueItems.value = []
+  for (const node of targetNodes) {
+    for (const sId of serviceIds) {
+      batchQueueItems.value.push({
+        id: `${scopeKey(node)}-${sId}`,
+        nodeKey: scopeKey(node),
+        displayName: node.displayName || node.nodeKey,
+        countryFlag: node.countryFlag || '🌐',
+        countryCode: node.countryCode || '',
+        serviceName: publicServiceName(sId),
+        serviceId: sId,
+        status: 'queued',
+      })
+    }
+  }
 
   compositeRunning.value = true
   compositeCancelled.value = false
@@ -2202,6 +2543,8 @@ async function runServiceBatch(params?: { serviceId?: string; serviceIds?: strin
       const svcName = publicServiceName(serviceId)
       for (let rep = 1; rep <= repeatCount; rep++) {
         if (compositeCancelled.value) break
+        const curQueueItem = batchQueueItems.value.find(item => item.nodeKey === key && item.serviceId === serviceId)
+        if (curQueueItem) curQueueItem.status = 'running'
         compositeStatusDetail.value = `[${i + 1}/${targetNodes.length}] 正在检测 ${node.displayName || node.nodeKey} -> ${svcName} (${rep}/${repeatCount})...`
         try {
           const reqId = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `svc-${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -2235,6 +2578,14 @@ async function runServiceBatch(params?: { serviceId?: string; serviceIds?: strin
           activeServiceAttempt.value = null
           upsertProjectAttempt(key, polled)
           if (polled.result) {
+            const isOk = ['matched', 'unlocked', 'reachable', 'profiled'].includes(polled.result.outcome)
+            if (curQueueItem) {
+              curQueueItem.status = isOk ? 'completed' : 'failed'
+              curQueueItem.durationMs = polled.result.duration_ms
+              curQueueItem.httpStatus = polled.result.http_status
+              curQueueItem.outcome = polled.result.outcome
+              curQueueItem.summary = polled.result.summary || polled.result.error_message
+            }
             const nodeMap = serviceResultsByKey.value[key] || {}
             serviceResultsByKey.value = {
               ...serviceResultsByKey.value,
@@ -2248,9 +2599,16 @@ async function runServiceBatch(params?: { serviceId?: string; serviceIds?: strin
                 },
               },
             }
+          } else if (curQueueItem) {
+            curQueueItem.status = 'failed'
+            curQueueItem.summary = '未返回结果'
           }
         } catch (err) {
           testError.value = `部分服务检查未完成：${messageFor(err)}`
+          if (curQueueItem) {
+            curQueueItem.status = 'failed'
+            curQueueItem.error = messageFor(err)
+          }
         }
       }
       }
@@ -2265,6 +2623,7 @@ async function runServiceBatch(params?: { serviceId?: string; serviceIds?: strin
     compositeRunning.value = false
     compositeActiveNodeKey.value = ''
     activeServiceAttempt.value = null
+
   }
 }
 
@@ -2455,13 +2814,78 @@ async function selectHistory(test: WorkbenchLatencyTest): Promise<void> {
   }
 }
 
-const modalActiveTab = ref<'chart' | 'health' | 'config'>('chart')
+const modalActiveTab = ref<'chart' | 'health' | 'config' | 'services'>('chart')
 const focusedHealthReport = computed<NodeHealthReport | null>(() => {
   if (!focusedKey.value) return null
   return scopedHealthReport(focusedKey.value)
 })
 
-function openHistory(key: string, tab: 'chart' | 'health' | 'config' = 'chart'): void {
+function nodeServicesList(key: string) {
+  const history = serviceHistoryByKey.value[key] || []
+  const liveMap = serviceResultsByKey.value[key] || {}
+  const serviceIds = [...new Set([
+    ...selectedServiceIds.value,
+    ...Object.keys(liveMap),
+    ...history.map(a => a.service_id),
+  ])]
+
+  return serviceIds.map(id => {
+    const live = liveMap[id]
+    const latestAttempt = history
+      .filter(a => a.service_id === id)
+      .sort((a, b) => Date.parse(b.result?.finished_at || b.finished_at || b.requested_at) - Date.parse(a.result?.finished_at || a.finished_at || a.requested_at))[0]
+
+    const outcome = live?.outcome || latestAttempt?.result?.outcome
+    const name = serviceShortNames[id] || publicServiceCatalog.value.find(c => c.service_id === id)?.name || id
+
+    let status: 'good' | 'bad' | 'warn' | 'untested' = 'untested'
+    let label = '未测'
+    if (outcome) {
+      if (['matched', 'unlocked', 'reachable', 'profiled'].includes(outcome)) {
+        status = 'good'
+        label = id === 'antigravity' ? '已回答' : id === 'youtube_premium' ? '解锁' : id === 'netflix_unlock' ? '完整' : '可用'
+      } else if (['challenge', 'rate_limited', 'originals_only', 'region_limited'].includes(outcome)) {
+        status = 'warn'
+        label = outcome === 'challenge' ? '有盾' : outcome === 'rate_limited' ? '限流' : outcome === 'originals_only' ? '自制剧' : '受限'
+      } else {
+        status = 'bad'
+        label = outcome === 'timed_out' ? '超时' : outcome === 'region_blocked' ? '锁区' : outcome === 'credentials_required' ? '需绑定' : '不可用'
+      }
+    }
+
+    let detailSummary = ''
+    if (latestAttempt?.result?.details) {
+      const parts = Object.entries(latestAttempt.result.details).map(([k, v]) => `${serviceDetailLabel(k)}: ${v}`)
+      if (parts.length) detailSummary = parts.slice(0, 3).join(' · ')
+    }
+
+    return {
+      id,
+      name,
+      status,
+      label,
+      outcome,
+      outcomeLabel: outcome ? serviceOutcomeLabel(outcome) : '未测',
+      durationMs: live?.durationMs ?? latestAttempt?.result?.duration_ms,
+      httpStatus: live?.httpStatus ?? latestAttempt?.result?.http_status,
+      timestamp: live?.timestamp ?? latestAttempt?.result?.finished_at,
+      detailSummary,
+    }
+  })
+}
+
+function runQuickBatchForFocusedNode(): void {
+  if (!focusedOption.value) return
+  const svcs = selectedServiceIds.value.length ? selectedServiceIds.value : ['antigravity', 'chatgpt_web', 'youtube_premium', 'netflix_unlock']
+  void runServiceBatch({
+    serviceIds: svcs,
+    repeatCount: 1,
+    timeoutSeconds: 15,
+    keys: [focusedKey.value],
+  })
+}
+
+function openHistory(key: string, tab: 'chart' | 'health' | 'config' | 'services' = 'chart'): void {
   modalActiveTab.value = tab
   focusNode(key)
   expanded.value = true
@@ -2472,7 +2896,7 @@ function openHistory(key: string, tab: 'chart' | 'health' | 'config' = 'chart'):
 }
 function closeHistory(): void { expanded.value = false; detailError.value = '' }
 function changeProject(project: WorkbenchProject): void { activeProject.value = project; batchMessage.value = ''; testError.value = '' }
-defineExpose({ showProject: changeProject })
+defineExpose({ showProject: changeProject, selectedServiceIds, allNodesExpanded })
 function projectUnavailableLabel(project: WorkbenchProject): string {
   if (project === 'throughput') {
     if (selectedKeys.value.length === 0) return '请先在下方勾选节点以执行下载测速。'
@@ -2760,13 +3184,7 @@ onUnmounted(() => {
               <span>仅看存活</span>
             </label>
             <span v-if="activeProject === 'latency'" class="scope-separator" aria-hidden="true"></span>
-            <label v-if="activeProject === 'latency'" class="scope-control">并发
-              <select v-model.number="concurrencyLevel" class="concurrency-select" aria-label="测速并发数">
-                <option :value="16">16 并发 (极速)</option>
-                <option :value="8">8 并发 (平衡)</option>
-                <option :value="4">4 并发 (温和)</option>
-              </select>
-            </label>
+            <label v-if="activeProject === 'latency'" class="scope-control">并发<UiSelect v-model="concurrencyLevel" variant="scope" aria-label="测速并发数" :options="concurrencyOptions" /></label>
           </div>
 
           <div class="scope-actions-end">
@@ -2922,13 +3340,39 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <div v-if="compositeRunning" class="composite-progress-banner">
-      <div class="composite-spinner" aria-hidden="true"></div>
-      <div class="composite-banner-text">
-        <strong>{{ compositeStatusTitle }}</strong>
-        <span>{{ compositeStatusDetail }}</span>
+    <div v-if="compositeRunning" class="composite-progress-banner" @click="showBatchQueueDrawer = true">
+      <div class="composite-progress-track">
+        <div class="composite-progress-fill" :style="{ width: `${batchQueuePercent}%` }"></div>
       </div>
-      <button type="button" class="prototype-button" @click="cancelCompositeTest">取消测试</button>
+      <div class="composite-banner-content">
+        <div class="composite-spinner" aria-hidden="true"></div>
+        <div class="composite-banner-text">
+          <div class="banner-title-line">
+            <strong>{{ compositeStatusTitle || '批量测试执行中' }}</strong>
+            <span v-if="batchQueueTotal > 0" class="banner-progress-stats">
+              [{{ batchQueueCompleted + batchQueueFailed }} / {{ batchQueueTotal }}]
+              <b>{{ batchQueuePercent }}%</b>
+              <span v-if="batchQueueCompleted > 0" class="stat-success">· 成功 {{ batchQueueCompleted }}</span>
+              <span v-if="batchQueueFailed > 0" class="stat-failed">· 失败 {{ batchQueueFailed }}</span>
+            </span>
+          </div>
+          <span class="banner-detail-line">{{ compositeStatusDetail }}</span>
+        </div>
+        <div class="banner-actions">
+          <button
+            v-if="batchQueueTotal > 0"
+            type="button"
+            class="prototype-button view-queue-btn"
+            title="展开查看所有节点的测试进展、排队状况与详细报文"
+            @click.stop="showBatchQueueDrawer = true"
+          >
+            📋 查看详细进度 ({{ batchQueueTotal }})
+          </button>
+          <button type="button" class="prototype-button cancel-btn" @click.stop="cancelCompositeTest">
+            取消测试
+          </button>
+        </div>
+      </div>
     </div>
 
     <WorkbenchPublicServicePanel
@@ -3180,10 +3624,11 @@ onUnmounted(() => {
         @select-all="selectedKeys = $event"
         @clear-selection="clearSelection"
         @back-to-picker="handleBackToServicePicker"
+        @back-to-latency="changeProject('latency')"
       />
       <DownloadComparison v-else-if="activeProject === 'throughput'" :rows="comparisonRows" :records="visibleDownloads" :selected="selectedKeys" :states="projectHistoryStateByKey" :partial="projectHistoryMetaByKey" @toggle="toggleSelected" @detail="openNodeDetail" />
       <ul v-else class="node-list" role="listbox" aria-label="节点列表">
-        <li v-for="node in visibleOptions" :key="scopeKey(node)" class="node-row" :class="{ 'is-focused': focusedKey === scopeKey(node), 'no-latency-history': activeProject === 'latency' && !allSiteTestsForKey(scopeKey(node)).length && !isTesting(scopeKey(node)), 'latency-health': activeProject === 'latency' && !!nodeHealthReport(scopeKey(node)), 'compact-mode-row': activeProject === 'latency' && !allNodesExpanded }" :aria-selected="isSelected(scopeKey(node))">
+        <li v-for="node in visibleOptions" :key="scopeKey(node)" class="node-row" :class="{ 'is-focused': focusedKey === scopeKey(node), 'no-latency-history': activeProject === 'latency' && !allSiteTestsForKey(scopeKey(node)).length && !isTesting(scopeKey(node)), 'latency-health': activeProject === 'latency' && !!nodeHealthReport(scopeKey(node)), 'compact-mode-row': activeProject === 'latency' && !allNodesExpanded, 'has-active-popover': activeMorePillsKey === scopeKey(node) }" :aria-selected="isSelected(scopeKey(node))">
           <!-- Compact View for Latency (Default Collapsed) -->
           <template v-if="activeProject === 'latency' && !allNodesExpanded">
             <label class="select-cell compact-cell-check" :aria-label="`选择 ${node.displayName}`" @click.stop>
@@ -3195,6 +3640,7 @@ onUnmounted(() => {
               <span class="compact-tag protocol-tag">{{ node.type || '节点' }}</span>
               <span class="compact-tag source-tag">{{ sourceName(node.profileId, node.profileName) }}</span>
               <span v-if="node.countryCode && node.countryCode !== 'OTHER'" class="compact-tag country-tag">{{ node.countryCode }}</span>
+              <span v-if="nodeFlappingInfo(scopeKey(node)).isFlapping" class="compact-tag flapping" :title="nodeFlappingInfo(scopeKey(node)).reason">⇄ 漂移</span>
               <span v-if="monitoredNodeKeys.has(scopeKey(node))" class="badge-monitoring compact-monitoring" title="该节点已被持续监测任务包含并正在定期探测">● 监测中</span>
             </div>
             <div class="compact-cell-metrics">
@@ -3225,21 +3671,71 @@ onUnmounted(() => {
               >
                 {{ nodeCompactMetrics(scopeKey(node)).speedText }}
               </span>
-              <div class="compact-unlock-pills" title="核心服务可用性（点击直接探测）">
+              <div class="compact-unlock-pills" title="服务可用性（点击直接探测或查看详情）">
                 <button
-                  v-for="pill in nodeCompactUnlockPills(scopeKey(node))"
+                  v-for="pill in nodeGroupedUnlockPills(scopeKey(node)).visible"
                   :key="pill.id"
                   type="button"
                   class="compact-unlock-pill"
                   :class="pill.status"
                   :disabled="pill.status === 'testing'"
                   :title="pill.title"
-                  @click.stop="triggerQuickServiceTest(node, pill.id)"
+                  @mouseenter="onCompactPillHover($event, node, pill)"
+                  @mouseleave="onCompactPillLeave"
+                  @click.stop="onPillClick(node, pill)"
                 >
                   <span class="pill-dot"></span>
                   <span class="pill-name">{{ pill.name }}</span>
                   <span class="pill-label">{{ pill.label }}</span>
                 </button>
+                <div v-if="nodeGroupedUnlockPills(scopeKey(node)).remaining.length > 0" class="more-pills-wrapper">
+                  <button
+                    type="button"
+                    class="compact-unlock-pill more-pills-btn"
+                    :class="{ active: activeMorePillsKey === scopeKey(node) }"
+                    :title="`展开该节点全部 ${nodeGroupedUnlockPills(scopeKey(node)).totalCount} 项服务检测`"
+                    @click.stop="toggleMorePills(scopeKey(node))"
+                  >
+                    +{{ nodeGroupedUnlockPills(scopeKey(node)).remaining.length }} 项 ▾
+                  </button>
+                  <div
+                    v-if="activeMorePillsKey === scopeKey(node)"
+                    class="more-pills-popover"
+                    @click.stop
+                  >
+                    <div class="more-pills-header">
+                      <span class="more-pills-title">全部服务检测 ({{ nodeGroupedUnlockPills(scopeKey(node)).totalCount }} 项)</span>
+                      <button type="button" class="more-pills-close" title="关闭" @click.stop="activeMorePillsKey = ''">✕</button>
+                    </div>
+                    <div class="more-pills-grid">
+                      <button
+                        v-for="pill in nodeCompactUnlockPills(scopeKey(node))"
+                        :key="pill.id"
+                        type="button"
+                        class="compact-unlock-pill popover-pill"
+                        :class="pill.status"
+                        :disabled="pill.status === 'testing'"
+                        :title="pill.title"
+                        @mouseenter="onCompactPillHover($event, node, pill)"
+                        @mouseleave="onCompactPillLeave"
+                        @click.stop="onPillClick(node, pill); activeMorePillsKey = ''"
+                      >
+                        <span class="pill-dot"></span>
+                        <span class="pill-name">{{ pill.name }}</span>
+                        <span class="pill-label">{{ pill.label }}</span>
+                      </button>
+                    </div>
+                    <div class="more-pills-footer">
+                      <button
+                        type="button"
+                        class="more-pills-view-all"
+                        @click.stop="openHistory(scopeKey(node), 'services'); activeMorePillsKey = ''"
+                      >
+                        查看完整服务检测记录与诊断 ↗
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
             <div class="compact-cell-sparkline" title="历史延迟走势（鼠标悬浮看本次/上次/上上次对比）">
@@ -3266,8 +3762,27 @@ onUnmounted(() => {
               <span>{{ sourceName(node.profileId, node.profileName) }}</span>
               <span>{{ node.countryCode || '未知地区' }}</span>
               <span>{{ node.type || '节点' }}</span>
+              <span v-if="nodeFlappingInfo(scopeKey(node)).isFlapping" class="compact-tag flapping" :title="nodeFlappingInfo(scopeKey(node)).reason">⇄ 漂移</span>
               <span v-if="monitoredNodeKeys.has(scopeKey(node))" class="badge-monitoring" title="该节点已被持续监测任务包含并正在定期探测">● 监测中</span>
               <span v-if="isNoticeNode(node, noticeOverrides, scopeKey(node))" class="notice-tag">📢 非节点/公告</span>
+              <div class="compact-unlock-pills expanded-node-pills" title="服务可用性（点击直接探测或查看详情）">
+                <button
+                  v-for="pill in nodeCompactUnlockPills(scopeKey(node))"
+                  :key="pill.id"
+                  type="button"
+                  class="compact-unlock-pill"
+                  :class="pill.status"
+                  :disabled="pill.status === 'testing'"
+                  :title="pill.title"
+                  @mouseenter="onCompactPillHover($event, node, pill)"
+                  @mouseleave="onCompactPillLeave"
+                  @click.stop="onPillClick(node, pill)"
+                >
+                  <span class="pill-dot"></span>
+                  <span class="pill-name">{{ pill.name }}</span>
+                  <span class="pill-label">{{ pill.label }}</span>
+                </button>
+              </div>
             </span>
             <div class="node-row-actions">
               <button
@@ -3507,10 +4022,18 @@ onUnmounted(() => {
           >
             节点信息
           </button>
+          <button
+            type="button"
+            class="modal-tab-btn"
+            :class="{ active: modalActiveTab === 'services' }"
+            @click="modalActiveTab = 'services'"
+          >
+            服务检测
+          </button>
         </div>
 
         <template v-if="focusedDisplayedTest || samplesForKey(focusedKey).length > 0">
-          <div v-show="modalActiveTab !== 'config'" class="history-controls">
+          <div v-show="modalActiveTab !== 'config' && modalActiveTab !== 'services'" class="history-controls">
             <label>时间范围<ObservationWindowSelect v-model="windowMode" label="历史时间范围" /></label>
             <span>{{ windowLabel }} · 截至 {{ formatShortTime(activeWindow.until) }} · {{ modalActiveTab === 'health' ? '根据此范围内已加载的测试记录分析' : '横轴为真实采样时间 · 纵轴为毫秒' }}</span>
             <span v-if="detailLoading">正在读取详情…</span>
@@ -3720,7 +4243,75 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div v-if="modalActiveTab !== 'config' && (!focusedDisplayedTest && samplesForKey(focusedKey).length === 0)" class="modal-empty-state">
+        <div v-show="modalActiveTab === 'services'" class="modal-services-tab-content">
+          <div v-if="nodeServicesList(focusedKey).length" class="node-services-grid">
+            <div
+              v-for="svc in nodeServicesList(focusedKey)"
+              :key="svc.id"
+              class="service-status-card"
+              :class="svc.status"
+            >
+              <div class="svc-card-header">
+                <span class="svc-card-name">{{ svc.name }}</span>
+                <span class="compact-unlock-pill" :class="svc.status">
+                  <span class="pill-dot"></span>
+                  {{ svc.label }}
+                </span>
+              </div>
+              <div class="svc-card-body">
+                <div class="svc-body-stat">
+                  <span class="svc-stat-k">耗时</span>
+                  <span class="svc-stat-v font-mono">{{ svc.durationMs != null ? `${svc.durationMs}ms` : '-' }}</span>
+                </div>
+                <div class="svc-body-stat">
+                  <span class="svc-stat-k">状态</span>
+                  <span class="svc-stat-v font-mono">{{ svc.httpStatus || '-' }}</span>
+                </div>
+                <div class="svc-body-stat">
+                  <span class="svc-stat-k">判定</span>
+                  <span class="svc-stat-v">{{ svc.outcomeLabel }}</span>
+                </div>
+              </div>
+              <div v-if="svc.detailSummary" class="svc-card-evidence">
+                <code>{{ svc.detailSummary }}</code>
+              </div>
+              <div class="svc-card-footer">
+                <button
+                  type="button"
+                  class="svc-action-btn"
+                  :disabled="activePillTestingKey === `${focusedKey}:${svc.id}`"
+                  @click.stop="triggerQuickServiceTest(focusedOption!, svc.id)"
+                >
+                  {{ activePillTestingKey === `${focusedKey}:${svc.id}` ? '检测中…' : '⚡ 重新检测' }}
+                </button>
+                <button
+                  type="button"
+                  class="svc-action-btn subtle"
+                  @click.stop="goToServiceComparisonFor(svc.id, focusedOption)"
+                >
+                  看板对比 →
+                </button>
+              </div>
+            </div>
+          </div>
+          <div v-else class="modal-empty-state">
+            <div class="modal-empty-icon">🛡️</div>
+            <h3>暂无服务检测记录</h3>
+            <p>该节点尚未执行流媒体/AI服务可用性探测。可一键执行探测，测试反重力、ChatGPT、YouTube 等服务的可用状态。</p>
+            <div class="modal-empty-actions">
+              <button
+                type="button"
+                class="prototype-button primary"
+                :disabled="batchBusy || compositeRunning"
+                @click="runQuickBatchForFocusedNode"
+              >
+                ⚡ 一键检测已选服务
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="modalActiveTab !== 'config' && modalActiveTab !== 'services' && (!focusedDisplayedTest && samplesForKey(focusedKey).length === 0)" class="modal-empty-state">
           <div class="modal-empty-icon">📊</div>
           <h3>该节点尚未执行延迟测试</h3>
           <p>暂无真实采样历史数据。点击下方按钮立即测试此节点，获取实时 HTTP Ping 延迟和真实采样证据。</p>
@@ -3731,6 +4322,89 @@ onUnmounted(() => {
           </div>
         </div>
       </section>
+    </div>
+
+    <!-- 节点服务检测轻量详情浮层 -->
+    <div v-if="activePillDetail" class="prototype-modal-backdrop" @click.self="activePillDetail = null">
+      <div class="pill-detail-card" role="dialog" aria-modal="true" aria-labelledby="pill-detail-title">
+        <div class="pill-detail-header">
+          <div class="pill-detail-title-group">
+            <span class="pill-detail-badge" :class="activePillDetail.status">
+              <span class="pill-dot"></span>
+              {{ activePillDetail.serviceName }} · {{ activePillDetail.label }}
+            </span>
+            <h3 id="pill-detail-title" class="pill-detail-node-name">
+              {{ activePillDetail.node.countryFlag || '🌐' }} {{ activePillDetail.node.displayName }}
+            </h3>
+            <p class="pill-detail-sub">
+              {{ sourceName(activePillDetail.node.profileId, activePillDetail.node.profileName) }} · {{ activePillDetail.node.countryCode || '未知地区' }} · {{ activePillDetail.node.type || '节点' }}
+            </p>
+          </div>
+          <button type="button" class="close-button" aria-label="关闭详情" @click="activePillDetail = null">×</button>
+        </div>
+
+        <div class="pill-detail-metrics-grid">
+          <div class="pill-metric-item">
+            <span class="metric-label">判定结论</span>
+            <strong class="metric-value" :class="activePillDetail.status">
+              {{ activePillDetail.outcome ? serviceOutcomeLabel(activePillDetail.outcome) : '未测' }}
+            </strong>
+          </div>
+          <div class="pill-metric-item">
+            <span class="metric-label">响应耗时</span>
+            <strong class="metric-value font-mono">
+              {{ activePillDetail.durationMs != null ? `${activePillDetail.durationMs} ms` : '-' }}
+            </strong>
+          </div>
+          <div class="pill-metric-item">
+            <span class="metric-label">HTTP 状态码</span>
+            <strong class="metric-value font-mono">
+              {{ activePillDetail.httpStatus || '-' }}
+            </strong>
+          </div>
+          <div class="pill-metric-item">
+            <span class="metric-label">测试时间</span>
+            <span class="metric-value text-xs">
+              {{ activePillDetail.timestamp ? formatShortTime(activePillDetail.timestamp) : '-' }}
+            </span>
+          </div>
+        </div>
+
+        <div v-if="activePillDetail.details && Object.keys(activePillDetail.details).length" class="pill-detail-extra">
+          <h4 class="extra-title">诊断取证详情</h4>
+          <div class="extra-kv-grid">
+            <div v-for="(v, k) in activePillDetail.details" :key="k" class="extra-kv-row">
+              <span class="extra-k">{{ serviceDetailLabel(String(k)) }}</span>
+              <code class="extra-v">{{ String(v) }}</code>
+            </div>
+          </div>
+        </div>
+
+        <div class="pill-detail-actions">
+          <button
+            type="button"
+            class="prototype-button primary"
+            :disabled="activePillDetail.isRetesting"
+            @click="retestFromPillDetail"
+          >
+            {{ activePillDetail.isRetesting ? '正在重新检测…' : '⚡ 重新检测此项' }}
+          </button>
+          <button
+            type="button"
+            class="prototype-button"
+            @click="goToServiceComparisonFor(activePillDetail.serviceId, activePillDetail.node)"
+          >
+            📊 查看服务检测看板与全部节点对比 →
+          </button>
+          <button
+            type="button"
+            class="prototype-button secondary"
+            @click="activePillDetail = null"
+          >
+            关闭
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- 组合测试弹出框 / Modal -->
@@ -3843,6 +4517,137 @@ onUnmounted(() => {
         <button type="button" class="toast-close-btn" aria-label="关闭提示" @click="undoNoticeToast = null">×</button>
       </div>
     </transition>
+
+    <!-- Batch Queue Detail Modal / Drawer -->
+    <div v-if="showBatchQueueDrawer" class="prototype-modal-backdrop" @click.self="showBatchQueueDrawer = false">
+      <div class="batch-queue-modal" role="dialog" aria-modal="true" aria-labelledby="queue-modal-title">
+        <div class="batch-queue-header">
+          <div class="queue-header-left">
+            <h3 id="queue-modal-title">📋 批量测试详细进度清单</h3>
+            <div class="queue-stat-pills">
+              <span class="queue-stat-pill">总计 <b>{{ batchQueueTotal }}</b></span>
+              <span class="queue-stat-pill running">检测中 <b>{{ batchQueueRunning }}</b></span>
+              <span class="queue-stat-pill queued">排队中 <b>{{ batchQueueQueued }}</b></span>
+              <span class="queue-stat-pill success">成功 <b>{{ batchQueueCompleted }}</b></span>
+              <span v-if="batchQueueFailed > 0" class="queue-stat-pill fail">失败 <b>{{ batchQueueFailed }}</b></span>
+              <span class="queue-stat-pill percent">完成度 <b>{{ batchQueuePercent }}%</b></span>
+            </div>
+          </div>
+          <button type="button" class="close-button" aria-label="关闭详细进度" @click="showBatchQueueDrawer = false">×</button>
+        </div>
+
+        <div class="queue-progress-bar-container">
+          <div class="queue-progress-track">
+            <div class="queue-progress-fill" :style="{ width: `${batchQueuePercent}%` }"></div>
+          </div>
+        </div>
+
+        <!-- Filter Tabs -->
+        <div class="queue-filter-tabs">
+          <button
+            type="button"
+            class="queue-tab-btn"
+            :class="{ active: batchQueueFilter === 'all' }"
+            @click="batchQueueFilter = 'all'"
+          >
+            全部 ({{ batchQueueTotal }})
+          </button>
+          <button
+            type="button"
+            class="queue-tab-btn"
+            :class="{ active: batchQueueFilter === 'running' }"
+            @click="batchQueueFilter = 'running'"
+          >
+            ⚡ 检测中 ({{ batchQueueRunning }})
+          </button>
+          <button
+            type="button"
+            class="queue-tab-btn"
+            :class="{ active: batchQueueFilter === 'queued' }"
+            @click="batchQueueFilter = 'queued'"
+          >
+            ⏳ 排队中 ({{ batchQueueQueued }})
+          </button>
+          <button
+            type="button"
+            class="queue-tab-btn"
+            :class="{ active: batchQueueFilter === 'completed' }"
+            @click="batchQueueFilter = 'completed'"
+          >
+            ✅ 成功 ({{ batchQueueCompleted }})
+          </button>
+          <button
+            type="button"
+            class="queue-tab-btn"
+            :class="{ active: batchQueueFilter === 'failed' }"
+            @click="batchQueueFilter = 'failed'"
+          >
+            ❌ 失败 ({{ batchQueueFailed }})
+          </button>
+        </div>
+
+        <!-- Queue Item List -->
+        <div class="queue-list-container">
+          <div v-if="!filteredBatchQueueItems.length" class="queue-empty-msg">
+            当前筛选下无匹配的节点项
+          </div>
+          <div
+            v-for="(item, idx) in filteredBatchQueueItems"
+            :key="item.id || idx"
+            class="queue-item-row"
+            :class="item.status"
+          >
+            <div class="queue-item-status-icon">
+              <span v-if="item.status === 'running'" class="queue-spinner" title="正在探测"></span>
+              <span v-else-if="item.status === 'completed'" class="icon-ok" title="检测完成">✅</span>
+              <span v-else-if="item.status === 'failed'" class="icon-err" title="检测失败">❌</span>
+              <span v-else class="icon-queue" title="排队等待">⏳</span>
+            </div>
+
+            <div class="queue-item-main">
+              <div class="queue-item-title">
+                <span class="queue-flag">{{ item.countryFlag }}</span>
+                <strong class="queue-name" :title="item.displayName">{{ item.displayName }}</strong>
+                <span v-if="item.countryCode" class="queue-country">{{ item.countryCode }}</span>
+              </div>
+              <div class="queue-item-service">
+                <span class="service-tag">{{ item.serviceName }}</span>
+                <span v-if="item.summary" class="summary-text" :title="item.summary">{{ item.summary }}</span>
+                <span v-else-if="item.error" class="error-text" :title="item.error">{{ item.error }}</span>
+                <span v-else-if="item.status === 'running'" class="running-text">正在发送探针，等待响应…</span>
+                <span v-else class="waiting-text">排队等待中…</span>
+              </div>
+            </div>
+
+            <div class="queue-item-metrics">
+              <span v-if="item.durationMs" class="item-dur">{{ item.durationMs }} ms</span>
+              <span v-if="item.httpStatus" class="item-http">HTTP {{ item.httpStatus }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="batch-queue-footer">
+          <span class="queue-footer-tip">💡 测试正在后台有序运行，您可以随时关闭此窗口继续浏览</span>
+          <button type="button" class="prototype-button primary" @click="showBatchQueueDrawer = false">
+            收起进度清单
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hover Tooltip for compact pills -->
+    <ServiceHistoryTooltip
+      :visible="pillTooltipState.visible"
+      :x="pillTooltipState.x"
+      :y="pillTooltipState.y"
+      :service-name="pillTooltipState.serviceName"
+      :service-id="pillTooltipState.serviceId"
+      :node-name="pillTooltipState.nodeName"
+      :node-flag="pillTooltipState.nodeFlag"
+      :country-code="pillTooltipState.countryCode"
+      :history="pillTooltipState.history"
+      :rule-evidence="pillTooltipState.ruleEvidence"
+    />
   </main>
 </template>
 
@@ -4254,7 +5059,7 @@ onUnmounted(() => {
 .prototype-button { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--card-subtle); color: var(--text-main); font-size: 12px; font-weight: 700; transition: all .15s ease; }.prototype-button:hover:not(:disabled) { border-color: var(--border-focus); color: var(--primary); background: var(--card-hover); }.prototype-button.primary { border-color: var(--primary); background: var(--primary); color: white; }.prototype-button.primary:hover:not(:disabled) { background: var(--primary-hover); color: white; }.prototype-button:disabled { cursor: not-allowed; opacity: .52; }
 .prototype-panel { border: 1px solid var(--border); border-radius: 12px; background: var(--card-bg); box-shadow: 0 14px 35px rgba(0, 0, 0, .08); }.prototype-panel-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 19px 20px 14px; border-bottom: 1px solid var(--border); }.prototype-panel-header h2 { margin: 0 0 5px; font-size: 17px; letter-spacing: -.02em; }.prototype-panel-header p { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }.text-action { padding: 2px 0; border: 0; background: transparent; color: var(--primary); font-size: 12px; font-weight: 750; }.text-action:disabled { cursor: not-allowed; color: var(--text-muted); }
 .comparison-head { display: grid; grid-template-columns: 34px minmax(210px, .75fr) minmax(190px, .7fr) minmax(540px, 2.4fr); gap: 12px; align-items: end; padding: 12px 20px 9px; border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: 11px; font-weight: 700; }.history-axis { display: flex; justify-content: space-between; margin-top: 8px; padding: 0 16px 0 52px; color: var(--text-muted); font-size: 10px; font-weight: 500; }.history-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 13px; padding: 8px 20px; border-bottom: 1px solid var(--border); color: var(--text-secondary); font-size: 10px; }.legend-item { display: inline-flex; align-items: center; gap: 4px; }.legend-mark { width: 8px; height: 8px; border-radius: 50%; background: var(--success); }.legend-mark.fail { border-radius: 0; background: var(--danger); transform: rotate(45deg); }.legend-mark.timeout { border: 2px solid var(--danger); background: var(--card-bg); border-radius: 2px; }.legend-mark.missing { width: 13px; height: 3px; border-radius: 0; background: var(--text-muted); }
-.node-list { list-style: none; margin: 0; padding: 0; }.node-row { position: relative; display: grid; grid-template-columns: 34px minmax(210px, .75fr) minmax(190px, .7fr) minmax(540px, 2.4fr); gap: 12px; align-items: center; min-height: 132px; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--card-bg); transition: background-color .15s ease; content-visibility: auto; contain-intrinsic-size: auto 160px; }.node-row:last-child { border-bottom: 0; }.node-row:hover { background: var(--card-hover); }.node-row[aria-selected="true"] { background: var(--primary-subtle); }.node-row[aria-selected="true"]::before { content: ""; position: absolute; left: 0; top: 9px; bottom: 9px; width: 3px; border-radius: 0 3px 3px 0; background: var(--primary); }.select-cell { display: grid; place-items: center; min-height: 32px; cursor: pointer; }.select-cell input { width: 16px; height: 16px; margin: 0; }.node-evidence { min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }.node-evidence:hover .node-name strong { color: var(--primary); }.node-name { min-width: 0; }.node-name strong { display: block; overflow: hidden; color: var(--text-main); font-size: 14px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }.node-meta { display: flex; flex-wrap: wrap; gap: 5px 9px; margin-top: 5px; color: var(--text-secondary); font-size: 12px; }.node-meta span:first-child { color: var(--primary); }.badge-monitoring { display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; border-radius: 4px; background: rgba(16, 185, 129, 0.12); color: var(--success); font-size: 10px; font-weight: 600; }.node-row-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 6px; }.row-menu-dropdown-wrapper { position: relative; display: inline-flex; }.row-action-btn { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--card-subtle); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; transition: all .15s ease; }.row-action-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); background: var(--card-hover); }.row-action-btn.icon-only { padding: 2px 6px; font-size: 13px; line-height: 1; }.row-menu-popover { position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; min-width: 130px; padding: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--card-bg); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); animation: fadeIn 0.12s ease; }.row-menu-item { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 10px; border: 0; border-radius: 4px; background: transparent; color: var(--text-main); font-size: 12px; text-align: left; cursor: pointer; transition: background-color 0.15s ease; }.row-menu-item:hover { background: var(--card-hover); color: var(--primary); }.row-action-btn.primary { border-color: var(--primary); background: var(--primary-subtle); color: var(--primary); }.row-action-btn.primary:hover:not(:disabled) { background: var(--primary); color: white; }.row-action-btn:disabled { opacity: 0.5; cursor: not-allowed; }.text-action-subtle { padding: 2px 7px; border: 1px dashed var(--border); border-radius: 4px; background: transparent; color: var(--text-muted); font-size: 11px; cursor: pointer; transition: all .15s ease; }.text-action-subtle:hover { border-color: var(--warning); color: var(--warning); }
+.node-list { list-style: none; margin: 0; padding: 0; }.node-row { position: relative; display: grid; grid-template-columns: 34px minmax(210px, .75fr) minmax(190px, .7fr) minmax(540px, 2.4fr); gap: 12px; align-items: center; min-height: 132px; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--card-bg); transition: background-color .15s ease; content-visibility: auto; contain-intrinsic-size: auto 160px; }.node-row.has-active-popover { z-index: 9999 !important; position: relative !important; content-visibility: visible !important; contain: none !important; }.node-row:last-child { border-bottom: 0; }.node-row:hover { background: var(--card-hover); }.node-row[aria-selected="true"] { background: var(--primary-subtle); }.node-row[aria-selected="true"]::before { content: ""; position: absolute; left: 0; top: 9px; bottom: 9px; width: 3px; border-radius: 0 3px 3px 0; background: var(--primary); }.select-cell { display: grid; place-items: center; min-height: 32px; cursor: pointer; }.select-cell input { width: 16px; height: 16px; margin: 0; }.node-evidence { min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }.node-evidence:hover .node-name strong { color: var(--primary); }.node-name { min-width: 0; }.node-name strong { display: block; overflow: hidden; color: var(--text-main); font-size: 14px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }.node-meta { display: flex; flex-wrap: wrap; gap: 5px 9px; margin-top: 5px; color: var(--text-secondary); font-size: 12px; }.node-meta span:first-child { color: var(--primary); }.badge-monitoring { display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; border-radius: 4px; background: rgba(16, 185, 129, 0.12); color: var(--success); font-size: 10px; font-weight: 600; }.node-row-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 6px; }.row-menu-dropdown-wrapper { position: relative; display: inline-flex; }.row-action-btn { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--card-subtle); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; transition: all .15s ease; }.row-action-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); background: var(--card-hover); }.row-action-btn.icon-only { padding: 2px 6px; font-size: 13px; line-height: 1; }.row-menu-popover { position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; min-width: 130px; padding: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--card-bg); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); animation: fadeIn 0.12s ease; }.row-menu-item { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 10px; border: 0; border-radius: 4px; background: transparent; color: var(--text-main); font-size: 12px; text-align: left; cursor: pointer; transition: background-color 0.15s ease; }.row-menu-item:hover { background: var(--card-hover); color: var(--primary); }.row-action-btn.primary { border-color: var(--primary); background: var(--primary-subtle); color: var(--primary); }.row-action-btn.primary:hover:not(:disabled) { background: var(--primary); color: white; }.row-action-btn:disabled { opacity: 0.5; cursor: not-allowed; }.text-action-subtle { padding: 2px 7px; border: 1px dashed var(--border); border-radius: 4px; background: transparent; color: var(--text-muted); font-size: 11px; cursor: pointer; transition: all .15s ease; }.text-action-subtle:hover { border-color: var(--warning); color: var(--warning); }
 .row-readout { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }.readout-observation { display: flex; flex-direction: column; gap: 2px; width: 100%; }.readout-header { display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; }.readout-main-val { display: flex; align-items: baseline; gap: 6px; }.readout-health-summary { display: flex; flex-direction: column; gap: 3px; width: 100%; padding-top: 5px; border-top: 1px dashed var(--border); font-size: 11px; }.health-summary-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }.health-badge { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 10px; font-weight: 700; }.health-badge.success { background: rgba(16, 185, 129, 0.12); color: var(--success); }.health-badge.info { background: rgba(59, 130, 246, 0.12); color: var(--primary); }.health-badge.warning { background: rgba(245, 158, 11, 0.15); color: var(--warning, #f59e0b); }.health-badge.danger { background: rgba(239, 68, 68, 0.15); color: var(--danger); }.health-normal-val { color: var(--text-main); font-size: 11px; font-weight: 600; }.health-summary-metrics { color: var(--text-secondary); font-size: 10px; }.health-summary-metrics b { font-weight: 700; }.health-summary-metrics b.success { color: var(--success); }.health-summary-metrics b.warning { color: var(--warning, #f59e0b); }.health-summary-metrics b.danger { color: var(--danger); }.row-readout-state { color: var(--text-secondary); font-size: 12px; line-height: 1.2; }.row-readout-state.running { color: var(--primary); font-weight: 750; }.row-readout-value { display: flex; align-items: baseline; gap: 4px; max-width: 100%; overflow: hidden; color: var(--text-main); font-size: 20px; font-weight: 780; line-height: 1.08; letter-spacing: -.02em; text-overflow: ellipsis; white-space: nowrap; }.row-readout-value small { color: var(--text-secondary); font-size: 13px; font-weight: 650; letter-spacing: 0; }.row-readout-value.fail, .row-readout-value.timeout { color: var(--danger); }.row-readout-value.success { color: var(--success); }.row-readout-value.nodata { color: var(--text-muted); }.row-readout-time, .row-readout-status { max-width: 100%; overflow: hidden; color: var(--text-secondary); font-size: 12px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }.row-readout-status { margin-top: 3px; color: var(--text-main); font-weight: 700; }.pin-control button { padding: 0; border: 0; background: transparent; color: var(--primary); font-size: 11px; }
 .workbench-toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 60; display: flex; align-items: center; gap: 12px; padding: 10px 18px; border: 1px solid var(--border-focus, var(--primary)); border-radius: 8px; background: var(--card-bg); color: var(--text-main); box-shadow: 0 12px 36px rgba(0, 0, 0, 0.25); font-size: 12px; }.toast-text strong { color: var(--primary); }.toast-undo-btn { padding: 3px 10px; border: 1px solid var(--primary); border-radius: 4px; background: var(--primary-subtle); color: var(--primary); font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.15s ease; }.toast-undo-btn:hover { background: var(--primary); color: white; }.toast-close-btn { padding: 0 4px; border: 0; background: transparent; color: var(--text-muted); font-size: 16px; cursor: pointer; }.toast-close-btn:hover { color: var(--text-main); }.toast-slide-enter-active, .toast-slide-leave-active { transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1); }.toast-slide-enter-from, .toast-slide-leave-to { opacity: 0; transform: translate(-50%, 16px); }
 .modal-table-wrap tr.cursor-pointer { cursor: pointer; }.modal-table-wrap tr.cursor-pointer:hover:not(.selected) { background: var(--card-hover); }
@@ -4279,17 +5084,63 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 .composite-progress-banner {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 14px 18px;
+  border: 1px solid var(--primary);
+  border-radius: 12px;
+  background: var(--card-bg, #ffffff);
+  box-shadow: 0 4px 16px -2px rgba(37, 99, 235, 0.12);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.composite-progress-banner:hover {
+  border-color: #2563eb;
+  box-shadow: 0 6px 20px -2px rgba(37, 99, 235, 0.2);
+}
+
+.composite-progress-track {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--card-subtle, #f1f5f9);
+  overflow: hidden;
+  position: relative;
+}
+:global(.dark) .composite-progress-track {
+  background: #1e293b;
+}
+
+.composite-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6, #6366f1, #10b981);
+  border-radius: 999px;
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+}
+.composite-progress-fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+  animation: shimmer 1.5s infinite;
+}
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.composite-banner-content {
   display: flex;
   align-items: center;
   gap: 14px;
-  margin-bottom: 14px;
-  padding: 12px 18px;
-  border: 1px solid var(--primary);
-  border-radius: 10px;
-  background: var(--primary-subtle);
-  color: var(--text-main);
-  animation: fadeIn 0.2s ease;
+  width: 100%;
 }
+
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
@@ -4305,21 +5156,304 @@ onUnmounted(() => {
 .composite-banner-text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   flex: 1;
   min-width: 0;
 }
-.composite-banner-text strong {
+.banner-title-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.banner-title-line strong {
   font-size: 13px;
   color: var(--primary);
 }
-.composite-banner-text span {
+.banner-progress-stats {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.banner-progress-stats b {
+  color: #2563eb;
+}
+.stat-success {
+  color: #10b981;
+}
+.stat-failed {
+  color: #ef4444;
+}
+.banner-detail-line {
   font-size: 11px;
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.view-queue-btn {
+  background: #2563eb !important;
+  color: white !important;
+  border-color: #2563eb !important;
+  font-weight: 600;
+}
+.view-queue-btn:hover {
+  background: #1d4ed8 !important;
+}
+
+/* Batch Queue Modal */
+.batch-queue-modal {
+  width: min(840px, calc(100vw - 32px));
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  padding: 22px 24px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card-bg, #ffffff);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.35);
+  animation: modalSlideUp 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+:global(.dark) .batch-queue-modal {
+  background: #18202f;
+  border-color: #334155;
+}
+.batch-queue-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.queue-header-left h3 {
+  font-size: 17px;
+  font-weight: 750;
+  margin: 0 0 6px;
+}
+.queue-stat-pills {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.queue-stat-pill {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: var(--card-subtle);
+  color: var(--text-secondary);
+}
+.queue-stat-pill.running { background: rgba(59, 130, 246, 0.12); color: #2563eb; }
+.queue-stat-pill.queued { background: rgba(100, 116, 139, 0.12); color: #64748b; }
+.queue-stat-pill.success { background: rgba(16, 185, 129, 0.12); color: #10b981; }
+.queue-stat-pill.fail { background: rgba(239, 68, 68, 0.12); color: #ef4444; }
+.queue-stat-pill.percent b { color: #2563eb; }
+
+.queue-progress-bar-container {
+  margin: 4px 0 12px;
+}
+.queue-progress-track {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--card-subtle);
+  overflow: hidden;
+}
+.queue-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6, #10b981);
+  transition: width 0.3s ease;
+}
+
+.queue-filter-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+  overflow-x: auto;
+}
+.queue-tab-btn {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.12s ease;
+}
+.queue-tab-btn:hover {
+  background: var(--card-subtle);
+  color: var(--text-primary);
+}
+.queue-tab-btn.active {
+  background: var(--primary-subtle);
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.queue-list-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 50vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.queue-empty-msg {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.queue-item-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--card-subtle);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  transition: background 0.15s ease;
+}
+.queue-item-row.running {
+  background: rgba(59, 130, 246, 0.06);
+  border-color: rgba(59, 130, 246, 0.4);
+}
+.queue-item-row.completed {
+  border-left: 3px solid #10b981;
+}
+.queue-item-row.failed {
+  border-left: 3px solid #ef4444;
+}
+.queue-item-status-icon {
+  font-size: 14px;
+  width: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.queue-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #93c5fd;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+.queue-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+.queue-item-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.queue-flag { font-size: 13px; line-height: 1; }
+.queue-name {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.queue-country {
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--text-secondary);
+}
+.queue-item-service {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+.service-tag {
+  font-weight: 600;
+  color: #2563eb;
+}
+.summary-text {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.error-text {
+  color: #ef4444;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.running-text {
+  color: #2563eb;
+  font-style: italic;
+}
+.waiting-text {
+  color: var(--text-muted);
+}
+.queue-item-metrics {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.item-dur {
+  font-weight: 700;
+  color: #2563eb;
+  font-family: monospace;
+}
+.item-http {
+  font-family: monospace;
+  color: var(--text-secondary);
+}
+
+.batch-queue-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+.queue-footer-tip {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.compact-tag.flapping {
+  background: #fef3c7;
+  color: #b45309;
+  border: 1px solid #fde68a;
+  font-weight: 700;
+}
+:global(.dark) .compact-tag.flapping {
+  background: #451a03;
+  color: #fcd34d;
+  border-color: #92400e;
+}
+
 .composite-modal {
   width: min(680px, calc(100vw - 32px));
   max-height: calc(100vh - 40px);
@@ -4892,6 +6026,231 @@ onUnmounted(() => {
   background: var(--card-subtle, #f8fafc);
   border-radius: 6px;
   border: 1px solid var(--border, #e2e8f0);
+}
+
+/* Quick Inspector Modal for Single Pill Detail */
+.pill-detail-card {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  padding: 24px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.pill-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+}
+.pill-detail-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.pill-detail-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  width: fit-content;
+}
+.pill-detail-badge.good { background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); }
+.pill-detail-badge.warn { background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); }
+.pill-detail-badge.bad { background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); }
+.pill-detail-badge.untested { background: rgba(255, 255, 255, 0.06); color: var(--text-muted); border: 1px solid var(--border); }
+.pill-detail-node-name {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-main);
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pill-detail-sub {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0;
+}
+.pill-detail-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.pill-metric-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 9px;
+  background: var(--card-subtle);
+  border: 1px solid var(--border);
+}
+.pill-metric-item .metric-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.pill-metric-item .metric-value {
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--text-main);
+}
+.pill-metric-item .metric-value.good { color: #10b981; }
+.pill-metric-item .metric-value.warn { color: #f59e0b; }
+.pill-metric-item .metric-value.bad { color: #ef4444; }
+.pill-detail-extra {
+  padding: 14px;
+  border-radius: 9px;
+  background: var(--card-subtle);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.extra-title {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text-secondary);
+  margin: 0;
+}
+.extra-kv-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.extra-kv-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: 11.5px;
+}
+.extra-k {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.extra-v {
+  color: var(--text-main);
+  background: rgba(0, 0, 0, 0.05);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  word-break: break-all;
+}
+.pill-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 4px;
+}
+.pill-detail-actions button {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 7px;
+}
+
+/* Modal Services Tab Content */
+.modal-services-tab-content {
+  margin-top: 14px;
+}
+.node-services-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+.service-status-card {
+  padding: 16px;
+  border-radius: 10px;
+  background: var(--card-subtle);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: border-color 0.15s ease;
+}
+.service-status-card:hover {
+  border-color: var(--border-focus);
+}
+.svc-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.svc-card-name {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--text-main);
+}
+.svc-card-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--card-bg);
+  padding: 8px 12px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+}
+.svc-body-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.svc-stat-k {
+  font-size: 10.5px;
+  color: var(--text-secondary);
+}
+.svc-stat-v {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+.svc-card-evidence {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.svc-card-footer {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+}
+.svc-action-btn {
+  flex: 1;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  color: var(--text-main);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.svc-action-btn:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.svc-action-btn.subtle {
+  background: transparent;
+  color: var(--text-secondary);
+}
+.svc-action-btn.subtle:hover {
+  color: var(--primary);
 }
 
 </style>

@@ -34,4 +34,52 @@ describe('service target picker', () => {
     expect(wrapper.findAll('.selection-summary')[1]!.text()).toContain('已选 3 条线路')
     wrapper.unmount()
   })
+
+  it('allows clicking the whole service card and provides selected services overview with clear all', async () => {
+    const catalog = [
+      { service_id: 'antigravity', name: '反重力', description: '反重力工具测试', category: 'ai', region: '全球', batch_default: true, enabled: true },
+      { service_id: 'chatgpt', name: 'ChatGPT', description: 'OpenAI 官网访问', category: 'ai', region: '全球', batch_default: true, enabled: true },
+      { service_id: 'netflix', name: 'Netflix', description: '网飞流媒体', category: 'media', region: '全球', batch_default: true, enabled: true },
+    ]
+    const wrapper = mount(ServiceCatalogPicker, {
+      props: {
+        catalog: catalog as any,
+        modelValue: ['antigravity', 'chatgpt'],
+        nodes,
+        selectedNodeKeys: [],
+      },
+    })
+
+    // Open services editor
+    await wrapper.findAll('.selection-summary')[0]!.trigger('click')
+
+    // Category navigation should include "已选服务 (2)"
+    const navButtons = wrapper.findAll('nav button')
+    const selectedNav = navButtons.find(b => b.text().includes('已选服务'))
+    expect(selectedNav).toBeDefined()
+    expect(selectedNav!.text()).toContain('2')
+
+    // Selected chips bar should display selected services
+    const chips = wrapper.findAll('.selected-chip')
+    expect(chips).toHaveLength(2)
+    expect(chips[0]!.text()).toContain('反重力')
+
+    // Clicking a chip removes it
+    await chips[0]!.trigger('click')
+    expect(wrapper.emitted('update:modelValue')?.[0]?.[0]).toEqual(['chatgpt'])
+
+    // Clicking the clear all button clears selection
+    const clearBtn = wrapper.find('.btn-clear-services')
+    expect(clearBtn.exists()).toBe(true)
+    await clearBtn.trigger('click')
+    expect(wrapper.emitted('update:modelValue')?.[1]?.[0]).toEqual([])
+
+    // Clicking a whole service card toggles selection
+    const cards = wrapper.findAll('.service-cards article')
+    expect(cards.length).toBeGreaterThanOrEqual(1)
+    await cards[0]!.trigger('click')
+    expect(wrapper.emitted('update:modelValue')).toBeTruthy()
+
+    wrapper.unmount()
+  })
 })

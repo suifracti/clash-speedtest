@@ -8,7 +8,16 @@ import UiSelect from '../common/UiSelect.vue'
 const props = withDefaults(defineProps<{ catalog: WorkbenchPublicServiceRule[]; modelValue: string[]; disabled?: boolean; showTargets?: boolean; sources?: LogicalProfileChoice[]; selectedSourceIds?: string[]; nodes?: MonitorNodeOption[]; selectedNodeKeys?: string[]; nodeRegion?: string; nodeSearch?: string; showAlternateConfigs?: boolean; hiddenAlternateCount?: number; repeatCount?: number; timeoutSeconds?: number }>(), { showTargets: true, sources: () => [], selectedSourceIds: () => [], nodes: () => [], selectedNodeKeys: () => [], nodeRegion: '全部地区', nodeSearch: '', showAlternateConfigs: false, hiddenAlternateCount: 0, repeatCount: 1, timeoutSeconds: 10 })
 const emit = defineEmits<{ (e: 'update:modelValue', ids: string[]): void; (e: 'update:selectedSourceIds', ids: string[]): void; (e: 'update:selectedNodeKeys', keys: string[]): void; (e: 'update:nodeRegion', value: string): void; (e: 'update:nodeSearch', value: string): void; (e: 'update:showAlternateConfigs', value: boolean): void; (e: 'update:repeatCount', value: number): void; (e: 'update:timeoutSeconds', value: number): void; (e: 'run'): void }>()
 const editor = ref<'services' | 'nodes' | null>(null)
-function edit(section: 'services' | 'nodes') { editor.value = editor.value === section ? null : section }
+function edit(section: 'services' | 'nodes') {
+  if (editor.value === section) {
+    editor.value = null
+  } else {
+    editor.value = section
+    if (section === 'services' && props.modelValue.length > 0) {
+      group.value = '已选服务'
+    }
+  }
+}
 const group = ref('推荐'), region = ref('全部地区'), search = ref('')
 const nodeKey = (node: MonitorNodeOption) => `${node.profileId}\u0000${node.nodeKey}`
 const countryNames: Record<string, string> = { JP: '日本', US: '美国', HK: '香港', TW: '台湾', SG: '新加坡', KR: '韩国', CN: '中国大陆', GB: '英国', DE: '德国', FR: '法国', CA: '加拿大', AU: '澳大利亚', NL: '荷兰', IN: '印度', RU: '俄罗斯', VN: '越南', OTHER: '其他地区' }
@@ -99,15 +108,26 @@ watch(favorites, ids => {
     } catch {}
   }
 }, { deep: true })
-const groups = computed(() => ['推荐', '我的常用', ...new Set(props.catalog.map(serviceGroup))])
+const groups = computed(() => ['已选服务', '推荐', '我的常用', ...new Set(props.catalog.map(serviceGroup))])
 const regions = computed(() => ['全部地区', ...new Set(props.catalog.map(r => r.region || '全球'))].map(value => ({ value, label: value })))
 const filtered = computed(() => props.catalog.filter(r =>
-  (search.value.trim() || (group.value === '推荐' ? r.batch_default : group.value === '我的常用' ? favorites.value.includes(r.service_id) : serviceGroup(r) === group.value))
+  (search.value.trim() || (
+    group.value === '已选服务' ? props.modelValue.includes(r.service_id) :
+    group.value === '推荐' ? r.batch_default :
+    group.value === '我的常用' ? favorites.value.includes(r.service_id) :
+    serviceGroup(r) === group.value
+  ))
   && (region.value === '全部地区' || region.value === r.region)
   && `${r.name} ${r.description || ''}`.toLowerCase().includes(search.value.toLowerCase())))
 const selected = computed(() => props.catalog.filter(r => props.modelValue.includes(r.service_id)))
 function toggle(id: string) { if (!props.disabled) emit('update:modelValue', props.modelValue.includes(id) ? props.modelValue.filter(v => v !== id) : [...props.modelValue, id]) }
 function favorite(id: string) { favorites.value = favorites.value.includes(id) ? favorites.value.filter(v => v !== id) : [...favorites.value, id] }
+
+function resetToDefaultServices() {
+  if (props.disabled) return
+  const defaults = props.catalog.filter(r => r.batch_default).map(r => r.service_id)
+  emit('update:modelValue', defaults.length ? defaults : ['antigravity', 'chatgpt_web', 'youtube_premium', 'netflix_unlock'])
+}
 </script>
 <template>
 <section class="service-library" aria-label="选择要检测的服务">
@@ -118,10 +138,99 @@ function favorite(id: string) { favorites.value = favorites.value.includes(id) ?
     <div v-if="showTargets" class="library-run"><div><strong>{{ selected.length }} 项服务 × {{ selectedNodeCount }} 个节点</strong><small>{{ !selectedNodeCount ? '请先点击“选择节点”' : !selected.length ? '请先选择服务' : '开始前可确认检测范围与消耗' }}</small></div><label>重复 <UiSelect :model-value="repeatCount" :options="[{ value: 1, label: '1 次' }, { value: 2, label: '2 次' }, { value: 3, label: '3 次' }]" aria-label="服务检测次数" @update:model-value="emit('update:repeatCount', Number($event))" /></label><label>超时 <UiSelect :model-value="timeoutSeconds" :options="[{ value: 5, label: '5 秒' }, { value: 10, label: '10 秒' }, { value: 20, label: '20 秒' }, { value: 30, label: '30 秒' }]" aria-label="服务单项超时" @update:model-value="emit('update:timeoutSeconds', Number($event))" /></label><button type="button" class="run-service" :disabled="disabled || !selected.length || !selectedNodeCount" @click="editor = null; emit('run')">开始检测</button></div>
 
 <section v-if="!showTargets || editor === 'services'" class="service-editor" aria-label="服务目录">
-<header class="editor-heading"><div><h2>选择服务</h2><p>跨分类多选；标记说明这项检查能验证到哪一步。</p></div><div class="library-search"><input v-model="search" type="search" placeholder="搜索服务" aria-label="搜索服务"><UiSelect v-model="region" :options="regions" aria-label="服务所属地区" /></div></header>
+<header class="editor-heading"><div><h2>选择服务</h2><p>点击整张卡片任意位置即可选择/取消；支持跨分类多选与一键清空。</p></div><div class="library-search"><input v-model="search" type="search" placeholder="搜索服务" aria-label="搜索服务"><UiSelect v-model="region" :options="regions" aria-label="服务所属地区" /></div></header>
+
+    <!-- 已选服务快捷标签栏 -->
+    <div v-if="selected.length" class="selected-services-bar">
+      <div class="selected-bar-header">
+        <span class="selected-count-label">已选服务 ({{ selected.length }} 项)：</span>
+        <div class="selected-bar-actions">
+          <button type="button" class="btn-clear-services" :disabled="disabled" @click="emit('update:modelValue', [])">🗑️ 一键清空</button>
+          <button type="button" class="btn-default-services" :disabled="disabled" @click="resetToDefaultServices">⚡ 设为默认4项</button>
+        </div>
+      </div>
+      <div class="selected-chips-scroll">
+        <button
+          v-for="rule in selected"
+          :key="rule.service_id"
+          type="button"
+          class="selected-chip"
+          :disabled="disabled"
+          :title="`点击移除 ${serviceTitle(rule)}`"
+          @click.stop="toggle(rule.service_id)"
+        >
+          <span class="chip-name">{{ serviceTitle(rule) }}</span>
+          <span class="chip-remove" aria-hidden="true">✕</span>
+        </button>
+      </div>
+    </div>
+
     <div class="library-body">
-      <nav aria-label="服务分类"><button v-for="item in groups" :key="item" :aria-pressed="group === item" @click="group = item">{{ item }}<span>{{ item === '我的常用' ? favorites.length : item === '推荐' ? catalog.filter(r => r.batch_default).length : catalog.filter(r => serviceGroup(r) === item).length }}</span></button></nav>
-      <div class="service-cards"><article v-for="rule in filtered" :key="rule.service_id" :class="{ picked: modelValue.includes(rule.service_id) }"><label><input type="checkbox" :checked="modelValue.includes(rule.service_id)" :disabled="disabled" @change="toggle(rule.service_id)"><strong>{{ serviceTitle(rule) }}</strong></label><button class="favorite-service" :aria-label="`${favorites.includes(rule.service_id) ? '取消常用' : '设为常用'} ${serviceTitle(rule)}`" :aria-pressed="favorites.includes(rule.service_id)" @click="favorite(rule.service_id)">{{ favorites.includes(rule.service_id) ? '★' : '☆' }}</button><p>{{ rule.description }}</p><footer><span :class="{ verified: rule.service_id === 'antigravity' }">{{ serviceEvidence(rule) }}</span><small>{{ rule.region || '全球' }}</small></footer></article><p v-if="!filtered.length" class="library-empty">{{ group === '我的常用' ? '点服务卡片右上角的 ☆，把常用服务放在这里。' : '没有匹配的服务，试试其他分类或地区。' }}</p></div>
+      <nav aria-label="服务分类">
+        <button
+          v-for="item in groups"
+          :key="item"
+          :aria-pressed="group === item"
+          :class="{ 'group-selected-highlight': item === '已选服务' && selected.length > 0 }"
+          @click="group = item"
+        >
+          {{ item }}
+          <span :class="{ 'count-active': item === '已选服务' && selected.length > 0 }">{{
+            item === '已选服务' ? selected.length :
+            item === '我的常用' ? favorites.length :
+            item === '推荐' ? catalog.filter(r => r.batch_default).length :
+            catalog.filter(r => serviceGroup(r) === item).length
+          }}</span>
+        </button>
+      </nav>
+      <div class="service-cards">
+        <article
+          v-for="rule in filtered"
+          :key="rule.service_id"
+          :class="{ picked: modelValue.includes(rule.service_id) }"
+          tabindex="0"
+          role="button"
+          :aria-pressed="modelValue.includes(rule.service_id)"
+          @click="toggle(rule.service_id)"
+          @keydown.enter.prevent="toggle(rule.service_id)"
+          @keydown.space.prevent="toggle(rule.service_id)"
+        >
+          <div class="service-card-top">
+            <label class="service-card-checkbox-label" @click.stop>
+              <input
+                type="checkbox"
+                :checked="modelValue.includes(rule.service_id)"
+                :disabled="disabled"
+                @change="toggle(rule.service_id)"
+              >
+              <strong>{{ serviceTitle(rule) }}</strong>
+            </label>
+            <button
+              type="button"
+              class="favorite-service"
+              :aria-label="`${favorites.includes(rule.service_id) ? '取消常用' : '设为常用'} ${serviceTitle(rule)}`"
+              :aria-pressed="favorites.includes(rule.service_id)"
+              @click.stop="favorite(rule.service_id)"
+            >
+              {{ favorites.includes(rule.service_id) ? '★' : '☆' }}
+            </button>
+          </div>
+          <p>{{ rule.description }}</p>
+          <footer>
+            <span :class="{ verified: rule.service_id === 'antigravity' }">{{ serviceEvidence(rule) }}</span>
+            <small>{{ rule.region || '全球' }}</small>
+          </footer>
+        </article>
+        <p v-if="!filtered.length" class="library-empty">
+          {{
+            group === '已选服务'
+              ? '当前尚未选择任何服务。可在左侧选择其他分类点击卡片添加。'
+              : group === '我的常用'
+                ? '点服务卡片右上角的 ☆，把常用服务放在这里。'
+                : '没有匹配的服务，试试其他分类或地区。'
+          }}
+        </p>
+      </div>
     </div>
 
 <div class="editor-footer"><span>已选 {{ selected.length }} 项服务</span><button v-if="selected.length" :disabled="disabled" @click="emit('update:modelValue', [])">清空服务</button><button v-if="showTargets" class="done-selection" @click="editor = selectedNodeCount ? null : 'nodes'">{{ selectedNodeCount ? '完成选择' : '下一步：选择节点' }}</button></div>
@@ -160,19 +269,38 @@ h2{font-size:16px;margin:0 0 4px}
 .service-editor,.target-picker{border-top:1px solid var(--border)}
 .library-search{display:flex;align-items:center;gap:8px}
 .library-search input,.node-tools input{border:1px solid var(--border);background:var(--card-bg);border-radius:7px;padding:8px 10px;font-size:13px;min-width:0}
+.selected-services-bar{background:var(--card-subtle);border-top:1px solid var(--border);padding:10px 18px;display:flex;flex-direction:column;gap:8px}
+.selected-bar-header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.selected-count-label{font-size:13px;font-weight:650;color:var(--primary)}
+.selected-bar-actions{display:flex;align-items:center;gap:8px}
+.btn-clear-services,.btn-default-services{font-size:12px;padding:4px 9px;border-radius:6px;border:1px solid var(--border);background:var(--card-bg);color:var(--text-secondary);cursor:pointer;transition:all .15s ease}
+.btn-clear-services:hover:not(:disabled){color:#e53e3e;border-color:#e53e3e;background:rgba(229,62,62,.08)}
+.btn-default-services:hover:not(:disabled){color:var(--primary);border-color:var(--primary);background:var(--primary-subtle)}
+.selected-chips-scroll{display:flex;align-items:center;gap:6px;overflow-x:auto;padding-bottom:3px;scrollbar-width:thin}
+.selected-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 9px;font-size:12px;border-radius:6px;background:var(--primary-subtle);border:1px solid var(--primary);color:var(--primary);cursor:pointer;white-space:nowrap;transition:all .15s ease;flex-shrink:0}
+.selected-chip:hover:not(:disabled){background:rgba(229,62,62,.12);border-color:#e53e3e;color:#e53e3e}
+.selected-chip .chip-remove{font-size:11px;font-weight:700;opacity:.7}
+.selected-chip:hover .chip-remove{opacity:1}
 .library-body{display:grid;grid-template-columns:144px minmax(0,1fr);border-top:1px solid var(--border)}
 nav{display:flex;flex-direction:column;gap:3px;padding:10px;background:var(--card-subtle)}
-nav button{display:flex;align-items:center;justify-content:space-between;text-align:left;padding:8px;border-radius:6px;font-size:13px}
+nav button{display:flex;align-items:center;justify-content:space-between;text-align:left;padding:8px;border-radius:6px;font-size:13px;cursor:pointer}
 nav button[aria-pressed=true]{background:var(--primary-subtle);color:var(--primary);font-weight:700}
+nav button.group-selected-highlight{color:var(--primary);font-weight:650}
 nav span{font-size:11px;color:var(--text-secondary)}
+.count-active{background:var(--primary);color:#fff;padding:1px 6px;border-radius:10px;font-size:11px;font-weight:600}
 .service-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(245px,1fr));align-content:start;gap:8px;padding:12px;max-height:330px;overflow:auto}
-.service-cards article{position:relative;padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--card-bg)}
-.service-cards article.picked{border-color:var(--primary);background:var(--primary-subtle)}
-article label{display:flex;align-items:center;gap:8px;padding-right:24px;font-size:14px;cursor:pointer}
+.service-cards article{position:relative;padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--card-bg);cursor:pointer;user-select:none;transition:border-color .15s ease,background .15s ease,box-shadow .15s ease}
+.service-cards article:hover{border-color:var(--primary);background:var(--card-subtle)}
+.service-cards article:focus-visible{outline:2px solid var(--primary);outline-offset:1px}
+.service-cards article.picked{border-color:var(--primary);background:var(--primary-subtle);box-shadow:inset 0 0 0 1px var(--primary)}
+.service-card-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.service-card-checkbox-label{display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;flex:1;min-width:0}
+.service-card-checkbox-label strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 article p{font-size:12px;line-height:1.5;color:var(--text-secondary);margin:8px 0}
 article footer{display:flex;justify-content:space-between;gap:6px;font-size:11px;color:var(--text-secondary)}
 article footer .verified{color:var(--success)}
-.favorite-service{position:absolute;right:10px;top:9px;font-size:20px;color:var(--text-muted)}
+.favorite-service{position:relative;font-size:18px;line-height:1;color:var(--text-muted);background:none;border:none;padding:2px 4px;border-radius:4px;cursor:pointer;transition:transform .15s ease,color .15s ease}
+.favorite-service:hover{transform:scale(1.2);color:#a97411}
 .favorite-service[aria-pressed=true]{color:#a97411}
 .library-empty{padding:20px;font-size:13px;color:var(--text-secondary);grid-column:1/-1}
 .editor-footer{display:flex;align-items:center;gap:12px;padding:12px 18px;border-top:1px solid var(--border);font-size:13px}

@@ -43,17 +43,82 @@ function apply() {
   <span class="window-select">
     <UiSelect :model-value="choice" :aria-label="label" variant="compact" :options="options" @update:model-value="select" />
     <template v-if="choice.startsWith('custom-')">
-      <input v-model="amount" type="number" min="0" step="any" :aria-label="choice === 'custom-d' ? '自定义天数' : '自定义小时数'" @keydown.enter.prevent="apply">
-      <span>{{ choice === 'custom-d' ? 'd' : 'h' }}</span>
-      <button type="button" @click="apply">应用</button>
+      <div class="custom-window-input-group">
+        <input
+          v-model="amount"
+          type="number"
+          min="0"
+          step="any"
+          class="custom-amount-input"
+          :aria-label="choice === 'custom-d' ? '自定义天数' : '自定义小时数'"
+          @keydown.enter.prevent="apply"
+        >
+        <span class="custom-unit-badge">{{ choice === 'custom-d' ? '天' : '小时' }}</span>
+        <button type="button" class="custom-apply-btn" @click="apply">应用</button>
+      </div>
     </template>
     <span v-if="error" class="window-error" role="alert">{{ error }}</span>
   </span>
 </template>
 
 <style scoped>
-.window-select { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-input { width: 65px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 5px; background: var(--card-bg); color: var(--text-main); }
-button { padding: 5px 9px; border: 1px solid var(--border); border-radius: 5px; background: var(--card-bg); color: var(--primary); cursor: pointer; }
+.window-select { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.custom-window-input-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card-subtle);
+  transition: all 0.15s ease;
+}
+.custom-window-input-group:focus-within {
+  border-color: var(--primary);
+  background: var(--card-bg);
+  box-shadow: 0 0 0 2px var(--primary-subtle, rgba(99, 102, 241, 0.2));
+}
+.custom-amount-input {
+  width: 44px;
+  padding: 3px 0;
+  border: none;
+  background: transparent;
+  color: var(--text-main);
+  font-size: 12px;
+  font-family: var(--font-mono, monospace);
+  font-weight: 600;
+  outline: none;
+  -moz-appearance: textfield;
+}
+.custom-amount-input::-webkit-outer-spin-button,
+.custom-amount-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.custom-unit-badge {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-weight: 550;
+  user-select: none;
+}
+.custom-apply-btn {
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: var(--primary);
+  color: white;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+.custom-apply-btn:hover {
+  filter: brightness(1.1);
+  transform: translateY(-0.5px);
+}
+.custom-apply-btn:active {
+  transform: translateY(0.5px);
+}
 .window-error { color: var(--danger); font-size: 11px; }
 </style>

@@ -435,9 +435,9 @@ describe('LatencyWorkbench Health & Redesign Features', () => {
     const modal = wrapper.find('.prototype-history-modal')
     expect(modal.exists()).toBe(true)
 
-    // Tab buttons exist (3 tabs: chart, health, config)
+    // Tab buttons exist (4 tabs: chart, health, services, config)
     const tabs = modal.findAll('.modal-tab-btn')
-    expect(tabs).toHaveLength(3)
+    expect(tabs).toHaveLength(4)
     expect(tabs[1].classes()).toContain('active')
 
     // Switch to health tab
@@ -464,6 +464,11 @@ describe('LatencyWorkbench Health & Redesign Features', () => {
     expect(tabs[2].classes()).toContain('active')
     expect(modal.find('.modal-config-tab-content').isVisible()).toBe(true)
     expect(modal.text()).toContain('节点基本信息与订阅配置')
+
+    // Switch to services tab
+    await tabs[3].trigger('click')
+    expect(tabs[3].classes()).toContain('active')
+    expect(modal.find('.modal-services-tab-content').isVisible()).toBe(true)
 
     // Can switch back to chart tab
     await tabs[0].trigger('click')

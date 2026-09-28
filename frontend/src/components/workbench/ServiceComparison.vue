@@ -5,6 +5,7 @@ import { serviceDetailLabel, serviceOutcomeLabel } from '../../utils/serviceOutc
 import { serviceEvidence, serviceTitle, summarizeService } from '../../utils/servicePresentation'
 import UiSelect from '../common/UiSelect.vue'
 import InteractiveTrendSparkline, { type TrendPoint } from './InteractiveTrendSparkline.vue'
+import ServiceHistoryTooltip from './ServiceHistoryTooltip.vue'
 
 const props = defineProps<{
   rows: { key: string; node: MonitorNodeOption }[]
@@ -25,13 +26,45 @@ const emit = defineEmits<{
   (e: 'select-all', keys: string[]): void
   (e: 'clear-selection'): void
   (e: 'back-to-picker'): void
+  (e: 'back-to-latency'): void
 }>()
 
-const focus = ref('')
-const showAllNodes = ref(false)
+const isTestingEnv = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || Boolean(process.env?.VITEST))
+
+function readPersistedStorage<T>(key: string, fallback: T): T {
+  try {
+    if (typeof localStorage !== 'undefined' && !isTestingEnv) {
+      const v = localStorage.getItem(key)
+      if (v !== null) return v as unknown as T
+    }
+  } catch {}
+  return fallback
+}
+
+function writePersistedStorage(key: string, value: string): void {
+  try {
+    if (typeof localStorage !== 'undefined' && !isTestingEnv) {
+      localStorage.setItem(key, value)
+    }
+  } catch {}
+}
+
+const focus = ref(readPersistedStorage('speedtest.service-comparison-focus', ''))
+watch(focus, (v) => { if (v) writePersistedStorage('speedtest.service-comparison-focus', v) })
+
+const showAllNodes = ref(readPersistedStorage<string>('speedtest.service-comparison-show-all', 'false') === 'true')
+watch(showAllNodes, (v) => writePersistedStorage('speedtest.service-comparison-show-all', String(v)))
+
 const inspected = ref<WorkbenchPublicServiceAttempt | null>(null)
-const viewMode = ref<'all' | 'single'>('all')
-const sortBy = ref<'region' | 'pass_rate' | 'status' | 'recent' | 'changes' | 'name'>('region')
+const inspectedNodeKey = ref('')
+const viewMode = ref<'all' | 'single'>(readPersistedStorage<'all' | 'single'>('speedtest.service-comparison-view-mode', 'all'))
+watch(viewMode, (v) => writePersistedStorage('speedtest.service-comparison-view-mode', v))
+
+const sortBy = ref<'region' | 'pass_rate' | 'status' | 'recent' | 'changes' | 'name'>(
+  readPersistedStorage<'region' | 'pass_rate' | 'status' | 'recent' | 'changes' | 'name'>('speedtest.service-comparison-sort', 'region')
+)
+watch(sortBy, (v) => writePersistedStorage('speedtest.service-comparison-sort', v))
+
 const selectedTimeWindow = ref<'24h' | '48h' | '7d' | 'all'>('24h')
 
 function nodeServiceTrendPoints(key: string): TrendPoint[] {
@@ -276,16 +309,172 @@ function retestOutdated() {
   emit('run', keys)
 }
 
-const selectedRegion = ref('全部地区')
+const selectedRegion = ref(readPersistedStorage('speedtest.service-comparison-region', '全部地区'))
+watch(selectedRegion, (v) => writePersistedStorage('speedtest.service-comparison-region', v))
+
 const searchKeyword = ref('')
-const statusFilter = ref<'all' | 'good' | 'bad' | 'untested'>('all')
+const statusFilter = ref<'all' | 'good' | 'bad' | 'flapping' | 'untested'>(
+  readPersistedStorage<'all' | 'good' | 'bad' | 'flapping' | 'untested'>('speedtest.service-comparison-status', 'all')
+)
+watch(statusFilter, (v) => writePersistedStorage('speedtest.service-comparison-status', v))
 
 const statusFilterOptions = [
   { value: 'all', label: '全部状态' },
   { value: 'good', label: '仅可用 (通过)' },
   { value: 'bad', label: '仅异常 / 受限' },
+  { value: 'flapping', label: '仅漂移/波动 (⇄)' },
   { value: 'untested', label: '仅未检测' },
 ]
+
+function hasFlappingOrDrift(report?: ReturnType<typeof summarizeService>): boolean {
+  if (!report || !report.samples || report.samples.length < 2) return false
+  if (report.exitChanges > 0 || report.changes > 0) return true
+  const ips = new Set<string>()
+  for (const s of report.samples) {
+    const ip = s.result?.details?.ip
+    if (ip && ip.trim()) ips.add(ip.trim())
+  }
+  return ips.size > 1
+}
+
+function nodeHasDrift(row: { reports?: { report: ReturnType<typeof summarizeService> }[]; report?: ReturnType<typeof summarizeService> }): boolean {
+  if (row.reports) {
+    return row.reports.some(item => hasFlappingOrDrift(item.report))
+  }
+  if (row.report) {
+    return hasFlappingOrDrift(row.report)
+  }
+  return false
+}
+
+const totalFlappingCount = computed(() => {
+  if (viewMode.value === 'all') {
+    return overviewRows.value.filter(r => nodeHasDrift(r)).length
+  }
+  return rows.value.filter(r => nodeHasDrift(r)).length
+})
+
+const inspectedHistory = computed(() => {
+  if (!inspected.value) return []
+  let matchKey = inspectedNodeKey.value
+  if (!matchKey) {
+    const matchEntry = Object.entries(props.records).find(([, attempts]) =>
+      attempts.some(a => a.attempt_id === inspected.value?.attempt_id),
+    )
+    if (matchEntry) matchKey = matchEntry[0]
+  }
+  const attempts = props.records[matchKey] || []
+  return attempts
+    .filter(a => a.service_id === inspected.value?.service_id)
+    .sort((a, b) => {
+      const timeA = Date.parse(a.result?.finished_at || a.finished_at || a.requested_at || '') || 0
+      const timeB = Date.parse(b.result?.finished_at || b.finished_at || b.requested_at || '') || 0
+      return timeB - timeA
+    })
+})
+
+const inspectedDriftInfo = computed(() => {
+  const history = inspectedHistory.value
+  const set = new Set<string>()
+  let changes = 0
+  for (let i = 0; i < history.length; i++) {
+    const ip = history[i].result?.details?.ip
+    if (ip && ip.trim()) set.add(ip.trim())
+    if (i > 0 && history[i].result?.outcome !== history[i - 1].result?.outcome) {
+      changes++
+    }
+  }
+  const distinctIPs = [...set]
+  const passed = history.filter(a => ['matched', 'unlocked', 'profiled', 'reachable'].includes(a.result?.outcome || '')).length
+  const passRate = history.length ? Math.round((passed / history.length) * 100) : 0
+  return {
+    distinctIPs,
+    changes,
+    passRate,
+    hasDrift: distinctIPs.length > 1 || changes > 0,
+  }
+})
+
+function handleRetestInspected() {
+  if (inspectedNodeKey.value) {
+    emit('run', [inspectedNodeKey.value])
+  } else if (inspected.value) {
+    const matchEntry = Object.entries(props.records).find(([, attempts]) =>
+      attempts.some(a => a.attempt_id === inspected.value?.attempt_id),
+    )
+    if (matchEntry) {
+      emit('run', [matchEntry[0]])
+    }
+  }
+}
+
+// Hover Tooltip state & helpers
+const tooltipState = ref({
+  visible: false,
+  x: 0,
+  y: 0,
+  serviceName: '',
+  serviceId: '',
+  nodeName: '',
+  nodeFlag: '🌐',
+  countryCode: '',
+  history: [] as WorkbenchPublicServiceAttempt[],
+  ruleEvidence: '',
+})
+
+let tooltipTimer: any = null
+
+function showTooltip(x: number, y: number, data: Omit<typeof tooltipState.value, 'visible' | 'x' | 'y'>) {
+  clearTimeout(tooltipTimer)
+  tooltipState.value = {
+    ...data,
+    x,
+    y,
+    visible: true,
+  }
+}
+
+function hideTooltip() {
+  clearTimeout(tooltipTimer)
+  tooltipTimer = setTimeout(() => {
+    tooltipState.value.visible = false
+  }, 120)
+}
+
+function handleOverviewPillEnter(
+  event: MouseEvent,
+  row: { key: string; node: MonitorNodeOption },
+  item: { service: { value: string | number; label: string; evidence?: string }; report: ReturnType<typeof summarizeService> },
+) {
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  const history = (props.records[row.key] || []).filter(a => a.service_id === item.service.value)
+  showTooltip(rect.left + rect.width / 2, rect.top, {
+    serviceName: item.service.label,
+    serviceId: String(item.service.value),
+    nodeName: row.node.displayName,
+    nodeFlag: row.node.countryFlag || '🌐',
+    countryCode: row.node.countryCode || '',
+    history,
+    ruleEvidence: item.service.evidence || '',
+  })
+}
+
+function handleSingleCardEnter(
+  event: MouseEvent,
+  row: { key: string; node: MonitorNodeOption; report: ReturnType<typeof summarizeService> },
+) {
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  const history = (props.records[row.key] || []).filter(a => a.service_id === focus.value)
+  showTooltip(rect.left + rect.width / 2, rect.top, {
+    serviceName: rule.value ? serviceTitle(rule.value) : '公共服务',
+    serviceId: focus.value,
+    nodeName: row.node.displayName,
+    nodeFlag: row.node.countryFlag || '🌐',
+    countryCode: row.node.countryCode || '',
+    history,
+    ruleEvidence: serviceEvidence(rule.value),
+  })
+}
 
 const regionOptions = computed(() => {
   const set = new Set<string>()
@@ -314,6 +503,7 @@ const filteredRows = computed(() => {
       const isGood = ['matched', 'unlocked', 'reachable', 'profiled'].includes(row.report.latest?.result?.outcome || '')
       if (statusFilter.value === 'good' && !isGood) return false
       if (statusFilter.value === 'bad' && (isGood || row.report.total === 0)) return false
+      if (statusFilter.value === 'flapping' && !hasFlappingOrDrift(row.report)) return false
       if (statusFilter.value === 'untested' && row.report.total > 0) return false
     }
     return true
@@ -333,6 +523,12 @@ const filteredOverviewRows = computed(() => {
       if (!name.includes(q) && !reg.includes(q) && !profile.includes(q)) {
         return false
       }
+    }
+    if (statusFilter.value !== 'all') {
+      if (statusFilter.value === 'flapping' && !nodeHasDrift(row)) return false
+      if (statusFilter.value === 'untested' && row.reports.some(item => item.report.total > 0)) return false
+      if (statusFilter.value === 'good' && !row.reports.some(item => ['matched', 'unlocked', 'reachable', 'profiled'].includes(item.report.latest?.result?.outcome || ''))) return false
+      if (statusFilter.value === 'bad' && !row.reports.some(item => item.report.total > 0 && !['matched', 'unlocked', 'reachable', 'profiled'].includes(item.report.latest?.result?.outcome || ''))) return false
     }
     return true
   })
@@ -447,9 +643,40 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
 
 <template>
   <div class="service-results">
+    <!-- Top Return & Navigation Bar -->
+    <div class="service-nav-bar">
+      <div class="service-nav-left">
+        <button
+          type="button"
+          class="nav-back-btn primary"
+          title="点击返回节点延迟与工作台概览"
+          @click="emit('back-to-latency')"
+        >
+          <span class="back-arrow">←</span>
+          <span>返回延迟工作台</span>
+        </button>
+        <span v-if="viewMode === 'single'" class="nav-crumb-separator">/</span>
+        <button
+          v-if="viewMode === 'single'"
+          type="button"
+          class="nav-back-btn subtle"
+          title="返回全部服务概览列表"
+          @click="viewChoice = 'all'"
+        >
+          <span>↩ 返回全部服务概览</span>
+        </button>
+      </div>
+      <div class="service-nav-right">
+        <span class="service-count-chip">已选 {{ selected.length }} / {{ currentKeys.length }} 节点</span>
+      </div>
+    </div>
+
     <div class="results-heading">
       <div v-if="viewMode !== 'all'" class="heading-title-box">
-        <h3>{{ rule ? serviceTitle(rule) : '先在上方选择服务' }}</h3>
+        <div class="heading-badge-line">
+          <span class="service-rule-badge">{{ rule?.category || '公网服务' }}</span>
+          <h3>{{ rule ? serviceTitle(rule) : '先在上方选择服务' }}</h3>
+        </div>
         <p>
           {{
             `${serviceEvidence(rule)} · ${
@@ -461,17 +688,36 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
         </p>
       </div>
       <div class="results-tools">
-        <input
-          v-model="searchKeyword"
-          type="search"
-          placeholder="🔍 搜索节点 / 地区…"
-          class="service-search-input"
-        >
-        <label>地区 <UiSelect v-model="selectedRegion" aria-label="筛选地区" :options="regionOptions" /></label>
-        <label v-if="viewMode !== 'all'">状态 <UiSelect v-model="statusFilter" aria-label="筛选状态" :options="statusFilterOptions" /></label>
-        <label>查看 <UiSelect v-model="viewChoice" aria-label="查看服务结果" :options="[{ value: 'all', label: '全部服务概览' }, ...choices]" /></label>
-        <label>排序 <UiSelect v-model="sortBy" aria-label="排序服务结果" :options="sortOptions" /></label>
-        <label class="checkbox-inline"><input v-model="showAllNodes" type="checkbox">含未测</label>
+        <div class="search-input-group">
+          <span class="search-icon" aria-hidden="true">🔍</span>
+          <input
+            v-model="searchKeyword"
+            type="search"
+            placeholder="搜索节点 / 地区…"
+            class="service-search-input"
+          >
+          <button v-if="searchKeyword" type="button" class="search-clear-btn" aria-label="清空搜索" @click="searchKeyword = ''">×</button>
+        </div>
+        <div class="tool-select-group">
+          <span class="tool-label">地区</span>
+          <UiSelect v-model="selectedRegion" aria-label="筛选地区" variant="compact" :options="regionOptions" />
+        </div>
+        <div v-if="viewMode !== 'all'" class="tool-select-group">
+          <span class="tool-label">状态</span>
+          <UiSelect v-model="statusFilter" aria-label="筛选状态" variant="compact" :options="statusFilterOptions" />
+        </div>
+        <div class="tool-select-group">
+          <span class="tool-label">查看</span>
+          <UiSelect v-model="viewChoice" aria-label="查看服务结果" variant="compact" :options="[{ value: 'all', label: '全部服务概览' }, ...choices]" />
+        </div>
+        <div class="tool-select-group">
+          <span class="tool-label">排序</span>
+          <UiSelect v-model="sortBy" aria-label="排序服务结果" variant="compact" :options="sortOptions" />
+        </div>
+        <label class="custom-toggle-label" :class="{ active: showAllNodes }" title="开启后显示未进行过该服务测试的节点">
+          <input v-model="showAllNodes" type="checkbox">
+          <span>含未测</span>
+        </label>
         <div class="batch-action-group">
           <button type="button" class="tool-btn" @click="toggleSelectAllCurrent">
             {{ isAllSelected ? '取消全选' : `全选 (${currentKeys.length})` }}
@@ -500,6 +746,16 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
     <template v-if="viewMode === 'all'">
       <div v-if="overviewMeasured" class="overview-status">
         <span>已测节点：<b>{{ overviewMeasured }}</b> 个</span>
+        <button
+          v-if="totalFlappingCount > 0"
+          type="button"
+          class="stat-pill flapping-btn"
+          :class="{ active: statusFilter === 'flapping' }"
+          title="点击切换：仅查看检出多出口 IP 漂移或状态波动的节点"
+          @click="statusFilter = statusFilter === 'flapping' ? 'all' : 'flapping'"
+        >
+          ⇄ 漂移节点 <b>{{ totalFlappingCount }}</b>
+        </button>
         <small>未测节点点击“⚡ 检测”即可一键验证可用性。</small>
       </div>
       <div v-if="filteredOverviewRows.length" class="service-overview">
@@ -508,7 +764,10 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
             <input type="checkbox" :checked="selected.includes(row.key)" :aria-label="`选择 ${row.node.displayName}`" @change="emit('toggle', row.key)">
             <span class="overview-flag">{{ row.node.countryFlag || '🌐' }}</span>
             <div class="overview-node-text">
-              <strong :title="row.node.displayName">{{ row.node.displayName }}</strong>
+              <div class="node-title-line">
+                <strong :title="row.node.displayName">{{ row.node.displayName }}</strong>
+                <span v-if="nodeHasDrift(row)" class="node-drift-badge" title="该节点在部分服务中检测到多出口 IP 漂移或状态波动">⇄ 漂移</span>
+              </div>
               <small>{{ row.node.countryCode || 'OTHER' }} · {{ row.node.type || '节点' }}</small>
             </div>
           </label>
@@ -521,14 +780,17 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
             >
               <button
                 type="button"
-                :class="['overview-service-pill', item.report.total ? tone(item.report.latest) : 'untested']"
+                :class="['overview-service-pill', item.report.total ? tone(item.report.latest) : 'untested', { 'has-drift': hasFlappingOrDrift(item.report) }]"
                 :title="`${item.service.label}：${item.report.total ? label(item.report.latest) : '未检测'} · 点击深入查看`"
-                @click="inspected = item.report.latest || null"
+                @mouseenter="handleOverviewPillEnter($event, row, item)"
+                @mouseleave="hideTooltip"
+                @click="inspected = item.report.latest || null; inspectedNodeKey = row.key"
               >
                 <span class="pill-dot"></span>
                 <span class="svc-name">{{ item.service.label.split(' ')[0] }}</span>
                 <strong class="svc-status">{{ item.report.total ? label(item.report.latest) : '未测' }}</strong>
                 <small v-if="item.report.latest?.result?.duration_ms" class="svc-dur">{{ item.report.latest.result.duration_ms }}ms</small>
+                <span v-if="hasFlappingOrDrift(item.report)" class="pill-flapping-tag" title="检出多出口漂移或状态波动">⇄</span>
                 <span v-if="item.report.total > 0" class="service-score" style="display:none">{{ Math.round((item.report.passed / item.report.total) * 100) }}%</span>
               </button>
             </span>
@@ -545,6 +807,16 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
         <div class="summary-stat-group">
           <span class="stat-pill">已测节点 <b>{{ measured.length }}</b> / {{ rows.length }}</span>
           <span v-if="changed > 0" class="stat-pill warn">波动节点 <b>{{ changed }}</b></span>
+          <button
+            v-if="totalFlappingCount > 0"
+            type="button"
+            class="stat-pill flapping-btn"
+            :class="{ active: statusFilter === 'flapping' }"
+            title="点击切换：仅查看检出多出口 IP 漂移或状态波动的节点"
+            @click="statusFilter = statusFilter === 'flapping' ? 'all' : 'flapping'"
+          >
+            ⇄ 漂移节点 <b>{{ totalFlappingCount }}</b>
+          </button>
         </div>
       </div>
 
@@ -564,11 +836,17 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
                 <div class="card-tags-line">
                   <span v-if="row.node.countryCode" class="card-tag region">{{ row.node.countryCode }}</span>
                   <span class="card-tag protocol">{{ row.node.type || '节点' }}</span>
+                  <span v-if="hasFlappingOrDrift(row.report)" class="card-tag flapping" title="检出多出口漂移或状态震荡">⇄ 漂移</span>
                 </div>
               </div>
             </label>
             <div class="card-actions-v5">
-              <span class="outcome-badge-v5" :class="tone(row.report.latest)">
+              <span
+                class="outcome-badge-v5"
+                :class="tone(row.report.latest)"
+                @mouseenter="handleSingleCardEnter($event, row)"
+                @mouseleave="hideTooltip"
+              >
                 <span class="badge-dot"></span>
                 {{ row.report.total ? label(row.report.latest) : states[row.key] === 'loading' ? '读取中…' : '未检测' }}
               </span>
@@ -619,7 +897,7 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
                 ⚠️ 波动 {{ row.report.changes }} 次
               </span>
               <span class="meta-time">{{ stampRelative(row.report.latest!) }}</span>
-              <button type="button" class="btn-evidence-detail" @click="inspected = row.report.latest || null">
+              <button type="button" class="btn-evidence-detail" @click="inspected = row.report.latest || null; inspectedNodeKey = row.key">
                 详情 →
               </button>
             </div>
@@ -640,31 +918,200 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
       {{ selected.length ? `已选 ${selected.length} 条线路，等待开始检测；结果会在这里出现。` : '选择好服务和节点，即可开始检测。' }}
     </p>
 
-    <section v-if="inspected" class="service-inspector" role="region" aria-label="服务检测记录">
-      <button class="close-inspector" aria-label="关闭检测记录" @click="inspected = null">×</button>
-      <span>检测依据 · {{ stamp(inspected) }}</span>
-      <h3>{{ inspected.display_name }} · {{ inspected.rule.name }}</h3>
-      <strong class="outcome" :class="tone(inspected)">{{ label(inspected) }}</strong>
-      <p>{{ inspected.result?.summary || inspected.result?.error_message }}</p>
-      <dl>
-        <div v-for="(value, key) in inspected.result?.details" :key="key">
-          <dt>{{ serviceDetailLabel(String(key)) }}</dt>
-          <dd>{{ value || '未提供' }}</dd>
+    <!-- Centered Modal Inspector with Full History and Drift Analysis -->
+    <div v-if="inspected" class="service-inspector-modal-backdrop" @click.self="inspected = null">
+      <section class="service-inspector" role="dialog" aria-modal="true" aria-label="服务检测记录">
+        <button class="close-inspector" aria-label="关闭检测记录" @click="inspected = null">×</button>
+        <div class="inspector-header">
+          <div class="inspector-badge-row">
+            <span class="inspector-service-badge">{{ inspected.rule?.category || '公网服务' }}</span>
+            <span class="inspector-time-tag">检测依据 · {{ stamp(inspected) }}</span>
+          </div>
+          <h3>{{ inspected.display_name }} · {{ inspected.rule.name }}</h3>
+          <div class="inspector-status-row">
+            <strong class="outcome" :class="tone(inspected)">{{ label(inspected) }}</strong>
+            <button
+              v-if="inspectedNodeKey"
+              type="button"
+              class="inspector-retest-btn"
+              :disabled="running"
+              @click="handleRetestInspected"
+            >
+              ⚡ 重新检测此项
+            </button>
+          </div>
         </div>
-      </dl>
-      <details>
-        <summary>技术信息与保存状态</summary>
-        <p>HTTP {{ inspected.result?.http_status ?? '无响应' }} · {{ inspected.result?.duration_ms ?? '—' }} ms · {{ inspected.persistence_state === 'saved' ? '已保存' : '尚未保存' }}</p>
-        <p>{{ inspected.rule.success_criterion }}</p>
-        <p>{{ inspected.persistence_error }}</p>
-      </details>
-    </section>
+
+        <!-- Flapping / Drift Analysis in Inspector -->
+        <div v-if="inspectedDriftInfo.hasDrift" class="inspector-drift-card">
+          <div class="drift-header">
+            <span class="drift-title-icon">⇄</span>
+            <strong>漂移检测分析</strong>
+          </div>
+          <div v-if="inspectedDriftInfo.distinctIPs.length > 1" class="drift-row">
+            <span>检出 {{ inspectedDriftInfo.distinctIPs.length }} 个不同落地出口 IP：</span>
+            <div class="drift-ip-tags">
+              <code v-for="ip in inspectedDriftInfo.distinctIPs" :key="ip">{{ ip }}</code>
+            </div>
+          </div>
+          <div v-if="inspectedDriftInfo.changes > 0" class="drift-row">
+            <span>历史状态发生 {{ inspectedDriftInfo.changes }} 次跳变震荡 (可用率: {{ inspectedDriftInfo.passRate }}%)</span>
+          </div>
+        </div>
+
+        <p class="inspector-summary-text">{{ inspected.result?.summary || inspected.result?.error_message }}</p>
+
+        <!-- Key Metrics Bar -->
+        <div class="inspector-metrics-bar">
+          <div class="metric-item">
+            <span class="metric-lbl">HTTP 状态</span>
+            <strong class="metric-val">{{ inspected.result?.http_status ?? '无响应' }}</strong>
+          </div>
+          <div class="metric-item">
+            <span class="metric-lbl">响应耗时</span>
+            <strong class="metric-val">{{ inspected.result?.duration_ms ?? '—' }} ms</strong>
+          </div>
+          <div class="metric-item">
+            <span class="metric-lbl">读取数据量</span>
+            <strong class="metric-val">{{ inspected.result?.bytes_read ? `${(inspected.result.bytes_read / 1024).toFixed(1)} KiB` : '—' }}</strong>
+          </div>
+          <div class="metric-item">
+            <span class="metric-lbl">历史总测试</span>
+            <strong class="metric-val">{{ inspectedHistory.length }} 次</strong>
+          </div>
+        </div>
+
+        <dl>
+          <div v-for="(value, key) in inspected.result?.details" :key="key">
+            <dt>{{ serviceDetailLabel(String(key)) }}</dt>
+            <dd>{{ value || '未提供' }}</dd>
+          </div>
+        </dl>
+
+        <!-- Full History Timeline -->
+        <div v-if="inspectedHistory.length > 1" class="inspector-history-section">
+          <h4>完整测试历史记录 ({{ inspectedHistory.length }} 次)</h4>
+          <div class="inspector-history-table">
+            <div
+              v-for="(hist, idx) in inspectedHistory"
+              :key="hist.attempt_id || idx"
+              class="history-row-item"
+              :class="{ 'is-current': hist.attempt_id === inspected.attempt_id }"
+            >
+              <div class="hist-time">{{ stamp(hist) }}</div>
+              <div class="hist-badge">
+                <span class="hist-dot" :class="tone(hist)"></span>
+                <span :class="tone(hist)">{{ label(hist) }}</span>
+              </div>
+              <div class="hist-dur">{{ hist.result?.duration_ms ? `${hist.result.duration_ms} ms` : '—' }}</div>
+              <div class="hist-http">HTTP {{ hist.result?.http_status ?? '—' }}</div>
+              <div class="hist-ip">{{ hist.result?.details?.ip || '—' }}</div>
+              <div class="hist-summary" :title="hist.result?.summary || hist.result?.error_message || ''">
+                {{ hist.result?.summary || hist.result?.error_message || '—' }}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <details>
+          <summary>技术信息与保存状态</summary>
+          <p>HTTP {{ inspected.result?.http_status ?? '无响应' }} · {{ inspected.result?.duration_ms ?? '—' }} ms · {{ inspected.persistence_state === 'saved' ? '已保存' : '尚未保存' }}</p>
+          <p>{{ inspected.rule.success_criterion }}</p>
+          <p>{{ inspected.persistence_error }}</p>
+        </details>
+      </section>
+    </div>
+
+    <!-- Hover Tooltip Popover -->
+    <ServiceHistoryTooltip
+      :visible="tooltipState.visible"
+      :x="tooltipState.x"
+      :y="tooltipState.y"
+      :service-name="tooltipState.serviceName"
+      :service-id="tooltipState.serviceId"
+      :node-name="tooltipState.nodeName"
+      :node-flag="tooltipState.nodeFlag"
+      :country-code="tooltipState.countryCode"
+      :history="tooltipState.history"
+      :rule-evidence="tooltipState.ruleEvidence"
+    />
   </div>
 </template>
 
 <style scoped>
 .service-results {
   padding: 16px 20px;
+}
+.service-nav-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.service-nav-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.nav-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+.nav-back-btn.primary {
+  background: var(--card-subtle);
+  border: 1px solid var(--border);
+  color: var(--primary);
+}
+.nav-back-btn.primary:hover {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: white;
+  transform: translateX(-2px);
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
+}
+.nav-back-btn.subtle {
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--text-secondary);
+}
+.nav-back-btn.subtle:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.nav-crumb-separator {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.service-count-chip {
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--card-subtle);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+.heading-badge-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.service-rule-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(99, 102, 241, 0.12);
+  color: var(--primary);
+  font-weight: 700;
 }
 .results-heading {
   display: flex;
@@ -694,20 +1141,86 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
 .results-tools {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
   margin-left: auto;
 }
-.results-tools label {
-  font-size: 12px;
-  display: flex;
+.search-input-group {
+  position: relative;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  color: var(--text-secondary);
 }
-.checkbox-inline {
+.search-input-group .search-icon {
+  position: absolute;
+  left: 9px;
+  font-size: 12px;
+  pointer-events: none;
+  opacity: 0.6;
+}
+.search-input-group .service-search-input {
+  padding: 6px 26px 6px 28px;
+  font-size: 12px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--card-subtle);
+  color: var(--text-main);
+  width: 170px;
+  transition: all 0.15s ease;
+}
+.search-input-group .service-search-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  background: var(--card-bg);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+}
+.search-clear-btn {
+  position: absolute;
+  right: 6px;
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+.search-clear-btn:hover {
+  color: var(--text-main);
+}
+.tool-select-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.tool-label {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  font-weight: 550;
+}
+.custom-toggle-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--card-subtle);
+  font-size: 11.5px;
+  color: var(--text-secondary);
   cursor: pointer;
   user-select: none;
+  transition: all 0.15s ease;
+}
+.custom-toggle-label:hover {
+  background: var(--card-bg);
+  border-color: var(--border-focus);
+}
+.custom-toggle-label.active {
+  background: rgba(99, 102, 241, 0.1);
+  border-color: var(--primary);
+  color: var(--primary);
+  font-weight: 600;
 }
 .batch-action-group {
   display: flex;
@@ -1127,35 +1640,213 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
   border-color: var(--primary);
 }
 
+/* Modal Dialog Backdrop & Centered Inspector */
+.service-inspector-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(5px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: fadeInBackdrop 0.15s ease-out;
+}
+
+@keyframes fadeInBackdrop {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 .service-inspector {
   position: relative;
-  margin-top: 20px;
+  width: 740px;
+  max-width: 95vw;
+  max-height: 88vh;
+  overflow-y: auto;
   padding: 24px;
-  background: var(--card-subtle);
-  border: 1px solid var(--primary);
-  border-radius: 12px;
+  background: var(--card-bg, #ffffff);
+  border: 1px solid var(--border-focus, #3b82f6);
+  border-radius: 14px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  animation: modalSlideUp 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+:global(.dark) .service-inspector {
+  background: #18202f;
+  border-color: #3b82f6;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+}
+
+@keyframes modalSlideUp {
+  from { opacity: 0; transform: translateY(16px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.inspector-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.inspector-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.inspector-service-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(59, 130, 246, 0.12);
+  color: #2563eb;
+}
+:global(.dark) .inspector-service-badge {
+  background: rgba(96, 165, 250, 0.2);
+  color: #93c5fd;
+}
+.inspector-time-tag {
+  font-size: 11px;
+  color: var(--text-secondary);
 }
 .service-inspector h3 {
-  font-size: 18px;
-  margin: 10px 0;
+  font-size: 19px;
+  font-weight: 750;
+  margin: 4px 0;
+  color: var(--text-primary);
 }
-.service-inspector > span,
-.service-inspector p {
+.inspector-status-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+}
+.inspector-retest-btn {
+  padding: 4px 12px;
   font-size: 12px;
-  color: var(--text-secondary);
-  margin: 12px 0;
-  line-height: 1.7;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid var(--primary);
+  background: var(--primary);
+  color: #ffffff;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.inspector-retest-btn:hover:not(:disabled) {
+  opacity: 0.9;
+  transform: translateY(-1px);
 }
 .close-inspector {
   position: absolute;
-  right: 16px;
-  top: 12px;
-  font-size: 24px;
+  right: 18px;
+  top: 16px;
+  font-size: 26px;
+  line-height: 1;
   background: none;
   border: none;
   cursor: pointer;
   color: var(--text-secondary);
+  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
+.close-inspector:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text-primary);
+}
+:global(.dark) .close-inspector:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* Flapping & Drift Card in Inspector */
+.inspector-drift-card {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+:global(.dark) .inspector-drift-card {
+  background: #2b2214;
+  border-color: #78350f;
+  color: #fde68a;
+}
+.drift-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.drift-title-icon {
+  font-weight: 800;
+  font-size: 14px;
+}
+.drift-row {
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.drift-ip-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.drift-ip-tags code {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #fef3c7;
+  border: 1px solid #fde68a;
+  font-family: monospace;
+  font-size: 11px;
+}
+:global(.dark) .drift-ip-tags code {
+  background: #451a03;
+  border-color: #92400e;
+}
+
+.inspector-summary-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 10px 0;
+  line-height: 1.6;
+}
+
+/* Metrics Bar */
+.inspector-metrics-bar {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin: 14px 0;
+  padding: 10px;
+  background: var(--card-subtle);
+  border-radius: 8px;
+}
+.metric-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.metric-lbl {
+  font-size: 10.5px;
+  color: var(--text-secondary);
+}
+.metric-val {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
 .service-inspector dl {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -1164,11 +1855,11 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
 }
 .service-inspector dl div {
   padding: 10px;
-  background: var(--card-bg);
+  background: var(--card-subtle);
   border-radius: 7px;
 }
 .service-inspector dt {
-  font-size: 10px;
+  font-size: 10.5px;
   color: var(--text-secondary);
 }
 .service-inspector dd {
@@ -1176,10 +1867,157 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
   overflow-wrap: anywhere;
   margin: 5px 0 0;
 }
+
+/* History Timeline Table */
+.inspector-history-section {
+  margin: 18px 0 10px;
+  border-top: 1px dashed var(--border);
+  padding-top: 14px;
+}
+.inspector-history-section h4 {
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0 0 10px;
+  color: var(--text-primary);
+}
+.inspector-history-table {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.history-row-item {
+  display: grid;
+  grid-template-columns: 140px 90px 70px 80px 110px 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--card-subtle);
+  font-size: 11px;
+}
+.history-row-item.is-current {
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+.hist-time {
+  font-size: 10.5px;
+  color: var(--text-secondary);
+}
+.hist-badge {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+}
+.hist-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.hist-dot.good { background: #10b981; }
+.hist-dot.bad { background: #ef4444; }
+.hist-dot.limited { background: #f59e0b; }
+.hist-dur {
+  font-weight: 700;
+  font-family: monospace;
+}
+.hist-http {
+  color: var(--text-secondary);
+  font-family: monospace;
+}
+.hist-ip {
+  color: var(--text-secondary);
+  font-family: monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hist-summary {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .service-inspector summary {
   font-size: 12px;
   cursor: pointer;
+  margin-top: 10px;
+  color: var(--text-secondary);
 }
+
+/* Flapping Badge & Filter Styles */
+.flapping-btn {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fde68a;
+  cursor: pointer;
+}
+.flapping-btn.active {
+  background: #f59e0b;
+  color: #ffffff;
+  border-color: #d97706;
+}
+:global(.dark) .flapping-btn {
+  background: #38260f;
+  color: #fde68a;
+  border-color: #78350f;
+}
+:global(.dark) .flapping-btn.active {
+  background: #d97706;
+  color: #ffffff;
+}
+
+.node-title-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.node-drift-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #fef3c7;
+  color: #b45309;
+  border: 1px solid #fde68a;
+}
+:global(.dark) .node-drift-badge {
+  background: #451a03;
+  color: #fcd34d;
+  border-color: #92400e;
+}
+
+.pill-flapping-tag {
+  font-size: 9px;
+  font-weight: 800;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: #fef3c7;
+  color: #b45309;
+  border: 1px solid #fcd34d;
+  margin-left: 2px;
+}
+:global(.dark) .pill-flapping-tag {
+  background: #451a03;
+  color: #fcd34d;
+  border-color: #92400e;
+}
+
+.card-tag.flapping {
+  background: #fef3c7;
+  color: #b45309;
+  border: 1px solid #fde68a;
+  font-weight: 700;
+}
+:global(.dark) .card-tag.flapping {
+  background: #451a03;
+  color: #fcd34d;
+  border-color: #92400e;
+}
+
 
 /* Overview Mode Styles */
 .overview-status {
