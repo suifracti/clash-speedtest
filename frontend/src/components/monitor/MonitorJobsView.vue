@@ -8,6 +8,7 @@ import MonitorTransfer from './MonitorTransfer.vue'
 import { isNoticeNode, loadNoticeOverrides } from '../../utils/nodeFilter'
 import { buildLogicalProfileChoices, logicalChoiceForProfile, type LogicalProfileChoice } from '../../utils/logicalProfiles'
 import type { MonitorJob, MonitorJobNode, MonitorJobPrefill, MonitorNodeOption, MonitorNodeSelectionContext, MonitorRun, MonitorSamplingTier, NodeDetailRequest } from '../../types'
+import InteractiveTrendSparkline, { type TrendPoint } from '../workbench/InteractiveTrendSparkline.vue'
 
 const props = defineProps<{ prefill?: MonitorJobPrefill | null }>()
 
@@ -295,6 +296,19 @@ async function loadRunHistory(nextJobs: MonitorJob[]): Promise<void> {
 	recentRuns.value = Object.fromEntries(entries)
 }
 
+
+function jobTrendPoints(jobId: string): TrendPoint[] {
+  const runs = recentRuns.value[jobId] || []
+  return runs.map(r => ({
+    id: r.runId,
+    time: Date.parse(r.startedAt),
+    latencyMs: r.status === 'completed' ? (r.successNodes > 0 ? 50 : 0) : 0,
+    status: r.status === 'completed' ? (r.successNodes === r.totalNodes ? 'completed' : 'partial_failed') : 'failed',
+    loss: r.totalNodes > 0 ? Math.round(((r.totalNodes - r.successNodes) / r.totalNodes) * 100) : 0,
+    summary: `${r.successNodes}/${r.totalNodes} 节点成功`,
+  })).sort((a, b) => a.time - b.time)
+}
+
 async function reload(showSpinner = false): Promise<void> {
   if (refreshInFlight) return
   refreshInFlight = true
@@ -482,6 +496,14 @@ function openNodeDetail(job: MonitorJob, node: MonitorJobNode): void {
 onMounted(async () => {
   await reload(true)
   if (props.prefill) applyPrefill(props.prefill)
+  const savedProf = localStorage.getItem('speedtest.selected-profile-id')
+  if (savedProf && savedProf !== 'all' && !profileId.value) {
+    const match = profileChoices.value.find(p => p.id === savedProf || p.profileIds.includes(savedProf))
+    if (match) {
+      profileId.value = match.id
+      profileIds.value = [...match.profileIds]
+    }
+  }
   // Poll only the read model. Leaving this page never calls Stop/Pause.
   refreshTimer = setInterval(() => void reload(), 5000)
 })
@@ -729,7 +751,12 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="mt-3 border-t border-border pt-2">
-              <div class="mb-1 text-[11px] font-medium text-content-secondary">最近运行结果</div>
+              <div class="mb-2 flex items-center justify-between">
+                <span class="text-[11px] font-medium text-content-secondary">📈 历史运行走势 (悬浮看详情):</span>
+                <div style="width: 140px; height: 26px;">
+                  <InteractiveTrendSparkline :points="jobTrendPoints(job.id)" type="latency" :height="26" />
+                </div>
+              </div>
               <div v-if="runErrors[job.id]" class="text-[11px] text-red-600 dark:text-red-400">读取失败：{{ runErrors[job.id] }}</div>
               <div v-else-if="(recentRuns[job.id] ?? []).length === 0" class="text-[11px] text-content-muted">暂无实际运行记录；启动后首轮会立即按现有 Scheduler 语义执行。</div>
               <div v-else class="space-y-1">

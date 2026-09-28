@@ -430,10 +430,14 @@ function formatDate(iso?: string): string {
         <p>用量来自机场提供的快照<br>刷新订阅时同步更新，不合并共享套餐额度</p>
       </div>
 
-      <section v-if="embedded && (attentionCount || readAttentionCount)" class="attention-inbox" aria-label="需要处理的订阅">
-        <div class="attention-heading"><span class="attention-icon">{{ attentionCount ? '!' : '✓' }}</span><div><h2>{{ attentionCount ? `${attentionCount} 条订阅需要你看一眼` : '当前提醒均已读' }}</h2><p>每次标为已读后，剩余流量降至当时的一半再提醒；出现新问题也会提醒。</p></div><button @click="showReadAttention = !showReadAttention">{{ showReadAttention ? `未读（${attentionCount}）` : `查看已读（${readAttentionCount}）` }}</button><button @click="attentionOnly = !attentionOnly">{{ attentionOnly ? '返回全部订阅' : '只看需处理订阅' }}</button></div>
-        <div class="attention-items"><div v-for="entry in displayedAttention" :key="attentionKey(entry.sub)" class="attention-entry"><button class="attention-open" :disabled="busy" @click="attentionOnly = !showReadAttention; selectAirport(entry.ap.id)"><span><strong>{{ entry.ap.name }} · {{ entry.sub.name }}</strong><small>{{ attentionReason(entry.sub) }}</small></span><b>查看套餐 →</b></button><button class="attention-read" :disabled="busy" @click="markAttention(entry.sub, !showReadAttention)">{{ showReadAttention ? '标为未读' : '标为已读' }}</button></div><p v-if="!displayedAttention.length" class="attention-empty">{{ showReadAttention ? '暂无已读提醒' : '暂无未读提醒' }}</p></div>
-      </section>
+      <!-- Compact Attention Alert Bar -->
+      <div v-if="embedded && attentionCount > 0" class="compact-attention-banner">
+        <span class="compact-attention-tag">⚠️ 订阅提醒</span>
+        <span class="compact-attention-text">有 {{ attentionCount }} 条订阅需要注意（流量将耗尽或即将到期）</span>
+        <button type="button" class="compact-attention-btn" @click="attentionOnly = !attentionOnly">
+          {{ attentionOnly ? '显示全部订阅' : '仅看需关注项' }}
+        </button>
+      </div>
 
       <div class="manager-layout">
       <aside v-if="embedded" class="airport-browser" aria-label="机场列表">
@@ -704,7 +708,12 @@ function formatDate(iso?: string): string {
             </div>
 
             <!-- Level 2: Subscriptions List -->
-            <AirportMaintenancePanel :airport="ap" :discovered-links="discoveredLinks(ap)" @saved="store.loadAirports()" />
+            <details class="airport-maintenance-collapsible">
+              <summary>⚙️ 高级管理与自动化配置 (定时刷新 / 发现入口)</summary>
+              <div class="maint-content-wrap">
+                <AirportMaintenancePanel :airport="ap" :discovered-links="discoveredLinks(ap)" @saved="store.loadAirports()" />
+              </div>
+            </details>
             <div class="subscriptions-list">
               <template v-if="ap.subscriptions && ap.subscriptions.length > 0">
                 <div
@@ -911,4 +920,76 @@ progress::-webkit-progress-value { background: var(--primary); }
   .subscription-actions { justify-content: flex-start; flex-wrap: wrap; }
   .manager-toolbar input { width: 100%; }
 }
+
+/* V5 Compact Modern Subscription Manager */
+.compact-attention-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  margin-bottom: 12px;
+  background: #fef9c3;
+  border: 1px solid #fde047;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #854d0e;
+}
+.compact-attention-tag {
+  font-weight: 700;
+  font-size: 11px;
+}
+.compact-attention-text {
+  flex: 1;
+}
+.compact-attention-btn {
+  font-size: 11px;
+  font-weight: 600;
+  color: #854d0e;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.airport-maintenance-collapsible {
+  margin: 10px 16px 6px;
+  border: 1px dashed var(--border, #cbd5e1);
+  border-radius: 6px;
+  background: var(--card-subtle, #f8fafc);
+  font-size: 12px;
+}
+.airport-maintenance-collapsible > summary {
+  padding: 8px 12px;
+  cursor: pointer;
+  color: var(--text-secondary, #64748b);
+  font-weight: 500;
+}
+.maint-content-wrap {
+  padding: 10px 12px;
+  border-top: 1px dashed var(--border, #cbd5e1);
+}
+.airport-workspace .manager-overview {
+  padding: 12px 18px !important;
+  margin-bottom: 16px !important;
+  gap: 20px !important;
+}
+.airport-workspace .manager-overview strong {
+  font-size: 20px !important;
+}
+.airport-workspace .subscription-row {
+  padding: 14px 18px !important;
+  gap: 10px !important;
+}
+.airport-workspace .subscription-usage {
+  padding: 10px 14px !important;
+  margin-top: 8px !important;
+  border-radius: 6px !important;
+}
+.airport-workspace .usage-heading strong {
+  font-size: 16px !important;
+}
+.airport-workspace .airport-header {
+  padding: 14px 18px !important;
+}
+.airport-workspace .airport-name-line strong {
+  font-size: 17px !important;
+}
+
 </style>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { fetchSettings, saveSettings } from '../../api/bridge'
 import type { MonitorNodeOption, WorkbenchPublicServiceRule } from '../../types'
 import type { LogicalProfileChoice } from '../../utils/logicalProfiles'
 import { serviceEvidence, serviceGroup, serviceTitle } from '../../utils/servicePresentation'
@@ -64,7 +65,18 @@ function clearNodes() { if (!props.disabled) emit('update:selectedNodeKeys', [])
 const favoriteKey = 'speedtest.favorite-services.v1'
 function readFavorites(): string[] { try { const value = JSON.parse(localStorage.getItem(favoriteKey) || '[]'); return Array.isArray(value) ? value.filter(v => typeof v === 'string') : [] } catch { return [] } }
 const favorites = ref(readFavorites())
-watch(favorites, ids => { try { localStorage.setItem(favoriteKey, JSON.stringify(ids)) } catch { /* private storage */ } }, { deep: true })
+onMounted(async () => {
+  try {
+    const settings = await fetchSettings()
+    if (Array.isArray(settings.favorite_services) && settings.favorite_services.length > 0) {
+      favorites.value = Array.from(new Set([...favorites.value, ...settings.favorite_services]))
+    }
+  } catch {}
+})
+watch(favorites, ids => {
+  try { localStorage.setItem(favoriteKey, JSON.stringify(ids)) } catch {}
+  void fetchSettings().then(s => saveSettings({ ...s, favorite_services: ids })).catch(() => {})
+}, { deep: true })
 const groups = computed(() => ['推荐', '我的常用', ...new Set(props.catalog.map(serviceGroup))])
 const regions = computed(() => ['全部地区', ...new Set(props.catalog.map(r => r.region || '全球'))].map(value => ({ value, label: value })))
 const filtered = computed(() => props.catalog.filter(r =>

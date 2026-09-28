@@ -2,6 +2,7 @@
 import { serviceOutcomeLabel } from "../../utils/serviceOutcome"
 import { baselineLatencyTest, latencySiteResults, suiteHealth } from '../../utils/latencyTargets'
 import MultiSiteLatencyTrend from './MultiSiteLatencyTrend.vue'
+import InteractiveTrendSparkline, { type TrendPoint } from './InteractiveTrendSparkline.vue'
 import AppIcon from '../common/AppIcon.vue'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { fetchMonitorNodeOptions, fetchMonitorJobs } from '../../api/monitor'
@@ -99,6 +100,10 @@ function setProfileScope(value: string): void {
   const logical = logicalChoiceForProfile(logicalProfileChoices.value, value)
   selectedProfileIds.value = value === 'all' ? [] : logical?.profileIds || [value]
   selectedProfileId.value = logical?.id || value
+  try {
+    localStorage.setItem('speedtest.selected-profile-id', selectedProfileId.value)
+  } catch {}
+  void api.fetchSettings().then(s => api.saveSettings({ ...s, selected_profile_id: selectedProfileId.value })).catch(() => {})
 }
 function profileInScope(profileId: string): boolean {
   return selectedProfileIds.value.length === 0 || selectedProfileIds.value.includes(profileId)
@@ -1439,6 +1444,25 @@ const healthReportCache = computed(() => {
   return map
 })
 
+
+function nodeLatencyTrendPoints(key: string): TrendPoint[] {
+  const tests = testsForKey(key)
+  return tests.map(t => ({
+    id: t.attempt_id,
+    time: Date.parse(t.finished_at || t.requested_at),
+    latencyMs: t.latency_ms,
+    loss: t.packet_loss,
+    status: t.status,
+  })).sort((a, b) => a.time - b.time)
+}
+
+function handleBackToServicePicker(): void {
+  const el = document.querySelector('.service-library')
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+}
+
 const healthComparisonCache = computed(() => {
   const map: Record<string, LatencyAttemptComparison> = {}
   for (const node of visibleOptions.value) {
@@ -1496,7 +1520,10 @@ function scopedHealthReport(key: string): NodeHealthReport | null {
   }
   return report
 }
-function testMatchesKey(test: WorkbenchLatencyTest, key: string): boolean { const option = optionForKey(key); return !!option && test.profile_id === option.profileId && test.node_key === option.nodeKey && test.node_identity_key === option.nodeIdentityKey && test.config_revision_key === option.configRevisionKey }
+function testMatchesKey(test: WorkbenchLatencyTest, key: string): boolean {
+  const option = optionForKey(key)
+  return !!option && test.profile_id === option.profileId && test.node_key === option.nodeKey
+}
 
 function upsertHistory(key: string, test: WorkbenchLatencyTest): void {
   const next = [test, ...(historyByKey.value[key] || []).filter((item) => item.attempt_id !== test.attempt_id)]
@@ -1541,7 +1568,12 @@ async function loadOptions(): Promise<void> {
     const loaded = await fetchMonitorNodeOptions()
     if (requestID !== optionsRequestID) return
     options.value = loaded
-    if (selectedProfileId.value !== 'all') setProfileScope(selectedProfileId.value)
+    const savedProf = localStorage.getItem('speedtest.selected-profile-id')
+    if (savedProf && savedProf !== 'all') {
+      setProfileScope(savedProf)
+    } else if (selectedProfileId.value !== 'all') {
+      setProfileScope(selectedProfileId.value)
+    }
     const canonical = canonicalOptions.value
     const validKeys = new Set(canonical.map(scopeKey))
     selectedKeys.value = selectedKeys.value.filter((key) => validKeys.has(key))
@@ -1599,12 +1631,12 @@ async function loadHistories(nodes: MonitorNodeOption[]): Promise<void> {
       const node = nodes[index]
       const key = scopeKey(node)
       const response = responses[index]
-      if (!Array.isArray(response.tests) || response.tests.some((test) => !testMatchesKey(test, key))) {
+      if (!response || !Array.isArray(response.tests)) {
         states[key] = 'error'
-        errors.push(`${node.displayName || node.nodeKey}：响应归属不一致`)
+        errors.push(`${node.displayName || node.nodeKey}：响应异常`)
         continue
       }
-      histories[key] = response.tests
+      histories[key] = response.tests.filter((test) => testMatchesKey(test, key))
       metas[key] = { hasMore: response.has_more, complete: response.complete }
       states[key] = 'ready'
     }
@@ -3109,6 +3141,7 @@ onUnmounted(() => {
         @run="handleRunServiceTest"
         @select-all="selectedKeys = $event"
         @clear-selection="clearSelection"
+        @back-to-picker="handleBackToServicePicker"
       />
       <DownloadComparison v-else-if="activeProject === 'throughput'" :rows="comparisonRows" :records="visibleDownloads" :selected="selectedKeys" :states="projectHistoryStateByKey" :partial="projectHistoryMetaByKey" @toggle="toggleSelected" @detail="openNodeDetail" />
       <ul v-else class="node-list" role="listbox" aria-label="节点列表">
@@ -3170,6 +3203,9 @@ onUnmounted(() => {
                   <span class="pill-label">{{ pill.label }}</span>
                 </button>
               </div>
+            </div>
+            <div class="compact-cell-sparkline" title="历史延迟走势（鼠标悬浮看本次/上次/上上次对比）">
+              <InteractiveTrendSparkline :points="nodeLatencyTrendPoints(scopeKey(node))" type="latency" :height="26" />
             </div>
             <div class="compact-cell-actions">
               <button type="button" class="row-action-btn" :disabled="batchBusy" @click.stop="runTest([scopeKey(node)])">⚡ 测速</button>
@@ -4769,6 +4805,19 @@ onUnmounted(() => {
   .latency-table .node-evidence { grid-column: 2; }
 }
 @media (max-width: 680px) { .health-grid-cards { grid-template-columns: 1fr; } .batch-item-row { grid-template-columns: 1fr 1fr; } .batch-item-result { grid-column: 1 / -1; } .batch-scroll { max-height: 300px; } }
+
+.compact-cell-sparkline {
+  display: flex;
+  align-items: center;
+  width: 140px;
+  min-width: 110px;
+  height: 28px;
+  padding: 0 4px;
+  background: var(--card-subtle, #f8fafc);
+  border-radius: 6px;
+  border: 1px solid var(--border, #e2e8f0);
+}
+
 </style>
 
 <style scoped>
@@ -4794,4 +4843,17 @@ onUnmounted(() => {
 .latency-table .node-row { border-bottom-color: color-mix(in srgb, var(--border) 70%, transparent); }
 .latency-table .row-health-overview { background: transparent; }
 @media(max-width: 700px) { .workspace-context { display: none; }.prototype-page-heading h1 { font-size: 22px; } }
+
+.compact-cell-sparkline {
+  display: flex;
+  align-items: center;
+  width: 140px;
+  min-width: 110px;
+  height: 28px;
+  padding: 0 4px;
+  background: var(--card-subtle, #f8fafc);
+  border-radius: 6px;
+  border: 1px solid var(--border, #e2e8f0);
+}
+
 </style>

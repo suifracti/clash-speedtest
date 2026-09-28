@@ -4,6 +4,7 @@ import type { MonitorNodeOption, WorkbenchPublicServiceAttempt, WorkbenchPublicS
 import { serviceDetailLabel, serviceOutcomeLabel } from '../../utils/serviceOutcome'
 import { serviceEvidence, serviceTitle, summarizeService } from '../../utils/servicePresentation'
 import UiSelect from '../common/UiSelect.vue'
+import InteractiveTrendSparkline, { type TrendPoint } from './InteractiveTrendSparkline.vue'
 
 const props = defineProps<{
   rows: { key: string; node: MonitorNodeOption }[]
@@ -23,6 +24,7 @@ const emit = defineEmits<{
   (e: 'run', keys?: string[]): void
   (e: 'select-all', keys: string[]): void
   (e: 'clear-selection'): void
+  (e: 'back-to-picker'): void
 }>()
 
 const focus = ref('')
@@ -30,6 +32,25 @@ const showAllNodes = ref(false)
 const inspected = ref<WorkbenchPublicServiceAttempt | null>(null)
 const viewMode = ref<'all' | 'single'>('all')
 const sortBy = ref<'region' | 'pass_rate' | 'status' | 'recent' | 'changes' | 'name'>('region')
+const selectedTimeWindow = ref<'24h' | '48h' | '7d' | 'all'>('24h')
+
+function nodeServiceTrendPoints(key: string): TrendPoint[] {
+  const list = props.records[key] || []
+  const filtered = viewMode.value === 'single' && focus.value
+    ? list.filter(a => a.service_id === focus.value)
+    : list
+  return filtered
+    .filter(a => a.result && a.result.outcome !== 'cancelled')
+    .map(a => ({
+      id: a.attempt_id,
+      time: Date.parse(a.result?.finished_at || a.finished_at || a.requested_at),
+      durationMs: a.result?.duration_ms,
+      status: ['matched', 'reachable', 'profiled', 'unlocked'].includes(a.result?.outcome || '') ? 'completed' : 'failed',
+      outcome: a.result?.outcome,
+      summary: cleanSummary(a.result, a.rule),
+    }))
+    .sort((a, b) => a.time - b.time)
+}
 
 const sortOptions = [
   { value: 'region', label: '按地区' },
@@ -559,6 +580,16 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
 
           <!-- Card Body -->
           <div v-if="row.report.total" class="card-body-v5">
+            <!-- Interactive Trend Sparkline -->
+            <div class="card-sparkline-row">
+              <span class="sparkline-title">历史走势 (悬浮看对比):</span>
+              <InteractiveTrendSparkline
+                :points="nodeServiceTrendPoints(row.key)"
+                type="service"
+                :window="selectedTimeWindow"
+                :height="30"
+              />
+            </div>
             <div class="card-evidence-line">
               <span v-if="row.report.latest?.result?.details?.checked_model" class="pill-model" title="已验证可用模型">
                 🤖 {{ row.report.latest.result.details.checked_model }}
@@ -1331,4 +1362,87 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
     width: 100%;
   }
 }
+
+.service-nav-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--card-bg, #ffffff);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 9px;
+  margin-bottom: 14px;
+}
+.back-to-picker-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--card-subtle, #f8fafc);
+  border: 1px solid var(--border, #cbd5e1);
+  color: var(--text-main, #0f172a);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.back-to-picker-btn:hover {
+  background: var(--primary-subtle, #eff6ff);
+  border-color: var(--primary, #3b82f6);
+  color: var(--primary, #3b82f6);
+}
+.back-arrow {
+  font-size: 15px;
+}
+.window-filter-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.window-filter-label {
+  font-size: 12px;
+  color: var(--text-secondary, #64748b);
+  font-weight: 500;
+}
+.window-pill {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 5px;
+  border: 1px solid var(--border, #cbd5e1);
+  background: var(--card-bg, #ffffff);
+  color: var(--text-secondary, #64748b);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.window-pill:hover {
+  border-color: var(--primary, #3b82f6);
+  color: var(--primary, #3b82f6);
+}
+.window-pill.active {
+  background: var(--primary, #3b82f6);
+  border-color: var(--primary, #3b82f6);
+  color: #ffffff;
+  font-weight: 600;
+}
+.card-sparkline-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--card-subtle, #f8fafc);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  border: 1px solid var(--border, #e2e8f0);
+}
+.sparkline-title {
+  font-size: 11px;
+  color: var(--text-secondary, #64748b);
+  white-space: nowrap;
+  font-weight: 500;
+}
+
 </style>

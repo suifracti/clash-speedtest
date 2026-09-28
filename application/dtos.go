@@ -347,6 +347,8 @@ type AppSettings struct {
 	MonitorBudgetDailyRequests *int64                  `json:"monitor_budget_daily_requests,omitempty"`
 	MonitorBudgetDailyBytes    *int64                  `json:"monitor_budget_daily_bytes,omitempty"`
 	MonitorBudgetResponseBytes *int64                  `json:"monitor_budget_response_bytes,omitempty"`
+	FavoriteServices           []string                `json:"favorite_services,omitempty"`
+	SelectedProfileID          string                  `json:"selected_profile_id,omitempty"`
 }
 
 // ControllerConfigDTO configures connection to external proxy controller.

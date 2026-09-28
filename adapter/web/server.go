@@ -1285,10 +1285,10 @@ func (s *Server) handleListWorkbenchLatencyTests(w http.ResponseWriter, r *http.
 // connection per node. Each entry still uses the existing scoped raw query.
 func (s *Server) handleListWorkbenchLatencyTestsBatch(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		TargetID string    `json:"target_id"`
-		Since    time.Time `json:"since"`
-		Until    time.Time `json:"until"`
-		Limit    int       `json:"limit"`
+		TargetID string     `json:"target_id"`
+		Since    *time.Time `json:"since"`
+		Until    *time.Time `json:"until"`
+		Limit    int        `json:"limit"`
 		Nodes    []struct {
 			ProfileID         string `json:"profile_id"`
 			NodeKey           string `json:"node_key"`
@@ -1296,19 +1296,24 @@ func (s *Server) handleListWorkbenchLatencyTestsBatch(w http.ResponseWriter, r *
 			ConfigRevisionKey string `json:"config_revision_key"`
 		} `json:"nodes"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10)).Decode(&request); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid history batch request")
 		return
 	}
-	if len(request.Nodes) == 0 || len(request.Nodes) > 200 || request.Limit < 1 || request.Limit > 100 {
-		writeError(w, http.StatusBadRequest, "history batch requires 1-200 nodes and limit 1-100")
+	if len(request.Nodes) == 0 || len(request.Nodes) > 2000 || request.Limit < 1 || request.Limit > 100 {
+		writeError(w, http.StatusBadRequest, "history batch requires 1-2000 nodes and limit 1-100")
 		return
 	}
+
+	var sincePtr, untilPtr *time.Time
+	if request.Since != nil && request.Until != nil && !request.Since.IsZero() && !request.Until.IsZero() && request.Since.Before(*request.Until) {
+		sincePtr = request.Since
+		untilPtr = request.Until
+	}
+
 	results := make([]application.WorkbenchLatencyHistoryResult, len(request.Nodes))
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, 10)
-	var firstErr error
-	var errMu sync.Mutex
+	sem := make(chan struct{}, 16)
 
 	for i, node := range request.Nodes {
 		wg.Add(1)
@@ -1326,44 +1331,30 @@ func (s *Server) handleListWorkbenchLatencyTestsBatch(w http.ResponseWriter, r *
 				return
 			}
 
-			errMu.Lock()
-			if firstErr != nil {
-				errMu.Unlock()
-				return
-			}
-			errMu.Unlock()
-
 			result, err := s.app.ListWorkbenchLatencyTests(r.Context(), application.WorkbenchLatencyHistoryQuery{
 				TargetID:          request.TargetID,
 				ProfileID:         n.ProfileID,
 				NodeKey:           n.NodeKey,
 				NodeIdentityKey:   n.NodeIdentityKey,
 				ConfigRevisionKey: n.ConfigRevisionKey,
-				Since:             &request.Since,
-				Until:             &request.Until,
+				Since:             sincePtr,
+				Until:             untilPtr,
 				Limit:             request.Limit,
 			})
 			if err != nil {
-				errMu.Lock()
-				if firstErr == nil {
-					firstErr = err
+				results[idx] = application.WorkbenchLatencyHistoryResult{
+					Tests:    []application.WorkbenchLatencyTestDTO{},
+					Complete: false,
 				}
-				errMu.Unlock()
 				return
+			}
+			if result.Tests == nil {
+				result.Tests = []application.WorkbenchLatencyTestDTO{}
 			}
 			results[idx] = result
 		}(i, node)
 	}
 	wg.Wait()
-
-	if firstErr != nil {
-		if monitor.IsValidationError(firstErr) {
-			writeError(w, http.StatusBadRequest, firstErr.Error())
-		} else {
-			writeError(w, http.StatusInternalServerError, firstErr.Error())
-		}
-		return
-	}
 	writeJSON(w, http.StatusOK, results)
 }
 

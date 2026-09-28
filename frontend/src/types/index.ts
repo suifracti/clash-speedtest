@@ -714,7 +714,9 @@ export interface AppSettings {
   monitor_budget_max_concurrent?: number
   monitor_budget_daily_requests?: number
   monitor_budget_daily_bytes?: number
-  monitor_budget_response_bytes?: number
+  monitor_budget_response_bytes?: number
+  favorite_services?: string[]
+  selected_profile_id?: string
 }
 
 export interface MonitorBudgetStatus {
