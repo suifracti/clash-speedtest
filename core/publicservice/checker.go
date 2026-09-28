@@ -68,7 +68,7 @@ var catalog = []Rule{
 	},
 	{
 		ServiceID: "antigravity", Name: "Google Antigravity 可用性", RuleVersion: 5,
-		Category: "AI 服务", Region: "全球", ResultKind: "account_availability", Description: "使用已绑定凭据发起极短模型请求，区分账号、地区与服务问题。",
+		Category: "AI 服务", Region: "全球", ResultKind: "account_availability", Description: "Google Antigravity (反重力) AI 辅助模型可用性探测。使用已绑定 Google 凭据发起极短模型请求，区分账号、地区与网络故障。",
 		TargetURL: antigravityBase + "streamGenerateContent?alt=sse", Method: http.MethodPost,
 		SuccessCriterion: "使用已绑定 Google 凭据，经所选节点查询项目和模型并发起短请求；仅实际模型输出判定可用。最多 3 个模型相关请求，另有 1 次不带凭据的 Cloudflare 出口观察；共享总超时，可能消耗少量账号额度。出口观察不代表 Google 实际看到的 IP",
 		RedirectPolicy:   "do_not_follow", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,

@@ -84,9 +84,9 @@ func checkAntigravity(ctx context.Context, client *http.Client, token string, st
 		// The model catalog is substantially larger than an ordinary probe
 		// response. Keep a bounded cap, but do not misclassify a valid catalog
 		// as unavailable just because it exceeds the generic 64 KiB limit.
-		maximum := MaximumResponseBytes
+		maximum := 1024 * 1024
 		if step == "fetchAvailableModels" {
-			maximum = 512 * 1024
+			maximum = 4 * 1024 * 1024
 		}
 		body, err := io.ReadAll(io.LimitReader(resp.Body, int64(maximum)+1))
 		r.BytesRead += int64(min(len(body), maximum))

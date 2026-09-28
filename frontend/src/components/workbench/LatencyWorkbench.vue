@@ -2048,6 +2048,29 @@ function triggerServiceBatchFromBar(): void {
   })
 }
 
+function onServiceSelectedFromComparison(serviceId: string): void {
+  barServiceId.value = serviceId
+  if (!selectedServiceIds.value.includes(serviceId)) {
+    selectedServiceIds.value = [...selectedServiceIds.value, serviceId]
+  }
+}
+
+function handleRunServiceTest(keys?: string[]): void {
+  const targetKeys = keys && keys.length > 0 ? keys : selectedKeys.value.length > 0 ? selectedKeys.value : comparisonRows.value.map(r => r.key)
+  if (!targetKeys.length || compositeRunning.value || batchBusy.value) return
+  if (keys && keys.length > 0) {
+    selectedKeys.value = [...new Set([...selectedKeys.value, ...keys])]
+  }
+  const svcs = (barServiceId.value && selectedServiceIds.value.includes(barServiceId.value))
+    ? [barServiceId.value]
+    : (selectedServiceIds.value.length ? selectedServiceIds.value : [barServiceId.value || 'antigravity'])
+  void runServiceBatch({
+    serviceIds: svcs,
+    repeatCount: barServiceRepeatCount.value,
+    timeoutSeconds: barServiceTimeout.value,
+  })
+}
+
 function scheduleBatchPoll(delayMs = 1000): void {
   if (batchPollTimer) clearTimeout(batchPollTimer)
   if (!activeBatchID) return
@@ -2896,7 +2919,23 @@ onUnmounted(() => {
         </ul>
       </div>
 
-      <ServiceComparison v-else-if="activeProject === 'service'" :rows="comparisonRows" :services="selectedServiceOptions" :catalog="publicServiceCatalog" :records="visibleServices" :selected="selectedKeys" :states="projectHistoryStateByKey" :partial="projectHistoryMetaByKey" @toggle="toggleSelected" @service="barServiceId = $event" @detail="openNodeDetail" />
+      <ServiceComparison
+        v-else-if="activeProject === 'service'"
+        :rows="comparisonRows"
+        :services="selectedServiceOptions"
+        :catalog="publicServiceCatalog"
+        :records="visibleServices"
+        :selected="selectedKeys"
+        :states="projectHistoryStateByKey"
+        :partial="projectHistoryMetaByKey"
+        :running="compositeRunning || batchBusy"
+        @toggle="toggleSelected"
+        @service="onServiceSelectedFromComparison"
+        @detail="openNodeDetail"
+        @run="handleRunServiceTest"
+        @select-all="selectedKeys = $event"
+        @clear-selection="clearSelection"
+      />
       <DownloadComparison v-else-if="activeProject === 'throughput'" :rows="comparisonRows" :records="visibleDownloads" :selected="selectedKeys" :states="projectHistoryStateByKey" :partial="projectHistoryMetaByKey" @toggle="toggleSelected" @detail="openNodeDetail" />
       <ul v-else class="node-list" role="listbox" aria-label="节点列表">
         <li v-for="node in visibleOptions" :key="scopeKey(node)" class="node-row" :class="{ 'is-focused': focusedKey === scopeKey(node), 'no-latency-history': activeProject === 'latency' && !allSiteTestsForKey(scopeKey(node)).length && !isTesting(scopeKey(node)), 'latency-health': activeProject === 'latency' && !!nodeHealthReport(scopeKey(node)), 'compact-mode-row': activeProject === 'latency' && !allNodesExpanded }" :aria-selected="isSelected(scopeKey(node))">
