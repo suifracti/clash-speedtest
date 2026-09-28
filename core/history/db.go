@@ -2654,3 +2654,29 @@ func (d *DB) ApplyRetention(ctx context.Context, req monitor.RetentionRequest) (
 		Partial:        false,
 	}, nil
 }
+
+// CleanupWorkbenchHistory prunes old latency tests, latency batches, download attempts,
+// and public service attempts older than the specified cutoff.
+func (d *DB) CleanupWorkbenchHistory(ctx context.Context, cutoff time.Time) (int64, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	var totalDeleted int64
+	if res, err := d.db.ExecContext(ctx, `DELETE FROM workbench_latency_tests WHERE finished_at < ?`, cutoff); err == nil {
+		c, _ := res.RowsAffected()
+		totalDeleted += c
+	}
+	if res, err := d.db.ExecContext(ctx, `DELETE FROM workbench_latency_batches WHERE requested_at < ?`, cutoff); err == nil {
+		c, _ := res.RowsAffected()
+		totalDeleted += c
+	}
+	if res, err := d.db.ExecContext(ctx, `DELETE FROM workbench_public_service_attempts WHERE finished_at < ?`, cutoff); err == nil {
+		c, _ := res.RowsAffected()
+		totalDeleted += c
+	}
+	if res, err := d.db.ExecContext(ctx, `DELETE FROM workbench_download_attempts WHERE finished_at < ?`, cutoff); err == nil {
+		c, _ := res.RowsAffected()
+		totalDeleted += c
+	}
+	return totalDeleted, nil
+}

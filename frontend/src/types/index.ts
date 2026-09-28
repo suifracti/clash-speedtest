@@ -233,7 +233,19 @@ export interface WorkbenchLatencyBatchRequest {
   test_project: 'latency_stability'
   timeout_seconds: number
   sample_count?: number
+  concurrency?: number
   selections: WorkbenchLatencyBatchSelection[]
+}
+
+export interface ExportClashConfigRequest {
+  node_keys: string[]
+  group_name?: string
+}
+
+export interface ExportClashConfigResponse {
+  yaml_content: string
+  node_count: number
+  node_names: string[]
 }
 
 export type WorkbenchLatencyBatchExecutionState = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'skipped_config' | 'not_executed' | 'interrupted'

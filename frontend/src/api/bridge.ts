@@ -36,6 +36,8 @@ import type {
   WorkbenchDownloadTestRequest,
   ProfileSetup,
   ProfileSource,
+  ExportClashConfigRequest,
+  ExportClashConfigResponse,
 } from '../types'
 
 declare global {
@@ -56,6 +58,87 @@ export function isWails(): boolean {
 }
 
 const API_BASE = ''
+
+let authToken = typeof localStorage !== 'undefined' ? localStorage.getItem('cst_auth_token') || '' : ''
+
+export function setAuthToken(token: string) {
+  authToken = token
+  if (typeof localStorage !== 'undefined') {
+    if (token) {
+      localStorage.setItem('cst_auth_token', token)
+    } else {
+      localStorage.removeItem('cst_auth_token')
+    }
+  }
+}
+
+export function getAuthToken(): string {
+  return authToken
+}
+
+async function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const reqInit = init ? { ...init } : {}
+  const headers = new Headers(reqInit.headers || {})
+  if (authToken && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${authToken}`)
+  }
+  reqInit.headers = headers
+  return fetch(input, reqInit)
+}
+
+export async function checkAuthStatus(): Promise<{ auth_required: boolean; authenticated: boolean }> {
+  if (isWails()) return { auth_required: false, authenticated: true }
+  try {
+    const res = await authFetch(`${API_BASE}/api/auth/status`)
+    if (!res.ok) return { auth_required: false, authenticated: true }
+    return res.json()
+  } catch {
+    return { auth_required: false, authenticated: true }
+  }
+}
+
+export async function loginWithPassword(password: string): Promise<{ token: string; authenticated: boolean }> {
+  const res = await authFetch(`${API_BASE}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  })
+  if (!res.ok) {
+    const errText = await res.text()
+    try {
+      const parsed = JSON.parse(errText)
+      throw new Error(parsed.error || errText)
+    } catch (e: any) {
+      if (e.message) throw e
+      throw new Error(errText)
+    }
+  }
+  const data = await res.json()
+  if (data.token) {
+    setAuthToken(data.token)
+  }
+  return data
+}
+
+export async function exportClashConfig(req: ExportClashConfigRequest): Promise<ExportClashConfigResponse> {
+  const res = await authFetch(`${API_BASE}/api/workbench/export-clash`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function cleanupWorkbenchHistory(olderThanDays = 30): Promise<{ deleted_count: number }> {
+  const res = await authFetch(`${API_BASE}/api/workbench/cleanup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ older_than_days: olderThanDays }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
 
 // --- Event Subscription ---
 
@@ -123,7 +206,7 @@ export async function fetchProfileSetup(): Promise<ProfileSetup> {
   if (isWails()) {
     return window.go!.desktop!.App!.GetProfileSetup()
   }
-  const res = await fetch(`${API_BASE}/api/profile/setup`)
+  const res = await authFetch(`${API_BASE}/api/profile/setup`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
@@ -132,7 +215,7 @@ export async function migrateLegacyData(): Promise<void> {
   if (isWails()) {
     return window.go!.desktop!.App!.MigrateLegacyData()
   }
-  const res = await fetch(`${API_BASE}/api/data/migration`, { method: 'POST' })
+  const res = await authFetch(`${API_BASE}/api/data/migration`, { method: 'POST' })
   if (!res.ok) throw new Error(await res.text())
 }
 
@@ -140,7 +223,7 @@ export async function inspectProfileSource(path: string): Promise<ProfileSource>
   if (isWails()) {
     return window.go!.desktop!.App!.InspectProfileSource(path)
   }
-  const res = await fetch(`${API_BASE}/api/profile/source/inspect`, {
+  const res = await authFetch(`${API_BASE}/api/profile/source/inspect`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path }),
@@ -153,7 +236,7 @@ export async function initializeEmptyProfileStore(): Promise<void> {
   if (isWails()) {
     return window.go!.desktop!.App!.InitializeEmptyProfileStore()
   }
-  const res = await fetch(`${API_BASE}/api/profile/setup/empty`, { method: 'POST' })
+  const res = await authFetch(`${API_BASE}/api/profile/setup/empty`, { method: 'POST' })
   if (!res.ok) throw new Error(await res.text())
 }
 
@@ -161,7 +244,7 @@ export async function importProfileSource(path: string): Promise<void> {
   if (isWails()) {
     return window.go!.desktop!.App!.ImportProfileSource(path)
   }
-  const res = await fetch(`${API_BASE}/api/profile/import`, {
+  const res = await authFetch(`${API_BASE}/api/profile/import`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path }),
@@ -173,7 +256,7 @@ export async function discardProfileImport(): Promise<void> {
   if (isWails()) {
     return window.go!.desktop!.App!.DiscardProfileImport()
   }
-  const res = await fetch(`${API_BASE}/api/profile/import/discard`, { method: 'POST' })
+  const res = await authFetch(`${API_BASE}/api/profile/import/discard`, { method: 'POST' })
   if (!res.ok) throw new Error(await res.text())
 }
 
@@ -181,7 +264,7 @@ export async function fetchAirports(): Promise<Airport[]> {
   if (isWails()) {
     return window.go!.desktop!.App!.ListAirports()
   }
-  const res = await fetch(`${API_BASE}/api/airports`)
+  const res = await authFetch(`${API_BASE}/api/airports`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
@@ -193,7 +276,7 @@ export async function getAirportURL(id: string): Promise<string> {
   if (isWails()) {
     return window.go!.desktop!.App!.GetAirportURL(id)
   }
-  const res = await fetch(`${API_BASE}/api/airports/${id}/url`)
+  const res = await authFetch(`${API_BASE}/api/airports/${id}/url`)
   if (!res.ok) throw new Error(await res.text())
   const payload = await res.json() as { url?: unknown }
   if (typeof payload.url !== 'string') throw new Error('订阅链接读取失败')
@@ -208,7 +291,7 @@ export async function createAirport(name: string, url?: string, websiteUrl?: str
   if (isWails()) {
     return window.go!.desktop!.App!.CreateAirport(name, url, websiteUrl, backupUrl)
   }
-  const res = await fetch(`${API_BASE}/api/airports`, {
+  const res = await authFetch(`${API_BASE}/api/airports`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, url, website_url: websiteUrl, backup_url: backupUrl, note, sub_name: subName }),
@@ -221,7 +304,7 @@ export async function updateAirport(id: string, name: string, url?: string, webs
   if (isWails()) {
     return window.go!.desktop!.App!.UpdateAirport(id, name, url, websiteUrl, backupUrl)
   }
-  const res = await fetch(`${API_BASE}/api/airports/${id}`, {
+  const res = await authFetch(`${API_BASE}/api/airports/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, url, website_url: websiteUrl, backup_url: backupUrl, note }),
@@ -234,7 +317,7 @@ export async function deleteAirport(id: string): Promise<void> {
   if (isWails()) {
     return window.go!.desktop!.App!.DeleteAirport(id)
   }
-  const res = await fetch(`${API_BASE}/api/airports/${id}`, { method: 'DELETE' })
+  const res = await authFetch(`${API_BASE}/api/airports/${id}`, { method: 'DELETE' })
   if (!res.ok) throw new Error(await res.text())
 }
 
@@ -242,13 +325,13 @@ export async function refreshAirport(id: string): Promise<Airport> {
   if (isWails()) {
     return window.go!.desktop!.App!.RefreshAirport(id)
   }
-  const res = await fetch(`${API_BASE}/api/airports/${id}/refresh`, { method: 'POST' })
+  const res = await authFetch(`${API_BASE}/api/airports/${id}/refresh`, { method: 'POST' })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
 
 export async function addSubscription(airportId: string, name: string, url: string, note?: string): Promise<Subscription> {
-  const res = await fetch(`${API_BASE}/api/airports/${airportId}/subscriptions`, {
+  const res = await authFetch(`${API_BASE}/api/airports/${airportId}/subscriptions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, url, note }),
@@ -258,7 +341,7 @@ export async function addSubscription(airportId: string, name: string, url: stri
 }
 
 export async function updateSubscription(airportId: string, subId: string, name: string, url: string, note?: string): Promise<Subscription> {
-  const res = await fetch(`${API_BASE}/api/airports/${airportId}/subscriptions/${subId}`, {
+  const res = await authFetch(`${API_BASE}/api/airports/${airportId}/subscriptions/${subId}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, url, note }),
@@ -268,12 +351,12 @@ export async function updateSubscription(airportId: string, subId: string, name:
 }
 
 export async function deleteSubscription(airportId: string, subId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/airports/${airportId}/subscriptions/${subId}`, { method: 'DELETE' })
+  const res = await authFetch(`${API_BASE}/api/airports/${airportId}/subscriptions/${subId}`, { method: 'DELETE' })
   if (!res.ok) throw new Error(await res.text())
 }
 
 export async function refreshSubscription(airportId: string, subId: string): Promise<Subscription> {
-  const res = await fetch(`${API_BASE}/api/airports/${airportId}/subscriptions/${subId}/refresh`, { method: 'POST' })
+  const res = await authFetch(`${API_BASE}/api/airports/${airportId}/subscriptions/${subId}/refresh`, { method: 'POST' })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
@@ -291,7 +374,7 @@ export async function fetchAirportNodes(airportId: string): Promise<NodeItem[]> 
   if (isWails()) {
     return window.go!.desktop!.App!.GetAirportNodes(airportId)
   }
-  const res = await fetch(`${API_BASE}/api/airports/${airportId}/nodes`)
+  const res = await authFetch(`${API_BASE}/api/airports/${airportId}/nodes`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
@@ -300,7 +383,7 @@ export async function startBatchTest(req: BatchTestRequest): Promise<void> {
   if (isWails()) {
     return window.go!.desktop!.App!.StartBatch(req)
   }
-  const res = await fetch(`${API_BASE}/api/test/batch`, {
+  const res = await authFetch(`${API_BASE}/api/test/batch`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
@@ -312,7 +395,7 @@ export async function startSingleTest(req: SingleTestRequest): Promise<NodeResul
   if (isWails()) {
     return window.go!.desktop!.App!.TestSingle(req)
   }
-  const res = await fetch(`${API_BASE}/api/test/single`, {
+  const res = await authFetch(`${API_BASE}/api/test/single`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
@@ -327,7 +410,7 @@ export async function runWorkbenchLatencyTest(req: WorkbenchLatencyTestRequest):
   if (isWails()) {
     return window.go!.desktop!.App!.RunWorkbenchLatencyTest(req)
   }
-  const res = await fetch(`${API_BASE}/api/workbench/latency-tests`, {
+  const res = await authFetch(`${API_BASE}/api/workbench/latency-tests`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
@@ -358,20 +441,20 @@ export async function fetchWorkbenchLatencyHistory(query: WorkbenchLatencyHistor
   if (isWails()) {
     return window.go!.desktop!.App!.ListWorkbenchLatencyTests(query)
   }
-  const res = await fetch(`${API_BASE}/api/workbench/latency-tests?${buildWorkbenchLatencyHistoryQuery(query)}`)
+  const res = await authFetch(`${API_BASE}/api/workbench/latency-tests?${buildWorkbenchLatencyHistoryQuery(query)}`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
 
 export async function saveAirportMaintenance(id: string, settings: import('../types').AirportMaintenance): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/airports/${id}/maintenance`, {
+  const res = await authFetch(`${API_BASE}/api/airports/${id}/maintenance`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings),
   })
   if (!res.ok) throw new Error(await res.text())
 }
 
 export async function openDataFolder(kind: 'data' | 'monitor'): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/data/open-folder?kind=${kind}`, { method: 'POST' })
+  const res = await authFetch(`${API_BASE}/api/data/open-folder?kind=${kind}`, { method: 'POST' })
   if (!res.ok) throw new Error(await res.text())
 }
 
@@ -381,7 +464,7 @@ export async function fetchWorkbenchLatencyHistories(queries: WorkbenchLatencyHi
   // frozen window instead of saturating the browser's per-origin connections.
   if (isWails()) return Promise.all(queries.map(fetchWorkbenchLatencyHistory))
   const [{ since, until, limit, target_id }] = queries
-  const res = await fetch(`${API_BASE}/api/workbench/latency-tests/query`, {
+  const res = await authFetch(`${API_BASE}/api/workbench/latency-tests/query`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ since, until, limit, target_id, nodes: queries.map(({ profile_id, node_key, node_identity_key, config_revision_key }) => ({ profile_id, node_key, node_identity_key, config_revision_key })) }),
@@ -398,7 +481,7 @@ export async function fetchWorkbenchLatencyTest(query: WorkbenchLatencyHistoryDe
   const params = new URLSearchParams({ profile_id: query.profile_id, node_key: query.node_key, node_identity_key: query.node_identity_key, config_revision_key: query.config_revision_key })
   if (query.since) params.set('since', query.since)
   if (query.until) params.set('until', query.until)
-  const res = await fetch(`${API_BASE}/api/workbench/latency-tests/${encodeURIComponent(query.attempt_id)}?${params.toString()}`)
+  const res = await authFetch(`${API_BASE}/api/workbench/latency-tests/${encodeURIComponent(query.attempt_id)}?${params.toString()}`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
@@ -406,56 +489,56 @@ export async function fetchWorkbenchLatencyTest(query: WorkbenchLatencyHistoryDe
 export async function fetchNodeHistoryRevisions(profileId: string, nodeIdentityKey: string): Promise<NodeHistoryRevision[]> {
   if (isWails()) return window.go!.desktop!.App!.ListNodeHistoryRevisions(profileId, nodeIdentityKey)
   const params = new URLSearchParams({ profile_id: profileId, node_identity_key: nodeIdentityKey })
-  const res = await fetch(`${API_BASE}/api/history/node-revisions?${params.toString()}`)
+  const res = await authFetch(`${API_BASE}/api/history/node-revisions?${params.toString()}`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
 
 export async function startWorkbenchLatencyBatch(req: WorkbenchLatencyBatchRequest): Promise<WorkbenchLatencyBatch> {
   if (isWails()) return window.go!.desktop!.App!.StartWorkbenchLatencyBatch(req)
-  const res = await fetch(`${API_BASE}/api/workbench/latency-batches`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req) })
+  const res = await authFetch(`${API_BASE}/api/workbench/latency-batches`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req) })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
 
 export async function fetchWorkbenchLatencyBatches(limit = 20): Promise<WorkbenchLatencyBatch[]> {
   if (isWails()) return window.go!.desktop!.App!.ListWorkbenchLatencyBatches(limit)
-  const res = await fetch(`${API_BASE}/api/workbench/latency-batches?limit=${limit}`)
+  const res = await authFetch(`${API_BASE}/api/workbench/latency-batches?limit=${limit}`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
 
 export async function fetchWorkbenchLatencyBatch(batchID: string): Promise<WorkbenchLatencyBatch> {
   if (isWails()) return window.go!.desktop!.App!.GetWorkbenchLatencyBatch(batchID)
-  const res = await fetch(`${API_BASE}/api/workbench/latency-batches/${encodeURIComponent(batchID)}`)
+  const res = await authFetch(`${API_BASE}/api/workbench/latency-batches/${encodeURIComponent(batchID)}`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
 
 export async function cancelWorkbenchLatencyBatch(batchID: string): Promise<WorkbenchLatencyBatch> {
   if (isWails()) return window.go!.desktop!.App!.CancelWorkbenchLatencyBatch(batchID)
-  const res = await fetch(`${API_BASE}/api/workbench/latency-batches/${encodeURIComponent(batchID)}/cancel`, { method: 'POST' })
+  const res = await authFetch(`${API_BASE}/api/workbench/latency-batches/${encodeURIComponent(batchID)}/cancel`, { method: 'POST' })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
 
 export async function retryWorkbenchLatencyBatchItem(batchID: string, itemID: string): Promise<WorkbenchLatencyBatch> {
   if (isWails()) return window.go!.desktop!.App!.RetryWorkbenchLatencyBatchItem(batchID, itemID)
-  const res = await fetch(`${API_BASE}/api/workbench/latency-batches/${encodeURIComponent(batchID)}/items/${encodeURIComponent(itemID)}/retry-save`, { method: 'POST' })
+  const res = await authFetch(`${API_BASE}/api/workbench/latency-batches/${encodeURIComponent(batchID)}/items/${encodeURIComponent(itemID)}/retry-save`, { method: 'POST' })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
 
 export async function listWorkbenchPublicServiceCatalog(): Promise<WorkbenchPublicServiceRule[]> {
   if (isWails()) return window.go!.desktop!.App!.ListWorkbenchPublicServiceCatalog()
-  const res = await fetch(`${API_BASE}/api/workbench/public-service-catalog`)
+  const res = await authFetch(`${API_BASE}/api/workbench/public-service-catalog`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
 
 export async function startWorkbenchPublicServiceTest(req: WorkbenchPublicServiceTestRequest): Promise<WorkbenchPublicServiceAttempt> {
   if (isWails()) return window.go!.desktop!.App!.StartWorkbenchPublicServiceTest(req)
-  const res = await fetch(`${API_BASE}/api/workbench/public-service-tests`, {
+  const res = await authFetch(`${API_BASE}/api/workbench/public-service-tests`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req),
   })
   if (!res.ok) throw new Error(await res.text())
@@ -482,35 +565,35 @@ export function buildWorkbenchPublicServiceHistoryQuery(query: WorkbenchPublicSe
 
 export async function fetchWorkbenchPublicServiceHistory(query: WorkbenchPublicServiceHistoryQuery): Promise<WorkbenchPublicServiceHistoryResult> {
   if (isWails()) return window.go!.desktop!.App!.ListWorkbenchPublicServiceTests(query)
-  const res = await fetch(`${API_BASE}/api/workbench/public-service-tests?${buildWorkbenchPublicServiceHistoryQuery(query)}`)
+  const res = await authFetch(`${API_BASE}/api/workbench/public-service-tests?${buildWorkbenchPublicServiceHistoryQuery(query)}`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
 
 export async function fetchWorkbenchPublicServiceAttempt(attemptID: string, query: WorkbenchPublicServiceHistoryQuery): Promise<WorkbenchPublicServiceAttempt> {
   if (isWails()) return window.go!.desktop!.App!.GetWorkbenchPublicServiceAttempt(attemptID, query)
-  const res = await fetch(`${API_BASE}/api/workbench/public-service-tests/${encodeURIComponent(attemptID)}?${buildWorkbenchPublicServiceHistoryQuery(query)}`)
+  const res = await authFetch(`${API_BASE}/api/workbench/public-service-tests/${encodeURIComponent(attemptID)}?${buildWorkbenchPublicServiceHistoryQuery(query)}`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
 
 export async function cancelWorkbenchPublicServiceTest(attemptID: string, query: WorkbenchPublicServiceHistoryQuery): Promise<WorkbenchPublicServiceAttempt> {
   if (isWails()) return window.go!.desktop!.App!.CancelWorkbenchPublicServiceTest(attemptID, query)
-  const res = await fetch(`${API_BASE}/api/workbench/public-service-tests/${encodeURIComponent(attemptID)}/cancel?${buildWorkbenchPublicServiceHistoryQuery(query)}`, { method: 'POST' })
+  const res = await authFetch(`${API_BASE}/api/workbench/public-service-tests/${encodeURIComponent(attemptID)}/cancel?${buildWorkbenchPublicServiceHistoryQuery(query)}`, { method: 'POST' })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
 
 export async function retrySaveWorkbenchPublicServiceTest(attemptID: string, query: WorkbenchPublicServiceHistoryQuery): Promise<WorkbenchPublicServiceAttempt> {
   if (isWails()) return window.go!.desktop!.App!.RetrySaveWorkbenchPublicServiceTest(attemptID, query)
-  const res = await fetch(`${API_BASE}/api/workbench/public-service-tests/${encodeURIComponent(attemptID)}/retry-save?${buildWorkbenchPublicServiceHistoryQuery(query)}`, { method: 'POST' })
+  const res = await authFetch(`${API_BASE}/api/workbench/public-service-tests/${encodeURIComponent(attemptID)}/retry-save?${buildWorkbenchPublicServiceHistoryQuery(query)}`, { method: 'POST' })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
 
 export async function startWorkbenchDownloadTest(req: WorkbenchDownloadTestRequest): Promise<WorkbenchDownloadAttempt> {
   if (isWails()) return window.go!.desktop!.App!.StartWorkbenchDownloadTest(req)
-  const res = await fetch(`${API_BASE}/api/workbench/download-tests`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req) })
+  const res = await authFetch(`${API_BASE}/api/workbench/download-tests`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req) })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
@@ -526,28 +609,28 @@ export function buildWorkbenchDownloadHistoryQuery(query: WorkbenchDownloadHisto
 
 export async function fetchWorkbenchDownloadHistory(query: WorkbenchDownloadHistoryQuery): Promise<WorkbenchDownloadHistoryResult> {
   if (isWails()) return window.go!.desktop!.App!.ListWorkbenchDownloadTests(query)
-  const res = await fetch(`${API_BASE}/api/workbench/download-tests?${buildWorkbenchDownloadHistoryQuery(query)}`)
+  const res = await authFetch(`${API_BASE}/api/workbench/download-tests?${buildWorkbenchDownloadHistoryQuery(query)}`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
 
 export async function fetchWorkbenchDownloadAttempt(attemptID: string, query: WorkbenchDownloadHistoryQuery): Promise<WorkbenchDownloadAttempt> {
   if (isWails()) return window.go!.desktop!.App!.GetWorkbenchDownloadAttempt(attemptID, query)
-  const res = await fetch(`${API_BASE}/api/workbench/download-tests/${encodeURIComponent(attemptID)}?${buildWorkbenchDownloadHistoryQuery(query)}`)
+  const res = await authFetch(`${API_BASE}/api/workbench/download-tests/${encodeURIComponent(attemptID)}?${buildWorkbenchDownloadHistoryQuery(query)}`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
 
 export async function cancelWorkbenchDownloadTest(attemptID: string, query: WorkbenchDownloadHistoryQuery): Promise<WorkbenchDownloadAttempt> {
   if (isWails()) return window.go!.desktop!.App!.CancelWorkbenchDownloadTest(attemptID, query)
-  const res = await fetch(`${API_BASE}/api/workbench/download-tests/${encodeURIComponent(attemptID)}/cancel?${buildWorkbenchDownloadHistoryQuery(query)}`, { method: 'POST' })
+  const res = await authFetch(`${API_BASE}/api/workbench/download-tests/${encodeURIComponent(attemptID)}/cancel?${buildWorkbenchDownloadHistoryQuery(query)}`, { method: 'POST' })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
 
 export async function retrySaveWorkbenchDownloadTest(attemptID: string, query: WorkbenchDownloadHistoryQuery): Promise<WorkbenchDownloadAttempt> {
   if (isWails()) return window.go!.desktop!.App!.RetrySaveWorkbenchDownloadTest(attemptID, query)
-  const res = await fetch(`${API_BASE}/api/workbench/download-tests/${encodeURIComponent(attemptID)}/retry-save?${buildWorkbenchDownloadHistoryQuery(query)}`, { method: 'POST' })
+  const res = await authFetch(`${API_BASE}/api/workbench/download-tests/${encodeURIComponent(attemptID)}/retry-save?${buildWorkbenchDownloadHistoryQuery(query)}`, { method: 'POST' })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
@@ -556,7 +639,7 @@ export async function stopTest(): Promise<void> {
   if (isWails()) {
     return window.go!.desktop!.App!.StopTest()
   }
-  const res = await fetch(`${API_BASE}/api/test/stop`, { method: 'POST' })
+  const res = await authFetch(`${API_BASE}/api/test/stop`, { method: 'POST' })
   if (!res.ok) throw new Error(await res.text())
 }
 
@@ -564,7 +647,7 @@ export async function fetchTestStatus(): Promise<TestStatus> {
   if (isWails()) {
     return window.go!.desktop!.App!.GetStatus()
   }
-  const res = await fetch(`${API_BASE}/api/test/status`)
+  const res = await authFetch(`${API_BASE}/api/test/status`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
@@ -573,7 +656,7 @@ export async function fetchHistory(): Promise<RunSummary[]> {
   if (isWails()) {
     return window.go!.desktop!.App!.ListHistory()
   }
-  const res = await fetch(`${API_BASE}/api/history`)
+  const res = await authFetch(`${API_BASE}/api/history`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
@@ -582,7 +665,7 @@ export async function fetchHistoryRun(id: string): Promise<TestRun> {
   if (isWails()) {
     return window.go!.desktop!.App!.GetHistory(id)
   }
-  const res = await fetch(`${API_BASE}/api/history/${id}`)
+  const res = await authFetch(`${API_BASE}/api/history/${id}`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
@@ -591,7 +674,7 @@ export async function deleteHistoryRun(id: string): Promise<void> {
   if (isWails()) {
     return window.go!.desktop!.App!.DeleteHistory(id)
   }
-  const res = await fetch(`${API_BASE}/api/history/${id}`, { method: 'DELETE' })
+  const res = await authFetch(`${API_BASE}/api/history/${id}`, { method: 'DELETE' })
   if (!res.ok) throw new Error(await res.text())
 }
 
@@ -599,7 +682,7 @@ export async function fetchAirportTimeline(airportId: string): Promise<AirportHi
   if (isWails()) {
     return window.go!.desktop!.App!.GetAirportTimeline(airportId)
   }
-  const res = await fetch(`${API_BASE}/api/history/airport?airport_id=${encodeURIComponent(airportId)}`)
+  const res = await authFetch(`${API_BASE}/api/history/airport?airport_id=${encodeURIComponent(airportId)}`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
@@ -619,7 +702,7 @@ export async function fetchTokenStatus(): Promise<TokenStatus> {
   if (isWails()) {
     return window.go!.desktop!.App!.GetTokenStatus()
   }
-  const res = await fetch(`${API_BASE}/api/antigravity/status`)
+  const res = await authFetch(`${API_BASE}/api/antigravity/status`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
@@ -628,7 +711,7 @@ export async function setToken(token: string): Promise<void> {
   if (isWails()) {
     return window.go!.desktop!.App!.SetToken(token)
   }
-  const res = await fetch(`${API_BASE}/api/antigravity/token`, {
+  const res = await authFetch(`${API_BASE}/api/antigravity/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token }),
@@ -640,7 +723,7 @@ export async function startOAuthLogin(): Promise<void> {
   if (isWails()) {
     return window.go!.desktop!.App!.StartOAuthLogin()
   }
-  const res = await fetch(`${API_BASE}/api/antigravity/login`, { method: 'POST' })
+  const res = await authFetch(`${API_BASE}/api/antigravity/login`, { method: 'POST' })
   if (!res.ok) throw new Error(await res.text())
 }
 
@@ -648,7 +731,7 @@ export async function exportClashYAML(airportId: string, nodeNames: string[]): P
   if (isWails()) {
     return window.go!.desktop!.App!.ExportClashConfig(airportId, nodeNames)
   }
-  const res = await fetch(`${API_BASE}/api/export/clash`, {
+  const res = await authFetch(`${API_BASE}/api/export/clash`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ airport_id: airportId, node_names: nodeNames }),
@@ -661,7 +744,7 @@ export async function exportClashYAMLFromResults(runId: string, nodeNames: strin
   if (isWails()) {
     return window.go!.desktop!.App!.ExportClashConfigFromResults(runId, nodeNames)
   }
-  const res = await fetch(`${API_BASE}/api/export/clash-run`, {
+  const res = await authFetch(`${API_BASE}/api/export/clash-run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ run_id: runId, node_names: nodeNames }),
@@ -674,7 +757,7 @@ export async function fetchSettings(): Promise<AppSettings> {
   if (isWails()) {
     return window.go!.desktop!.App!.GetSettings()
   }
-  const res = await fetch(`${API_BASE}/api/settings`)
+  const res = await authFetch(`${API_BASE}/api/settings`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
@@ -683,7 +766,7 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
   if (isWails()) {
     return window.go!.desktop!.App!.SaveSettings(settings)
   }
-  const res = await fetch(`${API_BASE}/api/settings`, {
+  const res = await authFetch(`${API_BASE}/api/settings`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(settings),
@@ -704,7 +787,7 @@ export async function fetchControllerStatus(): Promise<ControllerStatus> {
   if (isWails()) {
     return window.go!.desktop!.App!.GetControllerStatus()
   }
-  const res = await fetch(`${API_BASE}/api/controller/status`)
+  const res = await authFetch(`${API_BASE}/api/controller/status`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
@@ -713,7 +796,7 @@ export async function configureController(cfg: ControllerConfig): Promise<void> 
   if (isWails()) {
     return window.go!.desktop!.App!.ConfigureController(cfg)
   }
-  const res = await fetch(`${API_BASE}/api/controller/config`, {
+  const res = await authFetch(`${API_BASE}/api/controller/config`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(cfg),
@@ -725,7 +808,7 @@ export async function fetchControllerGroups(): Promise<ControllerGroup[]> {
   if (isWails()) {
     return window.go!.desktop!.App!.ListControllerGroups()
   }
-  const res = await fetch(`${API_BASE}/api/controller/groups`)
+  const res = await authFetch(`${API_BASE}/api/controller/groups`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
@@ -734,7 +817,7 @@ export async function selectControllerNode(group: string, node: string): Promise
   if (isWails()) {
     return window.go!.desktop!.App!.SelectControllerNode(group, node)
   }
-  const res = await fetch(`${API_BASE}/api/controller/select`, {
+  const res = await authFetch(`${API_BASE}/api/controller/select`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ group, node }),
@@ -746,7 +829,7 @@ export async function fetchSwitchPolicy(): Promise<SwitchPolicy> {
   if (isWails()) {
     return window.go!.desktop!.App!.GetSwitchPolicy()
   }
-  const res = await fetch(`${API_BASE}/api/controller/policy`)
+  const res = await authFetch(`${API_BASE}/api/controller/policy`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
@@ -756,7 +839,7 @@ export async function updateSwitchPolicy(policy: SwitchPolicy): Promise<SwitchPo
     await window.go!.desktop!.App!.UpdateSwitchPolicy(policy)
     return policy
   }
-  const res = await fetch(`${API_BASE}/api/controller/policy`, {
+  const res = await authFetch(`${API_BASE}/api/controller/policy`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(policy),
@@ -769,7 +852,7 @@ export async function fetchSwitchAuditTrail(): Promise<SwitchEvent[]> {
   if (isWails()) {
     return window.go!.desktop!.App!.GetSwitchAuditTrail()
   }
-  const res = await fetch(`${API_BASE}/api/controller/audit`)
+  const res = await authFetch(`${API_BASE}/api/controller/audit`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }

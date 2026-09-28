@@ -12,6 +12,7 @@ import MonitorJobsView from './components/monitor/MonitorJobsView.vue'
 import LatencyWorkbench from './components/workbench/LatencyWorkbench.vue'
 import NodeDetailView from './components/history/NodeDetailView.vue'
 import ProfileSetupModal from './components/profile/ProfileSetupModal.vue'
+import AuthModal from './components/common/AuthModal.vue'
 import type { MonitorJobNode, MonitorJobPrefill, NodeDetailRequest, WorkbenchSaveRetryRequest } from './types'
 
 const store = useWorkbenchStore()
@@ -39,6 +40,16 @@ const nodeDetail = ref<NodeDetailRequest | null>(null)
 const nodeDetailKey = ref(0)
 const workbenchSaveRetry = ref<WorkbenchSaveRetryRequest | null>(null)
 const timelineStore = useTimelineStore()
+const authRequired = ref(false)
+async function onAuthenticated() {
+  authRequired.value = false
+  await store.loadProfileSetup()
+  await Promise.all([
+    store.loadAirports(),
+    store.loadTokenStatus(),
+    store.loadHistory(),
+  ])
+}
 
 function openMonitorFromWorkbench(prefill: MonitorJobPrefill): void {
   monitorPrefill.value = prefill
@@ -87,6 +98,11 @@ async function openJobTimeline(payload: { profileId: string; node: MonitorJobNod
 let unsubscribeEvents: (() => void) | null = null
 
 onMounted(async () => {
+  const authStatus = await api.checkAuthStatus()
+  if (authStatus.auth_required && !authStatus.authenticated) {
+    authRequired.value = true
+    return
+  }
   // Subscribe to real-time streaming events (via Wails or SSE)
   unsubscribeEvents = api.subscribeEvents((type, payload) => {
     store.handleEvent(type, payload)
@@ -126,6 +142,7 @@ onUnmounted(() => {
 
     <!-- Modals -->
     <AirportModal v-show="activeView === 'airports'" :visible="activeView === 'airports'" embedded @browse-profile="browseProfile" />
+    <AuthModal :visible="authRequired" @authenticated="onAuthenticated" />
     <ProfileSetupModal />
     <PreferencesModal />
     <NodeDetailView v-if="nodeDetail" :key="nodeDetailKey" :scope="nodeDetail" @close="closeNodeDetail" @open-workbench-save-retry="openWorkbenchSaveRetry" />

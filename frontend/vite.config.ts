@@ -23,6 +23,13 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-vue': ['vue', 'pinia'],
+        },
+      },
+    },
   },
   test: {
     environment: 'jsdom',

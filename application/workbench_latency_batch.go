@@ -28,6 +28,7 @@ type workbenchLatencyBatchRuntime struct {
 	mu              sync.Mutex
 	cancelRequested bool
 	shutdown        bool
+	concurrency     int
 }
 
 func (s *AppService) beginWorkbenchSingle() error {
@@ -135,7 +136,11 @@ func (s *AppService) StartWorkbenchLatencyBatch(_ context.Context, req Workbench
 		return nil, fmt.Errorf("已有 Workbench 延迟测试正在运行")
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
-	runtime := &workbenchLatencyBatchRuntime{batchID: batch.BatchID, ctx: runCtx, cancel: cancel}
+	concurrency := workbenchLatencyBatchConcurrency
+	if req.Concurrency > 0 && req.Concurrency <= 32 {
+		concurrency = req.Concurrency
+	}
+	runtime := &workbenchLatencyBatchRuntime{batchID: batch.BatchID, ctx: runCtx, cancel: cancel, concurrency: concurrency}
 	s.workbenchActiveBatch = runtime
 	s.workbenchWG.Add(1)
 	// The full frozen selection is committed before the worker can issue a request.
@@ -289,8 +294,12 @@ func (s *AppService) runWorkbenchLatencyBatch(runtime *workbenchLatencyBatchRunt
 	s.emitWorkbenchLatencyBatch(batch)
 
 	workerCount := len(batch.Items)
-	if workerCount > workbenchLatencyBatchConcurrency {
-		workerCount = workbenchLatencyBatchConcurrency
+	limit := runtime.concurrency
+	if limit <= 0 {
+		limit = workbenchLatencyBatchConcurrency
+	}
+	if workerCount > limit {
+		workerCount = limit
 	}
 	jobs := make(chan int)
 	var workers sync.WaitGroup

@@ -2830,3 +2830,16 @@ func (s *AppService) ApplyRetention(ctx context.Context, req monitor.RetentionRe
 	})
 	return res, nil
 }
+
+// CleanupWorkbenchHistory prunes old workbench tests and batches older than olderThanDays.
+func (s *AppService) CleanupWorkbenchHistory(ctx context.Context, olderThanDays int) (int64, error) {
+	if s.historyStore == nil {
+		return 0, fmt.Errorf("history store is not initialized")
+	}
+	if olderThanDays <= 0 {
+		olderThanDays = 30
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -olderThanDays)
+	return s.historyStore.CleanupWorkbenchHistory(ctx, cutoff)
+}
+

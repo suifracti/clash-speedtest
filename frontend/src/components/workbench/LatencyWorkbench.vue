@@ -14,6 +14,7 @@ import ServiceCatalogPicker from './ServiceCatalogPicker.vue'
 import TestPlanDialog, { type TestPlan } from './TestPlanDialog.vue'
 import { serviceTitle } from '../../utils/servicePresentation'
 import DownloadComparison from './DownloadComparison.vue'
+import ExportClashModal from './ExportClashModal.vue'
 import ObservationWindowSelect from './ObservationWindowSelect.vue'
 import { readObservationPreference, saveObservationPreference } from './observationPreference'
 import IntraTestSamplePlot from './IntraTestSamplePlot.vue'
@@ -112,6 +113,38 @@ const windowMode = ref<LatencyWindowMode>(readObservationPreference('selected'))
 const activeWindow = ref<LatencyWindow>(freezeLatencyWindow(windowMode.value))
 const activeProject = ref<WorkbenchProject>('latency')
 const nodeCategoryFilter = ref<'proxies' | 'notices' | 'all'>('proxies')
+const isExportModalOpen = ref(false)
+const workbenchViewMode = ref<'compact' | 'detailed'>(
+  typeof localStorage !== 'undefined' && localStorage.getItem('cst_workbench_view_mode') === 'compact'
+    ? 'compact'
+    : 'detailed'
+)
+function setWorkbenchViewMode(mode: 'compact' | 'detailed') {
+  workbenchViewMode.value = mode
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem('cst_workbench_view_mode', mode)
+  }
+}
+const expandedKeys = ref<Set<string>>(new Set())
+function toggleRowExpanded(key: string) {
+  if (expandedKeys.value.has(key)) {
+    expandedKeys.value.delete(key)
+  } else {
+    expandedKeys.value.add(key)
+  }
+}
+const concurrencyLevel = ref<number>(16)
+const filterOnlyAlive = ref<boolean>(false)
+
+function compactLatencyClass(key: string): string {
+  const test = latestTestForKey(key)
+  if (!test) return 'nodata'
+  if (test.status === 'failed' || test.latency_ms <= 0) return 'fail'
+  if (test.latency_ms < 120) return 'fast'
+  if (test.latency_ms < 250) return 'medium'
+  return 'slow'
+}
+
 const noticeOverrides = ref<Record<string, boolean>>(loadNoticeOverrides())
 const selectedKeys = ref<string[]>([])
 const latencyTargetID = ref('all')
@@ -1434,7 +1467,7 @@ async function runTest(onlyKeys?: string[]): Promise<void> {
   testError.value = ''
   batchMessage.value = `正在创建批次：${frozenSelections.length} 个节点，${new Set(frozenSelections.map((item) => item.profile_id)).size} 个订阅，单项采样 ${sampleCount.value} 次，超时 ${timeoutSeconds.value} 秒。`
   try {
-    const created = await api.startWorkbenchLatencyBatch({ target_id: latencyTargetID.value, request_id: requestID, test_project: 'latency_stability', sample_count: sampleCount.value, timeout_seconds: timeoutSeconds.value, selections: frozenSelections })
+    const created = await api.startWorkbenchLatencyBatch({ target_id: latencyTargetID.value, request_id: requestID, test_project: 'latency_stability', sample_count: sampleCount.value, timeout_seconds: timeoutSeconds.value, concurrency: concurrencyLevel.value, selections: frozenSelections })
     if (pendingBatchRequestID !== requestID) return
     if (!activeBatch.value || activeBatch.value.batch_id !== created.batch_id) activeBatch.value = created
     activeBatchID = created.batch_id
@@ -2284,6 +2317,13 @@ onUnmounted(() => {
 <template>
   <main class="prototype-page prototype-latency-workbench" :class="`workspace-${activeProject}`">
     <TestPlanDialog v-if="testPlan" :plan="testPlan" @answer="answerTestPlan" />
+    <ExportClashModal
+      :visible="isExportModalOpen"
+      :selected-keys="selectedKeys"
+      :nodes="visibleOptions"
+      :get-latency="(k) => latestTestForKey(k)?.latency_ms ?? null"
+      @close="isExportModalOpen = false"
+    />
     <section class="prototype-page-heading">
       <div><h1>节点工作台</h1><p class="workspace-intro">{{ activeProject === 'latency' ? '六站延迟、连接状态与历史趋势' : activeProject === 'throughput' ? '下载速度与实际流量消耗' : '服务访问、地区限制与检测依据' }}</p></div>
       <div class="workspace-context">{{ proxyCount }} 条线路<template v-if="noticeCount"> · {{ noticeCount }} 条公告</template> · {{ windowLabel }}</div>
@@ -2333,6 +2373,19 @@ onUnmounted(() => {
             <label class="scope-control">排序<UiSelect v-model="sortBy" variant="scope" aria-label="节点排序" :options="sortSelectOptions" /></label>
             <span class="scope-separator" aria-hidden="true"></span>
             <label class="scope-control">条目类型<UiSelect v-model="nodeCategoryFilter" variant="scope" aria-label="筛选条目类型" :options="nodeCategorySelectOptions" /></label>
+            <span v-if="activeProject === 'latency'" class="scope-separator" aria-hidden="true"></span>
+            <label v-if="activeProject === 'latency'" class="alive-filter-label" title="仅显示有测试成功记录的节点">
+              <input v-model="filterOnlyAlive" type="checkbox">
+              <span>仅看存活</span>
+            </label>
+            <span v-if="activeProject === 'latency'" class="scope-separator" aria-hidden="true"></span>
+            <label v-if="activeProject === 'latency'" class="scope-control">并发
+              <select v-model.number="concurrencyLevel" class="concurrency-select" aria-label="测速并发数">
+                <option :value="16">16 并发 (极速)</option>
+                <option :value="8">8 并发 (平衡)</option>
+                <option :value="4">4 并发 (温和)</option>
+              </select>
+            </label>
           </div>
 
           <div class="scope-actions-end">
@@ -2716,8 +2769,44 @@ onUnmounted(() => {
       <ServiceComparison v-else-if="activeProject === 'service'" :rows="comparisonRows" :services="selectedServiceOptions" :catalog="publicServiceCatalog" :records="visibleServices" :selected="selectedKeys" :states="projectHistoryStateByKey" :partial="projectHistoryMetaByKey" @toggle="toggleSelected" @service="barServiceId = $event" @detail="openNodeDetail" />
       <DownloadComparison v-else-if="activeProject === 'throughput'" :rows="comparisonRows" :records="visibleDownloads" :selected="selectedKeys" :states="projectHistoryStateByKey" :partial="projectHistoryMetaByKey" @toggle="toggleSelected" @detail="openNodeDetail" />
       <ul v-else class="node-list" role="listbox" aria-label="节点列表">
-        <li v-for="node in visibleOptions" :key="scopeKey(node)" class="node-row" :class="{ 'is-focused': focusedKey === scopeKey(node), 'no-latency-history': activeProject === 'latency' && !allSiteTestsForKey(scopeKey(node)).length && !isTesting(scopeKey(node)), 'latency-health': activeProject === 'latency' && !!nodeHealthReport(scopeKey(node)) }" :aria-selected="isSelected(scopeKey(node))">
-          <label class="select-cell" :aria-label="`选择 ${node.displayName}`" @click.stop><input type="checkbox" :checked="isSelected(scopeKey(node))" @change="toggleSelected(scopeKey(node))"></label>
+        <li v-for="node in visibleOptions" :key="scopeKey(node)" class="node-row" :class="{ 'is-focused': focusedKey === scopeKey(node), 'no-latency-history': activeProject === 'latency' && !allSiteTestsForKey(scopeKey(node)).length && !isTesting(scopeKey(node)), 'latency-health': activeProject === 'latency' && !!nodeHealthReport(scopeKey(node)), 'compact-mode-row': activeProject === 'latency' && workbenchViewMode === 'compact' && !expandedKeys.has(scopeKey(node)) }" :aria-selected="isSelected(scopeKey(node))">
+                    <!-- Compact View for Latency -->
+          <template v-if="activeProject === 'latency' && workbenchViewMode === 'compact' && !expandedKeys.has(scopeKey(node))">
+            <label class="select-cell compact-cell-check" :aria-label="`选择 ${node.displayName}`" @click.stop>
+              <input type="checkbox" :checked="isSelected(scopeKey(node))" @change="toggleSelected(scopeKey(node))">
+            </label>
+            <div class="compact-cell-main" @click="focusNode(scopeKey(node))">
+              <span class="compact-flag">{{ node.countryFlag || '🌐' }}</span>
+              <strong class="compact-name" :title="node.displayName">{{ node.displayName || '未命名节点' }}</strong>
+              <span class="compact-tag">{{ node.type || '节点' }}</span>
+              <span class="compact-meta">{{ sourceName(node.profileId, node.profileName) }}</span>
+              <span v-if="downloadResultByKey[scopeKey(node)]" class="composite-badge download">↓ {{ downloadResultByKey[scopeKey(node)].speedMbps }}M</span>
+              <span v-if="serviceSummaryBadge(scopeKey(node))" class="composite-badge service">{{ serviceSummaryBadge(scopeKey(node)) }}</span>
+            </div>
+            <div class="compact-cell-metrics">
+              <template v-if="isTesting(scopeKey(node))">
+                <span class="row-readout-state running">测试中…</span>
+              </template>
+              <template v-else-if="latestTestForKey(scopeKey(node))">
+                <div class="compact-badge" :class="compactLatencyClass(scopeKey(node))">
+                  <span>{{ latestTestForKey(scopeKey(node))!.latency_ms }} ms</span>
+                </div>
+                <span class="compact-health-text">
+                  {{ suiteHealthForKey(scopeKey(node)) ? `${suiteHealthForKey(scopeKey(node))!.success}/6 连通` : (latestTestForKey(scopeKey(node))!.status !== 'failed' ? '成功' : '失败') }}
+                </span>
+              </template>
+              <template v-else>
+                <span class="compact-badge nodata">未测试</span>
+              </template>
+            </div>
+            <div class="compact-cell-actions">
+              <button type="button" class="row-action-btn" :disabled="batchBusy" @click.stop="runTest([scopeKey(node)])">⚡ 测速</button>
+              <button type="button" class="row-action-btn" title="展开六站走势图与详细样本" @click.stop="toggleRowExpanded(scopeKey(node))">展开走势 ▼</button>
+              <button type="button" class="row-action-btn" title="查看节点完整配置与详情" @click.stop="openHistory(scopeKey(node), 'config')">详情</button>
+            </div>
+          </template>
+          <template v-else>
+            <label class="select-cell" :aria-label="`选择 ${node.displayName}`" @click.stop><input type="checkbox" :checked="isSelected(scopeKey(node))" @change="toggleSelected(scopeKey(node))"></label>
           <div class="node-evidence" @click="focusNode(scopeKey(node))">
             <span class="node-name"><strong :title="node.displayName">{{ node.displayName || '未命名节点' }}</strong></span>
             <span class="node-meta">
@@ -2906,6 +2995,7 @@ onUnmounted(() => {
               </template>
             </template>
           </div>
+          </template>
         </li>
       </ul>
       <div class="compare-footer">

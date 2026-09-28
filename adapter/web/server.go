@@ -4,7 +4,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	crand "crypto/rand"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,6 +38,7 @@ type ServerConfig struct {
 	AppPaths      appdata.AppPaths
 	Port          int
 	PublicIPv6    string
+	WebPassword   string
 	ListenAddress string
 	ProfilePaths  profiles.Paths
 	HistoryDir    string
@@ -53,6 +56,8 @@ type Server struct {
 	shutdownChan chan struct{}
 	stopOnce     sync.Once
 	stopErr      error
+	authTokens   map[string]time.Time
+	authMu       sync.RWMutex
 }
 
 // NewServer constructs a new web adapter Server.
@@ -96,6 +101,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		app:          appSvc,
 		emitter:      emitter,
 		shutdownChan: make(chan struct{}, 1),
+		authTokens:   make(map[string]time.Time),
 	}
 
 	return s, nil
@@ -240,6 +246,15 @@ func (s *Server) buildHandler() http.Handler {
 	// endpoint here: the recommendation is advisory only and never switches a node.
 	mux.HandleFunc("GET /api/monitor/recommendation", s.handleGetMonitorRecommendation)
 
+	// Auth endpoints
+	mux.HandleFunc("GET /api/auth/status", s.handleAuthStatus)
+	mux.HandleFunc("POST /api/auth/login", s.handleAuthLogin)
+
+	// Workbench export & cleanup
+	mux.HandleFunc("POST /api/workbench/export-clash", s.handleExportWorkbenchClash)
+	mux.HandleFunc("GET /api/workbench/export-clash", s.handleExportWorkbenchClash)
+	mux.HandleFunc("POST /api/workbench/cleanup", s.handleCleanupWorkbenchHistory)
+
 	mux.HandleFunc("GET /api/events", s.handleEventsSSE)
 	mux.HandleFunc("POST /api/shutdown", s.handleShutdown)
 
@@ -248,13 +263,18 @@ func (s *Server) buildHandler() http.Handler {
 		mux.Handle("/", s.config.StaticHandler)
 	}
 
+	var handler http.Handler = mux
+	if s.config.WebPassword != "" {
+		handler = s.authMiddleware(handler)
+	}
+
 	if s.config.PublicIPv6 != "" {
-		return securityMiddlewareForHost(mux, net.JoinHostPort(s.config.PublicIPv6, strconv.Itoa(s.port)))
+		return securityMiddlewareForHost(handler, net.JoinHostPort(s.config.PublicIPv6, strconv.Itoa(s.port)))
 	}
 	if s.config.ListenAddress != "" && !isLoopbackHost(s.config.ListenAddress) {
-		return securityMiddlewareForHost(mux, "*")
+		return securityMiddlewareForHost(handler, "*")
 	}
-	return securityMiddleware(mux)
+	return securityMiddleware(handler)
 }
 
 func (s *Server) Start() error {
@@ -2112,3 +2132,199 @@ func (s *Server) handleGetMonitorBudget(w http.ResponseWriter, r *http.Request) 
 	}
 	writeJSON(w, http.StatusOK, status)
 }
+
+func (s *Server) isTokenValid(token string) bool {
+	if s.config.WebPassword == "" {
+		return true
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return false
+	}
+	if token == s.config.WebPassword {
+		return true
+	}
+	s.authMu.RLock()
+	expiry, exists := s.authTokens[token]
+	s.authMu.RUnlock()
+	return exists && time.Now().Before(expiry)
+}
+
+func (s *Server) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.config.WebPassword == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		path := r.URL.Path
+		// Allow static assets, favicon, index.html
+		if !strings.HasPrefix(path, "/api/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Allow auth status and login
+		if path == "/api/auth/status" || path == "/api/auth/login" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		token := ""
+		if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
+			token = strings.TrimPrefix(authHeader, "Bearer ")
+		} else if customHeader := r.Header.Get("X-Auth-Token"); customHeader != "" {
+			token = customHeader
+		} else if qToken := r.URL.Query().Get("token"); qToken != "" {
+			token = qToken
+		} else if cookie, err := r.Cookie("cst_auth_token"); err == nil && cookie != nil {
+			token = cookie.Value
+		}
+
+		if !s.isTokenValid(token) {
+			writeError(w, http.StatusUnauthorized, "需要访问密码或授权令牌")
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
+	if s.config.WebPassword == "" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"auth_required": false,
+			"authenticated": true,
+		})
+		return
+	}
+
+	token := ""
+	if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
+		token = strings.TrimPrefix(authHeader, "Bearer ")
+	} else if customHeader := r.Header.Get("X-Auth-Token"); customHeader != "" {
+		token = customHeader
+	} else if qToken := r.URL.Query().Get("token"); qToken != "" {
+		token = qToken
+	} else if cookie, err := r.Cookie("cst_auth_token"); err == nil && cookie != nil {
+		token = cookie.Value
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"auth_required": true,
+		"authenticated": s.isTokenValid(token),
+	})
+}
+
+func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
+	if s.config.WebPassword == "" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"authenticated": true,
+			"token":         "",
+		})
+		return
+	}
+
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "无效的 JSON 请求")
+		return
+	}
+
+	if req.Password != s.config.WebPassword {
+		writeError(w, http.StatusUnauthorized, "密码错误")
+		return
+	}
+
+	tokenBytes := make([]byte, 16)
+	if _, err := io.ReadFull(crand.Reader, tokenBytes); err != nil {
+		writeError(w, http.StatusInternalServerError, "生成令牌失败")
+		return
+	}
+	token := hex.EncodeToString(tokenBytes)
+
+	s.authMu.Lock()
+	s.authTokens[token] = time.Now().Add(30 * 24 * time.Hour)
+	s.authMu.Unlock()
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "cst_auth_token",
+		Value:    token,
+		Path:     "/",
+		Expires:  time.Now().Add(30 * 24 * time.Hour),
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"authenticated": true,
+		"token":         token,
+	})
+}
+
+func (s *Server) handleExportWorkbenchClash(w http.ResponseWriter, r *http.Request) {
+	var nodeKeys []string
+	groupName := "PROXY"
+
+	if r.Method == http.MethodGet {
+		rawKeys := r.URL.Query().Get("node_keys")
+		if rawKeys != "" {
+			nodeKeys = strings.Split(rawKeys, ",")
+		}
+		if g := r.URL.Query().Get("group"); g != "" {
+			groupName = g
+		}
+	} else {
+		var req application.ExportClashConfigRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid json body: "+err.Error())
+			return
+		}
+		nodeKeys = req.NodeKeys
+		if req.GroupName != "" {
+			groupName = req.GroupName
+		}
+	}
+
+	resp, err := s.app.ExportNodesClashConfig(r.Context(), application.ExportClashConfigRequest{
+		NodeKeys:  nodeKeys,
+		GroupName: groupName,
+	})
+	if err != nil {
+		if monitor.IsValidationError(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Direct YAML download if download=1 or format=yaml
+	if r.URL.Query().Get("download") == "1" || r.URL.Query().Get("format") == "yaml" {
+		w.Header().Set("Content-Type", "application/x-yaml; charset=utf-8")
+		w.Header().Set("Content-Disposition", "attachment; filename=\"clash-speedtest-export.yaml\"")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(resp.YAMLContent))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleCleanupWorkbenchHistory(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OlderThanDays int `json:"older_than_days"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	deleted, err := s.app.CleanupWorkbenchHistory(r.Context(), req.OlderThanDays)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deleted_count": deleted,
+	})
+}
+

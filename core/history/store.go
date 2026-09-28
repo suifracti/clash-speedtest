@@ -486,6 +486,13 @@ func (s *Store) ApplyRetention(ctx context.Context, req monitor.RetentionRequest
 	return s.db.ApplyRetention(ctx, req)
 }
 
+func (s *Store) CleanupWorkbenchHistory(ctx context.Context, cutoff time.Time) (int64, error) {
+	if s.db == nil {
+		return 0, nil
+	}
+	return s.db.CleanupWorkbenchHistory(ctx, cutoff)
+}
+
 // GetMonitorSampleFacets returns the distinct filter dimensions present in raw samples.
 // Presentation-only read model; see DB.GetMonitorSampleFacets.
 func (s *Store) GetMonitorSampleFacets(ctx context.Context, since, until time.Time, maxNodes, maxValues int) (*monitor.MonitorSampleFacets, error) {

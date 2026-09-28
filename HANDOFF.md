@@ -21,6 +21,8 @@ $env:CLASH_SPEEDTEST_DATA_DIR = Join-Path (Get-Location).Path 'data'
 
 打开 `http://127.0.0.1:8999/`。仓库保留 `frontend/dist`，后端嵌入此构建；改前端后必须先更新它再构建 Go：
 
+后续网络配置变更：Web 启动默认 `--listen ::`，监听全部 IPv6/IPv4 接口，允许 IPv6+端口及域名隧道访问；不含登录鉴权，管理接口也对可连接者开放，这是用户确认的配置。仅本机使用时添加 `--listen 127.0.0.1`。同源写请求校验保留。Windows 当前放行 TCP 8999；路由器/运营商入站限制仍需另行配置。默认随机端口未改变，固定分享请继续使用 `--port 8999`。
+
 ```powershell
 cd frontend
 npm ci

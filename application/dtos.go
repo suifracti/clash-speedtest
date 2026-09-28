@@ -120,6 +120,7 @@ type WorkbenchLatencyBatchRequest struct {
 	TestProject    string                           `json:"test_project"`
 	TimeoutSeconds int64                            `json:"timeout_seconds"`
 	SampleCount    int                              `json:"sample_count,omitempty"`
+	Concurrency    int                              `json:"concurrency,omitempty"`
 	Selections     []WorkbenchLatencyBatchSelection `json:"selections"`
 }
 
