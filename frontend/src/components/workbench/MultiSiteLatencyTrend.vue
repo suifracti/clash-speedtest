@@ -32,7 +32,14 @@ const series = computed(() => latencyTargets.map((target, index) => ({ ...target
 }).sort((a, b) => a.time - b.time) })))
 const visible = computed(() => series.value.filter(site => selected.value === 'all' || site.value === selected.value))
 const hoveredPoints = computed(() => visible.value.flatMap(site => site.points.filter(point => point.id === hoveredAttempt.value).map(point => ({ ...point, siteLabel: site.label, color: site.color }))))
-const siteHealth = computed(() => latencyTargets.filter(site => selected.value === 'all' || selected.value === site.value).map(site => ({ ...site, health: computeNodeHealthReport(props.tests.flatMap(test => test.samples.filter(sample => (sample.target || test.target || latencyTargets[0]!.url) === site.url && Date.parse(sample.timestamp) >= Date.parse(props.since) && Date.parse(sample.timestamp) < Date.parse(props.until)))) })))
+const isDetailsOpen = ref(false)
+const siteHealth = computed(() => {
+  if (!isDetailsOpen.value) return []
+  return latencyTargets.filter(site => selected.value === 'all' || selected.value === site.value).map(site => ({
+    ...site,
+    health: computeNodeHealthReport(props.tests.flatMap(test => test.samples.filter(sample => (sample.target || test.target || latencyTargets[0]!.url) === site.url && Date.parse(sample.timestamp) >= Date.parse(props.since) && Date.parse(sample.timestamp) < Date.parse(props.until))))
+  }))
+})
 const hoveredSamples = computed(() => (props.tests.find(test => test.attempt_id === hoveredAttempt.value)?.samples || []).filter(sample => Date.parse(sample.timestamp) >= Date.parse(props.since) && Date.parse(sample.timestamp) < Date.parse(props.until) && (selected.value === 'all' || sample.target === latencyTargets.find(site => site.value === selected.value)?.url)))
 const currentSample = computed(() => hoveredSamples.value[sampleIndex.value])
 function hover(event: MouseEvent) {
@@ -102,7 +109,7 @@ function path(points: typeof series.value[number]['points']) {
       </div>
       <p v-if="currentSample">样本 {{ sampleIndex + 1 }}/{{ hoveredSamples.length }} · {{ latencyTargets.find(site => site.url === currentSample?.target)?.label || 'Cloudflare' }} · {{ new Date(currentSample.timestamp).toLocaleString() }} · {{ currentSample.success ? `${currentSample.latency_ms} ms` : `失败：${currentSample.error || '请求失败'}` }}</p>
     </div>
-    <details class="advanced-sites-details">
+    <details class="advanced-sites-details" @toggle="isDetailsOpen = ($event.target as HTMLDetailsElement).open">
       <summary class="advanced-sites-summary">
         <span>📊 展开分站进阶直方图与各区间统计</span>
       </summary>

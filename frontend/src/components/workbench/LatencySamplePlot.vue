@@ -38,7 +38,7 @@ onMounted(() => {
       resizeObserver = new ResizeObserver((entries) => {
         for (const entry of entries) {
           const w = Math.round(entry.contentRect.width)
-          if (w > 0) {
+          if (w > 0 && Math.abs(w - measuredWidth.value) > 4) {
             measuredWidth.value = w
           }
         }

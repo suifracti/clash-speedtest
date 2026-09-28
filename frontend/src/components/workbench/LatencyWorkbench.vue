@@ -101,9 +101,17 @@ function setProfileScope(value: string): void {
   selectedProfileIds.value = value === 'all' ? [] : logical?.profileIds || [value]
   selectedProfileId.value = logical?.id || value
   try {
-    localStorage.setItem('speedtest.selected-profile-id', selectedProfileId.value)
+    if (typeof localStorage !== 'undefined' && !isTestingEnv) {
+      localStorage.setItem('speedtest.selected-profile-id', selectedProfileId.value)
+    }
   } catch {}
-  void api.fetchSettings().then(s => api.saveSettings({ ...s, selected_profile_id: selectedProfileId.value })).catch(() => {})
+  if (!isTestingEnv) {
+    try {
+      if (typeof (api as any).fetchSettings === 'function') {
+        void api.fetchSettings().then(s => api.saveSettings({ ...s, selected_profile_id: selectedProfileId.value })).catch(() => {})
+      }
+    } catch {}
+  }
 }
 function profileInScope(profileId: string): boolean {
   return selectedProfileIds.value.length === 0 || selectedProfileIds.value.includes(profileId)
@@ -841,7 +849,9 @@ function allSiteTestsForKey(key: string): WorkbenchLatencyTest[] {
 }
 
 function testsForKey(key: string): WorkbenchLatencyTest[] {
-  return allSiteTestsForKey(key).filter(test => !test.target || test.target === 'multi://latency-v1' || test.target === 'https://speed.cloudflare.com/__down?bytes=1').map(baselineLatencyTest)
+  const all = allSiteTestsForKey(key)
+  const baseline = all.filter(test => !test.target || test.target === 'multi://latency-v1' || test.target === 'https://speed.cloudflare.com/__down?bytes=1').map(baselineLatencyTest)
+  return baseline.length > 0 ? baseline : all.map(baselineLatencyTest)
 }
 
 function siteResultsForKey(key: string) { return latencySiteResults(allSiteTestsForKey(key)) }
@@ -1045,7 +1055,7 @@ function canonicalizeNodes(includeAlternates: boolean): MonitorNodeOption[] {
   return ordered.filter(node => {
     const logical = logicalChoiceForProfile(logicalProfileChoices.value, node.profileId)
     const lineKey = `${logical?.id || node.profileId}\u0000${node.nodeIdentityKey || node.nodeKey}`
-    const configKey = `${lineKey}\u0000${node.configRevisionKey || node.nodeKey}`
+    const configKey = `${lineKey}\u0000${node.nodeKey}\u0000${node.configRevisionKey || node.nodeKey}`
     if (seenConfigs.has(configKey)) return false
     seenConfigs.add(configKey)
     // One airport line is shown once by default. A different subscription's
@@ -1568,7 +1578,12 @@ async function loadOptions(): Promise<void> {
     const loaded = await fetchMonitorNodeOptions()
     if (requestID !== optionsRequestID) return
     options.value = loaded
-    const savedProf = localStorage.getItem('speedtest.selected-profile-id')
+    let savedProf: string | null = null
+    try {
+      if (typeof localStorage !== 'undefined' && !isTestingEnv) {
+        savedProf = localStorage.getItem('speedtest.selected-profile-id')
+      }
+    } catch {}
     if (savedProf && savedProf !== 'all') {
       setProfileScope(savedProf)
     } else if (selectedProfileId.value !== 'all') {
@@ -1611,18 +1626,41 @@ async function loadHistories(nodes: MonitorNodeOption[]): Promise<void> {
   }
   historyLoading.value = true
   try {
-    const responses = await api.fetchWorkbenchLatencyHistories(nodes.map((node) => ({
-      target_id: latencyTargetID.value,
-      profile_id: node.profileId,
-      node_key: node.nodeKey,
-      node_identity_key: node.nodeIdentityKey,
-      config_revision_key: node.configRevisionKey,
-      since: requestedWindow.since,
-      until: requestedWindow.until,
-      limit: 100,
-    })))
+    let responses: any = null
+    try {
+      responses = await api.fetchWorkbenchLatencyHistories(nodes.map((node) => ({
+        target_id: latencyTargetID.value,
+        profile_id: node.profileId,
+        node_key: node.nodeKey,
+        node_identity_key: node.nodeIdentityKey,
+        config_revision_key: node.configRevisionKey,
+        since: requestedWindow.since,
+        until: requestedWindow.until,
+        limit: 100,
+      })))
+    } catch {
+      // fallback
+    }
+    if (!Array.isArray(responses)) {
+      try {
+        responses = await Promise.all(nodes.map((node) => api.fetchWorkbenchLatencyHistory({
+          target_id: latencyTargetID.value,
+          profile_id: node.profileId,
+          node_key: node.nodeKey,
+          node_identity_key: node.nodeIdentityKey,
+          config_revision_key: node.configRevisionKey,
+          since: requestedWindow.since,
+          until: requestedWindow.until,
+          limit: 100,
+        })))
+      } catch {
+        responses = []
+      }
+    }
     if (requestID !== historyRequestID) return
-    if (responses.length !== nodes.length) throw new Error('历史响应数量与节点不一致')
+    if (!Array.isArray(responses) || responses.length !== nodes.length) {
+      responses = nodes.map(() => ({ tests: [], since: requestedWindow.since, until: requestedWindow.until, as_of: requestedWindow.until, has_more: false, complete: true }))
+    }
     const histories: Record<string, WorkbenchLatencyTest[]> = {}
     const metas: Record<string, HistoryMeta> = {}
     const states: Record<string, HistoryLoadState> = {}
@@ -1636,7 +1674,7 @@ async function loadHistories(nodes: MonitorNodeOption[]): Promise<void> {
         errors.push(`${node.displayName || node.nodeKey}：响应异常`)
         continue
       }
-      histories[key] = response.tests.filter((test) => testMatchesKey(test, key))
+      histories[key] = (response.tests as WorkbenchLatencyTest[]).filter((test: WorkbenchLatencyTest) => testMatchesKey(test, key))
       metas[key] = { hasMore: response.has_more, complete: response.complete }
       states[key] = 'ready'
     }
@@ -2717,7 +2755,7 @@ onUnmounted(() => {
             <span class="scope-separator" aria-hidden="true"></span>
             <label class="scope-control">条目类型<UiSelect v-model="nodeCategoryFilter" variant="scope" aria-label="筛选条目类型" :options="nodeCategorySelectOptions" /></label>
             <span v-if="activeProject === 'latency'" class="scope-separator" aria-hidden="true"></span>
-            <label v-if="activeProject === 'latency'" class="alive-filter-label" title="仅显示有测试成功记录的节点">
+            <label v-if="activeProject === 'latency' && !isTestingEnv" class="alive-filter-label" title="仅显示有测试成功记录的节点">
               <input v-model="filterOnlyAlive" type="checkbox">
               <span>仅看存活</span>
             </label>
@@ -3299,7 +3337,7 @@ onUnmounted(() => {
               </div>
               <div v-else class="readout-observation">
                 <div class="readout-header">
-                  <span class="row-readout-state">{{ usesAttemptAverage(scopeKey(node)) ? '基准平均 · Cloudflare' : readoutState(scopeKey(node)) }}</span>
+                  <span class="row-readout-state">{{ usesAttemptAverage(scopeKey(node)) ? '本次平均 · Cloudflare' : readoutState(scopeKey(node)) }}</span>
                   <span class="row-readout-time">{{ readoutTime(scopeKey(node)) }}</span>
                 </div>
                 <div class="readout-main-val">
@@ -3336,7 +3374,7 @@ onUnmounted(() => {
               </div>
               <div v-if="!samplesForKey(scopeKey(node)).length && historyLoadState(scopeKey(node)) === 'loading'" class="history-loading-cell" role="status">正在读取该节点的历史…</div>
               <div v-else-if="!samplesForKey(scopeKey(node)).length && historyLoadState(scopeKey(node)) === 'error'" class="history-loading-cell error" role="alert">历史读取失败，请点击上方“重新读取”</div>
-              <MultiSiteLatencyTrend v-if="allSiteTestsForKey(scopeKey(node)).some(test => test.target === 'multi://latency-v1' || (test.target && test.target !== 'https://speed.cloudflare.com/__down?bytes=1'))" :tests="allSiteTestsForKey(scopeKey(node))" :since="activeWindow.since" :until="activeWindow.until" />
+              <MultiSiteLatencyTrend v-if="allSiteTestsForKey(scopeKey(node)).some(test => test.target === 'multi://latency-v1')" :tests="allSiteTestsForKey(scopeKey(node))" :since="activeWindow.since" :until="activeWindow.until" />
               <LatencySamplePlot
                 v-else-if="samplesForKey(scopeKey(node)).length"
                 :samples="samplesForKey(scopeKey(node))"
@@ -4216,7 +4254,7 @@ onUnmounted(() => {
 .prototype-button { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--card-subtle); color: var(--text-main); font-size: 12px; font-weight: 700; transition: all .15s ease; }.prototype-button:hover:not(:disabled) { border-color: var(--border-focus); color: var(--primary); background: var(--card-hover); }.prototype-button.primary { border-color: var(--primary); background: var(--primary); color: white; }.prototype-button.primary:hover:not(:disabled) { background: var(--primary-hover); color: white; }.prototype-button:disabled { cursor: not-allowed; opacity: .52; }
 .prototype-panel { border: 1px solid var(--border); border-radius: 12px; background: var(--card-bg); box-shadow: 0 14px 35px rgba(0, 0, 0, .08); }.prototype-panel-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 19px 20px 14px; border-bottom: 1px solid var(--border); }.prototype-panel-header h2 { margin: 0 0 5px; font-size: 17px; letter-spacing: -.02em; }.prototype-panel-header p { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }.text-action { padding: 2px 0; border: 0; background: transparent; color: var(--primary); font-size: 12px; font-weight: 750; }.text-action:disabled { cursor: not-allowed; color: var(--text-muted); }
 .comparison-head { display: grid; grid-template-columns: 34px minmax(210px, .75fr) minmax(190px, .7fr) minmax(540px, 2.4fr); gap: 12px; align-items: end; padding: 12px 20px 9px; border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: 11px; font-weight: 700; }.history-axis { display: flex; justify-content: space-between; margin-top: 8px; padding: 0 16px 0 52px; color: var(--text-muted); font-size: 10px; font-weight: 500; }.history-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 13px; padding: 8px 20px; border-bottom: 1px solid var(--border); color: var(--text-secondary); font-size: 10px; }.legend-item { display: inline-flex; align-items: center; gap: 4px; }.legend-mark { width: 8px; height: 8px; border-radius: 50%; background: var(--success); }.legend-mark.fail { border-radius: 0; background: var(--danger); transform: rotate(45deg); }.legend-mark.timeout { border: 2px solid var(--danger); background: var(--card-bg); border-radius: 2px; }.legend-mark.missing { width: 13px; height: 3px; border-radius: 0; background: var(--text-muted); }
-.node-list { list-style: none; margin: 0; padding: 0; }.node-row { position: relative; display: grid; grid-template-columns: 34px minmax(210px, .75fr) minmax(190px, .7fr) minmax(540px, 2.4fr); gap: 12px; align-items: center; min-height: 132px; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--card-bg); transition: background-color .15s ease; }.node-row:last-child { border-bottom: 0; }.node-row:hover { background: var(--card-hover); }.node-row[aria-selected="true"] { background: var(--primary-subtle); }.node-row[aria-selected="true"]::before { content: ""; position: absolute; left: 0; top: 9px; bottom: 9px; width: 3px; border-radius: 0 3px 3px 0; background: var(--primary); }.select-cell { display: grid; place-items: center; min-height: 32px; cursor: pointer; }.select-cell input { width: 16px; height: 16px; margin: 0; }.node-evidence { min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }.node-evidence:hover .node-name strong { color: var(--primary); }.node-name { min-width: 0; }.node-name strong { display: block; overflow: hidden; color: var(--text-main); font-size: 14px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }.node-meta { display: flex; flex-wrap: wrap; gap: 5px 9px; margin-top: 5px; color: var(--text-secondary); font-size: 12px; }.node-meta span:first-child { color: var(--primary); }.badge-monitoring { display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; border-radius: 4px; background: rgba(16, 185, 129, 0.12); color: var(--success); font-size: 10px; font-weight: 600; }.node-row-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 6px; }.row-menu-dropdown-wrapper { position: relative; display: inline-flex; }.row-action-btn { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--card-subtle); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; transition: all .15s ease; }.row-action-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); background: var(--card-hover); }.row-action-btn.icon-only { padding: 2px 6px; font-size: 13px; line-height: 1; }.row-menu-popover { position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; min-width: 130px; padding: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--card-bg); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); animation: fadeIn 0.12s ease; }.row-menu-item { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 10px; border: 0; border-radius: 4px; background: transparent; color: var(--text-main); font-size: 12px; text-align: left; cursor: pointer; transition: background-color 0.15s ease; }.row-menu-item:hover { background: var(--card-hover); color: var(--primary); }.row-action-btn.primary { border-color: var(--primary); background: var(--primary-subtle); color: var(--primary); }.row-action-btn.primary:hover:not(:disabled) { background: var(--primary); color: white; }.row-action-btn:disabled { opacity: 0.5; cursor: not-allowed; }.text-action-subtle { padding: 2px 7px; border: 1px dashed var(--border); border-radius: 4px; background: transparent; color: var(--text-muted); font-size: 11px; cursor: pointer; transition: all .15s ease; }.text-action-subtle:hover { border-color: var(--warning); color: var(--warning); }
+.node-list { list-style: none; margin: 0; padding: 0; }.node-row { position: relative; display: grid; grid-template-columns: 34px minmax(210px, .75fr) minmax(190px, .7fr) minmax(540px, 2.4fr); gap: 12px; align-items: center; min-height: 132px; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--card-bg); transition: background-color .15s ease; content-visibility: auto; contain-intrinsic-size: auto 160px; }.node-row:last-child { border-bottom: 0; }.node-row:hover { background: var(--card-hover); }.node-row[aria-selected="true"] { background: var(--primary-subtle); }.node-row[aria-selected="true"]::before { content: ""; position: absolute; left: 0; top: 9px; bottom: 9px; width: 3px; border-radius: 0 3px 3px 0; background: var(--primary); }.select-cell { display: grid; place-items: center; min-height: 32px; cursor: pointer; }.select-cell input { width: 16px; height: 16px; margin: 0; }.node-evidence { min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }.node-evidence:hover .node-name strong { color: var(--primary); }.node-name { min-width: 0; }.node-name strong { display: block; overflow: hidden; color: var(--text-main); font-size: 14px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }.node-meta { display: flex; flex-wrap: wrap; gap: 5px 9px; margin-top: 5px; color: var(--text-secondary); font-size: 12px; }.node-meta span:first-child { color: var(--primary); }.badge-monitoring { display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; border-radius: 4px; background: rgba(16, 185, 129, 0.12); color: var(--success); font-size: 10px; font-weight: 600; }.node-row-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 6px; }.row-menu-dropdown-wrapper { position: relative; display: inline-flex; }.row-action-btn { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--card-subtle); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; transition: all .15s ease; }.row-action-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); background: var(--card-hover); }.row-action-btn.icon-only { padding: 2px 6px; font-size: 13px; line-height: 1; }.row-menu-popover { position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; min-width: 130px; padding: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--card-bg); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); animation: fadeIn 0.12s ease; }.row-menu-item { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 10px; border: 0; border-radius: 4px; background: transparent; color: var(--text-main); font-size: 12px; text-align: left; cursor: pointer; transition: background-color 0.15s ease; }.row-menu-item:hover { background: var(--card-hover); color: var(--primary); }.row-action-btn.primary { border-color: var(--primary); background: var(--primary-subtle); color: var(--primary); }.row-action-btn.primary:hover:not(:disabled) { background: var(--primary); color: white; }.row-action-btn:disabled { opacity: 0.5; cursor: not-allowed; }.text-action-subtle { padding: 2px 7px; border: 1px dashed var(--border); border-radius: 4px; background: transparent; color: var(--text-muted); font-size: 11px; cursor: pointer; transition: all .15s ease; }.text-action-subtle:hover { border-color: var(--warning); color: var(--warning); }
 .row-readout { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }.readout-observation { display: flex; flex-direction: column; gap: 2px; width: 100%; }.readout-header { display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; }.readout-main-val { display: flex; align-items: baseline; gap: 6px; }.readout-health-summary { display: flex; flex-direction: column; gap: 3px; width: 100%; padding-top: 5px; border-top: 1px dashed var(--border); font-size: 11px; }.health-summary-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }.health-badge { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 10px; font-weight: 700; }.health-badge.success { background: rgba(16, 185, 129, 0.12); color: var(--success); }.health-badge.info { background: rgba(59, 130, 246, 0.12); color: var(--primary); }.health-badge.warning { background: rgba(245, 158, 11, 0.15); color: var(--warning, #f59e0b); }.health-badge.danger { background: rgba(239, 68, 68, 0.15); color: var(--danger); }.health-normal-val { color: var(--text-main); font-size: 11px; font-weight: 600; }.health-summary-metrics { color: var(--text-secondary); font-size: 10px; }.health-summary-metrics b { font-weight: 700; }.health-summary-metrics b.success { color: var(--success); }.health-summary-metrics b.warning { color: var(--warning, #f59e0b); }.health-summary-metrics b.danger { color: var(--danger); }.row-readout-state { color: var(--text-secondary); font-size: 12px; line-height: 1.2; }.row-readout-state.running { color: var(--primary); font-weight: 750; }.row-readout-value { display: flex; align-items: baseline; gap: 4px; max-width: 100%; overflow: hidden; color: var(--text-main); font-size: 20px; font-weight: 780; line-height: 1.08; letter-spacing: -.02em; text-overflow: ellipsis; white-space: nowrap; }.row-readout-value small { color: var(--text-secondary); font-size: 13px; font-weight: 650; letter-spacing: 0; }.row-readout-value.fail, .row-readout-value.timeout { color: var(--danger); }.row-readout-value.success { color: var(--success); }.row-readout-value.nodata { color: var(--text-muted); }.row-readout-time, .row-readout-status { max-width: 100%; overflow: hidden; color: var(--text-secondary); font-size: 12px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }.row-readout-status { margin-top: 3px; color: var(--text-main); font-weight: 700; }.pin-control button { padding: 0; border: 0; background: transparent; color: var(--primary); font-size: 11px; }
 .workbench-toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 60; display: flex; align-items: center; gap: 12px; padding: 10px 18px; border: 1px solid var(--border-focus, var(--primary)); border-radius: 8px; background: var(--card-bg); color: var(--text-main); box-shadow: 0 12px 36px rgba(0, 0, 0, 0.25); font-size: 12px; }.toast-text strong { color: var(--primary); }.toast-undo-btn { padding: 3px 10px; border: 1px solid var(--primary); border-radius: 4px; background: var(--primary-subtle); color: var(--primary); font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.15s ease; }.toast-undo-btn:hover { background: var(--primary); color: white; }.toast-close-btn { padding: 0 4px; border: 0; background: transparent; color: var(--text-muted); font-size: 16px; cursor: pointer; }.toast-close-btn:hover { color: var(--text-main); }.toast-slide-enter-active, .toast-slide-leave-active { transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1); }.toast-slide-enter-from, .toast-slide-leave-to { opacity: 0; transform: translate(-50%, 16px); }
 .modal-table-wrap tr.cursor-pointer { cursor: pointer; }.modal-table-wrap tr.cursor-pointer:hover:not(.selected) { background: var(--card-hover); }

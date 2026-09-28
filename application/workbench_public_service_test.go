@@ -75,7 +75,7 @@ func TestWorkbenchAntigravityRequestAndSavedEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reached.Load() || saved.PersistenceState != "saved" || saved.ServiceID != "antigravity" || saved.Rule.RuleVersion != 3 || saved.Result == nil || saved.Result.Outcome != "auth_failed" || saved.Result.HTTPStatus == nil || *saved.Result.HTTPStatus != 401 {
+	if !reached.Load() || saved.PersistenceState != "saved" || saved.ServiceID != "antigravity" || saved.Rule.RuleVersion != 5 || saved.Result == nil || saved.Result.Outcome != "auth_failed" || saved.Result.HTTPStatus == nil || *saved.Result.HTTPStatus != 401 {
 		t.Fatalf("request and stored evidence mismatch: %+v", saved)
 	}
 }
@@ -113,13 +113,13 @@ func TestWorkbenchAntigravitySaveRetryKeepsModelEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if saved.Result == nil || saved.Result.Outcome != "matched" || saved.Result.Model != "gemini-fixture-flash" || saved.Result.RequestCount != 3 || saved.PersistenceState != "saved" || saved.AttemptID != started.AttemptID {
+	if saved.Result == nil || saved.Result.Outcome != "matched" || saved.Result.Model != "gemini-fixture-flash" || saved.Result.RequestCount != 4 || saved.PersistenceState != "saved" || saved.AttemptID != started.AttemptID {
 		t.Fatalf("missing model evidence: %+v", saved)
 	}
 	if _, err = app.StartWorkbenchPublicServiceTest(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
-	if calls.Load() != 3 {
+	if calls.Load() != 4 {
 		t.Fatalf("retry must not remeasure, calls=%d", calls.Load())
 	}
 }

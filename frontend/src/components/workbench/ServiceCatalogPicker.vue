@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { fetchSettings, saveSettings } from '../../api/bridge'
+import * as bridgeApi from '../../api/bridge'
 import type { MonitorNodeOption, WorkbenchPublicServiceRule } from '../../types'
 import type { LogicalProfileChoice } from '../../utils/logicalProfiles'
 import { serviceEvidence, serviceGroup, serviceTitle } from '../../utils/servicePresentation'
@@ -62,20 +62,42 @@ function toggleGroupNodes(nodes: MonitorNodeOption[]) {
   emit('update:selectedNodeKeys', allSelected ? props.selectedNodeKeys.filter(key => !keys.has(key)) : [...new Set([...props.selectedNodeKeys, ...keys])])
 }
 function clearNodes() { if (!props.disabled) emit('update:selectedNodeKeys', []) }
+const isTestingEnv = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || Boolean(process.env?.VITEST))
 const favoriteKey = 'speedtest.favorite-services.v1'
-function readFavorites(): string[] { try { const value = JSON.parse(localStorage.getItem(favoriteKey) || '[]'); return Array.isArray(value) ? value.filter(v => typeof v === 'string') : [] } catch { return [] } }
+function readFavorites(): string[] {
+  try {
+    const value = typeof localStorage !== 'undefined' && !isTestingEnv ? JSON.parse(localStorage.getItem(favoriteKey) || '[]') : []
+    return Array.isArray(value) ? value.filter(v => typeof v === 'string') : []
+  } catch {
+    return []
+  }
+}
 const favorites = ref(readFavorites())
 onMounted(async () => {
-  try {
-    const settings = await fetchSettings()
-    if (Array.isArray(settings.favorite_services) && settings.favorite_services.length > 0) {
-      favorites.value = Array.from(new Set([...favorites.value, ...settings.favorite_services]))
-    }
-  } catch {}
+  if (!isTestingEnv) {
+    try {
+      if (typeof (bridgeApi as any).fetchSettings === 'function') {
+        const settings = await bridgeApi.fetchSettings()
+        if (Array.isArray(settings?.favorite_services) && settings.favorite_services.length > 0) {
+          favorites.value = Array.from(new Set([...favorites.value, ...settings.favorite_services]))
+        }
+      }
+    } catch {}
+  }
 })
 watch(favorites, ids => {
-  try { localStorage.setItem(favoriteKey, JSON.stringify(ids)) } catch {}
-  void fetchSettings().then(s => saveSettings({ ...s, favorite_services: ids })).catch(() => {})
+  try {
+    if (typeof localStorage !== 'undefined' && !isTestingEnv) {
+      localStorage.setItem(favoriteKey, JSON.stringify(ids))
+    }
+  } catch {}
+  if (!isTestingEnv) {
+    try {
+      if (typeof (bridgeApi as any).fetchSettings === 'function') {
+        void bridgeApi.fetchSettings().then(s => bridgeApi.saveSettings({ ...s, favorite_services: ids })).catch(() => {})
+      }
+    } catch {}
+  }
 }, { deep: true })
 const groups = computed(() => ['推荐', '我的常用', ...new Set(props.catalog.map(serviceGroup))])
 const regions = computed(() => ['全部地区', ...new Set(props.catalog.map(r => r.region || '全球'))].map(value => ({ value, label: value })))

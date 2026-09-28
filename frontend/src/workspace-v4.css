@@ -171,6 +171,10 @@
 }
 
 /* Compact view mode and workbench controls */
+.app-shell .latency-table .node-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 160px;
+}
 .app-shell .latency-table .node-row.compact-mode-row {
   display: flex;
   align-items: center;
@@ -179,6 +183,8 @@
   min-height: 46px;
   border-bottom: 1px solid var(--border);
   transition: background 0.15s ease;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 46px;
 }
 .app-shell .latency-table .node-row.compact-mode-row:hover {
   background: var(--card-hover);

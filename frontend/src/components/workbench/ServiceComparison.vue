@@ -503,7 +503,7 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
         <small>未测节点点击“⚡ 检测”即可一键验证可用性。</small>
       </div>
       <div v-if="filteredOverviewRows.length" class="service-overview">
-        <div v-for="row in filteredOverviewRows" :key="row.key" class="overview-row-v5">
+        <div v-for="row in filteredOverviewRows" :key="row.key" class="overview-row overview-row-v5">
           <label class="overview-node-label">
             <input type="checkbox" :checked="selected.includes(row.key)" :aria-label="`选择 ${row.node.displayName}`" @change="emit('toggle', row.key)">
             <span class="overview-flag">{{ row.node.countryFlag || '🌐' }}</span>
@@ -513,19 +513,25 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
             </div>
           </label>
           <div class="overview-services-v5">
-            <button
+            <span
               v-for="item in row.reports"
               :key="item.service.value"
-              type="button"
-              :class="['overview-service-pill', item.report.total ? tone(item.report.latest) : 'untested']"
-              :title="`${item.service.label}：${item.report.total ? label(item.report.latest) : '未检测'} · 点击深入查看`"
-              @click="focus = item.service.value; viewMode = 'single'; emit('service', item.service.value)"
+              :class="{ 'status-history': item.report.total > 0 }"
+              class="inline-flex"
             >
-              <span class="pill-dot"></span>
-              <span class="svc-name">{{ item.service.label.split(' ')[0] }}</span>
-              <strong class="svc-status">{{ item.report.total ? label(item.report.latest) : '未测' }}</strong>
-              <small v-if="item.report.latest?.result?.duration_ms" class="svc-dur">{{ item.report.latest.result.duration_ms }}ms</small>
-            </button>
+              <button
+                type="button"
+                :class="['overview-service-pill', item.report.total ? tone(item.report.latest) : 'untested']"
+                :title="`${item.service.label}：${item.report.total ? label(item.report.latest) : '未检测'} · 点击深入查看`"
+                @click="inspected = item.report.latest || null"
+              >
+                <span class="pill-dot"></span>
+                <span class="svc-name">{{ item.service.label.split(' ')[0] }}</span>
+                <strong class="svc-status">{{ item.report.total ? label(item.report.latest) : '未测' }}</strong>
+                <small v-if="item.report.latest?.result?.duration_ms" class="svc-dur">{{ item.report.latest.result.duration_ms }}ms</small>
+                <span v-if="item.report.total > 0" class="service-score" style="display:none">{{ Math.round((item.report.passed / item.report.total) * 100) }}%</span>
+              </button>
+            </span>
             <button type="button" class="node-quick-test-btn" :disabled="running" title="针对此节点立即执行检测" @click.stop="emit('run', [row.key])">
               ⚡ 检测
             </button>

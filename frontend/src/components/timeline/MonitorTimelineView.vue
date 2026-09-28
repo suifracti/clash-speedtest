@@ -165,9 +165,9 @@ onBeforeUnmount(() => {
               class="w-5 h-5 rounded-full border-2 border-border border-t-brand animate-spin"
               aria-hidden="true"
             ></span>
-            <span class="text-xs text-content-secondary">正在读取最近的检测记录…</span>
+            <span class="text-xs text-content-secondary">正在通过游标读取最新一页原始样本…</span>
             <span class="text-[10px] text-content-muted">
-              请稍候。
+              读取完成前不会用任何示例数据填充时间轴。
             </span>
           </div>
 
@@ -224,7 +224,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Stable evidence entry point: click-selected, keyboard reachable -->
-      <TimelineInspector v-if="showTimeline" @open-node-detail="emit('open-node-detail', $event)" />
+      <TimelineInspector @open-node-detail="emit('open-node-detail', $event)" />
     </main>
     </template>
   </div>

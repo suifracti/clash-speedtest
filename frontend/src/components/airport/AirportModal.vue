@@ -430,14 +430,10 @@ function formatDate(iso?: string): string {
         <p>用量来自机场提供的快照<br>刷新订阅时同步更新，不合并共享套餐额度</p>
       </div>
 
-      <!-- Compact Attention Alert Bar -->
-      <div v-if="embedded && attentionCount > 0" class="compact-attention-banner">
-        <span class="compact-attention-tag">⚠️ 订阅提醒</span>
-        <span class="compact-attention-text">有 {{ attentionCount }} 条订阅需要注意（流量将耗尽或即将到期）</span>
-        <button type="button" class="compact-attention-btn" @click="attentionOnly = !attentionOnly">
-          {{ attentionOnly ? '显示全部订阅' : '仅看需关注项' }}
-        </button>
-      </div>
+      <section v-if="embedded && (attentionCount || readAttentionCount)" class="attention-inbox" aria-label="需要处理的订阅">
+        <div class="attention-heading"><span class="attention-icon">{{ attentionCount ? '!' : '✓' }}</span><div><h2>{{ attentionCount ? `${attentionCount} 条订阅需要你看一眼` : '当前提醒均已读' }}</h2><p>每次标为已读后，剩余流量降至当时的一半再提醒；出现新问题也会提醒。</p></div><button @click="showReadAttention = !showReadAttention">{{ showReadAttention ? `未读（${attentionCount}）` : `查看已读（${readAttentionCount}）` }}</button><button @click="attentionOnly = !attentionOnly">{{ attentionOnly ? '返回全部订阅' : '只看需处理订阅' }}</button></div>
+        <div class="attention-items"><div v-for="entry in displayedAttention" :key="attentionKey(entry.sub)" class="attention-entry"><button class="attention-open" :disabled="busy" @click="attentionOnly = !showReadAttention; selectAirport(entry.ap.id)"><span><strong>{{ entry.ap.name }} · {{ entry.sub.name }}</strong><small>{{ attentionReason(entry.sub) }}</small></span><b>查看套餐 →</b></button><button class="attention-read" :disabled="busy" @click="markAttention(entry.sub, !showReadAttention)">{{ showReadAttention ? '标为未读' : '标为已读' }}</button></div><p v-if="!displayedAttention.length" class="attention-empty">{{ showReadAttention ? '暂无已读提醒' : '暂无未读提醒' }}</p></div>
+      </section>
 
       <div class="manager-layout">
       <aside v-if="embedded" class="airport-browser" aria-label="机场列表">

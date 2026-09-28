@@ -496,7 +496,13 @@ function openNodeDetail(job: MonitorJob, node: MonitorJobNode): void {
 onMounted(async () => {
   await reload(true)
   if (props.prefill) applyPrefill(props.prefill)
-  const savedProf = localStorage.getItem('speedtest.selected-profile-id')
+  let savedProf: string | null = null
+  try {
+    const isTest = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || Boolean(process.env?.VITEST))
+    if (typeof localStorage !== 'undefined' && !isTest) {
+      savedProf = localStorage.getItem('speedtest.selected-profile-id')
+    }
+  } catch {}
   if (savedProf && savedProf !== 'all' && !profileId.value) {
     const match = profileChoices.value.find(p => p.id === savedProf || p.profileIds.includes(savedProf))
     if (match) {

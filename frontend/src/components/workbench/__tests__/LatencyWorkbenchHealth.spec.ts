@@ -48,11 +48,11 @@ it('counts category entries within the selected subscription', async () => {
   mocks.fetchNodes.mockResolvedValue([
     ...mockNodes,
     { ...mockNodes[0], nodeKey: 'notice', displayName: '官网 https://example.com' },
-    { ...mockNodes[0], profileId: 'other', nodeKey: 'other', displayName: 'Other node' },
+    { ...mockNodes[0], profileId: 'other', profileName: '其他订阅', nodeKey: 'other', nodeIdentityKey: 'id-other', displayName: 'Other node' },
   ])
   const wrapper = mount(LatencyWorkbench, { props: { initialProfileId: 'prof-1' }, global: { stubs: { UiSelect: true, LatencySamplePlot: true } } })
   await flushPromises()
-  expect(wrapper.text()).toContain('2 个缓存条目')
+  expect(wrapper.text()).toContain('2 个条目')
   expect(wrapper.text()).toContain('代理节点 (1)')
   expect(wrapper.text()).toContain('公告与信息 (1)')
   mocks.fetchAirports.mockResolvedValue([
@@ -69,7 +69,7 @@ it('counts category entries within the selected subscription', async () => {
   ] })
   await wrapper.setProps({ initialProfileId: 'other' })
   await flushPromises()
-  expect(wrapper.text()).toContain('1 个缓存条目')
+  expect(wrapper.text()).toContain('1 个条目')
   expect(wrapper.text()).toContain('公告与信息 (0)')
   wrapper.unmount()
 })
