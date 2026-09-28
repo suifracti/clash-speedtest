@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	workbenchLatencyBatchConcurrency = 4
+	workbenchLatencyBatchConcurrency = 16
 	workbenchLatencyBatchMaxItems    = 200
 	workbenchLatencySourceBatch      = "workbench_batch_latency"
 	workbenchLatencyMethod           = "http_get_via_proxy_first_byte"
@@ -57,6 +57,9 @@ func (s *AppService) endWorkbenchSingle() {
 }
 
 func (s *AppService) StartWorkbenchLatencyBatch(_ context.Context, req WorkbenchLatencyBatchRequest) (*WorkbenchLatencyBatchDTO, error) {
+	if _, err := speedtester.LatencyTargetURL(req.TargetID); err != nil {
+		return nil, monitor.NewValidationError(err.Error())
+	}
 	if s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized")
 	}
@@ -98,7 +101,13 @@ func (s *AppService) StartWorkbenchLatencyBatch(_ context.Context, req Workbench
 		return nil, monitor.NewValidationError("没有可执行的去重节点")
 	}
 	requestedAt := time.Now().UTC()
-	batch := &history.LatencyBatch{BatchID: newWorkbenchLatencyBatchID(), RequestID: requestID, TestProject: WorkbenchLatencyProject, TimeoutSeconds: timeoutSeconds, RequestedAt: requestedAt, State: "queued", ItemCount: len(selections), Items: make([]history.LatencyBatchItem, 0, len(selections))}
+	sampleCount := req.SampleCount
+	if sampleCount <= 0 {
+		sampleCount = 6
+	} else if sampleCount > 20 {
+		sampleCount = 20
+	}
+	batch := &history.LatencyBatch{TargetID: req.TargetID, BatchID: newWorkbenchLatencyBatchID(), RequestID: requestID, TestProject: WorkbenchLatencyProject, TimeoutSeconds: timeoutSeconds, SampleCount: sampleCount, RequestedAt: requestedAt, State: "queued", ItemCount: len(selections), Items: make([]history.LatencyBatchItem, 0, len(selections))}
 	for i, selection := range selections {
 		batch.Items = append(batch.Items, history.LatencyBatchItem{
 			ItemID: newWorkbenchLatencyBatchItemID(), BatchID: batch.BatchID, Ordinal: i,
@@ -397,7 +406,6 @@ func (s *AppService) runWorkbenchLatencyBatchItem(runtime *workbenchLatencyBatch
 	if err := update(index, func(item *history.LatencyBatchItem) {
 		item.AttemptID = attemptID
 		item.StartedAt = startedAt
-		item.PersistenceState = "saving"
 	}); err != nil {
 		return
 	}
@@ -407,7 +415,12 @@ func (s *AppService) runWorkbenchLatencyBatchItem(runtime *workbenchLatencyBatch
 	if s.latencyMeasureHook != nil {
 		measured, target, err = s.latencyMeasureHook(context.Background(), selected, timeout)
 	} else {
-		st, createErr := speedtester.New(&speedtester.Config{ConfigPaths: s.profilePaths.CacheFile(snapshot.ProfileID), Mode: speedtester.SpeedModeFast, Metrics: speedtester.MetricSet{Latency: true}, Concurrent: 1, Timeout: timeout, Rounds: 1})
+		pingCount := batch.SampleCount
+		if pingCount <= 0 {
+			pingCount = 6
+		}
+		probeTarget, _ := speedtester.LatencyTargetURL(batch.TargetID)
+		st, createErr := speedtester.New(&speedtester.Config{LatencyTargetURL: probeTarget, ConfigPaths: s.profilePaths.CacheFile(snapshot.ProfileID), Mode: speedtester.SpeedModeFast, Metrics: speedtester.MetricSet{Latency: true}, Concurrent: 1, Timeout: timeout, Rounds: 1, PingCount: pingCount})
 		if createErr != nil {
 			err = createErr
 		} else {
@@ -567,6 +580,9 @@ func deriveLatencyBatchState(items []history.LatencyBatchItem, cancelling, shutd
 		if item.PersistenceState == "failed" {
 			anySaveFailure = true
 		}
+		if item.Result != nil && item.Result.FailureSamples > 0 {
+			anyIssue = true
+		}
 		if item.PersistenceState == "saving" {
 			saving = true
 		}
@@ -608,7 +624,7 @@ func deriveLatencyBatchState(items []history.LatencyBatchItem, cancelling, shutd
 }
 
 func workbenchLatencyBatchDTO(batch history.LatencyBatch) *WorkbenchLatencyBatchDTO {
-	dto := &WorkbenchLatencyBatchDTO{BatchID: batch.BatchID, RequestID: batch.RequestID, TestProject: batch.TestProject, TimeoutSeconds: batch.TimeoutSeconds, RequestedAt: batch.RequestedAt, State: batch.State, ItemCount: batch.ItemCount}
+	dto := &WorkbenchLatencyBatchDTO{TargetID: batch.TargetID, BatchID: batch.BatchID, RequestID: batch.RequestID, TestProject: batch.TestProject, TimeoutSeconds: batch.TimeoutSeconds, SampleCount: batch.SampleCount, RequestedAt: batch.RequestedAt, State: batch.State, ItemCount: batch.ItemCount}
 	if len(batch.Items) == 0 {
 		return dto
 	}

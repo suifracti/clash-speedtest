@@ -28,6 +28,10 @@ const (
 // emits a second update for the same attempt_id. This keeps a slow history
 // transaction from blocking the user's measured result.
 func (s *AppService) RunWorkbenchLatencyTest(ctx context.Context, req WorkbenchLatencyTestRequest) (*WorkbenchLatencyTestDTO, error) {
+	targetURL, targetErr := speedtester.LatencyTargetURL(req.TargetID)
+	if targetErr != nil {
+		return nil, monitor.NewValidationError(targetErr.Error())
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -76,13 +80,21 @@ func (s *AppService) RunWorkbenchLatencyTest(ctx context.Context, req WorkbenchL
 	})
 
 	startedAt := time.Now().UTC()
+	sampleCount := req.SampleCount
+	if sampleCount <= 0 {
+		sampleCount = 6
+	} else if sampleCount > 20 {
+		sampleCount = 20
+	}
 	st, err := speedtester.New(&speedtester.Config{
-		ConfigPaths: s.profilePaths.CacheFile(profileID),
-		Mode:        speedtester.SpeedModeFast,
-		Metrics:     speedtester.MetricSet{Latency: true},
-		Concurrent:  1,
-		Timeout:     time.Duration(timeoutSeconds) * time.Second,
-		Rounds:      1,
+		ConfigPaths:      s.profilePaths.CacheFile(profileID),
+		Mode:             speedtester.SpeedModeFast,
+		Metrics:          speedtester.MetricSet{Latency: true},
+		Concurrent:       1,
+		Timeout:          time.Duration(timeoutSeconds) * time.Second,
+		Rounds:           1,
+		PingCount:        sampleCount,
+		LatencyTargetURL: targetURL,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("初始化延迟测试引擎失败: %w", err)
@@ -169,16 +181,25 @@ func (s *AppService) ListWorkbenchLatencyTests(ctx context.Context, query Workbe
 	if err != nil {
 		return WorkbenchLatencyHistoryResult{}, monitor.NewValidationError(err.Error())
 	}
+	targetURL := ""
+	if query.TargetID != "" && query.TargetID != "all" {
+		targetURL, err = speedtester.LatencyTargetURL(query.TargetID)
+		if err != nil {
+			return WorkbenchLatencyHistoryResult{}, monitor.NewValidationError(err.Error())
+		}
+	}
 	page, err := s.historyStore.QueryLatencyTests(ctx, history.LatencyTestFilter{
-		ProfileID:         profileID,
-		NodeKey:           nodeKey,
-		NodeIdentityKey:   nodeIdentityKey,
-		ConfigRevisionKey: configRevisionKey,
-		Since:             since,
-		Until:             until,
-		Limit:             query.Limit,
-		BeforeFinishedAt:  query.BeforeFinishedAt,
-		BeforeAttemptID:   strings.TrimSpace(query.BeforeAttemptID),
+		Target:              targetURL,
+		IncludeLegacyTarget: query.TargetID == "cloudflare",
+		ProfileID:           profileID,
+		NodeKey:             nodeKey,
+		NodeIdentityKey:     nodeIdentityKey,
+		ConfigRevisionKey:   configRevisionKey,
+		Since:               since,
+		Until:               until,
+		Limit:               query.Limit,
+		BeforeFinishedAt:    query.BeforeFinishedAt,
+		BeforeAttemptID:     strings.TrimSpace(query.BeforeAttemptID),
 	})
 	if err != nil {
 		return WorkbenchLatencyHistoryResult{}, err
@@ -313,7 +334,16 @@ func (s *AppService) resolveWorkbenchLatencyProxy(profileID, nodeKey string) (mo
 	if err != nil {
 		return monitor.MonitoredNode{}, "", nil, fmt.Errorf("加载订阅配置失败: %w", err)
 	}
-	if store.Get(profileID) == nil {
+	// Workbench selections are scoped by subscription ID. The primary
+	// subscription historically reused the airport ID, while additional
+	// subscriptions have their own IDs, so accepting only Store.Get here made
+	// every non-primary subscription look as if it had been removed.
+	profileExists := store.Get(profileID) != nil
+	if !profileExists {
+		_, subscription := store.FindSubscription(profileID)
+		profileExists = subscription != nil
+	}
+	if !profileExists {
 		return monitor.MonitoredNode{}, "", nil, monitor.NewValidationError("订阅不存在或已被移除")
 	}
 
@@ -391,6 +421,7 @@ func buildWorkbenchLatencyRecord(attemptID, profileID string, node monitor.Monit
 			}
 		}
 		samples = append(samples, history.LatencyTestSample{
+			Target:    sample.Target,
 			Seq:       sample.Seq,
 			Timestamp: sample.Timestamp,
 			LatencyMs: sample.LatencyMs,
@@ -438,6 +469,7 @@ func workbenchLatencyDTO(test history.LatencyTest, persistenceState, persistence
 	for _, sample := range test.Samples {
 		samples = append(samples, WorkbenchLatencySampleDTO{
 			Seq:       sample.Seq,
+			Target:    sample.Target,
 			Timestamp: sample.Timestamp,
 			LatencyMs: sample.LatencyMs,
 			Success:   sample.Success,

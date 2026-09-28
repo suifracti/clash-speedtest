@@ -9,15 +9,30 @@ const tokenInput = ref('')
 const isSavingToken = ref(false)
 const tokenSuccess = ref(false)
 const tokenError = ref('')
+const isDark = ref(false)
 
 onMounted(() => {
-  tokenInput.value = store.tokenStatus.preview || ''
+  tokenInput.value = ''
+  isDark.value = document.documentElement.classList.contains('dark') || document.body.classList.contains('dark-theme')
 })
 
 function closeModal() {
   store.isSettingsModalOpen = false
   tokenError.value = ''
   tokenSuccess.value = false
+}
+
+function toggleTheme() {
+  isDark.value = !isDark.value
+  if (isDark.value) {
+    document.documentElement.classList.add('dark', 'dark-theme')
+    document.body.classList.add('dark', 'dark-theme')
+    localStorage.setItem('theme', 'dark')
+  } else {
+    document.documentElement.classList.remove('dark', 'dark-theme')
+    document.body.classList.remove('dark', 'dark-theme')
+    localStorage.setItem('theme', 'light')
+  }
 }
 
 async function handleSaveToken() {
@@ -52,35 +67,41 @@ async function handleOAuthLogin() {
 <template>
   <div
     v-if="store.isSettingsModalOpen"
-    class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 select-none"
+    class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 select-none"
   >
-    <div class="bg-card border border-border rounded-xl shadow-2xl w-full max-w-lg overflow-hidden text-xs">
+    <div class="prototype-modal w-full max-w-lg overflow-hidden text-xs">
       <!-- Modal Header -->
-      <div class="p-4 border-b border-border flex items-center justify-between">
-        <h2 class="text-sm font-bold text-content-main flex items-center gap-2">
-          <span>⚙️</span> 运行偏好与凭据配置
+      <div class="prototype-modal-header">
+        <h2 class="prototype-modal-title">
+          <svg class="w-4 h-4 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+          设置
         </h2>
-        <button @click="closeModal" class="text-content-muted hover:text-content-main text-lg font-mono">
+        <button @click="closeModal" class="prototype-close-btn font-mono" aria-label="关闭">
           ✕
         </button>
       </div>
 
       <!-- Modal Body -->
-      <div class="p-5 flex flex-col gap-5">
+      <div class="prototype-modal-body flex flex-col gap-5">
+        <section class="settings-data"><div><strong>数据与备份</strong><p>打开本机文件夹，导出备份或迁移监测配置。</p></div><button class="tool-button" @click="closeModal(); store.isProfileSetupOpen = true">管理数据 →</button></section>
         <!-- Antigravity Credentials Section -->
         <div class="flex flex-col gap-2.5">
           <div class="flex items-center justify-between">
             <span class="font-semibold text-content-main">Google Antigravity 凭据</span>
             <span
               v-if="store.tokenStatus.has_token"
-              class="text-[11px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20"
+              class="badge badge--success font-mono"
             >
               已绑定 ({{ store.tokenStatus.source }})
             </span>
+            <span v-else class="badge badge--neutral">未绑定</span>
           </div>
 
           <p class="text-[11px] text-content-secondary leading-relaxed">
-            用于评估 Google 是否对出境节点执行区域封锁 (FAILED_PRECONDITION) 及测量真实的 API TTFB 耗时。
+            仅用于明确选择的 Antigravity 服务检测；不影响普通延迟与下载测试。
           </p>
 
           <div class="flex flex-col gap-2">
@@ -89,45 +110,64 @@ async function handleOAuthLogin() {
                 v-model="tokenInput"
                 type="password"
                 placeholder="Bearer ya29... 或直接粘贴完整凭据"
-                class="flex-1 bg-card-subtle text-content-main border border-border rounded px-3 py-1.5 focus:outline-none focus:border-brand font-mono text-[11px]"
+                class="prototype-input flex-1 font-mono text-[11px]"
               />
               <button
                 @click="handleSaveToken"
                 :disabled="isSavingToken"
-                class="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium disabled:opacity-50"
+                class="prototype-btn-primary"
               >
                 {{ isSavingToken ? '保存中' : '更新' }}
               </button>
             </div>
 
-            <div v-if="tokenError" class="text-red-400 text-[11px]">
+            <div v-if="tokenError" class="text-red-500 text-[11px]">
               {{ tokenError }}
             </div>
-            <div v-if="tokenSuccess" class="text-emerald-400 text-[11px]">
+            <div v-if="tokenSuccess" class="text-emerald-600 dark:text-emerald-400 text-[11px]">
               凭据已成功保存生效！
             </div>
           </div>
 
-          <div class="flex items-center justify-between pt-2 border-t border-border">
+          <div class="flex items-center justify-between pt-2.5 border-t border-border">
             <span class="text-content-muted text-[11px]">或者通过浏览器授权:</span>
             <button
               @click="handleOAuthLogin"
-              class="px-3 py-1 rounded bg-card-subtle hover:bg-card border border-border text-content-main font-medium flex items-center gap-1.5"
+              class="tool-button flex items-center gap-1.5"
             >
-              <span>🔑</span> 启动 Google OAuth 授权
+              <svg class="w-3.5 h-3.5 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+              </svg>
+              启动 Google OAuth 授权
             </button>
           </div>
         </div>
 
         <!-- System & UI Section -->
-        <div class="flex flex-col gap-2 pt-4 border-t border-border">
+        <div class="flex flex-col gap-2.5 pt-4 border-t border-border">
           <span class="font-semibold text-content-main">视觉偏好</span>
           <div class="flex items-center justify-between text-content-secondary">
             <span>主题配色</span>
-            <span class="font-mono text-content-muted">深色工业模式 (Dark)</span>
+            <button
+              type="button"
+              class="tool-button flex items-center gap-1.5 font-medium"
+              @click="toggleTheme"
+            >
+              <span v-if="isDark">🌙 深色模式</span>
+              <span v-else>☀️ 浅色模式</span>
+            </button>
           </div>
         </div>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.prototype-modal { border-radius: 16px; }
+.prototype-modal-header { background: var(--primary-subtle); padding: 22px 24px; }
+.prototype-modal-body { padding: 24px; }
+.prototype-modal-body > div { background: var(--card-subtle); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
+.settings-data { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px; border-left: 3px solid #5276aa; background: var(--card-subtle); }
+.settings-data p { font-size: 11px; color: var(--text-secondary); margin-top: 5px; }
+</style>

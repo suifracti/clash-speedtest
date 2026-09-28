@@ -79,18 +79,19 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 
 <template>
   <section class="rounded-lg border border-border bg-card p-4 text-xs" aria-label="Monitor 全局预算">
-    <h3 class="text-sm font-semibold">Monitor 全局预算与错峰</h3>
-    <p class="mt-1 text-content-muted">同一应用内所有 Monitor 任务及手动立即执行共用额度。Workbench 即时测速不包含在内。请求额度在发送前扣除，失败请求及每次重定向仍计数；响应体只统计本应用实际读取的字节，不代表代理、TLS 或系统总流量。</p>
+    <h3 class="text-sm font-semibold">自动检测保护</h3>
+    <p class="mt-1 text-content-secondary">避免后台检测过于频繁、耗费流量或占用资源。所有监测任务共用上限；当日额度用完暂停采集，次日恢复后，仍在运行的任务会继续。</p>
+    <details class="mt-2 text-content-muted"><summary>计量说明</summary><p>工作台即时测速不包含在内。失败请求和重定向也计次数；读取量仅指响应体，不等于套餐或系统总流量。停止任务、重开程序不清零当日用量。每日按 UTC 重置。</p></details>
     <div v-if="status" class="mt-2 text-content-secondary">
       今日（UTC {{ status.usage.utc_day }}）请求 {{ status.usage.requests_used }} / {{ status.limits.daily_requests }}，响应体读取 {{ (status.usage.bytes_used / mib).toFixed(2) }} / {{ (status.limits.daily_bytes / mib).toFixed(2) }} MiB；当前并发 {{ status.active_requests }} / {{ status.limits.max_concurrent }}。下次重置 {{ status.reset_at }}（UTC）。
       <p v-if="status.blocked_reason" class="mt-1 text-amber-700">{{ status.blocked_reason }}。未采集不是节点失败。</p>
     </div>
     <p class="mt-1 text-content-muted">HTTP 最多重定向 3 次，单请求最多 30 秒；明确选择的重型探测并发最多 1。到期错峰、有界等待，过期周期跳过不补跑。</p>
     <div class="mt-3 flex flex-wrap items-end gap-3">
-      <label class="grid gap-1">最大并发<input :value="concurrent" type="number" min="1" max="64" step="1" :disabled="busy" class="w-24 rounded border border-border bg-card px-2 py-1" @input="readInput('concurrent', $event)" /></label>
-      <label class="grid gap-1">每日请求数<input :value="requests" type="number" min="1" max="1000000000" step="1" :disabled="busy" class="w-28 rounded border border-border bg-card px-2 py-1" @input="readInput('requests', $event)" /></label>
-      <label class="grid gap-1">每日读取（MiB）<input :value="dailyMiB" type="number" min="1" max="1048576" step="1" :disabled="busy" class="w-28 rounded border border-border bg-card px-2 py-1" @input="readInput('daily', $event)" /></label>
-      <label class="grid gap-1">单响应读取上限（KiB）<input :value="responseKiB" type="number" min="1" max="16384" step="1" :disabled="busy" class="w-28 rounded border border-border bg-card px-2 py-1" @input="readInput('response', $event)" /></label>
+      <label class="grid gap-1">同时最多探测数<input :value="concurrent" type="number" min="1" max="64" step="1" :disabled="busy" class="w-24 rounded border border-border bg-card px-2 py-1" @input="readInput('concurrent', $event)" /></label>
+      <label class="grid gap-1">每天最多请求次数<input :value="requests" type="number" min="1" max="1000000000" step="1" :disabled="busy" class="w-28 rounded border border-border bg-card px-2 py-1" @input="readInput('requests', $event)" /></label>
+      <label class="grid gap-1">每天最多读取量（MiB）<input :value="dailyMiB" type="number" min="1" max="1048576" step="1" :disabled="busy" class="w-28 rounded border border-border bg-card px-2 py-1" @input="readInput('daily', $event)" /></label>
+      <label class="grid gap-1">每次最多读取量（KiB）<input :value="responseKiB" type="number" min="1" max="16384" step="1" :disabled="busy" class="w-28 rounded border border-border bg-card px-2 py-1" @input="readInput('response', $event)" /></label>
       <button type="button" :disabled="busy || !settings || !valid || !changed" class="rounded border border-border px-3 py-1.5 disabled:opacity-50" @click="save">保存 Monitor 预算</button>
     </div>
     <p v-if="!valid" class="mt-1 text-red-700">预算必须是有效正整数，且单响应上限不超过每日读取额度。</p>
@@ -98,3 +99,11 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
     <p v-if="error" class="mt-2 text-red-700" role="alert">{{ error }}</p>
   </section>
 </template>
+
+<style scoped>
+section { border-left: 3px solid #5379ab; background: var(--card); }
+h3 { color: #365c8d; }
+summary { cursor: pointer; }
+label { color: var(--text-secondary); }
+input { color: var(--text-main); font-weight: 600; min-height: 32px; }
+</style>

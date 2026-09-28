@@ -13,7 +13,7 @@ const props = withDefaults(defineProps<{
   ariaLabel?: string
   disabled?: boolean
   placeholder?: string
-  variant?: 'default' | 'scope' | 'toolbar'
+  variant?: 'default' | 'scope' | 'toolbar' | 'compact'
 }>(), {
   ariaLabel: '选择',
   disabled: false,
@@ -26,7 +26,7 @@ const emit = defineEmits<{
 }>()
 
 const root = ref<HTMLElement | null>(null)
-const trigger = ref<HTMLButtonElement | null>(null)
+const trigger = ref<HTMLElement | null>(null)
 const menu = ref<HTMLElement | null>(null)
 const isOpen = ref(false)
 const highlightedIndex = ref(-1)
@@ -76,11 +76,12 @@ function updateMenuPosition(): void {
   const top = !canOpenAbove && window.innerHeight - triggerRect.bottom >= menuRect.height + gap
     ? triggerRect.bottom + gap
     : Math.max(8, triggerRect.top - menuRect.height - gap)
+  const isCompact = props.variant === 'compact'
   menuStyle.value = {
     left: `${Math.max(8, triggerRect.left)}px`,
     top: `${top}px`,
-    minWidth: `${Math.max(triggerRect.width, 164)}px`,
-    maxWidth: `${Math.max(triggerRect.width, 280)}px`,
+    minWidth: `${Math.max(triggerRect.width, isCompact ? 80 : 164)}px`,
+    maxWidth: `${Math.max(triggerRect.width, isCompact ? 160 : 280)}px`,
   }
 }
 
@@ -127,6 +128,7 @@ function choose(index: number): void {
 }
 
 function onTriggerKeydown(event: KeyboardEvent): void {
+  if (props.disabled) return
   if (event.key === 'Escape') {
     if (isOpen.value) {
       event.preventDefault()
@@ -165,22 +167,22 @@ onBeforeUnmount(removeViewportListeners)
 
 <template>
   <span ref="root" class="ui-select" :class="`ui-select--${variant}`">
-    <button
+    <div
       ref="trigger"
-      type="button"
       class="ui-select__trigger"
       role="combobox"
       :aria-label="ariaLabel"
       :aria-expanded="isOpen"
       :aria-controls="menuId"
       :aria-haspopup="'listbox'"
-      :disabled="disabled"
+      :aria-disabled="disabled"
+      :tabindex="disabled ? -1 : 0"
       @click="toggleMenu"
       @keydown="onTriggerKeydown"
     >
       <span class="ui-select__label" :title="displayLabel">{{ displayLabel }}</span>
       <span class="ui-select__chevron" aria-hidden="true">⌄</span>
-    </button>
+    </div>
 
     <Teleport to="body">
       <div

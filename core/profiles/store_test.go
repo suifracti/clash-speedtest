@@ -85,3 +85,62 @@ func TestRedactURL(t *testing.T) {
 		t.Fatalf("redacted url = %s", got)
 	}
 }
+
+func TestMultiSubscriptionStore(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, StoreFileName)
+
+	ap := &Airport{
+		ID:         "ap1",
+		Name:       "多订阅机场",
+		WebsiteURL: "https://example.com",
+		BackupURL:  "https://backup.example.com",
+		Subscriptions: []*Subscription{
+			{ID: "sub1", Name: "主号", URL: "https://example.com/sub1"},
+			{ID: "sub2", Name: "备用号", URL: "https://example.com/sub2"},
+		},
+	}
+	store := &Store{}
+	store.Add(ap)
+	if err := SaveStore(path, store); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := LoadStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Airports) != 1 {
+		t.Fatalf("expected 1 airport, got %d", len(loaded.Airports))
+	}
+	loadedAp := loaded.Airports[0]
+	if len(loadedAp.Subscriptions) != 2 {
+		t.Fatalf("expected 2 subscriptions, got %d", len(loadedAp.Subscriptions))
+	}
+	if loadedAp.Subscriptions[0].Name != "主号" || loadedAp.Subscriptions[1].Name != "备用号" {
+		t.Fatalf("unexpected subscriptions: %+v", loadedAp.Subscriptions)
+	}
+
+	foundAp, foundSub := loaded.FindSubscription("sub2")
+	if foundAp == nil || foundSub == nil || foundSub.Name != "备用号" {
+		t.Fatalf("failed to find subscription: ap=%+v, sub=%+v", foundAp, foundSub)
+	}
+
+	// Test migration of legacy airport with URL only
+	legacyPath := filepath.Join(dir, "legacy.json")
+	legacyData := []byte(`{"airports":[{"id":"legacy1","name":"旧机场","url":"https://legacy.example/sub"}]}`)
+	if err := os.WriteFile(legacyPath, legacyData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	legacyLoaded, err := LoadStore(legacyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(legacyLoaded.Airports[0].Subscriptions) != 1 {
+		t.Fatalf("expected auto-migrated subscription, got: %+v", legacyLoaded.Airports[0].Subscriptions)
+	}
+	if legacyLoaded.Airports[0].Subscriptions[0].ID != "legacy1" {
+		t.Fatalf("expected sub id to match legacy airport id, got %s", legacyLoaded.Airports[0].Subscriptions[0].ID)
+	}
+}
+

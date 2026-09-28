@@ -123,6 +123,27 @@ func TestWebWorkbenchLatencyContractAndReopen(t *testing.T) {
 	if historyPage.Tests[0].AttemptID != result.AttemptID || len(historyPage.Tests[0].Samples) != len(result.Samples) {
 		t.Fatalf("reopened Web history mismatch: %+v", historyPage.Tests)
 	}
+	batchPayload, _ := json.Marshal(map[string]any{
+		"since": windowSince.UTC(), "until": windowUntil.UTC(), "limit": 100,
+		"nodes": []map[string]string{
+			{"profile_id": "profile-web", "node_key": options[0].NodeKey, "node_identity_key": options[0].NodeIdentityKey, "config_revision_key": options[0].ConfigRevisionKey},
+			{"profile_id": "other-profile", "node_key": options[0].NodeKey, "node_identity_key": options[0].NodeIdentityKey, "config_revision_key": options[0].ConfigRevisionKey},
+		},
+	})
+	batchReq := httptest.NewRequest(http.MethodPost, "/api/workbench/latency-tests/query", bytes.NewReader(batchPayload))
+	batchReq.Host = "127.0.0.1:8080"
+	batchRec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(batchRec, batchReq)
+	if batchRec.Code != http.StatusOK {
+		t.Fatalf("batch history status: %d body=%s", batchRec.Code, batchRec.Body.String())
+	}
+	var batchPages []application.WorkbenchLatencyHistoryResult
+	if err := json.Unmarshal(batchRec.Body.Bytes(), &batchPages); err != nil || len(batchPages) != 2 {
+		t.Fatalf("batch history decode: %v pages=%d", err, len(batchPages))
+	}
+	if len(batchPages[0].Tests) != 1 || batchPages[0].Tests[0].AttemptID != result.AttemptID || len(batchPages[1].Tests) != 0 || !batchPages[0].AsOf.Equal(windowUntil.UTC()) || !batchPages[1].AsOf.Equal(windowUntil.UTC()) {
+		t.Fatalf("batch history scope/window mismatch: first=%d second=%d", len(batchPages[0].Tests), len(batchPages[1].Tests))
+	}
 	detailReq := httptest.NewRequest(http.MethodGet, "/api/workbench/latency-tests/"+url.PathEscape(result.AttemptID)+"?"+windowQuery, nil)
 	detailReq.Host = "127.0.0.1:8080"
 	detailRec := httptest.NewRecorder()

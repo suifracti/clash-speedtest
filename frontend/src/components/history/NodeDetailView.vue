@@ -1,8 +1,11 @@
 <script setup lang="ts">
+import { serviceOutcomeLabel } from "../../utils/serviceOutcome"
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import * as bridge from '../../api/bridge'
 import { fetchMonitorNodeOptions, fetchMonitorStats, queryMonitorSamplesCursor } from '../../api/monitor'
 import LatencySamplePlot from '../workbench/LatencySamplePlot.vue'
+import MultiSiteLatencyTrend from '../workbench/MultiSiteLatencyTrend.vue'
+import UiSelect from '../common/UiSelect.vue'
 import type {
   DerivedStats,
   MonitorNodeOption,
@@ -13,6 +16,7 @@ import type {
   WorkbenchLatencyBatchItem,
   WorkbenchLatencyTest,
   WorkbenchPublicServiceAttempt,
+  WorkbenchPublicServiceRule,
   WorkbenchDownloadAttempt,
   WorkbenchSaveRetryRequest,
 } from '../../types'
@@ -65,6 +69,8 @@ const downloadMoreLoading = ref(false)
 const downloadError = ref('')
 const downloadLoaded = ref(false)
 const selectedPublicServiceID = ref(props.scope.origin?.kind === 'public_service_attempt' ? props.scope.origin.serviceId : '')
+const serviceCatalog = ref<WorkbenchPublicServiceRule[]>([])
+const serviceSelectOptions = computed(() => [{ value: '', label: '全部服务' }, ...serviceCatalog.value.map(rule => ({ value: rule.service_id, label: rule.name }))])
 const originTest = ref<WorkbenchLatencyTest | null>(null)
 const originPublicServiceAttempt = ref<WorkbenchPublicServiceAttempt | null>(null)
 const originDownloadAttempt = ref<WorkbenchDownloadAttempt | null>(null)
@@ -91,8 +97,8 @@ const currentStateLabel = computed(() => {
   if (optionsError.value) return '当前状态未知：当前节点列表读取失败'
   if (currentProfileOptions.value.length === 0) return '历史节点 · 当前订阅缓存中不可用'
   if (currentIdentityOptions.value.length === 0) return '历史节点 · 当前配置中没有此稳定身份'
-  if (!currentRevisionOption.value) return '历史 revision · 当前节点使用另一配置 revision'
-  return '当前节点与 revision 可用'
+  if (!currentRevisionOption.value) return '历史配置 · 节点当前已使用其他配置'
+  return '当前节点配置可用'
 })
 const revisionChoices = computed(() => {
   const found = new Map<string, NodeHistoryRevision>()
@@ -144,6 +150,7 @@ function sourceFilter() {
 
 function latencyQuery(cursor?: WorkbenchLatencyTest) {
   return {
+    target_id: props.scope.latencyTargetId,
     profile_id: props.scope.profileId,
     node_key: activeNodeKey.value,
     node_identity_key: props.scope.nodeIdentityKey,
@@ -473,9 +480,7 @@ function publicServiceExecutionLabel(state: string): string {
   return ({ queued: '等待执行', running: '执行中', cancelling: '正在取消', completed: '已完成', failed: '未符合判据', cancelled: '已取消', interrupted: '应用退出时中断' } as Record<string, string>)[state] || '状态未知'
 }
 
-function publicServiceOutcomeLabel(outcome?: string): string {
-  return ({ matched: '符合判据', http_rejected: 'HTTP 状态不符合判据', rate_limited: '目标响应指示请求受限', redirect: '重定向未跟随', timed_out: '超时', cancelled: '用户取消', transport_error: '代理/传输失败，阶段未知', criteria_mismatch: '响应未符合判据' } as Record<string, string>)[outcome || ''] || '无测量结果'
-}
+function publicServiceOutcomeLabel(outcome?: string): string { return serviceOutcomeLabel(outcome) }
 
 async function loadMoreMonitor(): Promise<void> {
   if (monitorMoreLoading.value || !monitorHasMore.value || !monitorNextCursor.value) return
@@ -564,7 +569,7 @@ function openDownloadSaveRetry(attempt: WorkbenchDownloadAttempt): void {
   })
 }
 
-onMounted(() => { void load() })
+onMounted(() => { void load(); void bridge.listWorkbenchPublicServiceCatalog().then(rules => { serviceCatalog.value = rules }).catch(() => { /* existing records remain readable */ }) })
 onBeforeUnmount(() => { generation++ })
 </script>
 
@@ -573,7 +578,7 @@ onBeforeUnmount(() => { generation++ })
     <main class="node-detail" role="dialog" aria-modal="true" aria-labelledby="node-detail-title">
       <header class="node-detail-header">
         <div class="node-detail-title">
-          <p class="node-detail-eyebrow">节点历史事实</p>
+          <p class="node-detail-eyebrow">原始记录与保存状态</p>
           <h2 id="node-detail-title">{{ activeDisplayName }}</h2>
           <p>{{ profileName }} · {{ activeNodeType }} · {{ currentStateLabel }}</p>
         </div>
@@ -583,14 +588,10 @@ onBeforeUnmount(() => { generation++ })
       <section class="node-detail-identity">
         <div class="node-detail-controls">
           <label>配置 revision
-            <select :value="selectedRevision" aria-label="配置 revision" @change="changeRevision(($event.target as HTMLSelectElement).value)">
-              <option v-for="revision in revisionChoices" :key="revision.config_revision_key" :value="revision.config_revision_key">{{ shortKey(revision.config_revision_key) }} · {{ revision.last_observed_at ? timeText(revision.last_observed_at) : '当前/入口版本' }}</option>
-            </select>
+            <UiSelect :model-value="selectedRevision" aria-label="配置 revision" :options="revisionChoices.map(revision => ({ value: revision.config_revision_key, label: `${shortKey(revision.config_revision_key)} · ${revision.last_observed_at ? timeText(revision.last_observed_at) : '当前/入口版本'}` }))" @update:model-value="changeRevision(String($event))" />
           </label>
           <label>请求窗口
-            <select v-model="selectedWindow" aria-label="请求窗口" @change="changeFilters">
-              <option v-if="props.scope.origin?.observedAt" value="context">记录所在范围</option><option value="24h">最近 24 小时</option><option value="7d">最近 7 天</option><option value="30d">最近 30 天</option>
-            </select>
+            <UiSelect :model-value="selectedWindow" aria-label="请求窗口" :options="[...(props.scope.origin?.observedAt ? [{ value: 'context', label: '记录所在范围' }] : []), { value: '24h', label: '最近 24 小时' }, { value: '7d', label: '最近 7 天' }, { value: '30d', label: '最近 30 天' }]" @update:model-value="selectedWindow = String($event) as WindowView; changeFilters()" />
           </label>
         </div>
         <div class="node-detail-scope-line"><span>节点身份 {{ shortKey(props.scope.nodeIdentityKey) }}</span><span>node_key {{ shortKey(activeNodeKey) }}</span><span>revision {{ shortKey(selectedRevision) }}</span></div>
@@ -612,15 +613,13 @@ onBeforeUnmount(() => { generation++ })
         </template>
         <template v-if="originTest"><p>测法 {{ originTest.method || '未知' }} v{{ originTest.method_version || '未知' }} · target {{ originTest.target || '未知' }} · 单位 {{ originTest.unit || '未知' }} · attempt {{ originTest.attempt_id }}</p><p>{{ originTest.success_samples }} 成功 / {{ originTest.failure_samples }} 失败 · {{ originTest.latency_ms }} ms · jitter {{ originTest.jitter_ms }} ms · {{ originTest.persistence_state }}</p></template>
         <template v-if="originPublicServiceAttempt"><p>{{ originPublicServiceAttempt.rule.method }} {{ originPublicServiceAttempt.rule.target_url }} · 规则 v{{ originPublicServiceAttempt.rule.rule_version }} · {{ originPublicServiceAttempt.rule.success_criterion }}</p><p>执行 {{ publicServiceExecutionLabel(originPublicServiceAttempt.execution_state) }} · 保存 {{ originPublicServiceAttempt.persistence_state }}<template v-if="originPublicServiceAttempt.persistence_error"> · {{ originPublicServiceAttempt.persistence_error }}</template></p><p v-if="originPublicServiceAttempt.result">{{ publicServiceOutcomeLabel(originPublicServiceAttempt.result.outcome) }} · HTTP {{ originPublicServiceAttempt.result.http_status ?? '无响应' }} · {{ originPublicServiceAttempt.result.duration_ms }} ms · 已读取 {{ originPublicServiceAttempt.result.bytes_read }} 字节<template v-if="originPublicServiceAttempt.result.failure_phase"> · {{ originPublicServiceAttempt.result.failure_phase }}</template><template v-if="originPublicServiceAttempt.result.error_message"> · {{ originPublicServiceAttempt.result.error_message }}</template></p><button v-if="originPublicServiceAttempt.persistence_state === 'failed' && originPublicServiceAttempt.result" type="button" class="node-detail-more" @click="openPublicServiceSaveRetry(originPublicServiceAttempt)">返回 Workbench 重试保存（不重新检测）</button></template>
-        <template v-if="originDownloadAttempt"><p>{{ originDownloadAttempt.rule.method }} {{ originDownloadAttempt.rule.target_url }} · 规则 v{{ originDownloadAttempt.rule.rule_version }} · 上限 {{ downloadLimitText(originDownloadAttempt.rule.maximum_bytes) }} / {{ (originDownloadAttempt.rule.maximum_duration_ns / 1e9).toFixed(0) }} 秒</p><p>执行 {{ originDownloadAttempt.execution_state }} · 保存 {{ originDownloadAttempt.persistence_state }}<template v-if="originDownloadAttempt.persistence_error"> · {{ originDownloadAttempt.persistence_error }}</template></p><p v-if="originDownloadAttempt.result">{{ originDownloadAttempt.result.outcome }} · 已读取 {{ originDownloadAttempt.result.bytes_read }} 字节 · {{ (originDownloadAttempt.result.duration_ns / 1e9).toFixed(2) }} 秒<template v-if="originDownloadAttempt.result.failure_phase"> · {{ originDownloadAttempt.result.failure_phase }}</template><template v-if="originDownloadAttempt.result.error_message"> · {{ originDownloadAttempt.result.error_message }}</template></p><button v-if="originDownloadAttempt.persistence_state === 'failed' && originDownloadAttempt.result" type="button" class="node-detail-more" @click="openDownloadSaveRetry(originDownloadAttempt)">返回 Workbench 重试保存（不重新下载）</button></template>
+        <template v-if="originDownloadAttempt"><p>{{ originDownloadAttempt.rule.method }} {{ originDownloadAttempt.rule.target_url }} · 规则 v{{ originDownloadAttempt.rule.rule_version }} · 本次最多下载 {{ downloadLimitText(originDownloadAttempt.rule.maximum_bytes) }}、最多测试 {{ (originDownloadAttempt.rule.maximum_duration_ns / 1e9).toFixed(0) }} 秒</p><p>执行 {{ originDownloadAttempt.execution_state }} · 保存 {{ originDownloadAttempt.persistence_state }}<template v-if="originDownloadAttempt.persistence_error"> · {{ originDownloadAttempt.persistence_error }}</template></p><p v-if="originDownloadAttempt.result">{{ originDownloadAttempt.result.outcome }} · 已读取 {{ originDownloadAttempt.result.bytes_read }} 字节 · {{ (originDownloadAttempt.result.duration_ns / 1e9).toFixed(2) }} 秒<template v-if="originDownloadAttempt.result.failure_phase"> · {{ originDownloadAttempt.result.failure_phase }}</template><template v-if="originDownloadAttempt.result.error_message"> · {{ originDownloadAttempt.result.error_message }}</template></p><button v-if="originDownloadAttempt.persistence_state === 'failed' && originDownloadAttempt.result" type="button" class="node-detail-more" @click="openDownloadSaveRetry(originDownloadAttempt)">返回 Workbench 重试保存（不重新下载）</button></template>
         <span v-if="!originBatchItem && !originTest && !originPublicServiceAttempt && !originDownloadAttempt && !originError && !originRevisionMismatch">正在读取原始 attempt…</span>
       </section>
 
       <section class="node-detail-section">
         <div class="node-detail-section-heading"><div><h3>Monitor 观察</h3><p>{{ sourceLabel }} · {{ windowLabel }} · {{ new Date(window.sinceMs).toLocaleString() }} – {{ new Date(window.untilMs).toLocaleString() }}</p></div><label>来源
-          <select v-model="selectedSource" aria-label="Monitor 来源" @change="changeFilters">
-            <option value="regular_observation">常规观测</option><option value="regular">regular</option><option value="focus">focus</option><option value="sparse">sparse</option><option value="diagnostic">diagnostic</option><option value="legacy_unknown">legacy_unknown</option><option value="all">全部来源 raw</option>
-          </select>
+          <UiSelect :model-value="selectedSource" aria-label="Monitor 来源" :options="[{ value: 'regular_observation', label: '常规观测' }, { value: 'regular', label: '常规采样' }, { value: 'focus', label: '重点采样' }, { value: 'sparse', label: '低频采样' }, { value: 'diagnostic', label: '手动诊断' }, { value: 'legacy_unknown', label: '旧来源未知' }, { value: 'all', label: '全部来源' }]" @update:model-value="selectedSource = String($event) as SourceView; changeFilters()" />
         </label></div>
         <p class="node-detail-note">{{ statSummaryLabel }}</p>
         <p class="node-detail-note">这里仅列已保存的 Monitor 原始样本。没有样本表示该窗口未观测；不会据此推断节点失败，也不把未采集、资源跳过或运行中断填入样本分母。</p>
@@ -647,15 +646,15 @@ onBeforeUnmount(() => { generation++ })
         <div v-if="workbenchLoading" class="node-detail-empty">正在读取 Workbench 历史…</div>
         <div v-for="test in workbenchRows" :key="test.attempt_id" class="node-detail-attempt">
           <div><strong>{{ timeText(test.finished_at) }} · {{ test.status === 'completed' ? '成功' : test.status === 'partial_failed' ? '部分失败' : '失败' }}</strong><span>保存 {{ test.persistence_state }}<template v-if="test.persistence_error"> · {{ test.persistence_error }}</template></span><small>来源 {{ test.source || '未知' }} · 测法 {{ test.method || '未知' }} v{{ test.method_version || '未知' }} · target {{ test.target || '未知' }} · 单位 {{ test.unit || '未知' }}</small></div>
-          <div class="node-detail-attempt-metrics"><b>{{ test.success_samples }} 成功 / {{ test.failure_samples }} 失败样本</b><span>延迟 {{ test.latency_ms > 0 ? `${test.latency_ms} ms` : '未知' }} · jitter {{ test.jitter_ms > 0 ? `${test.jitter_ms} ms` : '未知' }}</span><span>attempt {{ test.attempt_id }}</span></div>
-          <details><summary>查看样本图与 {{ test.samples.length }} 条原始样本</summary><LatencySamplePlot :samples="test.samples" :window-since="test.started_at" :window-until="test.finished_at" :hovered-index="null" :pinned-index="null" :height="100" /><ol><li v-for="sample in test.samples" :key="`${test.attempt_id}-${sample.seq}`">{{ timeText(sample.timestamp) }} · {{ sample.success ? `${sample.latency_ms} ms` : `失败 · ${sample.error || '原因未知'}` }} · #{{ sample.seq }}</li></ol></details>
+          <div class="node-detail-attempt-metrics"><b>{{ test.success_samples }} 成功 / {{ test.failure_samples }} 失败样本</b><span>{{ test.target === 'multi://latency-v1' ? 'Cloudflare 基准' : '延迟' }} {{ test.latency_ms > 0 ? `${test.latency_ms} ms` : '无成功样本' }} · 同站波动 {{ test.jitter_ms }} ms</span><span>attempt {{ test.attempt_id }}</span></div>
+          <details><summary>查看样本图与 {{ test.samples.length }} 条原始样本</summary><MultiSiteLatencyTrend v-if="test.target === 'multi://latency-v1'" :tests="[test]" :since="test.started_at" :until="test.finished_at" /><LatencySamplePlot v-else :samples="test.samples" :window-since="test.started_at" :window-until="test.finished_at" :hovered-index="null" :pinned-index="null" :height="100" /><ol><li v-for="sample in test.samples" :key="`${test.attempt_id}-${sample.seq}`">{{ timeText(sample.timestamp) }} · {{ sample.target || test.target }} · {{ sample.success ? `${sample.latency_ms} ms` : `失败 · ${sample.error || '原因未知'}` }} · #{{ sample.seq }}</li></ol></details>
         </div>
         <button v-if="workbenchHasMore" type="button" class="node-detail-more" :disabled="workbenchMoreLoading" @click="loadMoreWorkbench">{{ workbenchMoreLoading ? '正在加载…' : '加载更多 Workbench attempt' }}</button>
       </section>
 
       <section class="node-detail-section">
         <div class="node-detail-section-heading"><div><h3>Workbench 公共服务检测</h3><p>独立 attempt 历史；与延迟、Monitor 统计和推荐证据分开。读取详情不会发起请求。</p></div><label>服务
-          <select v-model="selectedPublicServiceID" aria-label="公共服务历史筛选" @change="changeFilters"><option value="">全部已接入服务</option><option value="cloudflare_204">Cloudflare 204 连通性</option><option value="google_204">Google 204 连通性</option><option value="github_api_root">GitHub 公共 API 根端点</option></select>
+          <UiSelect :model-value="selectedPublicServiceID" aria-label="公共服务历史筛选" :options="serviceSelectOptions" @update:model-value="selectedPublicServiceID = String($event); changeFilters()" />
         </label></div>
         <p class="node-detail-note">请求窗口 {{ windowLabel }} · {{ new Date(window.sinceMs).toLocaleString() }} – {{ new Date(window.untilMs).toLocaleString() }}；结果只表示对应固定目标是否符合保存的判据，不表示完整业务可用性。</p>
         <div v-if="publicServiceError" class="node-detail-error">公共服务历史读取失败：{{ publicServiceError }}</div>
@@ -664,7 +663,7 @@ onBeforeUnmount(() => { generation++ })
         <div v-if="publicServiceLoading" class="node-detail-empty">正在读取公共服务历史…</div>
         <div v-for="attempt in publicServiceRows" :key="attempt.attempt_id" class="node-detail-attempt" :class="{ 'node-detail-highlight': props.scope.origin?.kind === 'public_service_attempt' && props.scope.origin.attemptId === attempt.attempt_id }">
           <div><strong>{{ attempt.rule.name }} · {{ timeText(attempt.result?.finished_at || attempt.finished_at || attempt.started_at || attempt.requested_at) }}</strong><span>执行 {{ publicServiceExecutionLabel(attempt.execution_state) }} · 保存 {{ attempt.persistence_state }}<template v-if="attempt.persistence_error"> · {{ attempt.persistence_error }}</template></span><small>来源 {{ attempt.source }} · {{ attempt.rule.method }} {{ attempt.rule.target_url }} · 规则 v{{ attempt.rule.rule_version }}</small><small>{{ attempt.rule.success_criterion }} · {{ attempt.rule.redirect_policy === 'do_not_follow' ? '不跟随重定向' : attempt.rule.redirect_policy }}</small></div>
-          <div class="node-detail-attempt-metrics"><b>{{ publicServiceOutcomeLabel(attempt.result?.outcome) }}</b><span>HTTP {{ attempt.result?.http_status ?? '无响应' }} · {{ attempt.result?.duration_ms ?? '—' }} ms · 已读取 {{ attempt.result?.bytes_read ?? 0 }} 字节</span><span v-if="attempt.result?.failure_phase">失败位置 {{ attempt.result.failure_phase }}<template v-if="attempt.result.error_message"> · {{ attempt.result.error_message }}</template></span><span>attempt {{ attempt.attempt_id }}</span><button v-if="attempt.persistence_state === 'failed' && attempt.result" type="button" class="node-detail-more" @click="openPublicServiceSaveRetry(attempt)">返回 Workbench 重试保存（不重新检测）</button></div>
+          <div class="node-detail-attempt-metrics"><b>{{ publicServiceOutcomeLabel(attempt.result?.outcome) }}</b><span>HTTP {{ attempt.result?.http_status ?? '无响应' }} · {{ attempt.result?.duration_ms ?? '—' }} ms · 已读取 {{ attempt.result?.bytes_read ?? 0 }} 字节</span><span v-if="attempt.result?.failure_phase">失败位置 {{ attempt.result.failure_phase }}<template v-if="attempt.result.error_message"> · {{ attempt.result.error_message }}</template></span><span v-if="attempt.result?.model">模型 {{ attempt.result.model }} · 请求 {{ attempt.result.request_count }} 次</span><span>attempt {{ attempt.attempt_id }}</span><button v-if="attempt.persistence_state === 'failed' && attempt.result" type="button" class="node-detail-more" @click="openPublicServiceSaveRetry(attempt)">返回 Workbench 重试保存（不重新检测）</button></div>
         </div>
         <button v-if="publicServiceHasMore" type="button" class="node-detail-more" :disabled="publicServiceMoreLoading" @click="loadMorePublicService">{{ publicServiceMoreLoading ? '正在加载…' : '加载更多公共服务检测' }}</button>
       </section>
@@ -677,7 +676,7 @@ onBeforeUnmount(() => { generation++ })
         <p v-if="downloadLoaded && downloadHasMore" class="node-detail-warning">已加载 {{ downloadRows.length }} 次下载测量；当前窗口仍有更多记录。</p>
         <div v-if="downloadLoading" class="node-detail-empty">正在读取下载历史…</div>
         <div v-for="attempt in downloadRows" :key="attempt.attempt_id" class="node-detail-attempt" :class="{ 'node-detail-highlight': props.scope.origin?.kind === 'workbench_download_attempt' && props.scope.origin.attemptId === attempt.attempt_id }">
-          <div><strong>{{ timeText(attempt.result?.finished_at || attempt.finished_at || attempt.started_at || attempt.requested_at) }} · {{ attempt.execution_state }}</strong><span>保存 {{ attempt.persistence_state }}<template v-if="attempt.persistence_error"> · {{ attempt.persistence_error }}</template></span><small>来源 {{ attempt.source }} · {{ attempt.rule.method }} {{ attempt.rule.target_url }} · 规则 v{{ attempt.rule.rule_version }}</small><small>读取上限 {{ downloadLimitText(attempt.rule.maximum_bytes) }} · 时长上限 {{ (attempt.rule.maximum_duration_ns / 1e9).toFixed(0) }} 秒</small></div>
+          <div><strong>{{ timeText(attempt.result?.finished_at || attempt.finished_at || attempt.started_at || attempt.requested_at) }} · {{ attempt.execution_state }}</strong><span>保存 {{ attempt.persistence_state }}<template v-if="attempt.persistence_error"> · {{ attempt.persistence_error }}</template></span><small>来源 {{ attempt.source }} · {{ attempt.rule.method }} {{ attempt.rule.target_url }} · 规则 v{{ attempt.rule.rule_version }}</small><small>本次最多下载 {{ downloadLimitText(attempt.rule.maximum_bytes) }} · 最多测试 {{ (attempt.rule.maximum_duration_ns / 1e9).toFixed(0) }} 秒</small></div>
           <div class="node-detail-attempt-metrics"><b>{{ attempt.result?.outcome || (attempt.execution_state === 'interrupted' ? '应用退出时中断；未自动重测' : '尚无测量结果') }}</b><span v-if="attempt.result">{{ attempt.result.bytes_read.toLocaleString() }} 字节 · {{ (attempt.result.duration_ns / 1e9).toFixed(2) }} 秒<template v-if="attempt.result.http_status"> · HTTP {{ attempt.result.http_status }}</template></span><span v-if="attempt.result?.failure_phase">结束位置 {{ attempt.result.failure_phase }}<template v-if="attempt.result.error_message"> · {{ attempt.result.error_message }}</template></span><span>attempt {{ attempt.attempt_id }}</span><button v-if="attempt.persistence_state === 'failed' && attempt.result" type="button" class="node-detail-more" @click="openDownloadSaveRetry(attempt)">返回 Workbench 重试保存（不重新下载）</button></div>
           <details v-if="attempt.result?.samples.length"><summary>实际过程样本 {{ attempt.result.samples.length }} 条</summary><ol><li v-for="sample in attempt.result.samples" :key="sample.cumulative_bytes">{{ (sample.elapsed_ns / 1e9).toFixed(2) }} 秒 · +{{ sample.delta_bytes.toLocaleString() }} 字节 · 累计 {{ sample.cumulative_bytes.toLocaleString() }} 字节<template v-if="sample.speed_mbps !== undefined"> · {{ sample.speed_mbps.toFixed(2) }} Mbps</template></li></ol></details>
         </div>
@@ -688,29 +687,30 @@ onBeforeUnmount(() => { generation++ })
 </template>
 
 <style scoped>
-.node-detail-backdrop { position: fixed; inset: 0; z-index: 70; display: flex; justify-content: center; align-items: stretch; padding: 22px; background: rgba(20, 31, 40, .42); }
-.node-detail { width: min(1320px, 100%); max-height: 100%; overflow: auto; padding: 22px 26px 32px; border-radius: 13px; background: var(--card-bg, white); color: var(--text-main, #1f2933); box-shadow: 0 24px 70px rgba(20, 35, 45, .28); }
+.node-detail-backdrop { position: fixed; inset: 0; z-index: 70; display: flex; justify-content: center; align-items: stretch; padding: 22px; background: rgba(0, 0, 0, .55); backdrop-filter: blur(4px); }
+.node-detail { width: min(1320px, 100%); max-height: 100%; overflow: auto; padding: 22px 26px 32px; border: 1px solid var(--border); border-radius: 13px; background: var(--card-bg); color: var(--text-main); box-shadow: 0 24px 70px rgba(0, 0, 0, .35); }
 .node-detail-header, .node-detail-section-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
 .node-detail-title h2 { margin: 2px 0 5px; font-size: 23px; }
-.node-detail-title p:last-child, .node-detail-section-heading p { margin: 0; color: var(--text-secondary, #5a6872); font-size: 12px; }
-.node-detail-eyebrow { margin: 0 0 5px; color: var(--primary, #256b78); font-size: 11px; font-weight: 750; letter-spacing: .08em; }
-.node-detail-close { width: 34px; height: 34px; border: 1px solid var(--border, #d5dce0); border-radius: 50%; background: white; color: #53616b; font-size: 23px; line-height: 1; }
-.node-detail-identity, .node-detail-origin { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--border, #d5dce0); border-radius: 8px; background: var(--card-subtle, #f8fafb); }
+.node-detail-title p:last-child, .node-detail-section-heading p { margin: 0; color: var(--text-secondary); font-size: 12px; }
+.node-detail-eyebrow { margin: 0 0 5px; color: var(--primary); font-size: 11px; font-weight: 750; letter-spacing: .08em; }
+.node-detail-close { width: 34px; height: 34px; border: 1px solid var(--border); border-radius: 50%; background: var(--card-subtle); color: var(--text-secondary); font-size: 23px; line-height: 1; transition: all .15s ease; }
+.node-detail-close:hover { background: var(--card-hover); color: var(--text-main); }
+.node-detail-identity, .node-detail-origin { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-subtle); }
 .node-detail-controls { display: flex; flex-wrap: wrap; gap: 12px 24px; }
-.node-detail-controls label, .node-detail-section-heading label { display: grid; gap: 5px; color: var(--text-secondary, #5a6872); font-size: 11px; font-weight: 700; }
-.node-detail-controls select, .node-detail-section-heading select { min-width: 185px; padding: 6px 8px; border: 1px solid var(--border, #d5dce0); border-radius: 6px; background: white; color: var(--text-main, #1f2933); font-size: 12px; }
-.node-detail-scope-line { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 10px 0; color: var(--text-secondary, #5a6872); font-size: 11px; }
-.node-detail-identity details summary, .node-detail-table-wrap details summary, .node-detail-attempt details summary { cursor: pointer; color: var(--primary, #256b78); font-size: 11px; }
+.node-detail-controls label, .node-detail-section-heading label { display: grid; gap: 5px; color: var(--text-secondary); font-size: 11px; font-weight: 700; }
+.node-detail-controls :deep(.ui-select), .node-detail-section-heading :deep(.ui-select) { min-width: 185px; }
+.node-detail-scope-line { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 10px 0; color: var(--text-secondary); font-size: 11px; }
+.node-detail-identity details summary, .node-detail-table-wrap details summary, .node-detail-attempt details summary { cursor: pointer; color: var(--primary); font-size: 11px; }
 .node-detail-identity dl { display: grid; grid-template-columns: 150px 1fr; gap: 6px 12px; margin: 10px 0 0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 10px; }
-.node-detail-identity dt { color: var(--text-muted, #77858f); }.node-detail-identity dd { margin: 0; overflow-wrap: anywhere; }
-.node-detail-error, .node-detail-warning, .node-detail-note { margin: 8px 0 0; color: var(--text-secondary, #5a6872); font-size: 11px; line-height: 1.5; }
-.node-detail-error { color: #a32f36; }.node-detail-warning { color: #8a5b07; }
-.node-detail-origin h3, .node-detail-section h3 { margin: 0 0 5px; font-size: 15px; }.node-detail-origin p { margin: 4px 0; color: var(--text-secondary, #5a6872); font-size: 11px; overflow-wrap: anywhere; }
-.node-detail-section { margin-top: 17px; padding: 15px 15px 18px; border: 1px solid var(--border, #d5dce0); border-radius: 8px; }
-.node-detail-stats { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 10px 0; padding: 10px; background: var(--card-subtle, #f8fafb); color: var(--text-secondary, #5a6872); font-size: 11px; }.node-detail-stats strong { color: var(--text-main, #1f2933); }
-.node-detail-empty { padding: 14px 4px; color: var(--text-secondary, #5a6872); font-size: 12px; }.node-detail-table-wrap { margin-top: 10px; overflow: auto; }.node-detail-table-wrap table { width: 100%; min-width: 840px; border-collapse: collapse; font-size: 11px; }.node-detail-table-wrap th, .node-detail-table-wrap td { padding: 8px; border-bottom: 1px solid var(--border, #d5dce0); text-align: left; vertical-align: top; }.node-detail-table-wrap th { color: var(--text-secondary, #5a6872); }.node-detail-table-wrap small { display: block; margin-top: 4px; color: var(--text-muted, #77858f); line-height: 1.4; }.node-detail-table-wrap code { display: block; margin-top: 7px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 9px; }.break-target { max-width: 300px; overflow-wrap: anywhere; }
-.node-success { color: #167447; font-weight: 700; }.node-failure { color: #a32f36; font-weight: 700; }.node-detail-highlight { background: #fff6d9; }
-.node-detail-more { margin-top: 10px; padding: 7px 11px; border: 1px solid var(--border, #d5dce0); border-radius: 6px; background: white; color: var(--primary, #256b78); font-size: 11px; font-weight: 700; }.node-detail-more:disabled { opacity: .6; }
-.node-detail-attempt { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(230px, .7fr) minmax(180px, .6fr); gap: 13px; align-items: start; padding: 11px 0; border-top: 1px solid var(--border, #d5dce0); font-size: 11px; }.node-detail-attempt > div { display: flex; flex-direction: column; gap: 5px; }.node-detail-attempt strong { font-size: 12px; }.node-detail-attempt span, .node-detail-attempt small { color: var(--text-secondary, #5a6872); overflow-wrap: anywhere; }.node-detail-attempt ol { margin: 7px 0 0; padding-left: 18px; color: var(--text-secondary, #5a6872); }
+.node-detail-identity dt { color: var(--text-muted); }.node-detail-identity dd { margin: 0; overflow-wrap: anywhere; }
+.node-detail-error, .node-detail-warning, .node-detail-note { margin: 8px 0 0; color: var(--text-secondary); font-size: 11px; line-height: 1.5; }
+.node-detail-error { color: var(--danger); }.node-detail-warning { color: var(--warning); }
+.node-detail-origin h3, .node-detail-section h3 { margin: 0 0 5px; font-size: 15px; }.node-detail-origin p { margin: 4px 0; color: var(--text-secondary); font-size: 11px; overflow-wrap: anywhere; }
+.node-detail-section { margin-top: 17px; padding: 15px 15px 18px; border: 1px solid var(--border); border-radius: 8px; }
+.node-detail-stats { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 10px 0; padding: 10px; background: var(--card-subtle); color: var(--text-secondary); font-size: 11px; }.node-detail-stats strong { color: var(--text-main); }
+.node-detail-empty { padding: 14px 4px; color: var(--text-secondary); font-size: 12px; }.node-detail-table-wrap { margin-top: 10px; overflow: auto; }.node-detail-table-wrap table { width: 100%; min-width: 840px; border-collapse: collapse; font-size: 11px; }.node-detail-table-wrap th, .node-detail-table-wrap td { padding: 8px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }.node-detail-table-wrap th { color: var(--text-secondary); }.node-detail-table-wrap small { display: block; margin-top: 4px; color: var(--text-muted); line-height: 1.4; }.node-detail-table-wrap code { display: block; margin-top: 7px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 9px; }.break-target { max-width: 300px; overflow-wrap: anywhere; }
+.node-success { color: var(--success); font-weight: 700; }.node-failure { color: var(--danger); font-weight: 700; }.node-detail-highlight { background: var(--warning-bg); }
+.node-detail-more { margin-top: 10px; padding: 7px 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--card-subtle); color: var(--primary); font-size: 11px; font-weight: 700; transition: all .15s ease; }.node-detail-more:hover:not(:disabled) { border-color: var(--border-focus); background: var(--card-hover); }.node-detail-more:disabled { opacity: .6; }
+.node-detail-attempt { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(230px, .7fr) minmax(180px, .6fr); gap: 13px; align-items: start; padding: 11px 0; border-top: 1px solid var(--border); font-size: 11px; }.node-detail-attempt > div { display: flex; flex-direction: column; gap: 5px; }.node-detail-attempt strong { font-size: 12px; }.node-detail-attempt span, .node-detail-attempt small { color: var(--text-secondary); overflow-wrap: anywhere; }.node-detail-attempt ol { margin: 7px 0 0; padding-left: 18px; color: var(--text-secondary); }
 @media (max-width: 760px) { .node-detail-backdrop { padding: 5px; }.node-detail { padding: 17px 13px 25px; border-radius: 8px; }.node-detail-attempt { grid-template-columns: 1fr; }.node-detail-identity dl { grid-template-columns: 100px 1fr; }.node-detail-section-heading { flex-direction: column; } }
 </style>

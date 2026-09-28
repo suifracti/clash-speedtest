@@ -33,7 +33,10 @@ func TestWebPublicServiceCatalogUsesSharedApplicationDirectory(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &rules); err != nil {
 		t.Fatal(err)
 	}
-	if len(rules) != 3 || rules[0].ServiceID != "cloudflare_204" || rules[1].ServiceID != "google_204" || rules[2].ServiceID != "github_api_root" {
+	if len(rules) < 16 || rules[0].ServiceID != "cloudflare_204" || rules[1].ServiceID != "google_204" || rules[2].ServiceID != "github_api_root" || rules[3].ServiceID != "antigravity" {
 		t.Fatalf("unexpected public-service directory: %+v", rules)
+	}
+	if rules[4].Category == "" || rules[4].ResultKind == "" {
+		t.Fatalf("expanded catalog metadata is missing: %+v", rules[4])
 	}
 }

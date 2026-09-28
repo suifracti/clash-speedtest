@@ -202,7 +202,7 @@ func TestWorkbenchLatencyBatchStaysSavingUntilAttemptCommit(t *testing.T) {
 }
 
 func TestWorkbenchLatencyBatchCancellationBoundsConcurrencyAndDeduplicatesRequest(t *testing.T) {
-	service, store, _, options := newWorkbenchBatchFixture(t, 6)
+	service, store, _, options := newWorkbenchBatchFixture(t, 18)
 	release := make(chan struct{})
 	started := make(chan struct{}, 8)
 	var active, maximum, measured atomic.Int32
@@ -276,13 +276,13 @@ func TestWorkbenchLatencyBatchCancellationBoundsConcurrencyAndDeduplicatesReques
 			cancelled++
 		}
 	}
-	if completed != 4 || cancelled != 2 {
+	if completed != 16 || cancelled != 2 {
 		t.Fatalf("completed results or pending cancellation were lost: completed=%d cancelled=%d items=%+v", completed, cancelled, batch.Items)
 	}
 }
 
 func TestWorkbenchLatencyBatchShutdownStopsDispatch(t *testing.T) {
-	service, store, _, options := newWorkbenchBatchFixture(t, 6)
+	service, store, _, options := newWorkbenchBatchFixture(t, 18)
 	release := make(chan struct{})
 	started := make(chan struct{}, 8)
 	var measured atomic.Int32

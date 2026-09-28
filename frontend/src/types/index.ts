@@ -1,11 +1,38 @@
+export interface Subscription {
+  usage?: { upload: number; download: number; total?: number; expire?: number; updated_at: string }
+  id: string
+  airport_id: string
+  name: string
+  url_display: string
+  url_configured: boolean
+  note?: string
+  updated_at?: string
+  node_count: number
+  has_cache: boolean
+  status?: string // 'normal' | 'error' | 'unfetched'
+}
+
 export interface Airport {
+	maintenance?: AirportMaintenance
   id: string
   name: string
   url_display: string
   url_configured: boolean
+  website_url?: string
+  backup_url?: string
+  note?: string
+  subscriptions?: Subscription[]
   updated_at?: string
   node_count: number
   has_cache: boolean
+}
+
+export interface AirportMaintenance {
+  refresh_hours: number
+  next_refresh?: string
+  last_attempt?: string
+  last_result?: string
+  links: { label: string; url: string; monthly_day: number; done_month?: string }[]
 }
 
 export interface ProfileSource {
@@ -183,10 +210,12 @@ export interface SingleTestRequest {
 }
 
 export interface WorkbenchLatencyTestRequest {
+  target_id?: string
   profile_id: string
   node_key: string
   test_project: 'latency_stability'
   timeout_seconds: number
+  sample_count?: number
 }
 
 export interface WorkbenchLatencyBatchSelection {
@@ -199,9 +228,11 @@ export interface WorkbenchLatencyBatchSelection {
 }
 
 export interface WorkbenchLatencyBatchRequest {
+  target_id?: string
   request_id: string
   test_project: 'latency_stability'
   timeout_seconds: number
+  sample_count?: number
   selections: WorkbenchLatencyBatchSelection[]
 }
 
@@ -230,10 +261,12 @@ export interface WorkbenchLatencyBatchItem {
 }
 
 export interface WorkbenchLatencyBatch {
+  target_id?: string
   batch_id: string
   request_id: string
   test_project: 'latency_stability'
   timeout_seconds: number
+  sample_count?: number
   requested_at: string
   state: string
   item_count: number
@@ -241,6 +274,7 @@ export interface WorkbenchLatencyBatch {
 }
 
 export interface WorkbenchLatencyHistoryQuery {
+  target_id?: string
   profile_id: string
   node_key: string
   node_identity_key: string
@@ -286,6 +320,7 @@ export type NodeDetailOrigin =
   | { kind: 'workbench_download_attempt'; attemptId: string; observedAt?: string; snapshot?: WorkbenchDownloadAttempt }
 
 export interface NodeDetailRequest {
+  latencyTargetId?: string
   profileId: string
   profileName?: string
   nodeKey: string
@@ -297,6 +332,7 @@ export interface NodeDetailRequest {
 }
 
 export interface WorkbenchLatencySample {
+  target?: string
   seq: number
   timestamp: string
   latency_ms: number
@@ -339,6 +375,11 @@ export interface WorkbenchLatencyTest {
 export interface WorkbenchPublicServiceRule {
   service_id: string
   name: string
+  category?: string
+  region?: string
+  result_kind?: string
+  description?: string
+  batch_default?: boolean
   rule_version: number
   target_url: string
   method: string
@@ -361,6 +402,10 @@ export interface WorkbenchPublicServiceTestRequest {
 }
 
 export interface WorkbenchPublicServiceMeasurement {
+  model?: string
+  request_count?: number
+  summary?: string
+  details?: Record<string, string>
   outcome: string
   http_status?: number
   bytes_read: number

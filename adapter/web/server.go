@@ -1,12 +1,14 @@
 package web
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net"
@@ -14,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -124,18 +127,27 @@ func (s *Server) buildHandler() http.Handler {
 
 	// REST API routes
 	mux.HandleFunc("GET /api/profile/setup", s.handleGetProfileSetup)
+	mux.HandleFunc("POST /api/data/open-folder", s.handleOpenDataFolder)
 	mux.HandleFunc("POST /api/data/migration", s.handleMigrateLegacyData)
+	mux.HandleFunc("GET /api/data/export", s.handleExportDataRoot)
 	mux.HandleFunc("POST /api/profile/source/inspect", s.handleInspectProfileSource)
 	mux.HandleFunc("POST /api/profile/setup/empty", s.handleInitializeEmptyProfileStore)
 	mux.HandleFunc("POST /api/profile/import", s.handleImportProfileSource)
 	mux.HandleFunc("POST /api/profile/import/discard", s.handleDiscardProfileImport)
 	mux.HandleFunc("GET /api/airports", s.handleGetAirports)
+	mux.HandleFunc("PUT /api/airports/{id}/maintenance", s.handleAirportMaintenance)
 	mux.HandleFunc("POST /api/airports", s.handleCreateAirport)
 	mux.HandleFunc("GET /api/airports/{id}/url", s.handleGetAirportURL)
 	mux.HandleFunc("PUT /api/airports/{id}", s.handleUpdateAirport)
 	mux.HandleFunc("DELETE /api/airports/{id}", s.handleDeleteAirport)
 	mux.HandleFunc("POST /api/airports/{id}/refresh", s.handleRefreshAirport)
 	mux.HandleFunc("GET /api/airports/{id}/nodes", s.handleGetAirportNodes)
+	mux.HandleFunc("POST /api/airports/{id}/subscriptions", s.handleCreateSubscription)
+	mux.HandleFunc("PUT /api/airports/{id}/subscriptions/{subId}", s.handleUpdateSubscription)
+	mux.HandleFunc("DELETE /api/airports/{id}/subscriptions/{subId}", s.handleDeleteSubscription)
+	mux.HandleFunc("POST /api/airports/{id}/subscriptions/{subId}/refresh", s.handleRefreshSubscription)
+	mux.HandleFunc("GET /api/airports/{id}/subscriptions/{subId}/url", s.handleGetSubscriptionURL)
+	mux.HandleFunc("GET /api/subscriptions/{subId}/url", s.handleGetSubscriptionURL)
 
 	mux.HandleFunc("POST /api/test/batch", s.handleTestBatch)
 	mux.HandleFunc("POST /api/test/single", s.handleTestSingle)
@@ -196,6 +208,7 @@ func (s *Server) buildHandler() http.Handler {
 	// Workbench: stable-identity, single-node latency history.
 	mux.HandleFunc("POST /api/workbench/latency-tests", s.handleRunWorkbenchLatencyTest)
 	mux.HandleFunc("GET /api/workbench/latency-tests", s.handleListWorkbenchLatencyTests)
+	mux.HandleFunc("POST /api/workbench/latency-tests/query", s.handleListWorkbenchLatencyTestsBatch)
 	mux.HandleFunc("GET /api/workbench/latency-tests/{attempt_id}", s.handleGetWorkbenchLatencyTest)
 	mux.HandleFunc("POST /api/workbench/latency-batches", s.handleStartWorkbenchLatencyBatch)
 	mux.HandleFunc("GET /api/workbench/latency-batches", s.handleListWorkbenchLatencyBatches)
@@ -236,6 +249,7 @@ func (s *Server) Start() error {
 	}
 	s.port = listener.Addr().(*net.TCPAddr).Port
 	if s.app != nil {
+		s.app.StartSubscriptionRefresh(s.config.UserAgent)
 		if err := s.app.RecoverMonitorJobs(context.Background()); err != nil {
 			log.Printf("Monitor startup recovery did not run: %v", err)
 		}
@@ -489,8 +503,18 @@ func (s *Server) handleGetAirports(w http.ResponseWriter, r *http.Request) {
 }
 
 type createAirportReq struct {
+	Name       string `json:"name"`
+	URL        string `json:"url,omitempty"`
+	WebsiteURL string `json:"website_url,omitempty"`
+	BackupURL  string `json:"backup_url,omitempty"`
+	Note       string `json:"note,omitempty"`
+	SubName    string `json:"sub_name,omitempty"`
+}
+
+type subscriptionReq struct {
 	Name string `json:"name"`
 	URL  string `json:"url"`
+	Note string `json:"note,omitempty"`
 }
 
 func (s *Server) handleCreateAirport(w http.ResponseWriter, r *http.Request) {
@@ -499,7 +523,7 @@ func (s *Server) handleCreateAirport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "无效的请求参数")
 		return
 	}
-	dto, err := s.app.CreateAirport(req.Name, req.URL, s.config.UserAgent)
+	dto, err := s.app.CreateAirport(req.Name, req.URL, s.config.UserAgent, req.WebsiteURL, req.BackupURL, req.Note, req.SubName)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -524,7 +548,7 @@ func (s *Server) handleUpdateAirport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "无效的请求参数")
 		return
 	}
-	dto, err := s.app.UpdateAirport(id, req.Name, req.URL, s.config.UserAgent)
+	dto, err := s.app.UpdateAirport(id, req.Name, req.URL, s.config.UserAgent, req.WebsiteURL, req.BackupURL, req.Note)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -559,6 +583,71 @@ func (s *Server) handleGetAirportNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, nodes)
+}
+
+func (s *Server) handleCreateSubscription(w http.ResponseWriter, r *http.Request) {
+	airportID := r.PathValue("id")
+	var req subscriptionReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "无效的请求参数")
+		return
+	}
+	dto, err := s.app.AddSubscription(airportID, req.Name, req.URL, req.Note, s.config.UserAgent)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, dto)
+}
+
+func (s *Server) handleUpdateSubscription(w http.ResponseWriter, r *http.Request) {
+	airportID := r.PathValue("id")
+	subID := r.PathValue("subId")
+	var req subscriptionReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "无效的请求参数")
+		return
+	}
+	dto, err := s.app.UpdateSubscription(airportID, subID, req.Name, req.URL, req.Note, s.config.UserAgent)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, dto)
+}
+
+func (s *Server) handleDeleteSubscription(w http.ResponseWriter, r *http.Request) {
+	airportID := r.PathValue("id")
+	subID := r.PathValue("subId")
+	if err := s.app.DeleteSubscription(airportID, subID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+
+func (s *Server) handleRefreshSubscription(w http.ResponseWriter, r *http.Request) {
+	airportID := r.PathValue("id")
+	subID := r.PathValue("subId")
+	dto, err := s.app.RefreshSubscription(airportID, subID, s.config.UserAgent)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, dto)
+}
+
+func (s *Server) handleGetSubscriptionURL(w http.ResponseWriter, r *http.Request) {
+	subID := r.PathValue("subId")
+	if subID == "" {
+		subID = r.PathValue("id")
+	}
+	subURL, err := s.app.GetSubscriptionURL(subID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"url": subURL})
 }
 
 func (s *Server) handleTestBatch(w http.ResponseWriter, r *http.Request) {
@@ -720,6 +809,70 @@ func (s *Server) handleExportClash(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
 	w.Header().Set("Content-Length", strconv.Itoa(len(yamlData)))
 	_, _ = w.Write(yamlData)
+}
+
+func (s *Server) handleExportDataRoot(w http.ResponseWriter, r *http.Request) {
+	dataRoot := s.config.AppPaths.DataRoot
+	if dataRoot == "" {
+		writeError(w, http.StatusInternalServerError, "数据根目录未配置")
+		return
+	}
+
+	filename := fmt.Sprintf("clash-speedtest-data-%s.zip", time.Now().Format("20060102-150405"))
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+
+	zipWriter := zip.NewWriter(w)
+	defer zipWriter.Close()
+
+	// Write metadata file
+	meta := map[string]any{
+		"exported_at":    time.Now().UTC().Format(time.RFC3339),
+		"format_version": 1,
+		"platform":       runtime.GOOS,
+	}
+	if metaBytes, err := json.MarshalIndent(meta, "", "  "); err == nil {
+		if f, err := zipWriter.Create("export_meta.json"); err == nil {
+			_, _ = f.Write(metaBytes)
+		}
+	}
+
+	_ = filepath.Walk(dataRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(dataRoot, path)
+		if err != nil {
+			return nil
+		}
+		base := strings.ToLower(filepath.Base(path))
+		if strings.HasSuffix(base, ".lock") || strings.HasSuffix(base, ".tmp") || strings.HasSuffix(base, ".wal") || strings.HasSuffix(base, ".shm") {
+			return nil
+		}
+
+		// Cross-platform zip path with forward slashes
+		zipPath := filepath.ToSlash(rel)
+		header, err := zip.FileInfoHeader(info)
+		if err != nil {
+			return nil
+		}
+		header.Name = zipPath
+		header.Method = zip.Deflate
+
+		writer, err := zipWriter.CreateHeader(header)
+		if err != nil {
+			return nil
+		}
+
+		file, err := os.Open(path)
+		if err != nil {
+			return nil
+		}
+		defer file.Close()
+
+		_, _ = io.Copy(writer, file)
+		return nil
+	})
 }
 
 type exportCSVReq struct {
@@ -1028,6 +1181,7 @@ func (s *Server) handleListWorkbenchLatencyTests(w http.ResponseWriter, r *http.
 		return
 	}
 	query := application.WorkbenchLatencyHistoryQuery{
+		TargetID:          r.URL.Query().Get("target_id"),
 		ProfileID:         r.URL.Query().Get("profile_id"),
 		NodeKey:           r.URL.Query().Get("node_key"),
 		NodeIdentityKey:   r.URL.Query().Get("node_identity_key"),
@@ -1064,6 +1218,54 @@ func (s *Server) handleListWorkbenchLatencyTests(w http.ResponseWriter, r *http.
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	writeJSON(w, http.StatusOK, results)
+}
+
+// One frozen window for all visible node scopes avoids opening one browser
+// connection per node. Each entry still uses the existing scoped raw query.
+func (s *Server) handleListWorkbenchLatencyTestsBatch(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		TargetID string    `json:"target_id"`
+		Since    time.Time `json:"since"`
+		Until    time.Time `json:"until"`
+		Limit    int       `json:"limit"`
+		Nodes    []struct {
+			ProfileID         string `json:"profile_id"`
+			NodeKey           string `json:"node_key"`
+			NodeIdentityKey   string `json:"node_identity_key"`
+			ConfigRevisionKey string `json:"config_revision_key"`
+		} `json:"nodes"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10)).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid history batch request")
+		return
+	}
+	if len(request.Nodes) == 0 || len(request.Nodes) > 200 || request.Limit < 1 || request.Limit > 100 {
+		writeError(w, http.StatusBadRequest, "history batch requires 1-200 nodes and limit 1-100")
+		return
+	}
+	results := make([]application.WorkbenchLatencyHistoryResult, 0, len(request.Nodes))
+	for _, node := range request.Nodes {
+		result, err := s.app.ListWorkbenchLatencyTests(r.Context(), application.WorkbenchLatencyHistoryQuery{
+			TargetID:          request.TargetID,
+			ProfileID:         node.ProfileID,
+			NodeKey:           node.NodeKey,
+			NodeIdentityKey:   node.NodeIdentityKey,
+			ConfigRevisionKey: node.ConfigRevisionKey,
+			Since:             &request.Since,
+			Until:             &request.Until,
+			Limit:             request.Limit,
+		})
+		if err != nil {
+			if monitor.IsValidationError(err) {
+				writeError(w, http.StatusBadRequest, err.Error())
+			} else {
+				writeError(w, http.StatusInternalServerError, err.Error())
+			}
+			return
+		}
+		results = append(results, result)
 	}
 	writeJSON(w, http.StatusOK, results)
 }

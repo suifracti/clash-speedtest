@@ -54,6 +54,76 @@ func publicServiceRequest(requestID, profile, identity, revision, serviceID stri
 	}
 }
 
+func TestWorkbenchAntigravityRequestAndSavedEvidence(t *testing.T) {
+	var reached atomic.Bool
+	app, _ := newPublicServiceApplication(t, func(profile, node string) (monitor.MonitoredNode, error) {
+		return monitor.MonitoredNode{NodeKey: node, NodeIdentityKey: "identity-a", ConfigRevisionKey: "revision-a"}, nil
+	}, func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodPost || request.URL.String() != "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist" || request.Header.Get("Authorization") != "Bearer test-token" {
+			return nil, errors.New("unexpected Antigravity request contract")
+		}
+		reached.Store(true)
+		return publicServiceHTTPResponse(request, http.StatusUnauthorized, "application/json", `{"error":{"status":"UNAUTHENTICATED"}}`), nil
+	})
+	app.antigravityToken = "test-token"
+	started, err := app.StartWorkbenchPublicServiceTest(context.Background(), publicServiceRequest("antigravity-evidence", "profile-a", "identity-a", "revision-a", "antigravity"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.publicServiceWG.Wait()
+	saved, err := app.GetWorkbenchPublicServiceAttempt(context.Background(), started.AttemptID, publicServiceQueryForTest(started))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reached.Load() || saved.PersistenceState != "saved" || saved.ServiceID != "antigravity" || saved.Rule.RuleVersion != 3 || saved.Result == nil || saved.Result.Outcome != "auth_failed" || saved.Result.HTTPStatus == nil || *saved.Result.HTTPStatus != 401 {
+		t.Fatalf("request and stored evidence mismatch: %+v", saved)
+	}
+}
+
+func TestWorkbenchAntigravitySaveRetryKeepsModelEvidence(t *testing.T) {
+	var calls atomic.Int32
+	app, _ := newPublicServiceApplication(t, func(profile, node string) (monitor.MonitoredNode, error) {
+		return monitor.MonitoredNode{NodeKey: node, NodeIdentityKey: "identity-a", ConfigRevisionKey: "revision-a"}, nil
+	}, func(req *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		body := `{"response":{"candidates":[{"content":{"parts":[{"text":"OK"}]}}]}}`
+		if req.URL.Path == "/v1internal:loadCodeAssist" {
+			body = `{"cloudaicompanionProject":"fixture-project"}`
+		}
+		if req.URL.Path == "/v1internal:fetchAvailableModels" {
+			body = `{"models":{"gemini-fixture-flash":{}}}`
+		}
+		return publicServiceHTTPResponse(req, 200, "application/json", body), nil
+	})
+	app.antigravityToken = "fixture-secret"
+	app.publicServiceSaveHook = func(context.Context, string) error { return errors.New("fixture save failure") }
+	req := publicServiceRequest("antigravity-save", "profile-a", "identity-a", "revision-a", "antigravity")
+	started, err := app.StartWorkbenchPublicServiceTest(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.publicServiceWG.Wait()
+	query := publicServiceQueryForTest(started)
+	staged, err := app.GetWorkbenchPublicServiceAttempt(context.Background(), started.AttemptID, query)
+	if err != nil || staged.PersistenceState != "failed" {
+		t.Fatalf("expected staged failure: %+v %v", staged, err)
+	}
+	app.publicServiceSaveHook = nil
+	saved, err := app.RetrySaveWorkbenchPublicServiceTest(context.Background(), started.AttemptID, query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Result == nil || saved.Result.Outcome != "matched" || saved.Result.Model != "gemini-fixture-flash" || saved.Result.RequestCount != 3 || saved.PersistenceState != "saved" || saved.AttemptID != started.AttemptID {
+		t.Fatalf("missing model evidence: %+v", saved)
+	}
+	if _, err = app.StartWorkbenchPublicServiceTest(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 3 {
+		t.Fatalf("retry must not remeasure, calls=%d", calls.Load())
+	}
+}
+
 func TestWorkbenchPublicServiceSaveRetryReusesAttemptWithoutSecondRequest(t *testing.T) {
 	var calls atomic.Int32
 	app, store := newPublicServiceApplication(t, func(profile, node string) (monitor.MonitoredNode, error) {

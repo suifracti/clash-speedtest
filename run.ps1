@@ -1,4 +1,4 @@
-﻿# Clash-SpeedTest launcher (Windows; also works on macOS if pwsh is installed)
+# Clash-SpeedTest launcher (Windows; also works on macOS if pwsh is installed)
 # Runs from source with `go run`. No exe is built.
 #
 # Usage:
@@ -55,6 +55,10 @@ if (-not $go) {
 
 if (-not $env:GOPROXY) {
     $env:GOPROXY = "https://goproxy.cn,direct"
+}
+
+if (-not $env:CLASH_SPEEDTEST_DATA_DIR) {
+    $env:CLASH_SPEEDTEST_DATA_DIR = Join-Path $PSScriptRoot "data"
 }
 
 Write-Host "从源码启动 clash-speedtest（go run，不生成 exe）..."

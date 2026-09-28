@@ -27,16 +27,60 @@ func safeAirportURLDisplay(raw string) string {
 	return strings.ToLower(parsed.Scheme) + "://" + parsed.Host + "/•••"
 }
 
-func airportDTO(airport *profiles.Airport, nodeCount int, hasCache bool) AirportDTO {
+func subscriptionDTO(airportID string, sub *profiles.Subscription, nodeCount int, hasCache bool) SubscriptionDTO {
+	if sub == nil {
+		return SubscriptionDTO{}
+	}
+	status := "unfetched"
+	if hasCache {
+		if nodeCount > 0 {
+			status = "normal"
+		} else {
+			status = "error"
+		}
+	}
+	return SubscriptionDTO{
+		Usage:         sub.Usage,
+		ID:            sub.ID,
+		AirportID:     airportID,
+		Name:          sub.Name,
+		URLDisplay:    safeAirportURLDisplay(sub.URL),
+		URLConfigured: strings.TrimSpace(sub.URL) != "",
+		Note:          sub.Note,
+		UpdatedAt:     sub.UpdatedAt,
+		NodeCount:     nodeCount,
+		HasCache:      hasCache,
+		Status:        status,
+	}
+}
+
+func airportDTO(airport *profiles.Airport, nodeCount int, hasCache bool, subs ...SubscriptionDTO) AirportDTO {
 	if airport == nil {
 		return AirportDTO{}
 	}
+	urlDisplay := safeAirportURLDisplay(airport.URL)
+	if urlDisplay == "" && len(subs) > 0 {
+		urlDisplay = subs[0].URLDisplay
+	}
+	urlConfigured := strings.TrimSpace(airport.URL) != "" || len(subs) > 0
+	updatedAt := airport.UpdatedAt
+	if updatedAt.IsZero() && len(subs) > 0 {
+		updatedAt = subs[0].UpdatedAt
+	}
+	if subs == nil {
+		subs = []SubscriptionDTO{}
+	}
 	return AirportDTO{
+		Maintenance:   airport.Maintenance,
 		ID:            airport.ID,
 		Name:          airport.Name,
-		URLDisplay:    safeAirportURLDisplay(airport.URL),
-		URLConfigured: strings.TrimSpace(airport.URL) != "",
-		UpdatedAt:     airport.UpdatedAt,
+		WebsiteURL:    airport.WebsiteURL,
+		BackupURL:     airport.BackupURL,
+		Note:          airport.Note,
+		Subscriptions: subs,
+		URLDisplay:    urlDisplay,
+		URLConfigured: urlConfigured,
+		UpdatedAt:     updatedAt,
 		NodeCount:     nodeCount,
 		HasCache:      hasCache,
 	}

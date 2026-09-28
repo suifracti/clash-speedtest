@@ -78,11 +78,119 @@ func TestCheckerUsesFixedRulesAndNeverSendsBrowserCredentials(t *testing.T) {
 	if result.Outcome != "matched" || result.HTTPStatus == nil || *result.HTTPStatus != http.StatusNoContent || calls.Load() != 1 {
 		t.Fatalf("result = %+v, calls=%d", result, calls.Load())
 	}
-	if got := len(Catalog()); got != 3 {
-		t.Fatalf("catalog length = %d, want 3", got)
+	if got := len(Catalog()); got < 16 {
+		t.Fatalf("catalog length = %d, want expanded catalog", got)
 	}
 	if _, ok := RuleFor("https://attacker.example"); ok {
 		t.Fatal("arbitrary target unexpectedly resolved from the fixed catalog")
+	}
+}
+
+func TestCheckerRestoresIndependentIPQualityProfiles(t *testing.T) {
+	ping0, _ := RuleFor("ping0_ip_quality")
+	ippure, _ := RuleFor("ippure_ip_quality")
+	checker := Checker{ClientFactory: fixtureClient(func(request *http.Request) (*http.Response, error) {
+		switch request.URL.Host {
+		case "ping0.cc":
+			return fixtureResponse(request, http.StatusOK, "application/json", `{"ip":"203.0.113.7","location":"Tokyo","country":"Japan","asn":"AS64500","org":"Example Net","isidc":true,"iprisk":17}`), nil
+		case "my.ippure.com":
+			return fixtureResponse(request, http.StatusOK, "application/json", `{"ip":"203.0.113.7","asn":64500,"asOrganization":"Example Net","country":"Japan","countryCode":"JP","city":"Tokyo","fraudScore":23,"isResidential":false,"isBroadcast":false}`), nil
+		default:
+			t.Fatalf("unexpected target %s", request.URL)
+			return nil, nil
+		}
+	})}
+	ping0Result := checker.Check(context.Background(), monitor.MonitoredNode{}, ping0, DefaultTimeout)
+	if ping0Result.Outcome != "profiled" || ping0Result.Details["risk_score"] != "17" || ping0Result.Details["ip_type"] != "机房 IDC" {
+		t.Fatalf("unexpected Ping0 result: %+v", ping0Result)
+	}
+	ippureResult := checker.Check(context.Background(), monitor.MonitoredNode{}, ippure, DefaultTimeout)
+	if ippureResult.Outcome != "profiled" || ippureResult.Details["fraud_score"] != "23" || ippureResult.Details["origin_type"] != "原生 IP" {
+		t.Fatalf("unexpected IPPure result: %+v", ippureResult)
+	}
+}
+
+func TestCheckerSeparatesCloudflareChallengeAndNetflixUnlockTier(t *testing.T) {
+	grok, _ := RuleFor("grok_web")
+	challengeChecker := Checker{ClientFactory: fixtureClient(func(request *http.Request) (*http.Response, error) {
+		response := fixtureResponse(request, http.StatusForbidden, "text/html", "challenge")
+		response.Header.Set("cf-mitigated", "challenge")
+		return response, nil
+	})}
+	if result := challengeChecker.Check(context.Background(), monitor.MonitoredNode{}, grok, DefaultTimeout); result.Outcome != "challenge" {
+		t.Fatalf("expected challenge classification, got %+v", result)
+	}
+
+	netflix, _ := RuleFor("netflix_unlock")
+	netflixChecker := Checker{ClientFactory: fixtureClient(func(request *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(request.URL.Path, "/81280792") {
+			return fixtureResponse(request, http.StatusOK, "text/html", `<h1 class="title-title">LEGO Ninjago</h1>`), nil
+		}
+		return fixtureResponse(request, http.StatusNotFound, "text/html", "Oh no!"), nil
+	})}
+	result := netflixChecker.Check(context.Background(), monitor.MonitoredNode{}, netflix, DefaultTimeout)
+	if result.Outcome != "originals_only" || result.RequestCount != 2 {
+		t.Fatalf("expected originals-only tier from independent fixtures, got %+v", result)
+	}
+}
+
+func TestCheckerClassifiesRegionalStreamingEvidence(t *testing.T) {
+	abema, _ := RuleFor("abema_unlock")
+	fod, _ := RuleFor("fod_unlock")
+	checker := Checker{ClientFactory: fixtureClient(func(request *http.Request) (*http.Response, error) {
+		switch request.URL.Host {
+		case "api.abema.io":
+			return fixtureResponse(request, http.StatusOK, "application/json", `{"isoCountryCode":"JP"}`), nil
+		case "geocontrol1.stream.ne.jp":
+			return fixtureResponse(request, http.StatusOK, "application/xml", `<RESULT><FLAG TYPE="false" /></RESULT>`), nil
+		default:
+			t.Fatalf("unexpected regional target %s", request.URL)
+			return nil, nil
+		}
+	})}
+	if result := checker.Check(context.Background(), monitor.MonitoredNode{}, abema, DefaultTimeout); result.Outcome != "unlocked" || result.Details["service_region"] != "JP" {
+		t.Fatalf("unexpected ABEMA result: %+v", result)
+	}
+	if result := checker.Check(context.Background(), monitor.MonitoredNode{}, fod, DefaultTimeout); result.Outcome != "region_blocked" {
+		t.Fatalf("unexpected FOD result: %+v", result)
+	}
+}
+
+func TestCheckerAntigravityRule(t *testing.T) {
+	antigravity, ok := RuleFor("antigravity")
+	if !ok {
+		t.Fatal("antigravity rule not found in catalog")
+	}
+
+	// An authentication response is not evidence of regional availability.
+	checkerOk := Checker{AntigravityToken: "test-token", ClientFactory: fixtureClient(func(request *http.Request) (*http.Response, error) {
+		return fixtureResponse(request, http.StatusUnauthorized, "application/json", `{"error":{"code":401,"status":"UNAUTHENTICATED"}}`), nil
+	})}
+	resOk := checkerOk.Check(context.Background(), monitor.MonitoredNode{}, antigravity, DefaultTimeout)
+	if resOk.Outcome != "auth_failed" {
+		t.Fatalf("authentication must not claim regional availability, got: %+v", resOk)
+	}
+
+	// 2. Blocked with location error
+	checkerBlocked := Checker{AntigravityToken: "test-token", ClientFactory: fixtureClient(func(request *http.Request) (*http.Response, error) {
+		return fixtureResponse(request, http.StatusBadRequest, "application/json", `{"error":{"message":"User location is not supported"}}`), nil
+	})}
+	resBlocked := checkerBlocked.Check(context.Background(), monitor.MonitoredNode{}, antigravity, DefaultTimeout)
+	if resBlocked.Outcome != "region_blocked" {
+		t.Fatalf("expected region_blocked for Antigravity, got: %+v", resBlocked)
+	}
+	for _, status := range []int{http.StatusOK, http.StatusForbidden} {
+		t.Run(fmt.Sprintf("read-timeout-%d", status), func(t *testing.T) {
+			checker := Checker{AntigravityToken: "test-token", ClientFactory: fixtureClient(func(request *http.Request) (*http.Response, error) {
+				response := fixtureResponse(request, status, "application/json", "")
+				response.Body = timeoutBody{}
+				return response, nil
+			})}
+			result := checker.Check(context.Background(), monitor.MonitoredNode{}, antigravity, DefaultTimeout)
+			if result.Outcome != "timed_out" {
+				t.Fatalf("incomplete response must retain timeout, got: %+v", result)
+			}
+		})
 	}
 }
 

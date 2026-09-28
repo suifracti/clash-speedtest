@@ -182,15 +182,23 @@ func (s *AppService) executeWorkbenchPublicServiceTest(ctx context.Context, runt
 		delete(s.publicServiceActive, runtime.attemptID)
 		s.publicServiceMu.Unlock()
 	}()
-	result := s.publicServiceChecker.Check(ctx, runtime.node, runtime.rule, runtime.timeout)
+	checker := s.publicServiceChecker
+	if runtime.rule.ServiceID == "antigravity" {
+		checker.AntigravityToken = s.GetAntigravityToken()
+	}
+	result := checker.Check(ctx, runtime.node, runtime.rule, runtime.timeout)
 	executionState := "failed"
 	switch result.Outcome {
-	case "matched":
+	case "matched", "profiled", "reachable", "challenge", "unlocked", "originals_only", "region_limited", "service_rejected", "region_blocked", "unknown", "credentials_required", "auth_failed", "permission_denied", "setup_required", "rate_limited":
 		executionState = "completed"
 	case "cancelled":
 		executionState = "cancelled"
 	}
 	measurement := history.PublicServiceMeasurement{
+		Model:        result.Model,
+		RequestCount: result.RequestCount,
+		Summary:      result.Summary,
+		Details:      result.Details,
 		Outcome:      result.Outcome,
 		HTTPStatus:   result.HTTPStatus,
 		BytesRead:    result.BytesRead,
@@ -382,6 +390,11 @@ func publicServiceRuleSnapshot(rule publicservice.Rule, timeoutSeconds int64) hi
 	return history.PublicServiceRuleSnapshot{
 		ServiceID:        rule.ServiceID,
 		Name:             rule.Name,
+		Category:         rule.Category,
+		Region:           rule.Region,
+		ResultKind:       rule.ResultKind,
+		Description:      rule.Description,
+		BatchDefault:     rule.BatchDefault,
 		RuleVersion:      rule.RuleVersion,
 		TargetURL:        rule.TargetURL,
 		Method:           rule.Method,

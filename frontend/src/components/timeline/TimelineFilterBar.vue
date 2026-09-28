@@ -9,6 +9,16 @@
 import { computed, ref } from 'vue'
 import { RANGE_OPTIONS, useTimelineStore, type RangeKey } from '../../stores/timeline'
 import UiSelect from '../common/UiSelect.vue'
+import { useWorkbenchStore } from '../../stores/workbench'
+const workbench = useWorkbenchStore()
+function profileName(id: string) {
+  for (const airport of workbench.airports) {
+    const subscription = airport.subscriptions?.find(sub => sub.id === id)
+    if (subscription) return `${airport.name} · ${subscription.name}`
+    if (airport.id === id) return airport.name
+  }
+  return `历史订阅 · ${id.slice(-6)}（当前未关联）`
+}
 
 const store = useTimelineStore()
 
@@ -34,7 +44,7 @@ const nodeOptions = computed(() => [
 ])
 const profileOptions = computed(() => [
   { value: '', label: '全部' },
-  ...store.availableProfiles.map((profile) => ({ value: profile, label: profile })),
+  ...store.availableProfiles.map((profile) => ({ value: profile, label: profileName(profile) })),
 ])
 const probeOptions = computed(() => [
   { value: '', label: '全部' },
@@ -163,19 +173,19 @@ function shortTarget(target: string): string {
 
     <!-- Profile -->
     <label class="flex items-center gap-1.5">
-      <span class="text-content-muted">Profile</span>
+      <span class="text-content-muted">订阅</span>
       <UiSelect :model-value="store.profileId" @update:model-value="setProfileFilter" aria-label="选择订阅" :options="profileOptions" />
     </label>
 
     <!-- Probe type -->
     <label class="flex items-center gap-1.5">
-      <span class="text-content-muted">Probe</span>
+      <span class="text-content-muted">检查方式</span>
       <UiSelect :model-value="store.probeType" @update:model-value="setProbeTypeFilter" aria-label="选择探针类型" :options="probeOptions" />
     </label>
 
     <!-- Target -->
     <label class="flex items-center gap-1.5">
-      <span class="text-content-muted">Target</span>
+      <span class="text-content-muted">检查对象</span>
       <UiSelect :model-value="store.target" @update:model-value="setTargetFilter" aria-label="选择目标" :options="targetOptions" />
     </label>
 

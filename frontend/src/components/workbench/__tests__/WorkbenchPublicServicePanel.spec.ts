@@ -51,6 +51,19 @@ beforeEach(() => {
 afterEach(() => { wrapper?.unmount(); wrapper = null })
 
 describe('WorkbenchPublicServicePanel', () => {
+  it('executes the catalog Antigravity rule and shows credential failure without claiming availability', async () => {
+    const antigravity = { ...rule, service_id: 'antigravity', name: 'Google Antigravity 可用性', rule_version: 3, method: 'POST' }
+    apiMocks.listWorkbenchPublicServiceCatalog.mockResolvedValue([antigravity])
+    apiMocks.startWorkbenchPublicServiceTest.mockResolvedValue(attempt({ service_id: 'antigravity', rule: antigravity, execution_state: 'failed', persistence_state: 'saved', result: { outcome: 'auth_failed', http_status: 401, bytes_read: 40, started_at: '2026-09-26T10:00:00Z', finished_at: '2026-09-26T10:00:01Z', duration_ms: 1000, error_message: 'Google 凭据无效或已过期', request_count: 1 } }))
+    wrapper = mount(WorkbenchPublicServicePanel, { props: { node } })
+    await flushPromises()
+    await wrapper.get('button.public-service-primary').trigger('click')
+    await flushPromises()
+    expect(apiMocks.startWorkbenchPublicServiceTest).toHaveBeenCalledWith(expect.objectContaining({ service_id: 'antigravity', profile_id: 'profile-a', node_identity_key: 'identity-a', config_revision_key: 'revision-a' }))
+    expect(wrapper.text()).toContain('凭据失效，请重新绑定')
+    expect(wrapper.text()).toContain('管理 Google 凭据')
+    expect(wrapper.get('.public-service-result').text()).toContain('凭据失效，请重新绑定')
+  })
   it('freezes the selected node identity and cancels the actual active attempt', async () => {
     wrapper = mount(WorkbenchPublicServicePanel, { props: { node } })
     await flushPromises()
@@ -130,5 +143,25 @@ describe('WorkbenchPublicServicePanel', () => {
     expect(wrapper.text()).toContain('结果未能暂存；需重新检测')
     expect(wrapper.text()).toContain('测量结果未能暂存')
     expect(wrapper.text()).not.toContain('重试保存（不重新检测）')
+  })
+
+  it('emits start-batch event when multiple nodes are selected', async () => {
+    const nodeB = { ...node, nodeKey: 'node-b', nodeIdentityKey: 'identity-b', displayName: '节点 B' }
+    wrapper = mount(WorkbenchPublicServicePanel, { props: { node: null, selectedNodes: [node, nodeB] } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('已勾选 2 个节点（将排队依次检测）')
+    const startBtn = wrapper.get('button.public-service-primary')
+    expect(startBtn.text()).toContain('排队检测所选 2 个节点')
+    await startBtn.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('start-batch')).toHaveLength(1)
+    expect(wrapper.emitted('start-batch')![0][0]).toEqual(expect.objectContaining({
+      serviceId: 'cloudflare_204',
+      repeatCount: 1,
+      timeoutSeconds: 10,
+    }))
+    expect(apiMocks.startWorkbenchPublicServiceTest).not.toHaveBeenCalled()
   })
 })

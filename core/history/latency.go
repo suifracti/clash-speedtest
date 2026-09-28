@@ -36,10 +36,12 @@ type LatencyTest struct {
 // LatencyBatch is a user-confirmed Workbench selection snapshot. RequestID is
 // the idempotency key used when a client retries a create request.
 type LatencyBatch struct {
+	TargetID       string             `json:"target_id,omitempty"`
 	BatchID        string             `json:"batch_id"`
 	RequestID      string             `json:"request_id"`
 	TestProject    string             `json:"test_project"`
 	TimeoutSeconds int64              `json:"timeout_seconds"`
+	SampleCount    int                `json:"sample_count,omitempty"`
 	RequestedAt    time.Time          `json:"requested_at"`
 	State          string             `json:"state"`
 	ItemCount      int                `json:"item_count"`
@@ -73,6 +75,7 @@ type LatencyBatchItem struct {
 
 // LatencyTestSample is an immutable raw ping result belonging to one attempt.
 type LatencyTestSample struct {
+	Target    string    `json:"target,omitempty"`
 	Seq       int       `json:"seq"`
 	Timestamp time.Time `json:"timestamp"`
 	LatencyMs int64     `json:"latency_ms"`
@@ -82,15 +85,17 @@ type LatencyTestSample struct {
 
 // LatencyTestFilter scopes history to a logical subscription node.
 type LatencyTestFilter struct {
-	ProfileID         string
-	NodeKey           string
-	NodeIdentityKey   string
-	ConfigRevisionKey string
-	Since             *time.Time
-	Until             *time.Time
-	Limit             int
-	BeforeFinishedAt  *time.Time
-	BeforeAttemptID   string
+	Target              string
+	IncludeLegacyTarget bool
+	ProfileID           string
+	NodeKey             string
+	NodeIdentityKey     string
+	ConfigRevisionKey   string
+	Since               *time.Time
+	Until               *time.Time
+	Limit               int
+	BeforeFinishedAt    *time.Time
+	BeforeAttemptID     string
 }
 
 // LatencyTestQueryResult is a bounded, raw-sample-scoped history page.

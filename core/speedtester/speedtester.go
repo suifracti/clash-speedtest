@@ -39,6 +39,8 @@ type Config struct {
 	Metrics          MetricSet
 	Duration         time.Duration
 	Rounds           int
+	PingCount        int
+	LatencyTargetURL string
 	OutputPath       string
 	UserAgent        string // optional; empty means use default (mihomo kernel UA)
 	// AntigravityToken is an OAuth access token used only by the Antigravity
@@ -435,6 +437,7 @@ func (st *SpeedTester) Rounds() int {
 }
 
 type LatencySample struct {
+	Target    string        `json:"target,omitempty"`
 	Seq       int           `json:"seq"`
 	Timestamp time.Time     `json:"timestamp"`
 	Duration  time.Duration `json:"duration"`
@@ -672,7 +675,9 @@ func (st *SpeedTester) testProxyEmit(name string, proxy *CProxy, emit func(*Resu
 		go func() {
 			defer wg.Done()
 			pingCount := 6
-			if st.config != nil && st.config.Duration > 0 {
+			if st.config != nil && st.config.PingCount > 0 {
+				pingCount = st.config.PingCount
+			} else if st.config != nil && st.config.Duration > 0 {
 				pingCount = 3
 			}
 			latRes = st.testLatency(proxy, st.config.MaxLatency, pingCount)
@@ -724,7 +729,9 @@ func (st *SpeedTester) testProxyEmit(name string, proxy *CProxy, emit func(*Resu
 	} else {
 		if metrics.Latency {
 			pingCount := 6
-			if st.config != nil && st.config.Duration > 0 {
+			if st.config != nil && st.config.PingCount > 0 {
+				pingCount = st.config.PingCount
+			} else if st.config != nil && st.config.Duration > 0 {
 				pingCount = 3
 			}
 			latencyResult := st.testLatency(proxy, st.config.MaxLatency, pingCount)
@@ -843,57 +850,80 @@ func (st *SpeedTester) testLatency(proxy constant.Proxy, minLatency time.Duratio
 	}
 	client := st.createClient(proxy, minLatency)
 	defer client.CloseIdleConnections()
+	return st.testLatencyWithClient(client, pingCount)
+}
 
+func (st *SpeedTester) testLatencyWithClient(client *http.Client, pingCount int) *latencyResult {
 	latencies := make([]time.Duration, 0, pingCount)
 	samples := make([]LatencySample, 0, pingCount)
 	failedPings := 0
-	probeURL := st.probeURL()
+	probeURLs := LatencyProbeURLs(st.probeURL())
 
 	for i := 0; i < pingCount; i++ {
-		time.Sleep(100 * time.Millisecond)
-
-		start := time.Now()
-		req, err := http.NewRequest(http.MethodGet, probeURL, nil)
-		if err != nil {
-			failedPings++
-			samples = append(samples, LatencySample{
-				Seq:       i + 1,
-				Timestamp: start,
-				Success:   false,
-				Error:     err.Error(),
-			})
-			continue
+		if i > 0 {
+			time.Sleep(100 * time.Millisecond)
 		}
-		resp, err := client.Do(req)
-		if err != nil {
-			failedPings++
-			samples = append(samples, LatencySample{
-				Seq:       i + 1,
-				Timestamp: start,
-				Success:   false,
-				Error:     err.Error(),
-			})
-			continue
+		round := make([]LatencySample, len(probeURLs))
+		var probes sync.WaitGroup
+		for targetIndex, probeURL := range probeURLs {
+			probes.Add(1)
+			go func(targetIndex int, probeURL string) {
+				defer probes.Done()
+				start := time.Now()
+				sample := LatencySample{Seq: i*len(probeURLs) + targetIndex + 1, Target: probeURL, Timestamp: start}
+				defer func() { round[targetIndex] = sample }()
+				req, err := http.NewRequest(http.MethodGet, probeURL, nil)
+				if err != nil {
+					sample.Error = err.Error()
+					return
+				}
+				resp, err := client.Do(req)
+				if err != nil {
+					sample.Error = err.Error()
+					return
+				}
+				_, _ = io.CopyN(io.Discard, resp.Body, 1)
+				resp.Body.Close()
+				dur := time.Since(start)
+				sample.Duration, sample.LatencyMs, sample.Success = dur, dur.Milliseconds(), true
+			}(targetIndex, probeURL)
 		}
-		_, _ = io.CopyN(io.Discard, resp.Body, 1)
-		resp.Body.Close()
-		dur := time.Since(start)
-		latencies = append(latencies, dur)
-		samples = append(samples, LatencySample{
-			Seq:       i + 1,
-			Timestamp: start,
-			Duration:  dur,
-			LatencyMs: dur.Milliseconds(),
-			Success:   true,
-		})
+		probes.Wait()
+		for _, sample := range round {
+			samples = append(samples, sample)
+			if sample.Success {
+				latencies = append(latencies, sample.Duration)
+			} else {
+				failedPings++
+			}
+		}
 	}
 
-	stats := calculateLatencyStats(latencies, failedPings, pingCount)
+	stats := calculateLatencyStats(latencies, failedPings, pingCount*len(probeURLs))
+	if len(probeURLs) > 1 {
+		var baseline []time.Duration
+		baselineFailed := 0
+		for _, sample := range samples {
+			if sample.Target != probeURLs[0] {
+				continue
+			}
+			if sample.Success {
+				baseline = append(baseline, sample.Duration)
+			} else {
+				baselineFailed++
+			}
+		}
+		baselineStats := calculateLatencyStats(baseline, baselineFailed, pingCount)
+		stats.avgLatency, stats.jitter = baselineStats.avgLatency, baselineStats.jitter
+	}
 	stats.samples = samples
 	return stats
 }
 
 func (st *SpeedTester) probeURL() string {
+	if st.config != nil && st.config.LatencyTargetURL != "" {
+		return st.config.LatencyTargetURL
+	}
 	if st.serverMode == serverModeDirectDownload && st.downloadURL != "" {
 		return st.downloadURL
 	}

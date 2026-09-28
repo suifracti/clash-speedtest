@@ -5,6 +5,7 @@ import (
 
 	"github.com/faceair/clash-speedtest/core/history"
 	"github.com/faceair/clash-speedtest/core/monitor"
+	"github.com/faceair/clash-speedtest/core/profiles"
 )
 
 // TestConfig defines parameters for running speed and stability tests.
@@ -35,10 +36,12 @@ type SingleTestRequest struct {
 // WorkbenchLatencyTestRequest is the stable-identity request for the first
 // formal workbench path. Raw subscription config never crosses this boundary.
 type WorkbenchLatencyTestRequest struct {
+	TargetID       string `json:"target_id,omitempty"`
 	ProfileID      string `json:"profile_id"`
 	NodeKey        string `json:"node_key"`
 	TestProject    string `json:"test_project"`
 	TimeoutSeconds int64  `json:"timeout_seconds"`
+	SampleCount    int    `json:"sample_count,omitempty"`
 }
 
 type WorkbenchPublicServiceTestRequest struct {
@@ -112,9 +115,11 @@ type WorkbenchLatencyBatchSelection struct {
 }
 
 type WorkbenchLatencyBatchRequest struct {
+	TargetID       string                           `json:"target_id,omitempty"`
 	RequestID      string                           `json:"request_id"`
 	TestProject    string                           `json:"test_project"`
 	TimeoutSeconds int64                            `json:"timeout_seconds"`
+	SampleCount    int                              `json:"sample_count,omitempty"`
 	Selections     []WorkbenchLatencyBatchSelection `json:"selections"`
 }
 
@@ -140,10 +145,12 @@ type WorkbenchLatencyBatchItemDTO struct {
 }
 
 type WorkbenchLatencyBatchDTO struct {
+	TargetID       string                         `json:"target_id,omitempty"`
 	BatchID        string                         `json:"batch_id"`
 	RequestID      string                         `json:"request_id"`
 	TestProject    string                         `json:"test_project"`
 	TimeoutSeconds int64                          `json:"timeout_seconds"`
+	SampleCount    int                            `json:"sample_count,omitempty"`
 	RequestedAt    time.Time                      `json:"requested_at"`
 	State          string                         `json:"state"`
 	ItemCount      int                            `json:"item_count"`
@@ -152,6 +159,7 @@ type WorkbenchLatencyBatchDTO struct {
 
 // WorkbenchLatencyHistoryQuery scopes history to one logical subscription node.
 type WorkbenchLatencyHistoryQuery struct {
+	TargetID          string     `json:"target_id,omitempty"`
 	ProfileID         string     `json:"profile_id"`
 	NodeKey           string     `json:"node_key"`
 	NodeIdentityKey   string     `json:"node_identity_key"`
@@ -190,6 +198,7 @@ type WorkbenchLatencyHistoryResult struct {
 
 type WorkbenchLatencySampleDTO struct {
 	Seq       int       `json:"seq"`
+	Target    string    `json:"target,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 	LatencyMs int64     `json:"latency_ms"`
 	Success   bool      `json:"success"`
@@ -248,15 +257,35 @@ type TokenStatusDTO struct {
 	Preview  string `json:"preview"`
 }
 
+// SubscriptionDTO represents an individual subscription link under an airport.
+type SubscriptionDTO struct {
+	Usage         *profiles.SubscriptionUsage `json:"usage,omitempty"`
+	ID            string                      `json:"id"`
+	AirportID     string                      `json:"airport_id"`
+	Name          string                      `json:"name"`
+	URLDisplay    string                      `json:"url_display"`
+	URLConfigured bool                        `json:"url_configured"`
+	Note          string                      `json:"note,omitempty"`
+	UpdatedAt     time.Time                   `json:"updated_at,omitempty"`
+	NodeCount     int                         `json:"node_count"`
+	HasCache      bool                        `json:"has_cache"`
+	Status        string                      `json:"status"` // "normal", "error", "unfetched"
+}
+
 // AirportDTO represents airport subscription status for GUI/API display.
 type AirportDTO struct {
-	ID            string    `json:"id"`
-	Name          string    `json:"name"`
-	URLDisplay    string    `json:"url_display"`
-	URLConfigured bool      `json:"url_configured"`
-	UpdatedAt     time.Time `json:"updated_at,omitempty"`
-	NodeCount     int       `json:"node_count"`
-	HasCache      bool      `json:"has_cache"`
+	Maintenance   profiles.AirportMaintenance `json:"maintenance"`
+	ID            string                      `json:"id"`
+	Name          string                      `json:"name"`
+	WebsiteURL    string                      `json:"website_url,omitempty"`
+	BackupURL     string                      `json:"backup_url,omitempty"`
+	Note          string                      `json:"note,omitempty"`
+	Subscriptions []SubscriptionDTO           `json:"subscriptions"`
+	URLDisplay    string                      `json:"url_display"`
+	URLConfigured bool                        `json:"url_configured"`
+	UpdatedAt     time.Time                   `json:"updated_at,omitempty"`
+	NodeCount     int                         `json:"node_count"`
+	HasCache      bool                        `json:"has_cache"`
 }
 
 // ProfileSourceDTO is a redacted, user-selectable local source summary. It

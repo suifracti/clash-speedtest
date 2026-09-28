@@ -95,7 +95,30 @@ func FromLegacy(profileDir, historyDir string) AppPaths {
 	}
 }
 
+func executableDir() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	resolved, err := filepath.EvalSymlinks(exe)
+	if err == nil {
+		exe = resolved
+	}
+	dir := filepath.Dir(exe)
+	lowerDir := strings.ToLower(dir)
+	if strings.Contains(lowerDir, "go-build") || strings.Contains(lowerDir, filepath.Join("appdata", "local", "temp")) {
+		return ""
+	}
+	if strings.Contains(lowerDir, ".app/contents/macos") {
+		return ""
+	}
+	return dir
+}
+
 func defaultDataRoot() (string, error) {
+	if exeDir := executableDir(); exeDir != "" {
+		return filepath.Join(exeDir, "data"), nil
+	}
 	var base string
 	switch runtime.GOOS {
 	case "windows":

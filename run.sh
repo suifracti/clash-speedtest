@@ -53,6 +53,10 @@ if [ -z "${GOPROXY:-}" ]; then
   export GOPROXY="https://goproxy.cn,direct"
 fi
 
+if [ -z "${CLASH_SPEEDTEST_DATA_DIR:-}" ]; then
+  export CLASH_SPEEDTEST_DATA_DIR="$(cd "$(dirname "$0")" && pwd)/data"
+fi
+
 echo "从源码启动 clash-speedtest（go run，不生成二进制）..."
 if [ "$#" -gt 0 ]; then
   exec "$GO_BIN" run . "$@"

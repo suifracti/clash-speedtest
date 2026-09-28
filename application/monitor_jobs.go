@@ -112,33 +112,74 @@ func (s *AppService) ListMonitorNodeOptions() ([]MonitorNodeOptionDTO, error) {
 		if airport == nil {
 			continue
 		}
-		nodes, err := s.loadMonitorNodes(airport.ID)
-		if err != nil {
-			// A missing or invalid cache should make that subscription unavailable,
-			// not turn a healthy subscription into an unusable global selector.
-			continue
-		}
-		seen := make(map[string]struct{}, len(nodes))
-		for _, node := range nodes {
-			if node.NodeKey == "" {
+		if len(airport.Subscriptions) > 0 {
+			for _, sub := range airport.Subscriptions {
+				if sub == nil {
+					continue
+				}
+				nodes, err := s.loadMonitorNodes(sub.ID)
+				if err != nil {
+					nodes, err = s.loadMonitorNodes(airport.ID)
+					if err != nil {
+						continue
+					}
+				}
+				profileName := airport.Name
+				if sub.Name != "" && sub.Name != "默认订阅" {
+					profileName = fmt.Sprintf("%s · %s", airport.Name, sub.Name)
+				} else if len(airport.Subscriptions) > 1 {
+					profileName = fmt.Sprintf("%s · %s", airport.Name, sub.Name)
+				}
+				seen := make(map[string]struct{}, len(nodes))
+				for _, node := range nodes {
+					if node.NodeKey == "" {
+						continue
+					}
+					if _, exists := seen[node.NodeKey]; exists {
+						continue
+					}
+					seen[node.NodeKey] = struct{}{}
+					code := profiles.DetectCountry(node.DisplayName)
+					options = append(options, MonitorNodeOptionDTO{
+						ProfileID:         sub.ID,
+						ProfileName:       profileName,
+						NodeKey:           node.NodeKey,
+						NodeIdentityKey:   node.NodeIdentityKey,
+						ConfigRevisionKey: node.ConfigRevisionKey,
+						DisplayName:       node.DisplayName,
+						Type:              node.Type,
+						CountryCode:       code,
+						CountryFlag:       profiles.FlagFromCode(code),
+					})
+				}
+			}
+		} else {
+			nodes, err := s.loadMonitorNodes(airport.ID)
+			if err != nil {
 				continue
 			}
-			if _, exists := seen[node.NodeKey]; exists {
-				continue
+			seen := make(map[string]struct{}, len(nodes))
+			for _, node := range nodes {
+				if node.NodeKey == "" {
+					continue
+				}
+				if _, exists := seen[node.NodeKey]; exists {
+					continue
+				}
+				seen[node.NodeKey] = struct{}{}
+				code := profiles.DetectCountry(node.DisplayName)
+				options = append(options, MonitorNodeOptionDTO{
+					ProfileID:         airport.ID,
+					ProfileName:       airport.Name,
+					NodeKey:           node.NodeKey,
+					NodeIdentityKey:   node.NodeIdentityKey,
+					ConfigRevisionKey: node.ConfigRevisionKey,
+					DisplayName:       node.DisplayName,
+					Type:              node.Type,
+					CountryCode:       code,
+					CountryFlag:       profiles.FlagFromCode(code),
+				})
 			}
-			seen[node.NodeKey] = struct{}{}
-			code := profiles.DetectCountry(node.DisplayName)
-			options = append(options, MonitorNodeOptionDTO{
-				ProfileID:         airport.ID,
-				ProfileName:       airport.Name,
-				NodeKey:           node.NodeKey,
-				NodeIdentityKey:   node.NodeIdentityKey,
-				ConfigRevisionKey: node.ConfigRevisionKey,
-				DisplayName:       node.DisplayName,
-				Type:              node.Type,
-				CountryCode:       code,
-				CountryFlag:       profiles.FlagFromCode(code),
-			})
 		}
 	}
 
@@ -498,7 +539,13 @@ func (s *AppService) GetMonitorJobDTO(jobID string) (*MonitorJobDTO, error) {
 	}
 	profileName := ""
 	if store, loadErr := profiles.LoadStore(s.profilePaths.StoreFile()); loadErr == nil {
-		if airport := store.Get(job.ProfileID); airport != nil {
+		if ap, sub := store.FindSubscription(job.ProfileID); ap != nil {
+			if sub != nil && sub.Name != "" && (sub.Name != "默认订阅" || len(ap.Subscriptions) > 1) {
+				profileName = fmt.Sprintf("%s · %s", ap.Name, sub.Name)
+			} else {
+				profileName = ap.Name
+			}
+		} else if airport := store.Get(job.ProfileID); airport != nil {
 			profileName = airport.Name
 		}
 	}
@@ -507,11 +554,25 @@ func (s *AppService) GetMonitorJobDTO(jobID string) (*MonitorJobDTO, error) {
 }
 
 func (s *AppService) loadMonitorNodes(profileID string) ([]monitor.MonitoredNode, error) {
+	cacheID := profileID
 	if !s.profilePaths.HasCache(profileID) {
+		if store, err := profiles.LoadStore(s.profilePaths.StoreFile()); err == nil {
+			if ap := store.Get(profileID); ap != nil && len(ap.Subscriptions) > 0 {
+				if s.profilePaths.HasCache(ap.Subscriptions[0].ID) {
+					cacheID = ap.Subscriptions[0].ID
+				}
+			} else if _, sub := store.FindSubscription(profileID); sub != nil {
+				if s.profilePaths.HasCache(sub.ID) {
+					cacheID = sub.ID
+				}
+			}
+		}
+	}
+	if !s.profilePaths.HasCache(cacheID) {
 		return nil, fmt.Errorf("订阅节点缓存不存在，请先刷新订阅")
 	}
 	st, err := speedtester.New(&speedtester.Config{
-		ConfigPaths: s.profilePaths.CacheFile(profileID),
+		ConfigPaths: s.profilePaths.CacheFile(cacheID),
 		Mode:        speedtester.SpeedModeFast,
 	})
 	if err != nil {

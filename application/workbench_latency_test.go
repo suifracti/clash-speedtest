@@ -51,7 +51,7 @@ func TestWorkbenchLatencyHistoryWindowProjectsStatsFromRawSamples(t *testing.T) 
 		FailureSamples:    2,
 		Samples: []history.LatencyTestSample{
 			{Seq: 1, Timestamp: since.Add(-time.Second), LatencyMs: 9, Success: true},
-			{Seq: 2, Timestamp: since, LatencyMs: 40, Success: true},
+			{Seq: 2, Target: "https://www.gstatic.com/generate_204", Timestamp: since, LatencyMs: 40, Success: true},
 			{Seq: 3, Timestamp: until.Add(-time.Second), LatencyMs: 44, Success: false, Error: "timeout"},
 			{Seq: 4, Timestamp: until, LatencyMs: 80, Success: true},
 		},
@@ -78,6 +78,9 @@ func TestWorkbenchLatencyHistoryWindowProjectsStatsFromRawSamples(t *testing.T) 
 		t.Fatalf("expected one windowed attempt, got %+v", result.Tests)
 	}
 	windowed := result.Tests[0]
+	if windowed.Samples[0].Target != "https://www.gstatic.com/generate_204" {
+		t.Fatal("history API lost sample target attribution")
+	}
 	if len(windowed.Samples) != 2 || windowed.Samples[0].Timestamp != since || windowed.Samples[1].Timestamp != until.Add(-time.Second) {
 		t.Fatalf("unexpected half-open raw samples: %+v", windowed.Samples)
 	}
@@ -267,6 +270,46 @@ func TestWorkbenchLatencyTestUsesStableIdentityPersistsAndSeparatesProfiles(t *t
 	})
 	if err == nil || !monitor.IsValidationError(err) {
 		t.Fatalf("expected display name fallback to be rejected, got %v", err)
+	}
+}
+
+func TestResolveWorkbenchLatencyProxyAcceptsAdditionalSubscriptionID(t *testing.T) {
+	profileDir := t.TempDir()
+	paths := profiles.Paths{Dir: profileDir}
+	if err := profiles.SaveStore(paths.StoreFile(), &profiles.Store{Airports: []*profiles.Airport{{
+		ID:   "airport-1",
+		Name: "机场一",
+		Subscriptions: []*profiles.Subscription{
+			{ID: "airport-1", Name: "默认订阅", URL: "https://example.invalid/default"},
+			{ID: "subscription-2", Name: "2", URL: "https://example.invalid/second"},
+		},
+	}}}); err != nil {
+		t.Fatalf("SaveStore: %v", err)
+	}
+	writeLatencyProxyCache(t, paths, "subscription-2", "第二订阅节点", "127.0.0.1:65535")
+
+	service := &AppService{profilePaths: paths}
+	options, err := service.ListMonitorNodeOptions()
+	if err != nil {
+		t.Fatalf("ListMonitorNodeOptions: %v", err)
+	}
+	var selected MonitorNodeOptionDTO
+	for _, option := range options {
+		if option.ProfileID == "subscription-2" {
+			selected = option
+			break
+		}
+	}
+	if selected.NodeKey == "" {
+		t.Fatalf("additional subscription option missing: %+v", options)
+	}
+
+	resolved, executionName, _, err := service.resolveWorkbenchLatencyProxy("subscription-2", selected.NodeKey)
+	if err != nil {
+		t.Fatalf("resolve additional subscription: %v", err)
+	}
+	if executionName != "第二订阅节点" || resolved.NodeIdentityKey != selected.NodeIdentityKey || resolved.ConfigRevisionKey != selected.ConfigRevisionKey {
+		t.Fatalf("unexpected resolved node: name=%q node=%+v option=%+v", executionName, resolved, selected)
 	}
 }
 

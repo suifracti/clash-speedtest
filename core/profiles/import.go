@@ -582,7 +582,8 @@ func readSourceSnapshot(sourceDir string) (sourceSnapshot, error) {
 }
 
 func validateStore(store *Store) error {
-	seen := make(map[string]struct{})
+	seenAirports := make(map[string]struct{})
+	seenSubs := make(map[string]struct{})
 	for _, airport := range store.Airports {
 		if airport == nil || strings.TrimSpace(airport.ID) == "" {
 			return fmt.Errorf("source profile has an invalid profile id")
@@ -590,10 +591,23 @@ func validateStore(store *Store) error {
 		if filepath.IsAbs(airport.ID) || filepath.Base(airport.ID) != airport.ID || strings.ContainsAny(airport.ID, `/\\:`) || airport.ID == "." || airport.ID == ".." {
 			return fmt.Errorf("source profile has an unsafe profile id")
 		}
-		if _, exists := seen[airport.ID]; exists {
+		if _, exists := seenAirports[airport.ID]; exists {
 			return fmt.Errorf("source profile has duplicate profile ids")
 		}
-		seen[airport.ID] = struct{}{}
+		seenAirports[airport.ID] = struct{}{}
+
+		for _, sub := range airport.Subscriptions {
+			if sub == nil || strings.TrimSpace(sub.ID) == "" {
+				return fmt.Errorf("source subscription has an invalid id")
+			}
+			if filepath.IsAbs(sub.ID) || filepath.Base(sub.ID) != sub.ID || strings.ContainsAny(sub.ID, `/\\:`) || sub.ID == "." || sub.ID == ".." {
+				return fmt.Errorf("source subscription has an unsafe id")
+			}
+			if _, exists := seenSubs[sub.ID]; exists {
+				return fmt.Errorf("source subscription has duplicate id")
+			}
+			seenSubs[sub.ID] = struct{}{}
+		}
 	}
 	return nil
 }
@@ -613,10 +627,25 @@ func summarizeCaches(snapshot sourceSnapshot) (int, []string) {
 	count := 0
 	missing := make([]string, 0)
 	for _, airport := range snapshot.store.Airports {
-		if _, ok := snapshot.caches[airport.ID+".yaml"]; ok {
-			count++
+		if airport == nil {
+			continue
+		}
+		if len(airport.Subscriptions) > 0 {
+			for _, sub := range airport.Subscriptions {
+				if _, ok := snapshot.caches[sub.ID+".yaml"]; ok {
+					count++
+				} else if _, ok := snapshot.caches[airport.ID+".yaml"]; ok {
+					count++
+				} else {
+					missing = append(missing, "缓存："+sub.ID)
+				}
+			}
 		} else {
-			missing = append(missing, "缓存："+airport.ID)
+			if _, ok := snapshot.caches[airport.ID+".yaml"]; ok {
+				count++
+			} else {
+				missing = append(missing, "缓存："+airport.ID)
+			}
 		}
 	}
 	if len(snapshot.store.Airports) > 0 && len(snapshot.caches) == 0 {

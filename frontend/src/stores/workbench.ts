@@ -244,11 +244,11 @@ export const useWorkbenchStore = defineStore('workbench', () => {
   }
 
   async function loadAirports() {
-    if (profileSetup.value && profileSetup.value.state !== 'ready') {
-      return
-    }
     try {
       airports.value = await api.fetchAirports()
+      if (profileSetup.value && profileSetup.value.state !== 'ready') {
+        profileSetup.value = { ...profileSetup.value, state: 'ready', initialized: true }
+      }
       if (airports.value.length > 0 && !selectedAirportId.value) {
         selectedAirportId.value = airports.value[0].id
         await loadAirportNodes(airports.value[0].id)

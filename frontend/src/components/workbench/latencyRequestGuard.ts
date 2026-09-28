@@ -1,6 +1,6 @@
 import type { WorkbenchLatencyTest } from '../../types'
 
-export type LatencyWindowMode = '4h' | '24h'
+export type LatencyWindowMode = `${number}h` | `${number}d`
 
 export interface LatencyWindow {
   mode: LatencyWindowMode
@@ -11,7 +11,12 @@ export interface LatencyWindow {
 export function freezeLatencyWindow(mode: LatencyWindowMode, asOf = new Date()): LatencyWindow {
   const untilMs = asOf.getTime()
   if (!Number.isFinite(untilMs)) throw new Error('invalid latency observation as-of')
-  const durationMs = mode === '4h' ? 4 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000
+  const match = /^(\d+(?:\.\d+)?)(h|d)$/.exec(mode)
+  const amount = match ? Number(match[1]) : NaN
+  const durationMs = amount * (match?.[2] === 'd' ? 24 : 1) * 3600000
+  if (!Number.isFinite(durationMs) || durationMs < 1 || !Number.isFinite(new Date(untilMs - durationMs).getTime())) {
+    throw new Error('请输入有效的正数时间范围')
+  }
   return {
     mode,
     since: new Date(untilMs - durationMs).toISOString(),

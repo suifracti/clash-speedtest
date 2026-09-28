@@ -15,6 +15,9 @@ func AutoDetectPhysicalInterface() string {
 	if err != nil {
 		return ""
 	}
+	metrics := physicalGatewayMetrics()
+	bestName := ""
+	bestMetric := ^uint32(0)
 
 	virtualKeywords := []string{
 		"tun", "tap", "wintun", "mihomo", "clash", "sing-box", "sing_tun",
@@ -22,6 +25,14 @@ func AutoDetectPhysicalInterface() string {
 	}
 
 	for _, iface := range ifaces {
+		metric := uint32(0)
+		if metrics != nil {
+			var routable bool
+			metric, routable = metrics[iface.Index]
+			if !routable {
+				continue
+			}
+		}
 		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
 			continue
 		}
@@ -67,18 +78,19 @@ func AutoDetectPhysicalInterface() string {
 			if ipv4[0] == 198 && (ipv4[1] == 18 || ipv4[1] == 19) {
 				continue
 			}
-			return iface.Name
+			if bestName == "" || metric < bestMetric {
+				bestName, bestMetric = iface.Name, metric
+			}
+			break
 		}
 	}
-	return ""
+	return bestName
 }
 
 // BindPhysicalInterface automatically detects and binds Mihomo's dialer
 // to the physical network interface so that proxy probes bypass any active TUN adapter.
 func BindPhysicalInterface() string {
 	ifaceName := AutoDetectPhysicalInterface()
-	if ifaceName != "" {
-		dialer.DefaultInterface.Store(ifaceName)
-	}
+	dialer.DefaultInterface.Store(ifaceName)
 	return ifaceName
 }

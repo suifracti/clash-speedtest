@@ -34,8 +34,8 @@ func TestLatencyTestPersistenceReopenAndIdempotency(t *testing.T) {
 		FailureSamples:    1,
 		ErrorMessage:      "连接超时",
 		Samples: []LatencyTestSample{
-			{Seq: 1, Timestamp: started.Add(100 * time.Millisecond), LatencyMs: 42, Success: true},
-			{Seq: 2, Timestamp: started.Add(600 * time.Millisecond), Success: false, Error: "连接超时"},
+			{Seq: 1, Target: "https://www.gstatic.com/generate_204", Timestamp: started.Add(100 * time.Millisecond), LatencyMs: 42, Success: true},
+			{Seq: 2, Target: "https://api.github.com/zen", Timestamp: started.Add(600 * time.Millisecond), Success: false, Error: "连接超时"},
 		},
 	}
 
@@ -69,6 +69,9 @@ func TestLatencyTestPersistenceReopenAndIdempotency(t *testing.T) {
 	}
 	if len(got.Samples) != 2 || got.Samples[1].Success || got.Samples[1].Error != "连接超时" {
 		t.Fatalf("raw samples not preserved: %+v", got.Samples)
+	}
+	if got.Samples[0].Target != "https://www.gstatic.com/generate_204" || got.Samples[1].Target != "https://api.github.com/zen" {
+		t.Fatal("sample targets lost after reopen")
 	}
 
 	rows, err := reopened.QueryLatencyTests(ctx, LatencyTestFilter{ProfileID: "profile_a", NodeKey: "node_a"})
@@ -116,6 +119,34 @@ func TestLatencyTestAttemptIDConflictIsRejected(t *testing.T) {
 		t.Fatal("expected attempt ID conflict")
 	} else if errors.Is(err, context.Canceled) {
 		t.Fatalf("unexpected context error: %v", err)
+	}
+}
+
+func TestLatencyTargetHistoryDoesNotMixSites(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Now().UTC()
+	for i, target := range []string{"https://www.gstatic.com/generate_204", "https://speed.cloudflare.com/__down?bytes=1", ""} {
+		stamp := now.Add(time.Duration(i) * time.Second)
+		err := store.SaveLatencyTest(ctx, &LatencyTest{AttemptID: fmt.Sprintf("target-%d", i), ProfileID: "p", NodeKey: "n", Target: target, TestProject: "latency_stability", RequestedAt: stamp, StartedAt: stamp, FinishedAt: stamp, Status: "completed", Samples: []LatencyTestSample{{Seq: 1, Timestamp: stamp, LatencyMs: 42, Success: true}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := store.QueryLatencyTests(ctx, LatencyTestFilter{ProfileID: "p", NodeKey: "n", Target: "https://www.gstatic.com/generate_204", Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Tests) != 1 || page.Tests[0].AttemptID != "target-0" || page.HasMore {
+		t.Fatalf("target filter applied incorrectly: %+v", page)
+	}
+	page, err = store.QueryLatencyTests(ctx, LatencyTestFilter{ProfileID: "p", NodeKey: "n", Target: "https://speed.cloudflare.com/__down?bytes=1", IncludeLegacyTarget: true})
+	if err != nil || len(page.Tests) != 2 {
+		t.Fatalf("legacy default history missing: %+v, %v", page, err)
 	}
 }
 

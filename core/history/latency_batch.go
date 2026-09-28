@@ -21,7 +21,7 @@ func (d *DB) CreateLatencyBatch(ctx context.Context, batch *LatencyBatch) error 
 		return fmt.Errorf("begin latency batch: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO workbench_latency_batches(batch_id,request_id,test_project,timeout_seconds,requested_at,state) VALUES(?,?,?,?,?,?)`, batch.BatchID, batch.RequestID, batch.TestProject, batch.TimeoutSeconds, batch.RequestedAt.UTC(), batch.State); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO workbench_latency_batches(batch_id,request_id,test_project,timeout_seconds,requested_at,state,target_id) VALUES(?,?,?,?,?,?,?)`, batch.BatchID, batch.RequestID, batch.TestProject, batch.TimeoutSeconds, batch.RequestedAt.UTC(), batch.State, batch.TargetID); err != nil {
 		return fmt.Errorf("insert latency batch: %w", err)
 	}
 	stmt, err := tx.PrepareContext(ctx, `INSERT INTO workbench_latency_batch_items(item_id,batch_id,ordinal,profile_id,node_key,node_identity_key,config_revision_key,display_name,node_type,execution_state,persistence_state,attempt_id,requested_at,error_message,persistence_error,result_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
@@ -102,7 +102,7 @@ func (d *DB) UpdateLatencyBatchState(ctx context.Context, batchID, state string)
 
 func (d *DB) GetLatencyBatch(ctx context.Context, batchID string) (*LatencyBatch, error) {
 	batch := &LatencyBatch{}
-	err := d.db.QueryRowContext(ctx, `SELECT batch_id,request_id,test_project,timeout_seconds,requested_at,state,(SELECT COUNT(*) FROM workbench_latency_batch_items i WHERE i.batch_id=b.batch_id) FROM workbench_latency_batches b WHERE batch_id=?`, batchID).Scan(&batch.BatchID, &batch.RequestID, &batch.TestProject, &batch.TimeoutSeconds, &batch.RequestedAt, &batch.State, &batch.ItemCount)
+	err := d.db.QueryRowContext(ctx, `SELECT batch_id,request_id,test_project,timeout_seconds,requested_at,state,target_id,(SELECT COUNT(*) FROM workbench_latency_batch_items i WHERE i.batch_id=b.batch_id) FROM workbench_latency_batches b WHERE batch_id=?`, batchID).Scan(&batch.BatchID, &batch.RequestID, &batch.TestProject, &batch.TimeoutSeconds, &batch.RequestedAt, &batch.State, &batch.TargetID, &batch.ItemCount)
 	if err != nil {
 		return nil, fmt.Errorf("get latency batch %s: %w", batchID, err)
 	}
@@ -187,7 +187,7 @@ func (d *DB) ListLatencyBatches(ctx context.Context, limit int) ([]LatencyBatch,
 	if limit > 100 {
 		limit = 100
 	}
-	rows, err := d.db.QueryContext(ctx, `SELECT batch_id,request_id,test_project,timeout_seconds,requested_at,state,(SELECT COUNT(*) FROM workbench_latency_batch_items i WHERE i.batch_id=b.batch_id) FROM workbench_latency_batches b ORDER BY requested_at DESC,batch_id DESC LIMIT ?`, limit)
+	rows, err := d.db.QueryContext(ctx, `SELECT batch_id,request_id,test_project,timeout_seconds,requested_at,state,target_id,(SELECT COUNT(*) FROM workbench_latency_batch_items i WHERE i.batch_id=b.batch_id) FROM workbench_latency_batches b ORDER BY requested_at DESC,batch_id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +195,7 @@ func (d *DB) ListLatencyBatches(ctx context.Context, limit int) ([]LatencyBatch,
 	var batches []LatencyBatch
 	for rows.Next() {
 		var b LatencyBatch
-		if err := rows.Scan(&b.BatchID, &b.RequestID, &b.TestProject, &b.TimeoutSeconds, &b.RequestedAt, &b.State, &b.ItemCount); err != nil {
+		if err := rows.Scan(&b.BatchID, &b.RequestID, &b.TestProject, &b.TimeoutSeconds, &b.RequestedAt, &b.State, &b.TargetID, &b.ItemCount); err != nil {
 			return nil, err
 		}
 		b.RequestedAt = b.RequestedAt.UTC()
@@ -208,7 +208,7 @@ func (d *DB) ListLatencyBatches(ctx context.Context, limit int) ([]LatencyBatch,
 // terminal parents whose child item still has unresolved execution or save
 // state. A committed attempt is checked separately when each batch is loaded.
 func (d *DB) ListLatencyBatchesNeedingRecovery(ctx context.Context) ([]LatencyBatch, error) {
-	rows, err := d.db.QueryContext(ctx, `SELECT b.batch_id,b.request_id,b.test_project,b.timeout_seconds,b.requested_at,b.state,(SELECT COUNT(*) FROM workbench_latency_batch_items i WHERE i.batch_id=b.batch_id) FROM workbench_latency_batches b WHERE b.state IN ('queued','running','cancelling','saving') OR EXISTS (SELECT 1 FROM workbench_latency_batch_items i WHERE i.batch_id=b.batch_id AND (i.execution_state IN ('queued','running') OR i.persistence_state IN ('pending','saving'))) ORDER BY b.requested_at DESC,b.batch_id DESC`)
+	rows, err := d.db.QueryContext(ctx, `SELECT b.batch_id,b.request_id,b.test_project,b.timeout_seconds,b.requested_at,b.state,b.target_id,(SELECT COUNT(*) FROM workbench_latency_batch_items i WHERE i.batch_id=b.batch_id) FROM workbench_latency_batches b WHERE b.state IN ('queued','running','cancelling','saving') OR EXISTS (SELECT 1 FROM workbench_latency_batch_items i WHERE i.batch_id=b.batch_id AND (i.execution_state IN ('queued','running') OR i.persistence_state IN ('pending','saving'))) ORDER BY b.requested_at DESC,b.batch_id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -216,7 +216,7 @@ func (d *DB) ListLatencyBatchesNeedingRecovery(ctx context.Context) ([]LatencyBa
 	var batches []LatencyBatch
 	for rows.Next() {
 		var batch LatencyBatch
-		if err := rows.Scan(&batch.BatchID, &batch.RequestID, &batch.TestProject, &batch.TimeoutSeconds, &batch.RequestedAt, &batch.State, &batch.ItemCount); err != nil {
+		if err := rows.Scan(&batch.BatchID, &batch.RequestID, &batch.TestProject, &batch.TimeoutSeconds, &batch.RequestedAt, &batch.State, &batch.TargetID, &batch.ItemCount); err != nil {
 			return nil, err
 		}
 		batch.RequestedAt = batch.RequestedAt.UTC()

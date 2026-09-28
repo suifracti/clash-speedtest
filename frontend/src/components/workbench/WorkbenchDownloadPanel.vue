@@ -1,12 +1,40 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as api from '../../api/bridge'
+import UiSelect, { type UiSelectOption } from '../common/UiSelect.vue'
+import IntraTestSamplePlot from './IntraTestSamplePlot.vue'
 import type { MonitorNodeOption, NodeDetailRequest, WorkbenchDownloadAttempt, WorkbenchDownloadHistoryQuery, WorkbenchSaveRetryRequest } from '../../types'
 
-const props = defineProps<{ node: MonitorNodeOption | null; saveRetryRequest?: WorkbenchSaveRetryRequest | null }>()
+const maximumMiBOptions: UiSelectOption[] = [
+  { value: 20, label: '20 MiB' },
+  { value: 50, label: '50 MiB' },
+  { value: 100, label: '100 MiB' },
+]
+
+const downloadTimeoutOptions: UiSelectOption[] = [
+  { value: 5, label: '5 秒' },
+  { value: 10, label: '10 秒' },
+  { value: 20, label: '20 秒' },
+  { value: 30, label: '30 秒' },
+]
+
+const repeatCountOptions: UiSelectOption[] = [
+  { value: 1, label: '1 次' },
+  { value: 2, label: '2 次' },
+  { value: 3, label: '3 次' },
+  { value: 5, label: '5 次' },
+]
+
+const props = defineProps<{
+  compact?: boolean
+  node: MonitorNodeOption | null
+  selectedNodes?: MonitorNodeOption[]
+  saveRetryRequest?: WorkbenchSaveRetryRequest | null
+}>()
 const emit = defineEmits<{
   (event: 'open-node-detail', payload: NodeDetailRequest): void
   (event: 'save-retry-request-resolved', attemptID: string): void
+  (event: 'start-batch', params: { repeatCount: number; maximumMiB: number; timeoutSeconds: number }): void
 }>()
 
 const attempt = ref<WorkbenchDownloadAttempt | null>(null)
@@ -19,6 +47,8 @@ const historyHasMore = ref(false)
 const historyCursor = ref<WorkbenchDownloadAttempt | null>(null)
 const timeoutSeconds = ref(10)
 const maximumMiB = ref(20)
+const repeatCount = ref(1)
+const currentRound = ref(1)
 const progressBytes = ref(0)
 const progressSamples = ref<{ elapsed_ns: number; interval_ns: number; delta_bytes: number; cumulative_bytes: number; speed_mbps?: number }[]>([])
 let requestToken = 0
@@ -26,11 +56,13 @@ let historyToken = 0
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 let unsubscribeEvents: (() => void) | null = null
 
+const effectiveNodes = computed(() => (props.selectedNodes && props.selectedNodes.length > 0) ? props.selectedNodes : (props.node ? [props.node] : []))
+const isMultiNode = computed(() => effectiveNodes.value.length > 1)
 const active = computed(() => !!attempt.value && ['queued', 'running', 'cancelling'].includes(attempt.value.execution_state))
 const saving = computed(() => attempt.value?.persistence_state === 'saving')
 const saveFailed = computed(() => attempt.value?.persistence_state === 'failed' && !!attempt.value?.result)
 const capBytes = computed(() => maximumMiB.value * 1024 * 1024)
-const canStart = computed(() => !!props.node && !reading.value && !active.value && !saving.value && !saveFailed.value)
+const canStart = computed(() => effectiveNodes.value.length > 0 && !reading.value && !active.value && !saving.value && !saveFailed.value)
 
 function messageFor(value: unknown): string { return value instanceof Error ? value.message : String(value || '未知错误') }
 function newRequestID(): string { return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `download-${Date.now()}-${Math.random().toString(16).slice(2)}` }
@@ -158,8 +190,24 @@ function retryLoadSaveRetryRequest(): void {
 }
 
 async function start(): Promise<void> {
-  const node = props.node
+  if (isMultiNode.value) {
+    emit('start-batch', {
+      repeatCount: repeatCount.value,
+      maximumMiB: maximumMiB.value,
+      timeoutSeconds: timeoutSeconds.value,
+    })
+    return
+  }
+  const node = props.node || effectiveNodes.value[0]
   if (!node || !canStart.value) return
+  currentRound.value = 1
+  void runRound(1)
+}
+
+async function runRound(round: number): Promise<void> {
+  const node = props.node || effectiveNodes.value[0]
+  if (!node) return
+  currentRound.value = round
   const token = ++requestToken
   if (pollTimer) clearTimeout(pollTimer)
   error.value = ''
@@ -199,7 +247,15 @@ async function refresh(attemptID = attempt.value?.attempt_id || '', token = requ
     progressBytes.value = latest.result?.bytes_read ?? progressBytes.value
     progressSamples.value = latest.result?.samples ?? progressSamples.value
     error.value = ''
-    if (isActive(latest)) schedulePoll(attemptID, token)
+    if (isActive(latest)) {
+      schedulePoll(attemptID, token)
+    } else if (currentRound.value < repeatCount.value && latest.execution_state === 'completed' && token === requestToken) {
+      setTimeout(() => {
+        if (currentRound.value < repeatCount.value && token === requestToken && !reading.value) {
+          void runRound(currentRound.value + 1)
+        }
+      }, 500)
+    }
   } catch (cause) {
     if (token === requestToken) { error.value = `状态读取失败：${messageFor(cause)}`; schedulePoll(attemptID, token, 1400) }
   } finally {
@@ -257,7 +313,7 @@ function handleEvent(type: string, payload: any): void {
 }
 
 function executionLabel(state: string): string {
-  return ({ queued: '等待执行', running: '下载中', cancelling: '正在取消；请求尚未确认停止', completed: '测量完成', byte_limit: '达到响应体上限', time_limit: '达到时长上限', user_cancelled: '用户取消', interrupted: '应用退出时中断', connection_failed: '连接失败', http_rejected: '目标拒绝请求', redirect: '目标重定向，未跟随', transfer_interrupted: '响应体传输中断' } as Record<string, string>)[state] || '状态未知'
+  return ({ queued: '等待执行', running: '下载中', cancelling: '正在取消；请求尚未确认停止', completed: '测量完成', byte_limit: '已达到本次设定的读取量', time_limit: '已达到本次设定的测试时长', user_cancelled: '用户取消', interrupted: '应用退出时中断', connection_failed: '连接失败', http_rejected: '目标拒绝请求', redirect: '目标重定向，未跟随', transfer_interrupted: '响应体传输中断' } as Record<string, string>)[state] || '状态未知'
 }
 function outcomeLabel(outcome: string): string { return executionLabel(outcome) }
 function persistenceLabel(state: string): string { return ({ not_started: '尚未保存', saving: '结果保存中', saved: '已保存', failed: '保存失败；可重试保存', not_applicable: '无可保存结果' } as Record<string, string>)[state] || '保存状态未知' }
@@ -296,17 +352,19 @@ onBeforeUnmount(() => { requestToken++; if (pollTimer) clearTimeout(pollTimer); 
 </script>
 
 <template>
-  <section class="download-panel" aria-labelledby="download-panel-title">
-    <header><div><h2 id="download-panel-title">单节点下载测量</h2><p>只读取固定目标的响应体；字节数不等于系统总流量，也不代表完整文件已下载。</p></div></header>
-    <div class="download-controls">
-      <label>节点<span class="download-node" :class="{ muted: !node }">{{ node ? `${node.displayName} · ${node.profileName} · ${node.type || '节点'}` : '请只勾选一个节点' }}</span></label>
-      <label>读取上限<select v-model.number="maximumMiB" :disabled="active || saving"><option :value="20">20 MiB</option><option :value="50">50 MiB</option><option :value="100">100 MiB</option></select></label>
-      <label>时长上限<select v-model.number="timeoutSeconds" :disabled="active || saving"><option :value="5">5 秒</option><option :value="10">10 秒</option><option :value="20">20 秒</option><option :value="30">30 秒</option></select></label>
-      <button type="button" class="download-primary" :disabled="!canStart" @click="start">{{ reading ? '正在准备…' : active ? '下载中…' : '执行一次下载测量' }}</button>
+  <section v-if="!compact || attempt || error || historyError || failedAttempts.length || historyHasMore" class="download-panel" :class="{ compact }" aria-label="下载执行与保存状态">
+    <header v-if="!compact"><div><h2 id="download-panel-title">下载速度测量</h2><p>只读取固定目标的响应体；字节数不等于系统总流量，也不代表完整文件已下载。</p></div></header>
+    <button v-if="compact && active" type="button" class="download-button" :disabled="attempt?.execution_state === 'cancelling'" @click="cancel">取消下载</button>
+    <div v-if="!compact" class="download-controls">
+      <label>节点<span class="download-node" :class="{ muted: effectiveNodes.length === 0 }">{{ isMultiNode ? `已勾选 ${effectiveNodes.length} 个节点（将排队依次测速，测完一个再测下一个）` : (node ? `${node.displayName} · ${node.profileName} · ${node.type || '节点'}` : '请勾选至少一个节点') }}</span></label>
+      <label>测速次数<UiSelect v-model="repeatCount" variant="compact" aria-label="测速次数" :options="repeatCountOptions" :disabled="active || saving" /></label>
+      <label>每次最多下载<UiSelect v-model="maximumMiB" variant="compact" aria-label="每次最多下载" :options="maximumMiBOptions" :disabled="active || saving" /></label>
+      <label>每次最多测试<UiSelect v-model="timeoutSeconds" variant="compact" aria-label="每次最多测试多久" :options="downloadTimeoutOptions" :disabled="active || saving" /></label>
+      <button type="button" class="download-primary" :disabled="!canStart" @click="start">{{ reading ? '正在准备…' : active ? (repeatCount > 1 ? `下载中 (${currentRound}/${repeatCount})…` : '下载中…') : isMultiNode ? `排队测速所选 ${effectiveNodes.length} 个节点${repeatCount > 1 ? ` (每节点 ${repeatCount} 次)` : ''}` : repeatCount > 1 ? `执行测速 (${repeatCount} 次)` : '执行一次下载测量' }}</button>
       <button v-if="active" type="button" class="download-button" :disabled="attempt?.execution_state === 'cancelling'" @click="cancel">{{ attempt?.execution_state === 'cancelling' ? '正在取消…' : '取消下载' }}</button>
     </div>
-    <p class="download-rule">GET {{ attempt?.rule.target_url || 'https://speed.cloudflare.com/__down?bytes=（读取上限+1）' }} · 规则 v{{ attempt?.rule.rule_version || 1 }} · 最多 {{ attempt ? limitText(attempt.rule.maximum_bytes) : `${maximumMiB} MiB` }} / {{ attempt ? (attempt.rule.maximum_duration_ns / 1e9).toFixed(0) : timeoutSeconds }} 秒 · 不使用 Monitor 预算，不进入 Monitor 推荐证据。</p>
-    <p class="download-note">采样仅由实际收到的响应体字节和单调时钟计算；达到上限或用户取消都不表示节点故障。无有效样本时不显示 0 Mbps。</p>
+    <p class="download-rule">测试目标 Cloudflare 下载端点 · 规则 v{{ attempt?.rule.rule_version || 1 }} · 每次最多下载 {{ attempt ? limitText(attempt.rule.maximum_bytes) : `${maximumMiB} MiB` }}，最多测试 {{ attempt ? (attempt.rule.maximum_duration_ns / 1e9).toFixed(0) : timeoutSeconds }} 秒 · 不使用 Monitor 预算，不进入 Monitor 推荐证据。</p>
+    <p class="download-note">流量估算按设定的最大下载量计算，实际可能更少；达到设定量或手动取消都不表示节点故障。无有效样本时不显示 0 Mbps。</p>
     <div v-if="failedAttempts.length || historyHasMore || historyLoading || historyError" class="download-retry-history" aria-label="待重试保存的下载历史">
       <strong>可重试保存的历史结果</strong>
       <p v-if="historyError" class="download-error">读取待保存历史失败：{{ historyError }}</p>
@@ -324,15 +382,24 @@ onBeforeUnmount(() => { requestToken++; if (pollTimer) clearTimeout(pollTimer); 
       <p>{{ attempt.result ? outcomeLabel(attempt.result.outcome) : executionLabel(attempt.execution_state) }} · {{ attempt.result ? bytesText(attempt.result.bytes_read) : bytesText(progressBytes) }}<template v-if="attempt.result"> · 用时 {{ (attempt.result.duration_ns / 1e9).toFixed(2) }} 秒<template v-if="attempt.result.http_status"> · HTTP {{ attempt.result.http_status }}</template></template></p>
       <p v-if="attempt.result?.failure_phase">结束位置：{{ attempt.result.failure_phase }}<template v-if="attempt.result.error_message"> · {{ attempt.result.error_message }}</template></p>
       <p v-if="attempt.persistence_error" class="download-error">{{ attempt.persistence_error }}</p>
-      <div class="download-actions"><button type="button" class="download-button" :disabled="reading" @click="refresh()">{{ reading ? '读取中…' : '重新读取状态' }}</button><button v-if="saveFailed" type="button" class="download-button" :disabled="reading" @click="retrySave">重试保存（不重新下载）</button><button type="button" class="download-button" @click="openDetail">查看节点详情与历史</button></div>
+      <div v-if="progressSamples.length" class="mt-3">
+        <IntraTestSamplePlot
+          mode="throughput"
+          :throughput-samples="progressSamples"
+          :height="80"
+          :compact="false"
+        />
+      </div>
+      <div class="download-actions mt-3"><button type="button" class="download-button" :disabled="reading" @click="refresh()">{{ reading ? '读取中…' : '重新读取状态' }}</button><button v-if="saveFailed" type="button" class="download-button" :disabled="reading" @click="retrySave">重试保存（不重新下载）</button><button type="button" class="download-button" @click="openDetail">查看节点详情与历史</button></div>
       <details v-if="progressSamples.length"><summary>实际过程样本 {{ progressSamples.length }} 条</summary><ol><li v-for="sample in progressSamples" :key="sample.cumulative_bytes">{{ (sample.elapsed_ns / 1e9).toFixed(2) }} 秒 · +{{ bytesText(sample.delta_bytes) }} · 累计 {{ bytesText(sample.cumulative_bytes) }}<template v-if="sample.speed_mbps !== undefined"> · {{ sample.speed_mbps.toFixed(2) }} Mbps</template></li></ol></details>
     </div>
   </section>
 </template>
 
 <style scoped>
-.download-panel { margin-bottom: 14px; padding: 15px 18px; border: 1px solid var(--border, #d6dde1); border-radius: 10px; background: var(--card-bg, #fff); color: var(--text-main, #1f2933); }
-.download-panel h2 { margin: 0 0 4px; font-size: 15px; }.download-panel header p, .download-rule, .download-note, .download-result p { margin: 4px 0; color: var(--text-secondary, #596873); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
-.download-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 9px 12px; margin: 12px 0 5px; }.download-controls label { display: grid; gap: 5px; min-width: 150px; color: var(--text-secondary, #596873); font-size: 10px; font-weight: 700; }.download-controls select { min-height: 31px; padding: 5px 8px; border: 1px solid var(--border, #d6dde1); border-radius: 5px; background: white; color: var(--text-main, #1f2933); font-size: 11px; }.download-node { display: inline-flex; align-items: center; min-height: 31px; padding: 0 8px; border: 1px solid var(--border, #d6dde1); border-radius: 5px; color: var(--text-main, #1f2933); font-size: 11px; font-weight: 500; }.download-node.muted { color: var(--text-muted, #78868f); }
-.download-primary, .download-button { min-height: 31px; padding: 6px 10px; border: 1px solid var(--border, #d6dde1); border-radius: 5px; background: white; color: var(--primary, #256b78); font-size: 11px; font-weight: 700; }.download-primary { border-color: var(--primary, #256b78); background: var(--primary, #256b78); color: white; }.download-primary:disabled, .download-button:disabled { cursor: not-allowed; opacity: .55; }.download-note { color: var(--text-muted, #75838c); }.download-error { margin: 7px 0; color: #a32f36; font-size: 11px; overflow-wrap: anywhere; }.download-retry-history { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 9px; padding: 8px 10px; border: 1px solid var(--border, #d6dde1); border-radius: 7px; background: var(--card-subtle, #f8fafb); color: var(--text-secondary, #596873); font-size: 11px; }.download-retry-history strong, .download-retry-history p { width: 100%; margin: 0; }.download-retry-history strong { color: var(--text-main, #1f2933); }.download-result { margin-top: 11px; padding: 10px 12px; border: 1px solid var(--border, #d6dde1); border-radius: 7px; background: var(--card-subtle, #f8fafb); }.download-result-heading, .download-actions { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; color: var(--text-main, #1f2933); font-size: 12px; }.download-actions { justify-content: flex-start; margin-top: 8px; }.download-result details { margin-top: 8px; color: var(--text-secondary, #596873); font-size: 11px; }.download-result details summary { cursor: pointer; color: var(--primary, #256b78); }.download-result ol { display: grid; gap: 5px; margin: 7px 0; padding-left: 20px; }
+.compact > .download-rule, .compact > .download-note { display: none; }
+.download-panel { margin-bottom: 14px; padding: 15px 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--card-bg); color: var(--text-main); }
+.download-panel h2 { margin: 0 0 4px; font-size: 15px; }.download-panel header p, .download-rule, .download-note, .download-result p { margin: 4px 0; color: var(--text-secondary); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.download-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 9px 12px; margin: 12px 0 5px; }.download-controls label { display: grid; gap: 5px; min-width: 150px; color: var(--text-secondary); font-size: 10px; font-weight: 700; }.download-controls select { min-height: 31px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--card-subtle); color: var(--text-main); font-size: 11px; }.download-node { display: inline-flex; align-items: center; min-height: 31px; padding: 0 8px; border: 1px solid var(--border); border-radius: 5px; color: var(--text-main); font-size: 11px; font-weight: 500; }.download-node.muted { color: var(--text-muted); }
+.download-primary, .download-button { min-height: 31px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--card-subtle); color: var(--primary); font-size: 11px; font-weight: 700; transition: all .15s ease; }.download-primary { border-color: var(--primary); background: var(--primary); color: white; }.download-primary:hover:not(:disabled) { background: var(--primary-hover); }.download-button:hover:not(:disabled) { border-color: var(--border-focus); background: var(--card-hover); }.download-primary:disabled, .download-button:disabled { cursor: not-allowed; opacity: .55; }.download-note { color: var(--text-muted); }.download-error { margin: 7px 0; color: var(--danger); font-size: 11px; overflow-wrap: anywhere; }.download-retry-history { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 9px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--card-subtle); color: var(--text-secondary); font-size: 11px; }.download-retry-history strong, .download-retry-history p { width: 100%; margin: 0; }.download-retry-history strong { color: var(--text-main); }.download-result { margin-top: 11px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--card-subtle); }.download-result-heading, .download-actions { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; color: var(--text-main); font-size: 12px; }.download-actions { justify-content: flex-start; margin-top: 8px; }.download-result details { margin-top: 8px; color: var(--text-secondary); font-size: 11px; }.download-result details summary { cursor: pointer; color: var(--primary); }.download-result ol { display: grid; gap: 5px; margin: 7px 0; padding-left: 20px; }
 </style>

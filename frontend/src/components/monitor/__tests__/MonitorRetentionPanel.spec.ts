@@ -11,6 +11,7 @@ vi.mock('../../../api/monitor', () => ({
 import { fetchSettings, saveSettings } from '../../../api/bridge'
 import { applyMonitorRetention, fetchMonitorStorageUsage, previewMonitorRetention } from '../../../api/monitor'
 import MonitorRetentionPanel from '../MonitorRetentionPanel.vue'
+import UiSelect from '../../common/UiSelect.vue'
 
 const storage = { database_bytes: 1024, wal_bytes: 4096, shared_memory_bytes: 0, total_bytes: 5120, warning_bytes: 1024, hard_bytes: 4096, warning: true, protected: true }
 const cutoff = '2026-06-01T00:00:00Z'
@@ -34,13 +35,14 @@ describe('MonitorRetentionPanel', () => {
   it('keeps keep_all until explicit preference, preview and separate deletion confirmation', async () => {
     wrapper = mount(MonitorRetentionPanel)
     await flushPromises()
-    expect(wrapper.text()).toContain('当前保留偏好：keep_all')
+    expect(wrapper.text()).toContain('当前保留：全部保留')
     expect(wrapper.text()).toContain('WAL')
     expect(wrapper.text()).toContain('容量保护已生效')
     expect(wrapper.findAll('button').find(b => b.text().includes('预览'))!.attributes('disabled')).toBeDefined()
     expect(applyMonitorRetention).not.toHaveBeenCalled()
 
-    await wrapper.find('select').setValue('90d')
+    await wrapper.findComponent(UiSelect).vm.$emit('update:modelValue', '90d')
+    await flushPromises()
     await wrapper.findAll('button').find(b => b.text().includes('保存偏好'))!.trigger('click')
     await flushPromises()
     expect(saveSettings).toHaveBeenCalledWith(expect.objectContaining({ monitor_retention_policy: '90d' }))

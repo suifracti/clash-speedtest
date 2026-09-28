@@ -3,6 +3,7 @@ import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { fetchSettings, saveSettings } from '../../api/bridge'
 import { applyMonitorRetention, fetchMonitorStorageUsage, previewMonitorRetention } from '../../api/monitor'
 import type { AppSettings, MonitorRetentionPolicy, MonitorRetentionPreview, MonitorStorageUsage } from '../../types'
+import UiSelect from '../common/UiSelect.vue'
 
 const settings = ref<AppSettings | null>(null)
 const storage = ref<MonitorStorageUsage | null>(null)
@@ -36,8 +37,8 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`
 }
 
-function changePolicy(event: Event): void {
-  selectedPolicy.value = (event.target as HTMLSelectElement).value as MonitorRetentionPolicy
+function changePolicy(value: string | number): void {
+  selectedPolicy.value = String(value) as MonitorRetentionPolicy
   preview.value = null
   confirmed.value = false
 }
@@ -160,8 +161,8 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 
 <template>
   <section class="rounded-lg border border-border bg-card p-4 text-xs" aria-label="Monitor 历史保留与容量">
-    <h3 class="text-sm font-semibold">Monitor 历史保留与容量</h3>
-    <p class="mt-1 text-content-muted">当前保留偏好：{{ savedPolicy }}。仅作用于 Monitor raw 样本及符合条件的孤儿 run；Workbench 历史、任务定义、legacy JSON 和旧迁移来源不在删除范围内。</p>
+    <h3 class="text-sm font-semibold">历史保存与空间保护</h3>
+    <p class="mt-1 text-content-secondary">控制监测历史的增长。达到保护阈值后暂停新增采集，不自动删除记录。当前保留：{{ savedPolicy === 'keep_all' ? '全部保留' : savedPolicy }}。</p>
 
     <div v-if="storage" class="mt-3 text-content-secondary">
       SQLite 文件占用 {{ formatBytes(storage.total_bytes) }}（history.db {{ formatBytes(storage.database_bytes) }}、WAL {{ formatBytes(storage.wal_bytes) }}、shm {{ formatBytes(storage.shared_memory_bytes) }}）。这里检测的是 SQLite 文件占用，不是磁盘剩余空间。
@@ -187,9 +188,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 
     <div class="mt-3 flex flex-wrap items-end gap-3">
       <label class="grid gap-1">保留偏好
-        <select :value="selectedPolicy" :disabled="busy" class="rounded border border-border bg-card px-2 py-1" @change="changePolicy">
-          <option value="keep_all">全部保留</option><option value="30d">30 天</option><option value="90d">90 天</option><option value="180d">180 天</option><option value="custom">自定义</option>
-        </select>
+        <UiSelect :model-value="selectedPolicy" :disabled="busy" aria-label="监测历史保留偏好" :options="[{ value: 'keep_all', label: '全部保留' }, { value: '30d', label: '30 天' }, { value: '90d', label: '90 天' }, { value: '180d', label: '180 天' }, { value: 'custom', label: '自定义' }]" @update:model-value="changePolicy" />
       </label>
       <label v-if="selectedPolicy === 'custom'" class="grid gap-1">天数
         <input :value="customDays" type="number" min="1" max="36500" :disabled="busy" class="w-24 rounded border border-border bg-card px-2 py-1" @input="changeDays" />
@@ -208,3 +207,9 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
     <p v-if="error" class="mt-2 text-red-700" role="alert">{{ error }}</p>
   </section>
 </template>
+
+<style scoped>
+section { border-left: 3px solid #ad8642; background: var(--card); }
+h3 { color: #886025; }
+input { min-height: 32px; }
+</style>

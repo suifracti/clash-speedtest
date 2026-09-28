@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import NodeDetailView from '../NodeDetailView.vue'
+import UiSelect from '../../common/UiSelect.vue'
 import type { NodeDetailRequest } from '../../../types'
 
 const bridgeMocks = vi.hoisted(() => ({
@@ -9,6 +10,7 @@ const bridgeMocks = vi.hoisted(() => ({
   fetchWorkbenchLatencyTest: vi.fn(),
   fetchWorkbenchLatencyBatch: vi.fn(),
   fetchWorkbenchPublicServiceHistory: vi.fn(),
+  listWorkbenchPublicServiceCatalog: vi.fn(),
   fetchWorkbenchPublicServiceAttempt: vi.fn(),
   fetchWorkbenchDownloadHistory: vi.fn(),
   fetchWorkbenchDownloadAttempt: vi.fn(),
@@ -103,6 +105,7 @@ function setupDefaults(): void {
   bridgeMocks.fetchWorkbenchLatencyHistory.mockResolvedValue({ tests: [latencyTest('attempt-a')], since: '', until: '', as_of: '', has_more: false, complete: true })
   bridgeMocks.fetchWorkbenchLatencyTest.mockResolvedValue(latencyTest('attempt-origin'))
   bridgeMocks.fetchWorkbenchPublicServiceHistory.mockResolvedValue({ attempts: [], since: '', until: '', has_more: false, complete: true })
+  bridgeMocks.listWorkbenchPublicServiceCatalog.mockResolvedValue([{ service_id: 'github_api_root', name: 'GitHub API' }, { service_id: 'netflix_unlock', name: 'Netflix 片目与地区检查' }])
   bridgeMocks.fetchWorkbenchPublicServiceAttempt.mockResolvedValue(publicServiceAttempt('service-origin'))
   bridgeMocks.fetchWorkbenchDownloadHistory.mockResolvedValue({ attempts: [], since: '', until: '', has_more: false, complete: true })
   bridgeMocks.fetchWorkbenchDownloadAttempt.mockResolvedValue(downloadAttempt('download-origin'))
@@ -110,11 +113,22 @@ function setupDefaults(): void {
 }
 
 let wrapper: VueWrapper | null = null
+function select(label: string) { return wrapper!.findAllComponents(UiSelect).find(item => item.props('ariaLabel') === label)! }
+async function choose(label: string, value: string) { select(label).vm.$emit('update:modelValue', value); await flushPromises() }
 
 beforeEach(() => { vi.clearAllMocks(); setupDefaults() })
 afterEach(() => { wrapper?.unmount(); wrapper = null })
 
 describe('NodeDetailView', () => {
+  it('offers newly added service rules in the history filter', async () => {
+    wrapper = mount(NodeDetailView, { props: { scope: baseScope } })
+    await flushPromises()
+    const options = select('公共服务历史筛选').props('options') as { value: string; label: string }[]
+    expect(options).toContainEqual({ value: 'netflix_unlock', label: 'Netflix 片目与地区检查' })
+    await choose('公共服务历史筛选', 'netflix_unlock')
+    expect(bridgeMocks.fetchWorkbenchPublicServiceHistory).toHaveBeenLastCalledWith(expect.objectContaining({ service_id: 'netflix_unlock' }))
+  })
+
   it('queries by profile, stable identity and exact revision while showing independent Monitor and Workbench facts', async () => {
     wrapper = mount(NodeDetailView, { props: { scope: baseScope } })
     await flushPromises()
@@ -137,7 +151,7 @@ describe('NodeDetailView', () => {
       tests: [{ ...latencyTest('attempt-b'), config_revision_key: query.config_revision_key, node_key: query.node_key }],
       since: '', until: '', as_of: '', has_more: false, complete: true,
     }))
-    await wrapper.get('select[aria-label="配置 revision"]').setValue('rev-b')
+    await choose('配置 revision', 'rev-b')
     await flushPromises()
     expect(bridgeMocks.fetchWorkbenchLatencyHistory).toHaveBeenLastCalledWith(expect.objectContaining({ node_identity_key: 'identity-a', config_revision_key: 'rev-b', node_key: 'node-a-rev-b' }))
     expect(monitorMocks.fetchMonitorStats).toHaveBeenLastCalledWith(expect.objectContaining({ nodeIdentityKey: 'identity-a', configRevisionKey: 'rev-b' }))
@@ -168,9 +182,8 @@ describe('NodeDetailView', () => {
     wrapper = mount(NodeDetailView, { props: { scope } })
     await flushPromises()
 
-    const revisionSelect = wrapper.get('select[aria-label="配置 revision"]')
-    expect(revisionSelect.find('option[value="entry-revision"]').exists()).toBe(true)
-    expect(revisionSelect.text()).toContain('当前/入口版本')
+    const revisionOptions = select('配置 revision').props('options') as { value: string; label: string }[]
+    expect(revisionOptions.some(option => option.value === 'entry-revision' && option.label.includes('当前/入口版本'))).toBe(true)
     expect(wrapper.text()).toContain('所选身份、revision、来源和窗口内没有 raw 样本')
     expect(wrapper.text()).toContain('此身份、revision 和请求窗口内没有已保存 attempt')
     expect(wrapper.text()).toContain('实际样本 无样本')
@@ -188,7 +201,7 @@ describe('NodeDetailView', () => {
     monitorMocks.queryMonitorSamplesCursor.mockImplementationOnce(() => new Promise((resolve) => { releaseOld = resolve }))
     monitorMocks.queryMonitorSamplesCursor.mockImplementationOnce(async () => ({ items: [monitorSample('diagnostic-current')], nextCursor: '', hasMore: false, limit: 50 }))
     wrapper = mount(NodeDetailView, { props: { scope: baseScope } })
-    await wrapper.get('select[aria-label="Monitor 来源"]').setValue('diagnostic')
+    await choose('Monitor 来源', 'diagnostic')
     await flushPromises()
     releaseOld({ items: [monitorSample('stale-regular')], nextCursor: '', hasMore: false, limit: 50 })
     await flushPromises()
@@ -204,7 +217,7 @@ describe('NodeDetailView', () => {
     monitorMocks.queryMonitorSamplesCursor.mockImplementationOnce(async () => ({ items: [monitorSample('current-rev-b', 'rev-b')], nextCursor: '', hasMore: false, limit: 50 }))
     wrapper = mount(NodeDetailView, { props: { scope: baseScope } })
     await flushPromises()
-    await wrapper.get('select[aria-label="配置 revision"]').setValue('rev-b')
+    await choose('配置 revision', 'rev-b')
     await flushPromises()
     releaseOld({ items: [monitorSample('stale-rev-a', 'rev-a')], nextCursor: '', hasMore: false, limit: 50 })
     await flushPromises()
@@ -232,7 +245,7 @@ describe('NodeDetailView', () => {
       profile_id: 'profile-a', node_identity_key: 'identity-a', config_revision_key: 'rev-a', service_id: 'github_api_root',
     }))
     expect(wrapper.text()).toContain('GitHub 公共 API 根端点')
-    expect(wrapper.text()).toContain('符合判据')
+    expect(wrapper.text()).toContain('检测通过')
     expect(wrapper.text()).toContain('attempt service-origin')
     const handoff = wrapper.findAll('button').find((button) => button.text().includes('返回 Workbench 重试保存'))
     expect(handoff).toBeDefined()
@@ -250,7 +263,7 @@ describe('NodeDetailView', () => {
     bridgeMocks.fetchWorkbenchPublicServiceHistory.mockResolvedValueOnce({ attempts: [{ ...publicServiceAttempt('service-rev-b', 'rev-b'), node_key: 'node-a-rev-b' }], since: '', until: '', has_more: false, complete: true })
     wrapper = mount(NodeDetailView, { props: { scope: baseScope } })
     await flushPromises()
-    await wrapper.get('select[aria-label="配置 revision"]').setValue('rev-b')
+    await choose('配置 revision', 'rev-b')
     await flushPromises()
     releaseOld({ attempts: [publicServiceAttempt('stale-service-rev-a')], since: '', until: '', has_more: false, complete: true })
     await flushPromises()
@@ -295,7 +308,7 @@ describe('NodeDetailView', () => {
       domain: 'download', attempt_id: 'download-origin', profile_id: 'profile-a', node_key: 'node-a',
       node_identity_key: 'identity-a', config_revision_key: 'rev-a',
     })
-    await wrapper.get('select[aria-label="配置 revision"]').setValue('rev-b')
+    await choose('配置 revision', 'rev-b')
     await flushPromises()
     releaseOld({ attempts: [downloadAttempt('stale-download-rev-a')], since: '', until: '', has_more: false, complete: true })
     await flushPromises()

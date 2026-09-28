@@ -66,7 +66,7 @@ function topErrors(stats: DerivedStats | null): { label: string; count: number }
 </script>
 
 <template>
-  <div class="bg-card border-b border-border px-3 py-2 flex items-stretch gap-2 overflow-x-auto text-[11px]">
+  <div class="evidence-strip text-[11px]">
     <!-- Current sample: exactly one raw observation -->
     <div class="shrink-0 w-[210px] rounded border border-border bg-card-subtle px-2.5 py-1.5 flex flex-col gap-1">
       <div class="flex items-center justify-between">
@@ -105,12 +105,11 @@ function topErrors(stats: DerivedStats | null): { label: string; count: number }
         <span class="text-[10px] text-content-muted font-mono truncate">{{ rangeWindowLabel }}</span>
       </div>
       <template v-if="store.rangeStats">
-        <div class="text-[10px] leading-snug text-content-muted">{{ statsScopeLabel }}</div>
         <div class="grid grid-cols-2 gap-x-2 gap-y-0.5 font-mono">
           <span class="text-content-muted">样本</span>
           <span class="text-right text-content-main">{{ store.rangeStats.sampleCount }}</span>
           <span class="text-content-muted">成功率</span>
-          <span class="text-right text-content-main">{{ pct(store.rangeStats.successRate) }}</span>
+          <span class="text-right text-content-main">{{ store.rangeStats.sampleCount ? pct(store.rangeStats.successRate) : '—' }}</span>
           <span class="text-content-muted">P50 / P95</span>
           <span class="text-right text-content-main">
             {{ ms(store.rangeStats.latencyP50Ms) }} / {{ ms(store.rangeStats.latencyP95Ms) }}
@@ -120,10 +119,13 @@ function topErrors(stats: DerivedStats | null): { label: string; count: number }
             {{ errorTotal(store.rangeStats) }}
           </span>
         </div>
+        <details class="evidence-notes"><summary>统计口径</summary>
+        <div class="text-[10px] leading-snug text-content-muted">{{ statsScopeLabel }}</div>
         <div class="text-[10px] leading-snug text-content-muted">
           纳入层级：{{ includedTierLabel(store.rangeStats) }} · 样本加权结果，不代表时间可用率或公平节点排名
         </div>
         <div class="text-[10px] leading-snug text-content-muted">实际样本范围：{{ observedRangeLabel(store.rangeStats) }}</div>
+        </details>
         <div v-if="topErrors(store.rangeStats).length > 0" class="flex flex-wrap gap-1 pt-0.5">
           <span
             v-for="e in topErrors(store.rangeStats)"
@@ -147,7 +149,7 @@ function topErrors(stats: DerivedStats | null): { label: string; count: number }
         <span class="text-content-muted">样本</span>
         <span class="text-right text-content-main">{{ store.evidence24h.sampleCount }}</span>
         <span class="text-content-muted">成功率</span>
-        <span class="text-right text-content-main">{{ pct(store.evidence24h.successRate) }}</span>
+        <span class="text-right text-content-main">{{ store.evidence24h.sampleCount ? pct(store.evidence24h.successRate) : '—' }}</span>
         <span class="text-content-muted">P95</span>
         <span class="text-right text-content-main">{{ ms(store.evidence24h.latencyP95Ms) }}</span>
       </div>
@@ -163,7 +165,7 @@ function topErrors(stats: DerivedStats | null): { label: string; count: number }
         <span class="text-content-muted">样本</span>
         <span class="text-right text-content-main">{{ store.evidence7d.sampleCount }}</span>
         <span class="text-content-muted">成功率</span>
-        <span class="text-right text-content-main">{{ pct(store.evidence7d.successRate) }}</span>
+        <span class="text-right text-content-main">{{ store.evidence7d.sampleCount ? pct(store.evidence7d.successRate) : '—' }}</span>
         <span class="text-content-muted">P95</span>
         <span class="text-right text-content-main">{{ ms(store.evidence7d.latencyP95Ms) }}</span>
       </div>
@@ -175,3 +177,15 @@ function topErrors(stats: DerivedStats | null): { label: string; count: number }
     </div>
   </div>
 </template>
+
+<style scoped>
+.evidence-strip { display: grid; grid-template-columns: .9fr 1.4fr 1fr 1fr; gap: 0; padding: 16px 8px; background: var(--card); border: 1px solid var(--border); border-top: 0; }
+.evidence-strip > div { width: auto; min-width: 0; border: 0; border-right: 1px solid var(--border); border-radius: 0; background: transparent; padding: 0 16px; }
+.evidence-strip > div:last-child { border-right: 0; }
+.evidence-strip .font-mono { font-family: inherit; font-variant-numeric: tabular-nums; }
+.evidence-notes { color: var(--text-secondary); margin-top: 4px; }
+.evidence-notes summary { cursor: pointer; font-size: 10px; }
+.evidence-notes[open] > div { padding-top: 5px; }
+@media (max-width: 850px) { .evidence-strip { grid-template-columns: 1fr 1fr; gap: 18px 0; } .evidence-strip > div:nth-child(2n) { border-right: 0; } }
+@media (max-width: 480px) { .evidence-strip { grid-template-columns: 1fr; } .evidence-strip > div { border-right: 0; } }
+</style>

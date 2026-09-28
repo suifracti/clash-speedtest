@@ -77,4 +77,12 @@ func TestSchemaV4UpgradePreservesLatencyRawAndMonitorBudget(t *testing.T) {
 	if err != nil || usage.RequestsUsed != 11 || usage.BytesUsed != 1234 {
 		t.Fatalf("Monitor ledger changed during migration: usage=%+v err=%v", usage, err)
 	}
+	batch := &LatencyBatch{BatchID: "google-batch", RequestID: "google-request", TargetID: "google", TestProject: "latency_stability", TimeoutSeconds: 5, RequestedAt: now, State: "queued", Items: []LatencyBatchItem{{ItemID: "google-item", ProfileID: "profile-a", NodeKey: "node-a", NodeIdentityKey: "identity-a", ConfigRevisionKey: "rev-a"}}}
+	if err := upgraded.CreateLatencyBatch(context.Background(), batch); err != nil {
+		t.Fatal(err)
+	}
+	savedBatch, err := upgraded.GetLatencyBatch(context.Background(), batch.BatchID)
+	if err != nil || savedBatch.TargetID != "google" {
+		t.Fatalf("batch target not persisted: batch=%+v err=%v", savedBatch, err)
+	}
 }

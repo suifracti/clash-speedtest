@@ -19,6 +19,11 @@ function deferred<T>() {
 describe('latency request ownership', () => {
   it('freezes rolling UTC since/until from one as-of', () => {
     const asOf = new Date('2026-09-22T12:34:56.789Z')
+    expect(freezeLatencyWindow('6h', asOf).since).toBe('2026-09-22T06:34:56.789Z')
+    expect(freezeLatencyWindow('1.5h', asOf).since).toBe('2026-09-22T11:04:56.789Z')
+    expect(freezeLatencyWindow('2d', asOf).since).toBe('2026-09-20T12:34:56.789Z')
+    expect(() => freezeLatencyWindow('0h', asOf)).toThrow()
+    expect(() => freezeLatencyWindow('-2d', asOf)).toThrow()
 
     expect(freezeLatencyWindow('4h', asOf)).toEqual({
       mode: '4h',
@@ -28,6 +33,21 @@ describe('latency request ownership', () => {
     expect(freezeLatencyWindow('24h', asOf)).toEqual({
       mode: '24h',
       since: '2026-09-21T12:34:56.789Z',
+      until: '2026-09-22T12:34:56.789Z',
+    })
+    expect(freezeLatencyWindow('7d', asOf)).toEqual({
+      mode: '7d',
+      since: '2026-09-15T12:34:56.789Z',
+      until: '2026-09-22T12:34:56.789Z',
+    })
+    expect(freezeLatencyWindow('30d', asOf)).toEqual({
+      mode: '30d',
+      since: '2026-08-23T12:34:56.789Z',
+      until: '2026-09-22T12:34:56.789Z',
+    })
+    expect(freezeLatencyWindow('180d', asOf)).toEqual({
+      mode: '180d',
+      since: '2026-03-26T12:34:56.789Z',
       until: '2026-09-22T12:34:56.789Z',
     })
   })

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -76,7 +77,7 @@ var (
 	dataDirFlag          = flag.String("data-dir", "", "absolute isolated data directory (overrides CLASH_SPEEDTEST_DATA_DIR)")
 	cliFlag              = flag.Bool("cli", false, "force terminal CLI interactive mode")
 	portFlag             = flag.Int("port", 0, "port for GUI web server (default: random free port)")
-	browserFlag          = flag.String("browser", "", "preferred browser for GUI: zen, arc, brave, chrome, edge, safari, default, or path to executable")
+	browserFlag          = flag.String("browser", "", "preferred browser for GUI: zen, arc, brave, chrome, edge, safari, default, none, or path to executable")
 )
 
 func main() {
@@ -499,12 +500,16 @@ func runGUI(port int, userAgent string, browser string, appPaths appdata.AppPath
 	fmt.Printf(" (若浏览器未自动弹出，请直接在浏览器中打开上方链接)\n")
 	fmt.Printf(" (在终端按 Ctrl+C 可停止并退出服务)\n")
 	fmt.Printf("==================================================\n")
-	fmt.Println("正在打开桌面窗口...")
-
-	cmd, err := gui.LaunchApp(url, browser)
-	if err != nil {
-		fmt.Printf("唤起桌面窗口提示: %v，已降级至系统浏览器。\n", err)
-		_ = auth.OpenBrowser(url)
+	var cmd *exec.Cmd
+	if strings.EqualFold(strings.TrimSpace(browser), "none") {
+		fmt.Println("已关闭自动打开浏览器；请在所选浏览器中访问上方链接。")
+	} else {
+		fmt.Println("正在打开桌面窗口...")
+		cmd, err = gui.LaunchApp(url, browser)
+		if err != nil {
+			fmt.Printf("唤起桌面窗口提示: %v，已降级至系统浏览器。\n", err)
+			_ = auth.OpenBrowser(url)
+		}
 	}
 
 	sigChan := make(chan os.Signal, 1)

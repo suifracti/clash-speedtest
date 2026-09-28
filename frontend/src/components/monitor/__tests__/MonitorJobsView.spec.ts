@@ -28,6 +28,7 @@ import {
 } from '../../../api/monitor'
 import type { MonitorJob, MonitorJobPrefill, MonitorNodeOption, MonitorRun } from '../../../types'
 import MonitorJobsView from '../MonitorJobsView.vue'
+import UiSelect from '../../common/UiSelect.vue'
 
 const mockedOptions = vi.mocked(fetchMonitorNodeOptions)
 const mockedJobs = vi.mocked(fetchMonitorJobs)
@@ -115,6 +116,46 @@ afterEach(() => {
 })
 
 describe('MonitorJobsView', () => {
+  it('keeps both configurations when one airport source groups subscriptions with the same endpoint', async () => {
+    mockedOptions.mockResolvedValue([
+      { ...option, profileId: 'first', profileName: '飞鸟云 · 默认订阅', nodeKey: 'first-node', nodeIdentityKey: 'shared-endpoint', configRevisionKey: 'credential-a' },
+      { ...option, profileId: 'second', profileName: '飞鸟云 · 2', nodeKey: 'second-node', nodeIdentityKey: 'shared-endpoint', configRevisionKey: 'credential-b' },
+    ])
+    wrapper = mount(MonitorJobsView)
+    await flushPromises()
+    expect(wrapper.findAll('.node-picker input[type="checkbox"]')).toHaveLength(2)
+    for (const input of wrapper.findAll('.node-picker input[type="checkbox"]')) await input.setValue(true)
+    await wrapper.findAll('button').find(button => button.text() === '创建（不会自动启动）')!.trigger('click')
+    await flushPromises()
+    expect(mockedCreate.mock.calls.map(([request]) => request.profile_id).sort()).toEqual(['first', 'second'])
+    expect(mockedControl).not.toHaveBeenCalled()
+  })
+
+  it('filters notices and regions, then creates separate stopped jobs across subscriptions and probes', async () => {
+    mockedOptions.mockResolvedValue([option, { ...option, profileId: 'profile-2', profileName: 'Second airport', countryCode: 'US', displayName: 'US node' }, { ...option, nodeKey: 'notice', displayName: '官网 https://example.com' }])
+    wrapper = mount(MonitorJobsView)
+    await flushPromises()
+    expect(wrapper.findAll('.node-picker input')).toHaveLength(1)
+    const second = wrapper.findAll('.profile-multiselect input').find(input => (input.element as HTMLInputElement).value === 'profile-1')!
+    await second.setValue(true)
+    const regionSelect = wrapper.findAllComponents(UiSelect).find(component => component.props('ariaLabel') === '筛选地区')!
+    regionSelect.vm.$emit('update:modelValue', 'US')
+    await flushPromises()
+    expect(wrapper.findAll('.node-picker input')).toHaveLength(1)
+    await wrapper.find('.node-picker input').setValue(true)
+    regionSelect.vm.$emit('update:modelValue', 'JP')
+    await flushPromises()
+    await wrapper.find('.node-picker input').setValue(true)
+    await wrapper.find('.extra-probes input[value="service"]').setValue(true)
+    await wrapper.findAll('button').find(button => button.text() === '创建（不会自动启动）')!.trigger('click')
+    await flushPromises()
+    const requests = mockedCreate.mock.calls.map(([request]) => [request.profile_id, request.probe_set, request.node_keys]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+    expect(requests).toEqual([
+      ['profile-1', 'light', ['nk-real']], ['profile-1', 'service', ['nk-real']],
+      ['profile-2', 'light', ['nk-real']], ['profile-2', 'service', ['nk-real']],
+    ])
+    expect(mockedControl).not.toHaveBeenCalled()
+  })
   it('saves startup recovery permission without starting or stopping the current task', async () => {
     wrapper = mount(MonitorJobsView)
     await flushPromises()
@@ -134,7 +175,7 @@ describe('MonitorJobsView', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('创建（不会自动启动）')
-    await wrapper.find('input[type="checkbox"]').setValue(true)
+    await wrapper.find('.node-picker input[type="checkbox"]').setValue(true)
     const createButton = wrapper.findAll('button').find((button) => button.text().includes('创建（不会自动启动）'))
     expect(createButton).toBeDefined()
     await createButton!.trigger('click')
@@ -153,13 +194,9 @@ describe('MonitorJobsView', () => {
   it('suggests two minutes for a new focus task and persists the selected tier', async () => {
     wrapper = mount(MonitorJobsView)
     await flushPromises()
-    await wrapper.find('input[type="checkbox"]').setValue(true)
+    await wrapper.find('.node-picker input[type="checkbox"]').setValue(true)
 
-    await wrapper.get('[aria-label="选择周期采样层级"]').trigger('click')
-    const focusOption = Array.from(document.body.querySelectorAll('[role="option"]'))
-      .find((item) => item.textContent?.includes('focus')) as HTMLButtonElement | undefined
-    expect(focusOption).toBeDefined()
-    focusOption!.click()
+    wrapper.findAllComponents(UiSelect).find(component => component.props('ariaLabel') === '选择周期采样层级')!.vm.$emit('update:modelValue', 'focus')
     await flushPromises()
 
     const createButton = wrapper.findAll('button').find((button) => button.text().includes('创建（不会自动启动）'))
@@ -192,11 +229,7 @@ describe('MonitorJobsView', () => {
     wrapper = mount(MonitorJobsView)
     await flushPromises()
 
-    await wrapper.get('[aria-label="UI monitor 的周期采样层级"]').trigger('click')
-    const sparseOption = Array.from(document.body.querySelectorAll('[role="option"]'))
-      .find((item) => item.textContent?.includes('sparse')) as HTMLButtonElement | undefined
-    expect(sparseOption).toBeDefined()
-    sparseOption!.click()
+    wrapper.findAllComponents(UiSelect).find(component => component.props('ariaLabel') === 'UI monitor 的周期采样层级')!.vm.$emit('update:modelValue', 'sparse')
     await flushPromises()
     const saveButton = wrapper.findAll('button').find((button) => button.text().trim() === '保存层级')
     expect(saveButton).toBeDefined()
@@ -243,13 +276,13 @@ describe('MonitorJobsView', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('工作台已选择')
-    expect((wrapper.find('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(true)
+    expect((wrapper.find('.node-picker input[type="checkbox"]').element as HTMLInputElement).checked).toBe(true)
 
     const cancel = wrapper.findAll('button').find((button) => button.text().includes('取消本次预填'))
     expect(cancel).toBeDefined()
     await cancel!.trigger('click')
     expect(mockedCreate).not.toHaveBeenCalled()
-    expect((wrapper.find('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(false)
+    expect((wrapper.find('.node-picker input[type="checkbox"]').element as HTMLInputElement).checked).toBe(false)
 
     wrapper.unmount()
     wrapper = mount(MonitorJobsView, { props: { prefill } })

@@ -17,6 +17,11 @@ var ErrPublicServiceAttemptNotFound = errors.New("public-service attempt not fou
 type PublicServiceRuleSnapshot struct {
 	ServiceID        string `json:"service_id"`
 	Name             string `json:"name"`
+	Category         string `json:"category"`
+	Region           string `json:"region,omitempty"`
+	ResultKind       string `json:"result_kind"`
+	Description      string `json:"description"`
+	BatchDefault     bool   `json:"batch_default,omitempty"`
 	RuleVersion      int    `json:"rule_version"`
 	TargetURL        string `json:"target_url"`
 	Method           string `json:"method"`
@@ -30,14 +35,18 @@ type PublicServiceRuleSnapshot struct {
 
 // PublicServiceMeasurement is the bounded, body-free result of one request.
 type PublicServiceMeasurement struct {
-	Outcome      string    `json:"outcome"`
-	HTTPStatus   *int      `json:"http_status,omitempty"`
-	BytesRead    int64     `json:"bytes_read"`
-	StartedAt    time.Time `json:"started_at"`
-	FinishedAt   time.Time `json:"finished_at"`
-	DurationMs   int64     `json:"duration_ms"`
-	FailurePhase string    `json:"failure_phase,omitempty"`
-	ErrorMessage string    `json:"error_message,omitempty"`
+	Model        string            `json:"model,omitempty"`
+	RequestCount int               `json:"request_count,omitempty"`
+	Summary      string            `json:"summary,omitempty"`
+	Details      map[string]string `json:"details,omitempty"`
+	Outcome      string            `json:"outcome"`
+	HTTPStatus   *int              `json:"http_status,omitempty"`
+	BytesRead    int64             `json:"bytes_read"`
+	StartedAt    time.Time         `json:"started_at"`
+	FinishedAt   time.Time         `json:"finished_at"`
+	DurationMs   int64             `json:"duration_ms"`
+	FailurePhase string            `json:"failure_phase,omitempty"`
+	ErrorMessage string            `json:"error_message,omitempty"`
 }
 
 // PublicServiceAttempt is one explicitly requested Workbench service check.

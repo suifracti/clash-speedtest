@@ -32,6 +32,10 @@ import (
 // AppService orchestrates domain operations across speedtesting, history analysis,
 // profile subscriptions, external proxy controllers, and auto-switch decision policies.
 type AppService struct {
+	profileWriteMu    sync.Mutex
+	maintenanceOnce   sync.Once
+	maintenanceCancel context.CancelFunc
+	maintenanceWG     sync.WaitGroup
 	historyStore      *history.Store
 	profilePaths      profiles.Paths
 	appPaths          appdata.AppPaths
@@ -211,6 +215,10 @@ func (s *AppService) Stop() {
 
 // Close stops all background tasks and cleanly releases database connections.
 func (s *AppService) Close() error {
+	if s.maintenanceCancel != nil {
+		s.maintenanceCancel()
+		s.maintenanceWG.Wait()
+	}
 	s.workbenchMu.Lock()
 	s.workbenchClosed = true
 	if s.workbenchActiveBatch != nil {
@@ -937,12 +945,35 @@ func (s *AppService) ListAirports() ([]AirportDTO, error) {
 
 	dtos := make([]AirportDTO, 0, len(store.Airports))
 	for _, ap := range store.Airports {
-		hasCache := s.profilePaths.HasCache(ap.ID)
-		nodeCount := 0
-		if hasCache {
-			nodeCount = s.CountCachedNodes(ap.ID)
+		if ap == nil {
+			continue
 		}
-		dtos = append(dtos, airportDTO(ap, nodeCount, hasCache))
+		totalNodes := 0
+		hasAnyCache := false
+		subDTOs := make([]SubscriptionDTO, 0, len(ap.Subscriptions))
+		for _, sub := range ap.Subscriptions {
+			if sub == nil {
+				continue
+			}
+			hasCache := s.profilePaths.HasCache(sub.ID)
+			nodeCount := 0
+			if hasCache {
+				nodeCount = s.CountCachedNodes(sub.ID)
+				totalNodes += nodeCount
+				hasAnyCache = true
+			} else if s.profilePaths.HasCache(ap.ID) && len(ap.Subscriptions) == 1 {
+				nodeCount = s.CountCachedNodes(ap.ID)
+				totalNodes += nodeCount
+				hasAnyCache = true
+				hasCache = true
+			}
+			subDTOs = append(subDTOs, subscriptionDTO(ap.ID, sub, nodeCount, hasCache))
+		}
+		if !hasAnyCache && s.profilePaths.HasCache(ap.ID) {
+			totalNodes = s.CountCachedNodes(ap.ID)
+			hasAnyCache = true
+		}
+		dtos = append(dtos, airportDTO(ap, totalNodes, hasAnyCache, subDTOs...))
 	}
 	return dtos, nil
 }
@@ -964,12 +995,19 @@ func (s *AppService) GetAirportURL(id string) (string, error) {
 	}
 	airport := store.Get(id)
 	if airport == nil {
+		// Try finding by subscription ID
+		if _, sub := store.FindSubscription(id); sub != nil && strings.TrimSpace(sub.URL) != "" {
+			return sub.URL, nil
+		}
 		return "", fmt.Errorf("未找到指定机场")
 	}
-	if strings.TrimSpace(airport.URL) == "" {
-		return "", fmt.Errorf("该机场未配置订阅链接")
+	if strings.TrimSpace(airport.URL) != "" {
+		return airport.URL, nil
 	}
-	return airport.URL, nil
+	if len(airport.Subscriptions) > 0 && strings.TrimSpace(airport.Subscriptions[0].URL) != "" {
+		return airport.Subscriptions[0].URL, nil
+	}
+	return "", fmt.Errorf("该机场未配置订阅链接")
 }
 
 func (s *AppService) CountCachedNodes(airportID string) int {
@@ -988,11 +1026,13 @@ func (s *AppService) CountCachedNodes(airportID string) int {
 	return len(proxies)
 }
 
-func (s *AppService) CreateAirport(name, rawURL, userAgent string) (*AirportDTO, error) {
+func (s *AppService) CreateAirport(name, rawURL, userAgent string, optionalLinks ...string) (*AirportDTO, error) {
+	s.profileWriteMu.Lock()
+	defer s.profileWriteMu.Unlock()
 	name = strings.TrimSpace(name)
 	rawURL = strings.TrimSpace(rawURL)
-	if name == "" || rawURL == "" {
-		return nil, fmt.Errorf("机场名称和订阅链接不能为空")
+	if name == "" {
+		return nil, fmt.Errorf("机场名称不能为空")
 	}
 
 	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
@@ -1000,31 +1040,70 @@ func (s *AppService) CreateAirport(name, rawURL, userAgent string) (*AirportDTO,
 		return nil, err
 	}
 
-	ap := &profiles.Airport{
-		ID:   fmt.Sprintf("%d", time.Now().UnixNano()),
-		Name: name,
-		URL:  rawURL,
+	var websiteURL, backupURL, note, subName string
+	if len(optionalLinks) > 0 {
+		websiteURL = strings.TrimSpace(optionalLinks[0])
+	}
+	if len(optionalLinks) > 1 {
+		backupURL = strings.TrimSpace(optionalLinks[1])
+	}
+	if len(optionalLinks) > 2 {
+		note = strings.TrimSpace(optionalLinks[2])
+	}
+	if len(optionalLinks) > 3 {
+		subName = strings.TrimSpace(optionalLinks[3])
+	}
+	if subName == "" {
+		subName = "默认订阅"
 	}
 
-	if profiles.IsHTTPURL(ap.URL) {
-		body, err := profiles.FetchSubscription(ap.URL, userAgent)
-		if err != nil {
-			return nil, airportOperationError("获取订阅节点失败", ap.ID, ap.URL)
+	airportID := fmt.Sprintf("%d", time.Now().UnixNano())
+	ap := &profiles.Airport{
+		ID:         airportID,
+		Name:       name,
+		WebsiteURL: websiteURL,
+		BackupURL:  backupURL,
+		Note:       note,
+	}
+
+	var subDTOs []SubscriptionDTO
+	hasCache := false
+	nodeCount := 0
+
+	if rawURL != "" {
+		subID := airportID
+		sub := &profiles.Subscription{
+			ID:   subID,
+			Name: subName,
+			URL:  rawURL,
 		}
-		if err := s.profilePaths.WriteCache(ap.ID, body); err != nil {
-			return nil, airportOperationError("写入节点缓存失败", ap.ID, ap.URL)
+		if profiles.IsHTTPURL(rawURL) {
+			body, usage, err := profiles.FetchSubscriptionWithUsage(rawURL, userAgent)
+			sub.Usage = usage
+			if err != nil {
+				return nil, airportOperationError("获取订阅节点失败", ap.ID, rawURL)
+			}
+			if err := s.profilePaths.WriteCache(subID, body); err != nil {
+				return nil, airportOperationError("写入节点缓存失败", ap.ID, rawURL)
+			}
+			sub.UpdatedAt = time.Now()
+		} else {
+			expanded := profiles.ExpandLocalPath(rawURL)
+			data, err := os.ReadFile(expanded)
+			if err != nil {
+				return nil, airportOperationError("读取本地节点文件失败", ap.ID, rawURL)
+			}
+			if err := s.profilePaths.WriteCache(subID, data); err != nil {
+				return nil, airportOperationError("写入节点缓存失败", ap.ID, rawURL)
+			}
+			sub.UpdatedAt = time.Now()
 		}
-		ap.UpdatedAt = time.Now()
-	} else {
-		expanded := profiles.ExpandLocalPath(ap.URL)
-		data, err := os.ReadFile(expanded)
-		if err != nil {
-			return nil, airportOperationError("读取本地节点文件失败", ap.ID, ap.URL)
-		}
-		if err := s.profilePaths.WriteCache(ap.ID, data); err != nil {
-			return nil, airportOperationError("写入节点缓存失败", ap.ID, ap.URL)
-		}
-		ap.UpdatedAt = time.Now()
+		ap.URL = rawURL
+		ap.UpdatedAt = sub.UpdatedAt
+		ap.Subscriptions = []*profiles.Subscription{sub}
+		hasCache = true
+		nodeCount = s.CountCachedNodes(subID)
+		subDTOs = append(subDTOs, subscriptionDTO(ap.ID, sub, nodeCount, true))
 	}
 
 	store.Add(ap)
@@ -1032,16 +1111,16 @@ func (s *AppService) CreateAirport(name, rawURL, userAgent string) (*AirportDTO,
 		return nil, err
 	}
 
-	nodeCount := s.CountCachedNodes(ap.ID)
-	dto := airportDTO(ap, nodeCount, true)
+	dto := airportDTO(ap, nodeCount, hasCache, subDTOs...)
 	return &dto, nil
 }
 
-func (s *AppService) UpdateAirport(id, name, rawURL, userAgent string) (*AirportDTO, error) {
+func (s *AppService) UpdateAirport(id, name, rawURL, userAgent string, optionalLinks ...string) (*AirportDTO, error) {
+	s.profileWriteMu.Lock()
+	defer s.profileWriteMu.Unlock()
 	name = strings.TrimSpace(name)
-	rawURL = strings.TrimSpace(rawURL)
-	if name == "" || rawURL == "" {
-		return nil, fmt.Errorf("机场名称和订阅链接不能为空")
+	if name == "" {
+		return nil, fmt.Errorf("机场名称不能为空")
 	}
 
 	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
@@ -1053,34 +1132,67 @@ func (s *AppService) UpdateAirport(id, name, rawURL, userAgent string) (*Airport
 	if ap == nil {
 		return nil, fmt.Errorf("未找到指定机场")
 	}
+
+	var websiteURL, backupURL, note string
+	if len(optionalLinks) > 0 {
+		websiteURL = strings.TrimSpace(optionalLinks[0])
+	}
+	if len(optionalLinks) > 1 {
+		backupURL = strings.TrimSpace(optionalLinks[1])
+	}
+	if len(optionalLinks) > 2 {
+		note = strings.TrimSpace(optionalLinks[2])
+	}
+
+	ap.Name = name
+	ap.WebsiteURL = websiteURL
+	ap.BackupURL = backupURL
+	if note != "" || len(optionalLinks) > 2 {
+		ap.Note = note
+	}
+
+	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == safeAirportURLDisplay(ap.URL) {
 		return nil, fmt.Errorf("更新机场时必须提供完整订阅链接")
 	}
-
-	urlChanged := ap.URL != rawURL
-	ap.Name = name
-	ap.URL = rawURL
-
-	if urlChanged || !s.profilePaths.HasCache(ap.ID) {
-		if profiles.IsHTTPURL(ap.URL) {
-			body, err := profiles.FetchSubscription(ap.URL, userAgent)
-			if err != nil {
-				return nil, airportOperationError("获取订阅节点失败", ap.ID, ap.URL)
+	if rawURL != "" {
+		if len(ap.Subscriptions) == 0 {
+			subID := ap.ID
+			sub := &profiles.Subscription{
+				ID:   subID,
+				Name: "默认订阅",
+				URL:  rawURL,
 			}
-			if err := s.profilePaths.WriteCache(ap.ID, body); err != nil {
-				return nil, airportOperationError("写入节点缓存失败", ap.ID, ap.URL)
+			ap.Subscriptions = []*profiles.Subscription{sub}
+		}
+		firstSub := ap.Subscriptions[0]
+		urlChanged := firstSub.URL != rawURL
+		firstSub.URL = rawURL
+		ap.URL = rawURL
+		if urlChanged || !s.profilePaths.HasCache(firstSub.ID) {
+			if profiles.IsHTTPURL(rawURL) {
+				body, usage, err := profiles.FetchSubscriptionWithUsage(rawURL, userAgent)
+				firstSub.Usage = usage
+				if err != nil {
+					return nil, airportOperationError("获取订阅节点失败", ap.ID, rawURL)
+				}
+				if err := s.profilePaths.WriteCache(firstSub.ID, body); err != nil {
+					return nil, airportOperationError("写入节点缓存失败", ap.ID, rawURL)
+				}
+				firstSub.UpdatedAt = time.Now()
+			} else {
+				firstSub.Usage = nil
+				expanded := profiles.ExpandLocalPath(rawURL)
+				data, err := os.ReadFile(expanded)
+				if err != nil {
+					return nil, airportOperationError("读取本地节点文件失败", ap.ID, rawURL)
+				}
+				if err := s.profilePaths.WriteCache(firstSub.ID, data); err != nil {
+					return nil, airportOperationError("写入节点缓存失败", ap.ID, rawURL)
+				}
+				firstSub.UpdatedAt = time.Now()
 			}
-			ap.UpdatedAt = time.Now()
-		} else {
-			expanded := profiles.ExpandLocalPath(ap.URL)
-			data, err := os.ReadFile(expanded)
-			if err != nil {
-				return nil, airportOperationError("读取本地节点文件失败", ap.ID, ap.URL)
-			}
-			if err := s.profilePaths.WriteCache(ap.ID, data); err != nil {
-				return nil, airportOperationError("写入节点缓存失败", ap.ID, ap.URL)
-			}
-			ap.UpdatedAt = time.Now()
+			ap.UpdatedAt = firstSub.UpdatedAt
 		}
 	}
 
@@ -1088,12 +1200,26 @@ func (s *AppService) UpdateAirport(id, name, rawURL, userAgent string) (*Airport
 		return nil, err
 	}
 
-	nodeCount := s.CountCachedNodes(ap.ID)
-	dto := airportDTO(ap, nodeCount, s.profilePaths.HasCache(ap.ID))
+	totalNodes := 0
+	hasAnyCache := false
+	subDTOs := make([]SubscriptionDTO, 0, len(ap.Subscriptions))
+	for _, sub := range ap.Subscriptions {
+		hasCache := s.profilePaths.HasCache(sub.ID)
+		nodeCount := 0
+		if hasCache {
+			nodeCount = s.CountCachedNodes(sub.ID)
+			totalNodes += nodeCount
+			hasAnyCache = true
+		}
+		subDTOs = append(subDTOs, subscriptionDTO(ap.ID, sub, nodeCount, hasCache))
+	}
+	dto := airportDTO(ap, totalNodes, hasAnyCache, subDTOs...)
 	return &dto, nil
 }
 
 func (s *AppService) DeleteAirport(id string) error {
+	s.profileWriteMu.Lock()
+	defer s.profileWriteMu.Unlock()
 	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
 	if err != nil {
 		return err
@@ -1102,11 +1228,22 @@ func (s *AppService) DeleteAirport(id string) error {
 	if removed == nil {
 		return fmt.Errorf("未找到指定机场")
 	}
-	_ = os.Remove(s.profilePaths.CacheFile(id))
+	for _, sub := range removed.Subscriptions {
+		if sub != nil {
+			_ = os.Remove(s.profilePaths.CacheFile(sub.ID))
+		}
+	}
+	_ = os.Remove(s.profilePaths.CacheFile(removed.ID))
 	return profiles.SaveStore(s.profilePaths.StoreFile(), store)
 }
 
 func (s *AppService) RefreshAirport(id, userAgent string) (*AirportDTO, error) {
+	s.profileWriteMu.Lock()
+	defer s.profileWriteMu.Unlock()
+	return s.refreshAirportLocked(context.Background(), id, userAgent)
+}
+
+func (s *AppService) refreshAirportLocked(ctx context.Context, id, userAgent string) (*AirportDTO, error) {
 	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
 	if err != nil {
 		return nil, err
@@ -1116,47 +1253,350 @@ func (s *AppService) RefreshAirport(id, userAgent string) (*AirportDTO, error) {
 		return nil, fmt.Errorf("未找到指定机场")
 	}
 
-	if profiles.IsHTTPURL(ap.URL) {
-		body, err := profiles.FetchSubscription(ap.URL, userAgent)
-		if err != nil {
-			return nil, airportOperationError("刷新订阅节点失败", ap.ID, ap.URL)
-		}
-		if err := s.profilePaths.WriteCache(ap.ID, body); err != nil {
-			return nil, airportOperationError("写入节点缓存失败", ap.ID, ap.URL)
-		}
-	} else {
-		expanded := profiles.ExpandLocalPath(ap.URL)
-		data, err := os.ReadFile(expanded)
-		if err != nil {
-			return nil, airportOperationError("读取本地节点文件失败", ap.ID, ap.URL)
-		}
-		if err := s.profilePaths.WriteCache(ap.ID, data); err != nil {
-			return nil, airportOperationError("写入节点缓存失败", ap.ID, ap.URL)
+	if len(ap.Subscriptions) == 0 && ap.URL != "" {
+		ap.Subscriptions = []*profiles.Subscription{
+			{ID: ap.ID, Name: "默认订阅", URL: ap.URL},
 		}
 	}
-	ap.UpdatedAt = time.Now()
-	_ = profiles.SaveStore(s.profilePaths.StoreFile(), store)
 
-	nodeCount := s.CountCachedNodes(ap.ID)
-	dto := airportDTO(ap, nodeCount, true)
+	if len(ap.Subscriptions) == 0 {
+		return nil, fmt.Errorf("该机场尚未配置任何订阅")
+	}
+
+	var refreshErr error
+	for _, sub := range ap.Subscriptions {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if sub == nil || strings.TrimSpace(sub.URL) == "" {
+			continue
+		}
+		if profiles.IsHTTPURL(sub.URL) {
+			body, usage, err := profiles.FetchSubscriptionWithUsageContext(ctx, sub.URL, userAgent)
+			if err != nil {
+				refreshErr = airportOperationError("刷新订阅节点失败", ap.ID, sub.URL)
+				continue
+			}
+			if err := s.profilePaths.WriteCache(sub.ID, body); err != nil {
+				refreshErr = airportOperationError("写入节点缓存失败", ap.ID, sub.URL)
+				continue
+			}
+			sub.Usage = usage
+		} else {
+			sub.Usage = nil
+			expanded := profiles.ExpandLocalPath(sub.URL)
+			data, err := os.ReadFile(expanded)
+			if err != nil {
+				refreshErr = airportOperationError("读取本地节点文件失败", ap.ID, sub.URL)
+				continue
+			}
+			if err := s.profilePaths.WriteCache(sub.ID, data); err != nil {
+				refreshErr = airportOperationError("写入节点缓存失败", ap.ID, sub.URL)
+				continue
+			}
+		}
+		sub.UpdatedAt = time.Now()
+	}
+	ap.UpdatedAt = time.Now()
+	if err := profiles.SaveStore(s.profilePaths.StoreFile(), store); err != nil {
+		return nil, fmt.Errorf("保存订阅更新失败")
+	}
+
+	if refreshErr != nil {
+		return nil, refreshErr
+	}
+
+	totalNodes := 0
+	hasAnyCache := false
+	subDTOs := make([]SubscriptionDTO, 0, len(ap.Subscriptions))
+	for _, sub := range ap.Subscriptions {
+		hasCache := s.profilePaths.HasCache(sub.ID)
+		nodeCount := 0
+		if hasCache {
+			nodeCount = s.CountCachedNodes(sub.ID)
+			totalNodes += nodeCount
+			hasAnyCache = true
+		}
+		subDTOs = append(subDTOs, subscriptionDTO(ap.ID, sub, nodeCount, hasCache))
+	}
+	dto := airportDTO(ap, totalNodes, hasAnyCache, subDTOs...)
 	return &dto, nil
 }
 
-func (s *AppService) GetAirportNodes(airportID string) ([]map[string]any, error) {
+// AddSubscription adds a new subscription link to an existing airport.
+func (s *AppService) AddSubscription(airportID, name, rawURL, note, userAgent string) (*SubscriptionDTO, error) {
+	s.profileWriteMu.Lock()
+	defer s.profileWriteMu.Unlock()
+	name = strings.TrimSpace(name)
+	rawURL = strings.TrimSpace(rawURL)
+	if name == "" || rawURL == "" {
+		return nil, fmt.Errorf("订阅别名和订阅链接不能为空")
+	}
+
+	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
+	if err != nil {
+		return nil, err
+	}
+	ap := store.Get(airportID)
+	if ap == nil {
+		return nil, fmt.Errorf("未找到指定机场")
+	}
+
+	subID := fmt.Sprintf("%d", time.Now().UnixNano())
+	sub := &profiles.Subscription{
+		ID:   subID,
+		Name: name,
+		URL:  rawURL,
+		Note: strings.TrimSpace(note),
+	}
+
+	if profiles.IsHTTPURL(rawURL) {
+		body, usage, err := profiles.FetchSubscriptionWithUsage(rawURL, userAgent)
+		sub.Usage = usage
+		if err != nil {
+			return nil, airportOperationError("获取订阅节点失败", ap.ID, rawURL)
+		}
+		if err := s.profilePaths.WriteCache(subID, body); err != nil {
+			return nil, airportOperationError("写入节点缓存失败", ap.ID, rawURL)
+		}
+		sub.UpdatedAt = time.Now()
+	} else {
+		expanded := profiles.ExpandLocalPath(rawURL)
+		data, err := os.ReadFile(expanded)
+		if err != nil {
+			return nil, airportOperationError("读取本地节点文件失败", ap.ID, rawURL)
+		}
+		if err := s.profilePaths.WriteCache(subID, data); err != nil {
+			return nil, airportOperationError("写入节点缓存失败", ap.ID, rawURL)
+		}
+		sub.UpdatedAt = time.Now()
+	}
+
+	ap.AddSubscription(sub)
+	if err := profiles.SaveStore(s.profilePaths.StoreFile(), store); err != nil {
+		return nil, err
+	}
+
+	nodeCount := s.CountCachedNodes(subID)
+	dto := subscriptionDTO(ap.ID, sub, nodeCount, true)
+	return &dto, nil
+}
+
+// UpdateSubscription updates an existing subscription's alias, url, and note.
+func (s *AppService) UpdateSubscription(airportID, subID, name, rawURL, note, userAgent string) (*SubscriptionDTO, error) {
+	s.profileWriteMu.Lock()
+	defer s.profileWriteMu.Unlock()
+	name = strings.TrimSpace(name)
+	rawURL = strings.TrimSpace(rawURL)
+	if name == "" || rawURL == "" {
+		return nil, fmt.Errorf("订阅别名和订阅链接不能为空")
+	}
+
+	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
+	if err != nil {
+		return nil, err
+	}
+	ap := store.Get(airportID)
+	if ap == nil {
+		var foundSub *profiles.Subscription
+		ap, foundSub = store.FindSubscription(subID)
+		if ap == nil || foundSub == nil {
+			return nil, fmt.Errorf("未找到指定订阅")
+		}
+	}
+
+	sub := ap.GetSubscription(subID)
+	if sub == nil {
+		return nil, fmt.Errorf("未找到指定订阅")
+	}
+
+	if rawURL == safeAirportURLDisplay(sub.URL) {
+		return nil, fmt.Errorf("更新订阅时必须提供完整订阅链接")
+	}
+
+	sub.Name = name
+	sub.Note = strings.TrimSpace(note)
+	urlChanged := sub.URL != rawURL
+	sub.URL = rawURL
+
+	if urlChanged || !s.profilePaths.HasCache(sub.ID) {
+		sub.Usage = nil
+		if profiles.IsHTTPURL(rawURL) {
+			body, usage, err := profiles.FetchSubscriptionWithUsage(rawURL, userAgent)
+			sub.Usage = usage
+			if err != nil {
+				return nil, airportOperationError("获取订阅节点失败", ap.ID, rawURL)
+			}
+			if err := s.profilePaths.WriteCache(sub.ID, body); err != nil {
+				return nil, airportOperationError("写入节点缓存失败", ap.ID, rawURL)
+			}
+			sub.UpdatedAt = time.Now()
+		} else {
+			expanded := profiles.ExpandLocalPath(rawURL)
+			data, err := os.ReadFile(expanded)
+			if err != nil {
+				return nil, airportOperationError("读取本地节点文件失败", ap.ID, rawURL)
+			}
+			if err := s.profilePaths.WriteCache(sub.ID, data); err != nil {
+				return nil, airportOperationError("写入节点缓存失败", ap.ID, rawURL)
+			}
+			sub.UpdatedAt = time.Now()
+		}
+	}
+
+	if err := profiles.SaveStore(s.profilePaths.StoreFile(), store); err != nil {
+		return nil, err
+	}
+
+	nodeCount := s.CountCachedNodes(sub.ID)
+	dto := subscriptionDTO(ap.ID, sub, nodeCount, s.profilePaths.HasCache(sub.ID))
+	return &dto, nil
+}
+
+// DeleteSubscription removes a subscription from an airport.
+func (s *AppService) DeleteSubscription(airportID, subID string) error {
+	s.profileWriteMu.Lock()
+	defer s.profileWriteMu.Unlock()
+	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
+	if err != nil {
+		return err
+	}
+	ap := store.Get(airportID)
+	if ap == nil {
+		ap, _ = store.FindSubscription(subID)
+		if ap == nil {
+			return fmt.Errorf("未找到指定机场")
+		}
+	}
+
+	removed := ap.RemoveSubscription(subID)
+	if removed == nil {
+		return fmt.Errorf("未找到指定订阅")
+	}
+	_ = os.Remove(s.profilePaths.CacheFile(subID))
+	return profiles.SaveStore(s.profilePaths.StoreFile(), store)
+}
+
+// RefreshSubscription refreshes a single subscription.
+func (s *AppService) RefreshSubscription(airportID, subID, userAgent string) (*SubscriptionDTO, error) {
+	s.profileWriteMu.Lock()
+	defer s.profileWriteMu.Unlock()
+	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
+	if err != nil {
+		return nil, err
+	}
+	ap := store.Get(airportID)
+	if ap == nil {
+		ap, _ = store.FindSubscription(subID)
+		if ap == nil {
+			return nil, fmt.Errorf("未找到指定机场")
+		}
+	}
+	sub := ap.GetSubscription(subID)
+	if sub == nil {
+		return nil, fmt.Errorf("未找到指定订阅")
+	}
+
+	if profiles.IsHTTPURL(sub.URL) {
+		body, usage, err := profiles.FetchSubscriptionWithUsage(sub.URL, userAgent)
+		if err != nil {
+			return nil, airportOperationError("刷新订阅节点失败", ap.ID, sub.URL)
+		}
+		if err := s.profilePaths.WriteCache(sub.ID, body); err != nil {
+			return nil, airportOperationError("写入节点缓存失败", ap.ID, sub.URL)
+		}
+		sub.Usage = usage
+	} else {
+		sub.Usage = nil
+		expanded := profiles.ExpandLocalPath(sub.URL)
+		data, err := os.ReadFile(expanded)
+		if err != nil {
+			return nil, airportOperationError("读取本地节点文件失败", ap.ID, sub.URL)
+		}
+		if err := s.profilePaths.WriteCache(sub.ID, data); err != nil {
+			return nil, airportOperationError("写入节点缓存失败", ap.ID, sub.URL)
+		}
+	}
+	sub.UpdatedAt = time.Now()
+	if err := profiles.SaveStore(s.profilePaths.StoreFile(), store); err != nil {
+		return nil, fmt.Errorf("保存订阅更新失败")
+	}
+
+	nodeCount := s.CountCachedNodes(sub.ID)
+	dto := subscriptionDTO(ap.ID, sub, nodeCount, true)
+	return &dto, nil
+}
+
+// GetSubscriptionURL retrieves the full unmasked subscription URL for editing.
+func (s *AppService) GetSubscriptionURL(subID string) (string, error) {
+	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
+	if err != nil {
+		return "", err
+	}
+	_, sub := store.FindSubscription(subID)
+	if sub == nil {
+		ap := store.Get(subID)
+		if ap != nil && len(ap.Subscriptions) > 0 {
+			sub = ap.Subscriptions[0]
+		}
+	}
+	if sub == nil || strings.TrimSpace(sub.URL) == "" {
+		return "", fmt.Errorf("未找到指定订阅或未配置订阅链接")
+	}
+	return sub.URL, nil
+}
+
+func (s *AppService) GetAirportNodes(id string) ([]map[string]any, error) {
 	airportStore, err := profiles.LoadStore(s.profilePaths.StoreFile())
 	if err != nil {
 		return nil, err
 	}
-	airport := airportStore.Get(airportID)
-	if airport == nil {
+
+	// 1. Try finding as a Subscription ID first
+	if ap, sub := airportStore.FindSubscription(id); sub != nil {
+		cacheFile := s.profilePaths.CacheFile(sub.ID)
+		if !s.profilePaths.HasCache(sub.ID) {
+			cacheFile = s.profilePaths.CacheFile(ap.ID)
+		}
+		if !s.profilePaths.HasCache(sub.ID) && !s.profilePaths.HasCache(ap.ID) {
+			return nil, fmt.Errorf("订阅节点缓存不存在，请先刷新节点")
+		}
+		return s.loadNodesFromCache(cacheFile, fmt.Sprintf("%s · %s", ap.Name, sub.Name))
+	}
+
+	// 2. Try finding as Airport ID
+	ap := airportStore.Get(id)
+	if ap == nil {
 		return nil, fmt.Errorf("未找到指定机场")
 	}
 
-	cacheFile := s.profilePaths.CacheFile(airport.ID)
-	if !s.profilePaths.HasCache(airport.ID) {
-		return nil, fmt.Errorf("机场节点缓存不存在，请先刷新节点")
+	if len(ap.Subscriptions) > 0 {
+		var allNodes []map[string]any
+		for _, sub := range ap.Subscriptions {
+			cacheFile := s.profilePaths.CacheFile(sub.ID)
+			if !s.profilePaths.HasCache(sub.ID) && s.profilePaths.HasCache(ap.ID) && len(ap.Subscriptions) == 1 {
+				cacheFile = s.profilePaths.CacheFile(ap.ID)
+			}
+			if s.profilePaths.HasCache(sub.ID) || (len(ap.Subscriptions) == 1 && s.profilePaths.HasCache(ap.ID)) {
+				subNodes, err := s.loadNodesFromCache(cacheFile, fmt.Sprintf("%s · %s", ap.Name, sub.Name))
+				if err == nil {
+					allNodes = append(allNodes, subNodes...)
+				}
+			}
+		}
+		if len(allNodes) > 0 {
+			return allNodes, nil
+		}
 	}
 
+	cacheFile := s.profilePaths.CacheFile(ap.ID)
+	if !s.profilePaths.HasCache(ap.ID) {
+		return nil, fmt.Errorf("机场节点缓存不存在，请先刷新节点")
+	}
+	return s.loadNodesFromCache(cacheFile, ap.Name)
+}
+
+func (s *AppService) loadNodesFromCache(cacheFile, profileName string) ([]map[string]any, error) {
 	st, err := speedtester.New(&speedtester.Config{
 		ConfigPaths: cacheFile,
 		Mode:        speedtester.SpeedModeFast,
@@ -1179,6 +1619,7 @@ func (s *AppService) GetAirportNodes(airportID string) ([]map[string]any, error)
 			"type":         p.Type().String(),
 			"country_code": code,
 			"country_flag": flag,
+			"profile_name": profileName,
 		})
 	}
 

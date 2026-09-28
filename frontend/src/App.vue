@@ -1,17 +1,11 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useWorkbenchStore } from './stores/workbench'
 import { useTimelineStore } from './stores/timeline'
 import * as api from './api/bridge'
 
 import SourceScopeBar from './components/workbench/SourceScopeBar.vue'
-import LiveProgressStrip from './components/workbench/LiveProgressStrip.vue'
-import ResultTriageBar from './components/workbench/ResultTriageBar.vue'
-import TelemetryGrid from './components/workbench/TelemetryGrid.vue'
-import SampleInspector from './components/workbench/SampleInspector.vue'
-import StagingDock from './components/workbench/StagingDock.vue'
 import AirportModal from './components/airport/AirportModal.vue'
-import AirportConsolidatedMatrix from './components/history/AirportConsolidatedMatrix.vue'
 import PreferencesModal from './components/settings/PreferencesModal.vue'
 import MonitorTimelineView from './components/timeline/MonitorTimelineView.vue'
 import MonitorJobsView from './components/monitor/MonitorJobsView.vue'
@@ -26,10 +20,20 @@ const store = useWorkbenchStore()
  * Top-level view switch.
  *
  * The workbench (batch speed-test triage) and the monitor timeline are separate working
- * surfaces. Only one is mounted at a time, so leaving the timeline stops its polling and
- * releasing the canvas; returning re-reads the newest page from the cursor API.
+ * surfaces. Keep the workbench mounted so visiting subscription management does not
+ * abandon a pending measurement or save retry. The timeline still unmounts on exit.
  */
-const activeView = ref<'workbench' | 'monitor-jobs' | 'timeline'>('workbench')
+const activeView = ref<'workbench' | 'airports' | 'monitor-jobs' | 'timeline'>('workbench')
+const workbenchRef = ref<InstanceType<typeof LatencyWorkbench>>()
+function openProjectHistory(project: 'throughput' | 'service') {
+  activeView.value = 'workbench'
+  workbenchRef.value?.showProject(project)
+}
+const airportProfile = ref('all')
+watch(() => store.isAirportModalOpen, open => {
+  if (open) { activeView.value = 'airports'; store.isAirportModalOpen = false }
+})
+function browseProfile(id: string) { airportProfile.value = id; activeView.value = 'workbench' }
 const monitorPrefill = ref<MonitorJobPrefill | null>(null)
 const nodeDetail = ref<NodeDetailRequest | null>(null)
 const nodeDetailKey = ref(0)
@@ -62,8 +66,10 @@ function clearWorkbenchSaveRetry(attemptID: string): void {
   if (workbenchSaveRetry.value?.attempt_id === attemptID) workbenchSaveRetry.value = null
 }
 
-watch(activeView, (view) => {
+watch(activeView, async (view) => {
   if (view !== 'monitor-jobs') monitorPrefill.value = null
+  await nextTick()
+  window.scrollTo({ top: 0, behavior: 'instant' })
 })
 
 async function openJobTimeline(payload: { profileId: string; node: MonitorJobNode }): Promise<void> {
@@ -106,36 +112,21 @@ onUnmounted(() => {
   <div class="app-shell">
     <SourceScopeBar v-model:active-view="activeView" />
 
-    <template v-if="activeView === 'workbench'">
-      <LatencyWorkbench :save-retry-request="workbenchSaveRetry" @save-retry-request-resolved="clearWorkbenchSaveRetry" @open-monitor="openMonitorFromWorkbench" @open-node-detail="openNodeDetail" />
-      <details class="legacy-surface app-page">
-        <summary>
-          既有批量测速（本阶段未改动）
-        </summary>
-        <div class="flex max-h-[70vh] min-h-[360px] flex-col overflow-hidden border-t border-border">
-          <LiveProgressStrip />
-          <ResultTriageBar />
-          <main class="flex-1 flex overflow-hidden">
-            <TelemetryGrid />
-            <SampleInspector />
-          </main>
-          <StagingDock />
-        </div>
-      </details>
-    </template>
+    <div v-show="activeView === 'workbench'">
+      <LatencyWorkbench ref="workbenchRef" :visible="activeView === 'workbench'" :initial-profile-id="airportProfile" :save-retry-request="workbenchSaveRetry" @save-retry-request-resolved="clearWorkbenchSaveRetry" @open-monitor="openMonitorFromWorkbench" @open-node-detail="openNodeDetail" />
+    </div>
 
-    <div v-else-if="activeView === 'monitor-jobs'" class="app-page">
+    <div v-if="activeView === 'monitor-jobs'" class="app-page">
       <MonitorJobsView :prefill="monitorPrefill" @prefill-consumed="clearMonitorPrefill" @open-timeline="openJobTimeline" @open-node-detail="openNodeDetail" />
     </div>
 
-    <div v-else class="app-page">
-      <MonitorTimelineView @open-node-detail="openNodeDetail" />
+    <div v-else-if="activeView === 'timeline'" class="app-page">
+      <MonitorTimelineView @open-node-detail="openNodeDetail" @open-project-history="openProjectHistory" />
     </div>
 
     <!-- Modals -->
-    <AirportModal />
+    <AirportModal v-show="activeView === 'airports'" :visible="activeView === 'airports'" embedded @browse-profile="browseProfile" />
     <ProfileSetupModal />
-    <AirportConsolidatedMatrix />
     <PreferencesModal />
     <NodeDetailView v-if="nodeDetail" :key="nodeDetailKey" :scope="nodeDetail" @close="closeNodeDetail" @open-workbench-save-retry="openWorkbenchSaveRetry" />
   </div>

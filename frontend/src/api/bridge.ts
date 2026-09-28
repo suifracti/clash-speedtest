@@ -1,5 +1,6 @@
 import type {
   Airport,
+  Subscription,
   NodeItem,
   BatchTestRequest,
   SingleTestRequest,
@@ -58,6 +59,9 @@ const API_BASE = ''
 
 // --- Event Subscription ---
 
+const webEventListeners = new Set<(type: string, payload: any) => void>()
+let webEventSource: EventSource | null = null
+
 export function subscribeEvents(onEvent: (type: string, payload: any) => void): () => void {
   if (isWails() && window.runtime?.EventsOn) {
     const events = [
@@ -87,18 +91,29 @@ export function subscribeEvents(onEvent: (type: string, payload: any) => void): 
     }
   }
 
-  // Fallback to HTTP SSE
-  const source = new EventSource(`${API_BASE}/api/events`)
-  source.onmessage = (e) => {
-    try {
-      const data = JSON.parse(e.data)
-      if (data && data.type) {
-        onEvent(data.type, data.payload)
-      }
-    } catch {}
+  // One SSE connection per page, shared by Workbench, download and app shell.
+  // Separate EventSource instances can exhaust the browser's local connection
+  // slots and leave ordinary history reads queued indefinitely.
+  webEventListeners.add(onEvent)
+  if (!webEventSource) {
+    webEventSource = new EventSource(`${API_BASE}/api/events`)
+    webEventSource.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        if (data && data.type) {
+          for (const listener of webEventListeners) {
+            try { listener(data.type, data.payload) } catch {}
+          }
+        }
+      } catch {}
+    }
   }
   return () => {
-    source.close()
+    webEventListeners.delete(onEvent)
+    if (webEventListeners.size === 0) {
+      webEventSource?.close()
+      webEventSource = null
+    }
   }
 }
 
@@ -185,27 +200,31 @@ export async function getAirportURL(id: string): Promise<string> {
   return payload.url
 }
 
-export async function createAirport(name: string, url: string): Promise<Airport> {
+export function exportDataRootURL(): string {
+  return `${API_BASE}/api/data/export`
+}
+
+export async function createAirport(name: string, url?: string, websiteUrl?: string, backupUrl?: string, note?: string, subName?: string): Promise<Airport> {
   if (isWails()) {
-    return window.go!.desktop!.App!.CreateAirport(name, url)
+    return window.go!.desktop!.App!.CreateAirport(name, url, websiteUrl, backupUrl)
   }
   const res = await fetch(`${API_BASE}/api/airports`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, url }),
+    body: JSON.stringify({ name, url, website_url: websiteUrl, backup_url: backupUrl, note, sub_name: subName }),
   })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
 
-export async function updateAirport(id: string, name: string, url: string): Promise<Airport> {
+export async function updateAirport(id: string, name: string, url?: string, websiteUrl?: string, backupUrl?: string, note?: string): Promise<Airport> {
   if (isWails()) {
-    return window.go!.desktop!.App!.UpdateAirport(id, name, url)
+    return window.go!.desktop!.App!.UpdateAirport(id, name, url, websiteUrl, backupUrl)
   }
   const res = await fetch(`${API_BASE}/api/airports/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, url }),
+    body: JSON.stringify({ name, url, website_url: websiteUrl, backup_url: backupUrl, note }),
   })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
@@ -226,6 +245,46 @@ export async function refreshAirport(id: string): Promise<Airport> {
   const res = await fetch(`${API_BASE}/api/airports/${id}/refresh`, { method: 'POST' })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
+}
+
+export async function addSubscription(airportId: string, name: string, url: string, note?: string): Promise<Subscription> {
+  const res = await fetch(`${API_BASE}/api/airports/${airportId}/subscriptions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, url, note }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function updateSubscription(airportId: string, subId: string, name: string, url: string, note?: string): Promise<Subscription> {
+  const res = await fetch(`${API_BASE}/api/airports/${airportId}/subscriptions/${subId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, url, note }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function deleteSubscription(airportId: string, subId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/airports/${airportId}/subscriptions/${subId}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(await res.text())
+}
+
+export async function refreshSubscription(airportId: string, subId: string): Promise<Subscription> {
+  const res = await fetch(`${API_BASE}/api/airports/${airportId}/subscriptions/${subId}/refresh`, { method: 'POST' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function getSubscriptionURL(subId: string, airportId?: string): Promise<string> {
+  const path = airportId ? `${API_BASE}/api/airports/${airportId}/subscriptions/${subId}/url` : `${API_BASE}/api/subscriptions/${subId}/url`
+  const res = await fetch(path)
+  if (!res.ok) throw new Error(await res.text())
+  const payload = await res.json() as { url?: unknown }
+  if (typeof payload.url !== 'string') throw new Error('订阅链接读取失败')
+  return payload.url
 }
 
 export async function fetchAirportNodes(airportId: string): Promise<NodeItem[]> {
@@ -287,6 +346,7 @@ export function buildWorkbenchLatencyHistoryQuery(query: WorkbenchLatencyHistory
     until: query.until,
   })
   if (query.limit) params.set('limit', String(query.limit))
+  if (query.target_id) params.set('target_id', query.target_id)
   if (query.before_finished_at && query.before_attempt_id) {
     params.set('before_finished_at', query.before_finished_at)
     params.set('before_attempt_id', query.before_attempt_id)
@@ -299,6 +359,34 @@ export async function fetchWorkbenchLatencyHistory(query: WorkbenchLatencyHistor
     return window.go!.desktop!.App!.ListWorkbenchLatencyTests(query)
   }
   const res = await fetch(`${API_BASE}/api/workbench/latency-tests?${buildWorkbenchLatencyHistoryQuery(query)}`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function saveAirportMaintenance(id: string, settings: import('../types').AirportMaintenance): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/airports/${id}/maintenance`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings),
+  })
+  if (!res.ok) throw new Error(await res.text())
+}
+
+export async function openDataFolder(kind: 'data' | 'monitor'): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/data/open-folder?kind=${kind}`, { method: 'POST' })
+  if (!res.ok) throw new Error(await res.text())
+}
+
+export async function fetchWorkbenchLatencyHistories(queries: WorkbenchLatencyHistoryQuery[]): Promise<WorkbenchLatencyHistoryResult[]> {
+  if (!queries.length) return []
+  // Wails keeps its existing bridge path; Web uses one request for the same
+  // frozen window instead of saturating the browser's per-origin connections.
+  if (isWails()) return Promise.all(queries.map(fetchWorkbenchLatencyHistory))
+  const [{ since, until, limit, target_id }] = queries
+  const res = await fetch(`${API_BASE}/api/workbench/latency-tests/query`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ since, until, limit, target_id, nodes: queries.map(({ profile_id, node_key, node_identity_key, config_revision_key }) => ({ profile_id, node_key, node_identity_key, config_revision_key })) }),
+    signal: AbortSignal.timeout(30000),
+  })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }

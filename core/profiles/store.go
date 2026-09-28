@@ -17,11 +17,70 @@ const (
 	LegacyEnvFile = "run.local.env"
 )
 
+type Subscription struct {
+	Usage     *SubscriptionUsage `json:"usage,omitempty"`
+	ID        string             `json:"id"`
+	Name      string             `json:"name"`
+	URL       string             `json:"url"`
+	Note      string             `json:"note,omitempty"`
+	UpdatedAt time.Time          `json:"updated_at,omitempty"`
+}
+
 type Airport struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	URL       string    `json:"url"`
-	UpdatedAt time.Time `json:"updated_at,omitempty"`
+	Maintenance   AirportMaintenance `json:"maintenance,omitempty"`
+	ID            string             `json:"id"`
+	Name          string             `json:"name"`
+	URL           string             `json:"url,omitempty"`
+	WebsiteURL    string             `json:"website_url,omitempty"`
+	BackupURL     string             `json:"backup_url,omitempty"`
+	Note          string             `json:"note,omitempty"`
+	Subscriptions []*Subscription    `json:"subscriptions,omitempty"`
+	UpdatedAt     time.Time          `json:"updated_at,omitempty"`
+}
+
+func (a *Airport) GetSubscription(id string) *Subscription {
+	if a == nil {
+		return nil
+	}
+	for _, sub := range a.Subscriptions {
+		if sub.ID == id {
+			return sub
+		}
+	}
+	return nil
+}
+
+func (a *Airport) AddSubscription(sub *Subscription) {
+	if a == nil || sub == nil {
+		return
+	}
+	if sub.ID == "" {
+		sub.ID = newAirportID()
+	}
+	a.Subscriptions = append(a.Subscriptions, sub)
+	if a.URL == "" {
+		a.URL = sub.URL
+	}
+}
+
+func (a *Airport) RemoveSubscription(id string) *Subscription {
+	if a == nil {
+		return nil
+	}
+	for i, sub := range a.Subscriptions {
+		if sub.ID == id {
+			a.Subscriptions = append(a.Subscriptions[:i], a.Subscriptions[i+1:]...)
+			if a.URL == sub.URL {
+				if len(a.Subscriptions) > 0 {
+					a.URL = a.Subscriptions[0].URL
+				} else {
+					a.URL = ""
+				}
+			}
+			return sub
+		}
+	}
+	return nil
 }
 
 type Store struct {
@@ -71,6 +130,21 @@ func LoadStore(path string) (*Store, error) {
 	if store.Airports == nil {
 		store.Airports = []*Airport{}
 	}
+	for _, ap := range store.Airports {
+		if ap == nil {
+			continue
+		}
+		if len(ap.Subscriptions) == 0 && ap.URL != "" {
+			ap.Subscriptions = []*Subscription{
+				{
+					ID:        ap.ID,
+					Name:      "默认订阅",
+					URL:       ap.URL,
+					UpdatedAt: ap.UpdatedAt,
+				},
+			}
+		}
+	}
 	if err := validateStore(&store); err != nil {
 		return nil, fmt.Errorf("validate %s: %w", path, err)
 	}
@@ -81,6 +155,17 @@ func SaveStore(path string, store *Store) error {
 	if store == nil {
 		store = &Store{}
 	}
+	for _, ap := range store.Airports {
+		if ap == nil {
+			continue
+		}
+		if len(ap.Subscriptions) > 0 && ap.URL == "" {
+			ap.URL = ap.Subscriptions[0].URL
+			if ap.UpdatedAt.IsZero() {
+				ap.UpdatedAt = ap.Subscriptions[0].UpdatedAt
+			}
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
@@ -89,7 +174,22 @@ func SaveStore(path string, store *Store) error {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(path, data, 0o600)
+	file, err := os.CreateTemp(filepath.Dir(path), ".airports-*.tmp")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	if _, err = file.Write(data); err == nil {
+		err = file.Sync()
+	}
+	closeErr := file.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	return os.Rename(file.Name(), path)
 }
 
 func (s *Store) Add(airport *Airport) {
@@ -118,6 +218,24 @@ func applyAirportEdit(airport *Airport, name, url string) (urlChanged bool) {
 	if urlChanged {
 		airport.UpdatedAt = time.Time{}
 	}
+	if len(airport.Subscriptions) > 0 {
+		if airport.Subscriptions[0].URL != url {
+			urlChanged = true
+			airport.Subscriptions[0].URL = url
+			airport.Subscriptions[0].UpdatedAt = time.Time{}
+		}
+		if name != "" && airport.Subscriptions[0].Name == "默认订阅" {
+			// keep alias or unchanged
+		}
+	} else if url != "" {
+		airport.Subscriptions = []*Subscription{
+			{
+				ID:   airport.ID,
+				Name: "默认订阅",
+				URL:  url,
+			},
+		}
+	}
 	return urlChanged
 }
 
@@ -128,6 +246,23 @@ func (s *Store) Get(id string) *Airport {
 		}
 	}
 	return nil
+}
+
+func (s *Store) FindSubscription(id string) (*Airport, *Subscription) {
+	for _, airport := range s.Airports {
+		if airport == nil {
+			continue
+		}
+		for _, sub := range airport.Subscriptions {
+			if sub != nil && sub.ID == id {
+				return airport, sub
+			}
+		}
+		if airport.ID == id && len(airport.Subscriptions) > 0 {
+			return airport, airport.Subscriptions[0]
+		}
+	}
+	return nil, nil
 }
 
 func (p Paths) HasCache(id string) bool {

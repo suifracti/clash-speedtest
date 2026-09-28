@@ -197,12 +197,12 @@ func (a *App) GetAirportURL(id string) (string, error) {
 	return a.app.GetAirportURL(id)
 }
 
-func (a *App) CreateAirport(name, url string) (*application.AirportDTO, error) {
-	return a.app.CreateAirport(name, url, a.userAgent)
+func (a *App) CreateAirport(name, url string, optionalLinks ...string) (*application.AirportDTO, error) {
+	return a.app.CreateAirport(name, url, a.userAgent, optionalLinks...)
 }
 
-func (a *App) UpdateAirport(id, name, url string) (*application.AirportDTO, error) {
-	return a.app.UpdateAirport(id, name, url, a.userAgent)
+func (a *App) UpdateAirport(id, name, url string, optionalLinks ...string) (*application.AirportDTO, error) {
+	return a.app.UpdateAirport(id, name, url, a.userAgent, optionalLinks...)
 }
 
 func (a *App) DeleteAirport(id string) error {

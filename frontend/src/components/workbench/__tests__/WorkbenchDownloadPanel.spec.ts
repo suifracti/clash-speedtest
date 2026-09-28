@@ -136,4 +136,24 @@ describe('WorkbenchDownloadPanel', () => {
     expect(wrapper.text()).toContain('另一节点')
     expect(wrapper.text()).not.toContain('结果属于 下载节点')
   })
+
+  it('emits start-batch event when multiple nodes are selected', async () => {
+    const nodeB = { ...node, nodeKey: 'node-b', nodeIdentityKey: 'identity-b', displayName: '节点 B' }
+    wrapper = mount(WorkbenchDownloadPanel, { props: { node: null, selectedNodes: [node, nodeB] } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('已勾选 2 个节点（将排队依次测速，测完一个再测下一个）')
+    const startBtn = wrapper.get('button.download-primary')
+    expect(startBtn.text()).toContain('排队测速所选 2 个节点')
+    await startBtn.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.emitted('start-batch')).toHaveLength(1)
+    expect(wrapper.emitted('start-batch')![0][0]).toEqual(expect.objectContaining({
+      repeatCount: 1,
+      maximumMiB: 20,
+      timeoutSeconds: 10,
+    }))
+    expect(apiMocks.startWorkbenchDownloadTest).not.toHaveBeenCalled()
+  })
 })
