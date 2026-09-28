@@ -102,16 +102,21 @@ function path(points: typeof series.value[number]['points']) {
       </div>
       <p v-if="currentSample">样本 {{ sampleIndex + 1 }}/{{ hoveredSamples.length }} · {{ latencyTargets.find(site => site.url === currentSample?.target)?.label || 'Cloudflare' }} · {{ new Date(currentSample.timestamp).toLocaleString() }} · {{ currentSample.success ? `${currentSample.latency_ms} ms` : `失败：${currentSample.error || '请求失败'}` }}</p>
     </div>
-    <section class="sites-history" aria-label="分站历史统计">
-      <header><strong>{{ selected === 'all' ? '六站历史统计' : `${latencyTargets.find(site => site.value === selected)?.label} 历史统计` }}</strong><small>跟随上方站点选择 · 当前时间范围 · 延迟按站独立统计</small></header>
-      <div class="history-table-wrap"><table>
-        <thead><tr><th>站点</th><th>成功 / 请求</th><th>成功率</th><th>常见延迟</th><th>较慢时 P95</th><th>延迟区间次数</th></tr></thead>
-        <tbody><tr v-for="site in siteHealth" :key="site.value"><th>{{ site.label }}</th>
-          <template v-if="site.health"><td>{{ site.health.successCount }} / {{ site.health.sampleCount }}<small v-if="site.health.failCount" class="has-failure">失败 {{ site.health.failCount }} 次</small></td><td>{{ site.health.successRateText }}</td><td>{{ site.health.normalRangeText }}</td><td>{{ site.health.p95 === null ? '—' : `${site.health.p95} ms` }}</td><td><div class="site-bins"><span v-for="bin in site.health.histogramBins" :key="bin.label" :title="`${bin.label}：${bin.count} 次（${bin.percentage}%）`">{{ bin.label }}<b>{{ bin.count }} 次</b><i :style="{ width: `${bin.percentage}%` }" /></span><small v-if="!site.health.histogramBins.length">无成功样本</small></div></td></template>
-          <td v-else colspan="5">当前范围未检测</td>
-        </tr></tbody>
-      </table></div>
-    </section>
+    <details class="advanced-sites-details">
+      <summary class="advanced-sites-summary">
+        <span>📊 展开分站进阶直方图与各区间统计</span>
+      </summary>
+      <section class="sites-history" aria-label="分站历史统计">
+        <header><strong>{{ selected === 'all' ? '六站历史统计' : `${latencyTargets.find(site => site.value === selected)?.label} 历史统计` }}</strong><small>跟随上方站点选择 · 当前时间范围 · 延迟按站独立统计</small></header>
+        <div class="history-table-wrap"><table>
+          <thead><tr><th>站点</th><th>成功 / 请求</th><th>成功率</th><th>常见延迟</th><th>较慢时 P95</th><th>延迟区间次数</th></tr></thead>
+          <tbody><tr v-for="site in siteHealth" :key="site.value"><th>{{ site.label }}</th>
+            <template v-if="site.health"><td>{{ site.health.successCount }} / {{ site.health.sampleCount }}<small v-if="site.health.failCount" class="has-failure">失败 {{ site.health.failCount }} 次</small></td><td>{{ site.health.successRateText }}</td><td>{{ site.health.normalRangeText }}</td><td>{{ site.health.p95 === null ? '—' : `${site.health.p95} ms` }}</td><td><div class="site-bins"><span v-for="bin in site.health.histogramBins" :key="bin.label" :title="`${bin.label}：${bin.count} 次（${bin.percentage}%）`">{{ bin.label }}<b>{{ bin.count }} 次</b><i :style="{ width: `${bin.percentage}%` }" /></span><small v-if="!site.health.histogramBins.length">无成功样本</small></div></td></template>
+            <td v-else colspan="5">当前范围未检测</td>
+          </tr></tbody>
+        </table></div>
+      </section>
+    </details>
   </div>
 </template>
 
@@ -122,7 +127,10 @@ function path(points: typeof series.value[number]['points']) {
 .tooltip-site { display:grid; grid-template-columns:1fr 1fr auto; gap:6px; align-items:center; }
 .tooltip-site details { grid-column:1/-1; font-size:11px; }.tooltip-site summary { cursor:pointer; }
 .has-failure { color:var(--danger, #b74437); }
-.sites-history { border-top:1px solid var(--border); margin-top:12px; padding-top:12px; font-size:12px; }
+.advanced-sites-details { margin-top: 14px; border-top: 1px dashed var(--border); padding-top: 10px; }
+.advanced-sites-summary { font-size: 11px; color: var(--text-secondary); cursor: pointer; user-select: none; padding: 4px 8px; border-radius: 6px; width: fit-content; transition: background 0.15s; }
+.advanced-sites-summary:hover { background: var(--card-subtle); color: var(--primary); }
+.sites-history { border-top:1px solid var(--border); margin-top:10px; padding-top:10px; font-size:12px; }
 .sites-history header { display:flex; gap:12px; align-items:center; margin-bottom:10px; }.sites-history small { color:var(--text-secondary); }
 .history-table-wrap { overflow-x:auto; }.sites-history table { width:100%; border-collapse:collapse; text-align:left; }
 .sites-history td,.sites-history th { padding:9px 8px; border-bottom:1px solid var(--border); }.sites-history td small { display:block; }

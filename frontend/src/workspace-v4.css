@@ -331,6 +331,115 @@
   color: #f59e0b;
 }
 
+.compact-unlock-pills {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+}
+
+.compact-unlock-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 550;
+  line-height: 1.3;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+  user-select: none;
+  background: transparent;
+}
+.compact-unlock-pill:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.15);
+}
+.compact-unlock-pill .pill-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.compact-unlock-pill .pill-name {
+  color: var(--text-secondary);
+}
+.compact-unlock-pill .pill-label {
+  font-weight: 650;
+}
+
+.compact-unlock-pill.good {
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.3);
+  color: #10b981;
+}
+.compact-unlock-pill.good .pill-dot {
+  background: #10b981;
+  box-shadow: 0 0 5px rgba(16, 185, 129, 0.5);
+}
+.compact-unlock-pill.good .pill-name {
+  color: #10b981;
+}
+
+.compact-unlock-pill.warn {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: #f59e0b;
+}
+.compact-unlock-pill.warn .pill-dot {
+  background: #f59e0b;
+}
+.compact-unlock-pill.warn .pill-name {
+  color: #f59e0b;
+}
+
+.compact-unlock-pill.bad {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.25);
+  color: #ef4444;
+}
+.compact-unlock-pill.bad .pill-dot {
+  background: #ef4444;
+}
+.compact-unlock-pill.bad .pill-name {
+  color: #ef4444;
+}
+
+.compact-unlock-pill.untested {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--border);
+  color: var(--text-muted);
+  opacity: 0.75;
+}
+.compact-unlock-pill.untested .pill-dot {
+  background: var(--text-muted);
+}
+.compact-unlock-pill.untested:hover {
+  opacity: 1;
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.compact-unlock-pill.untested:hover .pill-name {
+  color: var(--primary);
+}
+
+.compact-unlock-pill.testing {
+  background: rgba(99, 102, 241, 0.15);
+  border-color: rgba(99, 102, 241, 0.4);
+  color: var(--primary);
+  cursor: wait;
+}
+.compact-unlock-pill.testing .pill-dot {
+  background: var(--primary);
+  animation: pulse-dot 1s infinite alternate;
+}
+@keyframes pulse-dot {
+  from { opacity: 0.3; transform: scale(0.8); }
+  to { opacity: 1; transform: scale(1.3); }
+}
+
 .compact-cell-actions {
   display: flex;
   align-items: center;

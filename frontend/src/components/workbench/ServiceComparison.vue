@@ -255,9 +255,71 @@ function retestOutdated() {
   emit('run', keys)
 }
 
+const selectedRegion = ref('全部地区')
+const searchKeyword = ref('')
+const statusFilter = ref<'all' | 'good' | 'bad' | 'untested'>('all')
+
+const statusFilterOptions = [
+  { value: 'all', label: '全部状态' },
+  { value: 'good', label: '仅可用 (通过)' },
+  { value: 'bad', label: '仅异常 / 受限' },
+  { value: 'untested', label: '仅未检测' },
+]
+
+const regionOptions = computed(() => {
+  const set = new Set<string>()
+  for (const r of props.rows) {
+    if (r.node.countryCode && r.node.countryCode !== 'OTHER') set.add(r.node.countryCode)
+  }
+  const sorted = [...set].sort()
+  return [{ value: '全部地区', label: '全部地区' }, ...sorted.map(c => ({ value: c, label: c }))]
+})
+
+const filteredRows = computed(() => {
+  return sortedRows.value.filter(row => {
+    if (selectedRegion.value !== '全部地区' && row.node.countryCode !== selectedRegion.value) {
+      return false
+    }
+    if (searchKeyword.value.trim()) {
+      const q = searchKeyword.value.trim().toLowerCase()
+      const name = (row.node.displayName || '').toLowerCase()
+      const reg = (row.node.countryCode || '').toLowerCase()
+      const profile = (row.node.profileName || '').toLowerCase()
+      if (!name.includes(q) && !reg.includes(q) && !profile.includes(q)) {
+        return false
+      }
+    }
+    if (statusFilter.value !== 'all') {
+      const isGood = ['matched', 'unlocked', 'reachable', 'profiled'].includes(row.report.latest?.result?.outcome || '')
+      if (statusFilter.value === 'good' && !isGood) return false
+      if (statusFilter.value === 'bad' && (isGood || row.report.total === 0)) return false
+      if (statusFilter.value === 'untested' && row.report.total > 0) return false
+    }
+    return true
+  })
+})
+
+const filteredOverviewRows = computed(() => {
+  return sortedOverviewRows.value.filter(row => {
+    if (selectedRegion.value !== '全部地区' && row.node.countryCode !== selectedRegion.value) {
+      return false
+    }
+    if (searchKeyword.value.trim()) {
+      const q = searchKeyword.value.trim().toLowerCase()
+      const name = (row.node.displayName || '').toLowerCase()
+      const reg = (row.node.countryCode || '').toLowerCase()
+      const profile = (row.node.profileName || '').toLowerCase()
+      if (!name.includes(q) && !reg.includes(q) && !profile.includes(q)) {
+        return false
+      }
+    }
+    return true
+  })
+})
+
 // Current selection helpers
 const currentKeys = computed(() =>
-  (viewMode.value === 'all' ? sortedOverviewRows.value : sortedRows.value).map(r => r.key),
+  (viewMode.value === 'all' ? filteredOverviewRows.value : filteredRows.value).map(r => r.key),
 )
 const isAllSelected = computed(
   () => currentKeys.value.length > 0 && currentKeys.value.every(k => props.selected.includes(k)),
@@ -293,6 +355,51 @@ function label(a?: WorkbenchPublicServiceAttempt) {
   return serviceOutcomeLabel(a?.result?.outcome)
 }
 
+function cleanSummary(result?: WorkbenchPublicServiceAttempt['result'], rule?: WorkbenchPublicServiceRule): string {
+  if (!result) return '尚无检测记录'
+  if (result.outcome === 'matched') {
+    if (result.details?.checked_model) {
+      return `真实模型响应成功 (${result.details.checked_model})`
+    }
+    return '检测通过，真实服务响应正常'
+  }
+  if (result.outcome === 'unlocked') {
+    return '完整版权片目已解锁'
+  }
+  if (result.outcome === 'originals_only') {
+    return '仅可访问自制剧内容'
+  }
+  if (result.outcome === 'region_blocked') {
+    return '服务明确限制该地区访问 (403)'
+  }
+  if (result.outcome === 'challenge') {
+    return '遇到 Cloudflare 验证盾阻拦'
+  }
+  if (result.outcome === 'rate_limited') {
+    return '请求频次或配额受限'
+  }
+  if (result.outcome === 'credentials_required') {
+    return '请先在系统设置中绑定 Google 账号凭据'
+  }
+  if (result.outcome === 'timed_out') {
+    return '网络请求超时，未能收到响应'
+  }
+  if (result.error_message?.includes('读取上限') || result.summary?.includes('读取上限')) {
+    return '旧规则响应截断，请点击右侧“⚡ 检测”以新规则重测'
+  }
+  return result.summary || result.error_message || serviceOutcomeLabel(result.outcome)
+}
+
+function stampRelative(a: WorkbenchPublicServiceAttempt): string {
+  const t = Date.parse(a.result?.finished_at || a.finished_at || a.requested_at)
+  if (!t || isNaN(t)) return ''
+  const diffSec = Math.floor((Date.now() - t) / 1000)
+  if (diffSec < 60) return '刚刚'
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}分钟前`
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}小时前`
+  return `${Math.floor(diffSec / 86400)}天前`
+}
+
 function inconclusive(report: ReturnType<typeof summarizeService>): boolean {
   return (
     report.total > 0 &&
@@ -320,25 +427,33 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
 <template>
   <div class="service-results">
     <div class="results-heading">
-      <div v-if="viewMode !== 'all'">
+      <div v-if="viewMode !== 'all'" class="heading-title-box">
         <h3>{{ rule ? serviceTitle(rule) : '先在上方选择服务' }}</h3>
         <p>
           {{
             `${serviceEvidence(rule)} · ${
               rule?.service_id === 'antigravity'
-                ? '只有收到真实模型内容才通过；账号、额度、地区问题分别记录。'
-                : '通过率只衡量本项判据，不代表整个服务的可用率。'
+                ? '只有收到真实模型内容才标记通过；账号、配额、地区问题清晰展示。'
+                : '通过率仅衡量当前服务判据。'
             }`
           }}
         </p>
       </div>
       <div class="results-tools">
-        <label>查看 <UiSelect v-model="viewChoice" aria-label="查看服务结果" :options="[{ value: 'all', label: '全部已选服务' }, ...choices]" /></label>
+        <input
+          v-model="searchKeyword"
+          type="search"
+          placeholder="🔍 搜索节点 / 地区…"
+          class="service-search-input"
+        >
+        <label>地区 <UiSelect v-model="selectedRegion" aria-label="筛选地区" :options="regionOptions" /></label>
+        <label v-if="viewMode !== 'all'">状态 <UiSelect v-model="statusFilter" aria-label="筛选状态" :options="statusFilterOptions" /></label>
+        <label>查看 <UiSelect v-model="viewChoice" aria-label="查看服务结果" :options="[{ value: 'all', label: '全部服务概览' }, ...choices]" /></label>
         <label>排序 <UiSelect v-model="sortBy" aria-label="排序服务结果" :options="sortOptions" /></label>
-        <label class="checkbox-inline"><input v-model="showAllNodes" type="checkbox">显示全部线路（含未测）</label>
+        <label class="checkbox-inline"><input v-model="showAllNodes" type="checkbox">含未测</label>
         <div class="batch-action-group">
           <button type="button" class="tool-btn" @click="toggleSelectAllCurrent">
-            {{ isAllSelected ? '取消全选' : `全选（${currentKeys.length}）` }}
+            {{ isAllSelected ? '取消全选' : `全选 (${currentKeys.length})` }}
           </button>
           <button type="button" class="tool-btn primary" :disabled="running || !currentKeys.length" @click="handleRunBatch">
             {{ running ? '检测中…' : selected.length ? `⚡ 检测已选 (${selected.length})` : `⚡ 检测全部 (${currentKeys.length})` }}
@@ -363,38 +478,32 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
 
     <template v-if="viewMode === 'all'">
       <div v-if="overviewMeasured" class="overview-status">
-        {{ overviewMeasured ? `${overviewMeasured} 个节点有已加载结果` : '当前范围尚无已加载的服务结果' }}
-        <small>未检测和无法确认都不代表节点已被证实不可用。</small>
+        <span>已测节点：<b>{{ overviewMeasured }}</b> 个</span>
+        <small>未测节点点击“⚡ 检测”即可一键验证可用性。</small>
       </div>
-      <div v-if="sortedOverviewRows.length" class="service-overview">
-        <div v-for="row in sortedOverviewRows" :key="row.key" class="overview-row">
-          <label>
+      <div v-if="filteredOverviewRows.length" class="service-overview">
+        <div v-for="row in filteredOverviewRows" :key="row.key" class="overview-row-v5">
+          <label class="overview-node-label">
             <input type="checkbox" :checked="selected.includes(row.key)" :aria-label="`选择 ${row.node.displayName}`" @change="emit('toggle', row.key)">
-            <span>
-              <strong>{{ row.node.displayName }}</strong>
-              <small>{{ row.node.profileName }} · {{ row.node.countryCode }}</small>
-            </span>
+            <span class="overview-flag">{{ row.node.countryFlag || '🌐' }}</span>
+            <div class="overview-node-text">
+              <strong :title="row.node.displayName">{{ row.node.displayName }}</strong>
+              <small>{{ row.node.countryCode || 'OTHER' }} · {{ row.node.type || '节点' }}</small>
+            </div>
           </label>
-          <div class="overview-services">
+          <div class="overview-services-v5">
             <button
               v-for="item in row.reports"
               :key="item.service.value"
               type="button"
-              :class="['overview-service', item.report.total ? tone(item.report.latest) : 'unknown']"
+              :class="['overview-service-pill', item.report.total ? tone(item.report.latest) : 'untested']"
+              :title="`${item.service.label}：${item.report.total ? label(item.report.latest) : '未检测'} · 点击深入查看`"
               @click="focus = item.service.value; viewMode = 'single'; emit('service', item.service.value)"
             >
-              <span>{{ item.service.label }}</span>
-              <em>{{ item.service.evidence }}</em>
-              <strong>{{ item.report.total ? label(item.report.latest) : '未检测' }}</strong>
-              <small v-if="item.report.total">
-                {{ inconclusive(item.report) ? '未得出可用性结论' : `${item.report.passed}/${item.report.total} 次通过` }}
-              </small>
-              <small v-if="item.report.latest?.result?.details?.antigravity_progress" class="overview-reason">
-                {{ item.report.latest.result.details.antigravity_progress }}
-              </small>
-              <small v-else-if="item.report.latest?.result?.error_message" class="overview-reason">
-                {{ item.report.latest.result.error_message }}
-              </small>
+              <span class="pill-dot"></span>
+              <span class="svc-name">{{ item.service.label.split(' ')[0] }}</span>
+              <strong class="svc-status">{{ item.report.total ? label(item.report.latest) : '未测' }}</strong>
+              <small v-if="item.report.latest?.result?.duration_ms" class="svc-dur">{{ item.report.latest.result.duration_ms }}ms</small>
             </button>
             <button type="button" class="node-quick-test-btn" :disabled="running" title="针对此节点立即执行检测" @click.stop="emit('run', [row.key])">
               ⚡ 检测
@@ -405,106 +514,93 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
     </template>
 
     <template v-else>
-      <div class="result-summary">
-        <div><strong>{{ measured.length }}</strong><span>个节点有记录</span></div>
-        <div><strong>{{ changed }}</strong><span>个节点结果有变化</span></div>
-        <p>重复检查建议 3–5 次。统计来自当前观察窗口已加载的记录；没有测过，不算失败。</p>
+      <div class="result-summary-v5">
+        <div class="summary-stat-group">
+          <span class="stat-pill">已测节点 <b>{{ measured.length }}</b> / {{ rows.length }}</span>
+          <span v-if="changed > 0" class="stat-pill warn">波动节点 <b>{{ changed }}</b></span>
+        </div>
       </div>
 
-      <div class="service-node-grid">
+      <div class="service-node-grid-v5">
         <article
-          v-for="row in sortedRows"
+          v-for="row in filteredRows"
           :key="row.key"
-          class="service-node"
-          :class="{ selected: selected.includes(row.key) }"
+          class="service-node-v5"
+          :class="{ selected: selected.includes(row.key), 'is-outdated': row.report.latest?.rule.rule_version !== rule?.rule_version && row.report.total > 0 }"
         >
-          <header>
-            <label>
+          <header class="card-header-v5">
+            <label class="card-node-info">
               <input type="checkbox" :checked="selected.includes(row.key)" :aria-label="`选择 ${row.node.displayName}`" @change="emit('toggle', row.key)">
-              <span>
-                <strong>{{ row.node.displayName }}</strong>
-                <small>{{ row.node.profileName }} · {{ row.node.countryCode }}</small>
-              </span>
+              <span class="card-flag">{{ row.node.countryFlag || '🌐' }}</span>
+              <div class="card-title-group">
+                <strong class="card-node-name" :title="row.node.displayName">{{ row.node.displayName }}</strong>
+                <div class="card-tags-line">
+                  <span v-if="row.node.countryCode" class="card-tag region">{{ row.node.countryCode }}</span>
+                  <span class="card-tag protocol">{{ row.node.type || '节点' }}</span>
+                </div>
+              </div>
             </label>
-            <div class="node-header-actions">
-              <span class="outcome" :class="tone(row.report.latest)">
-                {{ row.report.total ? label(row.report.latest) : states[row.key] === 'loading' ? '读取中' : states[row.key] === 'error' ? '读取失败' : '未检测' }}
+            <div class="card-actions-v5">
+              <span class="outcome-badge-v5" :class="tone(row.report.latest)">
+                <span class="badge-dot"></span>
+                {{ row.report.total ? label(row.report.latest) : states[row.key] === 'loading' ? '读取中…' : '未检测' }}
               </span>
-              <button type="button" class="card-retest-btn" :disabled="running" title="针对此节点立即执行本项检测" @click.stop="emit('run', [row.key])">
+              <button
+                type="button"
+                class="card-retest-btn-v5"
+                :disabled="running"
+                title="针对此节点立即执行本项检测"
+                @click.stop="emit('run', [row.key])"
+              >
                 ⚡ 检测
               </button>
             </div>
           </header>
 
-          <template v-if="row.report.total">
-            <div class="service-score">
-              <strong :class="tone(row.report.latest)">
-                {{ inconclusive(row.report) ? '—' : row.report.rate }}<small v-if="!inconclusive(row.report)">%</small>
-              </strong>
-              <span>
-                {{ inconclusive(row.report) ? '尚未得出结论' : '通过本项检查' }}<br>
-                <b>{{ inconclusive(row.report) ? `${row.report.total} 次未完成验证` : `${row.report.passed} / ${row.report.total} 次` }}</b>
+          <!-- Card Body -->
+          <div v-if="row.report.total" class="card-body-v5">
+            <div class="card-evidence-line">
+              <span v-if="row.report.latest?.result?.details?.checked_model" class="pill-model" title="已验证可用模型">
+                🤖 {{ row.report.latest.result.details.checked_model }}
               </span>
-              <div>
-                <span>结果变化 <b>{{ row.report.changes }} 次</b></span>
-                <span>出口变化 <b>{{ row.report.exitPairs ? `${row.report.exitChanges} 次` : '样本不足' }}</b></span>
-              </div>
+              <span v-if="row.report.latest?.result?.duration_ms" class="pill-duration">
+                ⏱️ {{ row.report.latest.result.duration_ms }} ms
+              </span>
+              <span v-if="row.report.latest?.rule.rule_version !== rule?.rule_version" class="pill-outdated" title="旧版规则限制了读取体，以新版规则重测可获取完整模型">
+                ⚠️ 旧规则 (v{{ row.report.latest?.rule.rule_version }})
+              </span>
+              <span class="evidence-desc" :title="cleanSummary(row.report.latest?.result, rule)">
+                {{ cleanSummary(row.report.latest?.result, rule) }}
+              </span>
             </div>
 
-            <p v-if="row.report.latest?.result?.details?.antigravity_progress" class="service-stage">
-              验证进度：{{ row.report.latest.result.details.antigravity_progress }}
-              <template v-if="row.report.latest.result.details.checked_model"> · {{ row.report.latest.result.details.checked_model }}</template>
-            </p>
-
-            <p v-if="row.report.total < 3" class="service-sample-warning">
-              目前只有 {{ row.report.total }} 次记录；百分比仅描述已做的检查，不能推断长期稳定。
-            </p>
-
-            <p class="service-conclusion">
-              {{ row.report.latest?.result?.summary || row.report.latest?.result?.error_message || '点击下方记录查看本次判据。' }}
-            </p>
-
-            <div class="status-history" aria-label="逐次检测结果">
-              <button
-                v-for="a in row.report.samples.slice(-24)"
-                :key="a.attempt_id"
-                :class="tone(a)"
-                :title="`${stamp(a)} · ${label(a)}`"
-                :aria-label="`${stamp(a)} ${label(a)}`"
-                @click="inspected = a"
-              >
-                {{ tone(a) === 'good' ? '✓' : tone(a) === 'bad' ? '×' : '!' }}
+            <div class="card-meta-line">
+              <span class="meta-stat">
+                通过率 <b>{{ row.report.rate }}%</b> <small>({{ row.report.passed }}/{{ row.report.total }}次)</small>
+              </span>
+              <span v-if="row.report.changes > 0" class="meta-fluctuation">
+                ⚠️ 波动 {{ row.report.changes }} 次
+              </span>
+              <span class="meta-time">{{ stampRelative(row.report.latest!) }}</span>
+              <button type="button" class="btn-evidence-detail" @click="inspected = row.report.latest || null">
+                详情 →
               </button>
             </div>
+          </div>
 
-            <footer>
-              <span>旧 → 新 · {{ stamp(row.report.latest!) }}</span>
-              <button type="button" class="view-evidence-btn" @click="inspected = row.report.latest || null">查看依据 →</button>
-            </footer>
-
-            <p v-if="row.report.latest?.persistence_state !== 'saved'" class="save-warning">
-              本次结果尚未保存。<button type="button" @click="emit('detail', row.node)">打开详情处理 →</button>
-            </p>
-
-            <div v-if="row.report.latest?.rule.rule_version !== rule?.rule_version" class="outdated-card-note">
-              <span>旧版规则历史结果 (v{{ row.report.latest?.rule.rule_version }})</span>
-              <button type="button" class="inline-retest-link" :disabled="running" @click.stop="emit('run', [row.key])">以新规则重测 →</button>
-            </div>
-          </template>
-
-          <p v-else class="not-tested">
-            {{ partial[row.key]?.hasMore ? '已加载的历史中没有本项结果' : '勾选节点，点击上方“开始检测”或卡片右上角“⚡ 检测”开始。' }}
-          </p>
+          <!-- Untested State -->
+          <div v-else class="card-untested-v5">
+            <span>尚未检测本项服务</span>
+            <button type="button" class="btn-quick-run-inline" :disabled="running" @click.stop="emit('run', [row.key])">
+              立即探测
+            </button>
+          </div>
         </article>
       </div>
     </template>
 
-    <p v-if="!(viewMode === 'all' ? sortedOverviewRows.length : sortedRows.length)" class="results-empty">
-      {{ selected.length ? `已选 ${selected.length} 条线路，等待开始检测；结果会在这里出现。` : '选择好服务和节点，即可开始检测。' }}结果会显示每项服务的状态与失败原因。
-    </p>
-
-    <p v-if="overviewMeasured || measured.length" class="results-footnote">
-      {{ Object.values(partial).some(p => p.hasMore || !p.complete) ? '部分历史未完整加载，统计不是全量。' : '' }}一次通过不保证持续可用。出口变化仅比较相邻成功获取的 IP；Cloudflare 出口观察不等于目标网站实际看到的出口。
+    <p v-if="!(viewMode === 'all' ? filteredOverviewRows.length : filteredRows.length)" class="results-empty">
+      {{ selected.length ? `已选 ${selected.length} 条线路，等待开始检测；结果会在这里出现。` : '选择好服务和节点，即可开始检测。' }}
     </p>
 
     <section v-if="inspected" class="service-inspector" role="region" aria-label="服务检测记录">
@@ -678,88 +774,195 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
   cursor: not-allowed;
 }
 
-.result-summary {
-  display: flex;
-  align-items: center;
-  gap: 32px;
-  padding: 16px 0;
-  margin: 8px 0 14px;
-  border-bottom: 1px solid var(--border);
+.service-search-input {
+  padding: 5px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  color: var(--text-primary);
+  width: 170px;
+  transition: all 0.15s ease;
 }
-.result-summary > div {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  white-space: nowrap;
-}
-.result-summary strong {
-  font-size: 27px;
-}
-.result-summary span,
-.result-summary p {
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-.result-summary p {
-  margin-left: auto;
-  max-width: 420px;
-  line-height: 1.7;
+.service-search-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
 }
 
-.service-node-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 14px;
+.result-summary-v5 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 6px 0 12px;
 }
-.service-node {
+.summary-stat-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.stat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: var(--card-subtle);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 16px;
-  background: var(--card-bg);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  font-size: 11.5px;
+  color: var(--text-secondary);
 }
-.service-node.selected {
+.stat-pill b {
+  color: var(--text-primary);
+}
+.stat-pill.warn {
+  color: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.3);
+  background: rgba(245, 158, 11, 0.08);
+}
+.stat-pill.warn b {
+  color: #f59e0b;
+}
+
+.service-node-grid-v5 {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 10px;
+}
+
+.service-node-v5 {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 10px 14px;
+  background: var(--card-bg);
+  transition: all 0.15s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.service-node-v5:hover {
+  border-color: rgba(99, 102, 241, 0.4);
+}
+.service-node-v5.selected {
   border-color: var(--primary);
   box-shadow: inset 3px 0 var(--primary);
+  background: rgba(99, 102, 241, 0.03);
 }
-.service-node header {
+.service-node-v5.is-outdated {
+  border-left: 3px solid #fa8c16;
+}
+
+.card-header-v5 {
   display: flex;
   justify-content: space-between;
-  gap: 10px;
   align-items: center;
+  gap: 10px;
 }
-.service-node label {
+.card-node-info {
   display: flex;
-  gap: 10px;
   align-items: center;
+  gap: 8px;
   min-width: 0;
   cursor: pointer;
+  flex: 1;
 }
-.service-node label span {
+.card-flag {
+  font-size: 15px;
+  line-height: 1;
+}
+.card-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
 }
-.service-node label strong {
+.card-node-name {
   font-size: 13px;
-  display: block;
+  font-weight: 650;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text-primary);
 }
-.service-node small {
-  font-size: 10px;
-  color: var(--text-secondary);
-  display: block;
-  margin-top: 3px;
-}
-
-.node-header-actions {
+.card-tags-line {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+}
+.card-tag {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-weight: 550;
+  line-height: 1.2;
+}
+.card-tag.region {
+  background: rgba(14, 165, 233, 0.12);
+  color: #0284c7;
+}
+.card-tag.protocol {
+  background: rgba(99, 102, 241, 0.1);
+  color: #6366f1;
+}
+:root.dark .card-tag.region {
+  color: #38bdf8;
+}
+
+.card-actions-v5 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-shrink: 0;
 }
-.card-retest-btn {
+.outcome-badge-v5 {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
   padding: 3px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.outcome-badge-v5 .badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.outcome-badge-v5.good {
+  background: rgba(16, 185, 129, 0.12);
+  color: #10b981;
+}
+.outcome-badge-v5.good .badge-dot {
+  background: #10b981;
+  box-shadow: 0 0 4px #10b981;
+}
+.outcome-badge-v5.warn,
+.outcome-badge-v5.limited {
+  background: rgba(245, 158, 11, 0.12);
+  color: #f59e0b;
+}
+.outcome-badge-v5.warn .badge-dot,
+.outcome-badge-v5.limited .badge-dot {
+  background: #f59e0b;
+}
+.outcome-badge-v5.bad {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+}
+.outcome-badge-v5.bad .badge-dot {
+  background: #ef4444;
+}
+.outcome-badge-v5.unknown {
+  background: var(--card-subtle);
+  color: var(--text-secondary);
+}
+.outcome-badge-v5.unknown .badge-dot {
+  background: var(--text-muted);
+}
+
+.card-retest-btn-v5 {
+  padding: 3px 9px;
   font-size: 11px;
   font-weight: 600;
   border-radius: 5px;
@@ -768,169 +971,123 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
   color: var(--text-primary);
   cursor: pointer;
   transition: all 0.15s ease;
+  white-space: nowrap;
 }
-.card-retest-btn:hover:not(:disabled) {
+.card-retest-btn-v5:hover:not(:disabled) {
   border-color: var(--primary);
-  background: var(--primary-subtle);
-  color: var(--primary);
+  background: var(--primary);
+  color: white;
 }
-.card-retest-btn:disabled {
+.card-retest-btn-v5:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 
-.outcome {
-  font-size: 10px;
-  padding: 4px 7px;
-  border-radius: 5px;
-  flex-shrink: 0;
-  max-width: 125px;
-}
-.good {
-  color: var(--success);
-  background: var(--success-bg);
-}
-.limited {
-  color: var(--warning);
-  background: var(--warning-bg);
-}
-.bad {
-  color: var(--danger);
-  background: var(--danger-bg);
-}
-.unknown {
-  color: var(--text-secondary);
-  background: var(--card-subtle);
-}
-
-.service-score {
+.card-body-v5 {
   display: flex;
-  gap: 12px;
-  align-items: center;
-  margin: 18px 0 12px;
-}
-.service-score > strong {
-  font-size: 34px;
-  background: none;
-  letter-spacing: -1px;
-}
-.service-score strong small {
-  display: inline;
-  font-size: 16px;
-  color: inherit;
-}
-.service-score > span {
-  font-size: 11px;
-  color: var(--text-secondary);
-  line-height: 1.8;
-}
-.service-score > div {
-  margin-left: auto;
-  display: grid;
+  flex-direction: column;
   gap: 5px;
-  font-size: 10px;
+  border-top: 1px dashed var(--border);
+  padding-top: 6px;
 }
-.service-conclusion {
-  font-size: 11px;
-  color: var(--text-secondary);
-  line-height: 1.6;
-  min-height: 34px;
-}
-.status-history {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-  margin: 10px 0;
-}
-.status-history button {
-  width: 22px;
-  height: 25px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: 750;
-  border: none;
-  cursor: pointer;
-}
-.service-node footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 10px;
-  color: var(--text-secondary);
-  margin-top: 8px;
-}
-.view-evidence-btn {
-  background: none;
-  border: none;
-  color: var(--primary);
-  cursor: pointer;
-  font-size: 10px;
-  padding: 0;
-}
-.view-evidence-btn:hover {
-  text-decoration: underline;
-}
-.not-tested {
-  font-size: 11px;
-  color: var(--text-secondary);
-  margin: 14px 0 0;
-  line-height: 1.6;
-}
-.results-footnote {
-  font-size: 11px;
-  line-height: 1.8;
-  color: var(--text-secondary);
-  margin-top: 20px;
-}
-.results-empty {
-  padding: 40px 20px;
-  text-align: center;
-  background: var(--card-subtle);
-  border-radius: 8px;
-  font-size: 13px;
-  line-height: 1.8;
-  color: var(--text-secondary);
-  margin-top: 16px;
-}
-.save-warning {
-  font-size: 11px;
-  color: var(--warning);
-}
-.save-warning button {
-  background: none;
-  border: none;
-  color: var(--primary);
-  cursor: pointer;
-}
-
-.outdated-card-note {
-  margin-top: 8px;
-  padding: 6px 10px;
-  background: #fffbe6;
-  border: 1px solid #ffe58f;
-  border-radius: 6px;
+.card-evidence-line {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 6px;
-  font-size: 10px;
-  color: #874d00;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-:root.dark .outdated-card-note {
-  background: #2b2111;
-  border-color: #594214;
+.pill-model {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(99, 102, 241, 0.12);
+  color: #6366f1;
+  flex-shrink: 0;
+}
+.pill-duration {
+  font-size: 10.5px;
+  font-family: monospace;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.pill-outdated {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #ffe58f;
+  color: #874d00;
+  flex-shrink: 0;
+}
+:root.dark .pill-outdated {
+  background: #594214;
   color: #ffd591;
 }
-.inline-retest-link {
+.evidence-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-meta-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  color: var(--text-secondary);
+}
+.meta-stat b {
+  color: var(--text-primary);
+}
+.meta-fluctuation {
+  color: #f59e0b;
+  font-weight: 600;
+}
+.meta-time {
+  margin-left: auto;
+}
+.btn-evidence-detail {
   background: none;
   border: none;
-  color: #fa8c16;
-  font-weight: 700;
+  color: var(--primary);
+  font-size: 10.5px;
   cursor: pointer;
   padding: 0;
 }
-.inline-retest-link:hover {
+.btn-evidence-detail:hover {
   text-decoration: underline;
+}
+
+.card-untested-v5 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.btn-quick-run-inline {
+  background: none;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 10.5px;
+  color: var(--primary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-quick-run-inline:hover:not(:disabled) {
+  background: var(--primary-subtle);
+  border-color: var(--primary);
 }
 
 .service-inspector {
@@ -1007,91 +1164,119 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
   border: 1px solid var(--border);
   border-radius: 11px;
 }
-.overview-row {
+.overview-row-v5 {
   display: grid;
-  grid-template-columns: minmax(160px, 210px) minmax(0, 1fr);
+  grid-template-columns: minmax(180px, 240px) 1fr;
   gap: 12px;
   align-items: center;
-  padding: 11px 13px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
 }
-.overview-row:last-child {
+.overview-row-v5:last-child {
   border-bottom: 0;
 }
-.overview-row > label {
+.overview-node-label {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
-  font-size: 12px;
   cursor: pointer;
 }
-.overview-row > label span {
+.overview-flag {
+  font-size: 14px;
+}
+.overview-node-text {
   min-width: 0;
 }
-.overview-row > label strong {
+.overview-node-text strong {
   display: block;
+  font-size: 12.5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.overview-row > label small {
+.overview-node-text small {
   display: block;
-  margin-top: 3px;
   color: var(--text-secondary);
-  font-size: 10px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 10.5px;
 }
-.overview-services {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 7px;
-}
-.overview-service {
+
+.overview-services-v5 {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
-  border: 1px solid currentColor;
-  border-radius: 8px;
-  padding: 6px 9px;
-  font-size: 11px;
-  text-align: left;
-  background: var(--card-bg);
-  cursor: pointer;
 }
-.overview-service span {
-  font-weight: 750;
-}
-.overview-service strong {
-  font-size: 11px;
-}
-.overview-service small {
-  opacity: 0.8;
-}
-.overview-service em {
-  font-style: normal;
-  font-size: 10px;
-  color: var(--text-secondary);
+.overview-service-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 6px;
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 1px 4px;
+  background: var(--card-bg);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
 }
-.overview-service .overview-reason {
-  flex-basis: 100%;
-  line-height: 1.35;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.overview-service-pill:hover {
+  transform: translateY(-1px);
+  border-color: var(--primary);
+}
+.overview-service-pill .pill-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+.overview-service-pill.good {
+  border-color: rgba(16, 185, 129, 0.3);
+  background: rgba(16, 185, 129, 0.08);
+  color: #10b981;
+}
+.overview-service-pill.good .pill-dot {
+  background: #10b981;
+}
+.overview-service-pill.warn,
+.overview-service-pill.limited {
+  border-color: rgba(245, 158, 11, 0.3);
+  background: rgba(245, 158, 11, 0.08);
+  color: #f59e0b;
+}
+.overview-service-pill.warn .pill-dot,
+.overview-service-pill.limited .pill-dot {
+  background: #f59e0b;
+}
+.overview-service-pill.bad {
+  border-color: rgba(239, 68, 68, 0.25);
+  background: rgba(239, 68, 68, 0.08);
+  color: #ef4444;
+}
+.overview-service-pill.bad .pill-dot {
+  background: #ef4444;
+}
+.overview-service-pill.unknown,
+.overview-service-pill.untested {
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+.overview-service-pill.unknown .pill-dot,
+.overview-service-pill.untested .pill-dot {
+  background: var(--text-muted);
+}
+.overview-service-pill .svc-name {
+  color: var(--text-secondary);
+}
+.overview-service-pill .svc-dur {
+  color: var(--text-muted);
+  font-size: 9.5px;
+  font-family: monospace;
 }
 .node-quick-test-btn {
-  padding: 5px 10px;
+  padding: 4px 8px;
   font-size: 11px;
   font-weight: 600;
-  border-radius: 6px;
+  border-radius: 5px;
   border: 1px solid var(--border);
   background: var(--card-subtle);
   color: var(--text-primary);
@@ -1102,16 +1287,6 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
 .node-quick-test-btn:hover:not(:disabled) {
   border-color: var(--primary);
   background: var(--primary-subtle);
-  color: var(--primary);
-}
-.service-stage,
-.service-sample-warning {
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--text-secondary);
-  margin: 5px 0;
-}
-.service-stage {
   color: var(--primary);
 }
 

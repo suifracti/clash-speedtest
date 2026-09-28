@@ -121,6 +121,188 @@ function toggleAllExpanded() {
   allNodesExpanded.value = !allNodesExpanded.value
 }
 
+interface NodeUnlockPill {
+  id: string
+  name: string
+  status: 'good' | 'bad' | 'warn' | 'untested' | 'testing'
+  label: string
+  title: string
+}
+
+const activePillTestingKey = ref<string>('')
+
+function nodeCompactUnlockPills(key: string): NodeUnlockPill[] {
+  const coreServices = [
+    { id: 'antigravity', name: '反重力' },
+    { id: 'chatgpt_web', name: 'ChatGPT' },
+    { id: 'youtube_premium', name: 'YouTube' },
+    { id: 'netflix_unlock', name: 'Netflix' },
+  ]
+
+  const liveMap = serviceResultsByKey.value[key]
+  const history = serviceHistoryByKey.value[key]
+
+  return coreServices.map(svc => {
+    if (activePillTestingKey.value === `${key}:${svc.id}`) {
+      return {
+        id: svc.id,
+        name: svc.name,
+        status: 'testing',
+        label: '检测中…',
+        title: `${svc.name}：正在通过该节点探测可用性…`,
+      }
+    }
+
+    const live = liveMap?.[svc.id]
+    const latestAttempt = history
+      ?.filter(a => a.service_id === svc.id)
+      .sort((a, b) => Date.parse(b.result?.finished_at || b.finished_at || b.requested_at) - Date.parse(a.result?.finished_at || a.finished_at || a.requested_at))[0]
+
+    const outcome = live?.outcome || latestAttempt?.result?.outcome
+
+    if (!outcome) {
+      return {
+        id: svc.id,
+        name: svc.name,
+        status: 'untested',
+        label: '未测',
+        title: `${svc.name}：尚未检测 (点击直接检测)`,
+      }
+    }
+
+    if (['matched', 'unlocked', 'reachable', 'profiled'].includes(outcome)) {
+      let label = '可用'
+      if (svc.id === 'antigravity') label = '已回答'
+      else if (svc.id === 'youtube_premium') label = '解锁'
+      else if (svc.id === 'netflix_unlock') label = '完整'
+      return {
+        id: svc.id,
+        name: svc.name,
+        status: 'good',
+        label,
+        title: `${svc.name}：${serviceOutcomeLabel(outcome)} (点击重新检测)`,
+      }
+    }
+
+    if (['challenge', 'rate_limited', 'originals_only', 'region_limited'].includes(outcome)) {
+      let label = '受限'
+      if (outcome === 'challenge') label = '有盾'
+      else if (outcome === 'rate_limited') label = '限流'
+      else if (outcome === 'originals_only') label = '自制剧'
+      return {
+        id: svc.id,
+        name: svc.name,
+        status: 'warn',
+        label,
+        title: `${svc.name}：${serviceOutcomeLabel(outcome)} (点击重新检测)`,
+      }
+    }
+
+    let label = '不可用'
+    if (outcome === 'timed_out') label = '超时'
+    else if (outcome === 'region_blocked') label = '锁区'
+    else if (outcome === 'credentials_required') label = '需绑定'
+    else if (outcome === 'unknown' && latestAttempt?.rule.rule_version && latestAttempt.rule.rule_version < 5) label = '旧规则'
+
+    return {
+      id: svc.id,
+      name: svc.name,
+      status: 'bad',
+      label,
+      title: `${svc.name}：${serviceOutcomeLabel(outcome)} (点击重新检测)`,
+    }
+  })
+}
+
+async function triggerQuickServiceTest(node: MonitorNodeOption, serviceId: string): Promise<void> {
+  const key = scopeKey(node)
+  activePillTestingKey.value = `${key}:${serviceId}`
+  try {
+    const reqId = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `svc-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    const created = await api.startWorkbenchPublicServiceTest({
+      request_id: reqId,
+      profile_id: node.profileId,
+      node_key: node.nodeKey,
+      node_identity_key: node.nodeIdentityKey,
+      config_revision_key: node.configRevisionKey,
+      service_id: serviceId,
+      timeout_seconds: 15,
+    })
+    const query: WorkbenchPublicServiceHistoryQuery = {
+      profile_id: node.profileId,
+      node_key: node.nodeKey,
+      node_identity_key: node.nodeIdentityKey,
+      config_revision_key: node.configRevisionKey,
+      service_id: serviceId,
+    }
+    let polled = created
+    const pollStart = Date.now()
+    const maxWaitMs = 20 * 1000
+    while (Date.now() - pollStart < maxWaitMs) {
+      await new Promise((r) => setTimeout(r, 400))
+      polled = await api.fetchWorkbenchPublicServiceAttempt(created.attempt_id, query)
+      if (!['queued', 'running', 'cancelling'].includes(polled.execution_state) && polled.persistence_state !== 'saving') {
+        break
+      }
+    }
+    upsertProjectAttempt(key, polled)
+    if (polled.result) {
+      const nodeMap = serviceResultsByKey.value[key] || {}
+      serviceResultsByKey.value = {
+        ...serviceResultsByKey.value,
+        [key]: {
+          ...nodeMap,
+          [serviceId]: {
+            outcome: polled.result.outcome,
+            durationMs: polled.result.duration_ms,
+            httpStatus: polled.result.http_status,
+            timestamp: polled.result.finished_at,
+          },
+        },
+      }
+    }
+  } catch (err) {
+    console.error('Quick service test failed:', err)
+  } finally {
+    if (activePillTestingKey.value === `${key}:${serviceId}`) {
+      activePillTestingKey.value = ''
+    }
+  }
+}
+
+let preloadRequestID = 0
+async function preloadPublicServiceHistories(nodes: MonitorNodeOption[]): Promise<void> {
+  const reqId = ++preloadRequestID
+  const toFetch = nodes.filter(n => !serviceHistoryByKey.value[scopeKey(n)])
+  if (!toFetch.length) return
+  let idx = 0
+  const worker = async () => {
+    while (idx < toFetch.length && reqId === preloadRequestID) {
+      const node = toFetch[idx++]
+      const key = scopeKey(node)
+      try {
+        const page = await api.fetchWorkbenchPublicServiceHistory({
+          profile_id: node.profileId,
+          node_key: node.nodeKey,
+          node_identity_key: node.nodeIdentityKey,
+          config_revision_key: node.configRevisionKey,
+          limit: 25,
+        })
+        if (reqId !== preloadRequestID) return
+        if (page.attempts?.length) {
+          serviceHistoryByKey.value = {
+            ...serviceHistoryByKey.value,
+            [key]: mergeProjectHistory(page.attempts, serviceHistoryByKey.value[key] || []),
+          }
+        }
+      } catch {
+        // background silent preload
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(8, toFetch.length) }, worker))
+}
+
 function nodeCompactMetrics(key: string) {
   const isCurrentlyTesting = isTesting(key)
   const test = latestTestForKey(key)
@@ -137,8 +319,6 @@ function nodeCompactMetrics(key: string) {
       connectivityClass: 'warning' as const,
       lossRateText: '',
       lossRateClass: 'zero' as const,
-      jitterText: '',
-      jitterClass: 'good' as const,
       speedText: null,
     }
   }
@@ -153,24 +333,31 @@ function nodeCompactMetrics(key: string) {
       connectivityClass: 'nodata' as const,
       lossRateText: '',
       lossRateClass: 'zero' as const,
-      jitterText: '',
-      jitterClass: 'good' as const,
       speedText: null,
     }
   }
 
-  // 1. Latency & badge
+  // 1. Latency & badge with intuitive thresholds
   const latencyMs = test?.latency_ms ?? (report?.p50 ?? null)
   let latencyText = '未测试'
   let latencyClass: 'fast' | 'medium' | 'slow' | 'fail' | 'nodata' = 'nodata'
   if (test?.status === 'failed' || (latencyMs !== null && latencyMs <= 0)) {
-    latencyText = '超时失败'
+    latencyText = '超时'
     latencyClass = 'fail'
   } else if (latencyMs !== null) {
-    latencyText = `${latencyMs} ms`
-    if (latencyMs < 150) latencyClass = 'fast'
-    else if (latencyMs < 300) latencyClass = 'medium'
-    else latencyClass = 'slow'
+    if (latencyMs < 150) {
+      latencyText = `${latencyMs} ms 极快`
+      latencyClass = 'fast'
+    } else if (latencyMs < 300) {
+      latencyText = `${latencyMs} ms 良好`
+      latencyClass = 'medium'
+    } else if (latencyMs < 800) {
+      latencyText = `${latencyMs} ms 较慢`
+      latencyClass = 'slow'
+    } else {
+      latencyText = `${latencyMs} ms 高延迟`
+      latencyClass = 'slow'
+    }
   }
 
   // 2. Connectivity
@@ -203,41 +390,32 @@ function nodeCompactMetrics(key: string) {
     }
   }
 
-  // 3. Loss Rate
+  // 3. Loss Rate (Clear percentage)
   let lossRateText = ''
   let lossRateClass: 'zero' | 'low' | 'high' = 'zero'
+  let lossVal = 0
+  let hasLossCalc = false
   if (suite && suite.count > 0) {
-    const loss = ((suite.count - suite.success) / suite.count) * 100
-    lossRateText = `丢包 ${loss.toFixed(1).replace(/\.0$/, '')}%`
-    lossRateClass = loss === 0 ? 'zero' : loss < 20 ? 'low' : 'high'
+    lossVal = ((suite.count - suite.success) / suite.count) * 100
+    hasLossCalc = true
   } else if (test && test.total_samples > 0) {
-    const loss = ((test.failure_samples || 0) / test.total_samples) * 100
-    lossRateText = `丢包 ${loss.toFixed(1).replace(/\.0$/, '')}%`
-    lossRateClass = loss === 0 ? 'zero' : loss < 20 ? 'low' : 'high'
+    lossVal = ((test.failure_samples || 0) / test.total_samples) * 100
+    hasLossCalc = true
   } else if (report && report.sampleCount > 0) {
-    const loss = (report.failCount / report.sampleCount) * 100
-    lossRateText = `丢包 ${loss.toFixed(1).replace(/\.0$/, '')}%`
-    lossRateClass = loss === 0 ? 'zero' : loss < 20 ? 'low' : 'high'
+    lossVal = (report.failCount / report.sampleCount) * 100
+    hasLossCalc = true
+  }
+  if (hasLossCalc) {
+    if (lossVal === 0) {
+      lossRateText = '0% 丢包'
+      lossRateClass = 'zero'
+    } else {
+      lossRateText = `${lossVal.toFixed(1).replace(/\.0$/, '')}% 丢包`
+      lossRateClass = lossVal < 20 ? 'low' : 'high'
+    }
   }
 
-  // 4. Jitter / P95
-  let jitterText = ''
-  let jitterClass: 'good' | 'warn' = 'good'
-  if (report?.p95 !== null && report?.p95 !== undefined && report?.p50 !== null && report?.p50 !== undefined) {
-    const diff = Math.max(0, report.p95 - report.p50)
-    jitterText = `P95 ${report.p95}ms · 抖动 ±${diff}ms`
-    jitterClass = diff > 80 ? 'warn' : 'good'
-  } else if (test?.jitter_ms) {
-    jitterText = `抖动 ±${Math.round(test.jitter_ms)}ms`
-    jitterClass = test.jitter_ms > 80 ? 'warn' : 'good'
-  } else if (report?.p95 !== null && report?.p95 !== undefined) {
-    jitterText = `P95 ${report.p95}ms`
-    jitterClass = 'good'
-  } else if (report?.trendText) {
-    jitterText = report.trendText
-  }
-
-  // 5. Download speed
+  // 4. Download speed
   const dl = downloadResultByKey.value[key]
   const speedText = dl ? `↓ ${dl.speedMbps} Mbps` : null
 
@@ -250,8 +428,6 @@ function nodeCompactMetrics(key: string) {
     connectivityClass,
     lossRateText,
     lossRateClass,
-    jitterText,
-    jitterClass,
     speedText,
   }
 }
@@ -1369,9 +1545,9 @@ async function loadOptions(): Promise<void> {
     const canonical = canonicalOptions.value
     const validKeys = new Set(canonical.map(scopeKey))
     selectedKeys.value = selectedKeys.value.filter((key) => validKeys.has(key))
-    if (focusedKey.value && !validKeys.has(focusedKey.value)) { focusedKey.value = ''; detailTest.value = null }
     await loadHistories(canonical)
     if (activeProject.value !== 'latency') void loadProjectHistories(canonical)
+    void preloadPublicServiceHistories(canonical)
     await loadRecentBatches()
   } catch (error) {
     if (requestID === optionsRequestID) optionsError.value = messageFor(error)
@@ -1470,8 +1646,6 @@ async function loadProjectHistories(nodes = options.value): Promise<void> {
   const window = activeWindow.value
   projectHistoryStateByKey.value = Object.fromEntries(nodes.map((node) => [scopeKey(node), 'loading' as HistoryLoadState]))
   projectHistoryMetaByKey.value = {}
-  if (project === 'throughput') downloadHistoryByKey.value = {}
-  else serviceHistoryByKey.value = {}
 
   // A project tab is allowed to read history, never to initiate measurements.
   // Bound the existing per-node API fan-out so dozens of rows do not flood the UI/server.
@@ -1506,7 +1680,7 @@ async function loadProjectHistories(nodes = options.value): Promise<void> {
       }
     }
   }
-  await Promise.all(Array.from({ length: Math.min(4, nodes.length) }, worker))
+  await Promise.all(Array.from({ length: Math.min(10, nodes.length) }, worker))
 }
 
 function upsertProjectAttempt(key: string, attempt: WorkbenchDownloadAttempt | WorkbenchPublicServiceAttempt): void {
@@ -2958,7 +3132,7 @@ onUnmounted(() => {
                 <strong>{{ nodeCompactMetrics(scopeKey(node)).latencyText }}</strong>
               </div>
               <span
-                v-if="nodeCompactMetrics(scopeKey(node)).hasData"
+                v-if="nodeCompactMetrics(scopeKey(node)).hasData && nodeCompactMetrics(scopeKey(node)).connectivityText"
                 class="compact-metric-pill connectivity"
                 :class="nodeCompactMetrics(scopeKey(node)).connectivityClass"
                 title="六站探测连通性"
@@ -2974,20 +3148,28 @@ onUnmounted(() => {
                 {{ nodeCompactMetrics(scopeKey(node)).lossRateText }}
               </span>
               <span
-                v-if="nodeCompactMetrics(scopeKey(node)).jitterText"
-                class="compact-metric-pill jitter"
-                :class="nodeCompactMetrics(scopeKey(node)).jitterClass"
-                :title="nodeCompactMetrics(scopeKey(node)).jitterText"
-              >
-                {{ nodeCompactMetrics(scopeKey(node)).jitterText }}
-              </span>
-              <span
                 v-if="nodeCompactMetrics(scopeKey(node)).speedText"
                 class="composite-badge download"
                 :title="`最新下载测速：${nodeCompactMetrics(scopeKey(node)).speedText}`"
               >
                 {{ nodeCompactMetrics(scopeKey(node)).speedText }}
               </span>
+              <div class="compact-unlock-pills" title="核心服务可用性（点击直接探测）">
+                <button
+                  v-for="pill in nodeCompactUnlockPills(scopeKey(node))"
+                  :key="pill.id"
+                  type="button"
+                  class="compact-unlock-pill"
+                  :class="pill.status"
+                  :disabled="pill.status === 'testing'"
+                  :title="pill.title"
+                  @click.stop="triggerQuickServiceTest(node, pill.id)"
+                >
+                  <span class="pill-dot"></span>
+                  <span class="pill-name">{{ pill.name }}</span>
+                  <span class="pill-label">{{ pill.label }}</span>
+                </button>
+              </div>
             </div>
             <div class="compact-cell-actions">
               <button type="button" class="row-action-btn" :disabled="batchBusy" @click.stop="runTest([scopeKey(node)])">⚡ 测速</button>
