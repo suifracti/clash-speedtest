@@ -468,7 +468,7 @@ export async function fetchWorkbenchLatencyHistories(queries: WorkbenchLatencyHi
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ since, until, limit, target_id, nodes: queries.map(({ profile_id, node_key, node_identity_key, config_revision_key }) => ({ profile_id, node_key, node_identity_key, config_revision_key })) }),
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(60000),
   })
   if (!res.ok) throw new Error(await res.text())
   return res.json()

@@ -1304,27 +1304,65 @@ func (s *Server) handleListWorkbenchLatencyTestsBatch(w http.ResponseWriter, r *
 		writeError(w, http.StatusBadRequest, "history batch requires 1-200 nodes and limit 1-100")
 		return
 	}
-	results := make([]application.WorkbenchLatencyHistoryResult, 0, len(request.Nodes))
-	for _, node := range request.Nodes {
-		result, err := s.app.ListWorkbenchLatencyTests(r.Context(), application.WorkbenchLatencyHistoryQuery{
-			TargetID:          request.TargetID,
-			ProfileID:         node.ProfileID,
-			NodeKey:           node.NodeKey,
-			NodeIdentityKey:   node.NodeIdentityKey,
-			ConfigRevisionKey: node.ConfigRevisionKey,
-			Since:             &request.Since,
-			Until:             &request.Until,
-			Limit:             request.Limit,
-		})
-		if err != nil {
-			if monitor.IsValidationError(err) {
-				writeError(w, http.StatusBadRequest, err.Error())
-			} else {
-				writeError(w, http.StatusInternalServerError, err.Error())
+	results := make([]application.WorkbenchLatencyHistoryResult, len(request.Nodes))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 10)
+	var firstErr error
+	var errMu sync.Mutex
+
+	for i, node := range request.Nodes {
+		wg.Add(1)
+		go func(idx int, n struct {
+			ProfileID         string `json:"profile_id"`
+			NodeKey           string `json:"node_key"`
+			NodeIdentityKey   string `json:"node_identity_key"`
+			ConfigRevisionKey string `json:"config_revision_key"`
+		}) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-r.Context().Done():
+				return
 			}
-			return
+
+			errMu.Lock()
+			if firstErr != nil {
+				errMu.Unlock()
+				return
+			}
+			errMu.Unlock()
+
+			result, err := s.app.ListWorkbenchLatencyTests(r.Context(), application.WorkbenchLatencyHistoryQuery{
+				TargetID:          request.TargetID,
+				ProfileID:         n.ProfileID,
+				NodeKey:           n.NodeKey,
+				NodeIdentityKey:   n.NodeIdentityKey,
+				ConfigRevisionKey: n.ConfigRevisionKey,
+				Since:             &request.Since,
+				Until:             &request.Until,
+				Limit:             request.Limit,
+			})
+			if err != nil {
+				errMu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				errMu.Unlock()
+				return
+			}
+			results[idx] = result
+		}(i, node)
+	}
+	wg.Wait()
+
+	if firstErr != nil {
+		if monitor.IsValidationError(firstErr) {
+			writeError(w, http.StatusBadRequest, firstErr.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, firstErr.Error())
 		}
-		results = append(results, result)
+		return
 	}
 	writeJSON(w, http.StatusOK, results)
 }

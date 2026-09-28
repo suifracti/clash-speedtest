@@ -387,7 +387,7 @@ func migrateSchema(db *sql.DB) error {
 		version = 7
 	}
 	if version == 7 {
-		if _, err := tx.Exec("ALTER TABLE workbench_latency_batches ADD COLUMN target_id TEXT NOT NULL DEFAULT ''"); err != nil {
+		if _, err := tx.Exec("ALTER TABLE workbench_latency_batches ADD COLUMN target_id TEXT NOT NULL DEFAULT ''"); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return fmt.Errorf("migrate latency target: %w", err)
 		}
 		if _, err := tx.Exec("UPDATE schema_meta SET schema_version = 8 WHERE singleton = 1"); err != nil {
@@ -396,7 +396,7 @@ func migrateSchema(db *sql.DB) error {
 		version = 8
 	}
 	if version == 8 {
-		if _, err := tx.Exec("ALTER TABLE workbench_latency_samples ADD COLUMN target TEXT NOT NULL DEFAULT ''"); err != nil {
+		if _, err := tx.Exec("ALTER TABLE workbench_latency_samples ADD COLUMN target TEXT NOT NULL DEFAULT ''"); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return err
 		}
 		if _, err := tx.Exec("UPDATE schema_meta SET schema_version = 9 WHERE singleton = 1"); err != nil {
@@ -1384,12 +1384,12 @@ func (d *DB) QueryLatencyTests(ctx context.Context, filter LatencyTestFilter) (*
 		// Scope attempts by raw sample timestamps before applying LIMIT. An
 		// attempt may straddle the boundary and remains eligible when any raw
 		// sample belongs to the requested half-open interval.
-		where += ` AND EXISTS (
+		where += ` AND t.finished_at >= ? AND EXISTS (
 			SELECT 1 FROM workbench_latency_samples AS ws
 			WHERE ws.attempt_id = t.attempt_id
 			  AND ws.timestamp >= ? AND ws.timestamp < ?
 		)`
-		args = append(args, *since, *until)
+		args = append(args, *since, *since, *until)
 	}
 	if (filter.BeforeFinishedAt == nil) != (filter.BeforeAttemptID == "") {
 		return nil, fmt.Errorf("latency history cursor requires before_finished_at and before_attempt_id")
