@@ -765,7 +765,7 @@ function answerTestPlan(confirmed: boolean) {
 }
 onUnmounted(() => answerTestPlan(false))
 const barServiceTimeout = ref(10)
-const barServiceRepeatCount = ref(1)
+const barServiceRepeatCount = ref(3)
 
 const barServiceOptions = computed<UiSelectOption[]>(() => publicServiceCatalog.value.length
   ? publicServiceCatalog.value.map(rule => ({ value: rule.service_id, label: `${rule.category || '服务'} · ${rule.name}` }))
@@ -861,6 +861,7 @@ const pillTooltipState = ref({
   y: 0,
   serviceName: '',
   serviceId: '',
+  nodeKey: '',
   nodeName: '',
   nodeFlag: '🌐',
   countryCode: '',
@@ -882,6 +883,7 @@ function onCompactPillHover(event: MouseEvent, node: MonitorNodeOption, pill: { 
     y: rect.top,
     serviceName: pill.name,
     serviceId: pill.id,
+    nodeKey,
     nodeName: node.displayName,
     nodeFlag: node.countryFlag || '🌐',
     countryCode: node.countryCode || '',
@@ -894,7 +896,40 @@ function onCompactPillLeave() {
   clearTimeout(pillTooltipTimer)
   pillTooltipTimer = setTimeout(() => {
     pillTooltipState.value.visible = false
-  }, 120)
+  }, 250)
+}
+
+function cancelHidePillTooltip() {
+  clearTimeout(pillTooltipTimer)
+}
+
+function handleCompactTooltipRetest(payload: { nodeKey: string; serviceId: string; repeatCount: number }) {
+  if (payload.nodeKey) {
+    void runServiceBatch({
+      keys: [payload.nodeKey],
+      serviceIds: [payload.serviceId],
+      repeatCount: payload.repeatCount || 3,
+    })
+  }
+}
+
+function compactPillSparkline(nodeKey: string, serviceId: string): string {
+  const attempts = (serviceHistoryByKey.value[nodeKey] || []).filter(a => a.service_id === serviceId && a.result && typeof a.result.duration_ms === 'number' && a.result.duration_ms > 0)
+  if (attempts.length < 2) return ''
+  const slice = [...attempts].sort((a, b) => Date.parse(a.result!.finished_at || '') - Date.parse(b.result!.finished_at || '')).slice(-5)
+  if (slice.length < 2) return ''
+  const durs = slice.map(s => s.result!.duration_ms!)
+  const min = Math.min(...durs)
+  const max = Math.max(...durs)
+  const range = max - min || 1
+  const w = 24
+  const h = 9
+  const pad = 1
+  return slice.map((s, idx) => {
+    const x = pad + (idx / (slice.length - 1)) * (w - pad * 2)
+    const y = (h - pad) - ((s.result!.duration_ms! - min) / range) * (h - pad * 2)
+    return `${idx === 0 ? 'M' : 'L'} ${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
 }
 
 function nodeFlappingInfo(key: string): { isFlapping: boolean; exitIPs: string[]; reason: string } {
@@ -931,7 +966,7 @@ const compositeDownloadMaxMiB = ref(20)
 const compositeDownloadTimeout = ref(10)
 
 const compositeIncludeService = ref(true)
-const compositeServiceRepeatCount = ref(1)
+const compositeServiceRepeatCount = ref(3)
 const compositeSelectedServices = ref<string[]>(['cloudflare_204', 'google_204', 'github_api_root'])
 const compositeServiceTimeout = ref(10)
 
@@ -2658,7 +2693,7 @@ function onServiceSelectedFromComparison(serviceId: string): void {
   }
 }
 
-function handleRunServiceTest(keys?: string[]): void {
+function handleRunServiceTest(keys?: string[], repeatCount?: number): void {
   const targetKeys = keys && keys.length > 0 ? keys : selectedKeys.value.length > 0 ? selectedKeys.value : comparisonRows.value.map(r => r.key)
   if (!targetKeys.length || compositeRunning.value || batchBusy.value) return
   if (keys && keys.length > 0) {
@@ -2667,9 +2702,10 @@ function handleRunServiceTest(keys?: string[]): void {
   const svcs = (barServiceId.value && selectedServiceIds.value.includes(barServiceId.value))
     ? [barServiceId.value]
     : (selectedServiceIds.value.length ? selectedServiceIds.value : [barServiceId.value || 'antigravity'])
+  const count = repeatCount && repeatCount > 0 ? repeatCount : (barServiceRepeatCount.value || 3)
   void runServiceBatch({
     serviceIds: svcs,
-    repeatCount: barServiceRepeatCount.value,
+    repeatCount: count,
     timeoutSeconds: barServiceTimeout.value,
   })
 }
@@ -3687,6 +3723,21 @@ onUnmounted(() => {
                   <span class="pill-dot"></span>
                   <span class="pill-name">{{ pill.name }}</span>
                   <span class="pill-label">{{ pill.label }}</span>
+                  <svg
+                    v-if="compactPillSparkline(scopeKey(node), pill.id)"
+                    class="pill-inline-sparkline"
+                    viewBox="0 0 24 9"
+                    aria-hidden="true"
+                  >
+                    <path
+                      :d="compactPillSparkline(scopeKey(node), pill.id)"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.3"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
                 </button>
                 <div v-if="nodeGroupedUnlockPills(scopeKey(node)).remaining.length > 0" class="more-pills-wrapper">
                   <button
@@ -3723,6 +3774,21 @@ onUnmounted(() => {
                         <span class="pill-dot"></span>
                         <span class="pill-name">{{ pill.name }}</span>
                         <span class="pill-label">{{ pill.label }}</span>
+                        <svg
+                          v-if="compactPillSparkline(scopeKey(node), pill.id)"
+                          class="pill-inline-sparkline"
+                          viewBox="0 0 24 9"
+                          aria-hidden="true"
+                        >
+                          <path
+                            :d="compactPillSparkline(scopeKey(node), pill.id)"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.3"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          />
+                        </svg>
                       </button>
                     </div>
                     <div class="more-pills-footer">
@@ -3781,6 +3847,21 @@ onUnmounted(() => {
                   <span class="pill-dot"></span>
                   <span class="pill-name">{{ pill.name }}</span>
                   <span class="pill-label">{{ pill.label }}</span>
+                  <svg
+                    v-if="compactPillSparkline(scopeKey(node), pill.id)"
+                    class="pill-inline-sparkline"
+                    viewBox="0 0 24 9"
+                    aria-hidden="true"
+                  >
+                    <path
+                      :d="compactPillSparkline(scopeKey(node), pill.id)"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.3"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
                 </button>
               </div>
             </span>
@@ -4642,11 +4723,15 @@ onUnmounted(() => {
       :y="pillTooltipState.y"
       :service-name="pillTooltipState.serviceName"
       :service-id="pillTooltipState.serviceId"
+      :node-key="pillTooltipState.nodeKey"
       :node-name="pillTooltipState.nodeName"
       :node-flag="pillTooltipState.nodeFlag"
       :country-code="pillTooltipState.countryCode"
       :history="pillTooltipState.history"
       :rule-evidence="pillTooltipState.ruleEvidence"
+      @keep-open="cancelHidePillTooltip"
+      @request-close="onCompactPillLeave"
+      @retest="handleCompactTooltipRetest"
     />
   </main>
 </template>

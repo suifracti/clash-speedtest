@@ -22,7 +22,7 @@ const emit = defineEmits<{
   (e: 'toggle', key: string): void
   (e: 'service', id: string): void
   (e: 'detail', node: MonitorNodeOption): void
-  (e: 'run', keys?: string[]): void
+  (e: 'run', keys?: string[], repeatCount?: number): void
   (e: 'select-all', keys: string[]): void
   (e: 'clear-selection'): void
   (e: 'back-to-picker'): void
@@ -306,7 +306,39 @@ const outdatedVersion = computed(() => outdatedRows.value[0]?.report.latest?.rul
 
 function retestOutdated() {
   const keys = outdatedRows.value.map(r => r.key)
-  emit('run', keys)
+  emit('run', keys, serviceRepeatCount.value)
+}
+
+const serviceRepeatCount = ref<number>(
+  Number(readPersistedStorage<number>('speedtest.service-comparison-repeat-count', 3)) || 3,
+)
+watch(serviceRepeatCount, (v) => writePersistedStorage('speedtest.service-comparison-repeat-count', String(v)))
+
+const serviceRepeatOptions = [
+  { value: 1, label: '测 1 次' },
+  { value: 2, label: '测 2 次' },
+  { value: 3, label: '测 3 次 (推荐)' },
+  { value: 5, label: '测 5 次' },
+  { value: 10, label: '测 10 次' },
+]
+
+function pillSparklinePath(samples?: WorkbenchPublicServiceAttempt[]): string {
+  if (!samples || samples.length < 2) return ''
+  const valid = samples.filter(s => s.result && typeof s.result.duration_ms === 'number' && s.result.duration_ms > 0)
+  if (valid.length < 2) return ''
+  const slice = valid.slice(-5)
+  const durs = slice.map(s => s.result!.duration_ms!)
+  const min = Math.min(...durs)
+  const max = Math.max(...durs)
+  const range = max - min || 1
+  const w = 26
+  const h = 10
+  const pad = 1
+  return slice.map((s, idx) => {
+    const x = pad + (idx / (slice.length - 1)) * (w - pad * 2)
+    const y = (h - pad) - ((s.result!.duration_ms! - min) / range) * (h - pad * 2)
+    return `${idx === 0 ? 'M' : 'L'} ${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
 }
 
 const selectedRegion = ref(readPersistedStorage('speedtest.service-comparison-region', '全部地区'))
@@ -397,13 +429,13 @@ const inspectedDriftInfo = computed(() => {
 
 function handleRetestInspected() {
   if (inspectedNodeKey.value) {
-    emit('run', [inspectedNodeKey.value])
+    emit('run', [inspectedNodeKey.value], serviceRepeatCount.value)
   } else if (inspected.value) {
     const matchEntry = Object.entries(props.records).find(([, attempts]) =>
       attempts.some(a => a.attempt_id === inspected.value?.attempt_id),
     )
     if (matchEntry) {
-      emit('run', [matchEntry[0]])
+      emit('run', [matchEntry[0]], serviceRepeatCount.value)
     }
   }
 }
@@ -415,6 +447,7 @@ const tooltipState = ref({
   y: 0,
   serviceName: '',
   serviceId: '',
+  nodeKey: '',
   nodeName: '',
   nodeFlag: '🌐',
   countryCode: '',
@@ -438,7 +471,17 @@ function hideTooltip() {
   clearTimeout(tooltipTimer)
   tooltipTimer = setTimeout(() => {
     tooltipState.value.visible = false
-  }, 120)
+  }, 250)
+}
+
+function cancelHideTooltip() {
+  clearTimeout(tooltipTimer)
+}
+
+function handleTooltipRetest(payload: { nodeKey: string; serviceId: string; repeatCount: number }) {
+  if (payload.nodeKey) {
+    emit('run', [payload.nodeKey], payload.repeatCount || serviceRepeatCount.value)
+  }
 }
 
 function handleOverviewPillEnter(
@@ -451,6 +494,7 @@ function handleOverviewPillEnter(
   showTooltip(rect.left + rect.width / 2, rect.top, {
     serviceName: item.service.label,
     serviceId: String(item.service.value),
+    nodeKey: row.key,
     nodeName: row.node.displayName,
     nodeFlag: row.node.countryFlag || '🌐',
     countryCode: row.node.countryCode || '',
@@ -468,6 +512,7 @@ function handleSingleCardEnter(
   showTooltip(rect.left + rect.width / 2, rect.top, {
     serviceName: rule.value ? serviceTitle(rule.value) : '公共服务',
     serviceId: focus.value,
+    nodeKey: row.key,
     nodeName: row.node.displayName,
     nodeFlag: row.node.countryFlag || '🌐',
     countryCode: row.node.countryCode || '',
@@ -552,7 +597,7 @@ function toggleSelectAllCurrent() {
 
 function handleRunBatch() {
   const keys = props.selected.length > 0 ? props.selected : currentKeys.value
-  emit('run', keys)
+  emit('run', keys, serviceRepeatCount.value)
 }
 
 function tone(a?: WorkbenchPublicServiceAttempt) {
@@ -714,6 +759,10 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
           <span class="tool-label">排序</span>
           <UiSelect v-model="sortBy" aria-label="排序服务结果" variant="compact" :options="sortOptions" />
         </div>
+        <div class="tool-select-group">
+          <span class="tool-label">轮数</span>
+          <UiSelect v-model="serviceRepeatCount" aria-label="服务单次检测轮数" variant="compact" :options="serviceRepeatOptions" />
+        </div>
         <label class="custom-toggle-label" :class="{ active: showAllNodes }" title="开启后显示未进行过该服务测试的节点">
           <input v-model="showAllNodes" type="checkbox">
           <span>含未测</span>
@@ -781,7 +830,7 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
               <button
                 type="button"
                 :class="['overview-service-pill', item.report.total ? tone(item.report.latest) : 'untested', { 'has-drift': hasFlappingOrDrift(item.report) }]"
-                :title="`${item.service.label}：${item.report.total ? label(item.report.latest) : '未检测'} · 点击深入查看`"
+                :title="`${item.service.label}：${item.report.total ? label(item.report.latest) : '未检测'} · 悬停查看走势与诊断`"
                 @mouseenter="handleOverviewPillEnter($event, row, item)"
                 @mouseleave="hideTooltip"
                 @click="inspected = item.report.latest || null; inspectedNodeKey = row.key"
@@ -789,12 +838,28 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
                 <span class="pill-dot"></span>
                 <span class="svc-name">{{ item.service.label.split(' ')[0] }}</span>
                 <strong class="svc-status">{{ item.report.total ? label(item.report.latest) : '未测' }}</strong>
+                <!-- Inline mini sparkline for service -->
+                <svg
+                  v-if="pillSparklinePath(item.report.samples)"
+                  class="pill-inline-sparkline"
+                  viewBox="0 0 26 10"
+                  aria-hidden="true"
+                >
+                  <path
+                    :d="pillSparklinePath(item.report.samples)"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
                 <small v-if="item.report.latest?.result?.duration_ms" class="svc-dur">{{ item.report.latest.result.duration_ms }}ms</small>
                 <span v-if="hasFlappingOrDrift(item.report)" class="pill-flapping-tag" title="检出多出口漂移或状态波动">⇄</span>
                 <span v-if="item.report.total > 0" class="service-score" style="display:none">{{ Math.round((item.report.passed / item.report.total) * 100) }}%</span>
               </button>
             </span>
-            <button type="button" class="node-quick-test-btn" :disabled="running" title="针对此节点立即执行检测" @click.stop="emit('run', [row.key])">
+            <button type="button" class="node-quick-test-btn" :disabled="running" title="针对此节点立即执行检测" @click.stop="emit('run', [row.key], serviceRepeatCount)">
               ⚡ 检测
             </button>
           </div>
@@ -855,7 +920,7 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
                 class="card-retest-btn-v5"
                 :disabled="running"
                 title="针对此节点立即执行本项检测"
-                @click.stop="emit('run', [row.key])"
+                @click.stop="emit('run', [row.key], serviceRepeatCount)"
               >
                 ⚡ 检测
               </button>
@@ -906,7 +971,7 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
           <!-- Untested State -->
           <div v-else class="card-untested-v5">
             <span>尚未检测本项服务</span>
-            <button type="button" class="btn-quick-run-inline" :disabled="running" @click.stop="emit('run', [row.key])">
+            <button type="button" class="btn-quick-run-inline" :disabled="running" @click.stop="emit('run', [row.key], serviceRepeatCount)">
               立即探测
             </button>
           </div>
@@ -1029,11 +1094,15 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
       :y="tooltipState.y"
       :service-name="tooltipState.serviceName"
       :service-id="tooltipState.serviceId"
+      :node-key="tooltipState.nodeKey"
       :node-name="tooltipState.nodeName"
       :node-flag="tooltipState.nodeFlag"
       :country-code="tooltipState.countryCode"
       :history="tooltipState.history"
       :rule-evidence="tooltipState.ruleEvidence"
+      @keep-open="cancelHideTooltip"
+      @request-close="hideTooltip"
+      @retest="handleTooltipRetest"
     />
   </div>
 </template>
@@ -2146,6 +2215,16 @@ function stamp(a: WorkbenchPublicServiceAttempt) {
   color: var(--text-muted);
   font-size: 9.5px;
   font-family: monospace;
+}
+.pill-inline-sparkline {
+  width: 26px;
+  height: 10px;
+  margin: 0 2px;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+.pill-inline-sparkline path {
+  vector-effect: non-scaling-stroke;
 }
 .node-quick-test-btn {
   padding: 4px 8px;

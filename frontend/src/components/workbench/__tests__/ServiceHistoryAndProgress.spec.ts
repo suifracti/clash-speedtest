@@ -83,7 +83,7 @@ describe('ServiceHistoryTooltip & Service Comparison Progress', () => {
     },
   }
 
-  it('renders rich hover tooltip with history comparison, delta latency, and IP drift detection', () => {
+  it('renders rich hover tooltip with history comparison, delta latency, and IP drift detection', async () => {
     const wrapper = mount(ServiceHistoryTooltip, {
       props: {
         visible: true,
@@ -120,9 +120,24 @@ describe('ServiceHistoryTooltip & Service Comparison Progress', () => {
     expect(wrapper.text()).toContain('测试历史记录 (2 次采样)')
     expect(wrapper.text()).toContain('本次')
     expect(wrapper.text()).toContain('上次')
+
+    // Assert retest action buttons inside tooltip
+    expect(wrapper.text()).toContain('⚡ 测1次')
+    expect(wrapper.text()).toContain('⚡ 连测3次')
+
+    // Trigger retest 3 times
+    const retest3Btn = wrapper.findAll('button').find(b => b.text().includes('连测3次'))
+    expect(retest3Btn).toBeDefined()
+    await retest3Btn!.trigger('click')
+    expect(wrapper.emitted('retest')).toBeTruthy()
+    expect(wrapper.emitted('retest')![0][0]).toEqual({
+      nodeKey: '',
+      serviceId: 'antigravity',
+      repeatCount: 3,
+    })
   })
 
-  it('opens centered modal inspector in ServiceComparison with drift panel and history table', async () => {
+  it('opens centered modal inspector in ServiceComparison with drift panel, sparkline, and repeat count', async () => {
     const rows = [
       {
         key: 'hk-1',
@@ -156,6 +171,16 @@ describe('ServiceHistoryTooltip & Service Comparison Progress', () => {
     // Verify row has drift badge
     expect(wrapper.get('.node-drift-badge').text()).toContain('⇄ 漂移')
     expect(wrapper.get('.pill-flapping-tag').text()).toContain('⇄')
+
+    // Verify inline sparkline exists inside overview service pill
+    expect(wrapper.find('.pill-inline-sparkline').exists()).toBe(true)
+
+    // Verify batch test emits repeat count (default 3)
+    const runAllBtn = wrapper.findAll('.tool-btn.primary').find(b => b.text().includes('⚡ 检测全部'))
+    expect(runAllBtn).toBeDefined()
+    await runAllBtn!.trigger('click')
+    expect(wrapper.emitted('run')).toBeTruthy()
+    expect(wrapper.emitted('run')![0]).toEqual([['hk-1'], 3])
 
     // Click the pill to open centered inspector
     await wrapper.get('.overview-service-pill').trigger('click')
