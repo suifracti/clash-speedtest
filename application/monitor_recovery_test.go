@@ -154,19 +154,6 @@ func createRecoveryJob(t *testing.T, svc *AppService, profileID string, tier mon
 	return job, node.NodeKey
 }
 
-func exhaustRecoveryRequestBudget(t *testing.T, historyDir string) {
-	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(historyDir, "history.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	day := time.Now().UTC().Format("2006-01-02")
-	if _, err := db.Exec(`UPDATE monitor_budget_usage SET utc_day=?, requests_used=20000, bytes_used=0 WHERE singleton=1`, day); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestMonitorRecoveryWaitCanBeCancelledByPauseStopDisableAndDelete(t *testing.T) {
 	root := t.TempDir()
 	paths := profiles.Paths{Dir: filepath.Join(root, "profiles")}
@@ -466,7 +453,7 @@ func TestMonitorRecoveryBlocksRevisionAndBudgetFailuresUntilExplicitStart(t *tes
 	}
 	writeP0MonitorProfileFixture(t, paths, "revision", "changed-revision", "127.0.0.1")
 	settingsFile := filepath.Join(root, "settings.json")
-	if err := os.WriteFile(settingsFile, []byte(`{"monitor_budget_daily_requests":0}`), 0o600); err != nil {
+	if err := os.WriteFile(settingsFile, []byte(`{"monitor_budget_max_concurrent":0}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	reopenedStore, err := history.NewStore(historyDir)
@@ -484,7 +471,7 @@ func TestMonitorRecoveryBlocksRevisionAndBudgetFailuresUntilExplicitStart(t *tes
 	if revisionState.RecoveryState != monitor.RecoveryStateBlocked || !strings.Contains(revisionState.RecoveryReason, "revision") || revisionState.State != monitor.JobStateBlocked {
 		t.Fatalf("revision conflict did not visibly block recovery: %+v", revisionState)
 	}
-	if budgetState.RecoveryState != monitor.RecoveryStateBlocked || !strings.Contains(budgetState.RecoveryReason, "预算") || budgetState.State == monitor.JobStateRunning {
+	if budgetState.RecoveryState != monitor.RecoveryStateBlocked || budgetState.BudgetState != "budget_settings_invalid" || budgetState.State == monitor.JobStateRunning {
 		t.Fatalf("unavailable budget did not fail closed: %+v", budgetState)
 	}
 	if dialer.count(revisionNode) != 1 || dialer.count(budgetNode) != 1 {
@@ -538,13 +525,15 @@ func TestMonitorStopIntentPersistenceFailureIsVisibleAfterRuntimeStops(t *testin
 	}
 	service := NewAppService(store, paths, nil)
 	job, _ := createRecoveryJob(t, service, "profile", monitor.SamplingTierRegular)
+	dialer := &recoveryDialer{requests: make(map[string]int)}
+	signals := setRecoveryRunner(service, store, dialer)
 	if err := service.SetMonitorJobResumeOnLaunch(job.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	exhaustRecoveryRequestBudget(t, historyDir)
 	if err := service.StartMonitorJob(job.ID); err != nil {
 		t.Fatal(err)
 	}
+	waitRecoveryRuns(t, signals.completed, job.ID)
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}

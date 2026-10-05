@@ -1,18 +1,7 @@
-import { createApp } from 'vue'
-import { createPinia } from 'pinia'
+import {createApp} from 'vue'
 import App from './App.vue'
-import './style.css'
-import './workspace-v4.css'
-
-const savedTheme = localStorage.getItem('theme')
-if (savedTheme === 'dark') {
-  document.documentElement.classList.add('dark', 'dark-theme')
-  document.body.classList.add('dark', 'dark-theme')
-}
-
-const app = createApp(App)
-const pinia = createPinia()
-
-app.use(pinia)
-app.mount('#app')
-
+import './app.css'
+import './native-ui.css'
+import {applyTheme,savedTheme} from './theme'
+void applyTheme(savedTheme()).catch(error=>console.warn('更新窗口主题失败',error))
+createApp(App).mount('#app')

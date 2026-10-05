@@ -1,5 +1,7 @@
 # Clash-SpeedTest
 
+当前跨平台「服务＋Web 界面」的源码接手与启动入口见 [Mac 接手说明](MAC_HANDOFF.md)。先从本仓库克隆并构建前端；下面的上游安装、CLI 和旧桌面说明不代表本迁移检查点。
+
 基于 Clash/Mihomo 核心的测速工具，快速测试你的节点速度。
 
 Features:

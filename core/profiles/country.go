@@ -54,6 +54,11 @@ var knownCountries = []countryDef{
 	{Code: "SE", Label: "瑞典", Flag: "🇸🇪", Keys: []string{"瑞典", "sweden", "se"}},
 	{Code: "CH", Label: "瑞士", Flag: "🇨🇭", Keys: []string{"瑞士", "switzerland", "ch"}},
 	{Code: "PL", Label: "波兰", Flag: "🇵🇱", Keys: []string{"波兰", "波蘭", "poland", "pl"}},
+	{Code: "ZA", Label: "南非", Flag: "🇿🇦", Keys: []string{"南非", "south africa", "za"}},
+	{Code: "KH", Label: "柬埔寨", Flag: "🇰🇭", Keys: []string{"柬埔寨", "cambodia", "kh"}},
+	{Code: "EG", Label: "埃及", Flag: "🇪🇬", Keys: []string{"埃及", "egypt", "eg"}},
+	{Code: "NG", Label: "尼日利亚", Flag: "🇳🇬", Keys: []string{"尼日利亚", "nigeria", "ng"}},
+	{Code: "PK", Label: "巴基斯坦", Flag: "🇵🇰", Keys: []string{"巴基斯坦", "pakistan", "pk"}},
 }
 
 type countryKey struct {
@@ -89,18 +94,34 @@ func init() {
 }
 
 func DetectCountry(name string) (code string) {
+	metadataName := strings.TrimLeftFunc(name, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsPunct(r) || unicode.IsSymbol(r) || r == '\uFE0F'
+	})
+	for _, prefix := range []string{"剩余流量", "套餐到期", "到期时间", "订阅到期", "套餐有效期", "有效期至", "有效期:", "有效期：", "流量重置时间", "流量重置日期", "流量重置：", "流量重置:", "订阅更新时间", "订阅更新日期", "订阅更新：", "订阅更新:"} {
+		if strings.HasPrefix(metadataName, prefix) {
+			return OtherCountryCode
+		}
+	}
 	lower := strings.ToLower(name)
 	tokens := nameTokens(name)
 
-	// Explicit text region keywords take precedence over flag emojis (e.g. 🇨🇳台湾 or 🇨🇳香港)
+	// Country and city names override flags (e.g. 🇨🇳台湾), but service tags
+	// such as YT-CN must not override a node's explicit country flag.
 	for _, rule := range countryKeys {
-		if matchCountryKey(lower, tokens, rule.key) {
+		if !isShortCodeKey(rule.key) && matchCountryKey(lower, tokens, rule.key) {
 			return rule.code
 		}
 	}
 
 	if flagCode := countryFromFlag(name); flagCode != "" {
 		return normalizeCountryCode(flagCode)
+	}
+	for _, token := range strings.FieldsFunc(lower, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) {
+		for _, rule := range countryKeys {
+			if isShortCodeKey(rule.key) && token == rule.key {
+				return rule.code
+			}
+		}
 	}
 	return OtherCountryCode
 }

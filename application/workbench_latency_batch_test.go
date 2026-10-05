@@ -201,6 +201,97 @@ func TestWorkbenchLatencyBatchStaysSavingUntilAttemptCommit(t *testing.T) {
 	}
 }
 
+func TestWorkbenchLatencyBatchCancellationAbortsCurrentMeasurementAndPreservesEvidence(t *testing.T) {
+	for _, outcome := range []string{"partial", "nil", "empty"} {
+		t.Run(outcome, func(t *testing.T) {
+			service, store, _, options := newWorkbenchBatchFixture(t, 3)
+			entered := make(chan context.Context, 1)
+			release := make(chan struct{})
+			var measurements atomic.Int32
+			service.latencyMeasureHook = func(ctx context.Context, _ monitor.MonitoredNode, _ time.Duration) (*speedtester.Result, string, error) {
+				if measurements.Add(1) == 1 {
+					return knownWorkbenchLatencyResult(true), "https://probe.example/__down?bytes=1", nil
+				}
+				entered <- ctx
+				select {
+				case <-ctx.Done():
+				case <-release:
+				}
+				var result *speedtester.Result
+				if outcome == "partial" {
+					result = knownWorkbenchLatencyResult(true)
+					result.LatencySamples = append(result.LatencySamples, speedtester.LatencySample{Seq: 2, Timestamp: time.Now().UTC(), Success: false, Error: context.Canceled.Error()})
+					result.PacketLoss = 50
+				} else if outcome == "empty" {
+					result = &speedtester.Result{}
+				}
+				return result, "https://probe.example/__down?bytes=1", context.Canceled
+			}
+			selections := []WorkbenchLatencyBatchSelection{batchSelection(options[0]), batchSelection(options[1]), batchSelection(options[2])}
+			created, err := service.StartWorkbenchLatencyBatch(context.Background(), WorkbenchLatencyBatchRequest{RequestID: "cancel-current-" + outcome, TestProject: WorkbenchLatencyProject, TimeoutSeconds: 1, Concurrency: 1, SampleCount: 6, Selections: selections})
+			if err != nil {
+				t.Fatalf("start batch: %v", err)
+			}
+			var measurementCtx context.Context
+			select {
+			case measurementCtx = <-entered:
+			case <-time.After(5 * time.Second):
+				close(release)
+				waitWorkbenchLatencyBatch(t, service)
+				t.Fatal("current measurement did not start after the first item completed")
+			}
+			if _, err := service.CancelWorkbenchLatencyBatch(created.BatchID); err != nil {
+				close(release)
+				waitWorkbenchLatencyBatch(t, service)
+				t.Fatalf("cancel batch: %v", err)
+			}
+			select {
+			case <-measurementCtx.Done():
+			case <-time.After(250 * time.Millisecond):
+				t.Error("cancel did not reach the currently running measurement")
+			}
+			close(release)
+			waitWorkbenchLatencyBatch(t, service)
+			batch, err := store.GetLatencyBatch(context.Background(), created.BatchID)
+			if err != nil {
+				t.Fatalf("get batch: %v", err)
+			}
+			if measurements.Load() != 2 {
+				t.Fatalf("cancel must stop later items: measurements=%d", measurements.Load())
+			}
+			completed, current, pending := batch.Items[0], batch.Items[1], batch.Items[2]
+			if completed.ExecutionState != "completed" || completed.PersistenceState != "saved" || completed.Result == nil || len(completed.Result.Samples) != 1 || completed.Result.Samples[0].LatencyMs != 42 {
+				t.Errorf("cancel changed the previously completed evidence: %+v", completed)
+			}
+			if current.ExecutionState != "cancelled" {
+				t.Errorf("current measurement must expose cancellation, got %s", current.ExecutionState)
+			}
+			if pending.ExecutionState != "cancelled" || pending.PersistenceState != "not_applicable" || pending.AttemptID != "" || pending.Result != nil {
+				t.Errorf("pending item must be cancelled without measurement evidence: %+v", pending)
+			}
+			if outcome != "partial" {
+				if batch.State != "cancelled" {
+					t.Errorf("cancellation without samples must not be reported as a failure: %s", batch.State)
+				}
+				if current.PersistenceState != "not_applicable" || current.Result != nil {
+					t.Errorf("cancellation without samples must not create a result: %+v", current)
+				}
+				return
+			}
+			if current.PersistenceState != "saved" || current.Result == nil || current.ResultStaged {
+				t.Fatalf("partial cancellation evidence must be durably saved: %+v", current)
+			}
+			record, err := store.GetLatencyTest(context.Background(), current.AttemptID)
+			if err != nil {
+				t.Fatalf("get partial attempt: %v", err)
+			}
+			if record.TotalSamples != 2 || record.SuccessSamples != 1 || record.FailureSamples != 1 || len(record.Samples) != 2 || record.Samples[0].Seq != 1 || !record.Samples[0].Success || record.Samples[0].LatencyMs != 42 || record.Samples[1].Seq != 2 || record.Samples[1].Success || record.Samples[1].Error != context.Canceled.Error() {
+				t.Fatalf("partial samples or cancellation failure were lost: %+v", record)
+			}
+		})
+	}
+}
+
 func TestWorkbenchLatencyBatchCancellationBoundsConcurrencyAndDeduplicatesRequest(t *testing.T) {
 	service, store, _, options := newWorkbenchBatchFixture(t, 18)
 	release := make(chan struct{})
@@ -267,17 +358,17 @@ func TestWorkbenchLatencyBatchCancellationBoundsConcurrencyAndDeduplicatesReques
 	if measured.Load() != workbenchLatencyBatchConcurrency || batch.State != "cancelled" {
 		t.Fatalf("cancel must stop pending dispatch: measured=%d state=%s", measured.Load(), batch.State)
 	}
-	completed, cancelled := 0, 0
+	measuredCancelled, pendingCancelled := 0, 0
 	for _, item := range batch.Items {
-		if item.ExecutionState == "completed" && item.PersistenceState == "saved" {
-			completed++
+		if item.ExecutionState == "cancelled" && item.PersistenceState == "saved" && item.Result != nil {
+			measuredCancelled++
 		}
 		if item.ExecutionState == "cancelled" && item.PersistenceState == "not_applicable" {
-			cancelled++
+			pendingCancelled++
 		}
 	}
-	if completed != 16 || cancelled != 2 {
-		t.Fatalf("completed results or pending cancellation were lost: completed=%d cancelled=%d items=%+v", completed, cancelled, batch.Items)
+	if measuredCancelled != 16 || pendingCancelled != 2 {
+		t.Fatalf("measured evidence or pending cancellation were lost: measuredCancelled=%d pendingCancelled=%d items=%+v", measuredCancelled, pendingCancelled, batch.Items)
 	}
 }
 

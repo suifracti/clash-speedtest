@@ -1,7 +1,6 @@
 package web
 
 import (
-	"archive/zip"
 	"bytes"
 	"context"
 	crand "crypto/rand"
@@ -18,7 +17,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,6 +42,7 @@ type ServerConfig struct {
 	HistoryDir    string
 	UserAgent     string
 	StaticHandler http.Handler
+	AppOptions    application.Options
 }
 
 // Server provides the HTTP REST and SSE endpoints, adapting them to AppService.
@@ -94,7 +93,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	}
 
 	emitter := NewSSEEmitter()
-	appSvc := application.NewAppServiceWithPaths(hStore, cfg.AppPaths, emitter)
+	appSvc := application.NewAppServiceWithOptions(hStore, cfg.AppPaths, emitter, cfg.AppOptions)
 
 	s := &Server{
 		config:       cfg,
@@ -150,6 +149,8 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("POST /api/profile/import", s.handleImportProfileSource)
 	mux.HandleFunc("POST /api/profile/import/discard", s.handleDiscardProfileImport)
 	mux.HandleFunc("GET /api/airports", s.handleGetAirports)
+	mux.HandleFunc("GET /api/subscription-usage", s.handleSubscriptionUsage)
+	mux.HandleFunc("POST /api/subscription-usage/refresh", s.handleRefreshSubscriptionUsage)
 	mux.HandleFunc("PUT /api/airports/{id}/maintenance", s.handleAirportMaintenance)
 	mux.HandleFunc("POST /api/airports", s.handleCreateAirport)
 	mux.HandleFunc("GET /api/airports/{id}/url", s.handleGetAirportURL)
@@ -871,67 +872,31 @@ func (s *Server) handleExportClash(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleExportDataRoot(w http.ResponseWriter, r *http.Request) {
-	dataRoot := s.config.AppPaths.DataRoot
-	if dataRoot == "" {
-		writeError(w, http.StatusInternalServerError, "数据根目录未配置")
+	archive, err := os.CreateTemp("", "speedtest-data-backup-*.zip")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "无法创建备份文件")
 		return
 	}
-
+	defer os.Remove(archive.Name())
+	defer archive.Close()
+	if err := s.app.ExportDataBackup(r.Context(), archive); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	info, err := archive.Stat()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "无法读取备份文件")
+		return
+	}
+	if _, err := archive.Seek(0, io.SeekStart); err != nil {
+		writeError(w, http.StatusInternalServerError, "无法读取备份文件")
+		return
+	}
 	filename := fmt.Sprintf("clash-speedtest-data-%s.zip", time.Now().Format("20060102-150405"))
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
-
-	zipWriter := zip.NewWriter(w)
-	defer zipWriter.Close()
-
-	// Write metadata file
-	meta := map[string]any{
-		"exported_at":    time.Now().UTC().Format(time.RFC3339),
-		"format_version": 1,
-		"platform":       runtime.GOOS,
-	}
-	if metaBytes, err := json.MarshalIndent(meta, "", "  "); err == nil {
-		if f, err := zipWriter.Create("export_meta.json"); err == nil {
-			_, _ = f.Write(metaBytes)
-		}
-	}
-
-	_ = filepath.Walk(dataRoot, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return nil
-		}
-		rel, err := filepath.Rel(dataRoot, path)
-		if err != nil {
-			return nil
-		}
-		base := strings.ToLower(filepath.Base(path))
-		if strings.HasSuffix(base, ".lock") || strings.HasSuffix(base, ".tmp") || strings.HasSuffix(base, ".wal") || strings.HasSuffix(base, ".shm") {
-			return nil
-		}
-
-		// Cross-platform zip path with forward slashes
-		zipPath := filepath.ToSlash(rel)
-		header, err := zip.FileInfoHeader(info)
-		if err != nil {
-			return nil
-		}
-		header.Name = zipPath
-		header.Method = zip.Deflate
-
-		writer, err := zipWriter.CreateHeader(header)
-		if err != nil {
-			return nil
-		}
-
-		file, err := os.Open(path)
-		if err != nil {
-			return nil
-		}
-		defer file.Close()
-
-		_, _ = io.Copy(writer, file)
-		return nil
-	})
+	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+	_, _ = io.Copy(w, archive)
 }
 
 type exportCSVReq struct {
@@ -2356,4 +2321,3 @@ func (s *Server) handleCleanupWorkbenchHistory(w http.ResponseWriter, r *http.Re
 		"deleted_count": deleted,
 	})
 }
-

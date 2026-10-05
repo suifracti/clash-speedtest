@@ -14,8 +14,6 @@ import (
 // BudgetLimits are product limits for this AppService's Monitor jobs only.
 type BudgetLimits struct {
 	MaxConcurrent int   `json:"max_concurrent"`
-	DailyRequests int64 `json:"daily_requests"`
-	DailyBytes    int64 `json:"daily_bytes"`
 	ResponseBytes int64 `json:"response_bytes"`
 }
 
@@ -35,12 +33,12 @@ type BudgetStatus struct {
 }
 
 // BudgetLedger must commit a reservation before a request or body read proceeds.
-// A failed refund may conservatively overcount, never grant unrecorded quota.
+// A failed refund may conservatively overcount usage.
 type BudgetLedger interface {
 	MonitorBudgetUsage(context.Context, string) (BudgetUsage, error)
-	ReserveMonitorRequest(context.Context, string, int64) (BudgetUsage, error)
+	ReserveMonitorRequest(context.Context, string) (BudgetUsage, error)
 	RefundMonitorRequest(context.Context, string) error
-	ReserveMonitorBytes(context.Context, string, int64, int64) (string, int64, error)
+	ReserveMonitorBytes(context.Context, string, int64) (string, int64, error)
 	RefundMonitorBytes(context.Context, string, int64) error
 }
 
@@ -133,7 +131,7 @@ func (b *BudgetController) config() (BudgetLimits, error) {
 	if err != nil {
 		return BudgetLimits{}, budgetBlock("budget_settings_invalid", fmt.Sprintf("无法读取 Monitor 预算设置：%v", err))
 	}
-	if limits.MaxConcurrent <= 0 || limits.DailyRequests <= 0 || limits.DailyBytes <= 0 || limits.ResponseBytes <= 0 || limits.ResponseBytes > limits.DailyBytes {
+	if limits.MaxConcurrent <= 0 || limits.ResponseBytes <= 0 {
 		return BudgetLimits{}, budgetBlock("budget_settings_invalid", "Monitor 预算设置无效")
 	}
 	return limits, nil
@@ -161,11 +159,6 @@ func (b *BudgetController) Status(ctx context.Context) (BudgetStatus, error) {
 	active := b.active
 	b.mu.Unlock()
 	status := BudgetStatus{Limits: limits, Usage: usage, ActiveRequests: active, ResetAt: day.AddDate(0, 0, 1)}
-	if usage.RequestsUsed >= limits.DailyRequests {
-		status.BlockedCode, status.BlockedReason = "requests_exhausted", "Monitor 今日请求额度已用尽，等待 UTC 次日重置或明确提高上限"
-	} else if usage.BytesUsed >= limits.DailyBytes {
-		status.BlockedCode, status.BlockedReason = "bytes_exhausted", "Monitor 今日响应体读取额度已用尽，等待 UTC 次日重置或明确提高上限"
-	}
 	return status, nil
 }
 
@@ -446,7 +439,7 @@ func (b *BudgetController) acquireRequest(ctx context.Context, heavy bool, prior
 		release()
 		return nil, 0, "", err
 	}
-	usage, err := b.ledger.ReserveMonitorRequest(ctx, budgetDay(b.now()), limits.DailyRequests)
+	usage, err := b.ledger.ReserveMonitorRequest(ctx, budgetDay(b.now()))
 	if err != nil {
 		release()
 		if cancelled := budgetContextError(ctx, err); cancelled != nil {
@@ -461,11 +454,10 @@ func (b *BudgetController) acquireRequest(ctx context.Context, heavy bool, prior
 }
 
 func (b *BudgetController) reserveBytes(ctx context.Context, n int64) (string, int64, error) {
-	limits, err := b.config()
-	if err != nil {
+	if _, err := b.config(); err != nil {
 		return "", 0, err
 	}
-	day, granted, err := b.ledger.ReserveMonitorBytes(ctx, budgetDay(b.now()), n, limits.DailyBytes)
+	day, granted, err := b.ledger.ReserveMonitorBytes(ctx, budgetDay(b.now()), n)
 	if err != nil {
 		if cancelled := budgetContextError(ctx, err); cancelled != nil {
 			return "", 0, cancelled

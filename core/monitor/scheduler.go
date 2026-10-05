@@ -234,6 +234,7 @@ func (s *Scheduler) checkBudget() (string, string) {
 	if code != "" {
 		s.job.BudgetState, s.job.BudgetReason = code, reason
 	} else if s.job.BudgetState == "requests_exhausted" || s.job.BudgetState == "bytes_exhausted" || s.job.BudgetState == "budget_settings_invalid" || s.job.BudgetState == "budget_unavailable" {
+		// Clear legacy daily-limit states when opening jobs from older versions.
 		s.job.BudgetState, s.job.BudgetReason = "ok", ""
 	}
 	s.mu.Unlock()

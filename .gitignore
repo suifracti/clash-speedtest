@@ -30,3 +30,18 @@ data/
 .ui-preview/
 artifacts/
 
+# Rebuilt locally; migration commits carry source and lockfiles only.
+frontend/dist/
+gui/web/dist/
+frontend/evidence/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.gguf
+*.onnx
+*.safetensors
+*.pt
+*.pth
+

@@ -9,8 +9,6 @@ import (
 
 const (
 	defaultBudgetConcurrent          = 4
-	defaultBudgetRequests      int64 = 20000
-	defaultBudgetBytes         int64 = 32 << 20
 	defaultBudgetResponseBytes int64 = 256 << 10
 )
 
@@ -18,14 +16,6 @@ func fillDefaultMonitorBudget(settings *AppSettings) {
 	if settings.MonitorBudgetMaxConcurrent == nil {
 		value := defaultBudgetConcurrent
 		settings.MonitorBudgetMaxConcurrent = &value
-	}
-	if settings.MonitorBudgetDailyRequests == nil {
-		value := defaultBudgetRequests
-		settings.MonitorBudgetDailyRequests = &value
-	}
-	if settings.MonitorBudgetDailyBytes == nil {
-		value := defaultBudgetBytes
-		settings.MonitorBudgetDailyBytes = &value
 	}
 	if settings.MonitorBudgetResponseBytes == nil {
 		value := defaultBudgetResponseBytes
@@ -35,10 +25,9 @@ func fillDefaultMonitorBudget(settings *AppSettings) {
 
 func validateMonitorBudget(settings *AppSettings) error {
 	fillDefaultMonitorBudget(settings)
-	concurrent, requests := *settings.MonitorBudgetMaxConcurrent, *settings.MonitorBudgetDailyRequests
-	dailyBytes, responseBytes := *settings.MonitorBudgetDailyBytes, *settings.MonitorBudgetResponseBytes
-	if concurrent < 1 || concurrent > 64 || requests < 1 || requests > 1000000000 || dailyBytes < 1 || dailyBytes > 1<<40 || responseBytes < 1 || responseBytes > 16<<20 || responseBytes > dailyBytes {
-		return monitor.NewValidationError("Monitor 预算无效：并发须为 1–64、日请求 1–10亿、日读取 1 B–1 TiB、单响应 1 B–16 MiB 且不超过日读取额度")
+	concurrent, responseBytes := *settings.MonitorBudgetMaxConcurrent, *settings.MonitorBudgetResponseBytes
+	if concurrent < 1 || concurrent > 64 || responseBytes < 1 || responseBytes > 16<<20 {
+		return monitor.NewValidationError("Monitor 请求设置无效：并发须为 1–64、单响应 1 B–16 MiB")
 	}
 	return nil
 }
@@ -50,8 +39,6 @@ func (s *AppService) monitorBudgetLimits() (monitor.BudgetLimits, error) {
 	}
 	return monitor.BudgetLimits{
 		MaxConcurrent: *settings.MonitorBudgetMaxConcurrent,
-		DailyRequests: *settings.MonitorBudgetDailyRequests,
-		DailyBytes:    *settings.MonitorBudgetDailyBytes,
 		ResponseBytes: *settings.MonitorBudgetResponseBytes,
 	}, nil
 }

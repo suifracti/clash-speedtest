@@ -422,7 +422,7 @@ func (s *AppService) runWorkbenchLatencyBatchItem(runtime *workbenchLatencyBatch
 	target := ""
 	timeout := time.Duration(batch.TimeoutSeconds) * time.Second
 	if s.latencyMeasureHook != nil {
-		measured, target, err = s.latencyMeasureHook(context.Background(), selected, timeout)
+		measured, target, err = s.latencyMeasureHook(runtime.ctx, selected, timeout)
 	} else {
 		pingCount := batch.SampleCount
 		if pingCount <= 0 {
@@ -434,17 +434,23 @@ func (s *AppService) runWorkbenchLatencyBatchItem(runtime *workbenchLatencyBatch
 			err = createErr
 		} else {
 			target = st.LatencyProbeTarget()
-			measured = st.TestSingle(executionName, proxy, func(*speedtester.Result) bool { return true })
+			measured = st.TestSingleContext(runtime.ctx, executionName, proxy, func(*speedtester.Result) bool { return true })
 		}
 	}
 	finishedAt := time.Now().UTC()
-	if err != nil || measured == nil {
+	cancelErr := runtime.ctx.Err()
+	if (err != nil && cancelErr == nil) || measured == nil || (cancelErr != nil && len(measured.LatencySamples) == 0) {
+		executionState := "failed"
 		message := "延迟测试未产生结果"
 		if err != nil {
 			message = err.Error()
 		}
+		if cancelErr != nil {
+			executionState = "cancelled"
+			message = cancelErr.Error()
+		}
 		_ = update(index, func(item *history.LatencyBatchItem) {
-			item.ExecutionState = "failed"
+			item.ExecutionState = executionState
 			item.PersistenceState = "not_applicable"
 			item.ErrorMessage = message
 			item.FinishedAt = finishedAt
@@ -460,6 +466,9 @@ func (s *AppService) runWorkbenchLatencyBatchItem(runtime *workbenchLatencyBatch
 	executionState := "completed"
 	if record.SuccessSamples == 0 {
 		executionState = "failed"
+	}
+	if cancelErr != nil {
+		executionState = "cancelled"
 	}
 	if err := update(index, func(item *history.LatencyBatchItem) {
 		item.ExecutionState = executionState

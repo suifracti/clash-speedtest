@@ -1,150 +1,73 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useWorkbenchStore } from './stores/workbench'
-import { useTimelineStore } from './stores/timeline'
-import * as api from './api/bridge'
-
-import SourceScopeBar from './components/workbench/SourceScopeBar.vue'
-import AirportModal from './components/airport/AirportModal.vue'
-import PreferencesModal from './components/settings/PreferencesModal.vue'
-import MonitorTimelineView from './components/timeline/MonitorTimelineView.vue'
-import MonitorJobsView from './components/monitor/MonitorJobsView.vue'
-import LatencyWorkbench from './components/workbench/LatencyWorkbench.vue'
-import NodeDetailView from './components/history/NodeDetailView.vue'
-import ProfileSetupModal from './components/profile/ProfileSetupModal.vue'
-import AuthModal from './components/common/AuthModal.vue'
-import type { MonitorJobNode, MonitorJobPrefill, NodeDetailRequest, WorkbenchSaveRetryRequest } from './types'
-
-const store = useWorkbenchStore()
-
-/**
- * Top-level view switch.
- *
- * The workbench (batch speed-test triage) and the monitor timeline are separate working
- * surfaces. Keep the workbench mounted so visiting subscription management does not
- * abandon a pending measurement or save retry. The timeline still unmounts on exit.
- */
-const activeView = ref<'workbench' | 'airports' | 'monitor-jobs' | 'timeline'>('workbench')
-const workbenchRef = ref<InstanceType<typeof LatencyWorkbench>>()
-function openProjectHistory(project: 'throughput' | 'service') {
-  activeView.value = 'workbench'
-  workbenchRef.value?.showProject(project)
-}
-const airportProfile = ref('all')
-watch(() => store.isAirportModalOpen, open => {
-  if (open) { activeView.value = 'airports'; store.isAirportModalOpen = false }
-})
-function browseProfile(id: string) { airportProfile.value = id; activeView.value = 'workbench' }
-const monitorPrefill = ref<MonitorJobPrefill | null>(null)
-const nodeDetail = ref<NodeDetailRequest | null>(null)
-const nodeDetailKey = ref(0)
-const workbenchSaveRetry = ref<WorkbenchSaveRetryRequest | null>(null)
-const timelineStore = useTimelineStore()
-const authRequired = ref(false)
-async function onAuthenticated() {
-  authRequired.value = false
-  await store.loadProfileSetup()
-  await Promise.all([
-    store.loadAirports(),
-    store.loadTokenStatus(),
-    store.loadHistory(),
-  ])
-}
-
-function openMonitorFromWorkbench(prefill: MonitorJobPrefill): void {
-  monitorPrefill.value = prefill
-  activeView.value = 'monitor-jobs'
-}
-
-function clearMonitorPrefill(): void {
-  monitorPrefill.value = null
-}
-
-function openNodeDetail(request: NodeDetailRequest): void {
-  nodeDetail.value = request
-  nodeDetailKey.value += 1
-}
-
-function closeNodeDetail(): void { nodeDetail.value = null }
-
-function openWorkbenchSaveRetry(request: WorkbenchSaveRetryRequest): void {
-  workbenchSaveRetry.value = request
-  nodeDetail.value = null
-  activeView.value = 'workbench'
-}
-
-function clearWorkbenchSaveRetry(attemptID: string): void {
-  if (workbenchSaveRetry.value?.attempt_id === attemptID) workbenchSaveRetry.value = null
-}
-
-watch(activeView, async (view) => {
-  if (view !== 'monitor-jobs') monitorPrefill.value = null
-  await nextTick()
-  window.scrollTo({ top: 0, behavior: 'instant' })
-})
-
-async function openJobTimeline(payload: { profileId: string; node: MonitorJobNode }): Promise<void> {
-	activeView.value = 'timeline'
-	// The timeline keeps its existing cursor/pagination semantics; this only applies
-	// the job's stable identity filters before showing the existing read-only view.
-	try {
-		await timelineStore.setNodeFilter(payload.node.nodeIdentityKey, payload.node.nodeKey)
-		await timelineStore.setProfileFilter(payload.profileId)
-	} catch {
-		// The existing timeline renders the real read error; navigation itself remains available.
-	}
-}
-
-let unsubscribeEvents: (() => void) | null = null
-
-onMounted(async () => {
-  const authStatus = await api.checkAuthStatus()
-  if (authStatus.auth_required && !authStatus.authenticated) {
-    authRequired.value = true
-    return
-  }
-  // Subscribe to real-time streaming events (via Wails or SSE)
-  unsubscribeEvents = api.subscribeEvents((type, payload) => {
-    store.handleEvent(type, payload)
-  })
-
-  // Load initial data
-  await store.loadProfileSetup()
-  await Promise.all([
-    store.loadAirports(),
-    store.loadTokenStatus(),
-    store.loadHistory(),
-  ])
-})
-
-onUnmounted(() => {
-  if (unsubscribeEvents) {
-    unsubscribeEvents()
-  }
-})
+import {onMounted,onBeforeUnmount,provide,ref} from 'vue'
+import {api} from './api'
+import {createWorkspace,workspaceKey} from './workspace'
+import type {Page} from './domain'
+import Icon from './components/Icon.vue'
+import Modal from './components/Modal.vue'
+import HomeView from './components/HomeView.vue'
+import AirportsView from './components/AirportsView.vue'
+import MonitorView from './components/MonitorView.vue'
+import HistoryView from './components/HistoryView.vue'
+import SettingsView from './components/SettingsView.vue'
+import DataView from './components/DataView.vue'
+import TestPlanModal from './components/TestPlanModal.vue'
+import MonitorCreateModal from './components/MonitorCreateModal.vue'
+import NodeDetailModal from './components/NodeDetailModal.vue'
+import QueueModal from './components/QueueModal.vue'
+const w=createWorkspace();provide(workspaceKey,w)
+const password=ref(''),loginError=ref(''),loggingIn=ref(false)
+const pages:{id:Page;label:string;icon:string}[]=[{id:'home',label:'节点首页',icon:'home'},{id:'airports',label:'机场订阅',icon:'layers'},{id:'monitor',label:'持续监测',icon:'monitor'},{id:'history',label:'检测历史',icon:'history'}]
+let timer:ReturnType<typeof setInterval>|undefined
+function navigate(page:Page){w.page.value=page;window.scrollTo({top:0,behavior:'instant'})}
+function authExpired(){w.authRequired.value=true;w.dispose()}
+async function login(){loggingIn.value=true;loginError.value='';try{await api.login(password.value);password.value='';w.authRequired.value=false;await w.boot()}catch(e){loginError.value=e instanceof Error?e.message:String(e)}finally{loggingIn.value=false}}
+onMounted(()=>{void w.boot();window.addEventListener('speedtest:auth-required',authExpired);timer=setInterval(()=>{if(w.busy.value&&!w.running.value&&document.visibilityState==='visible')void w.syncActive()},2500)})
+onBeforeUnmount(()=>{w.dispose();clearInterval(timer);window.removeEventListener('speedtest:auth-required',authExpired)})
 </script>
-
 <template>
   <div class="app-shell">
-    <SourceScopeBar v-model:active-view="activeView" />
-
-    <div v-show="activeView === 'workbench'">
-      <LatencyWorkbench ref="workbenchRef" :visible="activeView === 'workbench'" :initial-profile-id="airportProfile" :save-retry-request="workbenchSaveRetry" @save-retry-request-resolved="clearWorkbenchSaveRetry" @open-monitor="openMonitorFromWorkbench" @open-node-detail="openNodeDetail" />
+    <div class="app-content">
+      <header class="workspace-header">
+        <div class="workspace-header-inner">
+          <a class="brand" href="#" @click.prevent="navigate('home')">
+            <span class="brand-mark"><Icon name="pulse"/></span>
+            <div class="brand-copy"><strong>SpeedTest</strong><span>网络检测工作台</span></div>
+          </a>
+          <nav class="workspace-nav" aria-label="主导航">
+            <button v-for="p in pages" :key="p.id" type="button" :aria-current="w.page.value===p.id?'page':undefined" @click="navigate(p.id)">
+              <Icon :name="p.icon"/><span>{{p.label}}</span>
+              <small v-if="p.id==='monitor'&&w.jobs.value.some(j=>j.state==='running')">{{w.jobs.value.filter(j=>j.state==='running').length}}</small>
+            </button>
+          </nav>
+          <div class="workspace-tools">
+            <nav class="workspace-utilities" aria-label="工具">
+              <button type="button" aria-label="偏好设置" title="偏好设置" :aria-current="w.page.value==='settings'?'page':undefined" @click="navigate('settings')"><Icon name="settings"/><span>偏好设置</span></button>
+              <button type="button" aria-label="数据与备份" title="数据与备份" :aria-current="w.page.value==='data'?'page':undefined" @click="navigate('data')"><Icon name="data"/><span>数据与备份</span></button>
+            </nav>
+            <div class="connection-state" role="status" :title="w.connected.value?'实时连接正常':w.loading.value?'正在连接…':'实时连接断开'" :aria-label="w.connected.value?'实时连接正常':w.loading.value?'正在连接…':'实时连接断开'"><span class="status-dot" :class="{connected:w.connected.value}"/></div>
+          </div>
+        </div>
+      </header>
+      <main class="workspace-body">
+        <div v-if="w.error.value" class="app-error" role="alert"><span>{{w.error.value}}</span><div class="button-group"><button class="text-button" @click="w.boot()">重新读取</button><button class="button ghost icon-button" aria-label="关闭错误提示" @click="w.error.value=''"><Icon name="close"/></button></div></div>
+        <div v-if="w.loading.value&&!w.setup.value" class="app-loading"><span class="spinner"/><p>正在读取你的机场与记录…</p></div>
+        <template v-else-if="!w.authRequired.value">
+          <HomeView v-if="w.setup.value?.state==='ready'" v-show="w.page.value==='home'"/>
+          <AirportsView v-if="w.page.value==='airports'&&w.setup.value?.state==='ready'"/>
+          <MonitorView v-if="w.page.value==='monitor'&&w.setup.value?.state==='ready'"/>
+          <HistoryView v-if="w.page.value==='history'&&w.setup.value?.state==='ready'"/>
+          <SettingsView v-if="w.page.value==='settings'&&w.setup.value?.state==='ready'"/>
+          <DataView v-if="w.page.value==='data'||w.setup.value?.state!=='ready'"/>
+        </template>
+        <button v-if="w.busy.value&&w.page.value!=='home'" class="running-pill" @click="w.queueOpen.value=true"><span class="spinner"/>检测进行中 · 查看进度</button>
+      </main>
     </div>
-
-    <div v-if="activeView === 'monitor-jobs'" class="app-page">
-      <MonitorJobsView :prefill="monitorPrefill" @prefill-consumed="clearMonitorPrefill" @open-timeline="openJobTimeline" @open-node-detail="openNodeDetail" />
-    </div>
-
-    <div v-else-if="activeView === 'timeline'" class="app-page">
-      <MonitorTimelineView @open-node-detail="openNodeDetail" @open-project-history="openProjectHistory" />
-    </div>
-
-    <!-- Modals -->
-    <AirportModal v-show="activeView === 'airports'" :visible="activeView === 'airports'" embedded @browse-profile="browseProfile" />
-    <AuthModal :visible="authRequired" @authenticated="onAuthenticated" />
-    <ProfileSetupModal />
-    <PreferencesModal />
-    <NodeDetailView v-if="nodeDetail" :key="nodeDetailKey" :scope="nodeDetail" @close="closeNodeDetail" @open-workbench-save-retry="openWorkbenchSaveRetry" />
+    <Transition name="toast"><div v-if="w.toast.value" class="toast-message" role="status"><Icon name="check"/>{{w.toast.value}}</div></Transition>
+    <TestPlanModal v-if="w.plan.value"/>
+    <MonitorCreateModal v-if="w.monitorNodes.value"/>
+    <QueueModal v-if="w.queueOpen.value"/>
+    <NodeDetailModal v-if="w.inspectNode.value" :key="w.inspectNode.value.profile_id+w.inspectNode.value.node_key" :node="w.inspectNode.value" @close="w.inspectNode.value=null"/>
+    <Modal v-if="w.authRequired.value" title="访问此工作台" :closable="false"><form @submit.prevent="login"><p class="muted">输入此服务的访问密码。</p><label class="form-stack">访问密码<input v-model="password" type="password" autofocus autocomplete="current-password" required></label><p v-if="loginError" class="inline-error" role="alert">{{loginError}}</p><div class="form-actions"><button class="button primary" :disabled="loggingIn" type="submit">{{loggingIn?'正在登录…':'登录'}}</button></div></form></Modal>
   </div>
 </template>

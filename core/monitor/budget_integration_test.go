@@ -41,14 +41,14 @@ func budgetResponse(code int, body string, location string) *http.Response {
 	return &http.Response{StatusCode: code, Header: header, Body: io.NopCloser(strings.NewReader(body))}
 }
 
-func TestMonitorBudgetSharedRequestsRedirectFailureAndNoFalseRun(t *testing.T) {
+func TestMonitorBudgetAccountsRedirectsAndFailuresWithoutDailyCutoff(t *testing.T) {
 	store, err := history.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
-	limits := monitor.BudgetLimits{MaxConcurrent: 4, DailyRequests: 3, DailyBytes: 10, ResponseBytes: 10}
+	limits := monitor.BudgetLimits{MaxConcurrent: 4, ResponseBytes: 10}
 	budget := monitor.NewBudgetController(store, func() (monitor.BudgetLimits, error) { return limits, nil }, func() time.Time { return now })
 	var hops atomic.Int32
 	runner := monitor.NewRunner(monitor.RunnerConfig{Store: store, Budget: budget, Dialer: budgetDialer{roundTrip: func(req *http.Request) (*http.Response, error) {
@@ -82,16 +82,19 @@ func TestMonitorBudgetSharedRequestsRedirectFailureAndNoFalseRun(t *testing.T) {
 	if err != nil || second.Status != monitor.RunStatusFailed || len(samples) != 1 {
 		t.Fatalf("failed transport should be saved as network failure: %+v, %d samples, %v", second, len(samples), err)
 	}
-	third, samples, err := runner.ExecuteRun(context.Background(), budgetJob("third", "node-3"), now)
-	if _, blocked := monitor.AsBudgetBlock(err); !blocked || third != nil || len(samples) != 0 {
-		t.Fatalf("exhausted budget should not make a run: %+v, %d samples, %v", third, len(samples), err)
+	for _, id := range []string{"third", "fourth"} {
+		run, samples, err := runner.ExecuteRun(context.Background(), budgetJob(id, id), now)
+		if err != nil || run.Status != monitor.RunStatusCompleted || len(samples) != 1 || !samples[0].Success {
+			t.Fatalf("later round was cut off: %+v, %d samples, %v", run, len(samples), err)
+		}
+		runs, err := store.QueryMonitorRuns(context.Background(), id, 10)
+		if err != nil || len(runs) != 1 || runs[0].Status != monitor.RunStatusCompleted {
+			t.Fatalf("later round was not saved: %+v, %v", runs, err)
+		}
 	}
-	if hops.Load() != 3 {
-		t.Fatalf("exhausted budget allowed transport: %d hops", hops.Load())
-	}
-	runs, err := store.QueryMonitorRuns(context.Background(), "third", 10)
-	if err != nil || len(runs) != 0 {
-		t.Fatalf("denied round left durable run: %d, %v", len(runs), err)
+	status, err := budget.Status(context.Background())
+	if err != nil || status.BlockedCode != "" || status.Usage.RequestsUsed != 7 || status.Usage.BytesUsed != 15 || hops.Load() != 7 {
+		t.Fatalf("daily totals should remain counts, not cutoffs: %+v, hops=%d, %v", status, hops.Load(), err)
 	}
 }
 
@@ -100,7 +103,7 @@ func TestMonitorBudgetBodyCapAndStoreFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	limits := monitor.BudgetLimits{MaxConcurrent: 4, DailyRequests: 10, DailyBytes: 10, ResponseBytes: 3}
+	limits := monitor.BudgetLimits{MaxConcurrent: 4, ResponseBytes: 3}
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	budget := monitor.NewBudgetController(store, func() (monitor.BudgetLimits, error) { return limits, nil }, func() time.Time { return now })
 	var hops atomic.Int32
@@ -134,7 +137,7 @@ func TestMonitorBudgetRedirectCeilingAndHeavyPermit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	limits := monitor.BudgetLimits{MaxConcurrent: 4, DailyRequests: 10, DailyBytes: 10, ResponseBytes: 10}
+	limits := monitor.BudgetLimits{MaxConcurrent: 4, ResponseBytes: 10}
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	budget := monitor.NewBudgetController(store, func() (monitor.BudgetLimits, error) { return limits, nil }, func() time.Time { return now })
 	var hops atomic.Int32
@@ -175,7 +178,7 @@ func TestMonitorBudgetIdentityAndCancelledWait(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	limits := monitor.BudgetLimits{MaxConcurrent: 1, DailyRequests: 10, DailyBytes: 10, ResponseBytes: 10}
+	limits := monitor.BudgetLimits{MaxConcurrent: 1, ResponseBytes: 10}
 	budget := monitor.NewBudgetController(store, func() (monitor.BudgetLimits, error) { return limits, nil }, time.Now)
 	entered := make(chan struct{})
 	unblock := make(chan struct{})

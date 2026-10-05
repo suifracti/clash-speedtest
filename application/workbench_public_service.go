@@ -144,6 +144,10 @@ func (s *AppService) StartWorkbenchPublicServiceTest(_ context.Context, req Work
 	}
 	startedAt := time.Now().UTC()
 	if err := s.historyStore.BeginPublicServiceAttempt(context.Background(), attempt.AttemptID, startedAt); err != nil {
+		// The execution gate is still held and no public-service request is active.
+		if recoveryErr := s.reconcileWorkbenchPublicServiceAttempts(); recoveryErr != nil {
+			err = fmt.Errorf("%w; 更新未启动检测状态失败: %v", err, recoveryErr)
+		}
 		s.publicServiceMu.Unlock()
 		return nil, fmt.Errorf("无法登记检测启动；未发出服务请求: %w", err)
 	}
@@ -276,33 +280,40 @@ func (s *AppService) CancelWorkbenchPublicServiceTest(ctx context.Context, attem
 }
 
 func (s *AppService) RetrySaveWorkbenchPublicServiceTest(ctx context.Context, attemptID string, query WorkbenchPublicServiceHistoryQuery) (*history.PublicServiceAttempt, error) {
-	if s.historyStore == nil {
-		return nil, fmt.Errorf("history store is not initialized")
-	}
 	filter, err := publicServiceHistoryFilter(query)
 	if err != nil {
 		return nil, err
 	}
 	attemptID = strings.TrimSpace(attemptID)
-	if _, err := s.historyStore.GetPublicServiceAttempt(ctx, attemptID, filter); err != nil {
+	s.publicServiceMu.Lock()
+	if s.publicServiceClosed || s.publicServiceTransition {
+		s.publicServiceMu.Unlock()
+		return nil, fmt.Errorf("应用正在关闭或切换存储，不能重试保存")
+	}
+	if s.historyStore == nil {
+		s.publicServiceMu.Unlock()
+		return nil, fmt.Errorf("history store is not initialized")
+	}
+	current, err := s.historyStore.GetPublicServiceAttempt(ctx, attemptID, filter)
+	if err != nil {
+		s.publicServiceMu.Unlock()
 		return nil, err
 	}
-	s.publicServiceMu.Lock()
 	if s.publicServiceActive[attemptID] != nil {
 		s.publicServiceMu.Unlock()
 		return nil, fmt.Errorf("检测或保存仍在进行")
 	}
-	s.publicServiceMu.Unlock()
-	current, err := s.historyStore.GetPublicServiceAttempt(ctx, attemptID, filter)
-	if err != nil {
-		return nil, err
-	}
 	if current.PersistenceState == "saved" {
+		s.publicServiceMu.Unlock()
 		return current, nil
 	}
 	if current.PersistenceState != "failed" || current.Result == nil {
+		s.publicServiceMu.Unlock()
 		return nil, monitor.NewValidationError("没有可重试保存的暂存结果")
 	}
+	s.publicServiceWG.Add(1)
+	s.publicServiceMu.Unlock()
+	defer s.publicServiceWG.Done()
 	if err := s.saveWorkbenchPublicServiceResult(attemptID); err != nil {
 		_ = s.historyStore.MarkPublicServiceSaveFailed(context.Background(), attemptID,
 			"结果仍已暂存；保存失败，可沿用原 attempt 重试")
@@ -369,6 +380,9 @@ func (s *AppService) beginPublicServiceStorageTransition() error {
 		return fmt.Errorf("请先完成或取消正在运行的公共服务检测")
 	}
 	s.publicServiceTransition = true
+	// Retry saves do not have an executing runtime, but must finish before the
+	// store is replaced. The lock prevents new saves from joining this wait.
+	s.publicServiceWG.Wait()
 	return nil
 }
 

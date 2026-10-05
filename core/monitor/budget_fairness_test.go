@@ -42,14 +42,11 @@ func (l *fairnessLedger) MonitorBudgetUsage(_ context.Context, day string) (Budg
 	return l.usage, nil
 }
 
-func (l *fairnessLedger) ReserveMonitorRequest(_ context.Context, day string, limit int64) (BudgetUsage, error) {
+func (l *fairnessLedger) ReserveMonitorRequest(_ context.Context, day string) (BudgetUsage, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.usage.UTCDay != day {
 		l.usage = BudgetUsage{UTCDay: day}
-	}
-	if l.usage.RequestsUsed >= limit {
-		return l.usage, budgetBlock("requests_exhausted", "test daily limit exhausted")
 	}
 	l.usage.RequestsUsed++
 	return l.usage, nil
@@ -64,14 +61,11 @@ func (l *fairnessLedger) RefundMonitorRequest(_ context.Context, day string) err
 	return nil
 }
 
-func (l *fairnessLedger) ReserveMonitorBytes(_ context.Context, day string, want, limit int64) (string, int64, error) {
+func (l *fairnessLedger) ReserveMonitorBytes(_ context.Context, day string, want int64) (string, int64, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.usage.UTCDay != day {
 		l.usage = BudgetUsage{UTCDay: day}
-	}
-	if remaining := limit - l.usage.BytesUsed; want > remaining {
-		want = remaining
 	}
 	if want < 0 {
 		want = 0
@@ -93,7 +87,7 @@ func (l *fairnessLedger) RefundMonitorBytes(_ context.Context, day string, n int
 }
 
 func TestBudgetAdmissionPriorityAndBoundedSparseFairness(t *testing.T) {
-	limits := BudgetLimits{MaxConcurrent: 1, DailyRequests: 50, DailyBytes: 1000, ResponseBytes: 100}
+	limits := BudgetLimits{MaxConcurrent: 1, ResponseBytes: 100}
 	ledger := &fairnessLedger{}
 	b := NewBudgetController(ledger, func() (BudgetLimits, error) { return limits, nil }, func() time.Time {
 		return time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
@@ -158,7 +152,7 @@ func TestBudgetAdmissionPriorityAndBoundedSparseFairness(t *testing.T) {
 }
 
 func TestBudgetAdmissionCancellationRemovesWaiterWithoutRequest(t *testing.T) {
-	limits := BudgetLimits{MaxConcurrent: 1, DailyRequests: 10, DailyBytes: 100, ResponseBytes: 10}
+	limits := BudgetLimits{MaxConcurrent: 1, ResponseBytes: 10}
 	ledger := &fairnessLedger{}
 	b := NewBudgetController(ledger, func() (BudgetLimits, error) { return limits, nil }, time.Now)
 	hold, _, _, err := b.acquireRequest(context.Background(), false, 1)
@@ -193,7 +187,7 @@ func TestBudgetAdmissionCancellationRemovesWaiterWithoutRequest(t *testing.T) {
 }
 
 func TestBudgetAdmissionUsesReducedConcurrencyForQueuedWaiters(t *testing.T) {
-	limits := BudgetLimits{MaxConcurrent: 4, DailyRequests: 20, DailyBytes: 100, ResponseBytes: 10}
+	limits := BudgetLimits{MaxConcurrent: 4, ResponseBytes: 10}
 	config := &mutableBudgetConfig{limits: limits}
 	ledger := &fairnessLedger{}
 	b := NewBudgetController(ledger, config.read, func() time.Time {
@@ -246,8 +240,8 @@ func TestBudgetAdmissionUsesReducedConcurrencyForQueuedWaiters(t *testing.T) {
 	assertBudgetAdmissionState(t, b, 0, 0)
 }
 
-func TestBudgetAdmissionUsesReducedDailyLimitForQueuedWaiter(t *testing.T) {
-	limits := BudgetLimits{MaxConcurrent: 1, DailyRequests: 10, DailyBytes: 100, ResponseBytes: 10}
+func TestBudgetAdmissionUsesUpdatedResponseLimitForQueuedWaiter(t *testing.T) {
+	limits := BudgetLimits{MaxConcurrent: 1, ResponseBytes: 10}
 	config := &mutableBudgetConfig{limits: limits}
 	ledger := &fairnessLedger{}
 	b := NewBudgetController(ledger, config.read, func() time.Time {
@@ -257,37 +251,40 @@ func TestBudgetAdmissionUsesReducedDailyLimitForQueuedWaiter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := make(chan error, 1)
+	type outcome struct {
+		responseMax int64
+		err         error
+	}
+	result := make(chan outcome, 1)
 	go func() {
-		release, _, _, err := b.acquireRequest(context.Background(), false, 1)
+		release, responseMax, _, err := b.acquireRequest(context.Background(), false, 1)
 		if err == nil {
 			release()
 		}
-		result <- err
+		result <- outcome{responseMax, err}
 	}()
 	waitForBudgetWaiters(t, b, 1)
 
-	limits.DailyRequests = 1
+	limits.ResponseBytes = 3
 	config.set(limits, nil)
 	hold()
 	select {
-	case err := <-result:
-		block, ok := AsBudgetBlock(err)
-		if !ok || block.Code != "requests_exhausted" {
-			t.Fatalf("queued request ignored the reduced daily limit: %v", err)
+	case got := <-result:
+		if got.err != nil || got.responseMax != 3 {
+			t.Fatalf("queued request ignored the updated response limit: %+v", got)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("queued request did not finish after acquiring the available concurrency permit")
 	}
 	usage, err := ledger.MonitorBudgetUsage(context.Background(), "2026-09-23")
-	if err != nil || usage.RequestsUsed != 1 {
-		t.Fatalf("rejected waiter consumed request quota: usage=%+v err=%v", usage, err)
+	if err != nil || usage.RequestsUsed != 2 {
+		t.Fatalf("admitted requests were not counted: usage=%+v err=%v", usage, err)
 	}
 	assertBudgetAdmissionState(t, b, 0, 0)
 }
 
 func TestBudgetAdmissionDoesNotUseStaleLimitsAfterConfigReadFailure(t *testing.T) {
-	limits := BudgetLimits{MaxConcurrent: 1, DailyRequests: 10, DailyBytes: 100, ResponseBytes: 10}
+	limits := BudgetLimits{MaxConcurrent: 1, ResponseBytes: 10}
 	config := &mutableBudgetConfig{limits: limits}
 	ledger := &fairnessLedger{}
 	b := NewBudgetController(ledger, config.read, func() time.Time {

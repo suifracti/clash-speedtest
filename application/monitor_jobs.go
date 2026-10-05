@@ -223,8 +223,8 @@ func (s *AppService) CreateMonitorJobFromRequest(req MonitorJobCreateRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	airport := store.Get(profileID)
-	if airport == nil {
+	profileName, profileExists := monitorProfileName(store, profileID)
+	if !profileExists {
 		return nil, monitor.NewValidationError("订阅不存在或已被移除")
 	}
 
@@ -278,7 +278,7 @@ func (s *AppService) CreateMonitorJobFromRequest(req MonitorJobCreateRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	dto := monitorJobDTO(*job, airport.Name)
+	dto := monitorJobDTO(*job, profileName)
 	return &dto, nil
 }
 
@@ -320,17 +320,11 @@ func (s *AppService) ListMonitorJobDTOs() ([]MonitorJobDTO, error) {
 	if err != nil {
 		return nil, err
 	}
-	profileNames := make(map[string]string, len(store.Airports))
-	for _, airport := range store.Airports {
-		if airport != nil {
-			profileNames[airport.ID] = airport.Name
-		}
-	}
-
 	jobs := s.ListMonitorJobs()
 	dtos := make([]MonitorJobDTO, 0, len(jobs))
 	for _, job := range jobs {
-		dtos = append(dtos, monitorJobDTO(job, profileNames[job.ProfileID]))
+		profileName, _ := monitorProfileName(store, job.ProfileID)
+		dtos = append(dtos, monitorJobDTO(job, profileName))
 	}
 	return dtos, nil
 }
@@ -376,13 +370,14 @@ func (s *AppService) loadPersistedMonitorJobs() error {
 			job.NodeKeys = append(job.NodeKeys, node.NodeKey)
 		}
 
+		_, profileExists := monitorProfileName(profileStore, definition.ProfileID)
 		blockedReason := ""
 		switch {
 		case definition.DefinitionVersion != monitor.MonitorJobDefinitionVersion:
 			blockedReason = fmt.Sprintf("任务定义版本 %d 不受当前版本支持", definition.DefinitionVersion)
 		case profileErr != nil:
 			blockedReason = fmt.Sprintf("当前订阅配置不可用：%v", profileErr)
-		case profileStore == nil || profileStore.Get(definition.ProfileID) == nil:
+		case !profileExists:
 			blockedReason = "订阅不存在或已被移除"
 		default:
 			currentNodes, ok := nodeCache[definition.ProfileID]
@@ -539,18 +534,29 @@ func (s *AppService) GetMonitorJobDTO(jobID string) (*MonitorJobDTO, error) {
 	}
 	profileName := ""
 	if store, loadErr := profiles.LoadStore(s.profilePaths.StoreFile()); loadErr == nil {
-		if ap, sub := store.FindSubscription(job.ProfileID); ap != nil {
-			if sub != nil && sub.Name != "" && (sub.Name != "默认订阅" || len(ap.Subscriptions) > 1) {
-				profileName = fmt.Sprintf("%s · %s", ap.Name, sub.Name)
-			} else {
-				profileName = ap.Name
-			}
-		} else if airport := store.Get(job.ProfileID); airport != nil {
-			profileName = airport.Name
-		}
+		profileName, _ = monitorProfileName(store, job.ProfileID)
 	}
 	dto := monitorJobDTO(*job, profileName)
 	return &dto, nil
+}
+
+func monitorProfileName(store *profiles.Store, profileID string) (string, bool) {
+	if store == nil {
+		return "", false
+	}
+	// Airport IDs remain valid for definitions created before subscriptions had
+	// their own IDs. New definitions keep the selected subscription's identity.
+	if airport := store.Get(profileID); airport != nil {
+		return airport.Name, true
+	}
+	airport, sub := store.FindSubscription(profileID)
+	if airport == nil || sub == nil {
+		return "", false
+	}
+	if sub.Name != "" && (sub.Name != "默认订阅" || len(airport.Subscriptions) > 1) {
+		return fmt.Sprintf("%s · %s", airport.Name, sub.Name), true
+	}
+	return airport.Name, true
 }
 
 func (s *AppService) loadMonitorNodes(profileID string) ([]monitor.MonitoredNode, error) {

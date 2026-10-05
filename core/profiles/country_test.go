@@ -23,6 +23,18 @@ func TestDetectCountry(t *testing.T) {
 		{"印度 Mumbai", "IN"},
 		{"Relay-IEPL-01", "OTHER"},
 		{"🇬🇧 London-01", "UK"},
+		{"🇿🇦ZA²_1|5.3MB/s|0%|GPT⁺|YT-CN|NF|D+|X|History|[广播|机房]", "ZA"},
+		{"🇨🇦加拿大01|流媒体解锁|AI|移动优化", "CA"},
+		{"🇯🇵JP-01|YT-CN|NF-US", "JP"},
+		{"US-01|YT-CN", "US"},
+		{"剩余流量：12.29 GB", "OTHER"},
+		{"⏳剩余流量: 183.8GB", "OTHER"},
+		{"🇬🇧 到期时间：2052-08-30", "OTHER"},
+		{"香港 02 · 剩余流量 100 GB", "HK"},
+		{"[IPLC-家宽-移动优化 -柬埔寨] ✨ 5x", "KH"},
+		{"[IPLC-移动优化 -埃及] ✨ 5x", "EG"},
+		{"[IPLC-移动优化 -尼日利亚] ✨ 5x", "NG"},
+		{"[IPLC-移动优化 -巴基斯坦] ✨ 5x", "PK"},
 	}
 	for _, tt := range tests {
 		if got := DetectCountry(tt.name); got != tt.want {
@@ -151,8 +163,8 @@ func TestParsePlanSelection(t *testing.T) {
 		{"5l", false, 0, 5},
 		{"2r", false, 0, 2},
 		{"2轮", false, 0, 2},
-		{"2", false, 0, 2}, // in bandwidth mode, '2' means 2 rounds
-		{"3", false, 0, 3}, // in bandwidth mode, '3' means 3 rounds
+		{"2", false, 0, 2},              // in bandwidth mode, '2' means 2 rounds
+		{"3", false, 0, 3},              // in bandwidth mode, '3' means 3 rounds
 		{"2", true, 3 * time.Minute, 0}, // in latency mode, '2' means 3 minutes
 		{"3", true, 5 * time.Minute, 0}, // in latency mode, '3' means 5 minutes
 		{"2l", true, 0, 2},              // in latency mode, '2l' explicitly means 2 rounds

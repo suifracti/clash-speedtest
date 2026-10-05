@@ -1,0 +1,166 @@
+<script setup lang="ts">
+import UiSelect from './UiSelect.vue'
+import {computed,nextTick,onBeforeUnmount,onMounted,ref,watch} from 'vue'
+import {useWorkspace} from '../workspace'
+import {api} from '../api'
+import {date,downloadSpeed,downloadTone,isNotice,key,outcomeLabel,outcomeTone,projectNames,targets,type NodeOption,type Project} from '../domain'
+import {points,recentService,serviceSummary,monitorRoundPoints,monitorHTTPPoints,monitorHTTPServices,serviceHealthPoints,type TrendPoint} from '../presentation'
+import Icon from './Icon.vue'
+import Modal from './Modal.vue'
+import HealthBars from './HealthBars.vue'
+import ServicePicker from './ServicePicker.vue'
+import TrendChart from './TrendChart.vue'
+import RoundResults from './RoundResults.vue'
+import MeasurementResults from './MeasurementResults.vue'
+import InlineHistory from './InlineHistory.vue'
+import SiteDisplayPicker from './SiteDisplayPicker.vue'
+import {nodeDisplayName,nodeRegion,nodeRegionLabel} from '../nodePresentation'
+const w=useWorkspace(),inlineTab=ref<'round'|'history'>('round'),keepOpen=ref(false),picker=ref(false),noticeOpen=ref(false),currentPage=ref(1),hoverNode=ref<NodeOption|null>(null),activeRound=ref<TrendPoint|null>(null),hoverMode=ref<Exclude<Project,'combined'>>('latency'),monitorErrors=ref<Record<string,string>>({}),monitorData=ref<Record<string,import('../domain').MonitorSample[]>>({}),monitorHTTPData=ref<Record<string,import('../domain').MonitorSample[]>>({}),monitorHTTPErrors=ref<Record<string,string>>({})
+function savedFollowControls(){try{return window.localStorage.getItem('speedtest-follow-controls')==='true'}catch{return false}}
+const followControls=ref(savedFollowControls())
+watch(followControls,value=>{try{window.localStorage.setItem('speedtest-follow-controls',String(value))}catch{}})
+let monitorGeneration=0,hoverTimer:ReturnType<typeof setTimeout>|undefined,monitorTimer:ReturnType<typeof setInterval>|undefined
+const pageSize=20,chosen=computed(()=>w.airports.value.filter(a=>w.selectedAirportIds.value?.includes(a.id))),totalPages=computed(()=>Math.max(1,Math.ceil(w.filteredNodes.value.length/pageSize))),pageNodes=computed(()=>w.filteredNodes.value.slice((currentPage.value-1)*pageSize,currentPage.value*pageSize)),profiles=computed(()=>[...new Map(w.sourceNodes.value.map(n=>[n.profile_id,n.profile_name])).entries()]),allSelected=computed(()=>pageNodes.value.length>0&&pageNodes.value.every(n=>w.selectedKeys.value.includes(key(n)))),selectedServices=computed(()=>w.catalog.value.filter(r=>w.serviceIds.value.includes(r.service_id)))
+const hoverTarget=ref(w.displayTarget.value),hoverService=ref(''),servicePage=ref(1),servicesPerPage=6
+const inlineHistorySource=computed(()=>activeRound.value?.source||(hoverNode.value&&(hoverMode.value==='latency'&&hoverTarget.value==='cloudflare'&&monitorPoints(hoverNode.value).length&&!points(w,hoverNode.value,'latency','cloudflare').some(p=>p.tone!=='empty')||hoverMode.value==='service'&&httpPoints(hoverNode.value).length&&!serviceHealthPoints(w,hoverNode.value,visibleServiceIds.value).length)?'monitor':'manual'))
+const hoverPoints=computed(()=>hoverNode.value?inlineHistorySource.value==='monitor'?(hoverMode.value==='service'?httpPoints(hoverNode.value,hoverService.value):monitorPoints(hoverNode.value)):hoverMode.value==='service'&&!hoverService.value?serviceHealthPoints(w,hoverNode.value):points(w,hoverNode.value,hoverMode.value,hoverTarget.value,hoverService.value):[])
+const runNodes=computed(()=>w.selectedNodes.value.length?w.selectedNodes.value:w.filteredNodes.value)
+const displaySites=computed(()=>targets.filter(t=>w.displayTargets.value.includes(t.id)))
+const airportNodes=computed(()=>w.proxyNodes.value.filter(n=>w.airportFilter.value==='all'||w.nodeAirportId(n)===w.airportFilter.value))
+const filterProfiles=computed(()=>[...new Map(airportNodes.value.map(n=>[n.profile_id,sourceLabel(n)])).entries()])
+const filterRegions=computed(()=>[...new Set(airportNodes.value.map(nodeRegion))].sort())
+const serviceChoices=computed(()=>w.catalog.value.map(s=>({id:s.service_id,name:s.name})))
+const displayServices=computed(()=>w.catalog.value.filter(s=>w.displayServiceIds.value.includes(s.service_id)))
+const servicePages=computed(()=>Math.max(1,Math.ceil(displayServices.value.length/servicesPerPage)))
+const visibleServices=computed(()=>displayServices.value.slice((servicePage.value-1)*servicesPerPage,servicePage.value*servicesPerPage))
+const visibleServiceIds=computed(()=>visibleServices.value.map(s=>s.service_id))
+const chosenNames=computed(()=>chosen.value.map(a=>a.name).join(' · '))
+const healthTracks=computed(()=>[...displaySites.value.map(site=>({id:site.id,project:'latency' as const,label:site.name,target:site.id,serviceId:''})),{id:'download',project:'download' as const,label:'下载',target:w.displayTarget.value,serviceId:''},...visibleServices.value.map(s=>({id:s.service_id,project:'service' as const,label:s.name,target:w.displayTarget.value,serviceId:s.service_id}))])
+function sourceLabel(n:NodeOption){return w.nodeAirportName(n)+' · '+w.nodeSubscriptionName(n)}
+function airportNodeCount(id:string){return w.nodes.value.filter(n=>w.nodeAirportId(n)===id&&!isNotice(n)).length}
+function serviceMetric(n:NodeOption,id:string){const a=recentService(w,n,id);return a?.result?outcomeLabel(a.result.outcome):a?'未完成':'未测'}
+function serviceTone(n:NodeOption,id:string){const a=recentService(w,n,id);return a?.result?outcomeTone(a.result.outcome):'empty'}
+function downloadMetric(n:NodeOption){const a=w.downloads.value[key(n)]?.[0],v=downloadSpeed(a);return a?.result&&downloadTone(a)==='bad'?outcomeLabel(a.result.outcome):v!==null?`${v.toFixed(1)} MiB/s`:a?.result?outcomeLabel(a.result.outcome):a?'未完成':'未测'}
+function downloadMetricTone(n:NodeOption){const a=w.downloads.value[key(n)]?.[0];return a?downloadTone(a):'empty'}
+function trackPoints(n:NodeOption,track:(typeof healthTracks.value)[number]){return track.project==='latency'?sitePoints(n,track.target):points(w,n,track.project,track.target,track.serviceId)}
+function runLabel(p:Project){return p==='latency'?'测延迟':p==='download'?'测速':p==='service'?'检测服务':'组合检测'}
+function toggleAirport(id:string){const selected=w.selectedAirportIds.value||[];w.setAirports(selected.includes(id)?selected.filter(s=>s!==id):[...selected,id])}
+function metric(n:NodeOption,p:Project){if(p==='latency'){const point=sitePoints(n,w.displayTarget.value).at(-1);return point?.value==null?(point?'失败':'—'):`${Math.round(point.value)} ms`}if(p==='download'){const v=downloadSpeed(w.downloads.value[key(n)]?.[0]);return v===null?'—':`${v.toFixed(1)} MiB/s`}const s=serviceSummary(w,n);return s.measured?`${s.passed}/${s.total} 项`:'—'}
+function siteMetric(n:NodeOption,target:string){const point=sitePoints(n,target).at(-1);return point?.value==null?(point?'失败':'未测'):`${Math.round(point.value)} ms`}
+function expanded(n:NodeOption){return !!hoverNode.value&&key(hoverNode.value)===key(n)&&!!(activeRound.value||inlineTab.value==='history')}
+function nodeButtonId(n:NodeOption){return 'node-history-toggle-'+encodeURIComponent(key(n))}
+function nodePanelId(n:NodeOption){return 'node-history-panel-'+encodeURIComponent(key(n))}
+function closeInline(n:NodeOption){closeHover();void nextTick(()=>document.getElementById(nodeButtonId(n))?.focus({preventScroll:true}))}
+function monitoring(n:NodeOption){return w.jobs.value.some(j=>j.profile_id===n.profile_id&&j.node_keys?.includes(n.node_key)&&j.state==='running')}
+function httpPoints(n:NodeOption,id=''){return monitorHTTPPoints(monitorHTTPData.value[key(n)]||[],id)}
+function httpMetric(n:NodeOption,id:string){const p=httpPoints(n,id).at(-1);return p?p.tone==='good'?'HTTP 可达':'失败':'未测'}
+function monitorPoints(n:NodeOption){return monitorRoundPoints(monitorData.value[key(n)]||[])}
+function rowPoints(n:NodeOption,p:Project){return p==='latency'?sitePoints(n,w.displayTarget.value):p==='service'?serviceHealthPoints(w,n):points(w,n,p,w.displayTarget.value)}
+function sitePoints(n:NodeOption,target:string){return [...points(w,n,'latency',target).filter(p=>p.tone!=='empty'),...(target==='cloudflare'?monitorPoints(n):[])].sort((a,b)=>Date.parse(a.time)-Date.parse(b.time))}
+async function readMonitor(){
+  const generation=++monitorGeneration,list=pageNodes.value,project=w.project.value,until=new Date().toISOString(),since=new Date(Date.now()-w.hours.value*3600000).toISOString()
+  const queries=[...(project==='latency'||project==='combined'?[{probeType:'rtt',target:'https://cp.cloudflare.com/generate_204'}]:[]),...(project==='service'||project==='combined'?monitorHTTPServices:[])]
+  for(const n of list)for(const q of queries)try{
+    const result=await api.monitorSamples({profile_id:n.profile_id,node_identity_key:n.node_identity_key,config_revision_key:n.config_revision_key,probe_type:q.probeType,target:q.target,since,until,limit:80,order_desc:true})
+    if(generation!==monitorGeneration)return
+    if(q.probeType==='rtt'){monitorData.value[key(n)]=result.items||[];delete monitorErrors.value[key(n)]}
+    else{monitorHTTPData.value[key(n)]=[...(monitorHTTPData.value[key(n)]||[]).filter(s=>s.probe_type!==q.probeType),...(result.items||[])];delete monitorHTTPErrors.value[key(n)+':'+q.probeType]}
+  }catch(e){if(generation!==monitorGeneration)return;const message=e instanceof Error?e.message:'监测记录读取失败';if(q.probeType==='rtt')monitorErrors.value[key(n)]=message;else monitorHTTPErrors.value[key(n)+':'+q.probeType]=message}
+}
+
+function keepRound(){clearTimeout(hoverTimer)}
+function closeHover(){clearTimeout(hoverTimer);hoverNode.value=null;activeRound.value=null;inlineTab.value='round';keepOpen.value=false}
+function leaveRound(){clearTimeout(hoverTimer);if(!keepOpen.value)hoverTimer=setTimeout(closeHover,140)}
+function inspectRound(n:NodeOption,p:Project,point:TrendPoint,target=w.displayTarget.value,serviceId=''){keepRound();if(keepOpen.value)return;hoverNode.value=n;hoverMode.value=p==='combined'?'latency':p;hoverTarget.value=target;hoverService.value=serviceId;activeRound.value=point;inlineTab.value='round'}
+function openRound(n:NodeOption,p:Project,point:TrendPoint,target=w.displayTarget.value,serviceId=''){keepOpen.value=false;inspectRound(n,p,point,target,serviceId);keepOpen.value=true}
+function expandHistory(){keepRound();keepOpen.value=true;inlineTab.value='history'}
+function openNodeHistory(n:NodeOption){if(keepOpen.value&&expanded(n)&&inlineTab.value==='history'){closeHover();return}keepRound();hoverNode.value=n;hoverMode.value=w.project.value==='combined'?'latency':w.project.value;hoverTarget.value=w.displayTarget.value;hoverService.value='';activeRound.value=null;keepOpen.value=true;inlineTab.value='history'}
+watch([()=>w.search.value,()=>w.region.value,()=>w.subscription.value,()=>w.airportFilter.value,()=>w.sort.value,()=>w.priorityAirportId.value,()=>w.selectedAirportIds.value],()=>{currentPage.value=1;closeHover()},{deep:true})
+watch(()=>w.hours.value,()=>{monitorGeneration++;monitorData.value={};monitorErrors.value={};monitorHTTPData.value={};monitorHTTPErrors.value={}});watch(totalPages,count=>currentPage.value=Math.min(currentPage.value,count))
+watch([pageNodes,()=>w.project.value,()=>w.hours.value],()=>{if(w.page.value==='home'){void w.ensureHistory(pageNodes.value);void readMonitor()}},{immediate:true})
+watch(()=>w.page.value,p=>{if(p==='home'){void w.ensureHistory(pageNodes.value);void readMonitor()}else closeHover()})
+watch(()=>w.serviceIds.value,closeHover,{deep:true})
+watch(()=>w.displayServiceIds.value,()=>{servicePage.value=1;closeHover()},{deep:true})
+watch(servicePage,closeHover)
+watch(servicePages,count=>servicePage.value=Math.min(servicePage.value,count))
+watch([()=>w.project.value,()=>w.hours.value,currentPage],closeHover)
+watch(()=>w.displayTarget.value,()=>{if(keepOpen.value&&hoverNode.value){activeRound.value=null;inlineTab.value='history'}else closeHover()})
+onMounted(()=>monitorTimer=setInterval(()=>{if(w.page.value==='home'&&document.visibilityState==='visible')void readMonitor()},30000));onBeforeUnmount(()=>{monitorGeneration++;clearTimeout(hoverTimer);clearInterval(monitorTimer)})
+</script>
+<template>
+  <section class="home-view">
+    <div class="home-top"><div><h1>节点首页</h1><p>选机场，看节点，找到适合你的线路。</p></div><button class="button ghost" :disabled="w.loading.value" @click="w.refreshNodes().catch(w.fail)"><Icon name="refresh"/>刷新节点</button></div>
+    <section class="source-orbit" aria-label="机场选择">
+      <div class="orbit-shell"><svg viewBox="0 0 240 240" class="orbit-ring" aria-hidden="true"><circle cx="120" cy="120" r="115" class="orbit-track"/><circle v-for="(airport,i) in chosen" :key="airport.id" cx="120" cy="120" r="115" class="orbit-segment" :stroke-dasharray="`${2*Math.PI*115/Math.max(1,chosen.length)-10} ${2*Math.PI*115-2*Math.PI*115/Math.max(1,chosen.length)+10}`" :stroke-dashoffset="-i*2*Math.PI*115/Math.max(1,chosen.length)"/></svg><button class="orbit-button" :aria-label="'选择机场：'+(chosenNames||'尚未选择')" :aria-expanded="picker" @click="picker=true"><span class="airport-logos"><span v-for="airport in chosen.slice(0,4)" :key="airport.id" class="airport-logo">{{airport.name.slice(0,1)}}</span><span v-if="chosen.length>4" class="airport-logo airport-logo-more">+{{chosen.length-4}}</span><Icon v-if="!chosen.length" name="plus"/></span><strong>{{chosen.length?`${chosen.length} 个机场`:'选择机场'}}</strong><span class="orbit-names" :title="chosenNames">{{chosen.length>3?chosen.slice(0,2).map(a=>a.name).join(' · ')+' 等 '+chosen.length+' 个':chosenNames||'支持同时选择多个'}}</span><span class="orbit-link">切换机场<Icon name="down"/></span></button></div>
+      <div class="orbit-meta"><span><strong>{{w.proxyNodes.value.length}}</strong> 个节点</span><span><strong>{{profiles.length}}</strong> 个订阅</span><button v-if="w.notices.value.length" class="text-button" @click="noticeOpen=true">{{w.notices.value.length}} 条公告</button></div>
+    </section>
+    <div class="home-controls" :class="{following:followControls}">
+    <nav class="project-tabs" aria-label="检测项目"><button v-for="p in (['latency','download','service','combined'] as Project[])" :key="p" :aria-selected="w.project.value===p" @click="w.project.value=p"><Icon :name="p==='latency'?'pulse':p==='download'?'download':p==='service'?'globe':'layers'"/>{{projectNames[p]}}</button><label class="follow-controls-switch" title="开启后，检测和筛选选项会在滚动时留在顶部"><input v-model="followControls" type="checkbox" aria-label="跟随滚动"><Icon name="pin"/>跟随滚动</label><button class="tab-tail" @click="w.project.value='combined';w.openPlan()"><Icon name="settings"/>组合检测</button></nav>
+    <div class="view-context">
+      <div class="context-controls">
+        <SiteDisplayPicker v-if="w.project.value==='latency'||w.project.value==='combined'" v-model="w.displayTargets.value"/>
+        
+        <SiteDisplayPicker v-if="w.project.value==='service'||w.project.value==='combined'" v-model="w.displayServiceIds.value" :choices="serviceChoices" label="显示服务" item-label="服务" :default-id="serviceChoices[0]?.id"/>
+        <span v-if="(w.project.value==='service'||w.project.value==='combined')&&servicePages>1" class="service-display-pages" aria-label="显示服务分组"><button class="text-button" :disabled="servicePage<=1" aria-label="上一组服务" @click="servicePage--">‹</button><span>{{(servicePage-1)*servicesPerPage+1}}–{{Math.min(servicePage*servicesPerPage,displayServices.length)}} / {{displayServices.length}} 项</span><button class="text-button" :disabled="servicePage>=servicePages" aria-label="下一组服务" @click="servicePage++">›</button></span>
+        <label>历史范围<UiSelect v-model.number="w.hours.value"><option :value="6">最近 6 小时</option><option :value="24">最近 24 小时</option><option :value="168">最近 7 天</option><option :value="720">最近 30 天</option></UiSelect></label>
+        <span v-if="w.pendingReads.value" class="muted small">读取结果中…</span>
+      </div><span class="small muted">悬停看本轮 · 点击节点看走势</span><button class="button primary scope-run" :disabled="!runNodes.length||w.busy.value" @click="closeHover();w.openPlan(runNodes)"><Icon name="play"/>{{runLabel(w.project.value)}} · {{w.selectedNodes.value.length?'已选':'筛选'}} {{runNodes.length}} 个节点</button>
+    </div>
+    <details v-if="w.project.value==='service'||w.project.value==='combined'" class="service-picker-disclosure"><summary>选择检测服务 · 已选 {{w.serviceIds.value.length}} 项 <span>{{selectedServices.slice(0,3).map(s=>s.name).join(' · ')}}</span></summary><ServicePicker v-model="w.serviceIds.value" :catalog="w.catalog.value"/></details>
+    <div class="node-toolbar">
+      <label class="search-field"><Icon name="search"/><input v-model="w.search.value" type="search" placeholder="搜索节点、机场或地区" aria-label="搜索节点"></label>
+      <div class="toolbar-filters">
+        <UiSelect v-model="w.airportFilter.value" aria-label="机场筛选"><option value="all">全部机场</option><option v-for="a in chosen" :key="a.id" :value="a.id">{{a.name}}</option></UiSelect>
+        <UiSelect v-if="filterProfiles.length>1" v-model="w.subscription.value" aria-label="订阅筛选"><option value="all">全部订阅</option><option v-for="[id,name] in filterProfiles" :key="id" :value="id">{{name}}</option></UiSelect>
+        <UiSelect v-model="w.region.value" aria-label="地区筛选"><option value="all">全部地区</option><option v-for="code in filterRegions" :key="code" :value="code">{{nodeRegionLabel(code)}}</option></UiSelect>
+        <UiSelect v-model="w.sort.value" aria-label="节点排序"><option value="region">地区 → 机场</option><option value="airport">机场 → 地区</option><option value="name">按名称排序</option><option v-if="w.project.value==='latency'||w.project.value==='combined'" value="latency">按最近延迟排序</option><option v-if="w.project.value==='download'||w.project.value==='combined'" value="download">按最近下载速度</option><option v-if="w.project.value==='service'||w.project.value==='combined'" value="service">按已测服务通过率</option></UiSelect>
+        <UiSelect v-if="w.sort.value==='latency'&&displaySites.length>1" v-model="w.displayTarget.value" aria-label="延迟排序站点"><option v-for="site in displaySites" :key="site.id" :value="site.id">{{site.name}}延迟优先</option></UiSelect>
+        <UiSelect v-if="w.sort.value==='airport'&&chosen.length>1&&w.airportFilter.value==='all'" v-model="w.priorityAirportId.value" aria-label="优先机场"><option value="all">机场自然顺序</option><option v-for="a in chosen" :key="a.id" :value="a.id">{{a.name}}优先</option></UiSelect>
+        <button class="button" :class="{active:w.multiSelect.value}" @click="w.multiSelect.value?w.cancelSelection():w.multiSelect.value=true"><Icon name="select"/>{{w.multiSelect.value?'取消多选':'多选节点'}}</button>
+      </div>
+    </div>
+    <div class="node-list-context"><span>{{w.airportFilter.value==='all'?'全部已选机场':chosen.find(a=>a.id===w.airportFilter.value)?.name}} · {{w.filteredNodes.value.length}} 个节点<span v-if="w.sort.value==='region'"> · 同地区按机场、订阅分组</span><span v-else-if="w.sort.value==='airport'&&w.airportFilter.value==='all'&&w.priorityAirportId.value!=='all'"> · {{chosen.find(a=>a.id===w.priorityAirportId.value)?.name}}优先</span><span v-else-if="w.sort.value==='download'"> · 下载速度从高到低，未测或失败置后</span><span v-else-if="w.sort.value==='service'"> · 仅计已选显示服务的已测结果，未测置后</span></span><button v-if="w.notices.value.length" class="text-button" @click="noticeOpen=true">已归入 {{w.notices.value.length}} 条公告</button></div>
+    </div>
+    <div v-if="w.multiSelect.value" class="selection-bar" aria-live="polite"><div class="selection-info"><input type="checkbox" :checked="allSelected" :indeterminate="!allSelected&&pageNodes.some(n=>w.selectedKeys.value.includes(key(n)))" aria-label="选择本页全部节点" @change="w.toggleAll(pageNodes)"><strong>已选 {{w.selectedNodes.value.length}} 个节点</strong><button class="text-button" @click="w.toggleAll(w.filteredNodes.value)">{{w.filteredNodes.value.length&&w.filteredNodes.value.every(n=>w.selectedKeys.value.includes(key(n)))?'取消范围选择':'全选筛选范围'}}</button><button v-if="w.selectedKeys.value.length" class="text-button" @click="w.selectedKeys.value=[]">清空已选</button></div><div class="selection-actions"><button class="button primary" :disabled="!w.selectedNodes.value.length||w.busy.value" @click="w.openPlan()"><Icon name="play"/>{{w.project.value==='combined'?'组合检测':projectNames[w.project.value]}}</button><button class="button" :disabled="!w.selectedNodes.value.length" @click="w.monitorNodes.value=w.selectedNodes.value.map(n=>({...n}))"><Icon name="monitor"/>持续监测延迟</button><button class="button ghost" :disabled="!w.selectedNodes.value.length" @click="w.exportSelection().catch(w.fail)">导出</button></div></div>
+    <div v-if="w.busy.value" class="live-status"><span class="spinner"/><span>检测正在进行{{w.queue.value.length?` · ${w.done.value}/${w.queue.value.length}`:''}}</span><button class="text-button" @click="w.queueOpen.value=true">查看进度</button><button class="text-button danger" @click="w.cancelTests()">{{w.cancelRequested.value?'正在取消…':'取消检测'}}</button></div>
+    <div class="node-list">
+      <div class="node-heading" :class="{combined:w.project.value==='combined','multi-target':w.project.value!=='combined'&&(w.project.value!=='latency'||displaySites.length>1)}"><span/><span>节点 / 机场</span><span>{{w.project.value==='combined'?'延迟 · 下载 · 服务':w.project.value==='latency'?(displaySites.length>1?displaySites.length+' 站点延迟':targets.find(t=>t.id===w.displayTarget.value)?.name):w.project.value==='download'?'下载速度':visibleServices.length+' 项服务'}}</span><span class="align-right">近期检测</span><span/></div>
+      <article v-for="node in pageNodes" :key="key(node)" class="node-row" :class="{selected:w.selectedKeys.value.includes(key(node)),combined:w.project.value==='combined','multi-target':w.project.value!=='combined'&&(w.project.value!=='latency'||displaySites.length>1)}">
+        <span class="node-check"><input v-if="w.multiSelect.value" type="checkbox" :checked="w.selectedKeys.value.includes(key(node))" :aria-label="`选择 ${nodeDisplayName(node)}`" @change="w.toggleNode(node)"><span v-else class="node-dot" :class="monitoring(node)?'good':'empty'" :title="monitoring(node)?'持续监测中':'未开启持续监测'"/></span>
+        <button :id="nodeButtonId(node)" class="node-name-button" :title="node.display_name+' · '+sourceLabel(node)+' · '+node.type" :aria-expanded="expanded(node)" :aria-controls="expanded(node)?nodePanelId(node):undefined" @click="openNodeHistory(node)" @keydown.esc.stop.prevent="closeInline(node)"><span class="country-code">{{node.country_code||'—'}}</span><span class="node-name"><strong>{{nodeDisplayName(node)}}</strong><small>{{sourceLabel(node)}} · {{node.type}}</small></span></button>
+        <div v-if="w.project.value==='combined'" class="combined-values">
+          <section class="metric-group"><small class="metric-group-heading">延迟</small><div class="node-target-metrics"><div v-for="site in displaySites" :key="site.id"><small>{{site.name}}</small><strong>{{siteMetric(node,site.id)}}</strong></div></div></section>
+          <section class="metric-group"><small class="metric-group-heading">下载</small><div class="node-target-metrics"><div><small>下载速度</small><strong :class="downloadMetricTone(node)">{{downloadMetric(node)}}</strong></div></div></section>
+          <section class="metric-group"><small class="metric-group-heading">服务 · {{visibleServices.length}} 项<span v-if="servicePages>1">（第 {{servicePage}} 组）</span></small><div class="node-target-metrics"><div v-for="s in visibleServices" :key="s.service_id"><small :title="s.name">{{s.name}}</small><strong :class="serviceTone(node,s.service_id)">{{serviceMetric(node,s.service_id)}}</strong></div><div v-if="!visibleServices.length"><strong>尚无服务</strong></div></div><small>持续监测 · 基础 HTTP</small><p v-if="monitorHTTPServices.some(s=>monitorHTTPErrors[key(node)+':'+s.probeType])" class="small bad" role="alert">监测 HTTP 记录读取失败</p><div class="node-target-metrics monitor-http-metrics"><div v-for="s in monitorHTTPServices" :key="s.id"><small>{{s.name}}</small><strong :class="httpPoints(node,s.id).at(-1)?.tone||'empty'">{{httpMetric(node,s.id)}}</strong></div></div></section>
+        </div>
+        <div v-else class="node-metric">
+          <div v-if="w.project.value==='latency'&&displaySites.length>1" class="node-target-metrics"><div v-for="site in displaySites" :key="site.id"><small>{{site.name}}</small><strong>{{siteMetric(node,site.id)}}</strong></div></div>
+          <template v-else-if="w.project.value==='service'"><div class="node-target-metrics"><div v-for="s in visibleServices" :key="s.service_id"><small :title="s.name">{{s.name}}</small><strong :class="serviceTone(node,s.service_id)">{{serviceMetric(node,s.service_id)}}</strong></div><div v-if="!visibleServices.length"><strong>尚无服务</strong></div></div><small>持续监测 · 基础 HTTP</small><p v-if="monitorHTTPServices.some(s=>monitorHTTPErrors[key(node)+':'+s.probeType])" class="small bad" role="alert">监测 HTTP 记录读取失败</p><div class="node-target-metrics monitor-http-metrics"><div v-for="s in monitorHTTPServices" :key="s.id"><small>{{s.name}}</small><strong :class="httpPoints(node,s.id).at(-1)?.tone||'empty'">{{httpMetric(node,s.id)}}</strong></div></div></template>
+          <div v-else-if="w.project.value==='download'" class="node-target-metrics download-metrics"><div><small>下载速度</small><strong :class="downloadMetricTone(node)">{{downloadMetric(node)}}</strong></div></div>
+          <strong v-else>{{metric(node,w.project.value)}}</strong>
+          <small v-if="w.historyReadError(node,w.project.value)" class="bad">读取失败</small><small v-else-if="w.project.value==='service'">显示服务独立于检测选择</small><small v-else>{{date(w.project.value==='download'?w.downloads.value[key(node)]?.[0]?.finished_at:w.latestForTarget(node,w.displayTarget.value)?.finished_at)}}</small>
+        </div>
+        <div v-if="w.project.value==='combined'" class="health-stack target-health-stack combined-health">
+          <div v-for="track in healthTracks" :key="track.id"><span :title="track.label">{{track.label}}</span><HealthBars :points="trackPoints(node,track)" :label="track.label" @inspect="inspectRound(node,track.project,$event,track.target,track.serviceId)" @leave="leaveRound" @open="openRound(node,track.project,$event,track.target,track.serviceId)"/></div><div v-for="s in monitorHTTPServices" :key="s.id"><span :title="'持续监测 · '+s.name">{{s.name}}</span><HealthBars :points="httpPoints(node,s.id)" :label="s.name" @inspect="inspectRound(node,'service',$event,w.displayTarget.value,s.id)" @leave="leaveRound" @open="openRound(node,'service',$event,w.displayTarget.value,s.id)"/></div>
+        </div>
+        <div v-else class="node-health">
+          <div v-if="w.project.value==='service'" class="health-stack target-health-stack service-health"><div v-for="s in visibleServices" :key="s.service_id"><span :title="s.name">{{s.name}}</span><HealthBars :points="points(w,node,'service',w.displayTarget.value,s.service_id)" :label="s.name" @inspect="inspectRound(node,'service',$event,w.displayTarget.value,s.service_id)" @leave="leaveRound" @open="openRound(node,'service',$event,w.displayTarget.value,s.service_id)"/></div><div v-for="s in monitorHTTPServices" :key="s.id"><span :title="'持续监测 · '+s.name">{{s.name}}</span><HealthBars :points="httpPoints(node,s.id)" :label="s.name" @inspect="inspectRound(node,'service',$event,w.displayTarget.value,s.id)" @leave="leaveRound" @open="openRound(node,'service',$event,w.displayTarget.value,s.id)"/></div></div>
+          <div v-else-if="w.project.value==='latency'&&displaySites.length>1" class="health-stack target-health-stack"><div v-for="site in displaySites" :key="site.id"><span>{{site.name}}</span><HealthBars :points="sitePoints(node,site.id)" :label="site.name" @inspect="inspectRound(node,'latency',$event,site.id)" @leave="leaveRound" @open="openRound(node,'latency',$event,site.id)"/></div></div>
+          <HealthBars v-else :points="rowPoints(node,w.project.value)" :label="projectNames[w.project.value]" @inspect="inspectRound(node,w.project.value,$event)" @leave="leaveRound" @open="openRound(node,w.project.value,$event)"/>
+          <small>{{w.project.value==='latency'&&monitorErrors[key(node)]?'监测记录读取失败':w.project.value==='latency'&&displaySites.length>1?(monitorData[key(node)]?.length?'含持续监测 · Cloudflare':'每行一个站点 · 悬停看本轮'):w.project.value==='latency'&&monitorData[key(node)]?.length?'持续监测 · Cloudflare':w.project.value==='service'?(monitorHTTPServices.some(s=>monitorHTTPErrors[key(node)+':'+s.probeType])?'监测 HTTP 读取失败':httpPoints(node).length?'含持续监测 · 基础 HTTP':'每行一个服务 · 悬停看结果'):'手动检测记录'}}</small>
+        </div>
+        <button class="button row-run" :disabled="w.busy.value" :aria-label="`${runLabel(w.project.value)} ${nodeDisplayName(node)} · ${sourceLabel(node)}`" @click="closeHover();w.openPlan([node])"><Icon name="play"/>{{runLabel(w.project.value)}}</button>
+        <section v-if="expanded(node)" :id="nodePanelId(node)" class="node-inline-results" :aria-label="nodeDisplayName(node)+'详情'" @keydown.esc.stop.prevent="closeInline(node)" @mouseenter="keepRound" @mouseleave="leaveRound" @focusin="keepRound">
+          <header class="inline-panel-header"><div><strong>{{nodeDisplayName(node)}} · {{projectNames[hoverMode]}}</strong><small>{{sourceLabel(node)}}</small></div><nav class="view-switch" aria-label="节点展开内容"><button :aria-pressed="inlineTab==='round'" :disabled="!activeRound" @click="keepOpen=true;inlineTab='round';keepRound()">本轮数据</button><button :aria-pressed="inlineTab==='history'" @click="expandHistory">完整走势图</button></nav><button class="text-button" @click="closeInline(node)">收起</button></header>
+          <div v-if="inlineTab==='round'&&activeRound" class="inline-result-columns"><RoundResults v-if="hoverMode==='latency'" :point="activeRound"/><MeasurementResults v-else :point="activeRound" :project="hoverMode"/><div class="inline-history"><p class="small muted">{{hoverMode==='latency'?(activeRound.source==='monitor'?'持续监测 Cloudflare':targets.find(t=>t.id===hoverTarget)?.name):hoverMode==='service'?(monitorHTTPServices.find(s=>s.id===hoverService)?.name||w.catalog.value.find(s=>s.service_id===hoverService)?.name||'服务可用性'):'下载速度'}} · 历史走势</p><TrendChart :points="hoverPoints" :unit="hoverMode==='download'?'MiB/s':hoverMode==='service'?'通过':'ms'" label="节点近期走势"/><button class="text-button inline-expand-history" @click="expandHistory">在这里展开完整走势 <Icon name="down"/></button></div></div>
+          <InlineHistory v-else :node="node" :nodes="w.filteredNodes.value" :project="hoverMode" :source="inlineHistorySource" :monitor-service-id="hoverService" :anchor-points="hoverPoints" :target-ids="w.displayTargets.value" :service-ids="visibleServiceIds"/>
+        </section>
+      </article>
+      <div v-if="!pageNodes.length" class="empty-state"><Icon name="layers"/><h3>{{!chosen.length?'先选择一个机场':!w.nodes.value.length?'还没有缓存的节点':'没有匹配的节点'}}</h3><p>{{!chosen.length?'点击上方圆圈，可同时选择多个机场。':!w.nodes.value.length?'在机场订阅中添加或刷新订阅。':'调整地区、订阅或搜索条件。'}}</p><button class="button" @click="!chosen.length?picker=true:w.page.value='airports'">{{!chosen.length?'选择机场':'管理订阅'}}</button></div>
+      <footer class="list-footer"><span>{{w.filteredNodes.value.length}} 个节点<span v-if="w.selectedKeys.value.length"> · 已选 {{w.selectedKeys.value.length}}</span></span><div class="health-legend"><span><i class="good"/>成功</span><span><i class="warn"/>受限 / 部分通过</span><span><i class="bad"/>失败</span><span><i class="empty"/>未测</span></div><div class="pagination"><button class="button ghost icon-button" :disabled="currentPage<=1" aria-label="上一页" @click="currentPage--">‹</button><span>{{currentPage}} / {{totalPages}}</span><button class="button ghost icon-button" :disabled="currentPage>=totalPages" aria-label="下一页" @click="currentPage++">›</button></div></footer>
+    </div>
+    <Modal v-if="picker" title="选择机场" @close="picker=false"><p class="muted">选择会同步更新节点范围，已选节点保留在这个范围内。</p><div class="airport-pick-list"><label v-for="airport in w.airports.value" :key="airport.id" :class="{selected:w.selectedAirportIds.value?.includes(airport.id)}"><input type="checkbox" :checked="w.selectedAirportIds.value?.includes(airport.id)" @change="toggleAirport(airport.id)"><span class="airport-logo">{{airport.name.slice(0,1)}}</span><span><strong>{{airport.name}}</strong><small>{{airport.subscriptions?.length||1}} 个订阅</small></span><span class="muted">{{airportNodeCount(airport.id)}} 个节点</span></label></div><div v-if="!w.airports.value.length" class="empty-state">还没有机场订阅<button class="button" @click="picker=false;w.page.value='airports'">添加机场</button></div><template #footer><button class="button ghost" @click="w.setAirports([])">取消全部</button><button class="button" @click="w.setAirports(w.airports.value.map(a=>a.id))">全选机场</button><button class="button primary" @click="picker=false">完成</button></template></Modal>
+    <Modal v-if="noticeOpen" title="机场公告" @close="noticeOpen=false"><div v-for="n in w.notices.value" :key="key(n)" class="notice-row"><small>{{n.profile_name}}</small><p>{{n.display_name}}</p></div></Modal>
+
+  </section>
+</template>

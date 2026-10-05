@@ -67,11 +67,21 @@ func (s *AppService) StartSubscriptionRefresh(userAgent string) {
 			defer s.maintenanceWG.Done()
 			ticker := time.NewTicker(time.Minute)
 			defer ticker.Stop()
+			if s.historyStore != nil {
+				if _, err := s.collectSubscriptionUsage(ctx, time.Now(), userAgent, false); err != nil && ctx.Err() == nil {
+					log.Print("每日订阅更新或用量记录无法完成，请在用量监测中重试")
+				}
+			}
 			for {
 				select {
 				case <-ctx.Done():
 					return
 				case now := <-ticker.C:
+					if s.historyStore != nil {
+						if _, err := s.collectSubscriptionUsage(ctx, now, userAgent, false); err != nil && ctx.Err() == nil {
+							log.Print("每日订阅更新或用量记录无法完成，请在用量监测中重试")
+						}
+					}
 					if err := s.refreshDueAirport(ctx, now, userAgent); err != nil {
 						log.Print("订阅定时刷新无法执行或保存，请检查机场存储")
 					}

@@ -238,7 +238,7 @@ CREATE TABLE IF NOT EXISTS workbench_download_results (
 
 // CurrentSchemaVersion is the SQLite schema authority. Databases without a
 // schema_meta row are the explicitly recognized pre-version legacy schema.
-const CurrentSchemaVersion = 9
+const CurrentSchemaVersion = 10
 
 var (
 	ErrUnsupportedSchemaVersion = fmt.Errorf("unsupported SQLite schema version")
@@ -403,6 +403,15 @@ func migrateSchema(db *sql.DB) error {
 			return err
 		}
 		version = 9
+	}
+	if version == 9 {
+		if _, err := tx.Exec(subscriptionUsageDDL); err != nil {
+			return fmt.Errorf("migrate subscription usage history: %w", err)
+		}
+		if _, err := tx.Exec("UPDATE schema_meta SET schema_version = 10 WHERE singleton = 1"); err != nil {
+			return err
+		}
+		version = 10
 	}
 	if err := validateCurrentSchema(tx, version); err != nil {
 		return fmt.Errorf("validate schema version %d after migration: %w", version, err)
@@ -633,6 +642,10 @@ func validateCurrentSchema(tx *sql.Tx, version int) error {
 		if err := requireColumns(tx, "workbench_latency_samples", []string{"target"}); err != nil {
 			return err
 		}
+	}
+	if version >= 10 {
+		tables["subscription_usage_snapshots"] = []string{"account_key", "captured_at", "payload_json"}
+		tables["subscription_usage_refresh"] = []string{"singleton", "last_attempt", "next_refresh", "state", "message"}
 	}
 	if version >= 5 {
 		if version >= 8 {

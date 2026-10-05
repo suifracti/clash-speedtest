@@ -18,6 +18,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/faceair/clash-speedtest/adapter/desktop"
 	"github.com/faceair/clash-speedtest/adapter/web"
+	"github.com/faceair/clash-speedtest/application"
 	"github.com/faceair/clash-speedtest/core/appdata"
 	"github.com/faceair/clash-speedtest/core/auth"
 	"github.com/faceair/clash-speedtest/core/ip"
@@ -41,46 +42,47 @@ var (
 )
 
 var (
-	configPathsConfig    = flag.String("c", "", "config file path, also support http(s) url")
-	filterRegexConfig    = flag.String("f", ".+", "filter proxies by name, use regexp")
-	blockKeywords        = flag.String("b", "", "block proxies by keywords, use | to separate multiple keywords (example: -b 'rate|x1|1x')")
-	serverURL            = flag.String("server-url", "https://dl.google.com/chrome/mac/universal/stable/GGRO/googlechrome.dmg", "server url or direct download url")
-	speedMode            = flag.String("speed-mode", "download", "speed test mode: fast, download, full")
-	downloadSize         = flag.Int("download-size", 50*1024*1024, "download size for testing proxies")
-	uploadSize           = flag.Int("upload-size", 20*1024*1024, "upload size for testing proxies (full mode only)")
-	timeout              = flag.Duration("timeout", time.Second*5, "timeout for testing proxies")
-	concurrent           = flag.Int("concurrent", 4, "download concurrent size")
-	outputPath           = flag.String("output", "", "output config file path")
-	gistToken            = flag.String("gist-token", "", "github gist token for updating output")
-	gistAddress          = flag.String("gist-address", "", "github gist address or id for updating output (filename uses output basename)")
-	repoToken            = flag.String("repo-token", "", "github token for updating repository file")
-	repoAddress          = flag.String("repo-address", "", "github repository address or owner/repo for updating output")
-	repoFilePath         = flag.String("repo-file-path", "", "repository file path for uploading output (default: output basename)")
-	repoBranch           = flag.String("repo-branch", "", "repository branch for uploading output (default: repository default branch)")
-	maxLatency           = flag.Duration("max-latency", time.Second, "filter latency greater than this value")
-	maxPacketLoss        = flag.Float64("max-packet-loss", 100, "filter packet loss greater than this value(unit: %)")
-	minDownloadSpeed     = flag.Float64("min-download-speed", 5, "filter download speed less than this value(unit: MB/s)")
-	minUploadSpeed       = flag.Float64("min-upload-speed", 2, "filter upload speed less than this value(unit: MB/s, full mode only)")
-	earlyStop            = flag.Int("early-stop", 0, "stop testing after this many results pass filters (0 disables)")
-	renameNodes          = flag.Bool("rename", true, "rename nodes with IP location and speed")
-	renameTemplate       = flag.String("rename-template", "", "name template for renaming (Go text/template). Placeholders: {{.Flag}}, {{.CountryCode}}, {{.Index}}, {{.Direction}}, {{.Speed}}, {{.SpeedUnit}}, {{.LatencyMs}}, {{.DownloadSpeedMBps}}, {{.UploadSpeedMBps}}. Empty = default format")
-	fastMode             = flag.Bool("fast", false, "fast mode (alias for --speed-mode fast)")
-	metricsFlag          = flag.String("metrics", "", "test metrics: latency,download,upload,antigravity or all (default follows --speed-mode)")
-	durationFlag         = flag.Duration("duration", 0, "keep testing for this long, e.g. 10m (0 = one pass per node)")
-	roundsFlag           = flag.Int("rounds", 1, "number of test rounds per node (default 1)")
-	versionFlag          = flag.Bool("v", false, "show version information")
-	userAgent            = flag.String("ua", "", "User-Agent for fetching config from http(s) URL (default: mihomo kernel UA, e.g. mihomo/1.10.0)")
-	antigravityTokenFlag = flag.String("antigravity-token", "", "OAuth Bearer token (ya29...) for the Antigravity availability check")
-	antigravityTokenFile = flag.String("antigravity-token-file", "", "OAuth token file for the Antigravity availability check; required when --metrics includes antigravity (file holds a bare Bearer token or an 'Authorization: Bearer ...' line)")
-	guiFlag              = flag.Bool("gui", false, "launch desktop graphical user interface (GUI)")
-	webFlag              = flag.Bool("web", false, "launch web browser interface instead of native desktop window")
-	dataDirFlag          = flag.String("data-dir", "", "absolute isolated data directory (overrides CLASH_SPEEDTEST_DATA_DIR)")
-	cliFlag              = flag.Bool("cli", false, "force terminal CLI interactive mode")
-	portFlag             = flag.Int("port", 0, "port for GUI web server (default: random free port)")
-	publicIPv6Flag       = flag.String("public-ipv6", "", "explicitly expose the full unauthenticated web console on this IPv6 address (trusted sharing only)")
-	webPasswordFlag      = flag.String("web-password", "", "optional password for web console (can also be set via CLASH_SPEEDTEST_WEB_PASSWORD)")
-	listenFlag           = flag.String("listen", "::", "web listen address (default: all IPv6/IPv4 interfaces; use 127.0.0.1 for local only)")
-	browserFlag          = flag.String("browser", "", "preferred browser for GUI: zen, arc, brave, chrome, edge, safari, default, none, or path to executable")
+	configPathsConfig     = flag.String("c", "", "config file path, also support http(s) url")
+	filterRegexConfig     = flag.String("f", ".+", "filter proxies by name, use regexp")
+	blockKeywords         = flag.String("b", "", "block proxies by keywords, use | to separate multiple keywords (example: -b 'rate|x1|1x')")
+	serverURL             = flag.String("server-url", "https://dl.google.com/chrome/mac/universal/stable/GGRO/googlechrome.dmg", "server url or direct download url")
+	speedMode             = flag.String("speed-mode", "download", "speed test mode: fast, download, full")
+	downloadSize          = flag.Int("download-size", 50*1024*1024, "download size for testing proxies")
+	uploadSize            = flag.Int("upload-size", 20*1024*1024, "upload size for testing proxies (full mode only)")
+	timeout               = flag.Duration("timeout", time.Second*5, "timeout for testing proxies")
+	concurrent            = flag.Int("concurrent", 4, "download concurrent size")
+	outputPath            = flag.String("output", "", "output config file path")
+	gistToken             = flag.String("gist-token", "", "github gist token for updating output")
+	gistAddress           = flag.String("gist-address", "", "github gist address or id for updating output (filename uses output basename)")
+	repoToken             = flag.String("repo-token", "", "github token for updating repository file")
+	repoAddress           = flag.String("repo-address", "", "github repository address or owner/repo for updating output")
+	repoFilePath          = flag.String("repo-file-path", "", "repository file path for uploading output (default: output basename)")
+	repoBranch            = flag.String("repo-branch", "", "repository branch for uploading output (default: repository default branch)")
+	maxLatency            = flag.Duration("max-latency", time.Second, "filter latency greater than this value")
+	maxPacketLoss         = flag.Float64("max-packet-loss", 100, "filter packet loss greater than this value(unit: %)")
+	minDownloadSpeed      = flag.Float64("min-download-speed", 5, "filter download speed less than this value(unit: MB/s)")
+	minUploadSpeed        = flag.Float64("min-upload-speed", 2, "filter upload speed less than this value(unit: MB/s, full mode only)")
+	earlyStop             = flag.Int("early-stop", 0, "stop testing after this many results pass filters (0 disables)")
+	renameNodes           = flag.Bool("rename", true, "rename nodes with IP location and speed")
+	renameTemplate        = flag.String("rename-template", "", "name template for renaming (Go text/template). Placeholders: {{.Flag}}, {{.CountryCode}}, {{.Index}}, {{.Direction}}, {{.Speed}}, {{.SpeedUnit}}, {{.LatencyMs}}, {{.DownloadSpeedMBps}}, {{.UploadSpeedMBps}}. Empty = default format")
+	fastMode              = flag.Bool("fast", false, "fast mode (alias for --speed-mode fast)")
+	metricsFlag           = flag.String("metrics", "", "test metrics: latency,download,upload,antigravity or all (default follows --speed-mode)")
+	durationFlag          = flag.Duration("duration", 0, "keep testing for this long, e.g. 10m (0 = one pass per node)")
+	roundsFlag            = flag.Int("rounds", 1, "number of test rounds per node (default 1)")
+	versionFlag           = flag.Bool("v", false, "show version information")
+	userAgent             = flag.String("ua", "", "User-Agent for fetching config from http(s) URL (default: mihomo kernel UA, e.g. mihomo/1.10.0)")
+	antigravityTokenFlag  = flag.String("antigravity-token", "", "OAuth Bearer token (ya29...) for the Antigravity availability check")
+	antigravityTokenFile  = flag.String("antigravity-token-file", "", "OAuth token file for the Antigravity availability check; required when --metrics includes antigravity (file holds a bare Bearer token or an 'Authorization: Bearer ...' line)")
+	guiFlag               = flag.Bool("gui", false, "launch desktop graphical user interface (GUI)")
+	webFlag               = flag.Bool("web", false, "launch web browser interface instead of native desktop window")
+	dataDirFlag           = flag.String("data-dir", "", "absolute isolated data directory (overrides CLASH_SPEEDTEST_DATA_DIR)")
+	noAutoCredentialsFlag = flag.Bool("no-auto-credentials", false, "disable automatic credential discovery and refresh for GUI/web startup")
+	cliFlag               = flag.Bool("cli", false, "force terminal CLI interactive mode")
+	portFlag              = flag.Int("port", 0, "port for GUI web server (default: random free port)")
+	publicIPv6Flag        = flag.String("public-ipv6", "", "explicitly expose the full unauthenticated web console on this IPv6 address (trusted sharing only)")
+	webPasswordFlag       = flag.String("web-password", "", "optional password for web console (can also be set via CLASH_SPEEDTEST_WEB_PASSWORD)")
+	listenFlag            = flag.String("listen", "::", "web listen address (default: all IPv6/IPv4 interfaces; use 127.0.0.1 for local only)")
+	browserFlag           = flag.String("browser", "", "preferred browser for GUI: zen, arc, brave, chrome, edge, safari, default, none, or path to executable")
 )
 
 func main() {
@@ -129,15 +131,19 @@ func main() {
 		shouldRunGUI = true
 	}
 
+	if *noAutoCredentialsFlag && !shouldRunGUI {
+		log.Fatalln("--no-auto-credentials is supported only in GUI/web mode")
+	}
 	if shouldRunGUI {
+		appOptions := application.Options{NoAutoCredentials: *noAutoCredentialsFlag}
 		appPaths, err := appdata.Resolve(*dataDirFlag)
 		if err != nil {
 			log.Fatalf("resolve application data paths: %s", err)
 		}
 		if *webFlag {
-			runGUI(*portFlag, *userAgent, *browserFlag, appPaths)
+			runGUI(*portFlag, *userAgent, *browserFlag, appPaths, appOptions)
 		} else {
-			runDesktop(*userAgent, *portFlag, *browserFlag, appPaths)
+			runDesktop(*userAgent, *portFlag, *browserFlag, appPaths, appOptions)
 		}
 		return
 	}
@@ -474,7 +480,7 @@ func keepProxies(proxies map[string]*speedtester.CProxy, names []string) map[str
 	return filtered
 }
 
-func runGUI(port int, userAgent string, browser string, appPaths appdata.AppPaths) {
+func runGUI(port int, userAgent string, browser string, appPaths appdata.AppPaths, appOptions application.Options) {
 	profiles.EnableUTF8Console()
 
 	distFS, err := fs.Sub(desktopAssets, "frontend/dist")
@@ -489,6 +495,7 @@ func runGUI(port int, userAgent string, browser string, appPaths appdata.AppPath
 
 	server, err := web.NewServer(web.ServerConfig{
 		AppPaths:      appPaths,
+		AppOptions:    appOptions,
 		Port:          port,
 		PublicIPv6:    *publicIPv6Flag,
 		WebPassword:   webPassword,
@@ -554,16 +561,26 @@ func runGUI(port int, userAgent string, browser string, appPaths appdata.AppPath
 	_ = server.Stop(ctx)
 }
 
-func runDesktop(userAgent string, fallbackPort int, browser string, appPaths appdata.AppPaths) {
+type desktopRunners struct {
+	startNative func(desktop.RunConfig) error
+	startWeb    func(int, string, string, appdata.AppPaths, application.Options)
+}
+
+func runDesktop(userAgent string, fallbackPort int, browser string, appPaths appdata.AppPaths, appOptions application.Options) {
+	runDesktopWithRunners(userAgent, fallbackPort, browser, appPaths, appOptions, desktopRunners{desktop.Run, runGUI})
+}
+
+func runDesktopWithRunners(userAgent string, fallbackPort int, browser string, appPaths appdata.AppPaths, appOptions application.Options, runners desktopRunners) {
 	profiles.EnableUTF8Console()
 	cfg := desktop.RunConfig{
-		AppPaths:  appPaths,
-		UserAgent: userAgent,
-		Assets:    desktopAssets,
+		AppPaths:   appPaths,
+		UserAgent:  userAgent,
+		Assets:     desktopAssets,
+		AppOptions: appOptions,
 	}
-	err := desktop.Run(cfg)
+	err := runners.startNative(cfg)
 	if err != nil {
 		fmt.Printf("启动 Wails 原生桌面窗口失败 (%v)，正在自动降级至 Web 模式...\n", err)
-		runGUI(fallbackPort, userAgent, browser, appPaths)
+		runners.startWeb(fallbackPort, userAgent, browser, appPaths, appOptions)
 	}
 }

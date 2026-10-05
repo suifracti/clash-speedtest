@@ -121,7 +121,7 @@ func (s *AppService) resolveRecoveryNodes(definition *monitor.MonitorJobDefiniti
 	if profileErr != nil {
 		return nil, fmt.Sprintf("当前订阅配置不可用：%v", profileErr)
 	}
-	if profileStore == nil || profileStore.Get(definition.ProfileID) == nil {
+	if _, exists := monitorProfileName(profileStore, definition.ProfileID); !exists {
 		return nil, "订阅不存在或已被移除"
 	}
 	current, err := s.loadMonitorNodes(definition.ProfileID)
@@ -161,7 +161,7 @@ func (s *AppService) refreshBlockedMonitorJob(sched *monitor.Scheduler) error {
 	if err != nil {
 		return fmt.Errorf("当前订阅配置不可用：%w", err)
 	}
-	if profileStore == nil || profileStore.Get(job.ProfileID) == nil {
+	if _, exists := monitorProfileName(profileStore, job.ProfileID); !exists {
 		return fmt.Errorf("订阅不存在或已被移除")
 	}
 	current, err := s.loadMonitorNodes(job.ProfileID)

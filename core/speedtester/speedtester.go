@@ -344,7 +344,15 @@ func deduplicateProxiesByServerPort(proxies map[string]*CProxy) map[string]*CPro
 
 	deduplicated := make(map[string]*CProxy, len(proxies))
 	seen := make(map[string]struct{}, len(proxies))
-	for name, proxy := range proxies {
+	// Pick the same alias on every read; map iteration must not change a node's
+	// displayed name, country or configuration selected for the endpoint.
+	names := make([]string, 0, len(proxies))
+	for name := range proxies {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		proxy := proxies[name]
 		key, ok := buildProxyServerPortKey(proxy)
 		if ok {
 			if _, exists := seen[key]; exists {
@@ -378,8 +386,13 @@ func buildProxyServerPortKey(proxy *CProxy) (string, bool) {
 }
 
 func (st *SpeedTester) TestSingle(name string, proxy *CProxy, emit func(*Result) bool) *Result {
+	return st.TestSingleContext(context.Background(), name, proxy, emit)
+}
+
+// TestSingleContext allows latency probing to follow the caller's cancellation.
+func (st *SpeedTester) TestSingleContext(ctx context.Context, name string, proxy *CProxy, emit func(*Result) bool) *Result {
 	var last *Result
-	st.testProxyEmit(name, proxy, func(result *Result) bool {
+	st.testProxyEmitContext(ctx, name, proxy, func(result *Result) bool {
 		last = result
 		if emit != nil {
 			return emit(result)
@@ -648,6 +661,13 @@ func (r *Result) snapshot() *Result {
 }
 
 func (st *SpeedTester) testProxyEmit(name string, proxy *CProxy, emit func(*Result) bool) bool {
+	return st.testProxyEmitContext(context.Background(), name, proxy, emit)
+}
+
+func (st *SpeedTester) testProxyEmitContext(ctx context.Context, name string, proxy *CProxy, emit func(*Result) bool) bool {
+	if ctx.Err() != nil {
+		return false
+	}
 	if proxy == nil {
 		return true
 	}
@@ -659,9 +679,9 @@ func (st *SpeedTester) testProxyEmit(name string, proxy *CProxy, emit func(*Resu
 	}
 	emitOrContinue := func() bool {
 		if emit == nil {
-			return true
+			return ctx.Err() == nil
 		}
-		return emit(result.snapshot())
+		return emit(result.snapshot()) && ctx.Err() == nil
 	}
 
 	if metrics.Latency && metrics.Antigravity {
@@ -680,7 +700,7 @@ func (st *SpeedTester) testProxyEmit(name string, proxy *CProxy, emit func(*Resu
 			} else if st.config != nil && st.config.Duration > 0 {
 				pingCount = 3
 			}
-			latRes = st.testLatency(proxy, st.config.MaxLatency, pingCount)
+			latRes = st.testLatencyContext(ctx, proxy, st.config.MaxLatency, pingCount)
 		}()
 
 		go func() {
@@ -734,7 +754,7 @@ func (st *SpeedTester) testProxyEmit(name string, proxy *CProxy, emit func(*Resu
 			} else if st.config != nil && st.config.Duration > 0 {
 				pingCount = 3
 			}
-			latencyResult := st.testLatency(proxy, st.config.MaxLatency, pingCount)
+			latencyResult := st.testLatencyContext(ctx, proxy, st.config.MaxLatency, pingCount)
 			result.Latency = latencyResult.avgLatency
 			result.Jitter = latencyResult.jitter
 			result.PacketLoss = latencyResult.packetLoss
@@ -845,23 +865,44 @@ type latencyResult struct {
 }
 
 func (st *SpeedTester) testLatency(proxy constant.Proxy, minLatency time.Duration, pingCount int) *latencyResult {
+	return st.testLatencyContext(context.Background(), proxy, minLatency, pingCount)
+}
+
+func (st *SpeedTester) testLatencyContext(ctx context.Context, proxy constant.Proxy, timeout time.Duration, pingCount int) *latencyResult {
 	if pingCount <= 0 {
 		pingCount = 6
 	}
-	client := st.createClient(proxy, minLatency)
+	if timeout <= 0 && st.config != nil {
+		timeout = st.config.Timeout
+	}
+	client := st.createClient(proxy, timeout)
 	defer client.CloseIdleConnections()
-	return st.testLatencyWithClient(client, pingCount)
+	return st.testLatencyWithClientContext(ctx, client, pingCount)
 }
 
 func (st *SpeedTester) testLatencyWithClient(client *http.Client, pingCount int) *latencyResult {
+	return st.testLatencyWithClientContext(context.Background(), client, pingCount)
+}
+
+func (st *SpeedTester) testLatencyWithClientContext(ctx context.Context, client *http.Client, pingCount int) *latencyResult {
 	latencies := make([]time.Duration, 0, pingCount)
 	samples := make([]LatencySample, 0, pingCount)
 	failedPings := 0
 	probeURLs := LatencyProbeURLs(st.probeURL())
 
+rounds:
 	for i := 0; i < pingCount; i++ {
+		if ctx.Err() != nil {
+			break
+		}
 		if i > 0 {
-			time.Sleep(100 * time.Millisecond)
+			timer := time.NewTimer(100 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				break rounds
+			case <-timer.C:
+			}
 		}
 		round := make([]LatencySample, len(probeURLs))
 		var probes sync.WaitGroup
@@ -869,10 +910,19 @@ func (st *SpeedTester) testLatencyWithClient(client *http.Client, pingCount int)
 			probes.Add(1)
 			go func(targetIndex int, probeURL string) {
 				defer probes.Done()
+				if ctx.Err() != nil {
+					return
+				}
 				start := time.Now()
 				sample := LatencySample{Seq: i*len(probeURLs) + targetIndex + 1, Target: probeURL, Timestamp: start}
 				defer func() { round[targetIndex] = sample }()
-				req, err := http.NewRequest(http.MethodGet, probeURL, nil)
+				requestCtx := ctx
+				if client.Timeout > 0 {
+					var cancel context.CancelFunc
+					requestCtx, cancel = context.WithTimeout(ctx, client.Timeout)
+					defer cancel()
+				}
+				req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, probeURL, nil)
 				if err != nil {
 					sample.Error = err.Error()
 					return
@@ -882,14 +932,25 @@ func (st *SpeedTester) testLatencyWithClient(client *http.Client, pingCount int)
 					sample.Error = err.Error()
 					return
 				}
-				_, _ = io.CopyN(io.Discard, resp.Body, 1)
+				_, readErr := io.CopyN(io.Discard, resp.Body, 1)
 				resp.Body.Close()
+				if err := requestCtx.Err(); err != nil {
+					sample.Error = err.Error()
+					return
+				}
+				if readErr != nil && readErr != io.EOF {
+					sample.Error = readErr.Error()
+					return
+				}
 				dur := time.Since(start)
 				sample.Duration, sample.LatencyMs, sample.Success = dur, dur.Milliseconds(), true
 			}(targetIndex, probeURL)
 		}
 		probes.Wait()
 		for _, sample := range round {
+			if sample.Timestamp.IsZero() {
+				continue
+			}
 			samples = append(samples, sample)
 			if sample.Success {
 				latencies = append(latencies, sample.Duration)
@@ -899,7 +960,7 @@ func (st *SpeedTester) testLatencyWithClient(client *http.Client, pingCount int)
 		}
 	}
 
-	stats := calculateLatencyStats(latencies, failedPings, pingCount*len(probeURLs))
+	stats := calculateLatencyStats(latencies, failedPings, len(samples))
 	if len(probeURLs) > 1 {
 		var baseline []time.Duration
 		baselineFailed := 0
@@ -913,7 +974,7 @@ func (st *SpeedTester) testLatencyWithClient(client *http.Client, pingCount int)
 				baselineFailed++
 			}
 		}
-		baselineStats := calculateLatencyStats(baseline, baselineFailed, pingCount)
+		baselineStats := calculateLatencyStats(baseline, baselineFailed, len(baseline)+baselineFailed)
 		stats.avgLatency, stats.jitter = baselineStats.avgLatency, baselineStats.jitter
 	}
 	stats.samples = samples

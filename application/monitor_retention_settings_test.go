@@ -18,7 +18,7 @@ func TestMonitorRetentionPreferenceUsesCanonicalSettingsWithoutDeletion(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(paths.SettingsFile, []byte(`{"preferred_browser":"edge","unrelated_future_key":"preserve"}`), 0o600); err != nil {
+	if err := os.WriteFile(paths.SettingsFile, []byte(`{"preferred_browser":"edge","unrelated_future_key":"preserve","monitor_budget_daily_requests":0,"monitor_budget_daily_bytes":1}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	service := NewAppServiceWithPaths(nil, paths, nil)
@@ -29,27 +29,27 @@ func TestMonitorRetentionPreferenceUsesCanonicalSettingsWithoutDeletion(t *testi
 	if *initial.MonitorStorageWarningBytes != 1<<30 || *initial.MonitorStorageHardBytes != 2<<30 {
 		t.Fatalf("legacy settings lost 1/2 GiB default thresholds: %+v", initial)
 	}
-	if *initial.MonitorBudgetMaxConcurrent != 4 || *initial.MonitorBudgetDailyRequests != 20000 || *initial.MonitorBudgetDailyBytes != 32<<20 || *initial.MonitorBudgetResponseBytes != 256<<10 {
+	if *initial.MonitorBudgetMaxConcurrent != 4 || *initial.MonitorBudgetResponseBytes != 256<<10 {
 		t.Fatalf("legacy settings lost Monitor budget defaults: %+v", initial)
 	}
 	initial.MonitorRetentionPolicy = monitor.RetentionCustom
 	initial.MonitorRetentionCustomDays = 45
-	newRequests := int64(120)
-	initial.MonitorBudgetDailyRequests = &newRequests
+	newConcurrent := 8
+	initial.MonitorBudgetMaxConcurrent = &newConcurrent
 	if err := service.SaveSettings(initial); err != nil {
 		t.Fatal(err)
 	}
 	reopened := NewAppServiceWithPaths(nil, paths, nil)
 	got, err := reopened.GetSettings()
-	if err != nil || got.MonitorRetentionPolicy != monitor.RetentionCustom || got.MonitorRetentionCustomDays != 45 || *got.MonitorBudgetDailyRequests != newRequests {
+	if err != nil || got.MonitorRetentionPolicy != monitor.RetentionCustom || got.MonitorRetentionCustomDays != 45 || *got.MonitorBudgetMaxConcurrent != newConcurrent {
 		t.Fatalf("retention preference not retained: %+v %v", got, err)
 	}
-	invalidRequests := int64(0)
-	got.MonitorBudgetDailyRequests = &invalidRequests
+	invalidConcurrent := 0
+	got.MonitorBudgetMaxConcurrent = &invalidConcurrent
 	if err := reopened.SaveSettings(got); err == nil {
-		t.Fatal("zero request budget was accepted")
+		t.Fatal("zero concurrency was accepted")
 	}
-	got.MonitorBudgetDailyRequests = &newRequests
+	got.MonitorBudgetMaxConcurrent = &newConcurrent
 	got.MonitorRetentionPolicy = monitor.RetentionKeepAll
 	got.MonitorRetentionCustomDays = 0
 	if err := reopened.SaveSettings(got); err != nil {
@@ -61,6 +61,12 @@ func TestMonitorRetentionPreferenceUsesCanonicalSettingsWithoutDeletion(t *testi
 	}
 	if !strings.Contains(string(raw), `"unrelated_future_key": "preserve"`) || !strings.Contains(string(raw), `"monitor_retention_custom_days": 0`) {
 		t.Fatalf("canonical settings did not preserve unknown fields or reset custom days: %s", raw)
+	}
+	if strings.Contains(string(raw), "monitor_budget_daily_requests") || strings.Contains(string(raw), "monitor_budget_daily_bytes") {
+		t.Fatalf("saving settings retained obsolete daily limits: %s", raw)
+	}
+	if _, err := reopened.monitorBudgetLimits(); err != nil {
+		t.Fatalf("legacy daily limits interfered with monitoring settings: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(paths.DataRoot, "history")); !os.IsNotExist(err) {
 		t.Fatalf("saving retention preference must not create or prune history: %v", err)

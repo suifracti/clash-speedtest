@@ -49,11 +49,8 @@ func (d *DB) MonitorBudgetUsage(ctx context.Context, utcDay string) (monitor.Bud
 	return d.withMonitorBudget(ctx, utcDay, func(*monitor.BudgetUsage) (bool, error) { return false, nil })
 }
 
-func (d *DB) ReserveMonitorRequest(ctx context.Context, utcDay string, limit int64) (monitor.BudgetUsage, error) {
+func (d *DB) ReserveMonitorRequest(ctx context.Context, utcDay string) (monitor.BudgetUsage, error) {
 	return d.withMonitorBudget(ctx, utcDay, func(usage *monitor.BudgetUsage) (bool, error) {
-		if usage.RequestsUsed >= limit {
-			return false, &monitor.BudgetBlockError{Code: "requests_exhausted", Reason: "Monitor 今日请求额度已用尽"}
-		}
 		usage.RequestsUsed++
 		return true, nil
 	})
@@ -70,17 +67,13 @@ func (d *DB) RefundMonitorRequest(ctx context.Context, utcDay string) error {
 	return err
 }
 
-func (d *DB) ReserveMonitorBytes(ctx context.Context, utcDay string, want, limit int64) (string, int64, error) {
+func (d *DB) ReserveMonitorBytes(ctx context.Context, utcDay string, want int64) (string, int64, error) {
+	if want < 0 {
+		return "", 0, fmt.Errorf("Monitor byte reservation cannot be negative")
+	}
 	var granted int64
 	usage, err := d.withMonitorBudget(ctx, utcDay, func(usage *monitor.BudgetUsage) (bool, error) {
-		available := limit - usage.BytesUsed
-		if available <= 0 {
-			return false, &monitor.BudgetBlockError{Code: "bytes_exhausted", Reason: "Monitor 今日响应体读取额度已用尽"}
-		}
 		granted = want
-		if granted > available {
-			granted = available
-		}
 		usage.BytesUsed += granted
 		return true, nil
 	})
@@ -113,11 +106,11 @@ func (s *Store) MonitorBudgetUsage(ctx context.Context, utcDay string) (monitor.
 	}
 	return s.db.MonitorBudgetUsage(ctx, utcDay)
 }
-func (s *Store) ReserveMonitorRequest(ctx context.Context, utcDay string, limit int64) (monitor.BudgetUsage, error) {
+func (s *Store) ReserveMonitorRequest(ctx context.Context, utcDay string) (monitor.BudgetUsage, error) {
 	if s == nil || s.db == nil {
 		return monitor.BudgetUsage{}, fmt.Errorf("history store is not initialized")
 	}
-	return s.db.ReserveMonitorRequest(ctx, utcDay, limit)
+	return s.db.ReserveMonitorRequest(ctx, utcDay)
 }
 func (s *Store) RefundMonitorRequest(ctx context.Context, utcDay string) error {
 	if s == nil || s.db == nil {
@@ -125,11 +118,11 @@ func (s *Store) RefundMonitorRequest(ctx context.Context, utcDay string) error {
 	}
 	return s.db.RefundMonitorRequest(ctx, utcDay)
 }
-func (s *Store) ReserveMonitorBytes(ctx context.Context, utcDay string, want, limit int64) (string, int64, error) {
+func (s *Store) ReserveMonitorBytes(ctx context.Context, utcDay string, want int64) (string, int64, error) {
 	if s == nil || s.db == nil {
 		return "", 0, fmt.Errorf("history store is not initialized")
 	}
-	return s.db.ReserveMonitorBytes(ctx, utcDay, want, limit)
+	return s.db.ReserveMonitorBytes(ctx, utcDay, want)
 }
 func (s *Store) RefundMonitorBytes(ctx context.Context, utcDay string, unused int64) error {
 	if s == nil || s.db == nil {

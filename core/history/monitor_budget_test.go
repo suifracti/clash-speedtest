@@ -3,7 +3,6 @@ package history
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -42,20 +41,20 @@ func TestMonitorBudgetLedgerMigratesAndNeverRefundsOnReopenOrClockRollback(t *te
 	}
 	day1, day2 := "2026-09-23", "2026-09-24"
 	for i := 0; i < 2; i++ {
-		if _, err := store.ReserveMonitorRequest(ctx, day1, 2); err != nil {
+		if _, err := store.ReserveMonitorRequest(ctx, day1); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := store.ReserveMonitorRequest(ctx, day1, 2); err == nil {
-		t.Fatal("third request crossed daily limit")
+	if _, err := store.ReserveMonitorRequest(ctx, day1); err != nil {
+		t.Fatalf("third request was limited: %v", err)
 	}
-	readDay, granted, err := store.ReserveMonitorBytes(ctx, day1, 5, 7)
+	readDay, granted, err := store.ReserveMonitorBytes(ctx, day1, 5)
 	if err != nil || readDay != day1 || granted != 5 {
 		t.Fatalf("first body reservation = %s/%d, %v", readDay, granted, err)
 	}
-	_, granted, err = store.ReserveMonitorBytes(ctx, day1, 5, 7)
-	if err != nil || granted != 2 {
-		t.Fatalf("concurrent-safe partial reservation = %d, %v", granted, err)
+	_, granted, err = store.ReserveMonitorBytes(ctx, day1, 5)
+	if err != nil || granted != 5 {
+		t.Fatalf("usage count limited the next reservation = %d, %v", granted, err)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
@@ -66,14 +65,14 @@ func TestMonitorBudgetLedgerMigratesAndNeverRefundsOnReopenOrClockRollback(t *te
 	}
 	defer store.Close()
 	usage, err := store.MonitorBudgetUsage(ctx, day1)
-	if err != nil || usage.RequestsUsed != 2 || usage.BytesUsed != 7 {
+	if err != nil || usage.RequestsUsed != 3 || usage.BytesUsed != 10 {
 		t.Fatalf("reopen refunded today's quota: %+v %v", usage, err)
 	}
 	usage, err = store.MonitorBudgetUsage(ctx, day2)
 	if err != nil || usage.UTCDay != day2 || usage.RequestsUsed != 0 || usage.BytesUsed != 0 {
 		t.Fatalf("UTC new day failed to reset: %+v %v", usage, err)
 	}
-	if _, err := store.ReserveMonitorRequest(ctx, day2, 2); err != nil {
+	if _, err := store.ReserveMonitorRequest(ctx, day2); err != nil {
 		t.Fatal(err)
 	}
 	usage, err = store.MonitorBudgetUsage(ctx, day1)
@@ -87,12 +86,8 @@ func TestMonitorBudgetLedgerMigratesAndNeverRefundsOnReopenOrClockRollback(t *te
 	if err := store.db.db.QueryRow("SELECT schema_version FROM schema_meta WHERE singleton = 1").Scan(&version); err != nil || version != CurrentSchemaVersion {
 		t.Fatalf("schema upgrade version=%d, %v", version, err)
 	}
-	if _, err := store.ReserveMonitorRequest(ctx, day1, 1); err == nil {
-		t.Fatal("rollback should not reset used request")
-	} else {
-		var block *monitor.BudgetBlockError
-		if !errors.As(err, &block) || block.Code != "requests_exhausted" {
-			t.Fatalf("wrong exhaustion error: %v", err)
-		}
+	usage, err = store.ReserveMonitorRequest(ctx, day1)
+	if err != nil || usage.UTCDay != day2 || usage.RequestsUsed != 2 {
+		t.Fatalf("rollback should retain the current day's accounting without limiting requests: %+v %v", usage, err)
 	}
 }

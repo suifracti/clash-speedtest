@@ -26,29 +26,41 @@ import (
 	"github.com/faceair/clash-speedtest/core/profiles"
 	"github.com/faceair/clash-speedtest/core/publicservice"
 	"github.com/faceair/clash-speedtest/core/speedtester"
+	"github.com/faceair/clash-speedtest/core/subscriptionusage"
 	"gopkg.in/yaml.v2"
 )
+
+// Options controls application startup without changing stored user settings.
+type Options struct {
+	NoAutoCredentials bool
+	// CredentialDiscovery permits a scoped provider for embedding and isolated tests.
+	// Nil preserves the existing shared-cache discovery provider.
+	CredentialDiscovery func() (string, string, error)
+}
 
 // AppService orchestrates domain operations across speedtesting, history analysis,
 // profile subscriptions, external proxy controllers, and auto-switch decision policies.
 type AppService struct {
-	profileWriteMu    sync.Mutex
-	maintenanceOnce   sync.Once
-	maintenanceCancel context.CancelFunc
-	maintenanceWG     sync.WaitGroup
-	historyStore      *history.Store
-	profilePaths      profiles.Paths
-	appPaths          appdata.AppPaths
-	emitter           EventEmitter
-	cancelFunc        context.CancelFunc
-	cancelCtx         context.Context
-	mu                sync.Mutex
-	status            TestStatus
-	currentRunID      string
-	stoppedByUser     atomic.Bool
-	antigravityToken  string
-	antigravitySource string
-	antigravityMu     sync.RWMutex
+	profileWriteMu      sync.Mutex
+	usageRefreshMu      sync.Mutex
+	maintenanceOnce     sync.Once
+	maintenanceCancel   context.CancelFunc
+	maintenanceWG       sync.WaitGroup
+	historyStore        *history.Store
+	profilePaths        profiles.Paths
+	appPaths            appdata.AppPaths
+	emitter             EventEmitter
+	cancelFunc          context.CancelFunc
+	cancelCtx           context.Context
+	mu                  sync.Mutex
+	status              TestStatus
+	currentRunID        string
+	stoppedByUser       atomic.Bool
+	antigravityToken    string
+	antigravitySource   string
+	antigravityMu       sync.RWMutex
+	noAutoCredentials   bool
+	discoverCredentials func() (string, string, error)
 
 	// External Controller & Decision Policy fields
 	ctrlMu         sync.RWMutex
@@ -105,21 +117,31 @@ func NewAppService(hStore *history.Store, paths profiles.Paths, emitter EventEmi
 	if hStore != nil {
 		historyDir = hStore.Dir()
 	}
-	return newAppService(hStore, appdata.FromLegacy(paths.Dir, historyDir), paths, emitter)
+	return newAppService(hStore, appdata.FromLegacy(paths.Dir, historyDir), paths, emitter, Options{})
 }
 
 // NewAppServiceWithPaths creates the production service from the shared path
 // decision used by both the Web and Wails adapters.
 func NewAppServiceWithPaths(hStore *history.Store, paths appdata.AppPaths, emitter EventEmitter) *AppService {
-	profilePaths := profiles.Paths{Dir: paths.ProfileDir}
-	return newAppService(hStore, paths, profilePaths, emitter)
+	return NewAppServiceWithOptions(hStore, paths, emitter, Options{})
 }
 
-func newAppService(hStore *history.Store, appPaths appdata.AppPaths, profilePaths profiles.Paths, emitter EventEmitter) *AppService {
+// NewAppServiceWithOptions applies explicit startup controls to the shared service.
+func NewAppServiceWithOptions(hStore *history.Store, paths appdata.AppPaths, emitter EventEmitter, options Options) *AppService {
+	return newAppService(hStore, paths, profiles.Paths{Dir: paths.ProfileDir}, emitter, options)
+}
+
+func newAppService(hStore *history.Store, appPaths appdata.AppPaths, profilePaths profiles.Paths, emitter EventEmitter, options Options) *AppService {
 	if emitter == nil {
 		emitter = NewMemoryEventEmitter()
 	}
+	discover := options.CredentialDiscovery
+	if discover == nil {
+		discover = auth.TryAutoDetectAntigravityToken
+	}
 	svc := &AppService{
+		noAutoCredentials:   options.NoAutoCredentials,
+		discoverCredentials: discover,
 		historyStore:        hStore,
 		profilePaths:        profilePaths,
 		appPaths:            appPaths,
@@ -166,10 +188,12 @@ func newAppService(hStore *history.Store, appPaths appdata.AppPaths, profilePath
 		svc.controller = client
 	}
 
-	// Auto-detect Antigravity token on startup
-	if token, src, err := auth.TryAutoDetectAntigravityToken(); err == nil && token != "" {
-		svc.antigravityToken = token
-		svc.antigravitySource = src
+	// Explicit isolation bypasses shared credential reads, refreshes and writes.
+	if !svc.noAutoCredentials {
+		if token, src, err := svc.discoverCredentials(); err == nil && token != "" {
+			svc.antigravityToken = token
+			svc.antigravitySource = src
+		}
 	}
 
 	return svc
@@ -1262,6 +1286,10 @@ func (s *AppService) refreshAirportLocked(ctx context.Context, id, userAgent str
 	if len(ap.Subscriptions) == 0 {
 		return nil, fmt.Errorf("该机场尚未配置任何订阅")
 	}
+	if err := s.seedSubscriptionUsageLocked(ctx, store); err != nil {
+		return nil, err
+	}
+	observations := []subscriptionusage.Snapshot{}
 
 	var refreshErr error
 	for _, sub := range ap.Subscriptions {
@@ -1275,10 +1303,12 @@ func (s *AppService) refreshAirportLocked(ctx context.Context, id, userAgent str
 			body, usage, err := profiles.FetchSubscriptionWithUsageContext(ctx, sub.URL, userAgent)
 			if err != nil {
 				refreshErr = airportOperationError("刷新订阅节点失败", ap.ID, sub.URL)
+				observations = append(observations, usageSnapshot(ap, sub, "refresh_failed", "subscription_update", time.Now()))
 				continue
 			}
 			if err := s.profilePaths.WriteCache(sub.ID, body); err != nil {
 				refreshErr = airportOperationError("写入节点缓存失败", ap.ID, sub.URL)
+				observations = append(observations, usageSnapshot(ap, sub, "refresh_failed", "subscription_update", time.Now()))
 				continue
 			}
 			sub.Usage = usage
@@ -1296,6 +1326,13 @@ func (s *AppService) refreshAirportLocked(ctx context.Context, id, userAgent str
 			}
 		}
 		sub.UpdatedAt = time.Now()
+		status := "ok"
+		if !profiles.IsHTTPURL(sub.URL) {
+			status = "local_file"
+		} else if sub.Usage == nil {
+			status = "missing"
+		}
+		observations = append(observations, usageSnapshot(ap, sub, status, "subscription_update", sub.UpdatedAt))
 	}
 	ap.UpdatedAt = time.Now()
 	if err := profiles.SaveStore(s.profilePaths.StoreFile(), store); err != nil {
@@ -1303,7 +1340,13 @@ func (s *AppService) refreshAirportLocked(ctx context.Context, id, userAgent str
 	}
 
 	if refreshErr != nil {
+		if err := s.saveUsageObservations(ctx, observations); err != nil {
+			return nil, err
+		}
 		return nil, refreshErr
+	}
+	if err := s.saveUsageObservations(ctx, observations); err != nil {
+		return nil, err
 	}
 
 	totalNodes := 0
@@ -1409,6 +1452,9 @@ func (s *AppService) UpdateSubscription(airportID, subID, name, rawURL, note, us
 	if sub == nil {
 		return nil, fmt.Errorf("未找到指定订阅")
 	}
+	if err := s.seedSubscriptionUsageLocked(context.Background(), store); err != nil {
+		return nil, err
+	}
 
 	if rawURL == safeAirportURLDisplay(sub.URL) {
 		return nil, fmt.Errorf("更新订阅时必须提供完整订阅链接")
@@ -1496,10 +1542,16 @@ func (s *AppService) RefreshSubscription(airportID, subID, userAgent string) (*S
 	if sub == nil {
 		return nil, fmt.Errorf("未找到指定订阅")
 	}
+	if err := s.seedSubscriptionUsageLocked(context.Background(), store); err != nil {
+		return nil, err
+	}
 
 	if profiles.IsHTTPURL(sub.URL) {
 		body, usage, err := profiles.FetchSubscriptionWithUsage(sub.URL, userAgent)
 		if err != nil {
+			if saveErr := s.saveUsageObservations(context.Background(), []subscriptionusage.Snapshot{usageSnapshot(ap, sub, "refresh_failed", "subscription_update", time.Now())}); saveErr != nil {
+				return nil, saveErr
+			}
 			return nil, airportOperationError("刷新订阅节点失败", ap.ID, sub.URL)
 		}
 		if err := s.profilePaths.WriteCache(sub.ID, body); err != nil {
@@ -1523,6 +1575,15 @@ func (s *AppService) RefreshSubscription(airportID, subID, userAgent string) (*S
 	}
 
 	nodeCount := s.CountCachedNodes(sub.ID)
+	usageStatus := "ok"
+	if !profiles.IsHTTPURL(sub.URL) {
+		usageStatus = "local_file"
+	} else if sub.Usage == nil {
+		usageStatus = "missing"
+	}
+	if err := s.saveUsageObservations(context.Background(), []subscriptionusage.Snapshot{usageSnapshot(ap, sub, usageStatus, "subscription_update", sub.UpdatedAt)}); err != nil {
+		return nil, err
+	}
 	dto := subscriptionDTO(ap.ID, sub, nodeCount, true)
 	return &dto, nil
 }
@@ -1662,8 +1723,8 @@ func (s *AppService) GetTokenStatus() TokenStatusDTO {
 	s.antigravityMu.Lock()
 	defer s.antigravityMu.Unlock()
 
-	if s.antigravityToken == "" {
-		if tok, src, err := auth.TryAutoDetectAntigravityToken(); err == nil && tok != "" {
+	if s.antigravityToken == "" && !s.noAutoCredentials {
+		if tok, src, err := s.discoverCredentials(); err == nil && tok != "" {
 			s.antigravityToken = tok
 			s.antigravitySource = src
 		}
@@ -1815,6 +1876,7 @@ func (s *AppService) GetSettings() (*AppSettings, error) {
 		}
 		fillDefaultMonitorStorageThresholds(settings)
 		fillDefaultMonitorBudget(settings)
+		fillDefaultSubscriptionUsage(settings)
 		return settings, nil
 	}
 
@@ -1837,6 +1899,7 @@ func (s *AppService) GetSettings() (*AppSettings, error) {
 	if err := validateMonitorBudget(&settings); err != nil {
 		return nil, err
 	}
+	fillDefaultSubscriptionUsage(&settings)
 	return &settings, nil
 }
 
@@ -1864,6 +1927,7 @@ func (s *AppService) SaveSettings(settings *AppSettings) error {
 	if err := validateMonitorRetentionPreference(settings.MonitorRetentionPolicy, settings.MonitorRetentionCustomDays); err != nil {
 		return err
 	}
+	fillDefaultSubscriptionUsage(settings)
 	p := s.settingsPath()
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
@@ -1888,6 +1952,9 @@ func (s *AppService) SaveSettings(settings *AppSettings) error {
 	for key, value := range updated {
 		merged[key] = value
 	}
+	// Daily usage remains observable, but no longer limits monitoring.
+	delete(merged, "monitor_budget_daily_requests")
+	delete(merged, "monitor_budget_daily_bytes")
 	data, err := json.MarshalIndent(merged, "", "  ")
 	if err != nil {
 		return err
@@ -2675,6 +2742,13 @@ func (s *AppService) ListMonitorJobs() []monitor.MonitorJob {
 	for _, sched := range s.monitorSchedulers {
 		jobs = append(jobs, sched.Job())
 	}
+	// Keep periodic status refreshes from moving pause/stop controls under the pointer.
+	sort.Slice(jobs, func(i, j int) bool {
+		if jobs[i].CreatedAt.Equal(jobs[j].CreatedAt) {
+			return jobs[i].ID < jobs[j].ID
+		}
+		return jobs[i].CreatedAt.Before(jobs[j].CreatedAt)
+	})
 	return jobs
 }
 
@@ -2842,4 +2916,3 @@ func (s *AppService) CleanupWorkbenchHistory(ctx context.Context, olderThanDays 
 	cutoff := time.Now().UTC().AddDate(0, 0, -olderThanDays)
 	return s.historyStore.CleanupWorkbenchHistory(ctx, cutoff)
 }
-

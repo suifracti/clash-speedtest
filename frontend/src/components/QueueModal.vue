@@ -1,0 +1,11 @@
+<script setup lang="ts">
+import {nodeDisplayName} from '../nodePresentation'
+import {ref} from 'vue'
+import {api} from '../api'
+import {useWorkspace} from '../workspace'
+import {projectNames,stateLabel,type QueueItem} from '../domain'
+import Modal from './Modal.vue'
+const w=useWorkspace(),retrying=ref('')
+async function retry(q:QueueItem){retrying.value=q.id;try{if(q.batchId&&q.itemId)w.absorbBatch(await api.retryBatch(q.batchId,q.itemId));else if(q.attempt&&q.project!=='latency'){const a=await api.attemptAction(q.project,q.attempt.attempt_id,q.node,'retry-save',q.attempt.service_id||q.serviceId);q.attempt=a;q.error=a.persistence_error;w.mergeAttempt(q.project,a)}}catch(e){w.fail(e)}finally{retrying.value=''}}
+</script>
+<template><Modal title="检测进度" wide @close="w.queueOpen.value=false"><div class="queue-summary"><strong>{{w.queue.value.length?w.done.value+'/'+w.queue.value.length:'后台任务'}}</strong><span>{{w.pendingStart.value?'启动尚待确认':w.busy.value?'检测进行中':'检测已结束'}}</span><button class="button ghost" @click="w.syncActive()">刷新进度</button><button v-if="w.pendingStart.value?.body" class="button" :disabled="w.running.value||w.retryingStart.value" @click="w.retryPending()">{{w.retryingStart.value?'正在确认…':'重试启动'}}</button><button v-if="w.busy.value" class="button danger-outline" :disabled="w.cancelRequested.value" @click="w.cancelTests()">{{w.cancelRequested.value?'正在取消…':'取消检测'}}</button></div><div class="progress-track"><i :style="{width:w.queue.value.length?`${w.done.value/w.queue.value.length*100}%`:'0%'}"/></div><div v-if="!w.queue.value.length&&w.activeBatch.value" class="muted">恢复的后台批次包含 {{w.activeBatch.value.item_count}} 个节点；结果可在检测历史查看。</div><div v-for="q in w.queue.value" :key="q.id" class="queue-row"><div><strong>{{nodeDisplayName(q.node)}}</strong><small>{{q.node.profile_name}} · {{projectNames[q.project]}}<template v-if="q.serviceId"> · {{w.catalog.value.find(s=>s.service_id===q.serviceId)?.name||q.serviceId}}</template></small><p v-if="q.error" class="bad small">{{q.error}}</p></div><div class="queue-state"><span class="badge" :class="q.state==='completed'?'good':q.state==='failed'?'bad':''">{{stateLabel(q.state)}}</span><button v-if="q.attempt?.persistence_state==='failed'||q.error?.startsWith('保存失败')" class="text-button" :disabled="retrying===q.id" @click="retry(q)">重试保存</button></div></div></Modal></template>

@@ -1,15 +1,126 @@
 package application
 
 import (
+	"context"
 	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/faceair/clash-speedtest/core/appdata"
 	"github.com/faceair/clash-speedtest/core/history"
 	"github.com/faceair/clash-speedtest/core/monitor"
 	"github.com/faceair/clash-speedtest/core/profiles"
 )
+
+func TestMonitorJobListKeepsCreationOrderAcrossRefreshes(t *testing.T) {
+	created := time.Date(2026, time.October, 3, 0, 0, 0, 0, time.UTC)
+	svc := &AppService{monitorSchedulers: make(map[string]*monitor.Scheduler)}
+	runner := monitor.NewRunner(monitor.RunnerConfig{})
+	for _, job := range []*monitor.MonitorJob{
+		{ID: "older-z", CreatedAt: created},
+		{ID: "newer-a", CreatedAt: created.Add(time.Hour)},
+		{ID: "older-a", CreatedAt: created},
+	} {
+		scheduler, err := monitor.NewScheduler(monitor.SchedulerConfig{Job: job, Runner: runner})
+		if err != nil {
+			t.Fatal(err)
+		}
+		svc.monitorSchedulers[job.ID] = scheduler
+	}
+	want := []string{"older-a", "older-z", "newer-a"}
+	for refresh := 0; refresh < 20; refresh++ {
+		jobs := svc.ListMonitorJobs()
+		for i, id := range want {
+			if jobs[i].ID != id {
+				t.Fatalf("refresh %d moved job at position %d: got %s, want %s", refresh, i, jobs[i].ID, id)
+			}
+		}
+	}
+}
+
+func TestMonitorSubscriptionIdentityCreatesAndReopens(t *testing.T) {
+	paths := profiles.Paths{Dir: filepath.Join(t.TempDir(), "profiles")}
+	if err := profiles.SaveStore(paths.StoreFile(), &profiles.Store{Airports: []*profiles.Airport{
+		{ID: "airport", Name: "Airport", Subscriptions: []*profiles.Subscription{
+			{ID: "sub-main", Name: "Main"}, {ID: "sub-backup", Name: "Backup"},
+		}},
+		{ID: "legacy", Name: "Legacy"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, profileID := range []string{"sub-main", "sub-backup", "legacy"} {
+		writeP0MonitorProfileFixture(t, paths, profileID, "fixture-password", "127.0.0.1")
+	}
+	historyDir := filepath.Join(t.TempDir(), "history")
+	store, err := history.NewStore(historyDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appPaths := appdata.FromLegacy(paths.Dir, historyDir)
+	svc := NewAppServiceWithOptions(store, appPaths, nil, Options{NoAutoCredentials: true})
+	t.Cleanup(func() { _ = svc.Close() })
+	options, err := svc.ListMonitorNodeOptions()
+	if err != nil || len(options) != 3 {
+		t.Fatalf("node options: count=%d err=%v", len(options), err)
+	}
+	expectedNames := map[string]string{
+		"sub-main": "Airport · Main", "sub-backup": "Airport · Backup",
+		"airport": "Airport", "legacy": "Legacy",
+	}
+	for _, option := range options {
+		profileIDs := []string{option.ProfileID}
+		if option.ProfileID == "sub-main" {
+			profileIDs = append(profileIDs, "airport")
+		}
+		for _, profileID := range profileIDs {
+			created, err := svc.CreateMonitorJobFromRequest(MonitorJobCreateRequest{
+				ProfileID: profileID, NodeKeys: []string{option.NodeKey},
+				NodeContexts: []MonitorNodeSelectionContext{{NodeKey: option.NodeKey,
+					NodeIdentityKey: option.NodeIdentityKey, ConfigRevisionKey: option.ConfigRevisionKey}},
+				ProbeSet: monitor.ProbeSetLight, IntervalSeconds: 3600, TimeoutSeconds: 1,
+			})
+			if err != nil {
+				t.Fatalf("create monitor for %s: %v", profileID, err)
+			}
+			if created.ProfileID != profileID || created.ProfileName != expectedNames[profileID] {
+				t.Fatalf("created monitor lost profile identity: %+v", created)
+			}
+		}
+	}
+	checkJobs := func(service *AppService) {
+		t.Helper()
+		jobs, err := service.ListMonitorJobDTOs()
+		if err != nil || len(jobs) != len(expectedNames) {
+			t.Fatalf("monitor jobs: count=%d err=%v", len(jobs), err)
+		}
+		for _, job := range jobs {
+			if job.ProfileName != expectedNames[job.ProfileID] || job.State != monitor.JobStateStopped || job.BlockedReason != "" {
+				t.Fatalf("monitor profile or stopped state changed: %+v", job)
+			}
+			detail, err := service.GetMonitorJobDTO(job.ID)
+			if err != nil || detail.ProfileName != job.ProfileName {
+				t.Fatalf("monitor list/detail profile mismatch: detail=%+v err=%v", detail, err)
+			}
+		}
+	}
+	checkJobs(svc)
+	if err := svc.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopenedStore, err := history.NewStore(historyDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened := NewAppServiceWithOptions(reopenedStore, appPaths, nil, Options{NoAutoCredentials: true})
+	t.Cleanup(func() { _ = reopened.Close() })
+	checkJobs(reopened)
+	samples, err := reopened.QueryMonitorSamples(context.Background(), monitor.SampleFilter{})
+	if err != nil || len(samples) != 0 {
+		t.Fatalf("monitor creation/reopen unexpectedly produced samples: count=%d err=%v", len(samples), err)
+	}
+}
 
 func TestMonitorJobSelectionResolvesCachedConfigAndKeepsPublicDTOCredentialFree(t *testing.T) {
 	profileDir := t.TempDir()

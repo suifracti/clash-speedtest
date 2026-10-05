@@ -37,8 +37,12 @@ func NewApp(hStore *history.Store, paths profiles.Paths, userAgent string) *App 
 // NewAppWithPaths wires the Wails binding to the same resolved paths used by
 // the local Web adapter.
 func NewAppWithPaths(hStore *history.Store, paths appdata.AppPaths, userAgent string) *App {
+	return NewAppWithOptions(hStore, paths, userAgent, application.Options{})
+}
+
+func NewAppWithOptions(hStore *history.Store, paths appdata.AppPaths, userAgent string, options application.Options) *App {
 	emitter := NewWailsEventEmitter()
-	appSvc := application.NewAppServiceWithPaths(hStore, paths, emitter)
+	appSvc := application.NewAppServiceWithOptions(hStore, paths, emitter, options)
 
 	return &App{
 		app:          appSvc,

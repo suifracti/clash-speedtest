@@ -1,0 +1,68 @@
+/* Shared control details follow the existing page palette in WebView2 and browsers. */
+html { scrollbar-color: var(--gray) transparent; scrollbar-width: thin; }
+* { scrollbar-width: thin; scrollbar-color: var(--gray) transparent; }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--gray); border: 2px solid var(--surface); border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+::-webkit-scrollbar-corner { background: transparent; }
+
+input[type=checkbox] {
+  appearance: none;
+  display: inline-grid;
+  place-content: center;
+  background: var(--surface);
+  border: 1px solid var(--gray);
+  border-radius: 4px;
+  transition: background .12s, border-color .12s;
+}
+input[type=checkbox]::before {
+  content: '';
+  width: 9px;
+  height: 5px;
+  border: solid #fff;
+  border-width: 0 0 2px 2px;
+  transform: translateY(-1px) rotate(-45deg) scale(0);
+}
+input[type=checkbox]:checked, input[type=checkbox]:indeterminate { background: var(--blue); border-color: var(--blue); }
+input[type=checkbox]:checked::before { transform: translateY(-1px) rotate(-45deg); }
+input[type=checkbox]:indeterminate::before { width: 8px; height: 0; border-width: 0 0 2px; transform: none; }
+input[type=checkbox]:hover:not(:disabled) { border-color: var(--blue); }
+input[type=checkbox]:disabled { cursor: not-allowed; opacity: .45; }
+:root[data-theme=dark] input[type=checkbox]::before { border-color: #142342; }
+
+details > summary { list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+details:not(.measurement-result) > summary::before {
+  content: '›';
+  display: inline-flex;
+  justify-content: center;
+  width: 14px;
+  margin-right: 5px;
+  font-size: 17px;
+  line-height: 1;
+  color: var(--muted);
+  transition: transform .12s;
+}
+details:not(.measurement-result)[open] > summary::before { transform: rotate(90deg); }
+summary { cursor: pointer; }
+input[type=number]::-webkit-inner-spin-button { opacity: .5; cursor: pointer; }
+input[type=number]:hover::-webkit-inner-spin-button, input[type=number]:focus::-webkit-inner-spin-button { opacity: 1; }
+input[type=search]::-webkit-search-cancel-button {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-left: 8px;
+  cursor: pointer;
+  background: var(--muted);
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m4 4 8 8M12 4l-8 8' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+body:has(dialog[open]) { overflow: hidden; }
+.modal { max-height: calc(100dvh - 32px); overscroll-behavior: contain; }
+.modal-header { position: sticky; top: 0; background: var(--surface); z-index: 2; }
+.modal-footer { position: sticky; bottom: 0; background: var(--surface); z-index: 2; }
+@media (forced-colors: active) {
+  input[type=checkbox] { appearance: auto; }
+  input[type=checkbox]::before { content: none; }
+  :focus-visible { outline-color: Highlight; }
+}

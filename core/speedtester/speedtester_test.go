@@ -102,6 +102,12 @@ func TestDeduplicateProxies(t *testing.T) {
 		if duplicateCount != 1 {
 			t.Fatalf("expected exactly one duplicate proxy to remain, got %d", duplicateCount)
 		}
+		for i := 0; i < 32; i++ {
+			stable := deduplicateProxiesByServerPort(proxies)
+			if stable["proxy-a"] != proxies["proxy-a"] || stable["proxy-b"] != nil {
+				t.Fatal("the first named alias must remain stable across repeated reads")
+			}
+		}
 	})
 
 	t.Run("mapped ipv6 and ipv4 are deduplicated after normalization", func(t *testing.T) {

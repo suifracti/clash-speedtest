@@ -116,6 +116,25 @@ func (s *AppService) StartWorkbenchDownloadTest(_ context.Context, req Workbench
 		}
 		return prior, nil
 	}
+	abortStart := func() {
+		cancel()
+		close(runtime.ready)
+		s.endWorkbenchDownload(runtime)
+	}
+	// Another call can finish this request while node resolution is in progress.
+	// Recheck after reserving the execution slot, before creating a new identity.
+	prior, err = s.historyStore.GetWorkbenchDownloadAttemptByRequestID(context.Background(), requestID)
+	if err == nil {
+		abortStart()
+		if err := validateWorkbenchDownloadRequest(prior, profileID, nodeKey, identityKey, revisionKey, maximumBytes, timeoutSeconds); err != nil {
+			return nil, err
+		}
+		return prior, nil
+	}
+	if err != history.ErrWorkbenchDownloadAttemptNotFound {
+		abortStart()
+		return nil, fmt.Errorf("检查下载检测请求失败: %w", err)
+	}
 	attempt := &history.WorkbenchDownloadAttempt{
 		AttemptID: runtime.attemptID, RequestID: requestID, ProfileID: profileID, NodeKey: nodeKey,
 		NodeIdentityKey: identityKey, ConfigRevisionKey: revisionKey, DisplayName: node.DisplayName,
@@ -128,14 +147,17 @@ func (s *AppService) StartWorkbenchDownloadTest(_ context.Context, req Workbench
 		err = s.historyStore.CreateWorkbenchDownloadAttempt(context.Background(), attempt)
 	}
 	if err != nil {
-		close(runtime.ready)
-		s.endWorkbenchDownload(runtime)
+		abortStart()
 		return nil, fmt.Errorf("无法保存下载检测身份；未发出网络请求: %w", err)
 	}
 	startedAt := time.Now().UTC()
 	if err := s.historyStore.BeginWorkbenchDownloadAttempt(context.Background(), attempt.AttemptID, startedAt); err != nil {
-		close(runtime.ready)
-		s.endWorkbenchDownload(runtime)
+		// No download can be running while this slot is reserved. Use the existing
+		// recovery state to finish the durable identity without issuing a request.
+		if recoveryErr := s.reconcileWorkbenchDownloadAttempts(); recoveryErr != nil {
+			err = fmt.Errorf("%w; 更新未启动检测状态失败: %v", err, recoveryErr)
+		}
+		abortStart()
 		return nil, fmt.Errorf("无法登记下载检测启动；未发出网络请求: %w", err)
 	}
 	attempt.StartedAt = &startedAt

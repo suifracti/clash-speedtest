@@ -1,0 +1,70 @@
+import {afterEach,describe,expect,it} from 'vitest'
+import {defineComponent,nextTick,ref} from 'vue'
+import {flushPromises,mount,type VueWrapper} from '@vue/test-utils'
+import UiSelect from '../components/UiSelect.vue'
+
+let wrapper:VueWrapper|undefined
+afterEach(()=>{wrapper?.unmount();wrapper=undefined;document.body.innerHTML=''})
+
+describe('styled selection controls',()=>{
+  it('keeps numeric models and change events while keyboard selection skips disabled choices',async()=>{
+    const value=ref(1),changeValue=ref('')
+    wrapper=mount(defineComponent({components:{UiSelect},setup:()=>({value,change:(event:Event)=>{changeValue.value=(event.target as HTMLSelectElement).value}}),template:'<label>采样数<UiSelect v-model.number="value" @change="change"><option :value="1">1 次</option><option :value="3" disabled>3 次</option><option :value="6">6 次</option><option :value="10">10 次</option></UiSelect></label>'}),{attachTo:document.body})
+    await flushPromises()
+    const trigger=wrapper.get('[role="combobox"]')
+    expect(trigger.attributes('aria-label')).toBe('采样数')
+    await trigger.trigger('keydown',{key:'ArrowDown'});await flushPromises()
+    expect(trigger.attributes('aria-expanded')).toBe('true')
+    await trigger.trigger('keydown',{key:'ArrowDown'})
+    await trigger.trigger('keydown',{key:'Enter'})
+    expect(value.value).toBe(6)
+    expect(typeof value.value).toBe('number')
+    expect(changeValue.value).toBe('6')
+    expect(trigger.text()).toBe('6 次')
+    expect(document.activeElement).toBe(trigger.element)
+  })
+
+  it('moves to list boundaries and closes on Escape or Tab without committing a pending choice',async()=>{
+    const value=ref('b')
+    wrapper=mount(defineComponent({components:{UiSelect},setup:()=>({value}),template:'<UiSelect v-model="value" aria-label="订阅"><option value="a">Alpha</option><option value="b">Beta</option><option value="c">Charlie</option></UiSelect>'}),{attachTo:document.body})
+    await flushPromises()
+    const trigger=wrapper.get('[role="combobox"]')
+    await trigger.trigger('keydown',{key:'End'});await flushPromises()
+    expect(wrapper.get('[role="option"].active').text()).toBe('Charlie')
+    await trigger.trigger('keydown',{key:'Escape'})
+    expect(value.value).toBe('b')
+    expect(trigger.attributes('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(trigger.element)
+    await trigger.trigger('keydown',{key:'Home'});await flushPromises()
+    expect(wrapper.get('[role="option"].active').text()).toBe('Alpha')
+    await trigger.trigger('keydown',{key:'Enter'})
+    expect(value.value).toBe('a')
+    await trigger.trigger('keydown',{key:'End'});await flushPromises()
+    const event=new KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true})
+    trigger.element.dispatchEvent(event);await nextTick()
+    expect(event.defaultPrevented).toBe(false)
+    expect(value.value).toBe('a')
+    expect(trigger.attributes('aria-expanded')).toBe('false')
+  })
+
+  it('updates dynamic options and stops an already open control when its fieldset becomes disabled',async()=>{
+    const value=ref('a'),locked=ref(false),choices=ref([{value:'a',label:'Airport A'},{value:'b',label:'Airport B'}])
+    wrapper=mount(defineComponent({components:{UiSelect},setup:()=>({value,locked,choices}),template:'<fieldset :disabled="locked"><UiSelect v-model="value" aria-label="机场"><option v-for="choice in choices" :key="choice.value" :value="choice.value">{{choice.label}}</option></UiSelect></fieldset>'}),{attachTo:document.body})
+    await flushPromises()
+    const trigger=wrapper.get('[role="combobox"]')
+    await trigger.trigger('click');await flushPromises()
+    choices.value=[{value:'a',label:'Airport A renamed'},{value:'c',label:'Airport C'}];await flushPromises()
+    expect(trigger.text()).toBe('Airport A renamed')
+    expect(wrapper.findAll('[role="option"]').map(o=>o.text())).toEqual(['Airport A renamed','Airport C'])
+    locked.value=true;await flushPromises()
+    expect(trigger.attributes('disabled')).toBeDefined()
+    expect(trigger.attributes('aria-expanded')).toBe('false')
+    await trigger.trigger('keydown',{key:'End'});await trigger.trigger('keydown',{key:'Enter'})
+    expect(value.value).toBe('a')
+    locked.value=false;await flushPromises()
+    await trigger.trigger('click');await flushPromises()
+    await wrapper.get('[role="option"][data-index="1"]').trigger('click')
+    expect(value.value).toBe('c')
+    expect(typeof value.value).toBe('string')
+  })
+})
