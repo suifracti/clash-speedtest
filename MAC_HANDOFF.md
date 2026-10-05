@@ -1,10 +1,10 @@
 # Mac 接手：源码服务＋Web 界面
 
-迁移候选日期：2026-10-05。仓库：https://github.com/suifracti/clash-speedtest 。现有公开状态保持不变；默认分支仍为 main。候选分支 `codex/mac-migration-20261005`，只有 Windows 本地提交，未经用户确认不推送。提交 SHA 以最终交付及 `git rev-parse HEAD` 为准。
+迁移日期：2026-10-05。仓库：https://github.com/suifracti/clash-speedtest 。现有公开状态保持不变；默认分支仍为 main。原迁移分支 `codex/mac-migration-20261005` 的 `70f25a0947d5acf9ac8d35a1414a0a6a85b1c9e9` 已经用户确认推送。迁移前整合改用独立分支 `codex/mac-integration-20261005`；此整合分支目前只在 Windows 本地，需用户另行确认后才能推送。Mac 以最终整合提交为准，SHA 见交付记录及该分支的 `git rev-parse HEAD`。
 
 ## 来源与状态
 
-源码来源是 Windows 主目录的实际最新内容，基线 `219b181ef7be45e3245ece5a10d692feb53a1a2c`，加上原有未提交、未跟踪源码及删除状态。它包含 2026-10-04-history-scope-guard 检查点。只拉取基线 SHA 会遗漏新版。前端负责人已确认主目录为最新来源，没有另一份未整合副本。旧收尾负责人确认唯一额外候选是 README 提交 `5b916bd875e3737ba2b41a542d91fa671cbd838d`，没有套入本候选。
+源码来源是 Windows 主目录的实际最新内容：历史基线 `219b181ef7be45e3245ece5a10d692feb53a1a2c` 加上原有未提交、未跟踪源码及删除状态，已一次性记录于 `70f25a0`，包含 2026-10-04-history-scope-guard 检查点。只拉取历史基线会遗漏新版。前端负责人已确认没有另一份未整合副本。本次再核全部分支及工作树，主目录现存 290 个交付文件与 `70f25a0` 一致，没有新增业务代码。旧 README 提交 `5b916bd875e3737ba2b41a542d91fa671cbd838d` 中适用的运行范围／隔离数据说明已按当前源码改写保留；不整包套用旧提交，逐项处理见 [分支整合说明](docs/branch-integration-20261005.md)。
 
 见 [来源与分支清点](docs/migration-source-map.md)、[既有验证说明](docs/windows-validation-20261005.md)。保留 Windows 原目录及全部 worktree，直到 Mac 拉取并验证；不重放旧整包补丁，不重做圆环或页面设计。
 
@@ -19,10 +19,10 @@
 
 ## 拉取、构建与首次最小验证
 
-候选分支获准推送后：
+整合分支获准推送后（在此之前不可将旧迁移分支当最终整合版本）：
 
 ```sh
-git clone --branch codex/mac-migration-20261005 https://github.com/suifracti/clash-speedtest.git
+git clone --branch codex/mac-integration-20261005 https://github.com/suifracti/clash-speedtest.git
 cd clash-speedtest
 git rev-parse HEAD             # 与 Windows 最终交付 SHA 比对
 node scripts/prepare-legacy-assets.mjs
@@ -49,6 +49,8 @@ CGO_ENABLED=1 bash ./run-web.sh --no-auto-credentials \
 历史数据库已采用 schema 10，包括监测定义、原始样本、每日订阅用量快照。快照通过 SQLite backup API 包含已提交 WAL，不复制 WAL/SHM。浏览器当地的机场选择等 localStorage 不在服务器快照中；Mac 需重新选择。节点勾选及页面视角没有新增跨刷新永久保存语义。
 
 当前监测定义保留，服务重开不会擅自续跑；部分旧定义因订阅刷新移除节点而 blocked。不要自动改冻结范围或恢复任务。用户已取消 Codex 定时巡检，本迁移不重建它。个人凭据在 Mac 的 Antigravity 重新登录；--no-auto-credentials 用于隔离检查，正常使用时可不带。不要复制 Windows 原始 OAuth token 或机器专属配置到仓库。
+
+本轮整合只改说明，不改变数据库 schema 10、配置格式、源码依赖或非 Git 资源；原私有数据包和资源包的 SHA-256 继续有效。到 Mac 接手前，Windows 不再修改该整合基线；新的功能工作另建分支，不与 Mac 同时改同一交付版本。
 
 开发时后端仍在 18474；另开终端：
 

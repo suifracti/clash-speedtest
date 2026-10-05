@@ -1,5 +1,7 @@
 # 迁移源码来源清点（2026-10-05）
 
+此文件保留首次迁移时的清点。推送后的再次盘点及旧 README 适用内容整合，见 [最终分支整合说明](branch-integration-20261005.md)。首次未合入的旧 README 现为部分内容改写保留，并非原提交整体合并。
+
 现有 origin=https://github.com/suifracti/clash-speedtest.git，GitHub API 核实 visibility=PUBLIC、defaultBranch=main、远端 main=219b181ef7be45e3245ece5a10d692feb53a1a2c。公开／私有和默认分支不变。git ls-remote 的一次查询连接被重置，随后通过 GitHub API 核实 main；不把本地缓存视为实时远端证明。
 
 Windows 清点：15 个现存 worktree，主目录未提交，其余 14 个干净。24 个原有本地分支中，22 个其它分支的 HEAD 已是 main 祖先，main 本身为基线；唯一不同的是旧 README 候选。完整绝对路径与原始状态留在 Git 外 readonly-inventory.json，避免发布本机用户目录。没有 reset、删除或归档 worktree。
