@@ -57,7 +57,7 @@ func (s *AppService) endWorkbenchSingle() {
 	s.workbenchWG.Done()
 }
 
-func (s *AppService) StartWorkbenchLatencyBatch(_ context.Context, req WorkbenchLatencyBatchRequest) (*WorkbenchLatencyBatchDTO, error) {
+func (s *AppService) StartWorkbenchLatencyBatch(ctx context.Context, req WorkbenchLatencyBatchRequest) (*WorkbenchLatencyBatchDTO, error) {
 	if _, err := speedtester.LatencyTargetURL(req.TargetID); err != nil {
 		return nil, monitor.NewValidationError(err.Error())
 	}
@@ -101,6 +101,11 @@ func (s *AppService) StartWorkbenchLatencyBatch(_ context.Context, req Workbench
 	if len(selections) == 0 {
 		return nil, monitor.NewValidationError("没有可执行的去重节点")
 	}
+	for _, n := range selections {
+		if err := s.validateMeasurementRequest(ctx, requestID, n.ProfileID, n.NodeKey, n.NodeIdentityKey, n.ConfigRevisionKey, "latency", ""); err != nil {
+			return nil, err
+		}
+	}
 	requestedAt := time.Now().UTC()
 	sampleCount := req.SampleCount
 	if sampleCount <= 0 {
@@ -134,6 +139,10 @@ func (s *AppService) StartWorkbenchLatencyBatch(_ context.Context, req Workbench
 	if s.workbenchActiveBatch != nil || s.workbenchActiveSingles > 0 || s.workbenchActiveDownload != nil {
 		s.workbenchMu.Unlock()
 		return nil, fmt.Errorf("已有 Workbench 延迟测试正在运行")
+	}
+	if err := s.ensureManualLatencyRound(ctx, req, selections); err != nil {
+		s.workbenchMu.Unlock()
+		return nil, err
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
 	concurrency := workbenchLatencyBatchConcurrency
@@ -515,6 +524,9 @@ func (s *AppService) saveWorkbenchLatencyBatchAttempt(ctx context.Context, recor
 func (s *AppService) reconcileWorkbenchLatencyBatches() error {
 	if s.historyStore == nil {
 		return nil
+	}
+	if err := s.historyStore.DB().ReconcileMeasurementRounds(context.Background()); err != nil {
+		return err
 	}
 	batches, err := s.historyStore.ListLatencyBatchesNeedingRecovery(context.Background())
 	if err != nil {

@@ -17,6 +17,24 @@ function savedAttempt(n:NodeOption,kind:'download'|'service',id='saved-attempt')
 function selectServices(w:ReturnType<typeof createWorkspace>){w.catalog.value=[{service_id:'service-a',name:'Service A',category:'test',description:'',result_kind:'unlock',success_criterion:'',timeout_seconds:15}];w.serviceIds.value=['service-a']}
 
 describe('inline history read recovery',()=>{
+  it('offers one explicit older-history page and keeps the current scope',async()=>{
+    const newer=savedAttempt(node,'download','newer'),older={...savedAttempt(node,'download','older'),requested_at:'2026-10-01T00:00:00Z',finished_at:'2026-10-01T00:00:01Z',result:{...savedAttempt(node,'download','older').result!,finished_at:'2026-10-01T00:00:01Z'}}
+    vi.mocked(api.attemptHistory).mockResolvedValueOnce({attempts:[newer],has_more:true,complete:false}).mockResolvedValueOnce({attempts:[older],has_more:false,complete:true})
+    const w=createWorkspace()
+    wrapper=mount(InlineHistory,{props:{node,nodes:[node],project:'download'},global:{provide:{[workspaceKey as symbol]:w}}})
+    await flushPromises()
+    const olderButton=wrapper.findAll('button').find(button=>button.text().includes('读取更早记录'))
+    expect(wrapper.text()).toContain('读取更早记录 · 1 个节点')
+    expect(olderButton?.exists()).toBe(true)
+    await olderButton!.trigger('click')
+    await flushPromises()
+    expect(api.attemptHistory).toHaveBeenCalledTimes(2)
+    expect(w.downloads.value[key(node)]?.map(a=>a.attempt_id)).toEqual(['newer','older'])
+    expect(wrapper.text()).not.toContain('读取更早记录')
+    expect(wrapper.find('nav[aria-label="走势对比范围"] button[aria-pressed="true"]').text()).toBe('当前节点')
+    w.dispose()
+  })
+
   it('distinguishes a failed history read from no records and retries without changing selection',async()=>{
     vi.mocked(api.latencySummaries).mockResolvedValueOnce([{tests:[],has_more:false,complete:false}])
     const w=createWorkspace();w.selectedKeys.value=[key(node)]

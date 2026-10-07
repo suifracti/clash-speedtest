@@ -5,10 +5,10 @@ import MonitorCreateModal from '../components/MonitorCreateModal.vue'
 import TrendChart from '../components/TrendChart.vue'
 import {createWorkspace,workspaceKey} from '../workspace'
 import {api} from '../api'
-import {key,type Attempt,type LatencyTest,type MonitorJob,type MonitorSample,type NodeOption,type Plan} from '../domain'
+import {key,targets,type Attempt,type LatencyTest,type MonitorJob,type MonitorSample,type NodeOption,type Plan} from '../domain'
 import {nodeDisplayName} from '../nodePresentation'
 vi.hoisted(()=>{const items=new Map<string,string>();Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:(k:string)=>items.get(k)||null,setItem:(k:string,v:string)=>items.set(k,v),removeItem:(k:string)=>items.delete(k),clear:()=>items.clear()}})})
-vi.mock('../api',async importOriginal=>{const actual=await importOriginal<typeof import('../api')>();return {...actual,api:{...actual.api,monitorSamples:vi.fn(async()=>({items:[] as MonitorSample[],has_more:false,next_cursor:''})),latencySummaries:vi.fn(async()=>[]),attemptHistory:vi.fn(async()=>({attempts:[],has_more:false,complete:true})),jobs:vi.fn(async()=>[]),createJob:vi.fn(),jobAction:vi.fn(async()=>{}),startLatency:vi.fn(),startAttempt:vi.fn(),attempt:vi.fn(),attemptAction:vi.fn()}}})
+vi.mock('../api',async importOriginal=>{const actual=await importOriginal<typeof import('../api')>();return {...actual,api:{...actual.api,measurementRounds:vi.fn(async()=>[]),createRound:vi.fn(async()=>undefined),finishRound:vi.fn(async()=>undefined),monitorSamples:vi.fn(async()=>({items:[] as MonitorSample[],has_more:false,next_cursor:''})),latencySummaries:vi.fn(async()=>[]),attemptHistory:vi.fn(async()=>({attempts:[],has_more:false,complete:true})),jobs:vi.fn(async()=>[]),createJob:vi.fn(),jobAction:vi.fn(async()=>{}),startLatency:vi.fn(),startAttempt:vi.fn(),attempt:vi.fn(),attemptAction:vi.fn()}}})
 const a:NodeOption={profile_id:'sub-a',node_key:'node-a',node_identity_key:'identity-a',config_revision_key:'revision-a',profile_name:'机场 A',display_name:'香港 01',type:'trojan',country_code:'HK',country_flag:''}
 const b:NodeOption={profile_id:'sub-b',node_key:'node-b',node_identity_key:'identity-b',config_revision_key:'revision-b',profile_name:'机场 B',display_name:'新加坡 01',type:'ss',country_code:'SG',country_flag:''}
 let wrappers:VueWrapper[]=[]
@@ -129,8 +129,8 @@ describe('shared node selection',()=>{
     expect(w.airportFilter.value).toBe('all');expect(w.priorityAirportId.value).toBe('all');expect(w.selectedNodes.value).toEqual([b])
     w.dispose()
   })
-  it('keeps valid nonempty display sites and the primary site synchronized without changing test targets',()=>{
-    const w=workspace();expect(w.displayTargets.value).toEqual(['cloudflare'])
+  it('shows all six saved latency sites by default and keeps the primary site synchronized',()=>{
+    const w=workspace();expect(w.displayTargets.value).toEqual(targets.map(site=>site.id))
     w.displayTargets.value=['github','google','github','invalid']
     expect(w.displayTargets.value).toEqual(['github','google']);expect(w.displayTarget.value).toBe('github')
     w.displayTarget.value='google'
@@ -198,7 +198,7 @@ describe('shared node selection',()=>{
   })
   it('keeps per-service health history and exact round data inside the node expansion',async()=>{
     const w=workspace(),at=new Date().toISOString();w.project.value='service'
-    w.catalog.value.push({...w.catalog.value[0],service_id:'youtube',name:'YouTube'});w.serviceIds.value=['netflix_unlock','youtube']
+    w.catalog.value.push({...w.catalog.value[0],service_id:'youtube',name:'YouTube'});w.serviceIds.value=['netflix_unlock','youtube'];w.displayServiceIds.value=['netflix_unlock','youtube']
     w.services.value[key(a)]=['netflix_unlock','youtube'].map((id,i)=>({...a,attempt_id:'service-'+id,request_id:'round:r:'+id,service_id:id,display_name:a.display_name,requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',rule:{name:i?'YouTube':'Netflix',target_url:''},result:{outcome:i?'transport_error':'unlocked',bytes_read:0,finished_at:at,error_message:i?'connection refused':undefined}}))
     const wrapper=attach(HomeView,w);await flushPromises();await wrapper.find('.node-name-button').trigger('click');await flushPromises()
     const panel=wrapper.find('.node-inline-results');await panel.find('.inline-service-history>summary').trigger('click')
@@ -208,15 +208,18 @@ describe('shared node selection',()=>{
     expect(panel.find('.measurement-results').text()).toContain('YouTube')
     expect(panel.find('.measurement-results').text()).toContain('connection refused')
     expect(panel.find('.measurement-results').text()).not.toContain('Netflix')
-    expect((panel.find('select').element as HTMLSelectElement).value).toBe('youtube')
+    expect((panel.find('select').element as HTMLSelectElement).value).toBe('') // Hover inspects a result without changing the trend's selected service.
     expect(w.serviceIds.value).toEqual(['netflix_unlock','youtube'])
     expect(w.inspectNode.value).toBe(null)
   })
   it('opens data directly from the corresponding status bar and closes it on leaving',async()=>{
     vi.useFakeTimers()
-    const w=workspace(),at=new Date().toISOString();w.jobs.value=[{id:'job-a',profile_id:'sub-a',node_keys:['node-a'],state:'running'} as MonitorJob]
+    const w=workspace(),at=new Date().toISOString(),olderAt=new Date(Date.now()-3600000).toISOString();w.jobs.value=[{id:'job-a',profile_id:'sub-a',node_keys:['node-a'],state:'running'} as MonitorJob]
     vi.mocked(api.monitorSamples).mockResolvedValue({items:[{...a,sample_id:'monitor-a',timestamp:at,latency:400000000,success:true,display_name_snapshot:a.display_name,target:'https://cp.cloudflare.com/generate_204',probe_type:'rtt',ttfb:0,sampling_tier:'regular'} as MonitorSample],has_more:false,next_cursor:''})
-    w.downloads.value[key(a)]=[{...a,attempt_id:'download-a',request_id:'req-a',requested_at:at,finished_at:at,execution_state:'byte_limit',persistence_state:'saved',rule:{target_url:''},result:{outcome:'byte_limit',bytes_read:20971520,duration_ns:2000000000,finished_at:at}}]
+    w.downloads.value[key(a)]=[
+      {...a,attempt_id:'download-a',request_id:'req-a',requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',trigger_type:'scheduled',round_id:'scheduled-round',rule:{target_url:'https://download.example'},result:{outcome:'byte_limit',bytes_read:20971520,duration_ns:2000000000,finished_at:at}},
+      {...a,attempt_id:'download-older',request_id:'req-older',requested_at:olderAt,finished_at:olderAt,execution_state:'completed',persistence_state:'saved',trigger_type:'manual',round_id:'manual-round',rule:{target_url:'https://download.example'},result:{outcome:'time_limit',bytes_read:5242880,duration_ns:1000000000,finished_at:olderAt}}
+    ]
     w.catalog.value.push({service_id:'youtube',name:'YouTube',category:'影音',description:'',result_kind:'unlock',success_criterion:'',timeout_seconds:15})
     w.displayServiceIds.value=['netflix_unlock','youtube']
     w.services.value[key(a)]=[{...a,attempt_id:'netflix-a',request_id:'netflix-round',service_id:'netflix_unlock',requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',rule:{name:'Netflix',target_url:''},result:{outcome:'matched',bytes_read:0,finished_at:at}},{...a,attempt_id:'youtube-a',request_id:'youtube-round',service_id:'youtube',requested_at:at,finished_at:at,execution_state:'failed',persistence_state:'saved',rule:{name:'YouTube',target_url:''},result:{outcome:'connection_failed',bytes_read:0,finished_at:at}}]
@@ -227,17 +230,30 @@ describe('shared node selection',()=>{
     await wrapper.find('.node-row').trigger('mouseenter')
     expect(wrapper.find('.node-inline-results').exists()).toBe(false)
     const bars=wrapper.find('.node-row').findAll('.health-bars')
-    await bars[0].find('.health-cell.has-record').trigger('mouseenter')
+    const cloudflareBar=bars.find(bar=>(bar.attributes('aria-label')||'').startsWith('Cloudflare'))!
+    await cloudflareBar.find('.health-cell.has-record').trigger('mouseenter')
     expect(wrapper.findComponent(TrendChart).props('points')[0].value).toBe(400)
     expect(wrapper.find('.node-inline-results').text()).toContain('400 ms')
-    await bars[1].find('.health-cell.has-record').trigger('mouseenter')
+    const downloadBar=bars.find(bar=>(bar.attributes('aria-label')||'').startsWith('下载'))!
+    const downloadCells=downloadBar.findAll('.health-cell.has-record')
+    expect(downloadCells.map(cell=>cell.classes())).toEqual(expect.arrayContaining([expect.arrayContaining(['trigger-manual']),expect.arrayContaining(['trigger-scheduled'])]))
+    await downloadCells[0].trigger('mouseenter')
     expect(wrapper.findComponent(TrendChart).props('unit')).toBe('MiB/s')
-    expect(wrapper.findComponent(TrendChart).props('points')[0]).toMatchObject({id:'download-a',value:10,tone:'good'})
-    expect(wrapper.find('.node-inline-results').text()).toContain('10.00 MiB/s')
-    await bars[2].find('.health-cell.has-record').trigger('mouseenter')
+    expect(wrapper.findComponent(TrendChart).props('points')[0]).toMatchObject({id:'download-older',value:5,tone:'warn'})
+    expect(wrapper.find('.node-inline-results').text()).toContain('5.00 MiB/s')
+    const downloadReadout=wrapper.findAll('.combined-values .metric-group').find(group=>group.find('.metric-group-heading').text()==='下载')!
+    expect(downloadReadout.find('strong').text()).toBe('5.0 MiB/s')
+    expect(downloadReadout.text()).toContain('手动')
+    expect(downloadReadout.text()).toContain('部分测量')
+    expect(downloadReadout.find('strong').classes()).toContain('warn')
+    await downloadCells[1].trigger('mouseenter')
+    expect(downloadReadout.find('strong').text()).toBe('10.0 MiB/s')
+    expect(downloadReadout.text()).toContain('定时')
+    expect(downloadReadout.text()).not.toContain('部分测量')
+    await bars.find(bar=>(bar.attributes('aria-label')||'').startsWith('Netflix'))!.find('.health-cell.has-record').trigger('mouseenter')
     expect(wrapper.findComponent(TrendChart).props('points')).toEqual([expect.objectContaining({id:'netflix-a',value:1,tone:'good'})])
     expect(wrapper.find('.measurement-results').text()).toContain('Netflix')
-    await bars[3].find('.health-cell.has-record').trigger('mouseenter')
+    await bars.find(bar=>(bar.attributes('aria-label')||'').startsWith('YouTube'))!.find('.health-cell.has-record').trigger('mouseenter')
     expect(wrapper.findComponent(TrendChart).props('points')).toEqual([expect.objectContaining({id:'youtube-a',value:0,tone:'bad'})])
     expect(wrapper.find('.measurement-results').text()).toContain('YouTube')
     expect(wrapper.find('.measurement-results').text()).not.toContain('Netflix')
@@ -254,6 +270,45 @@ describe('shared node selection',()=>{
     expect(wrapper.find('.scope-run').text()).toContain('测速')
     await wrapper.find('.scope-run').trigger('click')
     expect((w.plan.value as Plan|null)?.projects).toEqual(['download']);expect((w.plan.value as Plan|null)?.nodes.map(n=>n.node_key)).toEqual(['node-a','node-b'])
+  })
+  it('previews unexecuted and saving-failed download states without borrowing the latest speed',async()=>{
+    vi.useFakeTimers()
+    const w=workspace(),now=Date.now();w.project.value='download'
+    const time=(seconds:number)=>new Date(now-seconds*1000).toISOString()
+    w.downloads.value[key(a)]=[
+      {...a,attempt_id:'latest-speed',request_id:'latest',requested_at:time(0),finished_at:time(0),execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://download.example'},result:{outcome:'byte_limit',bytes_read:10485760,duration_ns:1000000000,finished_at:time(0)}},
+      {...a,attempt_id:'unsaved',request_id:'unsaved',requested_at:time(60),execution_state:'completed',persistence_state:'failed',persistence_error:'disk full',rule:{target_url:'https://download.example'}},
+      {...a,attempt_id:'never-started',request_id:'never-started',requested_at:time(120),execution_state:'not_executed',persistence_state:'not_started',rule:{target_url:'https://download.example'}}
+    ]
+    const wrapper=attach(HomeView,w);await flushPromises()
+    const row=wrapper.find('.node-row'),cells=row.findAll('.health-cell.has-record'),metric=()=>row.find('.node-metric strong').text()
+    expect(metric()).toBe('10.0 MiB/s')
+    await cells[0].trigger('mouseenter')
+    expect(metric()).toBe('未执行');expect(row.find('.download-hover-context').text()).toContain('未执行')
+    await cells[1].trigger('mouseenter')
+    expect(metric()).toContain('保存失败');expect(metric()).not.toContain('MiB/s')
+    await row.find('.health-bars').trigger('mouseleave');await vi.advanceTimersByTimeAsync(160)
+    expect(metric()).toBe('10.0 MiB/s');expect(row.find('.node-inline-results').exists()).toBe(false)
+    w.dispose()
+  })
+  it('refreshes a stationary download hover after a result update and clears it on filtering',async()=>{
+    const w=workspace(),now=Date.now();w.project.value='download'
+    const time=(seconds:number)=>new Date(now-seconds*1000).toISOString()
+    w.downloads.value[key(a)]=[
+      {...a,attempt_id:'latest',request_id:'latest',requested_at:time(0),finished_at:time(0),execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://download.example'},result:{outcome:'byte_limit',bytes_read:10485760,duration_ns:1000000000,finished_at:time(0)}},
+      {...a,attempt_id:'hovered',request_id:'hovered',requested_at:time(60),finished_at:time(60),execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://download.example'},result:{outcome:'byte_limit',bytes_read:10485760,duration_ns:2500000000,finished_at:time(60)}}
+    ]
+    const wrapper=attach(HomeView,w);await flushPromises()
+    await wrapper.find('.health-cell.has-record').trigger('mouseenter')
+    expect(wrapper.find('.node-metric strong').text()).toBe('4.0 MiB/s')
+    w.downloads.value[key(a)][1].result!.duration_ns=5000000000;await flushPromises()
+    expect(wrapper.find('.node-metric strong').text()).toBe('2.0 MiB/s')
+    expect(wrapper.find('.node-inline-results').exists()).toBe(true)
+    w.search.value='新加坡';await flushPromises()
+    expect(wrapper.find('.node-inline-results').exists()).toBe(false);expect(wrapper.find('.node-metric strong').text()).toBe('未测')
+    w.search.value='香港';await flushPromises();expect(wrapper.find('.node-metric strong').text()).toBe('10.0 MiB/s')
+    await wrapper.find('.health-cell.has-record').trigger('mouseenter');expect(wrapper.find('.node-metric strong').text()).toBe('2.0 MiB/s')
+    w.dispose()
   })
   it('keeps the selected node when changing project and sends that exact node to download and service',async()=>{const w=workspace(),wrapper=attach(HomeView,w);await flushPromises();w.toggleNode(b);await flushPromises();await wrapper.findAll('.project-tabs button').find(b=>b.text()==='下载测速')!.trigger('click');await wrapper.find('.selection-actions .primary').trigger('click');expect((w.plan.value as Plan|null)?.projects).toEqual(['download']);expect((w.plan.value as Plan|null)?.nodes.map(n=>n.node_key)).toEqual(['node-b']);w.plan.value=null;await wrapper.findAll('.project-tabs button').find(b=>b.text()==='服务可用性')!.trigger('click');await wrapper.find('.selection-actions .primary').trigger('click');expect((w.plan.value as Plan|null)?.projects).toEqual(['service']);expect((w.plan.value as Plan|null)?.nodes.map(n=>n.node_key)).toEqual(['node-b']);expect((w.plan.value as Plan|null)?.serviceIds).toEqual(['netflix_unlock'])})
   it('cancel multi-select clears the selection and its actions',async()=>{const w=workspace(),wrapper=attach(HomeView,w);w.toggleNode(a);w.toggleNode(b);await flushPromises();expect(wrapper.find('.selection-bar').text()).toContain('已选 2 个节点');await wrapper.findAll('.toolbar-filters button').find(b=>b.text()==='取消多选')!.trigger('click');expect(w.selectedKeys.value).toEqual([]);expect(wrapper.find('.selection-bar').exists()).toBe(false);expect(wrapper.findAll('.node-check input')).toHaveLength(0)})

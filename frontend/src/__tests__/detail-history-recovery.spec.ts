@@ -8,12 +8,12 @@ import {api,request} from '../api'
 import type {Attempt,LatencyBatch,NodeOption,MonitorSample,MonitorJob} from '../domain'
 
 vi.hoisted(()=>{Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:()=>null,setItem:()=>{}}})})
-vi.mock('../api',async importOriginal=>{const actual=await importOriginal<typeof import('../api')>();return {...actual,request:vi.fn(),api:{...actual.api,revisions:vi.fn(),attemptHistory:vi.fn(),attemptAction:vi.fn(),batches:vi.fn(),batch:vi.fn(),retryBatch:vi.fn(),latencyHistory:vi.fn(),monitorSamples:vi.fn(),monitorFacets:vi.fn(),jobs:vi.fn(),budget:vi.fn(),storage:vi.fn()}}})
+vi.mock('../api',async importOriginal=>{const actual=await importOriginal<typeof import('../api')>();return {...actual,request:vi.fn(),api:{...actual.api,measurementRounds:vi.fn(async()=>[]),createRound:vi.fn(async()=>undefined),finishRound:vi.fn(async()=>undefined),revisions:vi.fn(),attemptHistory:vi.fn(),attemptAction:vi.fn(),batches:vi.fn(),batch:vi.fn(),retryBatch:vi.fn(),latencyHistory:vi.fn(),monitorSamples:vi.fn(),monitorFacets:vi.fn(),jobs:vi.fn(),budget:vi.fn(),storage:vi.fn()}}})
 const node:NodeOption={profile_id:'sub-a',node_key:'node-a',node_identity_key:'identity-a',config_revision_key:'revision-a',profile_name:'Airport A',display_name:'Node A',type:'ss',country_code:'SG',country_flag:''}
 const failed:Attempt={...node,attempt_id:'service-a',request_id:'request-a',service_id:'cloudflare_204',requested_at:'2026-10-02T12:00:00Z',execution_state:'completed',persistence_state:'failed',persistence_error:'save failed',rule:{name:'Cloudflare service',target_url:'https://cp.cloudflare.com/generate_204'},result:{outcome:'matched',bytes_read:0,http_status:204,finished_at:'2026-10-02T12:00:01Z'}}
 let wrapper:VueWrapper|undefined,w:Workspace
 beforeEach(()=>{
-  vi.resetAllMocks();window.sessionStorage.clear()
+  vi.resetAllMocks();vi.mocked(api.measurementRounds).mockResolvedValue([]);vi.mocked(api.createRound).mockResolvedValue(undefined);vi.mocked(api.finishRound).mockResolvedValue(undefined);window.sessionStorage.clear()
   HTMLDialogElement.prototype.showModal=vi.fn();HTMLDialogElement.prototype.close=vi.fn()
   vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}})
   vi.mocked(api.revisions).mockResolvedValue([])
@@ -55,6 +55,23 @@ it.each(['saved','rejected'])('ignores a late %s save response after changing th
   expect(document.body.textContent).not.toContain('Cloudflare service')
 })
 
+it.each([
+  {label:'failed attempt without a staged result',attempt:{...failed,result:undefined,persistence_error:'measurement ended before result staging'},canRetry:false},
+  {label:'failed attempt with a staged result',attempt:failed,canRetry:true},
+  {label:'save still in progress with a staged result',attempt:{...failed,persistence_state:'saving',persistence_error:'save in progress'},canRetry:false},
+  {label:'interrupted attempt without a staged result',attempt:{...failed,execution_state:'interrupted',persistence_state:'not_applicable',result:undefined,persistence_error:'interrupted before result staging'},canRetry:false},
+])('offers save retry only for a failed attempt with staged data: $label',async ({attempt,canRetry})=>{
+  vi.mocked(api.attemptHistory).mockResolvedValue({attempts:[attempt],has_more:false,complete:true})
+  wrapper=mount(NodeDetailModal,{props:{node},attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}})
+  await flushPromises()
+  bodyButton('详情').click();await flushPromises()
+  const retryButton=Array.from(document.querySelectorAll('dialog button')).find(b=>b.textContent?.trim()==='重试保存') as HTMLButtonElement|undefined
+  expect(Boolean(retryButton)).toBe(canRetry)
+  if(canRetry)expect(retryButton?.disabled).toBe(false)
+  if(attempt.persistence_error)expect(document.querySelector('.measurement-detail')?.textContent).toContain(attempt.persistence_error)
+  expect(api.attemptAction).not.toHaveBeenCalled()
+})
+
 function deferred<T>(){let resolve!:(value:T)=>void,reject!:(reason:Error)=>void;const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no});return {promise,resolve,reject}}
 const monitorSample:MonitorSample={...node,sample_id:'sample-http',run_id:'run-http',display_name_snapshot:node.display_name,timestamp:'2026-10-04T00:00:00Z',target:'https://api.github.com',probe_type:'service_github',success:false,error_class:'conn_error',error_detail:'Get https://api.github.com: EOF',latency:0,ttfb:0,sampling_tier:'regular'}
 function bodyButton(label:string){return Array.from(document.querySelectorAll('button')).find(b=>b.textContent?.trim()===label) as HTMLButtonElement}
@@ -73,7 +90,7 @@ it('opens monitoring-node details on saved monitor data, keeps manual history di
   oldProbe.resolve({items:[{...monitorSample,sample_id:'late-google',probe_type:'service_google',target:'https://www.google.com/generate_204',error_detail:'old google error'}],has_more:false,next_cursor:''});await flushPromises()
   expect(document.body.textContent).not.toContain('old google error')
   expect(document.querySelector('.table-scroll tbody')?.textContent).toContain('https://api.github.com')
-  bodyButton('手动检测').click();await flushPromises()
+  bodyButton('工作台记录').click();await flushPromises()
   expect(document.body.textContent).toContain('Cloudflare service')
   expect(document.body.textContent).not.toContain('Get https://api.github.com: EOF')
   expect(document.body.textContent).not.toContain('基础 HTTP：')
@@ -118,11 +135,11 @@ it('does not relabel a late task run as another task and distinguishes a read fa
   const oldRead=deferred<Record<string,any>[]>(),newRead=deferred<Record<string,any>[]>()
   vi.mocked(request).mockImplementation(path=>path.includes('job-a')?oldRead.promise:newRead.promise)
   wrapper=mount(MonitorView,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
-  await wrapper.findAll('.monitor-card').at(0)!.findAll('button').find(b=>b.text()==='运行记录')!.trigger('click');await flushPromises()
+  await wrapper.findAll('.monitor-card:not(.periodic-panel)').at(0)!.findAll('button').find(b=>b.text()==='运行记录')!.trigger('click');await flushPromises()
   expect(document.body.textContent).toContain('读取运行记录中')
   expect(document.body.textContent).not.toContain('还没有运行记录')
   ;(document.querySelector('dialog button[aria-label="关闭"]') as HTMLButtonElement).click();await flushPromises()
-  await wrapper.findAll('.monitor-card').at(1)!.findAll('button').find(b=>b.text()==='运行记录')!.trigger('click');await flushPromises()
+  await wrapper.findAll('.monitor-card:not(.periodic-panel)').at(1)!.findAll('button').find(b=>b.text()==='运行记录')!.trigger('click');await flushPromises()
   newRead.resolve([{run_id:'run-b',started_at:'2026-10-04T00:00:00Z',status:'completed',success_nodes:2,total_nodes:2,failed_nodes:0}]);await flushPromises()
   oldRead.resolve([{run_id:'run-a',started_at:'2026-10-03T00:00:00Z',status:'completed',success_nodes:99,total_nodes:99,failed_nodes:0}]);await flushPromises()
   expect(document.querySelector('dialog h2')?.textContent).toBe('Task B · 运行记录')
@@ -130,7 +147,7 @@ it('does not relabel a late task run as another task and distinguishes a read fa
   expect(document.querySelector('dialog tbody')?.textContent).not.toContain('99')
   ;(document.querySelector('dialog button[aria-label="关闭"]') as HTMLButtonElement).click();await flushPromises()
   vi.mocked(request).mockRejectedValueOnce(new Error('runs unavailable'))
-  await wrapper.findAll('.monitor-card').at(1)!.findAll('button').find(b=>b.text()==='运行记录')!.trigger('click');await flushPromises()
+  await wrapper.findAll('.monitor-card:not(.periodic-panel)').at(1)!.findAll('button').find(b=>b.text()==='运行记录')!.trigger('click');await flushPromises()
   expect(document.querySelector('dialog [role="alert"]')?.textContent).toContain('runs unavailable')
   expect(document.querySelector('dialog')?.textContent).not.toContain('还没有运行记录')
   vi.mocked(request).mockResolvedValueOnce([]);bodyButton('重新读取').click();await flushPromises()

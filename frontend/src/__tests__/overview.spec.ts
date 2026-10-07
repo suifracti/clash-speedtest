@@ -1,4 +1,4 @@
-import {describe,expect,it} from 'vitest'
+import {describe,expect,it,vi} from 'vitest'
 import {mount} from '@vue/test-utils'
 import MultiNodeChart from '../components/MultiNodeChart.vue'
 import MeasurementResults from '../components/MeasurementResults.vue'
@@ -19,6 +19,16 @@ describe('global charts and large service rounds',()=>{
     expect(series[1].points[0].value).toBe(120)
     wrapper.unmount()
   })
+  it('uses a preindexed time window instead of parsing every point on pointer movement',async()=>{
+    const series:NodeSeries[]=Array.from({length:8},(_,s)=>({id:'series-'+s,name:'Node '+s,airport:'Airport',points:Array.from({length:80},(_,i)=>({id:`${s}-${i}`,time:new Date(Date.UTC(2026,0,1,0,i)).toISOString(),value:20+s+i/10,tone:'good' as const,description:`${s}-${i}`}))}))
+    const wrapper=mount(MultiNodeChart,{props:{series,unit:'ms'}}),svg=wrapper.find('svg.overview-svg')
+    vi.spyOn(svg.element,'getBoundingClientRect').mockReturnValue({left:0,top:0,width:960,height:300,right:960,bottom:300,x:0,y:0,toJSON:()=>({})})
+    const parse=vi.spyOn(Date,'parse')
+    await svg.trigger('pointermove',{clientX:480,clientY:120})
+    expect(parse.mock.calls.length).toBeLessThan(32)
+    expect(wrapper.find('.overview-readout').text()).toContain('·')
+    parse.mockRestore();wrapper.unmount()
+  })
   it('compresses a large service bar by outcome while keeping all results searchable after pagination',async()=>{
     const attempts:Attempt[]=Array.from({length:20},(_,i)=>({profile_id:'p',node_key:'n',node_identity_key:'identity',config_revision_key:'revision',attempt_id:'service-'+i,request_id:'round:r:item-'+i,display_name:'Node',service_id:'s'+i,requested_at:'2026-10-01T00:00:00Z',execution_state:'completed',persistence_state:'saved',rule:{name:'Service '+i,target_url:'https://example.test'},result:{outcome:i<8?'unlocked':i<14?'region_limited':'transport_error',bytes_read:0,finished_at:'2026-10-01T00:00:01Z',error_message:i>=14?'connection refused':undefined}}))
     const point:TrendPoint={id:'round-r',time:'2026-10-01T00:00:01Z',value:.4,tone:'warn',description:'8/20 项服务通过',attempts,samples:attempts.map((a,i)=>({id:a.attempt_id,time:a.requested_at,value:i<8?1:0,tone:i<8?'good':i<14?'warn':'bad',description:a.rule.name!,label:a.rule.name!}))}
@@ -35,7 +45,16 @@ describe('global charts and large service rounds',()=>{
     await results.find('input[aria-label="搜索本轮服务结果"]').setValue('Service 19')
     expect(results.findAll('.measurement-result')).toHaveLength(1)
     expect(results.find('.measurement-result').text()).toContain('Service 19')
-    expect(results.find('.service-round-counts').text()).toContain('失败 6')
+    expect(results.find('.service-round-counts').text()).toContain('探针未通过 6')
     results.unmount();bar.unmount()
   })
+})
+
+it('breaks download trend lines when source, method or read budget differs',()=>{
+ const times=['2026-10-01T00:00:00Z','2026-10-01T01:00:00Z','2026-10-01T02:00:00Z','2026-10-01T03:00:00Z']
+ const points:TrendPoint[]=times.map((time,i)=>({id:String(i),time,value:10,tone:'good',description:'download',conditionKey:i<2?'cloudflare/GET/v2/10MiB':'hetzner/GET/v2/10MiB'}))
+ const wrapper=mount(MultiNodeChart,{props:{series:[{id:'node',name:'Node',airport:'A',points}],unit:'MiB/s'}})
+ const path=wrapper.find('.overview-line').attributes('d')!
+ expect(path.match(/M/g)).toHaveLength(2);expect(path.match(/L/g)).toHaveLength(2)
+ wrapper.unmount()
 })

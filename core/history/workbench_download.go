@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/faceair/clash-speedtest/core/speedtester"
 	"strings"
 	"time"
 )
@@ -15,6 +16,9 @@ var ErrWorkbenchDownloadAttemptNotFound = errors.New("Workbench download attempt
 const WorkbenchDownloadSource = "workbench_manual_download"
 
 type WorkbenchDownloadRuleSnapshot struct {
+	NetworkPathMethod string `json:"network_path_method,omitempty"`
+	PhysicalInterface string `json:"physical_interface,omitempty"`
+	DNSMode           string `json:"dns_mode,omitempty"`
 	RuleVersion       int    `json:"rule_version"`
 	TargetURL         string `json:"target_url"`
 	Method            string `json:"method"`
@@ -33,18 +37,29 @@ type WorkbenchDownloadSample struct {
 }
 
 type WorkbenchDownloadMeasurement struct {
-	Outcome      string                    `json:"outcome"`
-	HTTPStatus   *int                      `json:"http_status,omitempty"`
-	BytesRead    int64                     `json:"bytes_read"`
-	StartedAt    time.Time                 `json:"started_at"`
-	FinishedAt   time.Time                 `json:"finished_at"`
-	DurationNS   int64                     `json:"duration_ns"`
-	FailurePhase string                    `json:"failure_phase,omitempty"`
-	ErrorMessage string                    `json:"error_message,omitempty"`
-	Samples      []WorkbenchDownloadSample `json:"samples"`
+	TimingNS           map[string]int64                 `json:"timing_ns,omitempty"`
+	PhaseTimingsNS     map[string]int64                 `json:"phase_timings_ns,omitempty"`
+	NetworkPath        *speedtester.DownloadNetworkPath `json:"network_path,omitempty"`
+	Phase              string                           `json:"phase,omitempty"`
+	ErrorClass         string                           `json:"error_class,omitempty"`
+	EndReason          string                           `json:"end_reason,omitempty"`
+	PartialMeasurement bool                             `json:"partial_measurement,omitempty"`
+	RetryAfterSeconds  int64                            `json:"retry_after_seconds,omitempty"`
+	CompetingProbes    []string                         `json:"competing_probes,omitempty"`
+	Outcome            string                           `json:"outcome"`
+	HTTPStatus         *int                             `json:"http_status,omitempty"`
+	BytesRead          int64                            `json:"bytes_read"`
+	StartedAt          time.Time                        `json:"started_at"`
+	FinishedAt         time.Time                        `json:"finished_at"`
+	DurationNS         int64                            `json:"duration_ns"`
+	FailurePhase       string                           `json:"failure_phase,omitempty"`
+	ErrorMessage       string                           `json:"error_message,omitempty"`
+	Samples            []WorkbenchDownloadSample        `json:"samples"`
 }
 
 type WorkbenchDownloadAttempt struct {
+	RoundID           string                        `json:"round_id,omitempty"`
+	TriggerType       string                        `json:"trigger_type,omitempty"`
 	AttemptID         string                        `json:"attempt_id"`
 	RequestID         string                        `json:"request_id"`
 	ProfileID         string                        `json:"profile_id"`
@@ -143,12 +158,17 @@ func (d *DB) RequestWorkbenchDownloadCancellation(ctx context.Context, attemptID
 }
 
 func (d *DB) StageWorkbenchDownloadResult(ctx context.Context, attemptID, executionState string, measurement WorkbenchDownloadMeasurement) error {
+	waiting := time.Now()
+	d.mu.Lock()
+	waitNS := time.Since(waiting).Nanoseconds()
+	defer d.mu.Unlock()
+	if measurement.TimingNS != nil {
+		measurement.TimingNS["stage_save_lock_wait_ns"] = waitNS
+	}
 	encoded, err := json.Marshal(measurement)
 	if err != nil {
 		return fmt.Errorf("encode Workbench download result: %w", err)
 	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
 	res, err := d.db.ExecContext(ctx, `UPDATE workbench_download_attempts SET finished_at=?,execution_state=?,persistence_state='saving',persistence_error='',staged_result_json=? WHERE attempt_id=? AND execution_state IN ('running','cancelling')`, measurement.FinishedAt.UTC(), executionState, string(encoded), attemptID)
 	if err != nil {
 		return fmt.Errorf("stage Workbench download result %s: %w", attemptID, err)
@@ -183,7 +203,9 @@ func (d *DB) MarkWorkbenchDownloadSaveFailed(ctx context.Context, attemptID, saf
 }
 
 func (d *DB) CommitWorkbenchDownloadResult(ctx context.Context, attemptID string) error {
+	waiting := time.Now()
 	d.mu.Lock()
+	waitNS := time.Since(waiting).Nanoseconds()
 	defer d.mu.Unlock()
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -200,6 +222,22 @@ func (d *DB) CommitWorkbenchDownloadResult(ctx context.Context, attemptID string
 	var existing string
 	err = tx.QueryRowContext(ctx, `SELECT result_json FROM workbench_download_results WHERE attempt_id=?`, attemptID).Scan(&existing)
 	if err == sql.ErrNoRows {
+		var m WorkbenchDownloadMeasurement
+		if decodeErr := json.Unmarshal([]byte(staged), &m); decodeErr != nil {
+			return decodeErr
+		}
+		if m.TimingNS != nil {
+			m.TimingNS["commit_save_lock_wait_ns"] = waitNS
+			encoded, encodeErr := json.Marshal(m)
+			if encodeErr != nil {
+				return encodeErr
+			}
+			staged = string(encoded)
+			if _, updateErr := tx.ExecContext(ctx, `UPDATE workbench_download_attempts SET staged_result_json=? WHERE attempt_id=?`, staged, attemptID); updateErr != nil {
+				return updateErr
+			}
+		}
+
 		if _, err := tx.ExecContext(ctx, `INSERT INTO workbench_download_results(attempt_id,result_json,saved_at) VALUES(?,?,?)`, attemptID, staged, time.Now().UTC()); err != nil {
 			return fmt.Errorf("commit Workbench download result %s: %w", attemptID, err)
 		}
@@ -313,8 +351,8 @@ const workbenchDownloadSelect = `SELECT a.attempt_id,a.request_id,a.profile_id,a
 	a.display_name,a.node_type,a.source,a.requested_at,a.started_at,a.finished_at,a.execution_state,
 	CASE WHEN r.attempt_id IS NOT NULL THEN 'saved' ELSE a.persistence_state END,
 	CASE WHEN r.attempt_id IS NOT NULL THEN '' ELSE a.persistence_error END,
-	a.rule_snapshot_json,COALESCE(r.result_json,a.staged_result_json)
-	FROM workbench_download_attempts a LEFT JOIN workbench_download_results r ON r.attempt_id=a.attempt_id`
+	a.rule_snapshot_json,COALESCE(r.result_json,a.staged_result_json),COALESCE(m_round.round_id,''),COALESCE(m_round.trigger_type,'')
+	FROM workbench_download_attempts a LEFT JOIN workbench_download_results r ON r.attempt_id=a.attempt_id LEFT JOIN measurement_round_items m_item ON m_item.request_id=a.request_id AND m_item.profile_id=a.profile_id AND m_item.node_key=a.node_key AND m_item.node_identity_key=a.node_identity_key AND m_item.config_revision_key=a.config_revision_key AND m_item.project='download' AND m_item.service_id='' LEFT JOIN measurement_rounds m_round ON m_round.round_id=m_item.round_id`
 
 type workbenchDownloadScanner interface{ Scan(dest ...any) error }
 
@@ -325,7 +363,7 @@ func scanWorkbenchDownloadAttempt(scanner workbenchDownloadScanner) (*WorkbenchD
 	if err := scanner.Scan(&attempt.AttemptID, &attempt.RequestID, &attempt.ProfileID, &attempt.NodeKey,
 		&attempt.NodeIdentityKey, &attempt.ConfigRevisionKey, &attempt.DisplayName, &attempt.NodeType, &attempt.Source,
 		&attempt.RequestedAt, &started, &finished, &attempt.ExecutionState, &attempt.PersistenceState,
-		&attempt.PersistenceError, &ruleJSON, &resultJSON); err != nil {
+		&attempt.PersistenceError, &ruleJSON, &resultJSON, &attempt.RoundID, &attempt.TriggerType); err != nil {
 		return nil, err
 	}
 	attempt.RequestedAt = attempt.RequestedAt.UTC()

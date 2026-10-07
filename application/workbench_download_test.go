@@ -87,7 +87,11 @@ func TestWorkbenchDownloadSaveRetryAndReopenReuseAttemptWithoutRequest(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if failed.Source != history.WorkbenchDownloadSource || failed.Rule.RuleVersion != 1 || failed.Rule.Method != http.MethodGet || failed.Rule.MaximumBytes != 1000 ||
+	rounds, roundErr := store.DB().QueryMeasurementRoundNodes(context.Background(), "profile-a", "node-a", "identity-a", "revision-a", 16)
+	if roundErr != nil || len(rounds) != 1 || rounds[0].State != "finished" || len(rounds[0].Items) != 1 {
+		t.Fatalf("worker finished before its single round was durable: %+v %v", rounds, roundErr)
+	}
+	if failed.Source != history.WorkbenchDownloadSource || failed.Rule.RuleVersion != 3 || failed.Rule.Method != http.MethodGet || failed.Rule.MaximumBytes != 1000 ||
 		failed.PersistenceState != "failed" || failed.Result == nil || failed.Result.Outcome != "byte_limit" || failed.Result.BytesRead != 1000 || requests.Load() != 1 {
 		t.Fatalf("staged download attempt = %+v; requests=%d", failed, requests.Load())
 	}

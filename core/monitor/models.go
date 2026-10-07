@@ -35,6 +35,8 @@ type ProbeSetType string
 const (
 	// ProbeSetLight executes fast latency & lightweight HTTP reachability (e.g. Cloudflare trace / 204).
 	ProbeSetLight ProbeSetType = "light"
+	// Versioned six-site scope; legacy frozen jobs keep their original scope.
+	ProbeSetLatencySix ProbeSetType = "latency_six_v1"
 	// ProbeSetService tests common essential services (Google, Cloudflare, GitHub, etc.).
 	ProbeSetService ProbeSetType = "service"
 	// ProbeSetHeavy executes deep diagnostics including multi-target TTFB, IP drift, and bandwidth samples.

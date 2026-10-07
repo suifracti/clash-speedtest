@@ -12,7 +12,7 @@ const timestamps=computed(()=>props.points.map(p=>Date.parse(p.time)))
 const timeMin=computed(()=>Math.min(...timestamps.value)),timeMax=computed(()=>Math.max(...timestamps.value))
 function x(i:number){return timestamps.value.length<2?width.value/2:38+(timestamps.value[i]-timeMin.value)/Math.max(1,timeMax.value-timeMin.value)*(width.value-54)}
 function y(value:number){return 153-value/max.value*123}
-const path=computed(()=>{let d='',connected=false;props.points.forEach((p,i)=>{if(p.value===null||p.tone==='empty'||p.tone==='bad'){connected=false;return}d+=`${connected?'L':'M'}${x(i).toFixed(1)},${y(p.value).toFixed(1)} `;connected=true});return d})
+const path=computed(()=>{let d='',connected=false,condition:string|undefined;props.points.forEach((p,i)=>{if(p.value===null||p.tone==='empty'||p.tone==='bad'){connected=false;return}if(condition!==p.conditionKey)connected=false;condition=p.conditionKey;d+=`${connected?'L':'M'}${x(i).toFixed(1)},${y(p.value).toFixed(1)} `;connected=true});return d})
 const ticks=computed(()=>[0,.5,1].map(t=>({value:max.value*t,y:y(max.value*t)})))
 function over(e:PointerEvent){const box=(e.currentTarget as SVGElement).getBoundingClientRect();const cursor=e.clientX-box.left;let nearest=0;for(let i=1;i<props.points.length;i++)if(Math.abs(x(i)-cursor)<Math.abs(x(nearest)-cursor))nearest=i;hover.value=props.points.length?nearest:null}
 const hovered=computed(()=>hover.value===null?null:props.points[hover.value])

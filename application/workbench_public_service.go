@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -13,13 +14,18 @@ import (
 
 const workbenchPublicServiceSource = "workbench_public_service"
 
+var errWorkbenchAdmissionBusy = errors.New("主动检测通道繁忙")
+
 type publicServiceRuntime struct {
-	attemptID string
-	requestID string
-	cancel    context.CancelFunc
-	node      monitor.MonitoredNode
-	rule      publicservice.Rule
-	timeout   time.Duration
+	timingNS    map[string]int64
+	networkDone chan struct{}
+	attemptID   string
+	requestID   string
+	cancel      context.CancelFunc
+	node        monitor.MonitoredNode
+	rule        publicservice.Rule
+	timeout     time.Duration
+	periodic    bool
 }
 
 func (s *AppService) ListWorkbenchPublicServiceCatalog() []publicservice.Rule {
@@ -29,7 +35,33 @@ func (s *AppService) ListWorkbenchPublicServiceCatalog() []publicservice.Rule {
 // StartWorkbenchPublicServiceTest first commits the immutable attempt identity
 // and rule snapshot, then schedules one request in the selected node's isolated
 // proxy path. Repeating RequestID returns the same attempt without remeasuring.
-func (s *AppService) StartWorkbenchPublicServiceTest(_ context.Context, req WorkbenchPublicServiceTestRequest) (*history.PublicServiceAttempt, error) {
+func (s *AppService) StartWorkbenchPublicServiceTest(ctx context.Context, req WorkbenchPublicServiceTestRequest) (*history.PublicServiceAttempt, error) {
+	return s.startWorkbenchPublicServiceTest(ctx, req, 0)
+}
+
+// The scheduler uses the same identity, execution, cancellation and save path.
+// Only scheduler-owned requests can share its bounded background lane.
+func (s *AppService) startWorkbenchPublicServiceTest(ctx context.Context, req WorkbenchPublicServiceTestRequest, periodicLimit int) (returnedAttempt *history.PublicServiceAttempt, startErr error) {
+	received := time.Now()
+	defer func() {
+		if s.historyStore != nil && startErr == nil && returnedAttempt != nil {
+			_ = s.historyStore.DB().MarkMeasurementNotExecuted(context.Background(), req.RequestID, "")
+			return
+		}
+		if s.historyStore == nil || startErr == nil || errors.Is(startErr, errWorkbenchAdmissionBusy) {
+			return
+		}
+		if _, err := s.historyStore.GetPublicServiceAttemptByRequestID(context.Background(), req.RequestID); errors.Is(err, history.ErrPublicServiceAttemptNotFound) {
+			_ = s.historyStore.DB().MarkMeasurementNotExecuted(context.Background(), req.RequestID, startErr.Error())
+			_ = s.historyStore.DB().FinishAutomaticMeasurementRound(context.Background(), req.RequestID)
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("未执行：admission 阶段原请求预算耗尽或取消: %w", err)
+	}
+	if periodicLimit < 0 || periodicLimit > periodicMaximumServiceConcurrency {
+		return nil, monitor.NewValidationError("后台巡检并发超出范围")
+	}
 	if s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized")
 	}
@@ -68,6 +100,9 @@ func (s *AppService) StartWorkbenchPublicServiceTest(_ context.Context, req Work
 	if priorErr != history.ErrPublicServiceAttemptNotFound {
 		return nil, fmt.Errorf("检查公共服务请求身份失败: %w", priorErr)
 	}
+	if err := s.validateMeasurementRequest(ctx, requestID, profileID, nodeKey, identityKey, revisionKey, "service", serviceID); err != nil {
+		return nil, err
+	}
 	if err := s.reserveWorkbenchPublicServiceStart(); err != nil {
 		return nil, err
 	}
@@ -97,15 +132,34 @@ func (s *AppService) StartWorkbenchPublicServiceTest(_ context.Context, req Work
 	if s.publicServiceActive == nil {
 		s.publicServiceActive = make(map[string]*publicServiceRuntime)
 	}
-	if len(s.publicServiceActive) > 0 {
+	blocked := len(s.publicServiceActive) > 0
+	if periodicLimit > 0 {
+		blocked = false
+		measuring := 0
+		for _, active := range s.publicServiceActive {
+			if !active.periodic {
+				blocked = true
+				break
+			}
+			if probeNetworkRunning(active.networkDone) {
+				measuring++
+			}
+		}
+		blocked = blocked || measuring >= periodicLimit
+	}
+	if blocked {
 		s.publicServiceMu.Unlock()
-		return nil, fmt.Errorf("已有公共服务检测正在运行，请等待完成或取消")
+		return nil, fmt.Errorf("已有公共服务检测正在运行，请等待完成或取消: %w", errWorkbenchAdmissionBusy)
 	}
 
 	node, err := s.resolveWorkbenchPublicServiceNode(profileID, nodeKey)
 	if err != nil {
 		s.publicServiceMu.Unlock()
 		return nil, monitor.NewValidationError("无法安全解析当前节点配置；未发出服务请求")
+	}
+	if err := ctx.Err(); err != nil {
+		s.publicServiceMu.Unlock()
+		return nil, fmt.Errorf("未执行：preparation 阶段原请求预算耗尽或取消: %w", err)
 	}
 	if node.NodeKey != nodeKey || node.NodeIdentityKey != identityKey || node.ConfigRevisionKey != revisionKey {
 		s.publicServiceMu.Unlock()
@@ -145,7 +199,12 @@ func (s *AppService) StartWorkbenchPublicServiceTest(_ context.Context, req Work
 	startedAt := time.Now().UTC()
 	if err := s.historyStore.BeginPublicServiceAttempt(context.Background(), attempt.AttemptID, startedAt); err != nil {
 		// The execution gate is still held and no public-service request is active.
-		if recoveryErr := s.reconcileWorkbenchPublicServiceAttempts(); recoveryErr != nil {
+		if recoveryErr := func() error {
+			if len(s.publicServiceActive) > 0 {
+				return nil
+			} // Never reconcile a different live background attempt.
+			return s.reconcileWorkbenchPublicServiceAttempts()
+		}(); recoveryErr != nil {
 			err = fmt.Errorf("%w; 更新未启动检测状态失败: %v", err, recoveryErr)
 		}
 		s.publicServiceMu.Unlock()
@@ -153,14 +212,28 @@ func (s *AppService) StartWorkbenchPublicServiceTest(_ context.Context, req Work
 	}
 	attempt.StartedAt = &startedAt
 	attempt.ExecutionState = "running"
-	ctx, cancel := context.WithCancel(context.Background())
+	timings := probeTiming(ctx)
+	timings["start_setup_ns"] = time.Since(received).Nanoseconds()
+	// Periodic admission and network execution share the original gate-lease
+	// deadline. Detach cancellation ownership from the admission helper (which
+	// cancels its context on return), but do not renew the deadline after queueing.
+	var cancel context.CancelFunc
+	if deadline, ok := ctx.Deadline(); periodicLimit > 0 && ok {
+		timings["network_lease_deadline_unix_ns"] = deadline.UnixNano()
+		ctx, cancel = context.WithDeadline(context.Background(), deadline)
+	} else {
+		ctx, cancel = context.WithCancel(context.Background())
+	}
 	runtime := &publicServiceRuntime{
-		attemptID: attempt.AttemptID,
-		requestID: attempt.RequestID,
-		cancel:    cancel,
-		node:      node,
-		rule:      rule,
-		timeout:   time.Duration(timeoutSeconds) * time.Second,
+		timingNS:    timings,
+		networkDone: make(chan struct{}),
+		attemptID:   attempt.AttemptID,
+		periodic:    periodicLimit > 0,
+		requestID:   attempt.RequestID,
+		cancel:      cancel,
+		node:        node,
+		rule:        rule,
+		timeout:     time.Duration(timeoutSeconds) * time.Second,
 	}
 	s.publicServiceActive[attempt.AttemptID] = runtime
 	s.publicServiceWG.Add(1)
@@ -181,6 +254,11 @@ func (s *AppService) resolveWorkbenchPublicServiceNode(profileID, nodeKey string
 func (s *AppService) executeWorkbenchPublicServiceTest(ctx context.Context, runtime *publicServiceRuntime) {
 	defer s.publicServiceWG.Done()
 	defer func() {
+		_ = s.historyStore.DB().FinishAutomaticMeasurementRound(context.Background(), runtime.requestID)
+	}()
+	finishNetwork := finishProbeNetwork(runtime.networkDone)
+	defer finishNetwork()
+	defer func() {
 		runtime.cancel()
 		s.publicServiceMu.Lock()
 		delete(s.publicServiceActive, runtime.attemptID)
@@ -190,10 +268,32 @@ func (s *AppService) executeWorkbenchPublicServiceTest(ctx context.Context, runt
 	if runtime.rule.ServiceID == "antigravity" {
 		checker.AntigravityToken = s.GetAntigravityToken()
 	}
+	finishActivity := s.probeActivity.begin("service")
 	result := checker.Check(ctx, runtime.node, runtime.rule, runtime.timeout)
+	peers := finishActivity()
+	finishNetwork()
+	if result.Details == nil {
+		result.Details = map[string]string{}
+	}
+	result.Details["timing_version"] = "1"
+	for k, v := range runtime.timingNS {
+		result.Details[k] = fmt.Sprint(v)
+	}
+	result.Details["network_ns"] = fmt.Sprint(result.DurationMs * 1000000)
+	result.Details["competition_observation"] = "in_app_only"
+	if len(peers) > 0 {
+		result.Details["competing_probes"] = strings.Join(peers, ",")
+		result.Details["quality_caution"] = "shared_resources_overlap_possible"
+	}
 	executionState := "failed"
+	if result.RequestCount > 0 {
+		executionState = "completed"
+	}
+	if result.Details["execution_status"] == "not_executed" {
+		executionState = "not_executed"
+	}
 	switch result.Outcome {
-	case "matched", "profiled", "reachable", "challenge", "unlocked", "originals_only", "region_limited", "service_rejected", "region_blocked", "unknown", "credentials_required", "auth_failed", "permission_denied", "setup_required", "rate_limited":
+	case "matched", "profiled", "reachable", "challenge", "unlocked", "originals_only", "region_limited", "service_rejected", "region_blocked", "unknown", "auth_failed", "permission_denied", "setup_required", "rate_limited":
 		executionState = "completed"
 	case "cancelled":
 		executionState = "cancelled"

@@ -60,3 +60,14 @@ func TestLatencySuiteMeasuresEverySiteAndKeepsFailures(t *testing.T) {
 		t.Fatalf("want 2 failures, got %d", failures)
 	}
 }
+
+func TestLatencyHTTPRefusalKeepsTimingWithoutClaimingBusinessSuccess(t *testing.T) {
+	client := &http.Client{Transport: downloadRoundTripper(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 429, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("limited")), Request: r}, nil
+	})}
+	tester := &SpeedTester{config: &Config{LatencyTargetURL: "https://api.github.com/zen"}}
+	result := tester.testLatencyWithClient(client, 1)
+	if len(result.samples) != 1 || !result.samples[0].Success || !strings.Contains(result.samples[0].Error, "HTTP 429") {
+		t.Fatalf("response latency and endpoint refusal not separated: %+v", result.samples)
+	}
+}

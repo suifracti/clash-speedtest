@@ -944,6 +944,9 @@ rounds:
 				}
 				dur := time.Since(start)
 				sample.Duration, sample.LatencyMs, sample.Success = dur, dur.Milliseconds(), true
+				if resp.StatusCode >= 300 {
+					sample.Error = fmt.Sprintf("HTTP %d；响应时延已测，业务／地区解锁未确认", resp.StatusCode)
+				}
 			}(targetIndex, probeURL)
 		}
 		probes.Wait()

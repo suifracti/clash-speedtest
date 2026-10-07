@@ -62,34 +62,37 @@ type MonitorJobNodeDTO struct {
 // MonitorJobDTO is the public monitor-job read model. RawConfig is deliberately
 // absent: the scheduler retains it in memory, but neither Web nor Wails needs it.
 type MonitorJobDTO struct {
-	ID                     string                `json:"id"`
-	Name                   string                `json:"name"`
-	ProfileID              string                `json:"profile_id"`
-	ProfileName            string                `json:"profile_name"`
-	NodeKeys               []string              `json:"node_keys"`
-	Nodes                  []MonitorJobNodeDTO   `json:"nodes"`
-	ProbeSet               monitor.ProbeSetType  `json:"probe_set"`
-	SamplingTier           monitor.SamplingTier  `json:"sampling_tier"`
-	IntervalSeconds        int64                 `json:"interval_seconds"`
-	TimeoutSeconds         int64                 `json:"timeout_seconds"`
-	State                  monitor.JobState      `json:"state"`
-	RuntimeState           monitor.JobState      `json:"runtime_state"`
-	ResumeOnLaunch         bool                  `json:"resume_on_launch"`
-	DesiredState           monitor.JobState      `json:"desired_state"`
-	RecoveryState          monitor.RecoveryState `json:"recovery_state"`
-	RecoveryReason         string                `json:"recovery_reason,omitempty"`
-	IntentPersistenceError string                `json:"intent_persistence_error,omitempty"`
-	BlockedReason          string                `json:"blocked_reason,omitempty"`
-	PersistenceState       string                `json:"persistence_state"`
-	PersistenceError       string                `json:"persistence_error,omitempty"`
-	StorageState           string                `json:"storage_state,omitempty"`
-	StorageReason          string                `json:"storage_reason,omitempty"`
-	BudgetState            string                `json:"budget_state,omitempty"`
-	BudgetReason           string                `json:"budget_reason,omitempty"`
-	SkippedRounds          int64                 `json:"skipped_rounds,omitempty"`
-	ResourceSkippedRounds  int64                 `json:"resource_skipped_rounds,omitempty"`
-	CreatedAt              time.Time             `json:"created_at"`
-	UpdatedAt              time.Time             `json:"updated_at"`
+	ScopeKind              string                       `json:"scope_kind"`
+	UnresolvedNodeCount    int                          `json:"unresolved_node_count"`
+	UnresolvedNodes        []MonitorNodeResolutionIssue `json:"unresolved_nodes,omitempty"`
+	ID                     string                       `json:"id"`
+	Name                   string                       `json:"name"`
+	ProfileID              string                       `json:"profile_id"`
+	ProfileName            string                       `json:"profile_name"`
+	NodeKeys               []string                     `json:"node_keys"`
+	Nodes                  []MonitorJobNodeDTO          `json:"nodes"`
+	ProbeSet               monitor.ProbeSetType         `json:"probe_set"`
+	SamplingTier           monitor.SamplingTier         `json:"sampling_tier"`
+	IntervalSeconds        int64                        `json:"interval_seconds"`
+	TimeoutSeconds         int64                        `json:"timeout_seconds"`
+	State                  monitor.JobState             `json:"state"`
+	RuntimeState           monitor.JobState             `json:"runtime_state"`
+	ResumeOnLaunch         bool                         `json:"resume_on_launch"`
+	DesiredState           monitor.JobState             `json:"desired_state"`
+	RecoveryState          monitor.RecoveryState        `json:"recovery_state"`
+	RecoveryReason         string                       `json:"recovery_reason,omitempty"`
+	IntentPersistenceError string                       `json:"intent_persistence_error,omitempty"`
+	BlockedReason          string                       `json:"blocked_reason,omitempty"`
+	PersistenceState       string                       `json:"persistence_state"`
+	PersistenceError       string                       `json:"persistence_error,omitempty"`
+	StorageState           string                       `json:"storage_state,omitempty"`
+	StorageReason          string                       `json:"storage_reason,omitempty"`
+	BudgetState            string                       `json:"budget_state,omitempty"`
+	BudgetReason           string                       `json:"budget_reason,omitempty"`
+	SkippedRounds          int64                        `json:"skipped_rounds,omitempty"`
+	ResourceSkippedRounds  int64                        `json:"resource_skipped_rounds,omitempty"`
+	CreatedAt              time.Time                    `json:"created_at"`
+	UpdatedAt              time.Time                    `json:"updated_at"`
 }
 
 const (
@@ -203,7 +206,7 @@ func (s *AppService) CreateMonitorJobFromRequest(req MonitorJobCreateRequest) (*
 		return nil, monitor.NewValidationError("至少选择一个订阅节点")
 	}
 	if !validMonitorProbeSet(req.ProbeSet) {
-		return nil, monitor.NewValidationError("probe_set 必须是 light、service 或 heavy")
+		return nil, monitor.NewValidationError("probe_set 必须是 latency_six_v1、light、service 或 heavy")
 	}
 	tier := req.SamplingTier
 	if tier == "" {
@@ -279,6 +282,7 @@ func (s *AppService) CreateMonitorJobFromRequest(req MonitorJobCreateRequest) (*
 		return nil, err
 	}
 	dto := monitorJobDTO(*job, profileName)
+	s.enrichMonitorScope(&dto, *job)
 	return &dto, nil
 }
 
@@ -324,7 +328,9 @@ func (s *AppService) ListMonitorJobDTOs() ([]MonitorJobDTO, error) {
 	dtos := make([]MonitorJobDTO, 0, len(jobs))
 	for _, job := range jobs {
 		profileName, _ := monitorProfileName(store, job.ProfileID)
-		dtos = append(dtos, monitorJobDTO(job, profileName))
+		dto := monitorJobDTO(job, profileName)
+		s.enrichMonitorScope(&dto, job)
+		dtos = append(dtos, dto)
 	}
 	return dtos, nil
 }
@@ -537,6 +543,7 @@ func (s *AppService) GetMonitorJobDTO(jobID string) (*MonitorJobDTO, error) {
 		profileName, _ = monitorProfileName(store, job.ProfileID)
 	}
 	dto := monitorJobDTO(*job, profileName)
+	s.enrichMonitorScope(&dto, *job)
 	return &dto, nil
 }
 
@@ -665,7 +672,7 @@ func monitorJobDTO(job monitor.MonitorJob, profileName string) MonitorJobDTO {
 
 func validMonitorProbeSet(probeSet monitor.ProbeSetType) bool {
 	switch probeSet {
-	case monitor.ProbeSetLight, monitor.ProbeSetService, monitor.ProbeSetHeavy:
+	case monitor.ProbeSetLight, monitor.ProbeSetService, monitor.ProbeSetHeavy, monitor.ProbeSetLatencySix:
 		return true
 	default:
 		return false

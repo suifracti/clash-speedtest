@@ -41,6 +41,8 @@ type Options struct {
 // AppService orchestrates domain operations across speedtesting, history analysis,
 // profile subscriptions, external proxy controllers, and auto-switch decision policies.
 type AppService struct {
+	probeActivity       probeActivity
+	periodic            *periodicSampling
 	profileWriteMu      sync.Mutex
 	usageRefreshMu      sync.Mutex
 	maintenanceOnce     sync.Once
@@ -159,8 +161,9 @@ func newAppService(hStore *history.Store, appPaths appdata.AppPaths, profilePath
 	if hStore != nil {
 		svc.monitorBudget = monitor.NewBudgetController(hStore, svc.monitorBudgetLimits, nil)
 		svc.monitorRunner = monitor.NewRunner(monitor.RunnerConfig{
-			Store:  hStore,
-			Budget: svc.monitorBudget,
+			Store:         hStore,
+			Budget:        svc.monitorBudget,
+			ProbeActivity: svc.probeActivity.begin,
 		})
 		migrationState := appPaths.InspectMigration().State
 		if migrationState == appdata.MigrationStateReady || migrationState == appdata.MigrationStateIsolated {
@@ -196,6 +199,10 @@ func newAppService(hStore *history.Store, appPaths appdata.AppPaths, profilePath
 		}
 	}
 
+	svc.periodic = newPeriodicSampling(svc)
+	if svc.periodic.cfg.Enabled {
+		svc.periodic.startLocked()
+	}
 	return svc
 }
 
@@ -218,6 +225,9 @@ func (s *AppService) Status() TestStatus {
 
 // Stop interrupts any running test task and stops background monitor jobs.
 func (s *AppService) Stop() {
+	if s.periodic != nil {
+		s.periodic.stop()
+	}
 	s.mu.Lock()
 	if s.cancelFunc != nil {
 		s.stoppedByUser.Store(true)
@@ -239,6 +249,9 @@ func (s *AppService) Stop() {
 
 // Close stops all background tasks and cleanly releases database connections.
 func (s *AppService) Close() error {
+	if s.periodic != nil {
+		s.periodic.close()
+	}
 	if s.maintenanceCancel != nil {
 		s.maintenanceCancel()
 		s.maintenanceWG.Wait()

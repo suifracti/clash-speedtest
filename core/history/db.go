@@ -238,7 +238,7 @@ CREATE TABLE IF NOT EXISTS workbench_download_results (
 
 // CurrentSchemaVersion is the SQLite schema authority. Databases without a
 // schema_meta row are the explicitly recognized pre-version legacy schema.
-const CurrentSchemaVersion = 10
+const CurrentSchemaVersion = 11
 
 var (
 	ErrUnsupportedSchemaVersion = fmt.Errorf("unsupported SQLite schema version")
@@ -412,6 +412,15 @@ func migrateSchema(db *sql.DB) error {
 			return err
 		}
 		version = 10
+	}
+	if version == 10 {
+		if _, err := tx.Exec(measurementRoundSchema); err != nil {
+			return fmt.Errorf("migrate measurement rounds: %w", err)
+		}
+		if _, err := tx.Exec("UPDATE schema_meta SET schema_version=11 WHERE singleton=1"); err != nil {
+			return err
+		}
+		version = 11
 	}
 	if err := validateCurrentSchema(tx, version); err != nil {
 		return fmt.Errorf("validate schema version %d after migration: %w", version, err)
@@ -642,6 +651,10 @@ func validateCurrentSchema(tx *sql.Tx, version int) error {
 		if err := requireColumns(tx, "workbench_latency_samples", []string{"target"}); err != nil {
 			return err
 		}
+	}
+	if version >= 11 {
+		tables["measurement_rounds"] = []string{"round_id", "trigger_type", "started_at", "state", "plan_json"}
+		tables["measurement_round_items"] = []string{"round_id", "request_id", "project", "service_id", "profile_id", "node_key", "node_identity_key", "config_revision_key", "not_executed_reason"}
 	}
 	if version >= 10 {
 		tables["subscription_usage_snapshots"] = []string{"account_key", "captured_at", "payload_json"}

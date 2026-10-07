@@ -6,7 +6,7 @@ import {api} from '../api'
 import {key,type MonitorSample,type NodeOption,type Plan} from '../domain'
 
 vi.hoisted(()=>{const items=new Map<string,string>();Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:(k:string)=>items.get(k)||null,setItem:(k:string,v:string)=>items.set(k,v),clear:()=>items.clear()}})})
-vi.mock('../api',async importOriginal=>{const actual=await importOriginal<typeof import('../api')>();return {...actual,api:{...actual.api,latencySummaries:vi.fn(async(nodes:NodeOption[])=>nodes.map(()=>({tests:[],complete:true,has_more:false}))),attemptHistory:vi.fn(async()=>({attempts:[],complete:true,has_more:false})),monitorSamples:vi.fn(async()=>({items:[],has_more:false,next_cursor:''})),startLatency:vi.fn(),startAttempt:vi.fn(),createJob:vi.fn()}}})
+vi.mock('../api',async importOriginal=>{const actual=await importOriginal<typeof import('../api')>();return {...actual,api:{...actual.api,measurementRounds:vi.fn(async()=>[]),createRound:vi.fn(async()=>undefined),finishRound:vi.fn(async()=>undefined),latencySummaries:vi.fn(async(nodes:NodeOption[])=>nodes.map(()=>({tests:[],complete:true,has_more:false}))),attemptHistory:vi.fn(async()=>({attempts:[],complete:true,has_more:false})),monitorSamples:vi.fn(async()=>({items:[],has_more:false,next_cursor:''})),startLatency:vi.fn(),startAttempt:vi.fn(),createJob:vi.fn()}}})
 
 const a:NodeOption={profile_id:'sub-a-one',node_key:'shared-key',node_identity_key:'identity-a',config_revision_key:'revision-a',profile_name:'Airport A / One',display_name:'Node A One',type:'trojan',country_code:'HK',country_flag:''}
 const aTwo:NodeOption={...a,profile_id:'sub-a-two',node_key:'node-two',node_identity_key:'identity-a-two',config_revision_key:'revision-a-two',profile_name:'Airport A / Two',display_name:'Node A Two',country_code:'JP'}
@@ -32,11 +32,11 @@ describe('node selection through DOM controls',()=>{
     vi.mocked(api.monitorSamples).mockImplementation(async q=>({items:q.node_identity_key==='identity-a'&&q.config_revision_key==='revision-a'?[{...sample,sample_id:'monitor-fail',run_id:'run-fail',timestamp:'2026-10-03T06:35:00Z',success:false,error_class:'timeout'},sample]:[],has_more:false,next_cursor:''}))
     const {w,wrapper}=attach([a],['airport-a']);w.displayTargets.value=['cloudflare','google'];await flushPromises()
     expect(w.jobs.value).toEqual([])
-    expect(api.monitorSamples).toHaveBeenCalledWith(expect.objectContaining({profile_id:'sub-a-one',node_identity_key:'identity-a',config_revision_key:'revision-a',probe_type:'rtt',target:'https://cp.cloudflare.com/generate_204'}))
+    expect(api.monitorSamples).toHaveBeenCalledWith(expect.objectContaining({profile_id:'sub-a-one',node_identity_key:'identity-a',config_revision_key:'revision-a',probe_type:'rtt',target:undefined,limit:480}))
     const metrics=wrapper.findAll('.node-target-metrics strong')
     expect(metrics.map(m=>m.text())).toEqual(['失败','未测'])
     expect(wrapper.findAll('.health-cell.has-record')).toHaveLength(2)
-    expect(wrapper.text()).toContain('含持续监测 · Cloudflare')
+    expect(wrapper.text()).toContain('含持续监测 · 各站独立记录')
     await wrapper.get('.node-name').trigger('click');await flushPromises()
     expect(wrapper.get('.inline-full-history').text()).toContain('持续监测 · Cloudflare')
     expect(wrapper.findAll('.overview-series circle')).toHaveLength(1)

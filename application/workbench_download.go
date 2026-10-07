@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -13,23 +14,40 @@ import (
 	"github.com/faceair/clash-speedtest/core/speedtester"
 )
 
-const workbenchDownloadRuleVersion = 1
+const workbenchDownloadRuleVersion = 3
 
 type workbenchDownloadRuntime struct {
-	attemptID string
-	requestID string
-	ctx       context.Context
-	cancel    context.CancelFunc
-	ready     chan struct{}
-	mu        sync.Mutex
-	shutdown  bool
-	node      monitor.MonitoredNode
-	proxy     *speedtester.CProxy
-	engine    *speedtester.SpeedTester
-	rule      history.WorkbenchDownloadRuleSnapshot
+	timingNS       map[string]int64
+	physicalEgress *speedtester.PhysicalDownloadEgress
+	networkDone    chan struct{}
+	attemptID      string
+	requestID      string
+	ctx            context.Context
+	cancel         context.CancelFunc
+	ready          chan struct{}
+	mu             sync.Mutex
+	shutdown       bool
+	node           monitor.MonitoredNode
+	proxy          *speedtester.CProxy
+	engine         *speedtester.SpeedTester
+	rule           history.WorkbenchDownloadRuleSnapshot
 }
 
-func (s *AppService) StartWorkbenchDownloadTest(_ context.Context, req WorkbenchDownloadTestRequest) (*history.WorkbenchDownloadAttempt, error) {
+func (s *AppService) StartWorkbenchDownloadTest(ctx context.Context, req WorkbenchDownloadTestRequest) (returnedAttempt *history.WorkbenchDownloadAttempt, startErr error) {
+	received := time.Now()
+	defer func() {
+		if s.historyStore != nil && startErr == nil && returnedAttempt != nil {
+			_ = s.historyStore.DB().MarkMeasurementNotExecuted(context.Background(), req.RequestID, "")
+			return
+		}
+		if s.historyStore == nil || startErr == nil || errors.Is(startErr, errWorkbenchAdmissionBusy) {
+			return
+		}
+		if _, err := s.historyStore.GetWorkbenchDownloadAttemptByRequestID(context.Background(), req.RequestID); errors.Is(err, history.ErrWorkbenchDownloadAttemptNotFound) {
+			_ = s.historyStore.DB().MarkMeasurementNotExecuted(context.Background(), req.RequestID, startErr.Error())
+			_ = s.historyStore.DB().FinishAutomaticMeasurementRound(context.Background(), req.RequestID)
+		}
+	}()
 	if s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized")
 	}
@@ -67,6 +85,9 @@ func (s *AppService) StartWorkbenchDownloadTest(_ context.Context, req Workbench
 		return nil, fmt.Errorf("检查下载请求身份失败: %w", err)
 	}
 
+	if err := s.validateMeasurementRequest(ctx, requestID, profileID, nodeKey, identityKey, revisionKey, "download", ""); err != nil {
+		return nil, err
+	}
 	node, proxy, err := s.resolveWorkbenchDownloadNode(profileID, nodeKey)
 	if err != nil {
 		return nil, monitor.NewValidationError("无法安全解析当前节点配置；未发出下载请求")
@@ -77,6 +98,13 @@ func (s *AppService) StartWorkbenchDownloadTest(_ context.Context, req Workbench
 	if len(node.RawConfig) == 0 && s.workbenchDownloadResolveHook == nil {
 		return nil, monitor.NewValidationError("当前节点缓存配置不可用；未发出下载请求")
 	}
+	var physicalEgress *speedtester.PhysicalDownloadEgress
+	handedOff := false
+	defer func() {
+		if physicalEgress != nil && !handedOff {
+			_ = proxy.Close()
+		}
+	}()
 	engine, err := speedtester.New(&speedtester.Config{
 		ConfigPaths: s.profilePaths.CacheFile(profileID), ServerURL: speedtester.DefaultSpeedServer,
 		Mode: speedtester.SpeedModeDownload, Metrics: speedtester.MetricSet{Download: true}, Concurrent: 1,
@@ -88,6 +116,9 @@ func (s *AppService) StartWorkbenchDownloadTest(_ context.Context, req Workbench
 	if err != nil {
 		return nil, fmt.Errorf("初始化固定下载目标失败；未发出请求: %w", err)
 	}
+	if err := s.checkDownloadRetryAfter(ctx, req, target); err != nil {
+		return nil, err
+	}
 	now := time.Now().UTC()
 	rule := history.WorkbenchDownloadRuleSnapshot{
 		RuleVersion: workbenchDownloadRuleVersion, TargetURL: target, Method: http.MethodGet,
@@ -95,8 +126,8 @@ func (s *AppService) StartWorkbenchDownloadTest(_ context.Context, req Workbench
 		SampleEveryBytes: speedtester.DefaultDownloadSampleBytes, SampleEveryNS: int64(100 * time.Millisecond),
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
-	runtime := &workbenchDownloadRuntime{
-		attemptID: newWorkbenchLatencyID("workbench_download_attempt_"), requestID: requestID,
+	runtime := &workbenchDownloadRuntime{timingNS: probeTiming(ctx), networkDone: make(chan struct{}),
+		physicalEgress: physicalEgress, attemptID: newWorkbenchLatencyID("workbench_download_attempt_"), requestID: requestID,
 		ctx: runCtx, cancel: cancel, ready: make(chan struct{}), node: node, proxy: proxy, engine: engine, rule: rule,
 	}
 	waitForExisting, duplicate, err := s.beginWorkbenchDownload(runtime)
@@ -135,6 +166,24 @@ func (s *AppService) StartWorkbenchDownloadTest(_ context.Context, req Workbench
 		abortStart()
 		return nil, fmt.Errorf("检查下载检测请求失败: %w", err)
 	}
+	// Admit before resolving physical DNS: a busy queue must not repeatedly
+	// issue preparation queries while waiting for the shared network slot.
+	if s.workbenchDownloadResolveHook == nil {
+		proxy, physicalEgress, err = speedtester.PreparePhysicalDownloadProxy(ctx, proxy)
+		if err != nil {
+			abortStart()
+			return nil, monitor.NewValidationError("本机物理出口／DNS隔离无法确认，下载未执行：" + err.Error())
+		}
+		runtime.proxy, runtime.physicalEgress = proxy, physicalEgress
+	}
+	if physicalEgress != nil {
+		path := physicalEgress.Snapshot()
+		rule.NetworkPathMethod = path.Method
+		rule.PhysicalInterface = path.Interface
+		rule.DNSMode = path.DNSMode
+	}
+	runtime.timingNS["start_setup_ns"] = time.Since(received).Nanoseconds()
+	runtime.rule = rule
 	attempt := &history.WorkbenchDownloadAttempt{
 		AttemptID: runtime.attemptID, RequestID: requestID, ProfileID: profileID, NodeKey: nodeKey,
 		NodeIdentityKey: identityKey, ConfigRevisionKey: revisionKey, DisplayName: node.DisplayName,
@@ -163,6 +212,7 @@ func (s *AppService) StartWorkbenchDownloadTest(_ context.Context, req Workbench
 	attempt.StartedAt = &startedAt
 	attempt.ExecutionState = "running"
 	close(runtime.ready)
+	handedOff = true
 	go s.executeWorkbenchDownload(runtime)
 	return attempt, nil
 }
@@ -193,18 +243,23 @@ func (s *AppService) beginWorkbenchDownload(runtime *workbenchDownloadRuntime) (
 		if s.workbenchActiveDownload.requestID == runtime.requestID {
 			return s.workbenchActiveDownload.ready, true, nil
 		}
-		return nil, false, fmt.Errorf("已有 Workbench 主动测试正在运行，下载测试暂不可启动")
+		return nil, false, fmt.Errorf("已有 Workbench 主动测试正在运行，下载测试暂不可启动: %w", errWorkbenchAdmissionBusy)
 	}
 	if s.workbenchActiveBatch != nil || s.workbenchActiveSingles > 0 {
-		return nil, false, fmt.Errorf("已有 Workbench 主动测试正在运行，下载测试暂不可启动")
+		return nil, false, fmt.Errorf("已有 Workbench 主动测试正在运行，下载测试暂不可启动: %w", errWorkbenchAdmissionBusy)
 	}
 	if s.workbenchPublicServiceStarting > 0 {
-		return nil, false, fmt.Errorf("公共服务检测正在启动，下载测试暂不可启动")
+		return nil, false, fmt.Errorf("公共服务检测正在启动，下载测试暂不可启动: %w", errWorkbenchAdmissionBusy)
 	}
 	s.publicServiceMu.Lock()
 	defer s.publicServiceMu.Unlock()
-	if s.publicServiceClosed || s.publicServiceTransition || len(s.publicServiceActive) > 0 {
-		return nil, false, fmt.Errorf("已有公共服务检测或存储切换正在运行，下载测试暂不可启动")
+	if s.publicServiceClosed || s.publicServiceTransition {
+		return nil, false, fmt.Errorf("服务正在关闭或存储正在切换，未执行下载")
+	}
+	for _, active := range s.publicServiceActive {
+		if !active.periodic || probeNetworkRunning(active.networkDone) {
+			return nil, false, fmt.Errorf("已有公共服务检测正在运行，下载测试暂不可启动: %w", errWorkbenchAdmissionBusy)
+		}
 	}
 	s.workbenchActiveDownload = runtime
 	s.workbenchWG.Add(1)
@@ -221,15 +276,22 @@ func (s *AppService) endWorkbenchDownload(runtime *workbenchDownloadRuntime) {
 }
 
 func (s *AppService) executeWorkbenchDownload(runtime *workbenchDownloadRuntime) {
+	finishNetwork := finishProbeNetwork(runtime.networkDone)
+	defer finishNetwork()
 	defer func() {
 		runtime.cancel()
+		if runtime.physicalEgress != nil {
+			_ = runtime.proxy.Close()
+		}
+		_ = s.historyStore.DB().FinishAutomaticMeasurementRound(context.Background(), runtime.requestID)
 		s.endWorkbenchDownload(runtime)
 	}()
+	finishActivity := s.probeActivity.begin("download")
 	client, err := s.workbenchDownloadHTTPClient(runtime.engine, runtime.proxy, time.Duration(runtime.rule.MaximumDurationNS))
 	var result speedtester.DownloadStreamResult
 	if err != nil {
 		now := time.Now().UTC()
-		result = speedtester.DownloadStreamResult{Outcome: "connection_failed", TargetURL: runtime.rule.TargetURL, StartedAt: now, FinishedAt: now, FailurePhase: "proxy_setup", ErrorMessage: "无法建立节点隔离下载连接", Samples: []speedtester.DownloadStreamSample{}}
+		result = speedtester.DownloadStreamResult{Outcome: "connection_failed", TargetURL: runtime.rule.TargetURL, StartedAt: now, FinishedAt: now, Phase: "proxy_setup", ErrorClass: "proxy_setup", EndReason: "connection_failed", FailurePhase: "proxy_setup", ErrorMessage: "无法建立节点隔离下载连接", Samples: []speedtester.DownloadStreamSample{}}
 	} else {
 		options := speedtester.DownloadStreamOptions{
 			MaximumBytes: runtime.rule.MaximumBytes, MaximumDuration: time.Duration(runtime.rule.MaximumDurationNS),
@@ -243,6 +305,7 @@ func (s *AppService) executeWorkbenchDownload(runtime *workbenchDownloadRuntime)
 			}
 		})
 	}
+	finishNetwork()
 	runtime.mu.Lock()
 	shutdown := runtime.shutdown
 	runtime.mu.Unlock()
@@ -260,6 +323,14 @@ func (s *AppService) executeWorkbenchDownload(runtime *workbenchDownloadRuntime)
 		executionState = "interrupted"
 	}
 	measurement := workbenchDownloadMeasurement(result)
+	measurement.PhaseTimingsNS = result.PhaseTimingsNS
+	measurement.TimingNS = runtime.timingNS
+	measurement.TimingNS["network_ns"] = result.DurationNS
+	if runtime.physicalEgress != nil {
+		path := runtime.physicalEgress.Snapshot()
+		measurement.NetworkPath = &path
+	}
+	measurement.CompetingProbes = finishActivity()
 	if err := s.stageWorkbenchDownloadResult(runtime.attemptID, executionState, measurement); err != nil {
 		_ = s.historyStore.MarkWorkbenchDownloadStageFailed(context.Background(), runtime.attemptID, executionState, measurement.FinishedAt,
 			"测量已结束，但结果未能暂存；该结果无法重试保存，请重新执行检测")
@@ -288,6 +359,7 @@ func workbenchDownloadMeasurement(result speedtester.DownloadStreamResult) histo
 		})
 	}
 	return history.WorkbenchDownloadMeasurement{
+		Phase: result.Phase, ErrorClass: result.ErrorClass, EndReason: result.EndReason, PartialMeasurement: result.PartialMeasurement, RetryAfterSeconds: result.RetryAfterSeconds,
 		Outcome: result.Outcome, HTTPStatus: result.HTTPStatus, BytesRead: result.BytesRead,
 		StartedAt: result.StartedAt.UTC(), FinishedAt: result.FinishedAt.UTC(), DurationNS: result.DurationNS,
 		FailurePhase: result.FailurePhase, ErrorMessage: safeDownloadError(result.ErrorMessage), Samples: samples,
@@ -463,8 +535,8 @@ func (s *AppService) reserveWorkbenchPublicServiceStart() error {
 	if s.workbenchClosed {
 		return fmt.Errorf("应用正在关闭，不能开始公共服务检测")
 	}
-	if s.workbenchActiveDownload != nil {
-		return fmt.Errorf("下载测量正在运行，其他 Workbench 主动测试暂不可启动")
+	if s.workbenchActiveDownload != nil && probeNetworkRunning(s.workbenchActiveDownload.networkDone) {
+		return fmt.Errorf("下载测量正在运行，其他 Workbench 主动测试暂不可启动: %w", errWorkbenchAdmissionBusy)
 	}
 	s.workbenchPublicServiceStarting++
 	return nil

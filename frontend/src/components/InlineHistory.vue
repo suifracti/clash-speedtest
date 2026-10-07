@@ -5,7 +5,7 @@ import {computed,onBeforeUnmount,ref,watch} from 'vue'
 import {useWorkspace} from '../workspace'
 import {api} from '../api'
 import {key,outcomeLabel,targets,type NodeOption,type Project} from '../domain'
-import {monitorRoundPoints,monitorHTTPPoints,monitorHTTPServices,points,recentService,type NodeSeries,type TrendPoint} from '../presentation'
+import {monitorLatencyPoints,monitorRoundPoints,monitorHTTPPoints,monitorHTTPServices,points,recentService,type NodeSeries,type TrendPoint} from '../presentation'
 import MultiNodeChart from './MultiNodeChart.vue'
 import HealthBars from './HealthBars.vue'
 import MeasurementResults from './MeasurementResults.vue'
@@ -24,7 +24,7 @@ const series=computed(()=>comparisonNodes.value.flatMap((n):NodeSeries[]=>{
   if(props.project==='service'&&props.source!=='monitor')return chosenServices.value.map(rule=>({id:key(n)+':service:'+rule.service_id,nodeId:key(n),targetId:rule.service_id,targetName:rule.name,name:nodeDisplayName(n),airport:airportLabel(n),points:points(w,n,'service',displayTargets.value[0].id,rule.service_id)}))
   return [{id:key(n),name:nodeDisplayName(n),airport:airportLabel(n),points:props.source==='monitor'?(key(n)===key(props.node)?props.anchorPoints||[]:monitorHistory.value[key(n)]||[]):points(w,n,props.project,displayTargets.value[0].id,chosenService.value)}]
 }))
-const context=computed(()=>props.source==='monitor'?(props.project==='service'?'持续监测 · '+(monitorHTTPServices.find(s=>s.id===props.monitorServiceId)?.name||'基础 HTTP'):'持续监测 · Cloudflare'):props.project==='latency'?displayTargets.value.map(target=>target.name).join('、'):props.project==='download'?'下载速度':chosenServices.value.map(rule=>rule.name).join('、')||'服务可用性')
+const context=computed(()=>props.source==='monitor'?(props.project==='service'?'持续监测 · '+(monitorHTTPServices.find(s=>s.id===props.monitorServiceId)?.name||'基础 HTTP'):'持续监测 · '+(props.targetIds?.includes('all')?'延迟轮次汇总':displayTargets.value[0].name)):props.project==='latency'?displayTargets.value.map(target=>target.name).join('、'):props.project==='download'?'下载速度':chosenServices.value.map(rule=>rule.name).join('、')||'服务可用性')
 const historyError=computed(()=>[error.value,...(props.source==='monitor'?[]:comparisonNodes.value.flatMap(n=>{const message=w.historyReadError(n,props.project);return message?[`${nodeDisplayName(n)} · ${airportLabel(n)}：${message}`]:[]}))].filter(Boolean).join('；'))
 const hasRecords=computed(()=>series.value.some(s=>s.points.some(p=>p.tone!=='empty')))
 let generation=0
@@ -35,18 +35,25 @@ async function load(){
       for(const n of list){
         if(version!==generation)return
         if(key(n)===key(props.node))continue
-        const probes=props.project==='service'?monitorHTTPServices.filter(s=>!props.monitorServiceId||s.id===props.monitorServiceId):[{probeType:'rtt',target:'https://cp.cloudflare.com/generate_204'}]
+        const probes=props.project==='service'?monitorHTTPServices.filter(s=>!props.monitorServiceId||s.id===props.monitorServiceId):[{probeType:'rtt',target:undefined}]
         const samples=[]
-        for(const probe of probes){const result=await api.monitorSamples({profile_id:n.profile_id,node_identity_key:n.node_identity_key,config_revision_key:n.config_revision_key,probe_type:probe.probeType,target:probe.target,since:new Date(Date.now()-w.hours.value*3600000).toISOString(),until:new Date().toISOString(),limit:80,order_desc:true});if(version!==generation)return;samples.push(...(result.items||[]))}
-        if(version===generation)monitorHistory.value[key(n)]=props.project==='service'?monitorHTTPPoints(samples,props.monitorServiceId):monitorRoundPoints(samples)
+        for(const probe of probes){const result=await api.monitorSamples({profile_id:n.profile_id,node_identity_key:n.node_identity_key,config_revision_key:n.config_revision_key,probe_type:probe.probeType,target:probe.target,since:new Date(Date.now()-w.hours.value*3600000).toISOString(),until:new Date().toISOString(),limit:probe.probeType==='rtt'?480:80,order_desc:true});if(version!==generation)return;samples.push(...(result.items||[]))}
+        if(version===generation)monitorHistory.value[key(n)]=props.project==='service'?monitorHTTPPoints(samples,props.monitorServiceId):monitorLatencyPoints(samples,props.targetIds?.includes('all')?'all':displayTargets.value[0].id)
       }
     }else for(let i=0;i<list.length;i+=100){if(version!==generation)return;await w.ensureHistory(list.slice(i,i+100),[props.project])}
   }catch(e){if(version===generation)error.value=e instanceof Error?e.message:'历史读取失败'}finally{if(version===generation)loading.value=false}
 }
+async function loadOlder(){
+  if(props.source==='monitor'||loading.value)return
+  const version=generation;loading.value=true;error.value=''
+  try{await w.loadMoreHistory(comparisonNodes.value.slice(),[props.project])}
+  catch(e){if(version===generation)error.value=e instanceof Error?e.message:'历史读取失败'}
+  finally{if(version===generation)loading.value=false}
+}
 function serviceStatus(id:string){const attempt=recentService(w,props.node,id);return attempt?.result?outcomeLabel(attempt.result.outcome):'暂无记录'}
 function inspectService(_id:string,point:TrendPoint){inspected.value=point}
-watch(()=>comparisonNodes.value.map(key).sort().join('|')+'|'+props.project+'|'+w.hours.value+'|'+props.source+'|'+props.monitorServiceId,()=>{inspected.value=null;void load()},{immediate:true})
-watch(()=>props.project+'|'+w.hours.value+'|'+props.source+'|'+props.monitorServiceId,()=>{monitorHistory.value={}},{flush:'sync'})
+watch(()=>comparisonNodes.value.map(key).sort().join('|')+'|'+props.project+'|'+w.hours.value+'|'+props.source+'|'+props.monitorServiceId+'|'+props.targetIds?.join(','),()=>{inspected.value=null;void load()},{immediate:true})
+watch(()=>props.project+'|'+w.hours.value+'|'+props.source+'|'+props.monitorServiceId+'|'+props.targetIds?.join(','),()=>{monitorHistory.value={}},{flush:'sync'})
 watch(()=>displayServiceIds.value,ids=>{if(service.value&&!ids.includes(service.value))service.value='';inspected.value=null},{deep:true,immediate:true})
 watch(()=>key(props.node),()=>{scope.value='node';monitorHistory.value={};inspected.value=null})
 watch(()=>displayTargets.value.map(target=>target.id).join('|'),()=>{inspected.value=null})
@@ -62,6 +69,7 @@ onBeforeUnmount(()=>{generation++})
       </nav>
       <label v-if="project==='service'&&source!=='monitor'">对比服务<UiSelect v-model="service" :disabled="!displayServices.length" aria-label="走势对比服务" @change="inspected=null"><option value="">{{displayServices.length>1?'本页全部服务 · '+displayServices.length:displayServices.length?'全部显示服务':'暂无显示服务'}}</option><option v-for="s in displayServices" :key="s.service_id" :value="s.service_id">{{s.name}}</option></UiSelect></label>
       <span class="small muted">{{context}} · {{loading?'读取历史中…':'沿用上方历史范围'}}</span>
+      <button v-if="source!=='monitor'&&w.historyMoreCount(comparisonNodes,project)>0" class="text-button" :disabled="loading" @click="loadOlder">读取更早记录 · {{w.historyMoreCount(comparisonNodes,project)}} 个节点</button>
     </header>
     <p v-if="historyError" class="small bad" role="alert">历史读取失败：{{historyError}} <button class="text-button" aria-label="重新读取历史" :disabled="loading" @click="load">{{loading?'读取中…':'重新读取'}}</button></p>
     <MultiNodeChart v-if="!historyError||hasRecords" :series="series" :unit="project==='download'?'MiB/s':project==='service'?'状态':'ms'" :title="scope==='node'?nodeDisplayName(node)+' · 完整走势':'节点走势对比'" fold-legend/>

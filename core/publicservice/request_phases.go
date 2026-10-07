@@ -3,6 +3,7 @@ package publicservice
 import (
 	"context"
 	"crypto/tls"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptrace"
@@ -24,6 +25,10 @@ type requestPhases struct {
 	tlsCount  int
 	dnsCount  int
 	byteCount int
+	requests  int
+	written   int
+	network   time.Duration
+	body      time.Duration
 }
 
 func (p *requestPhases) wrap(original http.RoundTripper, proxyDial bool) http.RoundTripper {
@@ -55,6 +60,9 @@ type phaseTransport struct {
 
 func (t phaseTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	started := time.Now()
+	t.phases.mu.Lock()
+	t.phases.requests++
+	t.phases.mu.Unlock()
 	var dnsStart, tlsStart time.Time
 	var startMu sync.Mutex
 	trace := &httptrace.ClientTrace{
@@ -84,6 +92,13 @@ func (t phaseTransport) RoundTrip(request *http.Request) (*http.Response, error)
 			t.phases.tlsCount++
 			t.phases.mu.Unlock()
 		},
+		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			if info.Err == nil {
+				t.phases.mu.Lock()
+				t.phases.written++
+				t.phases.mu.Unlock()
+			}
+		},
 		GotFirstResponseByte: func() {
 			t.phases.mu.Lock()
 			t.phases.firstByte += time.Since(started)
@@ -91,21 +106,35 @@ func (t phaseTransport) RoundTrip(request *http.Request) (*http.Response, error)
 			t.phases.mu.Unlock()
 		},
 	}
-	return t.base.RoundTrip(request.WithContext(httptrace.WithClientTrace(request.Context(), trace)))
+	response, err := t.base.RoundTrip(request.WithContext(httptrace.WithClientTrace(request.Context(), trace)))
+	t.phases.mu.Lock()
+	t.phases.network += time.Since(started)
+	t.phases.mu.Unlock()
+	if response != nil && response.Body != nil {
+		response.Body = timedServiceBody{ReadCloser: response.Body, phases: t.phases}
+	}
+	return response, err
 }
 
 func (p *requestPhases) attach(result *Result) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.dialCount+p.tlsCount+p.dnsCount+p.byteCount == 0 {
+	if p.requests == 0 {
 		return
 	}
 	if result.Details == nil {
 		result.Details = map[string]string{}
 	}
+	result.RequestCount = p.requests
+	result.Details["request_count_kind"] = "http_transport_attempts_including_pre_header_failure"
+	result.Details["http_requests_written"] = strconv.Itoa(p.written)
+	result.Details["execution_status"] = "executed"
+	result.Details["conclusion"] = serviceEvidenceConclusion(*result)
 	format := func(d time.Duration) string {
 		return strconv.FormatFloat(float64(d)/float64(time.Millisecond), 'f', 1, 64)
 	}
+	result.Details["request_headers_network_ms"] = format(p.network)
+	result.Details["response_body_read_ms"] = format(p.body)
 	if p.dialCount > 0 {
 		result.Details["proxy_connect_ms"] = format(p.proxyDial)
 	}
@@ -121,4 +150,32 @@ func (p *requestPhases) attach(result *Result) {
 		result.Details["dns_timing_note"] = "由节点代理内部处理，无法单独计时"
 	}
 	result.Details["phase_timing_note"] = "多请求时为阶段累计；首字节时间包含建连与 TLS，不能与其它阶段相加"
+}
+
+type timedServiceBody struct {
+	io.ReadCloser
+	phases *requestPhases
+}
+
+func (b timedServiceBody) Read(buffer []byte) (int, error) {
+	start := time.Now()
+	n, err := b.ReadCloser.Read(buffer)
+	b.phases.mu.Lock()
+	b.phases.body += time.Since(start)
+	b.phases.mu.Unlock()
+	return n, err
+}
+func serviceEvidenceConclusion(r Result) string {
+	switch r.Outcome {
+	case "reachable":
+		return "http_reachable_business_and_unlock_unverified"
+	case "matched":
+		return "endpoint_rule_matched_only"
+	case "profiled":
+		return "endpoint_profile_observed_only"
+	case "unlocked":
+		return "unlock_rule_matched_not_playback_verified"
+	default:
+		return "unconfirmed"
+	}
 }

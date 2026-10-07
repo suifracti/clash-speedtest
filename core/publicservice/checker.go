@@ -331,6 +331,35 @@ type Checker struct {
 
 func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rule, timeout time.Duration) (final Result) {
 	startedAt := time.Now().UTC()
+	defer func() {
+		if final.Details == nil {
+			final.Details = map[string]string{}
+		}
+		if final.RequestCount == 0 {
+			// No transport was entered: an exhausted/cancelled preparation
+			// budget is not evidence of a node network timeout.
+			if final.Outcome == "timed_out" || final.Outcome == "cancelled" {
+				why := "budget_exhausted_before_network"
+				if final.Outcome == "cancelled" {
+					why = "cancelled_before_network"
+				}
+				final.Outcome, final.FailurePhase = "not_executed", "preparation"
+				final.Details["not_executed_reason"] = why
+			}
+			final.Details["execution_status"] = "not_executed"
+		} else {
+			final.Details["execution_status"] = "executed"
+		}
+		final.Details["conclusion"] = serviceEvidenceConclusion(final)
+		final.Details["evidence_node_identity"] = node.NodeIdentityKey
+		final.Details["evidence_config_revision"] = node.ConfigRevisionKey
+		final.Details["evidence_protocol"] = node.Type
+		final.Details["evidence_target"] = rule.TargetURL
+		final.Details["egress_verification"] = "unverified_default_node_proxy_route"
+		final.Details["evidence_observed_at"] = final.FinishedAt.Format(time.RFC3339Nano)
+		final.Details["evidence_valid_until"] = final.FinishedAt.Add(5 * time.Minute).Format(time.RFC3339Nano)
+		final.Details["evidence_reuse"] = "disabled_exit_not_verified"
+	}()
 	if timeout <= 0 {
 		timeout = DefaultTimeout
 	}
@@ -339,6 +368,9 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	if ctx.Err() != nil {
+		return finish(unexecutedPreparation(ctx.Err()), startedAt)
+	}
 
 	if rule.ServiceID == "antigravity" && strings.TrimSpace(c.AntigravityToken) == "" {
 		return finish(Result{Outcome: "credentials_required", FailurePhase: "credentials", ErrorMessage: "请先在设置中绑定 Google 凭据；未发出检测请求"}, startedAt)
@@ -348,6 +380,9 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 		factory = defaultClientFactory
 	}
 	client, err := factory(node, timeout)
+	if ctx.Err() != nil {
+		return finish(unexecutedPreparation(ctx.Err()), startedAt)
+	}
 	if err != nil {
 		return finish(Result{Outcome: "transport_error", FailurePhase: "proxy_setup", ErrorMessage: "无法建立节点隔离代理连接"}, startedAt)
 	}
@@ -568,4 +603,12 @@ func finish(result Result, startedAt time.Time) Result {
 	result.FinishedAt = time.Now().UTC()
 	result.DurationMs = result.FinishedAt.Sub(result.StartedAt).Milliseconds()
 	return result
+}
+
+func unexecutedPreparation(err error) Result {
+	why := "budget_exhausted_before_network"
+	if err == context.Canceled {
+		why = "cancelled_before_network"
+	}
+	return Result{Outcome: "not_executed", FailurePhase: "preparation", ErrorMessage: "准备阶段原请求预算已耗尽或取消；未发起网络探测", Details: map[string]string{"not_executed_reason": why}}
 }

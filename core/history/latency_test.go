@@ -150,6 +150,66 @@ func TestLatencyTargetHistoryDoesNotMixSites(t *testing.T) {
 	}
 }
 
+func TestLatencyHistoryKeepsProvenAttemptTargetWhenLegacySampleTargetIsEmpty(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	const cloudflareURL = "https://speed.cloudflare.com/__down?bytes=1"
+	now := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	legacy := &LatencyTest{
+		AttemptID:      "legacy-cloudflare-sample-target-empty",
+		ProfileID:      "profile-a",
+		NodeKey:        "node-a",
+		TestProject:    "latency_stability",
+		Source:         "workbench_batch_latency",
+		Method:         "http_get_via_proxy_first_byte",
+		MethodVersion:  1,
+		Target:         cloudflareURL,
+		RequestedAt:    now.Add(-time.Second),
+		StartedAt:      now.Add(-time.Second),
+		FinishedAt:     now,
+		Status:         "completed",
+		TotalSamples:   1,
+		SuccessSamples: 1,
+		Samples: []LatencyTestSample{{
+			Seq:       1,
+			Timestamp: now,
+			LatencyMs: 42,
+			Success:   true,
+			// Matches the v9 migration shape: sample target was added with an
+			// empty default, while the parent attempt still records the URL.
+		}},
+	}
+	if err := store.SaveLatencyTest(ctx, legacy); err != nil {
+		t.Fatalf("SaveLatencyTest: %v", err)
+	}
+
+	got, err := store.GetLatencyTest(ctx, legacy.AttemptID)
+	if err != nil {
+		t.Fatalf("GetLatencyTest: %v", err)
+	}
+	if got.Target != cloudflareURL || len(got.Samples) != 1 || got.Samples[0].Target != "" {
+		t.Fatalf("parent target or legacy sample shape changed: target=%q samples=%+v", got.Target, got.Samples)
+	}
+
+	cloudflare, err := store.QueryLatencyTests(ctx, LatencyTestFilter{ProfileID: "profile-a", NodeKey: "node-a", Target: cloudflareURL})
+	if err != nil || len(cloudflare.Tests) != 1 || cloudflare.Tests[0].AttemptID != legacy.AttemptID {
+		t.Fatalf("proven parent URL should match Cloudflare history without legacy guessing: %+v, %v", cloudflare, err)
+	}
+	google, err := store.QueryLatencyTests(ctx, LatencyTestFilter{ProfileID: "profile-a", NodeKey: "node-a", Target: "https://www.gstatic.com/generate_204"})
+	if err != nil || len(google.Tests) != 0 {
+		t.Fatalf("Cloudflare legacy sample must not enter Google history: %+v, %v", google, err)
+	}
+	all, err := store.QueryLatencyTests(ctx, LatencyTestFilter{ProfileID: "profile-a", NodeKey: "node-a"})
+	if err != nil || len(all.Tests) != 1 || all.Tests[0].Samples[0].Target != "" {
+		t.Fatalf("all-target history should preserve the original targetless sample: %+v, %v", all, err)
+	}
+}
+
 func TestQueryLatencyTestsFiltersRawSamplesBeforeLimitAndScopesProfiles(t *testing.T) {
 	ctx := context.Background()
 	store, err := NewStore(t.TempDir())

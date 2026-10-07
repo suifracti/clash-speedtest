@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -53,6 +54,8 @@ type PublicServiceMeasurement struct {
 // The saved result table is the commit marker; staged results remain retryable
 // under the same AttemptID and are never remeasured during recovery.
 type PublicServiceAttempt struct {
+	RoundID           string                    `json:"round_id,omitempty"`
+	TriggerType       string                    `json:"trigger_type,omitempty"`
 	AttemptID         string                    `json:"attempt_id"`
 	RequestID         string                    `json:"request_id"`
 	ProfileID         string                    `json:"profile_id"`
@@ -160,12 +163,18 @@ func (d *DB) RequestPublicServiceCancellation(ctx context.Context, attemptID str
 }
 
 func (d *DB) StagePublicServiceResult(ctx context.Context, attemptID, executionState string, measurement PublicServiceMeasurement) error {
+	waiting := time.Now()
+	d.mu.Lock()
+	waitNS := time.Since(waiting).Nanoseconds()
+	defer d.mu.Unlock()
+	if measurement.Details["timing_version"] == "1" {
+		measurement.Details["stage_save_lock_wait_ns"] = strconv.FormatInt(waitNS, 10)
+		measurement.Details["save_lock_scope"] = "in_process_writer_mutex_only"
+	}
 	resultJSON, err := json.Marshal(measurement)
 	if err != nil {
 		return fmt.Errorf("encode public-service result: %w", err)
 	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
 	res, err := d.db.ExecContext(ctx, `UPDATE workbench_public_service_attempts SET
 		finished_at=?, execution_state=?, persistence_state='saving', persistence_error='', staged_result_json=?
 		WHERE attempt_id=? AND execution_state IN ('running','cancelling')`,
@@ -211,7 +220,9 @@ func (d *DB) MarkPublicServiceSaveFailed(ctx context.Context, attemptID, safeMes
 // immutable fact table and updates the attempt's save state. Repeating it for
 // the same attempt is idempotent.
 func (d *DB) CommitPublicServiceResult(ctx context.Context, attemptID string) error {
+	waiting := time.Now()
 	d.mu.Lock()
+	waitNS := time.Since(waiting).Nanoseconds()
 	defer d.mu.Unlock()
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -228,6 +239,22 @@ func (d *DB) CommitPublicServiceResult(ctx context.Context, attemptID string) er
 	var existing string
 	err = tx.QueryRowContext(ctx, `SELECT result_json FROM workbench_public_service_results WHERE attempt_id=?`, attemptID).Scan(&existing)
 	if err == sql.ErrNoRows {
+		var m PublicServiceMeasurement
+		if decodeErr := json.Unmarshal([]byte(staged), &m); decodeErr != nil {
+			return decodeErr
+		}
+		if m.Details["timing_version"] == "1" {
+			m.Details["commit_save_lock_wait_ns"] = strconv.FormatInt(waitNS, 10)
+			encoded, encodeErr := json.Marshal(m)
+			if encodeErr != nil {
+				return encodeErr
+			}
+			staged = string(encoded)
+			if _, updateErr := tx.ExecContext(ctx, `UPDATE workbench_public_service_attempts SET staged_result_json=? WHERE attempt_id=?`, staged, attemptID); updateErr != nil {
+				return updateErr
+			}
+		}
+
 		if _, err := tx.ExecContext(ctx, `INSERT INTO workbench_public_service_results(attempt_id,result_json,saved_at) VALUES(?,?,?)`, attemptID, staged, time.Now().UTC()); err != nil {
 			return fmt.Errorf("commit public-service result %s: %w", attemptID, err)
 		}
@@ -364,9 +391,9 @@ const publicServiceAttemptSelect = `
 		a.execution_state,
 		CASE WHEN r.attempt_id IS NOT NULL THEN 'saved' ELSE a.persistence_state END,
 		CASE WHEN r.attempt_id IS NOT NULL THEN '' ELSE a.persistence_error END,
-		a.rule_snapshot_json,COALESCE(r.result_json,a.staged_result_json)
+		a.rule_snapshot_json,COALESCE(r.result_json,a.staged_result_json),COALESCE(m_round.round_id,''),COALESCE(m_round.trigger_type,'')
 	FROM workbench_public_service_attempts a
-	LEFT JOIN workbench_public_service_results r ON r.attempt_id=a.attempt_id
+	LEFT JOIN workbench_public_service_results r ON r.attempt_id=a.attempt_id LEFT JOIN measurement_round_items m_item ON m_item.request_id=a.request_id AND m_item.profile_id=a.profile_id AND m_item.node_key=a.node_key AND m_item.node_identity_key=a.node_identity_key AND m_item.config_revision_key=a.config_revision_key AND m_item.project='service' AND m_item.service_id=a.service_id LEFT JOIN measurement_rounds m_round ON m_round.round_id=m_item.round_id
 `
 
 type publicServiceScanner interface {
@@ -380,7 +407,7 @@ func scanPublicServiceAttempt(scanner publicServiceScanner) (*PublicServiceAttem
 	err := scanner.Scan(&attempt.AttemptID, &attempt.RequestID, &attempt.ProfileID, &attempt.NodeKey,
 		&attempt.NodeIdentityKey, &attempt.ConfigRevisionKey, &attempt.DisplayName, &attempt.NodeType,
 		&attempt.Source, &attempt.ServiceID, &attempt.RequestedAt, &started, &finished,
-		&attempt.ExecutionState, &attempt.PersistenceState, &attempt.PersistenceError, &ruleJSON, &resultJSON)
+		&attempt.ExecutionState, &attempt.PersistenceState, &attempt.PersistenceError, &ruleJSON, &resultJSON, &attempt.RoundID, &attempt.TriggerType)
 	if err != nil {
 		return nil, err
 	}

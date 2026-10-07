@@ -1,4 +1,5 @@
-import type {Airport,Attempt,HistoryPage,LatencyBatch,LatencyTest,MonitorCreate,MonitorJob,MonitorSample,NodeOption,NodeScope,ServiceRule,Settings,Setup,TokenStatus} from './domain'
+import type {PeriodicSamplingConfig,PeriodicSamplingStatus,PeriodicChecks} from './periodicSampling'
+import type {MeasurementRound,Airport,Attempt,HistoryPage,LatencyBatch,LatencyTest,MonitorCreate,MonitorJob,MonitorSample,NodeOption,NodeScope,ServiceRule,Settings,Setup,TokenStatus} from './domain'
 import {scope} from './domain'
 declare global {interface Window {go?:{desktop?:{App?:Record<string,(...args:any[])=>Promise<any>>}};runtime?:{EventsOn:(name:string,callback:(payload:any)=>void)=>()=>void}}}
 export const desktop=()=>!!window.go?.desktop?.App
@@ -12,6 +13,12 @@ export async function request<T>(path:string,method='GET',body?:unknown,desktopM
 const attemptPath=(k:'download'|'service')=>`/api/workbench/${k==='service'?'public-service':'download'}-tests`
 function attemptScope(kind:'download'|'service',n:NodeScope&{service_id?:string},serviceId=n.service_id){if(kind==='service'&&!serviceId)throw new Error('服务检测详情缺少服务标识，请刷新后重试');return {...scope(n),...(kind==='service'?{service_id:serviceId}:{})}}
 export const api={
+ measurementRounds:(n:NodeScope,limit=16)=>request<MeasurementRound[]>(`/api/measurement-rounds?${query({...scope(n),limit})}`,'GET',undefined,'ListMeasurementRoundNodes',[n.profile_id,n.node_key,n.node_identity_key,n.config_revision_key,limit]),
+ createRound:(body:unknown)=>request('/api/measurement-rounds','POST',body,'CreateManualMeasurementRound',[body]),
+ finishRound:(id:string,state='finished')=>request(`/api/measurement-rounds/${encodeURIComponent(id)}/finish`,'POST',{state},'FinishManualMeasurementRound',[id,state]),
+ periodicChecks:(profile='',node='')=>request<PeriodicChecks>(`/api/periodic-sampling/checks?${query({profile_id:profile,node_key:node})}`,'GET',undefined,'GetPeriodicServiceChecks',[profile,node]),
+ periodicSampling:()=>request<PeriodicSamplingStatus>('/api/periodic-sampling','GET',undefined,'GetPeriodicSampling'),
+ configurePeriodicSampling:(body:PeriodicSamplingConfig)=>request<PeriodicSamplingStatus>('/api/periodic-sampling','PUT',body,'ConfigurePeriodicSampling',[body]),
   auth:()=>desktop()?Promise.resolve({auth_required:false,authenticated:true}):request<{auth_required:boolean;authenticated:boolean}>('/api/auth/status'),
   async login(password:string){const data=await request<{token:string}>('/api/auth/login','POST',{password});token=data.token;window.localStorage.setItem('cst_auth_token',token)},
   setup:()=>request<Setup>('/api/profile/setup','GET',undefined,'GetProfileSetup'),airports:()=>request<Airport[]>('/api/airports','GET',undefined,'ListAirports'),nodes:()=>request<NodeOption[]>('/api/monitor/nodes','GET',undefined,'ListMonitorNodeOptions'),catalog:()=>request<ServiceRule[]>('/api/workbench/public-service-catalog','GET',undefined,'ListWorkbenchPublicServiceCatalog'),jobs:()=>request<MonitorJob[]>('/api/monitor/jobs','GET',undefined,'ListMonitorJobs'),

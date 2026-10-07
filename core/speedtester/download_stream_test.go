@@ -2,6 +2,8 @@ package speedtester
 
 import (
 	"context"
+	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -172,5 +174,81 @@ func TestMeasureDownloadStreamSeparatesHTTPRejectionConnectionAndBodyFailure(t *
 	interrupted := st.MeasureDownloadStream(context.Background(), client, DownloadStreamOptions{MaximumBytes: 100, MaximumDuration: time.Second}, nil)
 	if interrupted.Outcome != "transfer_interrupted" || interrupted.FailurePhase != "response_body" || strings.Contains(interrupted.ErrorMessage, "transport detail") {
 		t.Fatalf("body failure must be distinguished and sanitized: %+v", interrupted)
+	}
+}
+
+func TestDownloadDiagnosticSeparatesSourceRateLimitAndTypedTLSFailure(t *testing.T) {
+	st := newDownloadStreamTester(t)
+	calls := 0
+	client := &http.Client{Transport: downloadRoundTripper(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{StatusCode: 429, Header: http.Header{"Retry-After": []string{"120"}}, Body: io.NopCloser(strings.NewReader("limited")), Request: r}, nil
+	})}
+	got := st.MeasureDownloadStream(context.Background(), client, DownloadStreamOptions{MaximumBytes: 10 << 20, MaximumDuration: time.Second}, nil)
+	if got.Outcome != "source_rate_limited" || got.RetryAfterSeconds != 120 || got.BytesRead != 0 || calls != 1 {
+		t.Fatalf("rate limit misreported or retried: %+v calls=%d", got, calls)
+	}
+	client = &http.Client{Transport: downloadRoundTripper(func(r *http.Request) (*http.Response, error) {
+		return nil, tls.RecordHeaderError{Msg: "remote private URL must not leak"}
+	})}
+	got = st.MeasureDownloadStream(context.Background(), client, DownloadStreamOptions{MaximumBytes: 10 << 20, MaximumDuration: time.Second}, nil)
+	if got.ErrorClass != "tls" || got.Phase != "tls" || strings.Contains(got.ErrorMessage, "private") {
+		t.Fatalf("TLS diagnosis lost or leaked: %+v", got)
+	}
+}
+func TestDownloadPartialTimeoutPreservesBytesAndMeasurementCondition(t *testing.T) {
+	st := newDownloadStreamTester(t)
+	client := &http.Client{Transport: downloadRoundTripper(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: structReadCloser{Reader: io.MultiReader(strings.NewReader("abcd"), &contextBlockingBody{ctx: r.Context(), entered: make(chan struct{})})}, Request: r}, nil
+	})}
+	got := st.MeasureDownloadStream(context.Background(), client, DownloadStreamOptions{MaximumBytes: 10 << 20, MaximumDuration: 15 * time.Millisecond}, nil)
+	if got.Outcome != "time_limit" || !got.PartialMeasurement || got.BytesRead != 4 || got.Phase != "response_body" || got.EndReason != "time_limit" {
+		t.Fatalf("partial timed read lost: %+v", got)
+	}
+}
+
+type structReadCloser struct{ io.Reader }
+
+func (structReadCloser) Close() error { return nil }
+
+func TestFullReadBudgetIsNormalCompletionWithoutFailure(t *testing.T) {
+	st := newDownloadStreamTester(t)
+	client := &http.Client{Transport: downloadRoundTripper(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(strings.Repeat("x", 1024))), Request: r}, nil
+	})}
+	result := st.MeasureDownloadStream(context.Background(), client, DownloadStreamOptions{MaximumBytes: 512, MaximumDuration: time.Second}, nil)
+	if result.Outcome != "byte_limit" || result.BytesRead != 512 || result.FailurePhase != "" || result.ErrorMessage != "" {
+		t.Fatalf("normal bounded completion marked as failure: %+v", result)
+	}
+}
+
+func TestDownloadRecordsObservableStageDurations(t *testing.T) {
+	st := newDownloadStreamTester(t)
+	client := &http.Client{Transport: downloadRoundTripper(func(r *http.Request) (*http.Response, error) {
+		time.Sleep(5 * time.Millisecond)
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("x")), Request: r}, nil
+	})}
+	result := st.MeasureDownloadStream(context.Background(), client, DownloadStreamOptions{MaximumBytes: 512, MaximumDuration: time.Second}, nil)
+	encoded, _ := json.Marshal(result)
+	var record map[string]any
+	json.Unmarshal(encoded, &record)
+	phases, ok := record["phase_timings_ns"].(map[string]any)
+	if !ok || len(phases) == 0 {
+		t.Fatalf("missing stage durations: %s", encoded)
+	}
+	if _, exists := phases["dns"]; exists {
+		t.Fatal("must not invent hidden DNS duration")
+	}
+}
+
+func TestDownloadProxyHandshakeFailureRetainsObservedPhase(t *testing.T) {
+	st := newDownloadStreamTester(t)
+	client := &http.Client{Transport: downloadRoundTripper(func(r *http.Request) (*http.Response, error) {
+		markDownloadPhase(r.Context(), "proxy_handshake")
+		return nil, errors.New("failed to create session")
+	})}
+	got := st.MeasureDownloadStream(context.Background(), client, DownloadStreamOptions{MaximumBytes: 100, MaximumDuration: time.Second}, nil)
+	if got.FailurePhase != "proxy_handshake" || got.Phase != "proxy_handshake" || got.ErrorClass != "proxy_session" {
+		t.Fatalf("observed handshake overwritten: %+v", got)
 	}
 }

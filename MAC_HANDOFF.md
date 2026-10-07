@@ -1,5 +1,7 @@
 # Mac 接手：源码服务＋Web 界面
 
+> 当前状态（2026-10-07）：Mac已有新增源码成果并暂停开发；请先读 [README](README.md) 和 [暂停开发记录](docs/development-paused-20261007.md)。下文保留2026-10-05的迁移历史，其分支、schema 10、Mac未验等表述不是当前基线状态；本地暂停版本采用schema 11，具体提交与私有恢复材料见暂停交付。不要按旧说明重放补丁或恢复定时。
+
 迁移日期：2026-10-05。仓库：https://github.com/suifracti/clash-speedtest 。现有公开状态保持不变；默认分支仍为 main。原迁移分支 `codex/mac-migration-20261005` 的 `70f25a0947d5acf9ac8d35a1414a0a6a85b1c9e9` 已经用户确认推送。迁移前整合改用独立分支 `codex/mac-integration-20261005`；此整合分支目前只在 Windows 本地，需用户另行确认后才能推送。Mac 以最终整合提交为准，SHA 见交付记录及该分支的 `git rev-parse HEAD`。
 
 ## 来源与状态

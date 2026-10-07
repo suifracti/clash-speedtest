@@ -69,18 +69,20 @@ func (d *DefaultNodeDialer) CreateClient(node MonitoredNode, timeout time.Durati
 
 // RunnerConfig configures the Runner.
 type RunnerConfig struct {
-	Store       SampleStore
-	Dialer      NodeDialer
-	WorkerCount int
-	Budget      *BudgetController
+	ProbeActivity func(string) func() []string
+	Store         SampleStore
+	Dialer        NodeDialer
+	WorkerCount   int
+	Budget        *BudgetController
 }
 
 // Runner executes one round of probe checks across a job's nodes using an isolated dialer.
 type Runner struct {
-	store       SampleStore
-	dialer      NodeDialer
-	workerCount int
-	budget      atomic.Pointer[BudgetController]
+	probeActivity func(string) func() []string
+	store         SampleStore
+	dialer        NodeDialer
+	workerCount   int
+	budget        atomic.Pointer[BudgetController]
 }
 
 // NewRunner creates a new Runner instance.
@@ -92,9 +94,10 @@ func NewRunner(cfg RunnerConfig) *Runner {
 		cfg.WorkerCount = 4
 	}
 	runner := &Runner{
-		store:       cfg.Store,
-		dialer:      cfg.Dialer,
-		workerCount: cfg.WorkerCount,
+		store:         cfg.Store,
+		probeActivity: cfg.ProbeActivity,
+		dialer:        cfg.Dialer,
+		workerCount:   cfg.WorkerCount,
 	}
 	runner.budget.Store(cfg.Budget)
 	return runner
@@ -104,13 +107,23 @@ func (r *Runner) SetBudget(budget *BudgetController) { r.budget.Store(budget) }
 
 // TargetSpec defines a probe URL target and its expected probe type.
 type TargetSpec struct {
-	ProbeType string
-	URL       string
+	ResponseDelayOnly bool
+	ProbeType         string
+	URL               string
 }
 
 // GetProbeTargets returns the target probes for a given ProbeSetType.
 func GetProbeTargets(pset ProbeSetType) []TargetSpec {
 	switch pset {
+	case ProbeSetLatencySix:
+		return []TargetSpec{
+			{ResponseDelayOnly: true, ProbeType: "rtt", URL: "https://speed.cloudflare.com/__down?bytes=1"},
+			{ResponseDelayOnly: true, ProbeType: "rtt", URL: "https://www.gstatic.com/generate_204"},
+			{ResponseDelayOnly: true, ProbeType: "rtt", URL: "https://api.github.com/zen"},
+			{ResponseDelayOnly: true, ProbeType: "rtt", URL: "https://captive.apple.com/hotspot-detect.html"},
+			{ResponseDelayOnly: true, ProbeType: "rtt", URL: "http://www.msftconnecttest.com/connecttest.txt"},
+			{ResponseDelayOnly: true, ProbeType: "rtt", URL: "https://detectportal.firefox.com/success.txt"},
+		}
 	case ProbeSetService:
 		return []TargetSpec{
 			{ProbeType: "rtt", URL: "https://cp.cloudflare.com/generate_204"},
@@ -283,7 +296,7 @@ func (r *Runner) ExecuteRunWithAdmission(ctx context.Context, job *MonitorJob, s
 		run.Status = RunStatusPartialFailed
 	} else {
 		run.Status = RunStatusFailed
-		run.ErrorMessage = "所有目标节点探测均失败"
+		run.ErrorMessage = "所有目标节点均无成功证据；未执行与探针失败见目标记录"
 	}
 
 	// Persist samples and update run in store. A probe result is not a durable
@@ -326,6 +339,15 @@ func (r *Runner) probeNode(ctx context.Context, profileID string, node Monitored
 
 	client, err := r.dialer.CreateClient(node, timeout)
 	if err != nil {
+		// No request was possible. Preserve every planned target of the new
+		// scope instead of manufacturing six service failures.
+		if len(targets) == 6 {
+			samples := make([]*MonitorSample, 0, len(targets))
+			for _, target := range targets {
+				samples = append(samples, unexecutedProbe(profileID, node, target, runID, "配置不能建立客户端: "+err.Error()))
+			}
+			return samples, false, nil
+		}
 		// Client creation failure (e.g. invalid config)
 		sample := &MonitorSample{
 			SampleID:            newID("s"),
@@ -353,11 +375,20 @@ func (r *Runner) probeNode(ctx context.Context, profileID string, node Monitored
 
 	for _, target := range targets {
 		if ctx.Err() != nil {
+			if len(targets) == 6 {
+				samples = append(samples, unexecutedProbe(profileID, node, target, runID, "上游已取消，本目标未执行"))
+				continue
+			}
 			break
 		}
 
 		sample, err := r.executeSingleProbe(ctx, client, profileID, node, target, timeout, runID)
 		if err != nil {
+			if len(targets) == 6 {
+				for _, pending := range targets[len(samples):] {
+					samples = append(samples, unexecutedProbe(profileID, node, pending, runID, "资源入场未完成: "+err.Error()))
+				}
+			}
 			return samples, anySuccess, err
 		}
 		samples = append(samples, sample)
@@ -396,6 +427,20 @@ func (r *Runner) executeSingleProbe(
 		ErrorClass:          "none",
 	}
 
+	if r.probeActivity != nil {
+		finishActivity := r.probeActivity("monitor")
+		defer func() {
+			peers := finishActivity()
+			if sample.Metadata == nil {
+				sample.Metadata = map[string]any{}
+			}
+			sample.Metadata["competition_observation"] = "in_app_only"
+			if len(peers) > 0 {
+				sample.Metadata["competing_probes"] = peers
+				sample.Metadata["quality_caution"] = "shared_resources_overlap_possible"
+			}
+		}()
+	}
 	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, target.URL, nil)
 	if err != nil {
 		sample.ErrorClass = "invalid_request"
@@ -434,6 +479,12 @@ func (r *Runner) executeSingleProbe(
 	}
 	defer resp.Body.Close()
 
+	if sample.Metadata == nil {
+		sample.Metadata = map[string]any{}
+	}
+	sample.Metadata["execution_status"] = "executed"
+	sample.Metadata["http_status"] = resp.StatusCode
+	sample.Metadata["conclusion"] = "http_response_only_not_business_or_unlock"
 	// Drain small body up to 64KB
 	if _, err := io.CopyN(io.Discard, resp.Body, 64*1024); err != nil {
 		if _, blocked := AsBudgetBlock(err); blocked {
@@ -447,7 +498,13 @@ func (r *Runner) executeSingleProbe(
 		sample.TTFB = latency
 	}
 
-	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+	if target.ResponseDelayOnly {
+		sample.Success = true
+		sample.ErrorClass = "none"
+		if resp.StatusCode >= 300 {
+			sample.ErrorDetail = fmt.Sprintf("HTTP %d；已测得响应时延，业务／解锁未确认", resp.StatusCode)
+		}
+	} else if resp.StatusCode >= 200 && resp.StatusCode < 400 {
 		sample.Success = true
 		sample.ErrorClass = "none"
 	} else {
@@ -486,4 +543,8 @@ func newID(prefix string) string {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 	return fmt.Sprintf("%s_%s", prefix, hex.EncodeToString(b))
+}
+
+func unexecutedProbe(profile string, node MonitoredNode, target TargetSpec, runID, reason string) *MonitorSample {
+	return &MonitorSample{SampleID: newID("s"), RunID: runID, ProfileID: profile, NodeKey: node.NodeKey, NodeIdentityKey: node.NodeIdentityKey, ConfigRevisionKey: node.ConfigRevisionKey, DisplayNameSnapshot: node.DisplayName, ProbeType: target.ProbeType, Target: target.URL, Timestamp: time.Now(), ErrorClass: "not_executed", ErrorDetail: reason, Metadata: map[string]any{"execution_status": "not_executed", "conclusion": "unconfirmed"}}
 }
