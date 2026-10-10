@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/faceair/clash-speedtest/application"
 	"github.com/faceair/clash-speedtest/core/appdata"
@@ -45,6 +46,8 @@ type ServerConfig struct {
 	AppOptions    application.Options
 }
 
+const minRemoteWebPasswordLength = 12
+
 // Server provides the HTTP REST and SSE endpoints, adapting them to AppService.
 type Server struct {
 	config       ServerConfig
@@ -61,13 +64,34 @@ type Server struct {
 
 // NewServer constructs a new web adapter Server.
 func NewServer(cfg ServerConfig) (*Server, error) {
+	if cfg.ListenAddress == "" || strings.EqualFold(strings.TrimSpace(cfg.ListenAddress), "localhost") {
+		cfg.ListenAddress = "127.0.0.1"
+	}
+	listenIP := net.ParseIP(cfg.ListenAddress)
+	if listenIP == nil {
+		return nil, fmt.Errorf("listen must be a concrete IPv4 or IPv6 address")
+	}
+	if listenIP.IsUnspecified() {
+		return nil, fmt.Errorf("listen must be a specific interface address; wildcard listeners are not supported")
+	}
+	cfg.ListenAddress = listenIP.String()
+
 	if cfg.PublicIPv6 != "" {
 		ip := net.ParseIP(cfg.PublicIPv6)
 		if ip == nil || ip.To4() != nil || !ip.IsGlobalUnicast() || ip.IsPrivate() {
 			return nil, fmt.Errorf("public-ipv6 must be a global IPv6 literal")
 		}
 		cfg.PublicIPv6 = ip.String()
+		if !listenIP.IsLoopback() && cfg.ListenAddress != cfg.PublicIPv6 {
+			return nil, fmt.Errorf("listen and public-ipv6 must identify the same address")
+		}
+		cfg.ListenAddress = cfg.PublicIPv6
 	}
+
+	if !isLoopbackHost(cfg.ListenAddress) && !hasStrongWebPassword(cfg.WebPassword) {
+		return nil, fmt.Errorf("remote Web access requires --web-password with at least %d non-whitespace characters", minRemoteWebPasswordLength)
+	}
+
 	if cfg.AppPaths.ProfileDir != "" {
 		cfg.ProfilePaths = profiles.Paths{Dir: cfg.AppPaths.ProfileDir}
 		if cfg.HistoryDir == "" {
@@ -119,7 +143,7 @@ func (s *Server) Port() int {
 }
 
 func (s *Server) URL() string {
-	return fmt.Sprintf("http://127.0.0.1:%d", s.port)
+	return "http://" + net.JoinHostPort(s.config.ListenAddress, strconv.Itoa(s.port))
 }
 
 func (s *Server) ShutdownChan() <-chan struct{} {
@@ -277,24 +301,18 @@ func (s *Server) buildHandler() http.Handler {
 		handler = s.authMiddleware(handler)
 	}
 
-	if s.config.PublicIPv6 != "" {
-		return securityMiddlewareForHost(handler, net.JoinHostPort(s.config.PublicIPv6, strconv.Itoa(s.port)))
+	port := s.port
+	if port == 0 {
+		port = s.config.Port
 	}
-	if s.config.ListenAddress != "" && !isLoopbackHost(s.config.ListenAddress) {
-		return securityMiddlewareForHost(handler, "*")
+	if isLoopbackHost(s.config.ListenAddress) {
+		return securityMiddleware(handler)
 	}
-	return securityMiddleware(handler)
+	return securityMiddlewareForHost(handler, net.JoinHostPort(s.config.ListenAddress, strconv.Itoa(port)))
 }
 
 func (s *Server) Start() error {
-	bindHost := "127.0.0.1"
-	if s.config.ListenAddress != "" {
-		bindHost = s.config.ListenAddress
-	}
-	if s.config.PublicIPv6 != "" {
-		bindHost = "::"
-		log.Printf("WARNING: full unauthenticated web console exposed via IPv6; use only with trusted users")
-	}
+	bindHost := s.config.ListenAddress
 	listener, err := net.Listen("tcp", net.JoinHostPort(bindHost, strconv.Itoa(s.config.Port)))
 	if err != nil {
 		return fmt.Errorf("listen on port %d: %w", s.config.Port, err)
@@ -399,12 +417,13 @@ func securityMiddleware(next http.Handler) http.Handler {
 func securityMiddlewareForHost(next http.Handler, publicHost string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		allowedHost := publicHost
-		if allowedHost == "*" {
-			allowedHost = r.Host
+		// 1. Local servers accept loopback hosts; remote servers require the exact configured authority.
+		// Protects against DNS rebinding attacks and untrusted remote Host headers.
+		validHost := isLoopbackHost(r.Host)
+		if allowedHost != "" {
+			validHost = r.Host == allowedHost
 		}
-		// 1. Host header validation: local server must only be accessed via loopback host.
-		// Protects against DNS rebinding attacks.
-		if !isLoopbackHost(r.Host) && (allowedHost == "" || r.Host != allowedHost) {
+		if !validHost {
 			http.Error(w, "Forbidden: invalid or non-loopback Host header", http.StatusForbidden)
 			return
 		}
@@ -415,20 +434,24 @@ func securityMiddlewareForHost(next http.Handler, publicHost string) http.Handle
 			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
 				return false
 			}
-			if isLoopbackHost(r.Host) {
+			if allowedHost == "" {
 				return isLoopbackHost(u.Hostname())
 			}
 			return allowedHost != "" && u.Host == allowedHost
 		}
-		var isLoopbackOrigin bool
+		var isTrustedOrigin bool
 		if origin != "" {
-			isLoopbackOrigin = trustedOrigin(origin)
+			isTrustedOrigin = trustedOrigin(origin)
+			if !isTrustedOrigin {
+				http.Error(w, "Forbidden: untrusted origin", http.StatusForbidden)
+				return
+			}
 		}
 
 		// 2. CORS preflight (OPTIONS)
 		if r.Method == http.MethodOptions {
 			if origin != "" {
-				if !isLoopbackOrigin {
+				if !isTrustedOrigin {
 					http.Error(w, "Forbidden: untrusted origin", http.StatusForbidden)
 					return
 				}
@@ -443,10 +466,6 @@ func securityMiddlewareForHost(next http.Handler, publicHost string) http.Handle
 
 		// 3. Mutating requests protection (CSRF defense)
 		if isMutatingMethod(r.Method) {
-			if origin != "" && !isLoopbackOrigin {
-				http.Error(w, "Forbidden: untrusted origin for mutating request", http.StatusForbidden)
-				return
-			}
 			if ref := r.Header.Get("Referer"); ref != "" {
 				if !trustedOrigin(ref) {
 					http.Error(w, "Forbidden: untrusted referer for mutating request", http.StatusForbidden)
@@ -461,13 +480,17 @@ func securityMiddlewareForHost(next http.Handler, publicHost string) http.Handle
 
 		// 4. Safe reflection of loopback origin for local dev servers (e.g. Vite on localhost:5173).
 		// NEVER emit Access-Control-Allow-Origin: *
-		if origin != "" && isLoopbackOrigin {
+		if origin != "" && isTrustedOrigin && allowedHost == "" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 		}
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func hasStrongWebPassword(password string) bool {
+	return strings.TrimSpace(password) != "" && utf8.RuneCountInString(password) >= minRemoteWebPasswordLength
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
