@@ -26,6 +26,7 @@ import (
 	"github.com/faceair/clash-speedtest/core/profiles"
 	"github.com/faceair/clash-speedtest/core/publicservice"
 	"github.com/faceair/clash-speedtest/core/speedtester"
+	"github.com/faceair/clash-speedtest/core/subscriptionusage"
 	"gopkg.in/yaml.v2"
 )
 
@@ -116,6 +117,11 @@ type AppService struct {
 	// verification. Production uses historyStore.SaveLatencyTest directly.
 	latencySaveHook    func(context.Context, *history.LatencyTest) error
 	latencyMeasureHook func(context.Context, monitor.MonitoredNode, time.Duration) (*speedtester.Result, string, error)
+	// Subscription refresh hooks provide deterministic persistence fault injection
+	// for recovery-path tests. Production leaves them nil.
+	subscriptionRefreshStoreSaveHook func(string, *profiles.Store) error
+	subscriptionRefreshUsageSaveHook func(context.Context, []subscriptionusage.Snapshot) error
+	subscriptionRefreshRecoveryHook  func(kind, backupPath, targetPath string) error
 }
 
 // NewAppService creates a new application service instance.

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -77,6 +78,13 @@ type refreshError struct {
 
 func (e *refreshError) Error() string { return e.Message }
 
+func (s *AppService) saveSubscriptionRefreshStore(store *profiles.Store) error {
+	if s.subscriptionRefreshStoreSaveHook != nil {
+		return s.subscriptionRefreshStoreSaveHook(s.profilePaths.StoreFile(), store)
+	}
+	return profiles.SaveStore(s.profilePaths.StoreFile(), store)
+}
+
 func refreshFailure(err error) *refreshError {
 	var own *refreshError
 	if errors.As(err, &own) {
@@ -127,6 +135,172 @@ func refreshSourceFingerprint(rawURL string) string {
 	return hex.EncodeToString(value[:])
 }
 
+type refreshRecoveryCopy struct {
+	target  string
+	path    string
+	existed bool
+}
+
+func createRefreshRecoveryCopy(target string) (*refreshRecoveryCopy, error) {
+	copy := &refreshRecoveryCopy{target: target}
+	source, err := os.Open(target)
+	if os.IsNotExist(err) {
+		return copy, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer source.Close()
+
+	backup, err := os.CreateTemp(filepath.Dir(target), ".refresh-recovery-*")
+	if err != nil {
+		return nil, err
+	}
+	backupPath := backup.Name()
+	keep := false
+	defer func() {
+		if !keep {
+			_ = os.Remove(backupPath)
+		}
+	}()
+	if err = backup.Chmod(0o600); err != nil {
+		_ = backup.Close()
+		return nil, err
+	}
+	if _, err = io.Copy(backup, source); err == nil {
+		err = backup.Sync()
+	}
+	closeErr := backup.Close()
+	if err != nil {
+		return nil, err
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	if err = syncRefreshDirectory(filepath.Dir(target)); err != nil {
+		return nil, err
+	}
+	copy.path = backupPath
+	copy.existed = true
+	keep = true
+	return copy, nil
+}
+
+func (copy *refreshRecoveryCopy) discard() {
+	if copy == nil || copy.path == "" {
+		return
+	}
+	if err := os.Remove(copy.path); err == nil {
+		_ = syncRefreshDirectory(filepath.Dir(copy.path))
+	}
+}
+
+func (s *AppService) restoreRefreshRecoveryCopy(kind string, copy *refreshRecoveryCopy) error {
+	if copy == nil {
+		return fmt.Errorf("missing recovery copy")
+	}
+	if s.subscriptionRefreshRecoveryHook != nil {
+		if err := s.subscriptionRefreshRecoveryHook(kind, copy.path, copy.target); err != nil {
+			return err
+		}
+	}
+	if !copy.existed {
+		if err := os.Remove(copy.target); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return syncRefreshDirectory(filepath.Dir(copy.target))
+	}
+
+	source, err := os.Open(copy.path)
+	if err != nil {
+		return err
+	}
+	restored, err := os.CreateTemp(filepath.Dir(copy.target), ".refresh-restore-*")
+	if err != nil {
+		_ = source.Close()
+		return err
+	}
+	restoredPath := restored.Name()
+	defer os.Remove(restoredPath)
+	if err = restored.Chmod(0o600); err != nil {
+		_ = source.Close()
+		_ = restored.Close()
+		return err
+	}
+	if _, err = io.Copy(restored, source); err == nil {
+		err = restored.Sync()
+	}
+	_ = source.Close()
+	closeErr := restored.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if err = os.Rename(restoredPath, copy.target); err != nil {
+		return err
+	}
+	if err = syncRefreshDirectory(filepath.Dir(copy.target)); err != nil {
+		return err
+	}
+	copy.discard()
+	return nil
+}
+
+func (s *AppService) restoreRefreshStoreBytes(original []byte) error {
+	storePath := s.profilePaths.StoreFile()
+	if s.subscriptionRefreshRecoveryHook != nil {
+		if err := s.subscriptionRefreshRecoveryHook("store", "", storePath); err != nil {
+			return err
+		}
+	}
+	file, err := os.CreateTemp(filepath.Dir(storePath), ".refresh-restore-*")
+	if err != nil {
+		return err
+	}
+	temporaryPath := file.Name()
+	defer os.Remove(temporaryPath)
+	if err = file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if _, err = file.Write(original); err == nil {
+		err = file.Sync()
+	}
+	closeErr := file.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if err = os.Rename(temporaryPath, storePath); err != nil {
+		return err
+	}
+	return syncRefreshDirectory(filepath.Dir(storePath))
+}
+
+func syncRefreshDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	err = directory.Sync()
+	closeErr := directory.Close()
+	if err != nil {
+		return err
+	}
+	return closeErr
+}
+
+func refreshRollbackError(message string, rollbackErr error) *refreshError {
+	if rollbackErr != nil {
+		return &refreshError{Code: "rollback_unconfirmed", Message: "保存失败且恢复状态无法确认；请勿重复刷新并联系支持"}
+	}
+	return &refreshError{Code: "persist", Message: message}
+}
+
 func refreshRequestID(requestID string) string {
 	value := sha256.Sum256([]byte("subscription-refresh-request-v1\x00" + requestID))
 	return hex.EncodeToString(value[:])
@@ -157,6 +331,25 @@ func summarizeRefresh(job *SubscriptionRefreshJob) {
 		case "not_executed":
 			job.NotExecuted++
 		}
+	}
+}
+
+func markRefreshItemsNotExecuted(job *SubscriptionRefreshJob, first int, code, message string, at time.Time) {
+	for index := first; index < len(job.Items); index++ {
+		item := &job.Items[index]
+		if refreshTerminal(item.State) {
+			continue
+		}
+		if len(item.Stages) > 0 && item.Stages[len(item.Stages)-1].State == "fetching" {
+			item.Stages = item.Stages[:len(item.Stages)-1]
+		}
+		item.StartedAt = time.Time{}
+		item.DurationMS = 0
+		item.State = "not_executed"
+		item.ErrorCode = code
+		item.ErrorMessage = message
+		item.FinishedAt = at
+		item.Stages = append(item.Stages, RefreshStage{State: item.State, At: at})
 	}
 }
 
@@ -394,16 +587,11 @@ func (s *AppService) runSubscriptionRefresh(ctx context.Context, job *Subscripti
 	for index := range job.Items {
 		s.refreshMu.Lock()
 		if ctx.Err() != nil {
-			for pending := index; pending < len(job.Items); pending++ {
-				item := &job.Items[pending]
-				if item.State == "queued" {
-					item.State = "not_executed"
-					item.ErrorCode = "cancelled"
-					item.ErrorMessage = "任务已取消；此订阅没有发出请求"
-					item.FinishedAt = time.Now()
-					item.Stages = append(item.Stages, RefreshStage{State: item.State, At: item.FinishedAt})
-				}
+			code, message := "cancelled", "任务已取消；此订阅没有发出请求"
+			if job.PersistenceError != "" {
+				code, message = "persist", "刷新进度写入失败；此订阅没有发出请求"
 			}
+			markRefreshItemsNotExecuted(job, index, code, message, time.Now())
 			summarizeRefresh(job)
 			_ = s.saveRefreshLocked()
 			s.refreshMu.Unlock()
@@ -414,11 +602,8 @@ func (s *AppService) runSubscriptionRefresh(ctx context.Context, job *Subscripti
 		item.State = "fetching"
 		item.Stages = append(item.Stages, RefreshStage{State: "fetching", At: item.StartedAt})
 		if err := s.saveRefreshLocked(); err != nil {
-			item.ErrorCode = "persist"
-			item.ErrorMessage = "刷新进度写入失败；请求已停止"
-			item.State = "not_executed"
-			item.FinishedAt = time.Now()
-			job.PersistenceError = item.ErrorMessage
+			job.PersistenceError = "刷新进度写入失败；请求已停止"
+			markRefreshItemsNotExecuted(job, index, "persist", "刷新进度写入失败；此订阅没有发出请求", time.Now())
 			summarizeRefresh(job)
 			_ = s.saveRefreshLocked()
 			s.refreshMu.Unlock()
@@ -439,6 +624,9 @@ func (s *AppService) runSubscriptionRefresh(ctx context.Context, job *Subscripti
 			item.Stages = append(item.Stages, RefreshStage{State: state, At: time.Now()})
 			if err := s.saveRefreshLocked(); err != nil {
 				job.PersistenceError = "刷新进度写入失败；请求已停止"
+				if s.refreshCancel != nil {
+					s.refreshCancel()
+				}
 				return &refreshError{Code: "persist", Message: job.PersistenceError}
 			}
 			return nil
@@ -475,6 +663,14 @@ func (s *AppService) runSubscriptionRefresh(ctx context.Context, job *Subscripti
 	}
 
 	s.refreshMu.Lock()
+	stopCode, stopMessage := "not_executed", "刷新任务提前结束；此订阅没有发出请求"
+	if ctx.Err() != nil {
+		stopCode, stopMessage = "cancelled", "任务已取消；此订阅没有发出请求"
+	}
+	if job.PersistenceError != "" {
+		stopCode, stopMessage = "persist", "刷新进度写入失败；此订阅没有发出请求"
+	}
+	markRefreshItemsNotExecuted(job, 0, stopCode, stopMessage, time.Now())
 	job.FinishedAt = time.Now()
 	job.State = "finished"
 	if ctx.Err() != nil {
@@ -595,10 +791,16 @@ func (s *AppService) refreshSubscriptionLocked(ctx context.Context, airportID, s
 			sub.LastFailureRetryAt = status.RetryAfterUntil
 		}
 		if err := profiles.SaveStore(s.profilePaths.StoreFile(), store); err != nil {
+			if failure.Code == "rollback_unconfirmed" {
+				return nil, failure
+			}
 			return nil, &refreshError{Code: "persist", Message: "失败信息无法保存；旧缓存保留"}
 		}
 		snapshot := usageSnapshot(airport, sub, "refresh_failed", "subscription_update", now)
 		if err := s.saveUsageObservations(context.WithoutCancel(ctx), []subscriptionusage.Snapshot{snapshot}); err != nil {
+			if failure.Code == "rollback_unconfirmed" {
+				return nil, failure
+			}
 			return nil, &refreshError{Code: "persist", Message: "刷新失败记录无法保存；旧缓存保留"}
 		}
 		return nil, failure
@@ -663,13 +865,19 @@ func (s *AppService) refreshSubscriptionLocked(ctx context.Context, airportID, s
 		return fail(err)
 	}
 	cachePath := s.profilePaths.CacheFile(sub.ID)
-	oldBody, oldReadErr := os.ReadFile(cachePath)
-	if oldReadErr != nil && !os.IsNotExist(oldReadErr) {
-		return fail(&refreshError{Code: "cache_read", Message: "旧节点缓存无法读取；旧缓存保留"})
+	cacheRecovery, err := createRefreshRecoveryCopy(cachePath)
+	if err != nil {
+		return fail(&refreshError{Code: "persist", Message: "旧节点缓存恢复副本无法创建；旧缓存保留"})
+	}
+	oldStoreBytes, err := os.ReadFile(s.profilePaths.StoreFile())
+	if err != nil {
+		cacheRecovery.discard()
+		return fail(&refreshError{Code: "persist", Message: "原订阅状态无法读取；旧缓存保留"})
 	}
 	oldUsage, oldUpdatedAt, oldAirportUpdatedAt := sub.Usage, sub.UpdatedAt, airport.UpdatedAt
 	oldFailureAt, oldRetryAt, oldFailureCode, oldFailureMessage := sub.LastFailureAt, sub.LastFailureRetryAt, sub.LastFailureCode, sub.LastFailureMessage
 	if err = s.profilePaths.WriteCache(sub.ID, body); err != nil {
+		cacheRecovery.discard()
 		return fail(&refreshError{Code: "cache_write", Message: "节点缓存写入失败；旧缓存保留"})
 	}
 	now := time.Now()
@@ -679,11 +887,12 @@ func (s *AppService) refreshSubscriptionLocked(ctx context.Context, airportID, s
 	sub.LastFailureRetryAt = time.Time{}
 	sub.LastFailureCode = ""
 	sub.LastFailureMessage = ""
-	if err = profiles.SaveStore(s.profilePaths.StoreFile(), store); err != nil {
-		_ = rollbackRefreshCache(s.profilePaths, sub.ID, oldBody, oldReadErr)
+	if err = s.saveSubscriptionRefreshStore(store); err != nil {
+		cacheRollbackErr := s.restoreRefreshRecoveryCopy("cache", cacheRecovery)
+		storeRollbackErr := s.restoreRefreshStoreBytes(oldStoreBytes)
 		sub.Usage, sub.UpdatedAt, airport.UpdatedAt = oldUsage, oldUpdatedAt, oldAirportUpdatedAt
 		sub.LastFailureAt, sub.LastFailureRetryAt, sub.LastFailureCode, sub.LastFailureMessage = oldFailureAt, oldRetryAt, oldFailureCode, oldFailureMessage
-		return fail(&refreshError{Code: "persist", Message: "订阅更新保存失败；旧缓存已恢复"})
+		return fail(refreshRollbackError("订阅更新保存失败；旧缓存和订阅状态已恢复", errors.Join(cacheRollbackErr, storeRollbackErr)))
 	}
 	status := "ok"
 	if !profiles.IsHTTPURL(sub.URL) {
@@ -693,20 +902,14 @@ func (s *AppService) refreshSubscriptionLocked(ctx context.Context, airportID, s
 	}
 	snapshot := usageSnapshot(airport, sub, status, "subscription_update", now)
 	if err = s.saveUsageObservations(context.WithoutCancel(ctx), []subscriptionusage.Snapshot{snapshot}); err != nil {
-		_ = rollbackRefreshCache(s.profilePaths, sub.ID, oldBody, oldReadErr)
+		cacheRollbackErr := s.restoreRefreshRecoveryCopy("cache", cacheRecovery)
+		storeRollbackErr := s.restoreRefreshStoreBytes(oldStoreBytes)
 		sub.Usage, sub.UpdatedAt, airport.UpdatedAt = oldUsage, oldUpdatedAt, oldAirportUpdatedAt
 		sub.LastFailureAt, sub.LastFailureRetryAt, sub.LastFailureCode, sub.LastFailureMessage = oldFailureAt, oldRetryAt, oldFailureCode, oldFailureMessage
-		_ = profiles.SaveStore(s.profilePaths.StoreFile(), store)
-		return fail(&refreshError{Code: "persist", Message: "用量历史保存失败；旧缓存已恢复"})
+		return fail(refreshRollbackError("用量历史保存失败；旧缓存和订阅状态已恢复", errors.Join(cacheRollbackErr, storeRollbackErr)))
 	}
+	cacheRecovery.discard()
 	nodeCount := s.CountCachedNodes(sub.ID)
 	dto := subscriptionDTO(airport.ID, sub, nodeCount, true)
 	return &dto, nil
-}
-
-func rollbackRefreshCache(paths profiles.Paths, id string, oldBody []byte, readErr error) error {
-	if readErr == nil {
-		return paths.WriteCache(id, oldBody)
-	}
-	return os.Remove(paths.CacheFile(id))
 }

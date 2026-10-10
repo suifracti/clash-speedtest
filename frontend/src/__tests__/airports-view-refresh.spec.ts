@@ -24,12 +24,13 @@ beforeEach(()=>{
   mocks.workspace.subscription.value='all'
   mocks.api.refreshJobs.mockResolvedValue([])
   mocks.api.startRefresh.mockReset()
+  mocks.api.refreshJob.mockReset()
   mocks.api.cancelRefresh.mockReset()
   mocks.request.mockReset()
   HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','')}
   HTMLDialogElement.prototype.close=function(){this.removeAttribute('open')}
 })
-afterEach(()=>{wrapper?.unmount();wrapper=undefined;document.body.innerHTML='';vi.clearAllMocks()})
+afterEach(()=>{wrapper?.unmount();wrapper=undefined;document.body.innerHTML='';vi.useRealTimers();vi.clearAllMocks()})
 
 describe('AirportsView manual refresh jobs',()=>{
   it('starts a selected subscription job and exposes progress and cancellation',async()=>{
@@ -64,5 +65,37 @@ describe('AirportsView manual refresh jobs',()=>{
     retry?.dispatchEvent(new MouseEvent('click',{bubbles:true}))
     await flushPromises()
     expect(mocks.api.startRefresh).toHaveBeenNthCalledWith(2,expect.objectContaining({retry_of:'refresh-failed'}))
+  })
+
+  it('keeps a dismissed running progress modal closed across polling and provides a reopen entry',async()=>{
+    vi.useFakeTimers()
+    const running=job('refresh-running','running',[{airport_id:'airport-a',subscription_id:'account-a1',airport_name:'A',subscription_name:'A1',state:'fetching',stages:[{state:'fetching',at:'2026-10-11T00:00:01Z'}]}])
+    mocks.api.startRefresh.mockResolvedValue(running)
+    mocks.api.refreshJob.mockResolvedValue({...running,items:[{...running.items[0],state:'parsing',stages:[{state:'fetching',at:'2026-10-11T00:00:01Z'},{state:'parsing',at:'2026-10-11T00:00:02Z'}]}]})
+    wrapper=mount(AirportsView)
+    await flushPromises()
+    await wrapper.findAll('button[aria-label="刷新订阅"]')[0]!.trigger('click')
+    await flushPromises()
+    expect(mocks.api.startRefresh).toHaveBeenCalledTimes(1)
+    expect(document.body.querySelector('dialog.modal')).toBeTruthy()
+
+    document.body.querySelector<HTMLButtonElement>('dialog.modal button[aria-label="关闭"]')?.click()
+    await flushPromises()
+    expect(document.body.querySelector('dialog.modal')).toBeNull()
+
+    const refreshButton=wrapper.find<HTMLButtonElement>('button[aria-label="刷新订阅"]')
+    expect(refreshButton.element.disabled).toBe(true)
+    await refreshButton.trigger('click')
+    await flushPromises()
+    expect(mocks.api.startRefresh).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(700)
+    await flushPromises()
+    expect(document.body.querySelector('dialog.modal')).toBeNull()
+    const reopen=wrapper.findAll('button').find(button=>button.text().includes('查看刷新进度'))
+    expect(reopen).toBeTruthy()
+    await reopen?.trigger('click')
+    await flushPromises()
+    expect(document.body.querySelector('dialog.modal')?.textContent).toContain('解析中')
   })
 })
