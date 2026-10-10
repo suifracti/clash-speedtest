@@ -18,12 +18,16 @@ const (
 )
 
 type Subscription struct {
-	Usage     *SubscriptionUsage `json:"usage,omitempty"`
-	ID        string             `json:"id"`
-	Name      string             `json:"name"`
-	URL       string             `json:"url"`
-	Note      string             `json:"note,omitempty"`
-	UpdatedAt time.Time          `json:"updated_at,omitempty"`
+	LastFailureRetryAt time.Time          `json:"last_failure_retry_at,omitempty"`
+	LastFailureAt      time.Time          `json:"last_failure_at,omitempty"`
+	LastFailureCode    string             `json:"last_failure_code,omitempty"`
+	LastFailureMessage string             `json:"last_failure_message,omitempty"`
+	Usage              *SubscriptionUsage `json:"usage,omitempty"`
+	ID                 string             `json:"id"`
+	Name               string             `json:"name"`
+	URL                string             `json:"url"`
+	Note               string             `json:"note,omitempty"`
+	UpdatedAt          time.Time          `json:"updated_at,omitempty"`
 }
 
 type Airport struct {
@@ -274,7 +278,7 @@ func (p Paths) WriteCache(id string, body []byte) error {
 	if err := os.MkdirAll(p.CacheDir(), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(p.CacheFile(id), body, 0o600)
+	return writeAtomicCache(p.CacheFile(id), body)
 }
 
 func (p Paths) RemoveCache(id string) {
@@ -323,4 +327,27 @@ func (p Paths) ImportLegacyIfEmpty(store *Store) bool {
 		URL:  url,
 	})
 	return true
+}
+
+func writeAtomicCache(path string, body []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".cache-*.tmp")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if err = f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err = f.Write(body); err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	return os.Rename(f.Name(), path)
 }
