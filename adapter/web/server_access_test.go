@@ -58,6 +58,7 @@ func TestNewServerRejectsRemoteAccessWithoutStrongPasswordBeforeStorage(t *testi
 		{name: "missing"},
 		{name: "short", password: "short"},
 		{name: "whitespace", password: "            "},
+		{name: "short after excluding whitespace", password: strings.Repeat("x", minRemoteWebPasswordLength-1) + " "},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			profileDir := filepath.Join(t.TempDir(), "must-not-be-created")

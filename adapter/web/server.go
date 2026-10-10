@@ -21,7 +21,7 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
+	"unicode"
 
 	"github.com/faceair/clash-speedtest/application"
 	"github.com/faceair/clash-speedtest/core/appdata"
@@ -490,7 +490,13 @@ func securityMiddlewareForHost(next http.Handler, publicHost string) http.Handle
 }
 
 func hasStrongWebPassword(password string) bool {
-	return strings.TrimSpace(password) != "" && utf8.RuneCountInString(password) >= minRemoteWebPasswordLength
+	nonWhitespace := 0
+	for _, char := range password {
+		if !unicode.IsSpace(char) {
+			nonWhitespace++
+		}
+	}
+	return nonWhitespace >= minRemoteWebPasswordLength
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
