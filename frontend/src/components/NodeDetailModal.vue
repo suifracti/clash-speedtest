@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {nodeDisplayName} from '../nodePresentation'
-import {downloadGroup,servicePassed,serviceExecuted} from '../sharedResults'
+import {downloadGroup,serviceAvailability} from '../sharedResults'
 import {attemptTone,serviceConclusion} from '../measurementRounds'
 import UiSelect from './UiSelect.vue'
 import {computed,onBeforeUnmount,ref,watch} from 'vue'
@@ -24,7 +24,14 @@ watch(source,()=>{if(source.value==='monitor'&&project.value==='download')projec
 watch([source,monitorProbe,project,serviceId,revision,()=>props.node,()=>w.hours.value],()=>{tests.value=[];attempts.value=[];samplePage.value=1;record.value=null;until.value=new Date().toISOString();void load()},{immediate:true})
 watch(()=>props.node,async n=>{const token=++revisionVersion;revision.value=n.config_revision_key;revisions.value=[];try{const result=await api.revisions(n);if(token===revisionVersion)revisions.value=result||[]}catch{}},{immediate:true})
 onBeforeUnmount(()=>{version++;revisionVersion++})
-const chartPoints=computed<TrendPoint[]>(()=>source.value==='monitor'?(project.value==='service'?monitorHTTPPoints(monitorSamples.value,monitorProbe.value):monitorLatencyPoints(monitorSamples.value,target.value)):project.value==='latency'?tests.value.slice().reverse().map(t=>manualLatencyPoint(t,target.value)):attempts.value.slice().reverse().map(a=>({id:a.attempt_id,time:a.finished_at||a.requested_at,value:project.value==='download'?downloadSpeed(a):serviceExecuted(a)?servicePassed(a)?1:0:null,tone:project.value==='download'?downloadTone(a):attemptTone(a),conditionKey:project.value==='download'?downloadGroup(a).key:undefined,description:`${date(a.finished_at||a.requested_at)} · ${triggerLabel(a.trigger_type)} · 轮次 ${a.round_id||'关联未知'} · ${project.value==='download'?outcomeLabel(a.result?.outcome):serviceConclusion(a)}${project.value==='download'?' · '+downloadConditionLabel(a):''}`})))
+const chartPoints=computed<TrendPoint[]>(()=>{
+ if(source.value==='monitor')return project.value==='service'?monitorHTTPPoints(monitorSamples.value,monitorProbe.value):monitorLatencyPoints(monitorSamples.value,target.value)
+ if(project.value==='latency')return tests.value.slice().reverse().map(t=>manualLatencyPoint(t,target.value))
+ return attempts.value.slice().reverse().map(a=>{
+  const value=project.value==='download'?downloadSpeed(a):serviceAvailability(a),tone=project.value==='download'?downloadTone(a):attemptTone(a)
+  return {id:a.attempt_id,time:a.finished_at||a.requested_at,value,tone:project.value==='service'&&value===null&&tone==='bad'?'warn':tone,conditionKey:project.value==='download'?downloadGroup(a).key:undefined,description:`${date(a.finished_at||a.requested_at)} · ${triggerLabel(a.trigger_type)} · 轮次 ${a.round_id||'关联未知'} · ${project.value==='download'?outcomeLabel(a.result?.outcome):serviceConclusion(a)}${project.value==='download'?' · '+downloadConditionLabel(a):''}`}
+ })
+})
 const samples=computed(()=>tests.value.flatMap(t=>t.samples.map(s=>({...s,...latencySampleState(s),attempt_id:t.attempt_id}))).sort((a,b)=>Date.parse(b.timestamp)-Date.parse(a.timestamp))),sampleSlice=computed(()=>samples.value.slice((samplePage.value-1)*50,samplePage.value*50))
 const siteStats=computed(()=>targets.map(t=>{const list=tests.value.flatMap(test=>sampleFor(test,t.id)),successful=list.filter(s=>s.success);return {...t,value:median(successful.map(s=>s.latency_ms)),success:successful.length,total:list.length}}))
 async function retry(a:Attempt){const token=version,kind=project.value as 'download'|'service',n={...nodeScope.value};try{const saved=await api.attemptAction(kind,a.attempt_id,n,'retry-save',a.service_id);if(token!==version)return;record.value=saved;await load()}catch(e){if(token===version)error.value=e instanceof Error?e.message:String(e)}}
