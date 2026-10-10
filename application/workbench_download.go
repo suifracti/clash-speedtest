@@ -170,6 +170,11 @@ func (s *AppService) StartWorkbenchDownloadTest(ctx context.Context, req Workben
 		abortStart()
 		return nil, fmt.Errorf("检查下载检测请求失败: %w", err)
 	}
+	if runtime.preparePhysical != nil {
+		pathPlan := speedtester.PlanPhysicalDownloadPath(runtime.ctx, proxy)
+		applyWorkbenchDownloadRulePath(&rule, pathPlan)
+		runtime.rule = rule
+	}
 	runtime.timingNS["start_setup_ns"] = time.Since(received).Nanoseconds()
 	attempt := &history.WorkbenchDownloadAttempt{
 		AttemptID: runtime.attemptID, RequestID: requestID, ProfileID: profileID, NodeKey: nodeKey,
@@ -399,7 +404,7 @@ func downloadNetworkPath(runtime *workbenchDownloadRuntime, preparationErr error
 		return path
 	}
 	path := speedtester.DownloadNetworkPath{
-		Method: "unknown", AddressFamily: "unknown", ResolutionSource: "unobserved",
+		Method: "unknown", AddressFamily: "unknown", AddressSource: "unobserved",
 		TUNEvidence: "packet_route_not_observed", FailureReason: "physical_path_unobserved",
 	}
 	if preparationErr != nil {
@@ -582,6 +587,15 @@ func (s *AppService) ListWorkbenchDownloadTests(ctx context.Context, query Workb
 		result.Since, result.Until = *since, *until
 	}
 	return result, nil
+}
+
+func applyWorkbenchDownloadRulePath(rule *history.WorkbenchDownloadRuleSnapshot, path speedtester.DownloadNetworkPath) {
+	if rule == nil {
+		return
+	}
+	rule.NetworkPathMethod = path.Method
+	rule.PhysicalInterface = path.Interface
+	rule.DNSMode = path.DNSMode
 }
 
 func (s *AppService) reconcileWorkbenchDownloadAttempts() error {

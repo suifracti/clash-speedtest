@@ -99,7 +99,7 @@ func TestWorkbenchDownloadSaveRetryAndReopenReuseAttemptWithoutRequest(t *testin
 	if failed.Result.Samples == nil || len(failed.Result.Samples) == 0 || failed.Result.Samples[len(failed.Result.Samples)-1].CumulativeBytes != 1000 {
 		t.Fatalf("actual response-byte samples were not retained: %+v", failed.Result.Samples)
 	}
-	if failed.Result.NetworkPath == nil || failed.Result.NetworkPath.Method != "unknown" || failed.Result.NetworkPath.AddressFamily != "unknown" || failed.Result.NetworkPath.ResolutionSource != "unobserved" || failed.Result.NetworkPath.TUNEvidence != "packet_route_not_observed" {
+	if failed.Result.NetworkPath == nil || failed.Result.NetworkPath.Method != "unknown" || failed.Result.NetworkPath.AddressFamily != "unknown" || failed.Result.NetworkPath.AddressSource != "unobserved" || failed.Result.NetworkPath.TUNEvidence != "packet_route_not_observed" {
 		t.Fatalf("unverified test path must remain explicitly unknown: %+v", failed.Result.NetworkPath)
 	}
 	if err := store.Close(); err != nil {
@@ -335,8 +335,8 @@ func TestWorkbenchDownloadNetworkPathEvidenceSurvivesReopen(t *testing.T) {
 		StartedAt: now, FinishedAt: now, Samples: []history.WorkbenchDownloadSample{},
 		NetworkPath: &speedtester.DownloadNetworkPath{
 			Method: "physical_socket_v1", Interface: "en1", AddressFamily: "ipv4",
-			ResolutionSource: "physical_ipv4_dns",
-			DNSMode:          "physical_interface_dns_v1", TUNEvidence: "packet_route_not_observed",
+			AddressSource: "physical_ipv4_dns",
+			DNSMode:       "physical_interface_dns_v1", TUNEvidence: "packet_route_not_observed",
 			FailureReason: "ipv4_dns_not_found", DNSRequests: 2, DNSDialAttempts: 1,
 		},
 	}
@@ -362,9 +362,81 @@ func TestWorkbenchDownloadNetworkPathEvidenceSurvivesReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := got.Result.NetworkPath
-	if got.ExecutionState != "not_executed" || path == nil || path.Method != "physical_socket_v1" || path.AddressFamily != "ipv4" || path.ResolutionSource != "physical_ipv4_dns" || path.Interface != "en1" || path.FailureReason != "ipv4_dns_not_found" || path.DNSRequests != 2 || path.DNSDialAttempts != 1 || path.TUNEvidence != "packet_route_not_observed" {
+	if got.ExecutionState != "not_executed" || path == nil || path.Method != "physical_socket_v1" || path.AddressFamily != "ipv4" || path.AddressSource != "physical_ipv4_dns" || path.Interface != "en1" || path.FailureReason != "ipv4_dns_not_found" || path.DNSRequests != 2 || path.DNSDialAttempts != 1 || path.TUNEvidence != "packet_route_not_observed" {
 		t.Fatalf("persisted path evidence changed after reopen: %+v; attempt=%+v", path, got)
 	}
+}
+
+func TestWorkbenchDownloadRulePathSnapshotPersistsFromPlan(t *testing.T) {
+	app, store, _ := newWorkbenchDownloadApplication(t)
+	defer store.Close()
+
+	now := time.Now().UTC()
+	attempt := &history.WorkbenchDownloadAttempt{
+		AttemptID: "comparison-path-attempt", RequestID: "comparison-path-request", ProfileID: "profile-a",
+		NodeKey: "node-a", NodeIdentityKey: "identity-a", ConfigRevisionKey: "revision-a", DisplayName: "节点",
+		NodeType: "vless", Source: history.WorkbenchDownloadSource, RequestedAt: now,
+		ExecutionState: "queued", PersistenceState: "not_started",
+		Rule: history.WorkbenchDownloadRuleSnapshot{
+			RuleVersion: workbenchDownloadRuleVersion, TargetURL: "https://example.test/download", Method: http.MethodGet,
+			MaximumBytes: 1000, MaximumDurationNS: int64(time.Second),
+		},
+	}
+	if err := store.DB().CreateMeasurementRound(context.Background(), history.MeasurementRound{
+		RoundID: "comparison-round", TriggerType: "manual", StartedAt: now,
+		Items: []history.MeasurementRoundItem{{
+			RequestID: attempt.RequestID, Project: "download", ProfileID: attempt.ProfileID, NodeKey: attempt.NodeKey,
+			NodeIdentityKey: attempt.NodeIdentityKey, ConfigRevisionKey: attempt.ConfigRevisionKey, DisplayName: attempt.DisplayName,
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	applyWorkbenchDownloadRulePath(&attempt.Rule, speedtester.DownloadNetworkPath{
+		Method: "physical_socket_v1", Interface: "en1", DNSMode: "physical_interface_dns_v1",
+	})
+	if err := store.CreateWorkbenchDownloadAttempt(context.Background(), attempt); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginWorkbenchDownloadAttempt(context.Background(), attempt.AttemptID, now); err != nil {
+		t.Fatal(err)
+	}
+	measurement := history.WorkbenchDownloadMeasurement{
+		Outcome: "byte_limit", BytesRead: 1000, StartedAt: now, FinishedAt: now.Add(time.Second),
+		DurationNS: int64(time.Second), Samples: []history.WorkbenchDownloadSample{},
+		NetworkPath: &speedtester.DownloadNetworkPath{
+			Method: "physical_socket_v1", Interface: "en1", DNSMode: "physical_interface_dns_v1",
+			AddressFamily: "ipv4", AddressSource: "physical_ipv4_dns", DNSBindVerified: true, SocketBindVerified: true,
+		},
+	}
+	if err := store.StageWorkbenchDownloadResult(context.Background(), attempt.AttemptID, "completed", measurement); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CommitWorkbenchDownloadResult(context.Background(), attempt.AttemptID); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.GetWorkbenchDownloadAttempt(context.Background(), attempt.AttemptID, history.WorkbenchDownloadFilter{
+		ProfileID: "profile-a", NodeKey: "node-a", NodeIdentityKey: "identity-a", ConfigRevisionKey: "revision-a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRulePath := func(t *testing.T, got *history.WorkbenchDownloadAttempt) {
+		t.Helper()
+		if got.Rule.NetworkPathMethod != "physical_socket_v1" || got.Rule.PhysicalInterface != "en1" || got.Rule.DNSMode != "physical_interface_dns_v1" {
+			t.Fatalf("comparison rule path was not materialized from observed result: %+v", got.Rule)
+		}
+	}
+	assertRulePath(t, got)
+
+	rounds, err := app.ListMeasurementRoundNodes(context.Background(), "profile-a", "node-a", "identity-a", "revision-a", 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rounds) != 1 || len(rounds[0].Items) != 1 || rounds[0].Items[0].Download == nil {
+		t.Fatalf("measurement round did not return its download attempt: %+v", rounds)
+	}
+	assertRulePath(t, rounds[0].Items[0].Download)
 }
 
 func TestWorkbenchDownloadDeadlineDuringPreflightPersistsNotExecuted(t *testing.T) {

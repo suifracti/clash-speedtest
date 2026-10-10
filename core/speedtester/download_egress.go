@@ -78,7 +78,7 @@ type DownloadNetworkPath struct {
 	Method                string `json:"method"`
 	Interface             string `json:"interface,omitempty"`
 	AddressFamily         string `json:"address_family,omitempty"`
-	ResolutionSource      string `json:"resolution_source,omitempty"`
+	AddressSource         string `json:"address_source,omitempty"`
 	DNSMode               string `json:"dns_mode,omitempty"`
 	TUNEvidence           string `json:"tun_evidence,omitempty"`
 	FailureReason         string `json:"failure_reason,omitempty"`

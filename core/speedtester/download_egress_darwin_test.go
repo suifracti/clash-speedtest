@@ -99,8 +99,15 @@ func TestPhysicalPathSnapshotRecordsIPv4MethodAndUnobservedTUN(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := e.Snapshot()
-	if path.Method != "physical_socket_v1" || path.Interface != "en1" || path.AddressFamily != "ipv4" || path.ResolutionSource != "physical_ipv4_dns" || path.DNSRequests != 1 || path.TUNEvidence != "packet_route_not_observed" || path.SocketBindVerified {
+	if path.Method != "physical_socket_v1" || path.Interface != "en1" || path.AddressFamily != "ipv4" || path.AddressSource != "physical_ipv4_dns" || path.DNSRequests != 1 || path.TUNEvidence != "packet_route_not_observed" || path.SocketBindVerified {
 		t.Fatalf("physical path snapshot lost or overstated evidence: %+v", path)
+	}
+}
+
+func TestPhysicalDownloadPathPlanDoesNotIssueDNSOrSocketRequests(t *testing.T) {
+	path := PlanPhysicalDownloadPath(context.Background(), &CProxy{Config: map[string]any{"server": "node.example"}})
+	if path.Method != "physical_socket_v1" || path.AddressFamily != "unknown" || path.AddressSource != "unobserved" || path.DNSRequests != 0 || path.DNSDialAttempts != 0 || path.TCPDialAttempts != 0 || path.UDPDialAttempts != 0 || path.DNSBindVerified || path.SocketBindVerified || path.TUNEvidence != "packet_route_not_observed" {
+		t.Fatalf("local path planning made or claimed network evidence: %+v", path)
 	}
 }
 

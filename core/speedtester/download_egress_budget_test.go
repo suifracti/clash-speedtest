@@ -2,7 +2,9 @@ package speedtester
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -17,6 +19,16 @@ func TestBoundedPhysicalContextAddsDeadlineAndHonorsCancellation(t *testing.T) {
 	cancelParent()
 	if !errors.Is(ctx.Err(), context.Canceled) {
 		t.Fatalf("physical preparation did not inherit cancellation: %v", ctx.Err())
+	}
+}
+
+func TestDownloadNetworkPathPreservesFrontendAddressSourceKey(t *testing.T) {
+	encoded, err := json.Marshal(DownloadNetworkPath{AddressSource: "physical_ipv4_dns"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"address_source":"physical_ipv4_dns"`) || strings.Contains(string(encoded), `"resolution_source"`) {
+		t.Fatalf("network path does not use the established address_source field: %s", encoded)
 	}
 }
 
