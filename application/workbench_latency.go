@@ -58,7 +58,11 @@ func (s *AppService) RunWorkbenchLatencyTest(ctx context.Context, req WorkbenchL
 	}
 	defer s.endWorkbenchSingle()
 
-	selected, executionName, proxy, err := s.resolveWorkbenchLatencyProxy(profileID, nodeKey)
+	var revision []string
+	if configRevisionKey := strings.TrimSpace(req.ConfigRevisionKey); configRevisionKey != "" {
+		revision = []string{configRevisionKey}
+	}
+	selected, executionName, proxy, err := s.resolveWorkbenchLatencyProxy(profileID, nodeKey, revision...)
 	if err != nil {
 		return nil, err
 	}

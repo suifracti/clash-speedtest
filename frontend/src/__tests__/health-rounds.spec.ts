@@ -146,6 +146,24 @@ it('keeps every latency target in the persisted round expansion',()=>{
  expect(detail.text()).toContain('80 ms');expect(detail.text()).toContain('timeout')
 })
 
+it('preserves cancelled latency samples in persisted round projections',()=>{
+ const cancelled={...base,attempt_id:'cancelled-test',samples:[{seq:1,target:'https://cp.cloudflare.com/generate_204',timestamp:base.finished_at,success:false,latency_ms:0,error:'context canceled'}]}
+ const round={round_id:'cancelled-root',trigger_type:'manual' as const,started_at:base.requested_at,state:'cancelled',items:[{...node,request_id:'cancelled-child',project:'latency' as const,execution_state:'cancelled',persistence_state:'saved',latency:cancelled}]}
+ const w={latency:ref({}),downloads:ref({}),services:ref({}),serviceIds:ref<string[]>([]),displayTarget:ref('all'),measurementRounds:ref({[key(node)]:[round]})}
+ const [point]=points(w,node,'latency','all')
+ expect(point.samples?.[0]).toMatchObject({tone:'empty',executionState:'cancelled'})
+ expect(point.sampleGroups?.[0].samples[0]).toMatchObject({tone:'empty',executionState:'cancelled'})
+})
+
+it('describes only stored method and path evidence',()=>{
+ const point={id:'evidence',time:base.finished_at,value:null,tone:'empty' as const,description:'',latencyTests:[{...base,network_path:{method:'tcp_bind_v1',dns_bind_verified:false,socket_bind_verified:false,tcp_bindings:0,udp_bindings:0}}]}
+ const details=mount(RoundResults,{props:{point}})
+ expect(details.text()).toContain('空缺表示未记录')
+ expect(details.text()).not.toContain('A 记录优先')
+ expect(details.text()).not.toContain('AAAA')
+ expect(details.text()).not.toContain('绑定并核验物理接口')
+})
+
 
 it('retains a download round when an independent service filter is selected',()=>{
  const a:Attempt={...node,attempt_id:'download-child',request_id:'download-request',requested_at:base.requested_at,execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://download.example',maximum_bytes:10485760,maximum_duration_ns:10000000000},result:{outcome:'byte_limit',bytes_read:10485760,duration_ns:1000000000,finished_at:base.finished_at}}

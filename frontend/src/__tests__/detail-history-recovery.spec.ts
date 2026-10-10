@@ -5,7 +5,7 @@ import HistoryView from '../components/HistoryView.vue'
 import MonitorView from '../components/MonitorView.vue'
 import {createWorkspace,workspaceKey,type Workspace} from '../workspace'
 import {api,request} from '../api'
-import type {Attempt,LatencyBatch,NodeOption,MonitorSample,MonitorJob} from '../domain'
+import type {Attempt,LatencyBatch,LatencyTest,NodeOption,MonitorSample,MonitorJob} from '../domain'
 
 vi.hoisted(()=>{Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:()=>null,setItem:()=>{}}})})
 vi.mock('../api',async importOriginal=>{const actual=await importOriginal<typeof import('../api')>();return {...actual,request:vi.fn(),api:{...actual.api,measurementRounds:vi.fn(async()=>[]),createRound:vi.fn(async()=>undefined),finishRound:vi.fn(async()=>undefined),revisions:vi.fn(),attemptHistory:vi.fn(),attemptAction:vi.fn(),batches:vi.fn(),batch:vi.fn(),retryBatch:vi.fn(),latencyHistory:vi.fn(),monitorSamples:vi.fn(),monitorFacets:vi.fn(),jobs:vi.fn(),budget:vi.fn(),storage:vi.fn()}}})
@@ -35,6 +35,16 @@ it('shows recorded sample totals and Chinese terminal states without inventing a
   await rows[0].trigger('click');await flushPromises()
   expect(document.querySelector('dialog')?.textContent).toContain('实际采样 1 次 · 成功 1 次')
   expect(document.querySelector('dialog')?.textContent).not.toContain('6 次')
+})
+
+it('does not label an unrecorded not-executed cause as a physical-egress failure',async()=>{
+  const test:LatencyTest={...node,attempt_id:'not-executed-without-reason',display_name:node.display_name,node_type:'ss',requested_at:'2026-10-10T12:00:00Z',finished_at:'2026-10-10T12:00:00Z',status:'not_executed',latency_ms:0,total_samples:0,success_samples:0,failure_samples:0,persistence_state:'not_applicable',samples:[]}
+  vi.mocked(api.latencyHistory).mockResolvedValue({tests:[test],has_more:false,complete:true})
+  w.project.value='latency'
+  wrapper=mount(NodeDetailModal,{props:{node},attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}})
+  await flushPromises()
+  expect(document.body.textContent).toContain('原因未记录')
+  expect(document.body.textContent).not.toContain('物理出口预检失败')
 })
 
 it.each(['saved','rejected'])('ignores a late %s save response after changing the displayed project',async outcome=>{

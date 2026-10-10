@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -158,14 +159,21 @@ func TestWorkbenchLatencyTestUsesStableIdentityPersistsAndSeparatesProfiles(t *t
 		t.Fatalf("same-name profiles must have distinct stable keys: A=%+v B=%+v", optionA, optionB)
 	}
 
-	result, err := service.RunWorkbenchLatencyTest(context.Background(), WorkbenchLatencyTestRequest{
-		ProfileID:      "profile-a",
-		NodeKey:        optionA.NodeKey,
-		TestProject:    WorkbenchLatencyProject,
-		TimeoutSeconds: 1,
-	})
+	requestForRevision := func(revision string) WorkbenchLatencyTestRequest {
+		payload := fmt.Sprintf(`{"profile_id":%q,"node_key":%q,"config_revision_key":%q,"test_project":%q,"timeout_seconds":1,"sample_count":1}`, "profile-a", optionA.NodeKey, revision, WorkbenchLatencyProject)
+		var req WorkbenchLatencyTestRequest
+		if err := json.Unmarshal([]byte(payload), &req); err != nil {
+			t.Fatalf("decode latency request: %v", err)
+		}
+		return req
+	}
+	result, err := service.RunWorkbenchLatencyTest(context.Background(), requestForRevision("stale-revision"))
+	if err == nil || !strings.Contains(err.Error(), "所选节点已不存在") {
+		t.Fatalf("stale config revision should be rejected, got result=%+v err=%v", result, err)
+	}
+	result, err = service.RunWorkbenchLatencyTest(context.Background(), requestForRevision(optionA.ConfigRevisionKey))
 	if err != nil {
-		t.Fatalf("RunWorkbenchLatencyTest: %v", err)
+		t.Fatalf("RunWorkbenchLatencyTest with config revision: %v", err)
 	}
 	if result.PersistenceState != "saving" || result.ProfileID != "profile-a" || result.NodeKey != optionA.NodeKey {
 		t.Fatalf("unexpected saved result: %+v", result)
