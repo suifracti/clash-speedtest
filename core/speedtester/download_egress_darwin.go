@@ -20,24 +20,79 @@ import (
 )
 
 type PhysicalDownloadEgress struct {
-	iface       string
-	index       int
-	dns         string
-	dnsMode     string
-	host        string
-	nodeIP      netip.Addr
-	resolver    *net.Resolver
-	mu          sync.Mutex
-	tcp, udp    int
-	dnsVerified bool
-	prepared    time.Duration
-	dnsDuration time.Duration
+	iface            string
+	index            int
+	dns              string
+	dnsMode          string
+	host             string
+	nodeIP           netip.Addr
+	resolver         *net.Resolver
+	dnsRequests      *physicalRequestBudget
+	dnsDials         *physicalRequestBudget
+	tcpDials         *physicalRequestBudget
+	udpDials         *physicalRequestBudget
+	mu               sync.Mutex
+	tcp, udp         int
+	dnsVerified      bool
+	addressFamily    string
+	resolutionSource string
+	failureReason    string
+	prepared         time.Duration
+	dnsDuration      time.Duration
+}
+
+func newPhysicalDownloadEgress() *PhysicalDownloadEgress {
+	return &PhysicalDownloadEgress{
+		dnsRequests:   newPhysicalRequestBudget(physicalDownloadDNSRequestLimit),
+		dnsDials:      newPhysicalRequestBudget(physicalDownloadDNSRequestLimit),
+		tcpDials:      newPhysicalRequestBudget(physicalDownloadSocketRequestLimit),
+		udpDials:      newPhysicalRequestBudget(physicalDownloadSocketRequestLimit),
+		addressFamily: "unknown", resolutionSource: "unobserved",
+	}
 }
 
 func (e *PhysicalDownloadEgress) Snapshot() DownloadNetworkPath {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return DownloadNetworkPath{Method: "physical_socket_v1", Interface: e.iface, DNSMode: e.dnsMode, DNSBindVerified: e.dnsVerified, SocketBindVerified: e.tcp+e.udp > 0, TCPBindings: e.tcp, UDPBindings: e.udp, PreparationDurationNS: e.prepared.Nanoseconds(), DNSDurationNS: e.dnsDuration.Nanoseconds()}
+	return DownloadNetworkPath{
+		Method: "physical_socket_v1", Interface: e.iface, AddressFamily: e.addressFamily,
+		AddressSource: e.resolutionSource, DNSMode: e.dnsMode,
+		TUNEvidence: "packet_route_not_observed", FailureReason: e.failureReason,
+		DNSRequests: e.dnsRequests.count(), DNSDialAttempts: e.dnsDials.count(),
+		TCPDialAttempts: e.tcpDials.count(), UDPDialAttempts: e.udpDials.count(),
+		DNSBindVerified: e.dnsVerified, SocketBindVerified: e.tcp+e.udp > 0,
+		TCPBindings: e.tcp, UDPBindings: e.udp, PreparationDurationNS: e.prepared.Nanoseconds(), DNSDurationNS: e.dnsDuration.Nanoseconds(),
+	}
+}
+
+// PlanPhysicalDownloadPath reads local interface and DNS configuration only.
+// It performs no resolver lookup, socket dial, or download request, so the
+// cancellable attempt can persist its comparison rule before network preflight.
+func PlanPhysicalDownloadPath(ctx context.Context, original *CProxy) DownloadNetworkPath {
+	started := time.Now()
+	e := newPhysicalDownloadEgress()
+	ctx, cancel := boundedPhysicalContext(ctx, physicalDownloadPreparationTimeout)
+	defer cancel()
+	if _, err := e.discoverPhysicalPath(ctx, original); err != nil && e.Snapshot().FailureReason == "" {
+		e.setFailure(physicalFailureReason(ctx, err))
+	}
+	e.mu.Lock()
+	e.prepared = time.Since(started)
+	e.mu.Unlock()
+	return e.Snapshot()
+}
+
+type physicalDNSConn struct {
+	net.Conn
+	ctx    context.Context
+	budget *physicalRequestBudget
+}
+
+func (c *physicalDNSConn) Write(p []byte) (int, error) {
+	if err := c.budget.reserve(c.ctx); err != nil {
+		return 0, err
+	}
+	return c.Conn.Write(p)
 }
 
 // Use only numeric DNS servers explicitly scoped to this physical interface;
@@ -73,26 +128,175 @@ func (e *PhysicalDownloadEgress) resolve(ctx context.Context, host string) (neti
 		return e.nodeIP, nil
 	}
 	if ip, err := netip.ParseAddr(host); err == nil {
-		if !usablePhysicalAddress(ip) {
-			return netip.Addr{}, fmt.Errorf("proxy server is local, virtual or fake-ip")
+		if !ip.Is4() || !usablePhysicalAddress(ip) {
+			e.setFailure("node_address_unusable_or_unverified_family")
+			return netip.Addr{}, fmt.Errorf("proxy server is local, virtual, fake-ip or outside the verified IPv4 path")
 		}
+		e.setResolution("ipv4", "literal_ip")
 		return ip, nil
+	}
+	if err := ctx.Err(); err != nil {
+		e.setFailure(physicalFailureReason(ctx, err))
+		return netip.Addr{}, err
 	}
 	markDownloadPhase(ctx, "dns")
 	started := time.Now()
-	ips, err := e.resolver.LookupNetIP(ctx, "ip4", host)
+	lookupCtx, cancel := boundedPhysicalContext(ctx, physicalDownloadLookupTimeout)
+	ips, err := e.resolver.LookupNetIP(lookupCtx, "ip4", host)
+	cancel()
 	e.mu.Lock()
 	e.dnsDuration += time.Since(started)
 	e.mu.Unlock()
 	if err != nil {
+		e.setFailure(physicalFailureReason(ctx, err))
 		return netip.Addr{}, fmt.Errorf("physical DNS lookup unavailable: %w", err)
 	}
 	for _, ip := range ips {
 		if usablePhysicalAddress(ip) {
-			return ip.Unmap(), nil
+			ip = ip.Unmap()
+			e.setResolution("ipv4", "physical_ipv4_dns")
+			return ip, nil
 		}
 	}
+	e.setFailure("physical_dns_no_usable_ipv4")
 	return netip.Addr{}, fmt.Errorf("physical DNS returned no usable non-fake address")
+}
+
+func (e *PhysicalDownloadEgress) setResolution(family, source string) {
+	e.mu.Lock()
+	e.addressFamily, e.resolutionSource = family, source
+	e.mu.Unlock()
+}
+
+func (e *PhysicalDownloadEgress) setFailure(reason string) {
+	e.mu.Lock()
+	e.failureReason = reason
+	e.mu.Unlock()
+}
+
+func (e *PhysicalDownloadEgress) discoverPhysicalPath(ctx context.Context, original *CProxy) (string, error) {
+	if err := ctx.Err(); err != nil {
+		e.setFailure(physicalFailureReason(ctx, err))
+		return "", err
+	}
+	if original == nil || len(original.Config) == 0 {
+		e.setFailure("download_proxy_config_unavailable")
+		return "", fmt.Errorf("download proxy config unavailable")
+	}
+	if dialer.DefaultSocketHook != nil {
+		e.setFailure("external_socket_hook")
+		return "", fmt.Errorf("external socket hook prevents physical binding verification")
+	}
+	ifaceName := AutoDetectPhysicalInterface()
+	if ifaceName == "" {
+		e.setFailure("physical_interface_unavailable")
+		return "", fmt.Errorf("no physical default gateway interface")
+	}
+	iface, err := net.InterfaceByName(ifaceName)
+	if err != nil {
+		e.setFailure("physical_interface_unavailable")
+		return "", fmt.Errorf("physical interface unavailable")
+	}
+	e.iface, e.index = ifaceName, iface.Index
+	host, _ := original.Config["server"].(string)
+	e.host = host
+	if host == "" {
+		e.setFailure("proxy_server_unavailable")
+		return "", fmt.Errorf("proxy server address unavailable")
+	}
+	literal, literalErr := netip.ParseAddr(host)
+	if literalErr == nil && (!literal.Is4() || !usablePhysicalAddress(literal)) {
+		e.setFailure("node_address_unusable_or_unverified_family")
+		return "", fmt.Errorf("proxy server is local, virtual, fake-ip or outside the verified IPv4 path")
+	}
+	dns := ""
+	if literalErr == nil {
+		e.dnsMode = "node_literal_no_dns"
+	} else {
+		e.dnsMode = "physical_interface_dns_v1"
+		if output, commandErr := exec.CommandContext(ctx, "/usr/sbin/scutil", "--dns").Output(); commandErr == nil {
+			dns = physicalScopedDNS(string(output), ifaceName, iface.Index)
+		}
+		if dns == "" {
+			e.dnsMode = "physical_dhcp_dns_v1"
+			output, commandErr := exec.CommandContext(ctx, "/usr/sbin/ipconfig", "getoption", ifaceName, "domain_name_server").Output()
+			if commandErr != nil {
+				e.setFailure(physicalFailureReason(ctx, commandErr))
+				return "", fmt.Errorf("physical interface DNS unavailable")
+			}
+			for _, field := range strings.Fields(string(output)) {
+				if ip, parseErr := netip.ParseAddr(field); parseErr == nil && ip.Is4() && usablePhysicalAddress(ip) {
+					dns = ip.String()
+					break
+				}
+			}
+		}
+		if dns == "" {
+			e.setFailure("physical_dns_unavailable")
+			return "", fmt.Errorf("physical interface DNS is virtual, local or unavailable")
+		}
+	}
+	e.dns = dns
+	return dns, nil
+}
+
+func (e *PhysicalDownloadEgress) reserveDialBudget(ctx context.Context, udp bool) error {
+	e.mu.Lock()
+	budget := e.tcpDials
+	if udp {
+		budget = e.udpDials
+	}
+	if budget == nil {
+		budget = newPhysicalRequestBudget(physicalDownloadSocketRequestLimit)
+		if udp {
+			e.udpDials = budget
+		} else {
+			e.tcpDials = budget
+		}
+	}
+	e.mu.Unlock()
+	return budget.reserve(ctx)
+}
+
+func physicalFailureReason(ctx context.Context, err error) string {
+	if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+		return "user_cancelled"
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return "deadline_exceeded"
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		switch {
+		case dnsErr.IsNotFound:
+			return "ipv4_dns_not_found"
+		case dnsErr.IsTimeout:
+			return "ipv4_dns_timeout"
+		}
+	}
+	if errors.Is(err, errPhysicalDownloadBudgetExceeded) {
+		return "physical_request_budget_exhausted"
+	}
+	if strings.Contains(err.Error(), "connection refused") {
+		return "physical_dns_connection_refused"
+	}
+	if strings.Contains(err.Error(), "no route to host") {
+		return "physical_dns_network_unreachable"
+	}
+	return "physical_dns_unavailable"
+}
+
+func physicalSocketFailureReason(ctx context.Context, err error) string {
+	if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+		return "user_cancelled"
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return "deadline_exceeded"
+	}
+	if errors.Is(err, errPhysicalDownloadBudgetExceeded) {
+		return "physical_request_budget_exhausted"
+	}
+	return "physical_socket_connect_failed"
 }
 
 // Verify the actual socket option, rather than claiming bypass from a config
@@ -142,6 +346,10 @@ func (e *PhysicalDownloadEgress) verify(conn syscall.Conn, udp, dns bool) error 
 	return nil
 }
 func (e *PhysicalDownloadEgress) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	if err := e.reserveDialBudget(ctx, false); err != nil {
+		e.setFailure(physicalFailureReason(ctx, err))
+		return nil, err
+	}
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
 		return nil, err
@@ -154,6 +362,7 @@ func (e *PhysicalDownloadEgress) DialContext(ctx context.Context, network, addre
 	markDownloadPhase(ctx, "connection")
 	conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port), dialer.WithInterface(e.iface), dialer.WithOnlySingleStack(ip.Is4()), dialer.WithFallbackBind(false))
 	if err != nil {
+		e.setFailure(physicalSocketFailureReason(ctx, err))
 		return nil, err
 	}
 	markDownloadPhase(ctx, "proxy_handshake")
@@ -164,13 +373,23 @@ func (e *PhysicalDownloadEgress) DialContext(ctx context.Context, network, addre
 	}
 	if err = e.verify(raw, false, false); err != nil {
 		conn.Close()
+		e.setFailure("physical_tcp_socket_bind_unverified")
 		return nil, &PhysicalPathError{Cause: err}
 	}
 	return conn, nil
 }
 func (e *PhysicalDownloadEgress) ListenPacket(ctx context.Context, network, address string, remote netip.AddrPort) (net.PacketConn, error) {
+	if remote.IsValid() && !remote.Addr().Is4() {
+		e.setFailure("unverified_ipv6_socket_family")
+		return nil, &PhysicalPathError{Cause: fmt.Errorf("IPv6 packet sockets are outside the verified Darwin AF_INET path")}
+	}
+	if err := e.reserveDialBudget(ctx, true); err != nil {
+		e.setFailure(physicalFailureReason(ctx, err))
+		return nil, err
+	}
 	conn, err := dialer.ListenPacket(ctx, network, address, remote, dialer.WithInterface(e.iface), dialer.WithFallbackBind(false))
 	if err != nil {
+		e.setFailure(physicalSocketFailureReason(ctx, err))
 		return nil, err
 	}
 	raw, ok := conn.(syscall.Conn)
@@ -180,6 +399,7 @@ func (e *PhysicalDownloadEgress) ListenPacket(ctx context.Context, network, addr
 	}
 	if err = e.verify(raw, true, false); err != nil {
 		conn.Close()
+		e.setFailure("physical_udp_socket_bind_unverified")
 		return nil, &PhysicalPathError{Cause: err}
 	}
 	return conn, nil
@@ -208,96 +428,68 @@ func clonePhysicalProxyConfig(original map[string]any, ip netip.Addr, iface stri
 	config["interface-name"] = iface
 	return config, nil
 }
-func PreparePhysicalDownloadProxy(ctx context.Context, original *CProxy) (*CProxy, *PhysicalDownloadEgress, error) {
+func PreparePhysicalDownloadProxy(ctx context.Context, original *CProxy) (prepared *CProxy, e *PhysicalDownloadEgress, returnErr error) {
 	started := time.Now()
-	if original == nil || len(original.Config) == 0 {
-		return nil, nil, fmt.Errorf("download proxy config unavailable")
-	}
-	if dialer.DefaultSocketHook != nil {
-		return nil, nil, fmt.Errorf("external socket hook prevents physical binding verification")
-	}
-	ifaceName := AutoDetectPhysicalInterface()
-	if ifaceName == "" {
-		return nil, nil, fmt.Errorf("no physical default gateway interface")
-	}
-	iface, err := net.InterfaceByName(ifaceName)
-	if err != nil {
-		return nil, nil, err
-	}
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	e = newPhysicalDownloadEgress()
+	defer func() {
+		e.mu.Lock()
+		e.prepared = time.Since(started)
+		if returnErr != nil && e.failureReason == "" {
+			e.failureReason = physicalFailureReason(ctx, returnErr)
+		}
+		e.mu.Unlock()
+	}()
+	ctx, cancel := boundedPhysicalContext(ctx, physicalDownloadPreparationTimeout)
 	defer cancel()
-	dns := ""
-	dnsMode := "physical_interface_dns_v1"
-	if output, err := exec.CommandContext(ctx, "/usr/sbin/scutil", "--dns").Output(); err == nil {
-		dns = physicalScopedDNS(string(output), ifaceName, iface.Index)
+	dns, err := e.discoverPhysicalPath(ctx, original)
+	if err != nil {
+		return nil, e, err
 	}
-	if dns == "" {
-		dnsMode = "physical_dhcp_dns_v1"
-		output, err := exec.CommandContext(ctx, "/usr/sbin/ipconfig", "getoption", ifaceName, "domain_name_server").Output()
-		if err != nil {
-			return nil, nil, fmt.Errorf("physical interface DNS unavailable")
-		}
-		for _, field := range strings.Fields(string(output)) {
-			if ip, err := netip.ParseAddr(field); err == nil && ip.Is4() && usablePhysicalAddress(ip) {
-				dns = ip.String()
-				break
+	host, ifaceName := e.host, e.iface
+	if dns != "" {
+		e.resolver = &net.Resolver{PreferGo: true, StrictErrors: true, Dial: func(dialCtx context.Context, network, _ string) (net.Conn, error) {
+			if err := e.dnsDials.reserve(dialCtx); err != nil {
+				e.setFailure(physicalFailureReason(dialCtx, err))
+				return nil, err
 			}
-		}
+			conn, dialErr := dialer.DialContext(dialCtx, network, net.JoinHostPort(dns, "53"), dialer.WithInterface(ifaceName), dialer.WithOnlySingleStack(true), dialer.WithFallbackBind(false))
+			if dialErr != nil {
+				e.setFailure(physicalFailureReason(dialCtx, dialErr))
+				return nil, dialErr
+			}
+			raw, ok := conn.(syscall.Conn)
+			if !ok {
+				_ = conn.Close()
+				e.setFailure("dns_socket_unverifiable")
+				return nil, fmt.Errorf("physical DNS socket cannot be verified")
+			}
+			if verifyErr := e.verify(raw, strings.HasPrefix(network, "udp"), true); verifyErr != nil {
+				_ = conn.Close()
+				e.setFailure("dns_socket_bind_failed")
+				return nil, verifyErr
+			}
+			return &physicalDNSConn{Conn: conn, ctx: dialCtx, budget: e.dnsRequests}, nil
+		}}
 	}
-	if dns == "" {
-		return nil, nil, fmt.Errorf("physical DHCP DNS is virtual, local or unavailable")
-	}
-	e := &PhysicalDownloadEgress{iface: ifaceName, index: iface.Index, dns: dns, dnsMode: dnsMode}
-	e.resolver = &net.Resolver{PreferGo: true, StrictErrors: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
-		conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(dns, "53"), dialer.WithInterface(ifaceName), dialer.WithOnlySingleStack(true), dialer.WithFallbackBind(false))
-		if err != nil {
-			return nil, err
-		}
-		raw, ok := conn.(syscall.Conn)
-		if !ok {
-			conn.Close()
-			return nil, fmt.Errorf("physical DNS socket cannot be verified")
-		}
-		if err = e.verify(raw, strings.HasPrefix(network, "udp"), true); err != nil {
-			conn.Close()
-			return nil, err
-		}
-		return conn, nil
-	}}
-	host, _ := original.Config["server"].(string)
 	ip, err := e.resolve(ctx, host)
 	if err != nil {
-		reason := "unavailable"
-		var dnsError *net.DNSError
-		if errors.As(err, &dnsError) {
-			// net.DNSError.Err excludes the queried hostname and proxy credentials.
-			reason = dnsError.Err
-			switch {
-			case dnsError.IsNotFound:
-				reason = "not_found"
-			case dnsError.IsTimeout:
-				reason = "timeout"
-			case strings.Contains(dnsError.Err, "server misbehaving"):
-				reason = "server_misbehaving"
-			case strings.Contains(dnsError.Err, "connection refused"):
-				reason = "connection_refused"
-			case strings.Contains(dnsError.Err, "no route to host"):
-				reason = "local_network_unreachable"
-			case strings.Contains(dnsError.Err, "operation not permitted"):
-				reason = "local_permission_denied"
-			}
+		if e.Snapshot().FailureReason == "" {
+			e.setFailure(physicalFailureReason(ctx, err))
 		}
-		return nil, nil, fmt.Errorf("physical DNS resolution unavailable (reason=%s, class=%s, context=%v, bound=%t); download not executed", reason, downloadErrorClass(err), ctx.Err(), e.Snapshot().DNSBindVerified)
+		return nil, e, fmt.Errorf("physical IPv4 DNS or address selection unavailable; download not executed")
 	}
 	config, err := clonePhysicalProxyConfig(original.Config, ip, ifaceName)
 	if err != nil {
-		return nil, nil, err
+		e.setFailure("proxy_configuration_rejected")
+		return nil, e, err
 	}
+	e.mu.Lock()
 	e.host, e.nodeIP = host, ip
+	e.mu.Unlock()
 	proxy, err := adapter.ParseProxy(config, adapter.WithDialerForAPI(e))
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot create physical-path node proxy")
+		e.setFailure("proxy_adapter_unavailable")
+		return nil, e, fmt.Errorf("cannot create physical-path node proxy")
 	}
-	e.prepared = time.Since(started)
 	return &CProxy{Proxy: proxy, Config: config}, e, nil
 }
