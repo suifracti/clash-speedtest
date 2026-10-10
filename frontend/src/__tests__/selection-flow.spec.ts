@@ -88,8 +88,8 @@ describe('shared node selection',()=>{
     w.sort.value='name'
     expect(w.filteredNodes.value.findIndex(n=>n.node_key==='a2')).toBeLessThan(w.filteredNodes.value.findIndex(n=>n.node_key==='node-a'))
     w.nodes.value=[a2,b2,unknown]
-    const attempt=(node:NodeOption,id:string,second:number,result?:Attempt['result'],service_id?:string):Attempt=>({...node,attempt_id:id,request_id:id,service_id,requested_at:`2026-10-01T00:00:0${second}Z`,execution_state:result?'completed':'queued',persistence_state:result?'saved':'pending',rule:{target_url:''},result})
-    const download=(bytes_read:number):NonNullable<Attempt['result']>=>({outcome:'byte_limit',bytes_read,duration_ns:2000000000,finished_at:'2026-10-01T00:00:01Z'})
+    const attempt=(node:NodeOption,id:string,second:number,result?:Attempt['result'],service_id?:string):Attempt=>({...node,node_type:node.type,attempt_id:id,request_id:id,service_id,requested_at:`2026-10-01T00:00:0${second}Z`,execution_state:result?'completed':'queued',persistence_state:result?'saved':'pending',rule:{target_url:'',method:'GET',rule_version:1,maximum_bytes:20971520,maximum_duration_ns:10000000000,network_path_method:'physical_socket_v1',physical_interface:'en1',dns_mode:'physical_interface_dns_v1'},result})
+    const download=(bytes_read:number):NonNullable<Attempt['result']>=>({outcome:'byte_limit',bytes_read,duration_ns:2000000000,finished_at:'2026-10-01T00:00:01Z',network_path:{method:'physical_socket_v1',interface:'en1',dns_mode:'physical_interface_dns_v1',dns_bind_verified:true,socket_bind_verified:true,tcp_bindings:1,udp_bindings:0,address_family:'IPv4',address_source:'A'}})
     w.mergeAttempt('download',attempt(a2,'download-slow',1,download(10485760)))
     w.mergeAttempt('download',attempt(b2,'download-fast',1,download(20971520)))
     w.sort.value='latency';w.project.value='download'
@@ -139,7 +139,7 @@ describe('shared node selection',()=>{
     w.displayTarget.value='apple';expect(w.displayTargets.value).toEqual(['apple'])
     const test=(node:NodeOption,id:string,second:number,target:string,latency:number,success=true):LatencyTest=>{
       const time=`2026-10-01T00:00:0${second}Z`
-      return {...node,attempt_id:id,node_type:node.type,requested_at:time,finished_at:time,status:success?'completed':'failed',latency_ms:latency,total_samples:1,success_samples:success?1:0,failure_samples:success?0:1,samples:[{seq:1,target,timestamp:time,latency_ms:latency,success,error:success?undefined:'timeout'}],persistence_state:'saved'}
+      return {...node,attempt_id:id,node_type:node.type,requested_at:time,finished_at:time,status:success?'completed':'failed',latency_ms:latency,total_samples:1,success_samples:success?1:0,failure_samples:success?0:1,samples:[{seq:1,target,timestamp:time,latency_ms:latency,success,error:success?undefined:'timeout'}],persistence_state:'saved',source:'workbench',method:'http_get_via_proxy_first_byte',method_version:1,network_path:{method:'physical_socket_v1',interface:'en1',dns_mode:'physical_interface_dns_v1',dns_bind_verified:true,socket_bind_verified:true,tcp_bindings:1,udp_bindings:0,address_family:'IPv4',address_source:'A'}}
     }
     w.mergeLatency(test(a,'a-google-old',1,'https://www.gstatic.com/generate_204',90))
     w.mergeLatency(test(b,'b-google-old',2,'https://www.gstatic.com/generate_204',60))
@@ -392,7 +392,7 @@ it('labels differently bounded download evidence incomparable rather than aligni
 
 it('permits like-for-like historical download comparison only when condition and binding evidence are complete',async()=>{
  for(const verified of [true,false]){
-  const saved:Attempt={...oldDownload,node_type:'Vless',rule:{...oldDownload.rule,network_path_method:'physical_socket_v3',physical_interface:'en1',dns_mode:'physical_interface_dns_v1'},result:{...oldDownload.result!,network_path:{method:'physical_socket_v3',interface:'en1',dns_mode:'physical_interface_dns_v1',socket_bind_verified:verified,dns_bind_verified:verified,tcp_bindings:1,udp_bindings:1}}}
+  const saved:Attempt={...oldDownload,node_type:'Vless',rule:{...oldDownload.rule,network_path_method:'physical_socket_v3',physical_interface:'en1',dns_mode:'physical_interface_dns_v1'},result:{...oldDownload.result!,network_path:{method:'physical_socket_v3',interface:'en1',dns_mode:'physical_interface_dns_v1',socket_bind_verified:verified,dns_bind_verified:verified,tcp_bindings:1,udp_bindings:1,address_family:'IPv4',address_source:'A'}}}
   vi.mocked(api.attemptHistory).mockImplementation(async kind=>({attempts:kind==='download'?[saved]:[],has_more:false,complete:true}))
   window.localStorage.setItem('speedtest-home-view','quick');const w=workspace(),ui=attach(HomeView,w);await flushPromises();for(const checkbox of ui.findAll('.node-check input'))await checkbox.setValue(true)
   await ui.findAll('button').find(b=>b.text()==='比较已选 2 个节点')!.trigger('click');await flushPromises()

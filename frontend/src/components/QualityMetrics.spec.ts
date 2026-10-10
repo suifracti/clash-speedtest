@@ -1,8 +1,17 @@
 import {mount} from '@vue/test-utils'
 import {it,expect} from 'vitest'
 import QualityMetrics from './QualityMetrics.vue'
+import type {LatencyTest} from '../domain'
+import type {QualityEvidence} from '../nodeQuality'
 it('shows absent and insufficient evidence without assigning a score or treating profile as business availability',()=>{
  const wrapper=mount(QualityMetrics,{props:{evidence:{tests:[],monitor:[],downloads:[],services:[],reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true,since:'',until:''},target:'cloudflare',catalog:[]}});expect(wrapper.text()).toContain('未测');expect(wrapper.text()).not.toContain('%');expect(wrapper.text()).not.toContain('评分')
+})
+
+it('keeps legacy latency statistics visible and labels missing route evidence as incomparable',()=>{
+ const test:LatencyTest={profile_id:'p',node_key:'n',node_identity_key:'i',config_revision_key:'r',attempt_id:'legacy',display_name:'n',node_type:'vless',target:'https://speed.cloudflare.com/__down?bytes=1',requested_at:'2026-10-09T00:00:00Z',finished_at:'2026-10-09T00:01:00Z',status:'completed',latency_ms:25,total_samples:5,success_samples:5,failure_samples:0,persistence_state:'saved',method:'http_get_via_proxy_first_byte',method_version:1,samples:Array.from({length:5},(_,i)=>({seq:i+1,target:'https://speed.cloudflare.com/__down?bytes=1',timestamp:'2026-10-09T00:01:00Z',latency_ms:25+i,success:true}))}
+ const evidence:QualityEvidence={tests:[test],monitor:[],downloads:[],services:[],reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true,since:'2026-10-09T00:00:00Z',until:'2026-10-09T01:00:00Z'}
+ const wrapper=mount(QualityMetrics,{props:{evidence,target:'cloudflare',catalog:[]}})
+ expect(wrapper.text()).toContain('P50 27 ms');expect(wrapper.text()).toContain('出口条件证据不足');expect(wrapper.text()).not.toContain('读取失败');expect(wrapper.text()).not.toContain('失败')
 })
 
 import {oldService,newService,oldDownload,newDownload} from '../__tests__/fixtures/quality-evidence'
@@ -21,8 +30,6 @@ it('does not label latency incomplete when only download history is incomplete',
  expect(wrapper.get('.quality-latency').text()).not.toContain('读取不完整');expect(wrapper.get('.quality-download').text()).toContain('下载读取不完整');expect(wrapper.get('.quality-services').text()).not.toContain('读取不完整');expect(wrapper.get('.quality-evidence-details').text()).toContain('missing download page')
 })
 
-import type {LatencyTest} from '../domain'
-import type {QualityEvidence} from '../nodeQuality'
 const comparisonEvidence=():QualityEvidence=>({tests:[{attempt_id:'compare-latency',target:'https://speed.cloudflare.com/__down?bytes=1',source:'workbench',method:'http_get_via_proxy_first_byte',method_version:1,node_type:'vless',network_path:{method:'physical',interface:'en1',dns_mode:'bound',socket_bind_verified:true},status:'completed',samples:[...Array.from({length:20},(_,i)=>({seq:i,target:'https://speed.cloudflare.com/__down?bytes=1',timestamp:'2026-10-09T11:00:00Z',latency_ms:(i+1)*10,success:true})),{seq:20,target:'https://speed.cloudflare.com/__down?bytes=1',timestamp:'2026-10-09T11:00:01Z',latency_ms:0,success:false,error:'timeout'}]} as LatencyTest],monitor:[],downloads:[oldDownload,newDownload],services:[oldService,newService],reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true,since:'2026-10-09T00:00:00Z',until:'2026-10-09T12:00:00Z'})
 it('projects comparison distribution and response into separate aligned rows without dropping statistics',async()=>{
  const e=comparisonEvidence(),original=JSON.stringify(e),ui=mount(QualityMetrics,{props:{evidence:e,target:'cloudflare',catalog:[],comparisonField:'distribution'} as any})

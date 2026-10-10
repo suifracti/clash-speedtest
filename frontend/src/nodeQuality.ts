@@ -35,7 +35,7 @@ export function qualityGroups(tests:LatencyTest[],monitor:MonitorSample[],target
   const g=entry.g;g.total++;if(!g.lastAt||observationTime(timestamp)>observationTime(g.lastAt))g.lastAt=timestamp
   if(success&&Number.isFinite(value)&&value>=0){g.success++;entry.values.push(value)}
  }
- for(const t of tests){const p=t.network_path;const condition=[t.method_version??'unknown',t.node_type||'unknown',p?.method||'unknown',p?.interface||'unknown',p?.dns_mode||'unknown',p?.socket_bind_verified??'unknown',p?.dns_bind_verified??'unknown'];const comparable=!!t.method&&!!t.method_version&&!!p?.method&&p.socket_bind_verified===true&&p.dns_bind_verified===true
+ for(const t of tests){const p=t.network_path;const condition=[t.method_version??'unknown',t.node_type||'unknown',p?.method||'unknown',p?.interface||'unknown',p?.dns_mode||'unknown',p?.socket_bind_verified??'unknown',p?.dns_bind_verified??'unknown',p?.address_family||'unknown',p?.address_source||'unknown'];const comparable=!!t.method&&t.method_version!==undefined&&!!p?.method&&!!p.interface&&!!p.dns_mode&&p.socket_bind_verified===true&&p.dns_bind_verified===true&&!!p.address_family&&p.address_family!=='unknown'&&!!p.address_source&&p.address_source!=='unknown'
   for(const s of t.samples||[])add(t.attempt_id+':'+s.seq,t.source||'workbench',t.method||'旧方法未记录',s.target||t.target||'',condition,comparable,s.timestamp,s.success,s.latency_ms,s.error)
  }
  for(const s of monitor)if(s.probe_type==='rtt')add('monitor:'+s.sample_id,'monitor','旧监测 RTT（条件未记录）',s.target,['legacy-unverified'],false,s.timestamp,s.success,s.latency/1e6,s.error_class+' '+(s.error_detail||''))

@@ -45,7 +45,7 @@ const comparisonDownloadStatus=computed(()=>{
  if(attempts.some(a=>!a))return '下载不可比较：未测或无有效速度。'
  const groups=attempts.map(a=>downloadGroup(a))
  if(groups.some(g=>g.key!==groups[0]?.key))return '下载不可比较：条件或结束类型不同。'
- if(attempts.some(a=>!a!.rule.method||a!.rule.rule_version===undefined||a!.rule.maximum_bytes===undefined||a!.rule.maximum_duration_ns===undefined||!a!.rule.network_path_method||!a!.rule.physical_interface||!a!.rule.dns_mode||!a!.node_type||!a!.result?.network_path?.socket_bind_verified||!a!.result?.network_path?.dns_bind_verified))return '下载不可比较：方法、上限或出口证据不足。'
+ if(attempts.some(a=>!a!.rule.method||a!.rule.rule_version===undefined||a!.rule.maximum_bytes===undefined||a!.rule.maximum_duration_ns===undefined||!a!.rule.network_path_method||!a!.rule.physical_interface||!a!.rule.dns_mode||!a!.node_type||a!.result?.network_path?.method!==a!.rule.network_path_method||a!.result?.network_path?.interface!==a!.rule.physical_interface||a!.result?.network_path?.dns_mode!==a!.rule.dns_mode||!a!.result?.network_path?.socket_bind_verified||!a!.result?.network_path?.dns_bind_verified||!a!.result?.network_path?.address_family||!a!.result?.network_path?.address_source))return '下载不可比较：方法、上限或出口证据不足。'
  return '历史有效速度条件一致；最近检测状态仍单独核对。'
 })
 async function openComparison(){compareOpen.value=true;await readQualityNodes(qualityCompareNodes.value)}
@@ -57,6 +57,7 @@ let origin:HTMLElement|null=null
 let monitorGeneration=0,hoverTimer:ReturnType<typeof setTimeout>|undefined,monitorTimer:ReturnType<typeof setInterval>|undefined
 const qualitySummaries=computed(()=>Object.fromEntries(Object.entries(qualityData.value).map(([id,e])=>[id,qualityGroups(e.tests,e.monitor,w.displayTarget.value)[0]])))
 const allQualityReady=computed(()=>w.proxyNodes.value.every(n=>qualityData.value[key(n)]||qualityErrors.value[key(n)]))
+const qualityScopeKey=computed(()=>JSON.stringify(w.proxyNodes.value.map(key).sort()))
 const qualityFiltersPending=computed(()=>qualityView.value&&qualityGate.value!=='all'&&!allQualityReady.value)
 const visibleNodes=computed(()=>{let list=w.filteredNodes.value;if(!qualityView.value)return list;list=list.filter(n=>protocolFilter.value==='all'||n.type===protocolFilter.value)
  if(qualityGate.value!=='all'&&allQualityReady.value)list=list.filter(n=>qualityMatchesGate(qualityData.value[key(n)],qualitySummaries.value[key(n)],qualityGate.value,qualityCutoff.value))
@@ -143,7 +144,13 @@ function expandHistory(){keepRound();keepOpen.value=true;inlineTab.value='histor
 function openNodeHistory(n:NodeOption){const index=visibleNodes.value.findIndex(item=>key(item)===key(n));if(index<0){w.inspectNode.value=n;return}if(index>=0&&Math.floor(index/pageSize)+1!==currentPage.value){currentPage.value=Math.floor(index/pageSize)+1;void nextTick(()=>openNodeHistory(n));return}origin=document.getElementById(nodeButtonId(n));if(keepOpen.value&&expanded(n)&&inlineTab.value==='history'){closeHover();return}keepRound();hoverNode.value=n;hoverMode.value=w.project.value==='combined'?'latency':w.project.value;hoverTarget.value=w.displayTarget.value;hoverService.value='';activeRound.value=null;keepOpen.value=true;inlineTab.value='history'}
 watch([()=>w.search.value,()=>w.region.value,()=>w.subscription.value,()=>w.airportFilter.value,()=>w.sort.value,()=>w.priorityAirportId.value,()=>w.selectedAirportIds.value],()=>{currentPage.value=1;closeHover()},{deep:true})
 watch(()=>w.hours.value,()=>{presentation.clear();monitorGeneration++;monitorData.value={};monitorErrors.value={};monitorHTTPData.value={};monitorHTTPErrors.value={}});watch(totalPages,count=>currentPage.value=Math.min(currentPage.value,count))
-watch([pageNodes,qualityView],()=>{if(qualityView.value&&w.page.value==='home')void readQualityNodes(pageNodes.value)},{immediate:true})
+watch([pageNodes,qualityView,qualityScopeKey],([nodes,quick,scope],[,,previousScope])=>{
+ if(previousScope!==undefined&&scope!==previousScope){qualityGeneration++;qualityData.value={};qualityErrors.value={};qualityLoading.value=false
+  if(quick&&w.page.value==='home')void readQualityNodes(qualityGate.value!=='all'||qualitySort.value!=='existing'?w.proxyNodes.value:nodes)
+  return
+ }
+ if(quick&&w.page.value==='home')void readQualityNodes(nodes)
+},{immediate:true})
 watch(()=>w.hours.value,()=>{if(qualityView.value)void readQualityNodes(qualityGate.value!=='all'||qualitySort.value!=='existing'?w.proxyNodes.value:pageNodes.value,true);else{qualityGeneration++;qualityData.value={};qualityErrors.value={};qualityCutoff.value=new Date().toISOString()}})
 watch([pageNodes,()=>w.project.value,()=>w.hours.value],()=>{if(w.page.value==='home'){void w.ensureHistory(pageNodes.value);void readMonitor()}},{immediate:true})
 watch(()=>w.page.value,p=>{if(p==='home'){void w.ensureHistory(pageNodes.value);void readMonitor()}else{closeHover();presentation.clear()}})
@@ -239,7 +246,7 @@ onMounted(()=>monitorTimer=setInterval(()=>{if(w.page.value==='home'&&document.v
       <p class="quality-compare-meta">{{qualityCompareNodes.length}} 个已选节点 · 截止 {{date(qualityCutoff)}} · 查看不改变测速范围。</p>
       <p class="quality-compare-status" :class="compareCompatible?'muted':'warn'">{{compareCompatible?'延迟最新组条件一致，可比较描述统计。':'延迟不可比较：条件不同、样本不足、未测或读取不完整。'}}</p>
       <p class="comparison-download-status">{{comparisonDownloadStatus}}</p>
-      <details class="quality-compare-boundaries"><summary>比较口径与边界</summary><p>延迟按所选站点的最新条件组展示；P95 至少 20 个成功样本，少于 5 个成功样本不排名。下载仅同源、方法、上限及结束类型相同时可比较，历史有效速度不代表最近检测成功。服务逐项核对同一规则、方法和时间，HTTP响应不等于业务可用。完整依据可在各节点的证据行展开。</p></details>
+      <details class="quality-compare-boundaries"><summary>比较口径与边界</summary><p>延迟按所选站点的最新条件组展示；P95 至少 20 个成功样本，少于 5 个成功样本不排名，缺少出口或地址族/来源证据时只展示原值。下载仅同源、方法、上限、结束类型及已记录的出口地址条件相同时可比较，缺少必要出口证据时不做数值排序；历史有效速度不代表最近检测成功。服务逐项核对同一规则、方法、地址条件和时间，HTTP响应不等于业务可用。完整依据可在各节点的证据行展开。</p></details>
       <p v-if="qualityCompareNodes.length>2" id="comparison-scroll-hint" class="comparison-scroll-hint">← 超出视野时横向滚动；左侧指标固定。聚焦表格可用左右方向键。 →</p>
       <div class="quality-compare" role="region" aria-label="节点逐项比较表" tabindex="0" :aria-describedby="qualityCompareNodes.length>2?'comparison-scroll-hint':undefined" :style="{'--compare-count':qualityCompareNodes.length}">
         <table><colgroup><col class="comparison-label-column"><col v-for="n in qualityCompareNodes" :key="key(n)"></colgroup>
