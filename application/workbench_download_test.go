@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -98,6 +99,9 @@ func TestWorkbenchDownloadSaveRetryAndReopenReuseAttemptWithoutRequest(t *testin
 	if failed.Result.Samples == nil || len(failed.Result.Samples) == 0 || failed.Result.Samples[len(failed.Result.Samples)-1].CumulativeBytes != 1000 {
 		t.Fatalf("actual response-byte samples were not retained: %+v", failed.Result.Samples)
 	}
+	if failed.Result.NetworkPath == nil || failed.Result.NetworkPath.Method != "unknown" || failed.Result.NetworkPath.AddressFamily != "unknown" || failed.Result.NetworkPath.ResolutionSource != "unobserved" || failed.Result.NetworkPath.TUNEvidence != "packet_route_not_observed" {
+		t.Fatalf("unverified test path must remain explicitly unknown: %+v", failed.Result.NetworkPath)
+	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +116,7 @@ func TestWorkbenchDownloadSaveRetryAndReopenReuseAttemptWithoutRequest(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if recovered.PersistenceState != "failed" || recovered.Result == nil || recovered.AttemptID != started.AttemptID {
+	if recovered.PersistenceState != "failed" || recovered.Result == nil || recovered.AttemptID != started.AttemptID || recovered.Result.NetworkPath == nil || recovered.Result.NetworkPath.TUNEvidence != "packet_route_not_observed" {
 		t.Fatalf("staged result did not remain retryable after reopen: %+v", recovered)
 	}
 	saved, err := restarted.RetrySaveWorkbenchDownloadTest(context.Background(), started.AttemptID, downloadQuery())
@@ -225,6 +229,212 @@ func TestWorkbenchDownloadCancelAbortsRequestAndBlocksOtherWorkbenchStarts(t *te
 	if completed.ExecutionState != "user_cancelled" || completed.Result == nil || completed.Result.BytesRead != 0 {
 		t.Fatalf("user cancellation must abort the body request: %+v", completed)
 	}
+}
+
+func TestWorkbenchDownloadCancelDuringPreflightPersistsNotExecuted(t *testing.T) {
+	app, store, _ := newWorkbenchDownloadApplication(t)
+	defer store.Close()
+	var requests atomic.Int32
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseWorker := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseWorker()
+	ctx, cancel := newWorkbenchDownloadLifecycleContext(context.Background(), 5*time.Second)
+	now := time.Now().UTC()
+	runtime := &workbenchDownloadRuntime{
+		networkDone: make(chan struct{}), attemptID: "preflight-cancel-attempt", requestID: "preflight-cancel-request",
+		ctx: ctx, cancel: cancel, ready: make(chan struct{}), node: monitor.MonitoredNode{
+			NodeKey: "node-a", NodeIdentityKey: "identity-a", ConfigRevisionKey: "revision-a", DisplayName: "冻结节点", Type: "http",
+		}, rule: history.WorkbenchDownloadRuleSnapshot{
+			RuleVersion: workbenchDownloadRuleVersion, TargetURL: "https://speed.cloudflare.com/__down?bytes=1001",
+			Method: http.MethodGet, MaximumBytes: 1000, MaximumDurationNS: int64(5 * time.Second),
+		}, preparePhysical: func(ctx context.Context, _ *speedtester.CProxy) (*speedtester.CProxy, *speedtester.PhysicalDownloadEgress, error) {
+			requests.Add(1)
+			close(entered)
+			<-ctx.Done()
+			<-release
+			if err := ctx.Err(); err != nil {
+				return nil, nil, err
+			}
+			requests.Add(1)
+			return nil, nil, nil
+		},
+	}
+	attempt := &history.WorkbenchDownloadAttempt{
+		AttemptID: runtime.attemptID, RequestID: runtime.requestID, ProfileID: "profile-a", NodeKey: "node-a",
+		NodeIdentityKey: "identity-a", ConfigRevisionKey: "revision-a", DisplayName: "冻结节点", NodeType: "http",
+		Source: history.WorkbenchDownloadSource, RequestedAt: now, ExecutionState: "queued", PersistenceState: "not_started", Rule: runtime.rule,
+	}
+	if err := store.CreateWorkbenchDownloadAttempt(context.Background(), attempt); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginWorkbenchDownloadAttempt(context.Background(), runtime.attemptID, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, duplicate, err := app.beginWorkbenchDownload(runtime); err != nil || duplicate {
+		t.Fatalf("reserve download runtime: duplicate=%t err=%v", duplicate, err)
+	}
+	close(runtime.ready)
+	go app.executeWorkbenchDownload(runtime)
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("physical preflight did not start")
+	}
+	cancelling, err := app.CancelWorkbenchDownloadTest(context.Background(), runtime.attemptID, downloadQuery())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelling.ExecutionState != "cancelling" {
+		t.Fatalf("cancellation must remain visible until preflight cleanup completes: %s", cancelling.ExecutionState)
+	}
+	releaseWorker()
+	app.workbenchWG.Wait()
+	finished, err := app.GetWorkbenchDownloadAttempt(context.Background(), runtime.attemptID, downloadQuery())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished.ExecutionState != "not_executed" || finished.PersistenceState != "saved" || finished.Result == nil {
+		t.Fatalf("preflight cancellation must be a saved not_executed attempt: %+v", finished)
+	}
+	if finished.Result.Outcome != "not_executed" || finished.Result.EndReason != "user_cancelled" || finished.Result.BytesRead != 0 || len(finished.Result.Samples) != 0 {
+		t.Fatalf("preflight cancellation must retain zero-byte evidence: %+v", finished.Result)
+	}
+	if finished.Result.NetworkPath == nil || finished.Result.NetworkPath.TUNEvidence != "packet_route_not_observed" || finished.Result.NetworkPath.FailureReason != "user_cancelled" {
+		t.Fatalf("preflight failure path evidence = %+v", finished.Result.NetworkPath)
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("cancelled preflight issued a later DNS/socket request: requests=%d", requests.Load())
+	}
+	select {
+	case <-runtime.networkDone:
+	default:
+		t.Fatal("network cleanup did not finish before persistence completed")
+	}
+}
+
+func TestWorkbenchDownloadNetworkPathEvidenceSurvivesReopen(t *testing.T) {
+	_, store, _ := newWorkbenchDownloadApplication(t)
+	requestID, attemptID := "path-evidence-request", "path-evidence-attempt"
+	now := time.Now().UTC()
+	attempt := &history.WorkbenchDownloadAttempt{
+		AttemptID: attemptID, RequestID: requestID, ProfileID: "profile-a", NodeKey: "node-a",
+		NodeIdentityKey: "identity-a", ConfigRevisionKey: "revision-a", DisplayName: "冻结节点", NodeType: "vless",
+		Source: history.WorkbenchDownloadSource, RequestedAt: now, ExecutionState: "queued", PersistenceState: "not_started",
+		Rule: history.WorkbenchDownloadRuleSnapshot{RuleVersion: workbenchDownloadRuleVersion, Method: http.MethodGet, MaximumBytes: 1000, MaximumDurationNS: int64(time.Second)},
+	}
+	if err := store.CreateWorkbenchDownloadAttempt(context.Background(), attempt); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginWorkbenchDownloadAttempt(context.Background(), attemptID, now); err != nil {
+		t.Fatal(err)
+	}
+	measurement := history.WorkbenchDownloadMeasurement{
+		Outcome: "not_executed", ErrorClass: "physical_path", EndReason: "ipv4_dns_not_found", BytesRead: 0,
+		StartedAt: now, FinishedAt: now, Samples: []history.WorkbenchDownloadSample{},
+		NetworkPath: &speedtester.DownloadNetworkPath{
+			Method: "physical_socket_v1", Interface: "en1", AddressFamily: "ipv4",
+			ResolutionSource: "physical_ipv4_dns",
+			DNSMode:          "physical_interface_dns_v1", TUNEvidence: "packet_route_not_observed",
+			FailureReason: "ipv4_dns_not_found", DNSRequests: 2, DNSDialAttempts: 1,
+		},
+	}
+	if err := store.StageWorkbenchDownloadResult(context.Background(), attemptID, "not_executed", measurement); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CommitWorkbenchDownloadResult(context.Background(), attemptID); err != nil {
+		t.Fatal(err)
+	}
+	storeDir := store.Dir()
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := history.NewStore(storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	got, err := reopened.GetWorkbenchDownloadAttempt(context.Background(), attemptID, history.WorkbenchDownloadFilter{
+		ProfileID: "profile-a", NodeKey: "node-a", NodeIdentityKey: "identity-a", ConfigRevisionKey: "revision-a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := got.Result.NetworkPath
+	if got.ExecutionState != "not_executed" || path == nil || path.Method != "physical_socket_v1" || path.AddressFamily != "ipv4" || path.ResolutionSource != "physical_ipv4_dns" || path.Interface != "en1" || path.FailureReason != "ipv4_dns_not_found" || path.DNSRequests != 2 || path.DNSDialAttempts != 1 || path.TUNEvidence != "packet_route_not_observed" {
+		t.Fatalf("persisted path evidence changed after reopen: %+v; attempt=%+v", path, got)
+	}
+}
+
+func TestWorkbenchDownloadDeadlineDuringPreflightPersistsNotExecuted(t *testing.T) {
+	app, store, _ := newWorkbenchDownloadApplication(t)
+	defer store.Close()
+	ctx, cancel := newWorkbenchDownloadLifecycleContext(context.Background(), 150*time.Millisecond)
+	started := time.Now().UTC()
+	entered := make(chan struct{})
+	runtime := &workbenchDownloadRuntime{
+		timingNS: make(map[string]int64), networkDone: make(chan struct{}), attemptID: "preflight-deadline-attempt",
+		requestID: "preflight-deadline-request", ctx: ctx, cancel: cancel, ready: make(chan struct{}),
+		node: monitor.MonitoredNode{NodeKey: "node-a", NodeIdentityKey: "identity-a", ConfigRevisionKey: "revision-a", DisplayName: "冻结节点", Type: "http"},
+		rule: history.WorkbenchDownloadRuleSnapshot{RuleVersion: workbenchDownloadRuleVersion, TargetURL: "https://speed.cloudflare.com/__down?bytes=1001", Method: http.MethodGet, MaximumBytes: 1000, MaximumDurationNS: int64(150 * time.Millisecond)},
+		preparePhysical: func(ctx context.Context, _ *speedtester.CProxy) (*speedtester.CProxy, *speedtester.PhysicalDownloadEgress, error) {
+			close(entered)
+			<-ctx.Done()
+			return nil, nil, ctx.Err()
+		},
+	}
+	attempt := &history.WorkbenchDownloadAttempt{
+		AttemptID: runtime.attemptID, RequestID: runtime.requestID, ProfileID: "profile-a", NodeKey: "node-a",
+		NodeIdentityKey: "identity-a", ConfigRevisionKey: "revision-a", DisplayName: "冻结节点", NodeType: "http",
+		Source: history.WorkbenchDownloadSource, RequestedAt: started, ExecutionState: "queued", PersistenceState: "not_started", Rule: runtime.rule,
+	}
+	if err := store.CreateWorkbenchDownloadAttempt(context.Background(), attempt); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginWorkbenchDownloadAttempt(context.Background(), runtime.attemptID, started); err != nil {
+		t.Fatal(err)
+	}
+	if _, duplicate, err := app.beginWorkbenchDownload(runtime); err != nil || duplicate {
+		t.Fatalf("reserve download runtime: duplicate=%t err=%v", duplicate, err)
+	}
+	close(runtime.ready)
+	go app.executeWorkbenchDownload(runtime)
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("physical preflight did not start before its task deadline")
+	}
+	app.workbenchWG.Wait()
+	finished, err := app.GetWorkbenchDownloadAttempt(context.Background(), runtime.attemptID, downloadQuery())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished.ExecutionState != "not_executed" || finished.PersistenceState != "saved" || finished.Result == nil || finished.Result.EndReason != "deadline_exceeded" || finished.Result.BytesRead != 0 || len(finished.Result.Samples) != 0 {
+		t.Fatalf("preflight deadline must persist a zero-byte not_executed result: %+v", finished)
+	}
+}
+
+func TestUnverifiedPhysicalPathDoesNotTurnConnectionFailureIntoNodeFailure(t *testing.T) {
+	result := speedtester.DownloadStreamResult{
+		Outcome: "connection_failed", EndReason: "connection_failed", ErrorClass: "tls",
+		FailurePhase: "tls", ErrorMessage: "TLS setup failed",
+	}
+	path := speedtester.DownloadNetworkPath{Method: "legacy_default_binding_unverified", FailureReason: "physical_binding_unavailable"}
+	normalizeUnverifiedPathFailure(&result, path)
+	if result.Outcome != "local_path_unverified" || result.EndReason != "local_path_unverified" || result.ErrorClass != "tls" || result.FailurePhase != "tls" {
+		t.Fatalf("unknown local egress was misclassified as node failure or lost its TLS evidence: %+v", result)
+	}
+	rateLimited := speedtester.DownloadStreamResult{Outcome: "source_rate_limited", EndReason: "source_rate_limited"}
+	normalizeUnverifiedPathFailure(&rateLimited, path)
+	if rateLimited.Outcome != "source_rate_limited" {
+		t.Fatalf("source rate limit was conflated with unknown egress: %+v", rateLimited)
+	}
+}
+
+func TestCloseWorkbenchDownloadProxyAllowsMissingProxyAdapter(t *testing.T) {
+	closeWorkbenchDownloadProxy(nil)
+	closeWorkbenchDownloadProxy(&speedtester.CProxy{})
 }
 
 func TestWorkbenchDownloadAdmissionRejectsExistingActiveWorkbenchTest(t *testing.T) {

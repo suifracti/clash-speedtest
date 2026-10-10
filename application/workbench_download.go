@@ -17,20 +17,22 @@ import (
 const workbenchDownloadRuleVersion = 3
 
 type workbenchDownloadRuntime struct {
-	timingNS       map[string]int64
-	physicalEgress *speedtester.PhysicalDownloadEgress
-	networkDone    chan struct{}
-	attemptID      string
-	requestID      string
-	ctx            context.Context
-	cancel         context.CancelFunc
-	ready          chan struct{}
-	mu             sync.Mutex
-	shutdown       bool
-	node           monitor.MonitoredNode
-	proxy          *speedtester.CProxy
-	engine         *speedtester.SpeedTester
-	rule           history.WorkbenchDownloadRuleSnapshot
+	timingNS        map[string]int64
+	physicalEgress  *speedtester.PhysicalDownloadEgress
+	preparePhysical func(context.Context, *speedtester.CProxy) (*speedtester.CProxy, *speedtester.PhysicalDownloadEgress, error)
+	networkDone     chan struct{}
+	attemptID       string
+	requestID       string
+	ctx             context.Context
+	cancel          context.CancelFunc
+	ready           chan struct{}
+	mu              sync.Mutex
+	cleanupOnce     sync.Once
+	shutdown        bool
+	node            monitor.MonitoredNode
+	proxy           *speedtester.CProxy
+	engine          *speedtester.SpeedTester
+	rule            history.WorkbenchDownloadRuleSnapshot
 }
 
 func (s *AppService) StartWorkbenchDownloadTest(ctx context.Context, req WorkbenchDownloadTestRequest) (returnedAttempt *history.WorkbenchDownloadAttempt, startErr error) {
@@ -98,11 +100,10 @@ func (s *AppService) StartWorkbenchDownloadTest(ctx context.Context, req Workben
 	if len(node.RawConfig) == 0 && s.workbenchDownloadResolveHook == nil {
 		return nil, monitor.NewValidationError("当前节点缓存配置不可用；未发出下载请求")
 	}
-	var physicalEgress *speedtester.PhysicalDownloadEgress
 	handedOff := false
 	defer func() {
-		if physicalEgress != nil && !handedOff {
-			_ = proxy.Close()
+		if !handedOff {
+			closeWorkbenchDownloadProxy(proxy)
 		}
 	}()
 	engine, err := speedtester.New(&speedtester.Config{
@@ -125,10 +126,13 @@ func (s *AppService) StartWorkbenchDownloadTest(ctx context.Context, req Workben
 		MaximumBytes: maximumBytes, MaximumDurationNS: int64(time.Duration(timeoutSeconds) * time.Second),
 		SampleEveryBytes: speedtester.DefaultDownloadSampleBytes, SampleEveryNS: int64(100 * time.Millisecond),
 	}
-	runCtx, cancel := context.WithCancel(context.Background())
+	runCtx, cancel := newWorkbenchDownloadLifecycleContext(ctx, time.Duration(timeoutSeconds)*time.Second)
 	runtime := &workbenchDownloadRuntime{timingNS: probeTiming(ctx), networkDone: make(chan struct{}),
-		physicalEgress: physicalEgress, attemptID: newWorkbenchLatencyID("workbench_download_attempt_"), requestID: requestID,
+		attemptID: newWorkbenchLatencyID("workbench_download_attempt_"), requestID: requestID,
 		ctx: runCtx, cancel: cancel, ready: make(chan struct{}), node: node, proxy: proxy, engine: engine, rule: rule,
+	}
+	if s.workbenchDownloadResolveHook == nil {
+		runtime.preparePhysical = speedtester.PreparePhysicalDownloadProxy
 	}
 	waitForExisting, duplicate, err := s.beginWorkbenchDownload(runtime)
 	if err != nil {
@@ -166,24 +170,7 @@ func (s *AppService) StartWorkbenchDownloadTest(ctx context.Context, req Workben
 		abortStart()
 		return nil, fmt.Errorf("检查下载检测请求失败: %w", err)
 	}
-	// Admit before resolving physical DNS: a busy queue must not repeatedly
-	// issue preparation queries while waiting for the shared network slot.
-	if s.workbenchDownloadResolveHook == nil {
-		proxy, physicalEgress, err = speedtester.PreparePhysicalDownloadProxy(ctx, proxy)
-		if err != nil {
-			abortStart()
-			return nil, monitor.NewValidationError("本机物理出口／DNS隔离无法确认，下载未执行：" + err.Error())
-		}
-		runtime.proxy, runtime.physicalEgress = proxy, physicalEgress
-	}
-	if physicalEgress != nil {
-		path := physicalEgress.Snapshot()
-		rule.NetworkPathMethod = path.Method
-		rule.PhysicalInterface = path.Interface
-		rule.DNSMode = path.DNSMode
-	}
 	runtime.timingNS["start_setup_ns"] = time.Since(received).Nanoseconds()
-	runtime.rule = rule
 	attempt := &history.WorkbenchDownloadAttempt{
 		AttemptID: runtime.attemptID, RequestID: requestID, ProfileID: profileID, NodeKey: nodeKey,
 		NodeIdentityKey: identityKey, ConfigRevisionKey: revisionKey, DisplayName: node.DisplayName,
@@ -280,32 +267,56 @@ func (s *AppService) executeWorkbenchDownload(runtime *workbenchDownloadRuntime)
 	defer finishNetwork()
 	defer func() {
 		runtime.cancel()
-		if runtime.physicalEgress != nil {
-			_ = runtime.proxy.Close()
-		}
+		runtime.closeNetwork()
 		_ = s.historyStore.DB().FinishAutomaticMeasurementRound(context.Background(), runtime.requestID)
 		s.endWorkbenchDownload(runtime)
 	}()
 	finishActivity := s.probeActivity.begin("download")
-	client, err := s.workbenchDownloadHTTPClient(runtime.engine, runtime.proxy, time.Duration(runtime.rule.MaximumDurationNS))
 	var result speedtester.DownloadStreamResult
-	if err != nil {
-		now := time.Now().UTC()
-		result = speedtester.DownloadStreamResult{Outcome: "connection_failed", TargetURL: runtime.rule.TargetURL, StartedAt: now, FinishedAt: now, Phase: "proxy_setup", ErrorClass: "proxy_setup", EndReason: "connection_failed", FailurePhase: "proxy_setup", ErrorMessage: "无法建立节点隔离下载连接", Samples: []speedtester.DownloadStreamSample{}}
-	} else {
-		options := speedtester.DownloadStreamOptions{
-			MaximumBytes: runtime.rule.MaximumBytes, MaximumDuration: time.Duration(runtime.rule.MaximumDurationNS),
-			SampleEveryBytes: runtime.rule.SampleEveryBytes, SampleEveryDuration: time.Duration(runtime.rule.SampleEveryNS),
+	started := time.Now().UTC()
+	var preparationErr error
+	if err := runtime.ctx.Err(); err != nil {
+		preparationErr = err
+	} else if runtime.preparePhysical != nil {
+		original := runtime.proxy
+		prepared, egress, err := runtime.preparePhysical(runtime.ctx, original)
+		runtime.physicalEgress = egress
+		if prepared != nil {
+			runtime.proxy = prepared
 		}
-		result = runtime.engine.MeasureDownloadStream(runtime.ctx, client, options, func(sample speedtester.DownloadStreamSample, bytesRead int64) {
-			if s.emitter != nil {
-				s.emitter.Emit(Event{Type: "workbench_download_progress", Payload: map[string]any{
-					"attempt_id": runtime.attemptID, "bytes_read": bytesRead, "sample": sample,
-				}})
-			}
-		})
+		if err == nil && original != nil && runtime.proxy != original {
+			closeWorkbenchDownloadProxy(original)
+		}
+		preparationErr = err
+		if preparationErr == nil {
+			preparationErr = runtime.ctx.Err()
+		}
 	}
+	if preparationErr != nil {
+		result = workbenchDownloadPreflightFailure(runtime, started, time.Now().UTC(), preparationErr)
+	} else {
+		client, err := s.workbenchDownloadHTTPClient(runtime.engine, runtime.proxy, time.Duration(runtime.rule.MaximumDurationNS))
+		if err != nil {
+			now := time.Now().UTC()
+			result = speedtester.DownloadStreamResult{Outcome: "connection_failed", TargetURL: runtime.rule.TargetURL, StartedAt: now, FinishedAt: now, Phase: "proxy_setup", ErrorClass: "proxy_setup", EndReason: "connection_failed", FailurePhase: "proxy_setup", ErrorMessage: "无法建立节点隔离下载连接", Samples: []speedtester.DownloadStreamSample{}}
+		} else {
+			options := speedtester.DownloadStreamOptions{
+				MaximumBytes: runtime.rule.MaximumBytes, MaximumDuration: time.Duration(runtime.rule.MaximumDurationNS),
+				SampleEveryBytes: runtime.rule.SampleEveryBytes, SampleEveryDuration: time.Duration(runtime.rule.SampleEveryNS),
+			}
+			result = runtime.engine.MeasureDownloadStream(runtime.ctx, client, options, func(sample speedtester.DownloadStreamSample, bytesRead int64) {
+				if s.emitter != nil {
+					s.emitter.Emit(Event{Type: "workbench_download_progress", Payload: map[string]any{
+						"attempt_id": runtime.attemptID, "bytes_read": bytesRead, "sample": sample,
+					}})
+				}
+			})
+		}
+	}
+	runtime.closeNetwork()
 	finishNetwork()
+	path := downloadNetworkPath(runtime, preparationErr)
+	normalizeUnverifiedPathFailure(&result, path)
 	runtime.mu.Lock()
 	shutdown := runtime.shutdown
 	runtime.mu.Unlock()
@@ -324,12 +335,12 @@ func (s *AppService) executeWorkbenchDownload(runtime *workbenchDownloadRuntime)
 	}
 	measurement := workbenchDownloadMeasurement(result)
 	measurement.PhaseTimingsNS = result.PhaseTimingsNS
+	if runtime.timingNS == nil {
+		runtime.timingNS = make(map[string]int64)
+	}
 	measurement.TimingNS = runtime.timingNS
 	measurement.TimingNS["network_ns"] = result.DurationNS
-	if runtime.physicalEgress != nil {
-		path := runtime.physicalEgress.Snapshot()
-		measurement.NetworkPath = &path
-	}
+	measurement.NetworkPath = &path
 	measurement.CompetingProbes = finishActivity()
 	if err := s.stageWorkbenchDownloadResult(runtime.attemptID, executionState, measurement); err != nil {
 		_ = s.historyStore.MarkWorkbenchDownloadStageFailed(context.Background(), runtime.attemptID, executionState, measurement.FinishedAt,
@@ -341,6 +352,75 @@ func (s *AppService) executeWorkbenchDownload(runtime *workbenchDownloadRuntime)
 		_ = s.historyStore.MarkWorkbenchDownloadSaveFailed(context.Background(), runtime.attemptID, "结果仍已暂存；保存失败，可沿用原 attempt 重试")
 	}
 	s.emitWorkbenchDownloadUpdate(runtime.requestID)
+}
+
+func (runtime *workbenchDownloadRuntime) closeNetwork() {
+	if runtime == nil {
+		return
+	}
+	runtime.cleanupOnce.Do(func() {
+		closeWorkbenchDownloadProxy(runtime.proxy)
+	})
+}
+
+func closeWorkbenchDownloadProxy(proxy *speedtester.CProxy) {
+	if proxy == nil || proxy.Proxy == nil {
+		return
+	}
+	_ = proxy.Close()
+}
+
+func workbenchDownloadPreflightFailure(runtime *workbenchDownloadRuntime, started, finished time.Time, cause error) speedtester.DownloadStreamResult {
+	reason := preflightFailureReason(runtime.ctx, cause)
+	return speedtester.DownloadStreamResult{
+		Outcome: "not_executed", TargetURL: runtime.rule.TargetURL, StartedAt: started.UTC(), FinishedAt: finished.UTC(),
+		DurationNS: finished.Sub(started).Nanoseconds(), Phase: "physical_preflight", ErrorClass: "physical_path",
+		EndReason: reason, FailurePhase: "physical_preflight", ErrorMessage: "物理出口预检未完成；下载未执行",
+		Samples: []speedtester.DownloadStreamSample{},
+	}
+}
+
+func preflightFailureReason(ctx context.Context, cause error) string {
+	if errors.Is(cause, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+		return "user_cancelled"
+	}
+	if errors.Is(cause, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return "deadline_exceeded"
+	}
+	return "physical_path_unverified"
+}
+
+func downloadNetworkPath(runtime *workbenchDownloadRuntime, preparationErr error) speedtester.DownloadNetworkPath {
+	if runtime.physicalEgress != nil {
+		path := runtime.physicalEgress.Snapshot()
+		if preparationErr != nil && path.FailureReason == "" {
+			path.FailureReason = preflightFailureReason(runtime.ctx, preparationErr)
+		}
+		return path
+	}
+	path := speedtester.DownloadNetworkPath{
+		Method: "unknown", AddressFamily: "unknown", ResolutionSource: "unobserved",
+		TUNEvidence: "packet_route_not_observed", FailureReason: "physical_path_unobserved",
+	}
+	if preparationErr != nil {
+		path.FailureReason = preflightFailureReason(runtime.ctx, preparationErr)
+	}
+	return path
+}
+
+func normalizeUnverifiedPathFailure(result *speedtester.DownloadStreamResult, path speedtester.DownloadNetworkPath) {
+	if result == nil || path.Method != "legacy_default_binding_unverified" {
+		return
+	}
+	if result.Outcome != "connection_failed" && result.Outcome != "transfer_interrupted" {
+		return
+	}
+	result.Outcome = "local_path_unverified"
+	result.EndReason = "local_path_unverified"
+	if result.FailurePhase == "" {
+		result.FailurePhase = "local_egress"
+	}
+	result.ErrorMessage = "本机物理出口未能确认；不作为节点故障或有效速度读数"
 }
 
 func (s *AppService) workbenchDownloadHTTPClient(engine *speedtester.SpeedTester, proxy *speedtester.CProxy, timeout time.Duration) (*http.Client, error) {
