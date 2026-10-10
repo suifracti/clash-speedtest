@@ -17,7 +17,7 @@ import NodeDetailModal from './components/NodeDetailModal.vue'
 import QueueModal from './components/QueueModal.vue'
 const w=createWorkspace();provide(workspaceKey,w)
 const password=ref(''),loginError=ref(''),loggingIn=ref(false)
-const pages:{id:Page;label:string;icon:string}[]=[{id:'home',label:'节点首页',icon:'home'},{id:'airports',label:'机场订阅',icon:'layers'},{id:'monitor',label:'持续监测',icon:'monitor'},{id:'history',label:'检测历史',icon:'history'}]
+const pages:{id:Page;label:string;icon:string}[]=[{id:'home',label:'节点首页',icon:'home'},{id:'airports',label:'机场订阅',icon:'layers'},{id:'history',label:'检测历史',icon:'history'},{id:'monitor',label:'持续监测',icon:'monitor'}]
 let timer:ReturnType<typeof setInterval>|undefined
 function navigate(page:Page){w.page.value=page;window.scrollTo({top:0,behavior:'instant'})}
 function authExpired(){w.authRequired.value=true;w.dispose()}
@@ -45,7 +45,7 @@ onBeforeUnmount(()=>{w.dispose();clearInterval(timer);window.removeEventListener
               <button type="button" aria-label="偏好设置" title="偏好设置" :aria-current="w.page.value==='settings'?'page':undefined" @click="navigate('settings')"><Icon name="settings"/><span>偏好设置</span></button>
               <button type="button" aria-label="数据与备份" title="数据与备份" :aria-current="w.page.value==='data'?'page':undefined" @click="navigate('data')"><Icon name="data"/><span>数据与备份</span></button>
             </nav>
-            <div class="connection-state" role="status" :title="w.connected.value?'实时连接正常':w.loading.value?'正在连接…':'实时连接断开'" :aria-label="w.connected.value?'实时连接正常':w.loading.value?'正在连接…':'实时连接断开'"><span class="status-dot" :class="{connected:w.connected.value}"/></div>
+            <div class="connection-state" role="status" :title="w.connected.value?'实时连接正常':w.loading.value?'正在连接…':'实时连接断开'" :aria-label="w.connected.value?'实时连接正常':w.loading.value?'正在连接…':'实时连接断开'"><span class="status-dot" :class="{connected:w.connected.value}"/><small>{{w.connected.value?'已连接':w.loading.value?'连接中':'连接待确认'}}</small></div>
           </div>
         </div>
       </header>

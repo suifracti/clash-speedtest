@@ -8,13 +8,13 @@ import {api} from '../api'
 import {key,targets,type Attempt,type LatencyTest,type MonitorJob,type MonitorSample,type NodeOption,type Plan} from '../domain'
 import {nodeDisplayName} from '../nodePresentation'
 vi.hoisted(()=>{const items=new Map<string,string>();Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:(k:string)=>items.get(k)||null,setItem:(k:string,v:string)=>items.set(k,v),removeItem:(k:string)=>items.delete(k),clear:()=>items.clear()}})})
-vi.mock('../api',async importOriginal=>{const actual=await importOriginal<typeof import('../api')>();return {...actual,api:{...actual.api,measurementRounds:vi.fn(async()=>[]),createRound:vi.fn(async()=>undefined),finishRound:vi.fn(async()=>undefined),monitorSamples:vi.fn(async()=>({items:[] as MonitorSample[],has_more:false,next_cursor:''})),latencySummaries:vi.fn(async()=>[]),attemptHistory:vi.fn(async()=>({attempts:[],has_more:false,complete:true})),jobs:vi.fn(async()=>[]),createJob:vi.fn(),jobAction:vi.fn(async()=>{}),startLatency:vi.fn(),startAttempt:vi.fn(),attempt:vi.fn(),attemptAction:vi.fn()}}})
+vi.mock('../api',async importOriginal=>{const actual=await importOriginal<typeof import('../api')>();return {...actual,api:{...actual.api,refreshJobs:vi.fn(async()=>[]),latencyHistory:vi.fn(async()=>({tests:[],has_more:false,complete:true})),measurementRounds:vi.fn(async()=>[]),createRound:vi.fn(async()=>undefined),finishRound:vi.fn(async()=>undefined),monitorSamples:vi.fn(async()=>({items:[] as MonitorSample[],has_more:false,next_cursor:''})),latencySummaries:vi.fn(async()=>[]),attemptHistory:vi.fn(async()=>({attempts:[],has_more:false,complete:true})),jobs:vi.fn(async()=>[]),createJob:vi.fn(),jobAction:vi.fn(async()=>{}),startLatency:vi.fn(),startAttempt:vi.fn(),attempt:vi.fn(),attemptAction:vi.fn()}}})
 const a:NodeOption={profile_id:'sub-a',node_key:'node-a',node_identity_key:'identity-a',config_revision_key:'revision-a',profile_name:'机场 A',display_name:'香港 01',type:'trojan',country_code:'HK',country_flag:''}
 const b:NodeOption={profile_id:'sub-b',node_key:'node-b',node_identity_key:'identity-b',config_revision_key:'revision-b',profile_name:'机场 B',display_name:'新加坡 01',type:'ss',country_code:'SG',country_flag:''}
 let wrappers:VueWrapper[]=[]
 function workspace(){const w=createWorkspace();w.airports.value=[{id:'airport-a',name:'机场 A',node_count:1,has_cache:true,url_display:'',subscriptions:[{id:'sub-a',airport_id:'airport-a',name:'默认',url_display:'',url_configured:true,node_count:1,has_cache:true}]},{id:'airport-b',name:'机场 B',node_count:1,has_cache:true,url_display:'',subscriptions:[{id:'sub-b',airport_id:'airport-b',name:'默认',url_display:'',url_configured:true,node_count:1,has_cache:true}]}];w.nodes.value=[a,b];w.setAirports(['airport-a','airport-b']);w.catalog.value=[{service_id:'netflix_unlock',name:'Netflix',category:'影音',description:'',result_kind:'unlock',success_criterion:'',timeout_seconds:15}];w.serviceIds.value=['netflix_unlock'];return w}
 function attach(component:any,w:ReturnType<typeof workspace>){const wrapper=mount(component,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});wrappers.push(wrapper);return wrapper}
-beforeEach(()=>{window.localStorage.clear();vi.clearAllMocks();HTMLDialogElement.prototype.showModal=vi.fn();HTMLDialogElement.prototype.close=vi.fn();vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}})})
+beforeEach(()=>{window.localStorage.clear();window.localStorage.setItem('speedtest-home-view','detailed');vi.clearAllMocks();HTMLDialogElement.prototype.showModal=vi.fn();HTMLDialogElement.prototype.close=vi.fn();vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}})})
 afterEach(()=>{wrappers.forEach(w=>w.unmount());wrappers=[];document.body.innerHTML='';vi.useRealTimers();vi.unstubAllGlobals()})
 describe('shared node selection',()=>{
   it('uses uniform node labels without changing subscription names or identity',async()=>{
@@ -88,8 +88,8 @@ describe('shared node selection',()=>{
     w.sort.value='name'
     expect(w.filteredNodes.value.findIndex(n=>n.node_key==='a2')).toBeLessThan(w.filteredNodes.value.findIndex(n=>n.node_key==='node-a'))
     w.nodes.value=[a2,b2,unknown]
-    const attempt=(node:NodeOption,id:string,second:number,result?:Attempt['result'],service_id?:string):Attempt=>({...node,attempt_id:id,request_id:id,service_id,requested_at:`2026-10-01T00:00:0${second}Z`,execution_state:result?'completed':'queued',persistence_state:result?'saved':'pending',rule:{target_url:''},result})
-    const download=(bytes_read:number):NonNullable<Attempt['result']>=>({outcome:'byte_limit',bytes_read,duration_ns:2000000000,finished_at:'2026-10-01T00:00:01Z'})
+    const attempt=(node:NodeOption,id:string,second:number,result?:Attempt['result'],service_id?:string):Attempt=>({...node,node_type:node.type,attempt_id:id,request_id:id,service_id,requested_at:`2026-10-01T00:00:0${second}Z`,execution_state:result?'completed':'queued',persistence_state:result?'saved':'pending',rule:{target_url:'',method:'GET',rule_version:1,maximum_bytes:20971520,maximum_duration_ns:10000000000,network_path_method:'physical_socket_v1',physical_interface:'en1',dns_mode:'physical_interface_dns_v1'},result})
+    const download=(bytes_read:number):NonNullable<Attempt['result']>=>({outcome:'byte_limit',bytes_read,duration_ns:2000000000,finished_at:'2026-10-01T00:00:01Z',network_path:{method:'physical_socket_v1',interface:'en1',dns_mode:'physical_interface_dns_v1',dns_bind_verified:true,socket_bind_verified:true,tcp_bindings:1,udp_bindings:0,address_family:'IPv4',address_source:'A'}})
     w.mergeAttempt('download',attempt(a2,'download-slow',1,download(10485760)))
     w.mergeAttempt('download',attempt(b2,'download-fast',1,download(20971520)))
     w.sort.value='latency';w.project.value='download'
@@ -139,7 +139,7 @@ describe('shared node selection',()=>{
     w.displayTarget.value='apple';expect(w.displayTargets.value).toEqual(['apple'])
     const test=(node:NodeOption,id:string,second:number,target:string,latency:number,success=true):LatencyTest=>{
       const time=`2026-10-01T00:00:0${second}Z`
-      return {...node,attempt_id:id,node_type:node.type,requested_at:time,finished_at:time,status:success?'completed':'failed',latency_ms:latency,total_samples:1,success_samples:success?1:0,failure_samples:success?0:1,samples:[{seq:1,target,timestamp:time,latency_ms:latency,success,error:success?undefined:'timeout'}],persistence_state:'saved'}
+      return {...node,attempt_id:id,node_type:node.type,requested_at:time,finished_at:time,status:success?'completed':'failed',latency_ms:latency,total_samples:1,success_samples:success?1:0,failure_samples:success?0:1,samples:[{seq:1,target,timestamp:time,latency_ms:latency,success,error:success?undefined:'timeout'}],persistence_state:'saved',source:'workbench',method:'http_get_via_proxy_first_byte',method_version:1,network_path:{method:'physical_socket_v1',interface:'en1',dns_mode:'physical_interface_dns_v1',dns_bind_verified:true,socket_bind_verified:true,tcp_bindings:1,udp_bindings:0,address_family:'IPv4',address_source:'A'}}
     }
     w.mergeLatency(test(a,'a-google-old',1,'https://www.gstatic.com/generate_204',90))
     w.mergeLatency(test(b,'b-google-old',2,'https://www.gstatic.com/generate_204',60))
@@ -225,12 +225,12 @@ describe('shared node selection',()=>{
     w.services.value[key(a)]=[{...a,attempt_id:'netflix-a',request_id:'netflix-round',service_id:'netflix_unlock',requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',rule:{name:'Netflix',target_url:''},result:{outcome:'matched',bytes_read:0,finished_at:at}},{...a,attempt_id:'youtube-a',request_id:'youtube-round',service_id:'youtube',requested_at:at,finished_at:at,execution_state:'failed',persistence_state:'saved',rule:{name:'YouTube',target_url:''},result:{outcome:'connection_failed',bytes_read:0,finished_at:at}}]
     w.project.value='combined';const wrapper=attach(HomeView,w);await flushPromises()
     expect(wrapper.find('.node-row .combined-values').text()).toContain('下载速度10.0 MiB/s')
-    expect(wrapper.find('.node-row .combined-values').text()).toContain('Netflix通过')
-    expect(wrapper.find('.node-row .combined-values').text()).toContain('YouTube连接失败')
+    expect(wrapper.find('.node-row .combined-values').text()).toContain('Netflix探针规则通过')
+    expect(wrapper.find('.node-row .combined-values').text()).toContain('YouTube未确认 · 连接失败')
     await wrapper.find('.node-row').trigger('mouseenter')
     expect(wrapper.find('.node-inline-results').exists()).toBe(false)
     const bars=wrapper.find('.node-row').findAll('.health-bars')
-    const cloudflareBar=bars.find(bar=>(bar.attributes('aria-label')||'').startsWith('Cloudflare'))!
+    const cloudflareBar=bars.find(bar=>(bar.attributes('aria-label')||'').startsWith('延迟轮次'))!
     await cloudflareBar.find('.health-cell.has-record').trigger('mouseenter')
     expect(wrapper.findComponent(TrendChart).props('points')[0].value).toBe(400)
     expect(wrapper.find('.node-inline-results').text()).toContain('400 ms')
@@ -250,11 +250,12 @@ describe('shared node selection',()=>{
     expect(downloadReadout.find('strong').text()).toBe('10.0 MiB/s')
     expect(downloadReadout.text()).toContain('定时')
     expect(downloadReadout.text()).not.toContain('部分测量')
-    await bars.find(bar=>(bar.attributes('aria-label')||'').startsWith('Netflix'))!.find('.health-cell.has-record').trigger('mouseenter')
+    const serviceCells=bars.find(bar=>(bar.attributes('aria-label')||'').startsWith('服务轮次'))!.findAll('.health-cell.has-record')
+    await serviceCells[0].trigger('mouseenter')
     expect(wrapper.findComponent(TrendChart).props('points')).toEqual([expect.objectContaining({id:'netflix-a',value:1,tone:'good'})])
     expect(wrapper.find('.measurement-results').text()).toContain('Netflix')
-    await bars.find(bar=>(bar.attributes('aria-label')||'').startsWith('YouTube'))!.find('.health-cell.has-record').trigger('mouseenter')
-    expect(wrapper.findComponent(TrendChart).props('points')).toEqual([expect.objectContaining({id:'youtube-a',value:0,tone:'bad'})])
+    await serviceCells.at(-1)!.trigger('mouseenter')
+    expect(wrapper.findComponent(TrendChart).props('points')).toEqual([expect.objectContaining({id:'youtube-a',value:null,tone:'bad'})])
     expect(wrapper.find('.measurement-results').text()).toContain('YouTube')
     expect(wrapper.find('.measurement-results').text()).not.toContain('Netflix')
     expect(w.serviceIds.value).toEqual(['netflix_unlock'])
@@ -315,4 +316,88 @@ describe('shared node selection',()=>{
   it('preserves selection through a search but removes nodes when their airport is deselected',async()=>{const w=workspace();w.toggleNode(a);w.toggleNode(b);w.search.value='香港';await flushPromises();expect(w.selectedNodes.value.map(n=>n.node_key)).toEqual(['node-a','node-b']);w.setAirports(['airport-a']);await flushPromises();expect(w.selectedNodes.value.map(n=>n.node_key)).toEqual(['node-a']);expect(w.selectedKeys.value).toEqual([key(a)])})
   it('creates separate monitor jobs for selected subscriptions and resumes a partial failure without duplicates',async()=>{const w=workspace();w.monitorNodes.value=[a,b];const jobA={id:'job-a',profile_id:'sub-a'} as MonitorJob,jobB={id:'job-b',profile_id:'sub-b'} as MonitorJob;vi.mocked(api.createJob).mockResolvedValueOnce(jobA).mockRejectedValueOnce(new Error('temporary write failure')).mockResolvedValueOnce(jobB);attach(MonitorCreateModal,w);const button=()=>Array.from(document.querySelectorAll('dialog .modal-footer button')).find(b=>b.textContent?.includes('创建')||b.textContent?.includes('继续未完成')) as HTMLButtonElement;button().click();await flushPromises();expect(api.createJob).toHaveBeenNthCalledWith(1,expect.objectContaining({profile_id:'sub-a',node_keys:['node-a'],node_contexts:[{node_key:'node-a',node_identity_key:'identity-a',config_revision_key:'revision-a'}]}));expect(api.createJob).toHaveBeenNthCalledWith(2,expect.objectContaining({profile_id:'sub-b',node_keys:['node-b']}));expect(document.body.textContent).toContain('已成功创建的任务保留');button().click();await flushPromises();expect(api.createJob).toHaveBeenCalledTimes(3);expect(api.createJob).toHaveBeenNthCalledWith(3,expect.objectContaining({profile_id:'sub-b',node_keys:['node-b']}));expect(vi.mocked(api.jobAction).mock.calls.filter(c=>c[1]==='start').map(c=>c[0])).toEqual(['job-a','job-b'])})
   it('cancels an attempt whose start response arrives after cancel and does not start the next node',async()=>{vi.useFakeTimers();const w=workspace();let resolveStart!:(a:Attempt)=>void;vi.mocked(api.startAttempt).mockImplementationOnce(()=>new Promise(resolve=>resolveStart=resolve));const cancelled={...a,attempt_id:'attempt-a',request_id:'req-a',display_name:a.display_name,requested_at:new Date().toISOString(),execution_state:'cancelled',persistence_state:'saved',rule:{target_url:''}} as Attempt;vi.mocked(api.attemptAction).mockResolvedValue(cancelled);vi.mocked(api.attempt).mockResolvedValue(cancelled);w.plan.value={nodes:[a,b],projects:['download'],target:'all',samples:6,timeout:5,concurrency:8,downloadMiB:20,downloadSeconds:10,serviceIds:[],repeats:1};const running=w.runPlan();await flushPromises();await w.cancelTests();resolveStart({...cancelled,execution_state:'running'});await vi.runAllTimersAsync();await running;expect(api.startAttempt).toHaveBeenCalledTimes(1);expect(api.startAttempt).toHaveBeenCalledWith('download',expect.objectContaining({profile_id:'sub-a',node_key:'node-a',maximum_bytes:20971520}));expect(api.attemptAction).toHaveBeenCalledWith('download','attempt-a',expect.objectContaining({profile_id:'sub-a',node_key:'node-a'}),'cancel');expect(w.queue.value.map(q=>q.state)).toEqual(['cancelled','cancelled'])})
+})
+
+// New default flow uses the same selection identity and never starts a probe.
+it('defaults to quick evidence, compares selected nodes and switches back to detailed history',async()=>{window.localStorage.removeItem('speedtest-home-view');window.sessionStorage.clear();const w=workspace(),wrapper=attach(HomeView,w);await flushPromises();expect(wrapper.classes()).toContain('quality-view');expect(wrapper.findAll('.node-check input')).toHaveLength(2);const scope=[...w.selectedAirportIds.value!];await wrapper.findAll('.node-check input')[0].setValue(true);await wrapper.findAll('.node-check input')[1].setValue(true);await wrapper.findAll('button').find(b=>b.text()==='比较已选 2 个节点')!.trigger('click');await flushPromises();expect(document.querySelector('.quality-compare')).not.toBeNull();expect(document.querySelector('.quality-compare')?.textContent).toContain('未测');expect(w.selectedAirportIds.value).toEqual(scope);expect(api.startLatency).not.toHaveBeenCalled();expect(api.startAttempt).not.toHaveBeenCalled();await wrapper.findAll('button').find(b=>b.text()==='六站详细视图')!.trigger('click');expect(wrapper.classes()).not.toContain('quality-view');expect(w.selectedKeys.value).toEqual([key(a),key(b)]);w.dispose()})
+it('quick protocol filtering keeps the scope test and range selection on the displayed nodes',async()=>{window.localStorage.removeItem('speedtest-home-view');window.sessionStorage.clear();const w=workspace(),wrapper=attach(HomeView,w);await flushPromises();const select=wrapper.findAll('select').find(s=>s.find('option[value="trojan"]').exists())!;await select.setValue('trojan');await flushPromises();expect(wrapper.findAll('.node-row')).toHaveLength(1);await wrapper.find('.scope-run').trigger('click');expect(w.plan.value?.nodes.map(n=>n.node_key)).toEqual(['node-a']);w.plan.value=null;w.multiSelect.value=true;await flushPromises();await wrapper.findAll('.selection-info button').find(b=>b.text()==='全选筛选范围')!.trigger('click');expect(w.selectedKeys.value).toEqual([key(a)]);expect(api.startLatency).not.toHaveBeenCalled();w.dispose()})
+
+import {oldService,newService,oldDownload,newDownload} from './fixtures/quality-evidence'
+it('quality service filter rejects old success after the latest same-rule failure',async()=>{
+ window.localStorage.removeItem('speedtest-home-view');window.sessionStorage.clear()
+ vi.mocked(api.attemptHistory).mockImplementation(async(kind,node)=>({attempts:kind==='service'?(node.profile_id===a.profile_id?[oldService,newService]:[oldService]):[],has_more:false,complete:true}))
+ const w=workspace(),wrapper=attach(HomeView,w);await flushPromises()
+ await wrapper.get('select[aria-label="质量证据筛选"]').setValue('service');await flushPromises()
+ expect(wrapper.findAll('.node-name strong').map(e=>e.text())).toEqual(['新加坡 · 01'])
+ w.dispose();vi.mocked(api.attemptHistory).mockResolvedValue({attempts:[],has_more:false,complete:true})
+})
+it('quality download filter survives unrelated incomplete latency history and identifies older valid speed',async()=>{
+ window.localStorage.removeItem('speedtest-home-view');window.sessionStorage.clear()
+ vi.mocked(api.latencyHistory).mockResolvedValue({tests:[],has_more:false,complete:false})
+ vi.mocked(api.attemptHistory).mockImplementation(async(kind,node)=>({attempts:kind==='download'&&node.profile_id===a.profile_id?[oldDownload,newDownload]:[],has_more:false,complete:true}))
+ const w=workspace(),wrapper=attach(HomeView,w);await flushPromises()
+ await wrapper.get('select[aria-label="质量证据筛选"]').setValue('download');await flushPromises()
+ expect(wrapper.findAll('.node-name strong').map(e=>e.text())).toEqual(['香港 · 01'])
+ expect(wrapper.get('.quality-download').text()).toContain('历史有效速度：2.00 MiB/s');expect(wrapper.get('.quality-download').text()).toContain('最近检测：超时')
+ w.dispose();vi.mocked(api.latencyHistory).mockResolvedValue({tests:[],has_more:false,complete:true});vi.mocked(api.attemptHistory).mockResolvedValue({attempts:[],has_more:false,complete:true})
+})
+it('preserves low-frequency filters and cross-airport node selection when collapsed/reopened, with Escape focus recovery',async()=>{
+ window.localStorage.removeItem('speedtest-home-view');window.sessionStorage.clear()
+ const w=workspace(),wrapper=attach(HomeView,w);await flushPromises()
+ const toggle=wrapper.find('[aria-controls~="home-extra-filters"]');expect(toggle.exists()).toBe(true);expect(toggle.attributes('aria-expanded')).toBe('false')
+ await toggle.trigger('click');expect(toggle.attributes('aria-expanded')).toBe('true')
+ await wrapper.get('select[aria-label="协议筛选"]').setValue('trojan');await flushPromises();w.toggleNode(b);await flushPromises()
+ expect(wrapper.get('.scope-run').text()).toContain('已选 1 个节点');expect(wrapper.findAll('.node-name strong').map(e=>e.text())).toEqual(['香港 · 01'])
+ await wrapper.get('#home-extra-filters').trigger('keydown',{key:'Escape'});await flushPromises();expect(toggle.attributes('aria-expanded')).toBe('false');expect(document.activeElement).toBe(toggle.element)
+ expect(wrapper.get('.filter-summary').text()).toContain('trojan');expect(wrapper.get('.filter-summary').text()).toContain('符合 1');await toggle.trigger('click')
+ expect((wrapper.get('select[aria-label="协议筛选"]').element as HTMLSelectElement).value).toBe('trojan');expect(w.selectedNodes.value).toEqual([b])
+ w.project.value='download';await flushPromises();expect(wrapper.get('.scope-run').text()).toContain('测速 · 已选 1 个节点');w.openPlan();expect(w.plan.value?.nodes).toEqual([b]);expect(api.startAttempt).not.toHaveBeenCalled();w.dispose()
+})
+it('freezes the visible quick-filter scope before the combination shortcut changes project',async()=>{
+ window.localStorage.removeItem('speedtest-home-view');window.sessionStorage.clear()
+ const w=workspace(),wrapper=attach(HomeView,w);await flushPromises();await wrapper.get('select[aria-label="协议筛选"]').setValue('trojan');await flushPromises()
+ const button=wrapper.get('.project-tabs .tab-tail');expect(button.text()).toContain('筛选 1 个');await button.trigger('click');await flushPromises()
+ expect(w.plan.value?.nodes).toEqual([a]);expect(w.plan.value?.projects).toEqual(['latency','download','service']);expect(api.startAttempt).not.toHaveBeenCalled();expect(api.startLatency).not.toHaveBeenCalled();w.dispose()
+})
+it('keeps the full-download filter explicit and freezes its one-node scope when opening combination settings',async()=>{
+ window.localStorage.removeItem('speedtest-home-view');window.sessionStorage.clear()
+ const w=workspace();w.mergeAttempt('download',{...oldDownload,...a});w.project.value='download';w.downloadFullOnly.value=true
+ const wrapper=attach(HomeView,w);await flushPromises();expect(wrapper.findAll('.node-name strong').map(e=>e.text())).toEqual(['香港 · 01']);expect(wrapper.get('.filter-summary').text()).toContain('只看完整读取')
+ await wrapper.get('.project-tabs .tab-tail').trigger('click');await flushPromises();expect(w.plan.value?.nodes).toEqual([a]);w.dispose()
+})
+
+it('aligns two-node metrics by semantic row and keeps original history and selection after comparison',async()=>{
+ window.localStorage.setItem('speedtest-home-view','quick');const w=workspace(),ui=attach(HomeView,w);await flushPromises();await ui.findAll('.node-check input')[0].setValue(true);await ui.findAll('.node-check input')[1].setValue(true)
+ await ui.findAll('button').find(b=>b.text()==='比较已选 2 个节点')!.trigger('click');await flushPromises()
+ const table=document.querySelector('.quality-compare table')!;expect(table).not.toBeNull();expect(table.querySelectorAll('thead th[scope=col]')).toHaveLength(3)
+ expect([...table.querySelectorAll('tbody th[scope=row]')].map(e=>e.textContent?.trim())).toEqual(['延迟分布','成功率 / 样本','下载','服务结论','测量时间','完整证据','原始历史'])
+ expect(table.textContent).toContain('未测');expect(document.querySelector('.quality-compare-status')?.textContent).toContain('不可比较');expect(document.querySelector('.comparison-scroll-hint')).toBeNull()
+ const history=table.querySelector('tbody tr:last-child td button') as HTMLButtonElement;history.click();await flushPromises();expect(document.querySelector('.quality-compare')).toBeNull();expect(ui.get('.node-inline-results').text()).toContain('完整走势图');expect(ui.get('.inline-panel-header').text()).toContain('香港');expect(w.selectedKeys.value).toEqual([key(a),key(b)]);expect(api.startAttempt).not.toHaveBeenCalled();expect(api.startLatency).not.toHaveBeenCalled();w.dispose()
+})
+it('keeps labels and a keyboard scroll region when comparing three selected nodes',async()=>{
+ window.localStorage.setItem('speedtest-home-view','quick');const w=workspace(),c={...b,node_key:'node-c',node_identity_key:'identity-c',display_name:'日本 01',country_code:'JP'};w.nodes.value=[a,b,c];const ui=attach(HomeView,w);await flushPromises()
+ for(const checkbox of ui.findAll('.node-check input'))await checkbox.setValue(true)
+ await ui.findAll('button').find(b=>b.text()==='比较已选 3 个节点')!.trigger('click');await flushPromises()
+ const region=document.querySelector('.quality-compare')!;expect(region.getAttribute('tabindex')).toBe('0');expect(region.getAttribute('aria-describedby')).toBe('comparison-scroll-hint');expect(document.getElementById('comparison-scroll-hint')?.textContent).toContain('横向滚动')
+ expect(region.querySelectorAll('thead th[scope=col]')).toHaveLength(4);expect(region.querySelectorAll('tbody tr')).toHaveLength(7);expect(w.selectedKeys.value).toHaveLength(3);w.dispose()
+})
+
+it('labels differently bounded download evidence incomparable rather than aligning it as one speed condition',async()=>{
+ const saved={...oldDownload,node_type:'Vless',rule:{...oldDownload.rule,network_path_method:'physical_socket_v3',physical_interface:'en1',dns_mode:'physical_interface_dns_v1'},result:{...oldDownload.result!,network_path:{method:'physical_socket_v3',interface:'en1',dns_mode:'physical_interface_dns_v1',socket_bind_verified:true,dns_bind_verified:true,tcp_bindings:1,udp_bindings:1}}}
+ vi.mocked(api.attemptHistory).mockImplementation(async(kind,node)=>({attempts:kind==='download'?[node.profile_id===a.profile_id?saved:{...saved,attempt_id:'other-limit',rule:{...saved.rule,maximum_bytes:10485760}}]:[],has_more:false,complete:true}))
+ window.localStorage.setItem('speedtest-home-view','quick');const w=workspace(),ui=attach(HomeView,w);await flushPromises();for(const checkbox of ui.findAll('.node-check input'))await checkbox.setValue(true)
+ await ui.findAll('button').find(b=>b.text()==='比较已选 2 个节点')!.trigger('click');await flushPromises();expect(document.querySelector('.comparison-download-status')?.textContent).toContain('不可比较：条件或结束类型不同')
+ expect(document.querySelector('.quality-compare')?.textContent).toContain('5 MiB');expect(document.querySelector('.quality-compare')?.textContent).toContain('10 MiB');w.dispose();vi.mocked(api.attemptHistory).mockResolvedValue({attempts:[],has_more:false,complete:true})
+})
+
+it('permits like-for-like historical download comparison only when condition and binding evidence are complete',async()=>{
+ for(const verified of [true,false]){
+  const saved:Attempt={...oldDownload,node_type:'Vless',rule:{...oldDownload.rule,network_path_method:'physical_socket_v3',physical_interface:'en1',dns_mode:'physical_interface_dns_v1'},result:{...oldDownload.result!,network_path:{method:'physical_socket_v3',interface:'en1',dns_mode:'physical_interface_dns_v1',socket_bind_verified:verified,dns_bind_verified:verified,tcp_bindings:1,udp_bindings:1,address_family:'IPv4',address_source:'A'}}}
+  vi.mocked(api.attemptHistory).mockImplementation(async kind=>({attempts:kind==='download'?[saved]:[],has_more:false,complete:true}))
+  window.localStorage.setItem('speedtest-home-view','quick');const w=workspace(),ui=attach(HomeView,w);await flushPromises();for(const checkbox of ui.findAll('.node-check input'))await checkbox.setValue(true)
+  await ui.findAll('button').find(b=>b.text()==='比较已选 2 个节点')!.trigger('click');await flushPromises()
+  expect(document.querySelector('.comparison-download-status')?.textContent).toContain(verified?'历史有效速度条件一致':'不可比较：方法、上限或出口证据不足')
+  w.dispose();ui.unmount();wrappers=wrappers.filter(item=>item!==ui)
+ }
+ vi.mocked(api.attemptHistory).mockResolvedValue({attempts:[],has_more:false,complete:true})
 })

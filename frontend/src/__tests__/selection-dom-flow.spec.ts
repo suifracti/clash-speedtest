@@ -6,7 +6,7 @@ import {api} from '../api'
 import {key,type MonitorSample,type NodeOption,type Plan} from '../domain'
 
 vi.hoisted(()=>{const items=new Map<string,string>();Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:(k:string)=>items.get(k)||null,setItem:(k:string,v:string)=>items.set(k,v),clear:()=>items.clear()}})})
-vi.mock('../api',async importOriginal=>{const actual=await importOriginal<typeof import('../api')>();return {...actual,api:{...actual.api,measurementRounds:vi.fn(async()=>[]),createRound:vi.fn(async()=>undefined),finishRound:vi.fn(async()=>undefined),latencySummaries:vi.fn(async(nodes:NodeOption[])=>nodes.map(()=>({tests:[],complete:true,has_more:false}))),attemptHistory:vi.fn(async()=>({attempts:[],complete:true,has_more:false})),monitorSamples:vi.fn(async()=>({items:[],has_more:false,next_cursor:''})),startLatency:vi.fn(),startAttempt:vi.fn(),createJob:vi.fn()}}})
+vi.mock('../api',async importOriginal=>{const actual=await importOriginal<typeof import('../api')>();return {...actual,api:{...actual.api,refreshJobs:vi.fn(async()=>[]),measurementRounds:vi.fn(async()=>[]),createRound:vi.fn(async()=>undefined),finishRound:vi.fn(async()=>undefined),latencySummaries:vi.fn(async(nodes:NodeOption[])=>nodes.map(()=>({tests:[],complete:true,has_more:false}))),attemptHistory:vi.fn(async()=>({attempts:[],complete:true,has_more:false})),monitorSamples:vi.fn(async()=>({items:[],has_more:false,next_cursor:''})),startLatency:vi.fn(),startAttempt:vi.fn(),createJob:vi.fn()}}})
 
 const a:NodeOption={profile_id:'sub-a-one',node_key:'shared-key',node_identity_key:'identity-a',config_revision_key:'revision-a',profile_name:'Airport A / One',display_name:'Node A One',type:'trojan',country_code:'HK',country_flag:''}
 const aTwo:NodeOption={...a,profile_id:'sub-a-two',node_key:'node-two',node_identity_key:'identity-a-two',config_revision_key:'revision-a-two',profile_name:'Airport A / Two',display_name:'Node A Two',country_code:'JP'}
@@ -23,7 +23,7 @@ function dialog(){return new DOMWrapper(document.querySelector('dialog')!)}
 function airportInput(name:string){const label=Array.from(document.querySelectorAll('.airport-pick-list label')).find(e=>e.querySelector('strong')?.textContent===name)!;return new DOMWrapper(label.querySelector('input')!)}
 function nodeInput(view:VueWrapper,name:string){return view.get(`.node-check input[aria-label="选择 ${name}"]`)}
 
-beforeEach(()=>{window.localStorage.clear();window.sessionStorage.clear();vi.clearAllMocks();HTMLDialogElement.prototype.showModal=vi.fn();HTMLDialogElement.prototype.close=vi.fn();vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}});vi.stubGlobal('fetch',vi.fn().mockRejectedValue(new Error('Unexpected network request in isolated DOM selection test')))})
+beforeEach(()=>{window.localStorage.clear();window.localStorage.setItem('speedtest-home-view','detailed');window.sessionStorage.clear();vi.clearAllMocks();HTMLDialogElement.prototype.showModal=vi.fn();HTMLDialogElement.prototype.close=vi.fn();vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}});vi.stubGlobal('fetch',vi.fn().mockRejectedValue(new Error('Unexpected network request in isolated DOM selection test')))})
 afterEach(()=>{expect(fetch).not.toHaveBeenCalled();wrapper?.unmount();w?.dispose();wrapper=undefined;w=undefined;document.body.innerHTML='';vi.unstubAllGlobals()})
 
 describe('node selection through DOM controls',()=>{
@@ -74,14 +74,14 @@ describe('node selection through DOM controls',()=>{
     expect(wrapper.get('[role=alert]').text()).toContain('监测 HTTP 记录读取失败')
     vi.mocked(api.monitorSamples).mockResolvedValue({items:[],has_more:false,next_cursor:''})
     w.nodes.value=[{...a,config_revision_key:'revision-new'}];await flushPromises()
-    expect(wrapper.findAll('.monitor-http-metrics strong').map(m=>m.text())).toEqual(['未测','未测'])
+    expect(wrapper.findAll('.monitor-http-metrics strong')).toHaveLength(0)
     expect(wrapper.findAll('.health-cell.has-record')).toHaveLength(0)
   })
   it('uses the airport picker, subscription filter and node checkboxes as one scope for every project and monitor entry',async()=>{
     const {w,wrapper}=attach();await flushPromises()
     await wrapper.get('.orbit-button').trigger('click')
     await airportInput('Airport A').setValue(true);await airportInput('Airport B').setValue(true)
-    expect(wrapper.get('.orbit-button strong').text()).toBe('2 个机场')
+    expect(wrapper.get('.orbit-button strong').text()).toContain('2 个机场')
     await button(dialog(),'.modal-footer button','完成')
     expect(document.querySelector('dialog')).toBeNull()
     await button(wrapper,'.toolbar-filters button','多选节点')
