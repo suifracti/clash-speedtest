@@ -51,6 +51,22 @@ func parseConfigBody(body []byte) (*RawConfig, error) {
 	return nil, fmt.Errorf("subscription contained no proxies")
 }
 
+// ValidateSubscriptionBody checks subscription syntax without opening or
+// probing any nodes from the returned configuration.
+func ValidateSubscriptionBody(body []byte) error {
+	if _, err := parseConfigBody(body); err == nil {
+		return nil
+	} else {
+		var document map[interface{}]interface{}
+		if yaml.Unmarshal(normalizeSubscription(body), &document) == nil {
+			if proxies, ok := document["proxies"].([]interface{}); ok && len(proxies) == 0 {
+				return nil
+			}
+		}
+		return err
+	}
+}
+
 func normalizeSubscription(body []byte) []byte {
 	body = bytes.TrimSpace(body)
 	if len(body) >= 3 && body[0] == 0xEF && body[1] == 0xBB && body[2] == 0xBF {
