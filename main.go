@@ -79,9 +79,9 @@ var (
 	noAutoCredentialsFlag = flag.Bool("no-auto-credentials", false, "disable automatic credential discovery and refresh for GUI/web startup")
 	cliFlag               = flag.Bool("cli", false, "force terminal CLI interactive mode")
 	portFlag              = flag.Int("port", 0, "port for GUI web server (default: random free port)")
-	publicIPv6Flag        = flag.String("public-ipv6", "", "explicitly expose the full unauthenticated web console on this IPv6 address (trusted sharing only)")
-	webPasswordFlag       = flag.String("web-password", "", "optional password for web console (can also be set via CLASH_SPEEDTEST_WEB_PASSWORD)")
-	listenFlag            = flag.String("listen", "::", "web listen address (default: all IPv6/IPv4 interfaces; use 127.0.0.1 for local only)")
+	publicIPv6Flag        = flag.String("public-ipv6", "", "bind the authenticated web console to this specific public IPv6 address (requires --web-password)")
+	webPasswordFlag       = flag.String("web-password", "", "web console password (required for remote access; at least 12 characters; can also be set via CLASH_SPEEDTEST_WEB_PASSWORD)")
+	listenFlag            = flag.String("listen", "127.0.0.1", "web listen IP (default: loopback; remote addresses require --web-password with at least 12 characters)")
 	browserFlag           = flag.String("browser", "", "preferred browser for GUI: zen, arc, brave, chrome, edge, safari, default, none, or path to executable")
 )
 
@@ -480,7 +480,29 @@ func keepProxies(proxies map[string]*speedtester.CProxy, names []string) map[str
 	return filtered
 }
 
+type webAccessOptions struct {
+	listenAddress string
+	publicIPv6    string
+	webPassword   string
+}
+
+func webAccessOptionsFromFlags() webAccessOptions {
+	password := *webPasswordFlag
+	if password == "" {
+		password = os.Getenv("CLASH_SPEEDTEST_WEB_PASSWORD")
+	}
+	return webAccessOptions{
+		listenAddress: *listenFlag,
+		publicIPv6:    *publicIPv6Flag,
+		webPassword:   password,
+	}
+}
+
 func runGUI(port int, userAgent string, browser string, appPaths appdata.AppPaths, appOptions application.Options) {
+	runGUIWithAccess(port, userAgent, browser, appPaths, appOptions, webAccessOptionsFromFlags())
+}
+
+func runGUIWithAccess(port int, userAgent string, browser string, appPaths appdata.AppPaths, appOptions application.Options, access webAccessOptions) {
 	profiles.EnableUTF8Console()
 
 	distFS, err := fs.Sub(desktopAssets, "frontend/dist")
@@ -488,18 +510,13 @@ func runGUI(port int, userAgent string, browser string, appPaths appdata.AppPath
 		log.Fatalf("初始化前端静态资源失败: %s", err)
 	}
 
-	webPassword := *webPasswordFlag
-	if webPassword == "" {
-		webPassword = os.Getenv("CLASH_SPEEDTEST_WEB_PASSWORD")
-	}
-
 	server, err := web.NewServer(web.ServerConfig{
 		AppPaths:      appPaths,
 		AppOptions:    appOptions,
 		Port:          port,
-		PublicIPv6:    *publicIPv6Flag,
-		WebPassword:   webPassword,
-		ListenAddress: *listenFlag,
+		PublicIPv6:    access.publicIPv6,
+		WebPassword:   access.webPassword,
+		ListenAddress: access.listenAddress,
 		UserAgent:     userAgent,
 		StaticHandler: web.SPAHandler(distFS),
 	})
@@ -514,7 +531,7 @@ func runGUI(port int, userAgent string, browser string, appPaths appdata.AppPath
 	url := server.URL()
 	fmt.Printf("\n==================================================\n")
 	fmt.Printf(" Clash SpeedTest 桌面控制台已就绪\n")
-	fmt.Printf(" 本地控制台: %s\n", url)
+	fmt.Printf(" 控制台访问地址: %s\n", url)
 	fmt.Printf(" (若浏览器未自动弹出，请直接在浏览器中打开上方链接)\n")
 	fmt.Printf(" (在终端按 Ctrl+C 可停止并退出服务)\n")
 	fmt.Printf("==================================================\n")
@@ -563,14 +580,19 @@ func runGUI(port int, userAgent string, browser string, appPaths appdata.AppPath
 
 type desktopRunners struct {
 	startNative func(desktop.RunConfig) error
-	startWeb    func(int, string, string, appdata.AppPaths, application.Options)
+	startWeb    func(int, string, string, appdata.AppPaths, application.Options, webAccessOptions)
 }
 
 func runDesktop(userAgent string, fallbackPort int, browser string, appPaths appdata.AppPaths, appOptions application.Options) {
-	runDesktopWithRunners(userAgent, fallbackPort, browser, appPaths, appOptions, desktopRunners{desktop.Run, runGUI})
+	runDesktopWithRunners(userAgent, fallbackPort, browser, appPaths, appOptions, webAccessOptionsFromFlags(), desktopRunners{
+		startNative: desktop.Run,
+		startWeb: func(port int, ua, preferredBrowser string, paths appdata.AppPaths, options application.Options, access webAccessOptions) {
+			runGUIWithAccess(port, ua, preferredBrowser, paths, options, access)
+		},
+	})
 }
 
-func runDesktopWithRunners(userAgent string, fallbackPort int, browser string, appPaths appdata.AppPaths, appOptions application.Options, runners desktopRunners) {
+func runDesktopWithRunners(userAgent string, fallbackPort int, browser string, appPaths appdata.AppPaths, appOptions application.Options, access webAccessOptions, runners desktopRunners) {
 	profiles.EnableUTF8Console()
 	cfg := desktop.RunConfig{
 		AppPaths:   appPaths,
@@ -580,7 +602,9 @@ func runDesktopWithRunners(userAgent string, fallbackPort int, browser string, a
 	}
 	err := runners.startNative(cfg)
 	if err != nil {
-		fmt.Printf("启动 Wails 原生桌面窗口失败 (%v)，正在自动降级至 Web 模式...\n", err)
-		runners.startWeb(fallbackPort, userAgent, browser, appPaths, appOptions)
+		fmt.Printf("启动 Wails 原生桌面窗口失败 (%v)，正在自动降级至仅本机 Web 模式...\n", err)
+		access.listenAddress = "127.0.0.1"
+		access.publicIPv6 = ""
+		runners.startWeb(fallbackPort, userAgent, browser, appPaths, appOptions, access)
 	}
 }

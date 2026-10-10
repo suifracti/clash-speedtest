@@ -38,6 +38,8 @@ CGO_ENABLED=1 go build -buildvcs=false -o ./build/bin/clash-speedtest .
 
 打开 <http://127.0.0.1:18474/>。也可在完成前端构建后用 `bash ./run-web.sh`，并传入相同的 `--data-dir` 等参数。不要对同一数据目录同时启动两个服务。端口已占用时先确认现有进程；正常退出用 Ctrl+C，已有系统托管进程的停启方式以本机恢复说明为准。
 
+Web 默认只绑定 `127.0.0.1`，本机使用无需密码。远程访问必须绑定一个明确的本机 IPv4/IPv6 地址，并提供至少 12 个字符的 `--web-password`（或设置 `CLASH_SPEEDTEST_WEB_PASSWORD`）；`0.0.0.0`、`::` 等通配监听会被拒绝。`--public-ipv6 <全局 IPv6 地址>` 会绑定到该地址，也要求密码；若同时指定另一个远程 `--listen` 地址，启动会失败。远程 Web 使用 HTTP，不加密传输密码或会话；只在可信网络中使用，或让受 TLS 保护的代理／隧道转发到回环监听。Wails 原生窗口失败时会自动退回 `127.0.0.1`，不会继承远程监听地址或 `--public-ipv6`。升级时检查启动脚本：依赖旧的默认通配监听或显式通配地址的部署需要改为具体接口地址和强密码。
+
 前端生产资源通过 Go 嵌入，修改前端后须重新构建前端和服务。`prepare-legacy-assets.mjs` 只准备历史 GUI 包编译所需的三个资源，不替换当前界面；完整 Git 历史包含所需对象，浅克隆缺对象时见 [原迁移资源说明](docs/migration-extras.md)。原 CLI 仍保留，参数请查看 `./build/bin/clash-speedtest -h`；旧 CLI 和 Web 检测路径的结论不能混为同一方法。
 
 数据目录必须明确：`--data-dir <绝对路径>` 优先于 `CLASH_SPEEDTEST_DATA_DIR`，默认路径会随平台和启动方式变化。显式目录是一套独立数据，不会自动合并其他目录的订阅或历史。`--no-auto-credentials` 关闭自动凭据发现；需要鉴权的检测应通过正常登录流程处理，不复制令牌。

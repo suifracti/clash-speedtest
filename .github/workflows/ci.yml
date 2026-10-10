@@ -43,6 +43,7 @@ jobs:
         run: |
           cd frontend
           npm ci
+          npm test
           npm run build
 
       - name: Run Go Unit Tests
@@ -132,4 +133,11 @@ jobs:
 
       - name: Verify macOS App Bundle Exists
         run: |
-          test -d "build/bin/Clash SpeedTest Pro.app" || test -d "build/bin/clash-speedtest.app" || ls -la build/bin/
+          if [ -d "build/bin/Clash SpeedTest Pro.app" ]; then
+            echo "Found build/bin/Clash SpeedTest Pro.app"
+          elif [ -d "build/bin/clash-speedtest.app" ]; then
+            echo "Found build/bin/clash-speedtest.app"
+          else
+            echo "macOS app bundle was not produced" >&2
+            exit 1
+          fi
