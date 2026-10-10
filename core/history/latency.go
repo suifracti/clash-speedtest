@@ -1,11 +1,15 @@
 package history
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // LatencyTest is one user-triggered, single-node latency test. It is separate
 // from monitor runs because it represents an on-demand workbench action, not a
 // scheduler tick.
 type LatencyTest struct {
+	NetworkPath       json.RawMessage     `json:"network_path,omitempty"`
 	AttemptID         string              `json:"attempt_id"`
 	ProfileID         string              `json:"profile_id"`
 	NodeKey           string              `json:"node_key"`

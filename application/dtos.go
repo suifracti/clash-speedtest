@@ -1,6 +1,7 @@
 package application
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/faceair/clash-speedtest/core/history"
@@ -210,6 +211,7 @@ type WorkbenchLatencySampleDTO struct {
 // PersistenceState is independent from the test Status so a valid result can
 // still be shown when the history transaction fails.
 type WorkbenchLatencyTestDTO struct {
+	NetworkPath       json.RawMessage             `json:"network_path,omitempty"`
 	AttemptID         string                      `json:"attempt_id"`
 	ProfileID         string                      `json:"profile_id"`
 	NodeKey           string                      `json:"node_key"`

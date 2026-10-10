@@ -168,7 +168,7 @@ it('does not attach another node configuration list when revision reads arrive o
 
 it('keeps the last selected batch and does not reopen a closed record after save completes',async()=>{
   const first:LatencyBatch={batch_id:'batch-a',request_id:'a',target_id:'cloudflare',state:'completed',requested_at:'2026-10-04T00:00:00Z',item_count:1}
-  const second:LatencyBatch={...first,batch_id:'batch-b',request_id:'b',items:[{...node,item_id:'item-b',batch_id:'batch-b',execution_state:'completed',persistence_state:'failed',persistence_error:'save unavailable'}]}
+  const second:LatencyBatch={...first,batch_id:'batch-b',request_id:'b',items:[{...node,item_id:'item-b',batch_id:'batch-b',execution_state:'completed',persistence_state:'failed',persistence_error:'save unavailable',result:{...node,attempt_id:'staged',display_name:node.display_name,node_type:'ss',requested_at:first.requested_at,finished_at:first.requested_at,status:'completed',latency_ms:10,total_samples:1,success_samples:1,failure_samples:0,samples:[],persistence_state:'failed'}}]}
   const old=deferred<LatencyBatch>(),saved=deferred<LatencyBatch>()
   vi.mocked(api.batches).mockResolvedValue([first,second]);vi.mocked(api.batch).mockImplementation(id=>id==='batch-a'?old.promise:Promise.resolve(second));vi.mocked(api.retryBatch).mockReturnValueOnce(saved.promise)
   wrapper=mount(HistoryView,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()

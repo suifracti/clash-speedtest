@@ -2,6 +2,8 @@ package speedtester
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -345,7 +347,8 @@ func deduplicateProxiesByServerPort(proxies map[string]*CProxy) map[string]*CPro
 	deduplicated := make(map[string]*CProxy, len(proxies))
 	seen := make(map[string]struct{}, len(proxies))
 	// Pick the same alias on every read; map iteration must not change a node's
-	// displayed name, country or configuration selected for the endpoint.
+	// displayed name or country. Only identical full configs are aliases;
+	// credentials, transport and TLS policies sharing an endpoint stay separate.
 	names := make([]string, 0, len(proxies))
 	for name := range proxies {
 		names = append(names, name)
@@ -382,7 +385,49 @@ func buildProxyServerPortKey(proxy *CProxy) (string, bool) {
 	if port == "" {
 		return "", false
 	}
-	return fmt.Sprintf("%s:%s", server, port), true
+	config := make(map[string]any, len(proxy.Config))
+	for k, v := range proxy.Config {
+		if k != "name" {
+			config[k] = v
+		}
+	}
+	config["server"], config["port"] = server, port
+	// Sharing-link conversion generates a random WS User-Agent on each read.
+	// Ignore only that generated value for alias identity; explicit YAML headers
+	// and all actual runtime headers remain untouched.
+	if proxy.Config["_cst_generated_ws_ua"] == true {
+		if opts, ok := config["ws-opts"].(map[string]any); ok {
+			cloned := make(map[string]any, len(opts))
+			for k, v := range opts {
+				cloned[k] = v
+			}
+			if headers, ok := opts["headers"].(map[string]string); ok {
+				h := make(map[string]string, len(headers))
+				for k, v := range headers {
+					if !strings.EqualFold(k, "User-Agent") {
+						h[k] = v
+					}
+				}
+				cloned["headers"] = h
+			}
+			if headers, ok := opts["headers"].(map[string]any); ok {
+				h := make(map[string]any, len(headers))
+				for k, v := range headers {
+					if !strings.EqualFold(k, "User-Agent") {
+						h[k] = v
+					}
+				}
+				cloned["headers"] = h
+			}
+			config["ws-opts"] = cloned
+		}
+	}
+	serialized, err := json.Marshal(config)
+	if err != nil {
+		return "", false
+	}
+	digest := sha256.Sum256(serialized)
+	return fmt.Sprintf("%x", digest), true
 }
 
 func (st *SpeedTester) TestSingle(name string, proxy *CProxy, emit func(*Result) bool) *Result {
@@ -889,6 +934,8 @@ func (st *SpeedTester) testLatencyWithClientContext(ctx context.Context, client 
 	samples := make([]LatencySample, 0, pingCount)
 	failedPings := 0
 	probeURLs := LatencyProbeURLs(st.probeURL())
+	probeClient := *client
+	probeClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
 
 rounds:
 	for i := 0; i < pingCount; i++ {
@@ -927,7 +974,7 @@ rounds:
 					sample.Error = err.Error()
 					return
 				}
-				resp, err := client.Do(req)
+				resp, err := probeClient.Do(req)
 				if err != nil {
 					sample.Error = err.Error()
 					return

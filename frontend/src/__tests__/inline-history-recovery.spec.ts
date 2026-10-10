@@ -93,8 +93,8 @@ describe('inline history read recovery',()=>{
     retry.resolve({attempts:[savedAttempt(node,project)],has_more:false,complete:true});await flushPromises()
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
     expect(wrapper.findAll('.overview-series circle')).toHaveLength(1)
-    expect(wrapper.find('.overview-svg text').text()).toBe(project==='download'?'MiB/s':'状态')
-    if(project==='service'){expect(wrapper.find('.inline-service-row').text()).toContain('已解锁');expect(wrapper.findAll('.health-cell.has-record')).toHaveLength(1)}
+    expect(wrapper.find('.overview-svg text').text()).toBe(project==='download'?'MiB/s':'本轮通过比例')
+    if(project==='service'){expect(wrapper.find('.inline-service-row').text()).toContain('解锁规则通过');expect(wrapper.findAll('.health-cell.has-record')).toHaveLength(1)}
     expect(w.selectedKeys.value).toEqual([key(node)]);expect(w.serviceIds.value).toEqual(['service-a'])
     w.dispose()
   })
@@ -105,9 +105,9 @@ describe('inline history read recovery',()=>{
     await wrapper.setProps({project:'service'});await flushPromises()
     oldRead.reject(new Error('late download failure'));await flushPromises()
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
-    expect(wrapper.find('.overview-svg text').text()).toBe('状态')
+    expect(wrapper.find('.overview-svg text').text()).toBe('本轮通过比例')
     expect(wrapper.findAll('.overview-series circle')).toHaveLength(1)
-    expect(wrapper.find('.inline-service-row').text()).toContain('已解锁')
+    expect(wrapper.find('.inline-service-row').text()).toContain('解锁规则通过')
     w.dispose()
   })
   it('does not replace the current node curve when an earlier node read arrives late',async()=>{
@@ -140,12 +140,12 @@ describe('inline history read recovery',()=>{
     const svg=wrapper.find('.overview-svg').element as SVGElement
     svg.getBoundingClientRect=()=>({left:0,top:0,right:960,bottom:300,width:960,height:300,x:0,y:0,toJSON(){return {}}})
     const move=new Event('pointermove',{bubbles:true});Object.assign(move,{clientX:495,clientY:35});svg.dispatchEvent(move);await flushPromises()
-    expect(wrapper.find('.overview-readout').text()).toContain('已解锁')
+    expect(wrapper.find('.overview-readout').text()).toContain('解锁规则通过')
 
     await wrapper.find('.inline-history-tools select').setValue('service-b')
     history.resolve({attempts:[first,second],has_more:false,complete:true});await flushPromises()
     expect(wrapper.findAll('.overview-failure')).toHaveLength(1)
-    expect(wrapper.find('.overview-readout').text()).not.toContain('已解锁')
+    expect(wrapper.find('.overview-readout').text()).not.toContain('解锁规则通过')
     expect(wrapper.find('.overview-guide').exists()).toBe(false)
     expect(w.serviceIds.value).toEqual(['service-a'])
     w.dispose()

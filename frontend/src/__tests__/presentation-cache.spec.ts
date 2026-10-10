@@ -44,7 +44,8 @@ describe('bounded reactive presentation cache',()=>{
   expect(c.points(a,'service','cloudflare','one')[0].samples?.[0].label).toBe('服务一')
   w.catalog.value[0].name='更新名称';expect(c.points(a,'service','cloudflare','one')[0].samples?.[0].label).toBe('更新名称')
   const item=w.measurementRounds.value[key(a)][0].items[0];item.service={...download('one'),service_id:'one',rule:{name:'服务一',target_url:'https://example.com'},result:{outcome:'reachable',bytes_read:0,finished_at:at}};item.execution_state='completed';item.persistence_state='saved'
-  expect(c.points(a,'service','cloudflare','one')[0].value).toBe(1)
+  // HTTP reachability alone does not establish business failure or success.
+  expect(c.points(a,'service','cloudflare','one')[0].value).toBeNull()
   item.service.persistence_state='failed';item.persistence_state='failed'
   expect(c.points(a,'service','cloudflare','one')[0].tone).toBe('warn');expect(c.points(a,'service','cloudflare','one')[0].description).toContain('保存失败 1')
   expect(c.points(a,'service','cloudflare','missing')).toEqual([]);c.clear()
@@ -71,4 +72,18 @@ describe('bounded reactive presentation cache',()=>{
   for(let i=0;i<60;i++)c.points(a,'service','cloudflare','service-'+i)
   const evicted=c.points(a,'download');expect(evicted).not.toBe(next);expect(evicted[0].value).toBe(10);c.clear()
  })
+ it('reads every station from separate latency results in one durable round, retaining real sample time',()=>{
+  const w=fixture(),c=cache(w);const cf=latency('cf',80);cf.samples=cf.samples.slice(0,1)
+  const google=latency('google',900);google.samples=google.samples.slice(1);google.finished_at='2026-10-01T00:01:00Z';google.samples[0].timestamp=google.finished_at
+  w.latency.value[key(a)]=[google,cf]
+  w.measurementRounds.value[key(a)]=[{round_id:'bounded',trigger_type:'manual',started_at:at,state:'running',items:[cf,google].map(t=>({...a,request_id:t.attempt_id,project:'latency',execution_state:'completed',persistence_state:'saved',latency:t}))}]
+  expect(c.site(a,'google')[0].value).toBe(900)
+  expect(c.site(a,'google')[0].time).toBe(google.samples[0].timestamp)
+  expect(c.site(a,'cloudflare')[0].value).toBe(80)
+  expect(c.site(a,'apple')[0].value).toBeNull()
+  expect(c.site(a,'all')[0].value).toBe(490)
+  expect(c.site(a,'all')[0].latencyTests).toHaveLength(2)
+  c.clear()
+ })
+
 })

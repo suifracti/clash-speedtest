@@ -87,7 +87,8 @@ describe('one health column per round',()=>{
     expect(w.latestService(node,'netflix')?.attempt_id).toBe('netflix-new-failure')
     expect(w.latestService(node,'youtube')?.attempt_id).toBe('youtube-pending')
     expect(w.latestService(node,'apple')).toBeUndefined()
-    expect(serviceSummary(w,node,w.displayServiceIds.value)).toEqual({passed:0,measured:1,total:2})
+    // Transport failure and queued evidence do not establish business rejection.
+    expect(serviceSummary(w,node,w.displayServiceIds.value)).toEqual({passed:0,measured:0,total:0})
     expect(points(w,node,'service',undefined,'youtube').map(p=>p.id)).toEqual(['y','youtube-pending'])
     w.catalog.value=w.catalog.value.filter(rule=>rule.service_id!=='youtube')
     expect(w.displayServiceIds.value).toEqual(['netflix'])
