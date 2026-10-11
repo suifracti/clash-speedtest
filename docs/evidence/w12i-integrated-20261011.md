@@ -48,3 +48,14 @@ This integration does not add a new SQLite schema, exercise production data, upd
 - #50 now gates recognized v11 before v12 DDL with a verified WAL-aware backup. Synthetic Unix validation and Windows safe refusal do not authorize production-data startup, real upgrades, power-loss recovery or Windows successful upgrades.
 - W06's local DNS RCODE/AAAA tests are not real IPv6 physical-interface or TUN routing verification. Real OS file dialogs and actual 1440×900/800px Wails windows are still unverified.
 - All original 8 PRs and `main` must remain unchanged and unmerged. This branch exists solely for CI and review, under W12i #46 user authorization.
+
+
+## Partial W08 integration and six-site UI (2026-10-11)
+
+Per rewritten Issue #32 and user authorization, development proceeds independently of PR #58. Baseline `3f3f8e19907046a471088ef2b1a749d099ac2091` retains twelve packages. Source #56 `043eb093ce6b82528390f83dfd38d193ed94dda2` maps to `e01edbe`, `06a4f5b`, `43f6cbe`; #57 `199032e86db092471b748a31bfae736cf5833085` maps to `dab52d8`. Source files match locked source blobs exactly. PR #58 is not included in this increment; its alert-summary revision requires author delivery and Luna B review.
+
+Integration UI additions: HomeView wiring, SiteQuality.vue, siteQualityView.ts, three focused comparison/render tests and one mounted Home regression. Existing qualityData/window/identity/cache are reused. Expand per-node evidence to read saved records on demand; selecting sorting/filtering reads the fixed full scope. No measurement is dispatched. The entire filtered set must meet same target, URL/method/exit/family/window and metric gates before ranking; otherwise preserve original order and show non-comparability reasons. P50/rate require >=5 successful observations, P95 >=20. Old RTT remains diagnostic; no composite score. Original matrix/history hover/fix/download/service and source theme CSS remain.
+
+Fresh local frontend: 35 test files, 254 tests PASS, vue-tsc/Vite build PASS. New tests had three expected RED failures before minimal implementation. First adjacent DOM regression identified eager detailed-view history reads; fixed to on-demand and original four selection DOM tests now PASS. First build found a local name collision with existing siteReason; renamed import, build now PASS. No skip or timeout changes. Initial harness missing modules and one wrong script cwd were corrected; they are not product failures.
+
+Synthetic actual Vue Home/SiteQuality browser rendering at 1440x900 and 800x900, light/dark: no document overflow or page errors. Only isolated bridge saved-history reads; no refresh/start/monitor calls, no external request. Screenshots are synthetic browser evidence, not Wails or real-data acceptance. Final exact SHA/tree and full cross-platform CI are reported separately in Issue #46. Windows successful v11 upgrade remains blocked; real App, network, data and native acceptance remain outside authorization.

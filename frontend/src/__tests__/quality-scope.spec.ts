@@ -27,6 +27,25 @@ function evidence(node:NodeOption,value:number,complete=true):QualityEvidence{
 beforeEach(()=>{localStorageItems.clear();localStorageItems.set('speedtest-home-view','quick');window.sessionStorage.clear();vi.clearAllMocks();HTMLDialogElement.prototype.showModal=vi.fn();HTMLDialogElement.prototype.close=vi.fn();vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}})})
 afterEach(()=>{wrapper?.unmount();w?.dispose();wrapper=undefined;w=undefined;document.body.innerHTML='';vi.unstubAllGlobals()})
 
+it('wires six-site controls to saved evidence, preserves original history and refuses mixed-family ranking',async()=>{
+ localStorageItems.set('speedtest-home-view','detailed')
+ readQualityMock.mockImplementation(async(node:NodeOption)=>{const e=evidence(node,node.node_key==='b-1'?40:20);e.since='2026-10-09T00:00:00Z';e.until=at;return e})
+ w=createWorkspace();w.airports.value=[{id:'airport-b',name:'机场 B',url_display:'',node_count:2,has_cache:true,subscriptions:[{id:'sub-b',airport_id:'airport-b',name:'默认',url_display:'',url_configured:true,node_count:2,has_cache:true}]}];w.nodes.value=fresh.slice(0,2);w.setAirports(['airport-b'])
+ wrapper=mount(HomeView,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
+ await wrapper.get('select[aria-label="六站质量排序"]').setValue('p50');await flushPromises()
+ expect(wrapper.findAll('.node-name strong').map(n=>n.text())).toEqual(['香港 · 02','香港 · 01'])
+ expect(wrapper.text()).toContain('当前集合同站 / 同条件 / 同窗口，可比较')
+ expect(wrapper.findAll('.site-quality')).toHaveLength(2)
+ await wrapper.findAll('button[aria-label="查看 Cloudflare 原始历史"]')[0].trigger('click');await flushPromises()
+ expect(wrapper.get('.inline-panel-header').text()).toContain('已固定')
+ const changed=evidence(fresh[1],20);changed.since='2026-10-09T00:00:00Z';changed.until=at;changed.tests[0].network_path={...changed.tests[0].network_path!,address_family:'IPv6',address_source:'AAAA'}
+ readQualityMock.mockImplementation(async(node:NodeOption)=>node.node_key==='b-2'?changed:Object.assign(evidence(node,40),{since:'2026-10-09T00:00:00Z',until:at}))
+ await wrapper.findAll('button').find(b=>b.text()==='更新已保存证据')!.trigger('click');await flushPromises()
+ expect(wrapper.findAll('.node-name strong').map(n=>n.text())).toEqual(['香港 · 01','香港 · 02'])
+ expect(wrapper.text()).toContain('不可比较：保留原序')
+ expect(api.startLatency).not.toHaveBeenCalled();expect(api.startAttempt).not.toHaveBeenCalled()
+})
+
 it('loads and sorts the full new node scope, then ignores a late result from the previous scope',async()=>{
  let resolveStale!:(value:QualityEvidence)=>void
  const staleResult=new Promise<QualityEvidence>(resolve=>resolveStale=resolve)

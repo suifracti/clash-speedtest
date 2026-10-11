@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import QualityMetrics from './QualityMetrics.vue'
-import {readQuality,qualityGroups,downloadEvidence,latencyReadComplete,qualityMatchesGate,type QualityEvidence} from '../nodeQuality'
+import SiteQuality from './SiteQuality.vue'
+import {sortSiteRows,siteReason as qualityReason} from '../siteQualityView'
+import {readQuality,multiSiteQuality,qualityGroups,downloadEvidence,latencyReadComplete,qualityMatchesGate,type QualityEvidence,type SiteQualityMetric} from '../nodeQuality'
 import {mapLimited} from '../api'
 import {latencyTargetId} from '../latencyTargets'
 import {downloadGroup,latencyComparisonGroup,servicePassed,serviceExecuted,serviceComparisonGroup} from '../sharedResults'
@@ -29,6 +31,9 @@ function closeExtraFilters(){if(!extraFiltersOpen.value)return;extraFiltersOpen.
 const qualityView=ref(window.localStorage.getItem('speedtest-home-view')!=='detailed'),qualityHistory=ref(false),compareOpen=ref(false),qualityGate=ref('all'),qualitySort=ref('existing'),protocolFilter=ref('all')
 const qualityData=ref<Record<string,QualityEvidence>>({}),qualityErrors=ref<Record<string,string>>({}),qualityLoading=ref(false),qualityCutoff=ref(new Date().toISOString())
 let qualityGeneration=0
+const siteTarget=ref('cloudflare'),siteSort=ref<SiteQualityMetric|'existing'>('existing'),siteGate=ref('all')
+const siteSummaries=computed(()=>Object.fromEntries(w.proxyNodes.value.flatMap(n=>{const e=qualityData.value[key(n)];return e?[[key(n),multiSiteQuality(n,e)]]:[]})))
+const selectedSite=(n:NodeOption)=>siteSummaries.value[key(n)]?.find(s=>s.targetId===siteTarget.value)
 const qualityInflight=new Map<string,Promise<void>>()
 const qualityCompareNodes=computed(()=>w.selectedNodes.value)
 function changeView(quick:boolean){qualityView.value=quick;window.localStorage.setItem('speedtest-home-view',quick?'quick':'detailed');closeHover()}
@@ -59,14 +64,22 @@ let monitorGeneration=0,hoverTimer:ReturnType<typeof setTimeout>|undefined,monit
 const qualitySummaries=computed(()=>Object.fromEntries(Object.entries(qualityData.value).map(([id,e])=>[id,qualityGroups(e.tests,e.monitor,w.displayTarget.value)[0]])))
 const allQualityReady=computed(()=>w.proxyNodes.value.every(n=>qualityData.value[key(n)]||qualityErrors.value[key(n)]))
 const qualityScopeKey=computed(()=>JSON.stringify(w.proxyNodes.value.map(key).sort()))
-const qualityFiltersPending=computed(()=>qualityView.value&&qualityGate.value!=='all'&&!allQualityReady.value)
-const visibleNodes=computed(()=>{let list=w.filteredNodes.value;if(!qualityView.value)return list;list=list.filter(n=>protocolFilter.value==='all'||n.type===protocolFilter.value)
+const qualityFiltersPending=computed(()=>(qualityView.value?qualityGate.value!=='all':siteGate.value!=='all'||siteSort.value!=='existing')&&!allQualityReady.value)
+const siteRows=computed(()=>{
+ let list=w.filteredNodes.value
+ if(allQualityReady.value&&siteGate.value!=='all')list=list.filter(n=>{const s=selectedSite(n);return !!s&&(siteGate.value==='rankable'?s.rankable[siteSort.value==='existing'?'p50':siteSort.value]:siteGate.value==='fresh'?s.gates.fresh:siteGate.value==='response'?s.gates.response:s.gates.samples)})
+ return list.map(node=>({node,summary:selectedSite(node)}))
+})
+const siteSortResult=computed(()=>sortSiteRows(siteRows.value,siteSort.value==='existing'?'p50':siteSort.value))
+const visibleNodes=computed(()=>{let list=w.filteredNodes.value;if(!qualityView.value)return (siteSort.value!=='existing'&&allQualityReady.value?siteSortResult.value.rows:siteRows.value).map(r=>r.node);list=list.filter(n=>protocolFilter.value==='all'||n.type===protocolFilter.value)
  if(qualityGate.value!=='all'&&allQualityReady.value)list=list.filter(n=>qualityMatchesGate(qualityData.value[key(n)],qualitySummaries.value[key(n)],qualityGate.value,qualityCutoff.value))
  if(qualitySort.value!=='existing'&&allQualityReady.value)list=[...list].sort((a,b)=>{const ga=qualitySummaries.value[key(a)],gb=qualitySummaries.value[key(b)],ea=qualityData.value[key(a)],eb=qualityData.value[key(b)];const valid=(g:typeof ga,e:QualityEvidence|undefined)=>!!g&&!!e&&latencyReadComplete(e,g)&&g.comparable&&!g.insufficient&&(qualitySort.value!=='p95'||g.success>=20);const av=valid(ga,ea),bv=valid(gb,eb);if(av!==bv)return av?-1:1;if(!av)return 0;const group=ga.key.localeCompare(gb.key);if(group)return group;return qualitySort.value==='rate'?(gb.successRate||0)-(ga.successRate||0):(qualitySort.value==='p95'?ga.p95! -gb.p95!:ga.p50! -gb.p50!)})
  return list})
 const protocolChoices=computed(()=>[...new Set(w.proxyNodes.value.map(n=>n.type))].sort())
 watch([qualityGate,qualitySort],()=>{currentPage.value=1;if(qualityGate.value!=='all'||qualitySort.value!=='existing')void readQualityNodes(w.proxyNodes.value)})
 watch(protocolFilter,()=>currentPage.value=1)
+watch([siteTarget,siteSort,siteGate],()=>{currentPage.value=1;closeHover();if(siteSort.value!=='existing'||siteGate.value!=='all')void readQualityNodes(w.proxyNodes.value)})
+function openSiteHistory(n:NodeOption,target:string){openNodeHistory(n);hoverMode.value='latency';hoverTarget.value=target;activeRound.value=null}
 const pageSize=20,chosen=computed(()=>w.airports.value.filter(a=>w.selectedAirportIds.value?.includes(a.id))),totalPages=computed(()=>Math.max(1,Math.ceil(visibleNodes.value.length/pageSize))),pageNodes=computed(()=>visibleNodes.value.slice((currentPage.value-1)*pageSize,currentPage.value*pageSize)),profiles=computed(()=>[...new Map(w.sourceNodes.value.map(n=>[n.profile_id,n.profile_name])).entries()]),allSelected=computed(()=>pageNodes.value.length>0&&pageNodes.value.every(n=>w.selectedKeys.value.includes(key(n)))),selectedServices=computed(()=>w.catalog.value.filter(r=>w.serviceIds.value.includes(r.service_id)))
 const hoverTarget=ref(w.displayTarget.value),hoverService=ref(''),servicePage=ref(1),servicesPerPage=3
 const inlineHistorySource=computed(()=>activeRound.value?.source||(hoverNode.value&&(hoverMode.value==='latency'&&hoverTarget.value==='cloudflare'&&presentation.monitor(hoverNode.value,hoverTarget.value).length&&!presentation.points(hoverNode.value,'latency','cloudflare').some(p=>p.tone!=='empty')||hoverMode.value==='service'&&httpPoints(hoverNode.value).length&&!presentation.services(hoverNode.value,visibleServiceIds.value).length)?'monitor':'manual'))
@@ -147,12 +160,12 @@ watch([()=>w.search.value,()=>w.region.value,()=>w.subscription.value,()=>w.airp
 watch(()=>w.hours.value,()=>{presentation.clear();monitorGeneration++;monitorData.value={};monitorErrors.value={};monitorHTTPData.value={};monitorHTTPErrors.value={}});watch(totalPages,count=>currentPage.value=Math.min(currentPage.value,count))
 watch([pageNodes,qualityView,qualityScopeKey],([nodes,quick,scope],[,,previousScope])=>{
  if(previousScope!==undefined&&scope!==previousScope){qualityGeneration++;qualityData.value={};qualityErrors.value={};qualityLoading.value=false
-  if(quick&&w.page.value==='home')void readQualityNodes(qualityGate.value!=='all'||qualitySort.value!=='existing'?w.proxyNodes.value:nodes)
+  if((quick||siteSort.value!=='existing'||siteGate.value!=='all')&&w.page.value==='home')void readQualityNodes((quick?(qualityGate.value!=='all'||qualitySort.value!=='existing'):(siteSort.value!=='existing'||siteGate.value!=='all'))?w.proxyNodes.value:nodes)
   return
  }
- if(quick&&w.page.value==='home')void readQualityNodes(nodes)
+ if((quick||siteSort.value!=='existing'||siteGate.value!=='all')&&w.page.value==='home')void readQualityNodes(nodes)
 },{immediate:true})
-watch(()=>w.hours.value,()=>{if(qualityView.value)void readQualityNodes(qualityGate.value!=='all'||qualitySort.value!=='existing'?w.proxyNodes.value:pageNodes.value,true);else{qualityGeneration++;qualityData.value={};qualityErrors.value={};qualityCutoff.value=new Date().toISOString()}})
+watch(()=>w.hours.value,()=>{if(qualityView.value||siteSort.value!=='existing'||siteGate.value!=='all')void readQualityNodes((qualityView.value?(qualityGate.value!=='all'||qualitySort.value!=='existing'):(siteSort.value!=='existing'||siteGate.value!=='all'))?w.proxyNodes.value:pageNodes.value,true);else{qualityGeneration++;qualityData.value={};qualityErrors.value={};qualityCutoff.value=new Date().toISOString()}})
 watch([pageNodes,()=>w.project.value,()=>w.hours.value],()=>{if(w.page.value==='home'){void w.ensureHistory(pageNodes.value);void readMonitor()}},{immediate:true})
 watch(()=>w.page.value,p=>{if(p==='home'){void w.ensureHistory(pageNodes.value);void readMonitor()}else{closeHover();presentation.clear()}})
 watch(()=>w.serviceIds.value,closeHover,{deep:true})
@@ -203,6 +216,13 @@ onMounted(()=>monitorTimer=setInterval(()=>{if(w.page.value==='home'&&document.v
     <div v-if="qualityView" id="home-extra-filters" class="quality-context"><span>统计截止 {{date(qualityCutoff)}} · 每节点读取完整窗口，按条件分组 · 无综合评分</span><UiSelect v-model="protocolFilter" aria-label="协议筛选"><option value="all">全部协议</option><option v-for="p in protocolChoices" :key="p" :value="p">{{p}}</option></UiSelect><UiSelect v-model="qualityGate" aria-label="质量证据筛选"><option value="all">全部证据状态</option><option value="samples">成功样本 ≥5</option><option value="response">样本 ≥5 / 响应率 ≥90%</option><option value="fresh">24 小时内有样本</option><option value="download">有历史有效下载</option><option value="service">最近服务规则通过（任一）</option></UiSelect><UiSelect v-model="qualitySort" aria-label="质量分组排序"><option value="existing">沿用节点排序</option><option value="p50">同条件组 P50 升序</option><option value="p95">同条件组 P95 升序（≥20）</option><option value="rate">同条件组响应率降序</option></UiSelect><label><input v-model="qualityHistory" type="checkbox">显示历史条</label><button class="text-button" :disabled="qualityLoading" @click="readQualityNodes(qualityGate!=='all'||qualitySort!=='existing'?w.proxyNodes.value:pageNodes,true)">{{qualityLoading?'读取中…':'更新质量记录'}}</button></div>
     <div v-if="qualityView" class="quality-compare-action"><button class="button" :disabled="w.selectedNodes.value.length<2" @click="openComparison">比较已选 {{w.selectedNodes.value.length}} 个节点</button></div>
     <p v-if="qualityView&&(qualityGate!=='all'||qualitySort!=='existing')" class="small muted" role="status">{{allQualityReady?`已读固定范围 ${w.proxyNodes.value.length} 个节点 · 当前符合 ${visibleNodes.length} 个 · 读取失败 ${Object.keys(qualityErrors).length} 个 · 存在缺页/读取错误 ${Object.values(qualityData).filter(e=>!e.complete).length} 个（只限制对应类型的证据）`:`正在读取全部 ${w.proxyNodes.value.length} 个节点的保存历史（已读 ${Object.keys(qualityData).length}）；读取完成后应用条件筛选与分组排序`}}。规则通过仍须下钻确认具体业务判据。</p>
+    <div v-if="!qualityView" class="six-site-controls">
+      <label>逐站质量目标<UiSelect v-model="siteTarget" aria-label="六站质量目标"><option v-for="site in targets" :key="site.id" :value="site.id">{{site.name}}</option></UiSelect></label>
+      <label>证据筛选<UiSelect v-model="siteGate" aria-label="六站证据筛选"><option value="all">保留全部状态</option><option value="samples">成功样本 ≥5</option><option value="response">样本 ≥5 / 响应率 ≥90%</option><option value="fresh">24h 内有样本</option><option value="rankable">所选指标可排名</option></UiSelect></label>
+      <label>同条件排序<UiSelect v-model="siteSort" aria-label="六站质量排序"><option value="existing">保留原节点排序</option><option value="p50">P50 升序（≥5）</option><option value="p95">P95 升序（≥20）</option><option value="rate">响应率降序（≥5）</option></UiSelect></label>
+      <button class="text-button" :disabled="qualityLoading" @click="readQualityNodes(siteSort!=='existing'||siteGate!=='all'?w.proxyNodes.value:pageNodes,true)">更新已保存证据</button>
+      <p v-if="siteSort!=='existing'||siteGate!=='all'" role="status">{{!allQualityReady?'读取全部固定范围历史中；完成前保留原序':siteSort==='existing'?'已按所选站点证据筛选':siteSortResult.comparable?'当前集合同站 / 同条件 / 同窗口，可比较':'不可比较：保留原序 · '+siteSortResult.reasons.map(qualityReason).join(' · ')}} · {{visibleNodes.length}} 个节点</p>
+    </div>
     <div v-if="w.multiSelect.value" class="selection-bar" aria-live="polite"><div class="selection-info"><input type="checkbox" :checked="allSelected" :indeterminate="!allSelected&&pageNodes.some(n=>w.selectedKeys.value.includes(key(n)))" aria-label="选择本页全部节点" @change="w.toggleAll(pageNodes)"><strong>已选 {{w.selectedNodes.value.length}} 个节点</strong><button class="text-button" :disabled="qualityFiltersPending" @click="w.toggleAll(visibleNodes)">{{visibleNodes.length&&visibleNodes.every(n=>w.selectedKeys.value.includes(key(n)))?'取消范围选择':'全选筛选范围'}}</button><button v-if="w.selectedKeys.value.length" class="text-button" @click="w.selectedKeys.value=[]">清空已选</button></div><div class="selection-actions"><button class="button primary" :disabled="!w.selectedNodes.value.length||w.busy.value" @click="w.openPlan()"><Icon name="play"/>{{w.project.value==='combined'?'组合检测':projectNames[w.project.value]}}</button><button class="button" :disabled="!w.selectedNodes.value.length" @click="w.monitorNodes.value=w.selectedNodes.value.map(n=>({...n}))"><Icon name="monitor"/>持续监测延迟</button><button class="button ghost" :disabled="!w.selectedNodes.value.length" @click="w.exportSelection().catch(w.fail)">导出</button></div></div>
     <div v-if="w.busy.value" class="live-status"><span class="spinner"/><span>检测正在进行{{w.queue.value.length?` · ${w.done.value}/${w.queue.value.length}`:''}}</span><button class="text-button" @click="w.queueOpen.value=true">查看进度</button><button class="text-button danger" @click="w.cancelTests()">{{w.cancelRequested.value?'正在取消…':'取消检测'}}</button></div>
     <div class="node-list">
@@ -231,6 +251,7 @@ onMounted(()=>monitorTimer=setInterval(()=>{if(w.page.value==='home'&&document.v
           <small v-if="monitorErrors[key(node)]" class="bad">监测记录读取失败</small><small v-else><span v-if="monitorData[key(node)]?.length">含持续监测 · 各站独立记录 · </span>{{w.hours.value}} 小时 · {{rowPoints(node,w.project.value).length}} 轮 · 左旧右新</small>
         </div>
         <button class="button row-run" :disabled="w.busy.value" :aria-label="`${runLabel(w.project.value)} ${nodeDisplayName(node)} · ${sourceLabel(node)}`" @click="closeHover();w.openPlan([node])"><Icon name="play"/>{{runLabel(w.project.value)}}</button>
+        <SiteQuality v-if="!qualityView" :summaries="siteSummaries[key(node)]" :error="qualityErrors[key(node)]" @history="openSiteHistory(node,$event)" @load="readQualityNodes([node])"/>
         <section v-if="expanded(node)" :id="nodePanelId(node)" class="node-inline-results" :aria-label="nodeDisplayName(node)+'详情'" @keydown.esc.stop.prevent="closeInline(node)" @mouseenter="keepRound" @mouseleave="leaveRound" @focusin="keepRound">
           <header class="inline-panel-header"><div><strong>{{nodeDisplayName(node)}} · {{projectNames[hoverMode]}}</strong><small>{{sourceLabel(node)}}</small></div><nav class="view-switch" aria-label="节点展开内容"><button :aria-pressed="inlineTab==='round'" :disabled="!activeRound" @click="keepOpen=true;inlineTab='round';keepRound()">本轮数据</button><button :aria-pressed="inlineTab==='history'" @click="expandHistory">完整走势图</button></nav><button class="text-button" :aria-pressed="keepOpen" @click="keepRound();keepOpen=!keepOpen">{{keepOpen?'已固定 · 取消固定':'固定本轮'}}</button><button class="text-button" @click="closeInline(node)">收起</button></header>
           <div v-if="inlineTab==='round'&&activeRound" class="inline-result-columns"><RoundResults v-if="hoverMode==='latency'" :point="activeRound"/><MeasurementResults v-else :point="activeRound" :project="hoverMode"/><div class="inline-history"><p class="small muted">{{hoverMode==='latency'?(activeRound.source==='monitor'?'持续监测 · '+(targets.find(t=>t.id===hoverTarget)?.name||'延迟轮次汇总'):targets.find(t=>t.id===hoverTarget)?.name):hoverMode==='service'?(monitorHTTPServices.find(s=>s.id===hoverService)?.name||w.catalog.value.find(s=>s.service_id===hoverService)?.name||'服务可用性'):'下载速度'}} · 历史走势</p><TrendChart :points="hoverPoints" :unit="hoverMode==='download'?'MiB/s':hoverMode==='service'?'通过':'ms'" label="节点近期走势"/><button class="text-button inline-expand-history" @click="expandHistory">在这里展开完整走势 <Icon name="down"/></button></div></div>
@@ -258,3 +279,7 @@ onMounted(()=>monitorTimer=setInterval(()=>{if(w.page.value==='home'&&document.v
     </Modal>
   </section>
 </template>
+
+<style scoped>
+.six-site-controls{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:12px 0}.six-site-controls label{display:flex;align-items:center;gap:8px;font-size:13px}.six-site-controls p{flex-basis:100%;margin:0;font-size:13px;color:var(--muted)}
+</style>
