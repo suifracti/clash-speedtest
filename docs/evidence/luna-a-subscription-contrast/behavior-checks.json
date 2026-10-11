@@ -1,0 +1,39 @@
+{
+  "evidence": "All operations below use local synthetic bridge stubs; no refresh or monitoring request was sent to a backend.",
+  "checks": [
+    {
+      "name": "800-dark",
+      "job": "failed then retried",
+      "stages": "排队 → 抓取 → 失败",
+      "hoverColor": "rgb(152, 178, 255)",
+      "focusOutline": "solid",
+      "retryCall": {
+        "name": "StartSubscriptionRefreshJob",
+        "args": [
+          {
+            "request_id": "3f3b2dc0-d647-4b9f-8a30-3fbde5cea002",
+            "retry_of": "synthetic-failed-refresh"
+          }
+        ]
+      }
+    },
+    {
+      "name": "800-dark-running",
+      "width": 800,
+      "theme": "dark",
+      "job": "running then cancelled",
+      "stages": "排队 → 抓取 → 已取消",
+      "disabledRefresh": {
+        "disabled": true,
+        "opacity": "0.45"
+      },
+      "focusOutline": "solid",
+      "cancelCall": {
+        "name": "CancelSubscriptionRefreshJob",
+        "args": [
+          "synthetic-running-refresh"
+        ]
+      }
+    }
+  ]
+}
