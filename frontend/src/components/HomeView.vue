@@ -25,7 +25,7 @@ import InlineHistory from './InlineHistory.vue'
 import SiteDisplayPicker from './SiteDisplayPicker.vue'
 import SubscriptionOverview from './SubscriptionOverview.vue'
 import {nodeDisplayName,nodeRegion,nodeRegionLabel} from '../nodePresentation'
-type HomeSubscriptionSummary={refreshState:'loading'|'ready'|'error';noticeCount:number;expiredAccountCount:number;unknownExpiryAccountCount:number;failedItemCount:number;runningItemCount:number;latestFailureAccount?:string}
+type HomeSubscriptionSummary={refreshState:'loading'|'ready'|'error';noticeCount:number;expiredAccountCount:number;unknownExpiryAccountCount:number;failedItemCount:number;interruptedItemCount:number;runningItemCount:number;latestRefreshIssueAccount?:string;latestRefreshIssueState?:'failed'|'interrupted'}
 const w=useWorkspace(),inlineTab=ref<'round'|'history'>('round'),keepOpen=ref(false),picker=ref(false),currentPage=ref(1),hoverNode=ref<NodeOption|null>(null),activeRound=ref<TrendPoint|null>(null),hoverMode=ref<Exclude<Project,'combined'>>('latency'),monitorErrors=ref<Record<string,string>>({}),monitorData=ref<Record<string,import('../domain').MonitorSample[]>>({}),monitorHTTPData=ref<Record<string,import('../domain').MonitorSample[]>>({}),monitorHTTPErrors=ref<Record<string,string>>({})
 const subscriptionSummary=ref<HomeSubscriptionSummary|null>(null)
 function updateSubscriptionSummary(summary:HomeSubscriptionSummary){subscriptionSummary.value=summary}
@@ -90,20 +90,19 @@ const subscriptionSummaryText=computed(()=>{
  if(summary?.expiredAccountCount)parts.push(`已过期账户 ${summary.expiredAccountCount}`)
  if(summary?.unknownExpiryAccountCount)parts.push(`到期信息未知 ${summary.unknownExpiryAccountCount} 个账户`)
  if(summary?.failedItemCount)parts.push(`刷新失败 ${summary.failedItemCount} 项`)
- if(summary?.latestFailureAccount)parts.push(`最近失败：${summary.latestFailureAccount}`)
+ if(summary?.interruptedItemCount)parts.push(`刷新中断 ${summary.interruptedItemCount} 项`)
+ if(summary?.latestRefreshIssueAccount)parts.push(`${summary.latestRefreshIssueState==='interrupted'?'最近中断':'最近失败'}：${summary.latestRefreshIssueAccount}`)
  if(summary?.runningItemCount)parts.push(`刷新中 ${summary.runningItemCount} 项`)
- if(w.error.value)parts.push('订阅状态未知 · 展开查看')
- else if(w.loading.value)parts.push('订阅状态读取中…')
- else if(!chosen.value.length)parts.push('选择机场后查看订阅状态')
- else if(!summary||summary.refreshState==='loading')parts.push('刷新状态读取中…')
+ if(!summary||summary.refreshState==='loading')parts.push('刷新状态读取中…')
  else if(summary.refreshState==='error')parts.push('刷新状态未知 · 展开查看')
- else if(!summary.noticeCount&&!summary.expiredAccountCount&&!summary.unknownExpiryAccountCount&&!summary.failedItemCount&&!summary.runningItemCount)parts.push('当前无公告、过期或刷新失败')
+ else if(!chosen.value.length)parts.push('选择机场后查看订阅状态')
+ else if(!summary.noticeCount&&!summary.expiredAccountCount&&!summary.unknownExpiryAccountCount&&!summary.failedItemCount&&!summary.interruptedItemCount&&!summary.runningItemCount)parts.push('当前无公告、过期或刷新失败')
  return parts.join(' · ')
 })
 const subscriptionSummaryTone=computed(()=>{
  const summary=subscriptionSummary.value
- if(summary?.expiredAccountCount||summary?.failedItemCount)return 'bad'
- if(summary?.noticeCount||summary?.runningItemCount)return 'warn'
+ if(summary?.expiredAccountCount||summary?.failedItemCount||summary?.interruptedItemCount)return 'bad'
+ if(summary?.refreshState==='error'||summary?.unknownExpiryAccountCount||summary?.noticeCount||summary?.runningItemCount)return 'warn'
  return 'muted'
 })
 const subscriptionSummaryHint=computed(()=>subscriptionSummaryText.value==='当前无公告、过期或刷新失败'?'查看用量、到期、刷新状态和公告':'展开查看详情')

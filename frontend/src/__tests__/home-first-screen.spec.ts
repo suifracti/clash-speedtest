@@ -43,9 +43,10 @@ function noticeNode(profileId=profileIds[0]):NodeOption{
   const index=profileIds.indexOf(profileId)
   return {profile_id:profileId,node_key:`synthetic-notice-${index+1}`,node_identity_key:`synthetic-notice-identity-${index+1}`,config_revision_key:'synthetic-revision',profile_name:`合成账户 ${index+1}`,display_name:'公告：合成维护通知',type:'',country_code:'XX',country_flag:''}
 }
-function failedRefreshJob():SubscriptionRefreshJob{
-  return {id:'synthetic-refresh-failed',state:'finished',created_at:'2026-10-11T10:00:00Z',finished_at:'2026-10-11T10:00:01Z',completed:1,success:0,failed:1,cancelled:0,not_executed:0,cancel_requested:false,items:[{
-    airport_id:'airport-1',subscription_id:profileIds[0],airport_name:'合成机场 1',subscription_name:'合成账户 1',source_fingerprint:'synthetic-source',source_version:1,state:'failed',error_code:'synthetic_failure',error_message:'synthetic refresh failure',duration_ms:100,node_count:0,stages:[{state:'failed',at:'2026-10-11T10:00:01Z'}]
+function refreshJob(itemState:'failed'|'interrupted'|'succeeded'='failed',createdAt='2026-10-11T10:00:00Z'):SubscriptionRefreshJob{
+  const failed=itemState==='failed'||itemState==='interrupted'
+  return {id:`synthetic-refresh-${itemState}-${createdAt}`,state:'finished',created_at:createdAt,finished_at:'2026-10-11T10:00:01Z',completed:1,success:itemState==='succeeded'?1:0,failed:failed?1:0,cancelled:0,not_executed:0,cancel_requested:false,items:[{
+    airport_id:'airport-1',subscription_id:profileIds[0],airport_name:'合成机场 1',subscription_name:'合成账户 1',source_fingerprint:'synthetic-source',source_version:1,state:itemState,error_code:failed?'synthetic_failure':undefined,error_message:failed?'synthetic refresh failure':undefined,duration_ms:100,node_count:0,stages:[{state:itemState,at:'2026-10-11T10:00:01Z'}]
   }]}
 }
 
@@ -72,7 +73,7 @@ describe('synthetic 256-node home first screen',()=>{
   it('shows notices, expired accounts, and the latest failed refresh while collapsed',async()=>{
     const syntheticAirports=airports()
     syntheticAirports[0]!.subscriptions![0]!.usage!.expire=Math.floor(Date.now()/1000)-60
-    vi.mocked(api.refreshJobs).mockResolvedValueOnce([failedRefreshJob()])
+    vi.mocked(api.refreshJobs).mockResolvedValueOnce([refreshJob()])
     const {wrapper}=attachHome({airports:syntheticAirports,nodes:[...nodes(),noticeNode()]});await flushPromises()
     const disclosure=wrapper.get('details.home-subscription-disclosure')
     const summary=disclosure.get('summary')
@@ -115,6 +116,33 @@ describe('synthetic 256-node home first screen',()=>{
     const failedSummary=failed.get('details.home-subscription-disclosure summary').text()
     expect(failedSummary).toContain('刷新状态未知')
     expect(failedSummary).not.toContain('当前无公告、过期或刷新失败')
+  })
+
+  it('surfaces interrupted refreshes and lets a newer success replace an older interruption',async()=>{
+    vi.mocked(api.refreshJobs).mockResolvedValueOnce([refreshJob('interrupted')])
+    const interrupted=attachHome().wrapper;await flushPromises()
+    const interruptedSummary=interrupted.get('details.home-subscription-disclosure summary').text()
+    expect(interruptedSummary).toContain('刷新中断 1 项')
+    expect(interruptedSummary).toContain('合成机场 1 · 合成账户 1')
+    expect(interruptedSummary).not.toContain('当前无公告、过期或刷新失败')
+
+    vi.mocked(api.refreshJobs).mockResolvedValueOnce([refreshJob('succeeded','2026-10-11T12:00:00Z'),refreshJob('interrupted')])
+    const recovered=attachHome().wrapper;await flushPromises()
+    const recoveredSummary=recovered.get('details.home-subscription-disclosure summary').text()
+    expect(recoveredSummary).toContain('当前无公告、过期或刷新失败')
+    expect(recoveredSummary).not.toContain('刷新中断')
+  })
+
+  it('uses subscription read state instead of unrelated workspace loading or errors',async()=>{
+    vi.mocked(api.refreshJobs).mockResolvedValueOnce([])
+    const {workspace,wrapper}=attachHome()
+    workspace.loading.value=true
+    workspace.error.value='synthetic unrelated settings failure'
+    await flushPromises()
+    const summary=wrapper.get('details.home-subscription-disclosure summary').text()
+    expect(summary).toContain('当前无公告、过期或刷新失败')
+    expect(summary).not.toContain('刷新状态未知')
+    expect(summary).not.toContain('订阅状态读取中')
   })
 
   it('keeps account details discoverable without changing the airport and node scope',async()=>{
