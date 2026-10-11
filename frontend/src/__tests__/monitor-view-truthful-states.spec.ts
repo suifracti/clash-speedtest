@@ -237,6 +237,43 @@ describe('MonitorView truthful read state and async interactions',()=>{
     expect(api.deleteJob).not.toHaveBeenCalled()
   })
 
+  it('keeps pause failures separate from delete confirmation errors across cancel, retry, and job changes',async()=>{
+    vi.mocked(api.jobs)
+      .mockResolvedValueOnce([job('running'),job('running','job-b')])
+      .mockResolvedValueOnce([job('running'),job('running','job-b')])
+    vi.mocked(api.jobAction).mockRejectedValueOnce(new Error('pause unavailable'))
+    vi.mocked(api.deleteJob).mockRejectedValueOnce(new Error('delete unavailable'))
+    mountMonitorView();await flushPromises()
+
+    const cards=()=>document.querySelectorAll<HTMLElement>('.monitor-card')
+    const deleteButton=(index:number)=>cards()[index].querySelector<HTMLButtonElement>('button[aria-label="删除监测任务"]')!
+    button('暂停')!.click();await flushPromises()
+    expect(cards()[0].textContent).toContain('pause unavailable')
+
+    deleteButton(0).click();await nextTick()
+    expect(document.querySelector('dialog')?.textContent).not.toContain('删除失败')
+    expect(document.querySelector('dialog')?.textContent).not.toContain('pause unavailable')
+    expect(api.deleteJob).not.toHaveBeenCalled()
+    button('返回')!.click();await nextTick()
+
+    deleteButton(1).click();await nextTick()
+    expect(document.querySelector('dialog')?.textContent).not.toContain('pause unavailable')
+    button('返回')!.click();await nextTick()
+
+    deleteButton(0).click();await nextTick()
+    button('删除任务')!.click();await flushPromises()
+    expect(document.querySelector('dialog')?.textContent).toContain('删除失败：delete unavailable')
+    expect(cards()[0].textContent).toContain('pause unavailable')
+
+    button('返回')!.click();await nextTick()
+    deleteButton(1).click();await nextTick()
+    expect(document.querySelector('dialog')?.textContent).not.toContain('delete unavailable')
+    button('返回')!.click();await nextTick()
+    deleteButton(0).click();await nextTick()
+    expect(document.querySelector('dialog')?.textContent).not.toContain('delete unavailable')
+    expect(cards()[0].textContent).toContain('pause unavailable')
+  })
+
   it('shows delete busy feedback and calls only the job-delete API without deleting run history',async()=>{
     vi.mocked(api.jobs).mockResolvedValueOnce([job()]).mockResolvedValueOnce([])
     const retainedHistory=[run]
