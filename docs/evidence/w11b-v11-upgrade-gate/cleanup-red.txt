@@ -1,0 +1,15 @@
+=== RUN   TestV11UpgradeBackupCleanupPermissionFailure
+    upgrade_backup_test.go:28: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+    upgrade_backup_test.go:66: cleanup permission failure was swallowed: v11 pre-upgrade backup failed: sync backup directory: synthetic final attempt sync failure
+--- FAIL: TestV11UpgradeBackupCleanupPermissionFailure (0.06s)
+=== RUN   TestV11UpgradeBackupCleanupPermissionFailure
+    upgrade_backup_test.go:28: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+    upgrade_backup_test.go:66: cleanup permission failure was swallowed: v11 pre-upgrade backup failed: sync backup directory: synthetic final attempt sync failure
+--- FAIL: TestV11UpgradeBackupCleanupPermissionFailure (0.04s)
+=== RUN   TestV11UpgradeBackupCleanupPermissionFailure
+    upgrade_backup_test.go:28: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+    upgrade_backup_test.go:66: cleanup permission failure was swallowed: v11 pre-upgrade backup failed: sync backup directory: synthetic final attempt sync failure
+--- FAIL: TestV11UpgradeBackupCleanupPermissionFailure (0.03s)
+FAIL
+FAIL	github.com/faceair/clash-speedtest/core/history	0.907s
+FAIL

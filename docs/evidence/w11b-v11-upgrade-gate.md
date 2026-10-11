@@ -25,7 +25,7 @@ Snapshots are under the **actual history directory passed to OpenDB**, including
 
 Each attempt is fresh. W11a's online backup opens the source read-only, includes committed WAL pages and never migrates the source. The helper validates the snapshot using `mode=ro`, schema version exactly 11, existing v11 table/budget checks, absence of the v12 column, `integrity_check=ok` and no FK violations. It never calls OpenDB or ValidateDatabase on rollback. The manifest records format/from/to versions, relative filename, SHA-256 and UTC creation time, with no history records or subscription secrets.
 
-The snapshot and private manifest are synced; the completion manifest publishes via no-replacement hard link. Attempt/root/history directory syncs must also succeed before the callback returns. Failures delete only the new incomplete attempt; earlier completed snapshots survive. Retrying v11 always takes a fresh snapshot; reopening v12 does not create another. There is no automatic pruning, production restoration, old-snapshot reuse or app-level recovery decision.
+The snapshot and private manifest are synced; the completion manifest publishes via no-replacement hard link. Attempt/root/history directory syncs must also succeed before the callback returns. Failures attempt to delete only the new incomplete attempt; cleanup errors are preserved and reported. Where permitted, residual attempts are quarantined under `.failed-*`. If cleanup and quarantine are both denied, the original path can remain and is reported explicitly; a residual manifest alone never proves gate success. Earlier completed snapshots survive. Retrying v11 always takes a fresh snapshot; reopening v12 does not create another. There is no automatic pruning, production restoration, old-snapshot reuse or app-level recovery decision.
 
 The read transaction also guards concurrency: if another WAL writer commits before or after backup, promotion of this transaction to a writer returns `SQLITE_BUSY_SNAPSHOT` (517). The caller must retry the whole OpenDB operation, which takes a fresh snapshot, rather than retry DDL within a stale transaction. Two concurrent schema authorities either upgrade only with completed backups or return safe errors. No lock/DDL retry bypass was added.
 
@@ -59,3 +59,36 @@ git diff --check
 Production: `core/history/db.go` and new `core/history/upgrade_backup.go`. Tests: new `core/history/upgrade_backup_test.go`. Evidence: this document and the four linked logs. No application/adapter/main/gui/subscription/VPN/TUN files were changed. Existing schema DDL is unchanged. No original dirty candidate, real user DB/WAL, credentials, live probe, release or production rollback was touched.
 
 This is macOS offline evidence. Other platforms/filesystems, a real old v11 executable, abrupt termination and power-loss recovery remain unvalidated. Unsupported permission semantics, hard links or directory Sync fail closed. The 30-second context is cooperative, not a hard real-time deadline. Snapshot consistency covers SQLite, not a simultaneous settings/profile bundle. Native/web UI and remote CI are separate acceptance layers. This Draft PR does not authorize production-data startup, merge or release.
+
+
+## Sol D follow-up: post-publication cleanup denial
+
+Requested by [the continuation contract](https://github.com/suifracti/clash-speedtest/pull/50#issuecomment-6106171749), fixing [Sol D's independently reproduced Relevant](https://github.com/suifracti/clash-speedtest/pull/50#issuecomment-6106115134) on baseline head `114296fb985b90b59f89540757d680f85016e4c6`. Same PR50 branch; PR48 base remains `5094e54b045a359a83447d08a23dcb6d24be9b7d`. The prior unconditional cleanup description was too strong.
+
+The original callback published `complete.json`, then a synthetic final attempt-sync failure combined with real OS chmod0500 prevented deferred unlink. The source was correctly protected but cleanup errors were discarded. The regression uses only synthetic v11+WAL data in t.TempDir and a non-root runner; directory Sync failure is injected, unlink permission denial is real.
+
+The minimal fix changes only upgrade_backup.go, its tests and evidence. Deferred cleanup joins the cleanup error with the original gate error. If cleanup fails, it reserves a unique `.failed-*` name in the same backup parent and renames only the current failed attempt. The temporary empty name reservation belongs to this call; only that empty reservation is removed. This same-parent move avoids macOS denial when an unwritable attempt is moved into a different parent. No production chmod, previous-backup deletion, db.go or schema/startup changes were made.
+
+**Completion boundary:** `complete.json` records a verified snapshot, not proof that the entire directory-durability gate returned success. `.failed-*` paths are failed attempts and excluded from ordinary attempt enumeration. If the root is also unwritable, quarantine may fail and the original attempt/manifest may remain: both failures and the residual path are returned. Permission restoration must not treat that manifest as authority. Whole OpenDB retry always creates a fresh snapshot and does not modify/reuse/delete prior failed artifacts. No automatic cleanup/restore of retained artifacts is introduced.
+
+Fresh evidence on macOS27.0.1/arm64, Go1.25.14, uid501 (non-root):
+
+- [Cleanup RED](w11b-v11-upgrade-gate/cleanup-red.txt): against unchanged baseline production, `TestV11UpgradeBackupCleanupPermissionFailure` fails 3/3, `cleanup permission failure was swallowed`; exit1. Source schema11 and DB/WAL hashes are checked before the failing assertion.
+- [Cleanup GREEN](w11b-v11-upgrade-gate/cleanup-green.txt): both real-permission tests pass 3/3 each; exit0 (1.170s). Original case is quarantined and cleanup denial exposed. Root+attempt denial preserves both error causes and original residual path without changing permissions. Both tests verify source v11/DB/WAL hashes before retry; after test-only permission restoration, whole retry reaches12 with a fresh snapshot. Prior valid backup hash is preserved, and quarantined/retained failed artifacts are not removed or reused.
+- [Fresh package log](w11b-v11-upgrade-gate/cleanup-packages.txt): full history/application/appdata tests exit0 (2.267s/26.135s/0.474s).
+- [Fresh race log](w11b-v11-upgrade-gate/cleanup-race.txt): cleanup, original W11b gate, W11a online backup and v11-schema regressions exit0 (10.080s).
+- Vet for the same three packages and diff checks exit0. No new app bundle or native UI claim. Prior build evidence remains historical, not a newly run build for this follow-up.
+- Independent read-only reviewer reran the cleanup/dual-denial/pre-DDL cases and found no actionable P1/P2. This is a local review; it does not claim Sol D has reviewed the new head.
+
+Commands, with GOPROXY=off GOSUMDB=off:
+
+```sh
+go test ./core/history -run '^TestV11UpgradeBackupCleanupPermissionFailure$' -count=3 -v # RED before production fix
+go test ./core/history -run '^TestV11UpgradeBackupCleanup' -count=3 -v # GREEN
+go test ./core/history ./application ./core/appdata -count=1
+go test -race ./core/history -run 'TestV11UpgradeBackup|TestBackupDatabase|TestBackupToInterrupted|TestSchemaV11Upgrade' -count=1 -v
+go vet ./core/history ./application ./core/appdata
+git diff --check
+```
+
+These are synthetic error/permission experiments, not physical power-loss tests. Quarantine sync errors also remain observable; the helper cannot guarantee artifact removal or durable quarantine under arbitrary I/O/permission failure. Source DDL remains blocked on every failed gate. PR50 is stacked and has no Actions/checks observed at follow-up delivery; remote CI is not reported as passing. No real SQLite/WAL, dirty candidate, PR48/main/other-agent branch change, subscriptions/probes/VPN/TUN, merge or release.

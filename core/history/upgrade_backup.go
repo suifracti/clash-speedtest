@@ -29,7 +29,10 @@ type upgradeBackupHooks struct {
 // createVerifiedV11Rollback never uses OpenDB/ValidateDatabase on the snapshot:
 // both are migration authorities. A completed backup survives later migration
 // failure; incomplete attempts are private and are never reused on retries.
-func createVerifiedV11Rollback(ctx context.Context, dir string, hooks upgradeBackupHooks) error {
+// Cleanup can fail under real permission/I/O errors: report it and quarantine
+// only this attempt if the parent directory still permits the move. A manifest
+// alone is never proof that this function's durability gate returned success.
+func createVerifiedV11Rollback(ctx context.Context, dir string, hooks upgradeBackupHooks) (retErr error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -57,7 +60,12 @@ func createVerifiedV11Rollback(ctx context.Context, dir string, hooks upgradeBac
 	complete := false
 	defer func() {
 		if !complete {
-			_ = os.RemoveAll(attempt)
+			if err := os.RemoveAll(attempt); err != nil {
+				retained, quarantineErr := quarantineFailedUpgradeAttempt(root, attempt)
+				retErr = errors.Join(retErr,
+					fmt.Errorf("cleanup incomplete backup; residual artifacts at %s: %w", retained, err),
+					quarantineErr)
+			}
 		}
 	}()
 	snapshot := filepath.Join(attempt, "history.db")
@@ -125,6 +133,31 @@ func createVerifiedV11Rollback(ctx context.Context, dir string, hooks upgradeBac
 	}
 	complete = true
 	return nil
+}
+
+// Reserve an unused destination name without touching any prior backup.
+// Rename within the same parent avoids needing to update an unwritable attempt's
+// parent entry (moving it into a wrapper can itself fail on macOS).
+// If even that fails, leave the original path observable in the returned error;
+// do not chmod directories or silently treat a residual complete.json as success.
+func quarantineFailedUpgradeAttempt(root, attempt string) (string, error) {
+	retained, err := os.MkdirTemp(root, ".failed-")
+	if err != nil {
+		return attempt, fmt.Errorf("quarantine incomplete backup: %w", err)
+	}
+	// macOS requires an absent destination for this directory rename. Remove
+	// only the empty reservation just created by this call, never old artifacts.
+	if err := os.Remove(retained); err != nil {
+		return attempt, fmt.Errorf("prepare quarantine destination: %w", err)
+	}
+	if err := os.Rename(attempt, retained); err != nil {
+		return attempt, fmt.Errorf("quarantine incomplete backup: %w", err)
+	}
+	// Persist the changed directory entries where the filesystem permits it.
+	if err := syncUpgradeBackupPath(root); err != nil {
+		return retained, fmt.Errorf("sync failed-backup quarantine: %w", err)
+	}
+	return retained, nil
 }
 
 func syncUpgradeBackupPath(path string) error {

@@ -1,0 +1,32 @@
+=== RUN   TestV11UpgradeBackupCleanupPermissionFailure
+    upgrade_backup_test.go:28: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+    upgrade_backup_test.go:79: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+    upgrade_backup_test.go:92: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+    upgrade_backup_test.go:92: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+    upgrade_backup_test.go:102: post-publication failure: source v11 and DB/WAL hashes unchanged; real cleanup denial surfaced; failed attempt quarantined; fresh retry preserves prior and failed artifacts
+--- PASS: TestV11UpgradeBackupCleanupPermissionFailure (0.08s)
+=== RUN   TestV11UpgradeBackupCleanupAndQuarantineDenied
+    upgrade_backup_test.go:177: cleanup and quarantine both denied: joined errors expose residual path; source DB/WAL unchanged; permissions untouched; retry creates new backup without trusting residual complete.json
+--- PASS: TestV11UpgradeBackupCleanupAndQuarantineDenied (0.05s)
+=== RUN   TestV11UpgradeBackupCleanupPermissionFailure
+    upgrade_backup_test.go:28: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+    upgrade_backup_test.go:79: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+    upgrade_backup_test.go:92: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+    upgrade_backup_test.go:92: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+    upgrade_backup_test.go:102: post-publication failure: source v11 and DB/WAL hashes unchanged; real cleanup denial surfaced; failed attempt quarantined; fresh retry preserves prior and failed artifacts
+--- PASS: TestV11UpgradeBackupCleanupPermissionFailure (0.11s)
+=== RUN   TestV11UpgradeBackupCleanupAndQuarantineDenied
+    upgrade_backup_test.go:177: cleanup and quarantine both denied: joined errors expose residual path; source DB/WAL unchanged; permissions untouched; retry creates new backup without trusting residual complete.json
+--- PASS: TestV11UpgradeBackupCleanupAndQuarantineDenied (0.16s)
+=== RUN   TestV11UpgradeBackupCleanupPermissionFailure
+    upgrade_backup_test.go:28: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+    upgrade_backup_test.go:79: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+    upgrade_backup_test.go:92: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+    upgrade_backup_test.go:92: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+    upgrade_backup_test.go:102: post-publication failure: source v11 and DB/WAL hashes unchanged; real cleanup denial surfaced; failed attempt quarantined; fresh retry preserves prior and failed artifacts
+--- PASS: TestV11UpgradeBackupCleanupPermissionFailure (0.20s)
+=== RUN   TestV11UpgradeBackupCleanupAndQuarantineDenied
+    upgrade_backup_test.go:177: cleanup and quarantine both denied: joined errors expose residual path; source DB/WAL unchanged; permissions untouched; retry creates new backup without trusting residual complete.json
+--- PASS: TestV11UpgradeBackupCleanupAndQuarantineDenied (0.08s)
+PASS
+ok  	github.com/faceair/clash-speedtest/core/history	1.170s
