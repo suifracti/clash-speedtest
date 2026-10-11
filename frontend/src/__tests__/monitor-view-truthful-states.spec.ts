@@ -10,7 +10,7 @@ vi.hoisted(()=>{const items=new Map<string,string>();Object.defineProperty(windo
 vi.mock('../api',()=>({api:{jobs:vi.fn(),budget:vi.fn(),storage:vi.fn(),jobAction:vi.fn(),deleteJob:vi.fn()},request:vi.fn(),events:vi.fn(),mapLimited:vi.fn(),saveFile:vi.fn()}))
 
 const node:NodeOption={profile_id:'profile-a',node_key:'node-a',node_identity_key:'identity-a',config_revision_key:'revision-a',profile_name:'Airport A',display_name:'Node A',type:'ss',country_code:'HK',country_flag:''}
-const job=(state='running'):MonitorJob=>({id:'job-a',name:'Job A',profile_id:'profile-a',profile_name:'Airport A',nodes:[node],node_keys:['node-a'],probe_set:'latency_six_v1',sampling_tier:'normal',interval_seconds:900,timeout_seconds:8,state,resume_on_launch:false,updated_at:'2026-10-11T02:00:00Z'})
+const job=(state='running',id='job-a'):MonitorJob=>({id,name:id==='job-a'?'Job A':'Job B',profile_id:'profile-a',profile_name:'Airport A',nodes:[node],node_keys:['node-a'],probe_set:'latency_six_v1',sampling_tier:'normal',interval_seconds:900,timeout_seconds:8,state,resume_on_launch:false,updated_at:'2026-10-11T02:00:00Z'})
 const run={run_id:'run-a',started_at:'2026-10-11T02:00:00Z',status:'completed',success_nodes:1,total_nodes:1,failed_nodes:0}
 
 function deferred<T>(){let resolve!:(value:T)=>void, reject!:(reason?:unknown)=>void;const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no});return {promise,resolve,reject}}
@@ -185,6 +185,46 @@ describe('MonitorView truthful read state and async interactions',()=>{
     button('暂停')!.click();await flushPromises()
     expect(document.body.textContent).toContain('已暂停')
     expect(document.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('clears a stale action confirmation after a successful jobs read without clearing another API action failure',async()=>{
+    vi.mocked(api.jobs)
+      .mockResolvedValueOnce([job('running'),job('running','job-b')])
+      .mockResolvedValueOnce([job('running'),job('running','job-b')])
+      .mockRejectedValueOnce(new Error('jobs timeout'))
+      .mockResolvedValueOnce([job('paused'),job('running','job-b')])
+    vi.mocked(api.jobAction).mockRejectedValueOnce(new Error('pause unavailable')).mockResolvedValueOnce(undefined)
+    const {workspace}=mountMonitorView();await flushPromises()
+
+    const jobBCards=document.querySelectorAll<HTMLElement>('.monitor-card')
+    const pauseJobB=[...jobBCards[1].querySelectorAll<HTMLButtonElement>('button')].find(element=>element.textContent?.includes('暂停'))!
+    pauseJobB.click();await flushPromises()
+    expect(jobBCards[1].textContent).toContain('pause unavailable')
+
+    const pauseJobA=[...document.querySelectorAll<HTMLElement>('.monitor-card')[0].querySelectorAll<HTMLButtonElement>('button')].find(element=>element.textContent?.includes('暂停'))!
+    pauseJobA.click();await flushPromises()
+    expect(document.body.textContent).toContain('操作请求已返回，但任务状态未能重新读取')
+
+    button('刷新')!.click();await flushPromises()
+    const alerts=[...document.querySelectorAll<HTMLElement>('.monitor-card [role="alert"]')].map(element=>element.textContent||'')
+    expect(workspace.jobs.value[0].state).toBe('paused')
+    expect(alerts.some(message=>message.includes('pause unavailable'))).toBe(true)
+    expect(alerts.some(message=>message.includes('操作请求已返回'))).toBe(false)
+    expect(alerts.some(message=>message.includes('jobs timeout'))).toBe(false)
+  })
+
+  it('applies the jobs response and releases action busy state while the budget read remains pending',async()=>{
+    vi.mocked(api.jobs).mockResolvedValueOnce([job('running')]).mockResolvedValueOnce([job('paused')])
+    const {workspace}=mountMonitorView();await flushPromises()
+    const budgetPending=deferred<Record<string,any>>()
+    vi.mocked(api.budget).mockReturnValueOnce(budgetPending.promise)
+
+    button('暂停')!.click();await flushPromises()
+
+    expect(workspace.jobs.value[0].state).toBe('paused')
+    expect(button('继续')).not.toBeNull()
+    expect(button('继续')?.disabled).toBe(false)
+    expect(document.querySelector<HTMLElement>('.monitor-card')?.getAttribute('aria-busy')).toBe('false')
   })
 
   it('lets the user cancel delete without calling the API and exposes preserved history in confirmation',async()=>{
