@@ -11,11 +11,11 @@ import Modal from './Modal.vue'
 type ReadState={value:Record<string,any>|null;readAt:string;error:string}
 const initialReadState=():ReadState=>({value:null,readAt:'',error:''})
 const w=useWorkspace()
-const busyJobs=ref(new Set<string>()),actionErrors=ref<Record<string,string>>({})
+const busyJobs=ref(new Set<string>()),actionErrors=ref<Record<string,string>>({}),actionWarnings=ref<Record<string,string>>({})
 const remove=ref<MonitorJob|null>(null),budgetState=ref<ReadState>(initialReadState()),storageState=ref<ReadState>(initialReadState())
 const details=ref<MonitorJob|null>(null),runs=ref<Record<string,any>[]>([]),runsLoading=ref(false),runsError=ref('')
 const jobsReadAt=ref(''),jobsError=ref(''),jobsLoading=ref(false),refreshing=ref(false)
-let timer:ReturnType<typeof setInterval>|undefined,reloadGeneration=0,runsGeneration=0,mounted=false,latestReload:Promise<boolean>|null=null
+let timer:ReturnType<typeof setInterval>|undefined,reloadGeneration=0,budgetGeneration=0,storageGeneration=0,runsGeneration=0,mounted=false,latestReload:Promise<boolean>|null=null
 
 const active=computed(()=>w.jobs.value.filter(job=>job.state==='running').length)
 const jobSummary=computed(()=>{
@@ -35,9 +35,6 @@ const resourceWarning=computed(()=>{
 })
 
 function errorMessage(error:unknown){return error instanceof Error?error.message:String(error)}
-function setReadState(current:ReadState,result:PromiseSettledResult<Record<string,any>>,readAt:string):ReadState{
-  return result.status==='fulfilled'?{value:result.value??null,readAt,error:''}:{...current,error:errorMessage(result.reason)}
-}
 function resourceMessage(state:ReadState,label:string){
   if(state.error)return `${label}${state.value?'刷新失败；显示上次成功读取于 '+state.readAt:'读取失败；目前无可用读数'}：${state.error}`
   if(state.readAt)return state.value?`最近成功读取于 ${state.readAt}`:`已读取于 ${state.readAt}，接口未提供可用读数`
@@ -47,19 +44,35 @@ function formatBackendBytes(value:unknown){return typeof value==='number'&&Numbe
 function isBusy(id:string){return busyJobs.value.has(id)}
 function clearActionError(id:string){const next={...actionErrors.value};delete next[id];actionErrors.value=next}
 function setActionError(id:string,message:string){actionErrors.value={...actionErrors.value,[id]:message}}
+function clearActionWarning(id:string){const next={...actionWarnings.value};delete next[id];actionWarnings.value=next}
+function setActionWarning(id:string,message:string){actionWarnings.value={...actionWarnings.value,[id]:message}}
 
 async function reload(){
   const generation=++reloadGeneration
+  const budgetRead=++budgetGeneration,storageRead=++storageGeneration
   refreshing.value=true;jobsLoading.value=true
-  const response=Promise.allSettled([api.jobs(),api.budget(),api.storage()]).then(results=>{
+  Promise.resolve().then(()=>api.budget()).then(value=>{
+    if(!mounted||budgetRead!==budgetGeneration)return
+    budgetState.value={value:value??null,readAt:new Date().toLocaleTimeString(),error:''}
+  },error=>{
+    if(!mounted||budgetRead!==budgetGeneration)return
+    budgetState.value={...budgetState.value,error:errorMessage(error)}
+  })
+  Promise.resolve().then(()=>api.storage()).then(value=>{
+    if(!mounted||storageRead!==storageGeneration)return
+    storageState.value={value:value??null,readAt:new Date().toLocaleTimeString(),error:''}
+  },error=>{
+    if(!mounted||storageRead!==storageGeneration)return
+    storageState.value={...storageState.value,error:errorMessage(error)}
+  })
+  const response=Promise.resolve().then(()=>api.jobs()).then(value=>{
     if(!mounted||generation!==reloadGeneration)return false
-    const readAt=new Date().toLocaleTimeString()
-    const [jobsResult,budgetResult,storageResult]=results
-    if(jobsResult.status==='fulfilled'){
-      w.jobs.value=jobsResult.value||[];jobsReadAt.value=readAt;jobsError.value=''
-    }else jobsError.value=errorMessage(jobsResult.reason)
-    budgetState.value=setReadState(budgetState.value,budgetResult,readAt)
-    storageState.value=setReadState(storageState.value,storageResult,readAt)
+    w.jobs.value=value||[];jobsReadAt.value=new Date().toLocaleTimeString();jobsError.value='';actionWarnings.value={}
+    jobsLoading.value=false;refreshing.value=false
+    return true
+  },error=>{
+    if(!mounted||generation!==reloadGeneration)return false
+    jobsError.value=errorMessage(error)
     jobsLoading.value=false;refreshing.value=false
     return true
   })
@@ -75,19 +88,21 @@ async function reload(){
 
 async function action(job:MonitorJob,type:string,body?:unknown){
   if(isBusy(job.id))return
-  busyJobs.value.add(job.id);clearActionError(job.id)
+  busyJobs.value.add(job.id);clearActionError(job.id);clearActionWarning(job.id)
   try{
-    await api.jobAction(job.id,type,body)
+    try{await api.jobAction(job.id,type,body)}
+    catch(error){
+      if(!mounted)return
+      setActionError(job.id,errorMessage(error))
+      await reload()
+      return
+    }
     if(!mounted)return
     await reload()
     if(!mounted)return
-    if(jobsError.value)setActionError(job.id,`操作请求已返回，但任务状态未能重新读取：${jobsError.value}`)
+    if(jobsError.value)setActionWarning(job.id,`操作请求已返回，但任务状态未能重新读取：${jobsError.value}`)
     else if(type==='trigger')w.notify('已请求执行一次检测；结果请查看运行记录')
     else w.notify('任务状态已按后端列表重新读取')
-  }catch(error){
-    if(!mounted)return
-    setActionError(job.id,errorMessage(error))
-    await reload()
   }finally{
     if(mounted)busyJobs.value.delete(job.id)
   }
@@ -96,7 +111,7 @@ async function action(job:MonitorJob,type:string,body?:unknown){
 async function deleteJob(){
   const target=remove.value
   if(!target||isBusy(target.id))return
-  busyJobs.value.add(target.id);clearActionError(target.id)
+  busyJobs.value.add(target.id);clearActionError(target.id);clearActionWarning(target.id)
   try{
     await api.deleteJob(target.id)
     if(!mounted)return
@@ -209,7 +224,8 @@ onBeforeUnmount(()=>{mounted=false;reloadGeneration++;runsGeneration++;clearInte
             {{nodeDisplayName(node)}}<Icon name="chevron"/>
           </button>
         </details>
-        <p v-if="actionErrors[job.id]" class="inline-error" role="alert">操作未确认：{{actionErrors[job.id]}}</p>
+        <p v-if="actionErrors[job.id]" class="inline-error" role="alert">操作失败：{{actionErrors[job.id]}}</p>
+        <p v-if="actionWarnings[job.id]" class="inline-warning" role="alert">操作未确认：{{actionWarnings[job.id]}}</p>
         <footer>
           <div class="button-group">
             <button v-if="job.state==='running'" class="button" :disabled="isBusy(job.id)" :aria-busy="isBusy(job.id)" @click="action(job,'pause')">
