@@ -12,6 +12,7 @@ type ReadState={value:Record<string,any>|null;readAt:string;error:string}
 const initialReadState=():ReadState=>({value:null,readAt:'',error:''})
 const w=useWorkspace()
 const busyJobs=ref(new Set<string>()),actionErrors=ref<Record<string,string>>({}),actionWarnings=ref<Record<string,string>>({})
+const deleteErrors=ref<Record<string,string>>({})
 const remove=ref<MonitorJob|null>(null),budgetState=ref<ReadState>(initialReadState()),storageState=ref<ReadState>(initialReadState())
 const details=ref<MonitorJob|null>(null),runs=ref<Record<string,any>[]>([]),runsLoading=ref(false),runsError=ref('')
 const jobsReadAt=ref(''),jobsError=ref(''),jobsLoading=ref(false),refreshing=ref(false)
@@ -46,6 +47,8 @@ function clearActionError(id:string){const next={...actionErrors.value};delete n
 function setActionError(id:string,message:string){actionErrors.value={...actionErrors.value,[id]:message}}
 function clearActionWarning(id:string){const next={...actionWarnings.value};delete next[id];actionWarnings.value=next}
 function setActionWarning(id:string,message:string){actionWarnings.value={...actionWarnings.value,[id]:message}}
+function clearDeleteError(id:string){const next={...deleteErrors.value};delete next[id];deleteErrors.value=next}
+function setDeleteError(id:string,message:string){deleteErrors.value={...deleteErrors.value,[id]:message}}
 
 async function reload(){
   const generation=++reloadGeneration
@@ -111,7 +114,7 @@ async function action(job:MonitorJob,type:string,body?:unknown){
 async function deleteJob(){
   const target=remove.value
   if(!target||isBusy(target.id))return
-  busyJobs.value.add(target.id);clearActionError(target.id);clearActionWarning(target.id)
+  busyJobs.value.add(target.id);clearDeleteError(target.id)
   try{
     await api.deleteJob(target.id)
     if(!mounted)return
@@ -121,7 +124,7 @@ async function deleteJob(){
     w.notify(jobsError.value?'删除请求已返回；任务列表刷新失败，请刷新确认。':'任务已删除，原始历史保留')
   }catch(error){
     if(!mounted)return
-    setActionError(target.id,errorMessage(error))
+    setDeleteError(target.id,errorMessage(error))
   }finally{
     if(mounted)busyJobs.value.delete(target.id)
   }
@@ -141,6 +144,7 @@ async function show(job:MonitorJob){
   }
 }
 function cancelDelete(){if(remove.value&&!isBusy(remove.value.id))remove.value=null}
+function openDelete(job:MonitorJob){clearDeleteError(job.id);remove.value=job}
 function nodeOption(job:MonitorJob,node:NodeOption):NodeOption{return {...node,profile_id:job.profile_id,profile_name:job.profile_name,country_code:'',country_flag:''}}
 
 onMounted(()=>{
@@ -241,7 +245,7 @@ onBeforeUnmount(()=>{mounted=false;reloadGeneration++;runsGeneration++;clearInte
               {{isBusy(job.id)?'正在请求检测…':'检测一次'}}
             </button>
             <button class="button ghost" @click="show(job)">运行记录</button>
-            <button class="button ghost icon-button" aria-label="删除监测任务" :disabled="isBusy(job.id)" @click="remove=job"><Icon name="trash"/></button>
+            <button class="button ghost icon-button" aria-label="删除监测任务" :disabled="isBusy(job.id)" @click="openDelete(job)"><Icon name="trash"/></button>
           </div>
           <label class="check-field small">
             <input type="checkbox" :checked="job.resume_on_launch" :disabled="isBusy(job.id)" @change="action(job,'resume-on-launch',{enabled:($event.target as HTMLInputElement).checked})">
@@ -253,7 +257,7 @@ onBeforeUnmount(()=>{mounted=false;reloadGeneration++;runsGeneration++;clearInte
 
     <Modal v-if="remove" title="删除监测任务" :closable="!isBusy(remove.id)" @close="cancelDelete">
       <p>删除「{{remove.name}}」并停止后续监测，已经保存的原始记录保留。</p>
-      <p v-if="actionErrors[remove.id]" class="inline-error" role="alert">删除失败：{{actionErrors[remove.id]}}</p>
+      <p v-if="deleteErrors[remove.id]" class="inline-error" role="alert">删除失败：{{deleteErrors[remove.id]}}</p>
       <template #footer>
         <button class="button" :disabled="isBusy(remove.id)" @click="cancelDelete">返回</button>
         <button class="button danger-fill" :disabled="isBusy(remove.id)" :aria-busy="isBusy(remove.id)" @click="deleteJob">{{isBusy(remove.id)?'正在删除…':'删除任务'}}</button>
