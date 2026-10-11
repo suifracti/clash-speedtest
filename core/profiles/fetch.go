@@ -3,6 +3,7 @@ package profiles
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -42,14 +43,7 @@ func FetchSubscriptionWithUsage(rawURL, userAgent string) ([]byte, *Subscription
 }
 
 func FetchSubscriptionWithUsageContext(ctx context.Context, rawURL, userAgent string) ([]byte, *SubscriptionUsage, error) {
-	body, usage, err := fetchSubscriptionResponseContext(ctx, rawURL, userAgent)
-	if err != nil || usage != nil {
-		return body, usage, err
-	}
-	// Some providers expose usage only to subscription managers. Keep the
-	// original response as the node-config authority; read only the headers
-	// from this second request and discard its body.
-	return body, fetchUsageHeaderContext(ctx, rawURL), nil
+	return fetchSubscriptionResponseContext(ctx, rawURL, userAgent)
 }
 
 func fetchSubscriptionResponse(rawURL, userAgent string) ([]byte, *SubscriptionUsage, error) {
@@ -65,45 +59,47 @@ func fetchSubscriptionResponseContext(ctx context.Context, rawURL, userAgent str
 		userAgent = DefaultUserAgent()
 	}
 	req.Header.Set("User-Agent", userAgent)
-	client := &http.Client{Timeout: 60 * time.Second}
+	evidence, _ := ctx.Value(fetchObserverKey{}).(*FetchEvidence)
+	if evidence != nil {
+		evidence.Method = http.MethodGet
+		evidence.UserAgent = req.UserAgent()
+	}
+	client := subscriptionClient(req, evidence)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, nil, fmt.Errorf("http %s", resp.Status)
+	if evidence != nil {
+		evidence.HTTPStatus = resp.StatusCode
 	}
-	body, err := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		retryAt := time.Time{}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			retryAt = retryAfterUntil(resp.Header.Get("Retry-After"), time.Now())
+			if evidence != nil {
+				evidence.RetryAfterUntil = retryAt
+			}
+		}
+		return nil, nil, &FetchHTTPError{Status: resp.StatusCode, RetryAfterUntil: retryAt}
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxSubscriptionBytes+1))
+	if evidence != nil {
+		evidence.BytesRead = len(body)
+	}
 	if err != nil {
 		return nil, nil, err
+	}
+	if len(body) > MaxSubscriptionBytes {
+		return nil, nil, &FetchBodyError{Reason: "subscription response exceeds 8 MiB"}
 	}
 	if len(body) == 0 {
-		return nil, nil, fmt.Errorf("empty subscription body")
+		return nil, nil, &FetchBodyError{Reason: "empty subscription body"}
+	}
+	if evidence != nil {
+		evidence.BodySHA256 = fmt.Sprintf("%x", sha256.Sum256(body))
 	}
 	return body, parseSubscriptionUsage(resp.Header.Get("Subscription-Userinfo")), nil
-}
-
-func fetchUsageHeader(rawURL string) *SubscriptionUsage {
-	return fetchUsageHeaderContext(context.Background(), rawURL)
-}
-
-func fetchUsageHeaderContext(ctx context.Context, rawURL string) *SubscriptionUsage {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSpace(rawURL), nil)
-	if err != nil {
-		return nil
-	}
-	req.Header.Set("User-Agent", "clash.meta")
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil
-	}
-	return parseSubscriptionUsage(resp.Header.Get("Subscription-Userinfo"))
 }
 
 func RedactURL(raw string) string {

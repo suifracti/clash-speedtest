@@ -6,11 +6,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/faceair/clash-speedtest/core/profiles"
 )
 
 func TestAuthStatusAndLogin(t *testing.T) {
 	srv, err := NewServer(ServerConfig{
-		WebPassword: "secret-password",
+		WebPassword:  "secret-password",
+		ProfilePaths: profiles.Paths{Dir: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -70,7 +73,7 @@ func TestAuthStatusAndLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !loginResp.Authenticated || loginResp.Token == "" {
-		t.Fatalf("expected authenticated=true and non-empty token, got %+v", loginResp)
+		t.Fatal("expected authenticated=true and a non-empty authorization token")
 	}
 
 	// 5. Access protected endpoint with Bearer token

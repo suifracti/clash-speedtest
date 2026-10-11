@@ -5,6 +5,10 @@ declare global {interface Window {go?:{desktop?:{App?:Record<string,(...args:any
 export const desktop=()=>!!window.go?.desktop?.App
 let token=window.localStorage.getItem('cst_auth_token')||''
 export function query(params:object={}){const out=new URLSearchParams();for(const [k,v] of Object.entries(params))if(v!==undefined&&v!==null&&v!=='')out.set(k,String(v));return out.toString()}
+export interface SubscriptionRefreshSelection {airport_id:string;subscription_id:string}
+export interface SubscriptionRefreshRequest {request_id:string;all?:boolean;selections?:SubscriptionRefreshSelection[];retry_of?:string}
+export interface SubscriptionRefreshItem extends SubscriptionRefreshSelection {airport_name:string;subscription_name:string;source_fingerprint:string;source_version:number;state:string;error_code?:string;error_message?:string;started_at?:string;finished_at?:string;duration_ms:number;node_count:number;fetch?:{method:string;user_agent:string;request_count:number;redirect_count:number;bytes_read:number;body_sha256?:string;http_status?:number;retry_after_until?:string};stages:{state:string;at:string}[]}
+export interface SubscriptionRefreshJob {id:string;state:string;created_at:string;finished_at?:string;items:SubscriptionRefreshItem[];completed:number;success:number;failed:number;cancelled:number;not_executed:number;cancel_requested:boolean;persistence_error?:string}
 export async function request<T>(path:string,method='GET',body?:unknown,desktopMethod?:string,args:unknown[]=[]):Promise<T>{
   if(desktop()&&desktopMethod){const fn=window.go!.desktop!.App![desktopMethod];if(!fn)throw new Error('当前桌面版本需要更新才能使用此功能');return fn(...args)}
   const headers:Record<string,string>={};if(token)headers.Authorization=`Bearer ${token}`;if(body!==undefined)headers['Content-Type']='application/json'
@@ -22,6 +26,10 @@ export const api={
   auth:()=>desktop()?Promise.resolve({auth_required:false,authenticated:true}):request<{auth_required:boolean;authenticated:boolean}>('/api/auth/status'),
   async login(password:string){const data=await request<{token:string}>('/api/auth/login','POST',{password});token=data.token;window.localStorage.setItem('cst_auth_token',token)},
   setup:()=>request<Setup>('/api/profile/setup','GET',undefined,'GetProfileSetup'),airports:()=>request<Airport[]>('/api/airports','GET',undefined,'ListAirports'),nodes:()=>request<NodeOption[]>('/api/monitor/nodes','GET',undefined,'ListMonitorNodeOptions'),catalog:()=>request<ServiceRule[]>('/api/workbench/public-service-catalog','GET',undefined,'ListWorkbenchPublicServiceCatalog'),jobs:()=>request<MonitorJob[]>('/api/monitor/jobs','GET',undefined,'ListMonitorJobs'),
+  refreshJobs:()=>request<SubscriptionRefreshJob[]>('/api/subscription-refresh-jobs','GET',undefined,'ListSubscriptionRefreshJobs'),
+  startRefresh:(body:SubscriptionRefreshRequest)=>request<SubscriptionRefreshJob>('/api/subscription-refresh-jobs','POST',body,'StartSubscriptionRefreshJob',[body]),
+  refreshJob:(id:string)=>request<SubscriptionRefreshJob>(`/api/subscription-refresh-jobs/${encodeURIComponent(id)}`,'GET',undefined,'GetSubscriptionRefreshJob',[id]),
+  cancelRefresh:(id:string)=>request<SubscriptionRefreshJob>(`/api/subscription-refresh-jobs/${encodeURIComponent(id)}/cancel`,'POST',undefined,'CancelSubscriptionRefreshJob',[id]),
   createJob:(body:MonitorCreate)=>request<MonitorJob>('/api/monitor/jobs','POST',body,'CreateMonitorJob',[body]),
   jobAction:(id:string,action:string,body?:unknown)=>request(`/api/monitor/jobs/${encodeURIComponent(id)}/${action}`,'POST',body,({start:'StartMonitorJob',pause:'PauseMonitorJob',resume:'ResumeMonitorJob',stop:'StopMonitorJob',trigger:'TriggerMonitorJob','resume-on-launch':'SetMonitorJobResumeOnLaunch','sampling-tier':'UpdateMonitorJobSamplingTier'} as Record<string,string>)[action],[id,...(body?Object.values(body):[])]),
   deleteJob:(id:string)=>request(`/api/monitor/jobs/${encodeURIComponent(id)}`,'DELETE',undefined,'DeleteMonitorJob',[id]),
