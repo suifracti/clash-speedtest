@@ -78,13 +78,13 @@ export async function readQuality(node:NodeOption,since:string,until:string,read
 
 
 export type SiteQualityMetric='p50'|'p95'|'rate'
-export type SiteQualityReason='unknown_identity'|'invalid_window'|'unmeasured'|'incomplete_read'|'unknown_observation_time'|'unknown_conditions'|'insufficient_samples'|'insufficient_p95_samples'|'stale'|'ambiguous_latest_group'|'invalid_samples'
+export type SiteQualityReason='unknown_identity'|'invalid_window'|'unmeasured'|'incomplete_read'|'unknown_observation_time'|'unknown_conditions'|'insufficient_samples'|'insufficient_p95_samples'|'stale'|'ambiguous_latest_group'|'invalid_samples'|'latest_unobserved_attempt'|'conflicting_observations'
 export interface SiteQualityObservations {failed:number;cancelled:number;notExecuted:number;sourceLimited:number}
 export interface SiteQualitySummary {
  targetId:string;nodeId:string;since:string;until:string;groups:QualityGroup[];group?:QualityGroup
  total:number;success:number;excluded:number;p50:number|null;p95:number|null;successRate:number|null;lastAt:string
  state:'unmeasured'|'responded'|'partial'|'failed'|'cancelled'|'not_executed'|'source_limited'
- observations:SiteQualityObservations;attemptStates:{cancelled:number;notExecuted:number};unplacedSamples:number;invalidSamples:number
+ observations:SiteQualityObservations;attemptStates:{cancelled:number;notExecuted:number};unplacedSamples:number;invalidSamples:number;conflictingSamples:number
  readComplete:boolean;readError?:string;gates:{samples:boolean;response:boolean;fresh:boolean}
  rankable:Record<SiteQualityMetric,boolean>;reasons:SiteQualityReason[]
 }
@@ -106,16 +106,33 @@ export function multiSiteQuality(node:NodeScope,e:QualityEvidence):SiteQualitySu
  const nodeId=key(node),identityKnown=!!node.profile_id&&!!node.node_identity_key&&!!node.config_revision_key
  const start=observationTime(e.since),end=observationTime(e.until),windowValid=Number.isFinite(start)&&Number.isFinite(end)&&start<=end
  const tests=e.tests.filter(t=>key(t)===nodeId),monitor=e.monitor.filter(s=>key(s)===nodeId)
+ const fingerprints=new Map<string,string>(),conflicts=new Set<string>()
+ function remember(id:string,payload:unknown){
+  const fingerprint=JSON.stringify(payload),previous=fingerprints.get(id)
+  if(previous!==undefined&&previous!==fingerprint)conflicts.add(id)
+  else fingerprints.set(id,fingerprint)
+ }
+ // Identical repeated pages are duplicates. Contradictory copies of one saved
+ // observation are not two samples and must not select a winner by input order.
+ for(const t of tests)for(const sample of t.samples||[]){
+  remember('latency:'+t.attempt_id+':'+sample.seq,[qualityGroupKey(t.source||'workbench',t.method||'旧方法未记录',sample.target||t.target||'',latencyConditions(t)),observationTime(sample.timestamp),sample.success,sample.latency_ms,sample.error||''])
+ }
+ for(const sample of monitor)if(sample.probe_type==='rtt')remember('monitor:'+sample.sample_id,[sample.target,observationTime(sample.timestamp),sample.success,sample.latency,sample.error_class||'',sample.error_detail||''])
  return latencyTargets.map(target=>{
   let unplacedSamples=0,invalidSamples=0
+  const conflictingIDs=new Set<string>()
   const inWindow=(timestamp:string)=>{const at=observationTime(timestamp);if(!Number.isFinite(at)){unplacedSamples++;return false}return windowValid&&at>=start&&at<=end}
   const scopedTests=tests.map(t=>({...t,samples:(t.samples||[]).filter(s=>{
    if(latencyTargetId(s.target||t.target||'')!==target.id||!inWindow(s.timestamp))return false
+   const id='latency:'+t.attempt_id+':'+s.seq
+   if(conflicts.has(id)){conflictingIDs.add(id);return false}
    if(s.success&&(!Number.isFinite(s.latency_ms)||s.latency_ms<0)){invalidSamples++;return false}
    return true
   })}))
   const scopedMonitor=monitor.filter(s=>{
    if(s.probe_type!=='rtt'||latencyTargetId(s.target)!==target.id||!inWindow(s.timestamp))return false
+   const id='monitor:'+s.sample_id
+   if(conflicts.has(id)){conflictingIDs.add(id);return false}
    if(s.success&&(!Number.isFinite(s.latency)||s.latency<0)){invalidSamples++;return false}
    return true
   })
@@ -143,37 +160,47 @@ export function multiSiteQuality(node:NodeScope,e:QualityEvidence):SiteQualitySu
   // lastAt/response denominator. Prefer current measurements over legacy RTT.
   groups.sort((a,b)=>(details.get(b.key)?.at??Number.NEGATIVE_INFINITY)-(details.get(a.key)?.at??Number.NEGATIVE_INFINITY)||a.key.localeCompare(b.key))
   const currentGroups=groups.filter(g=>g.source!=='monitor'),candidates=currentGroups.length?currentGroups:groups
-  const group=candidates[0]
-  const ambiguous=!!group&&candidates.some(g=>g.key!==group.key&&details.get(g.key)!.at===details.get(group.key)!.at)
-  const observations=group?details.get(group.key)!.observations:{failed:0,cancelled:0,notExecuted:0,sourceLimited:0}
+  const observed=candidates[0]
+  const ambiguous=!!observed&&candidates.some(g=>g.key!==observed.key&&details.get(g.key)!.at===details.get(observed.key)!.at)
+  let latestEmpty:{test:LatencyTest;at:number}|undefined
   const attemptStates={cancelled:0,notExecuted:0},attemptsSeen=new Set<string>()
   for(const t of tests){
    if((latencyTargetId(t.target)!==target.id&&!(t.samples||[]).some(s=>latencyTargetId(s.target)===target.id))||attemptsSeen.has(t.attempt_id))continue
-   const at=observationTime(t.finished_at||t.requested_at);if(!windowValid||at<start||at>end||!Number.isFinite(at))continue
+   const at=[t.finished_at,t.requested_at].map(observationTime).find(Number.isFinite)??Number.NEGATIVE_INFINITY
+   if(!windowValid||at<start||at>end||!Number.isFinite(at))continue
    attemptsSeen.add(t.attempt_id)
    if(t.status==='cancelled')attemptStates.cancelled++;else if(t.status==='not_executed')attemptStates.notExecuted++
+   const hasSiteSample=(t.samples||[]).some(s=>latencyTargetId(s.target||t.target||'')===target.id)
+   if(!hasSiteSample&&(!latestEmpty||at>latestEmpty.at))latestEmpty={test:t,at}
   }
-  const readComplete=group?latencyReadComplete(e,group):e.reads.latency.complete&&e.reads.monitor.complete
-  const readError=group?e.reads[group.source==='monitor'?'monitor':'latency'].error:e.reads.latency.error||e.reads.monitor.error
+  // A newer attempt with no observation cannot inherit the old path's metrics.
+  // Keep old groups as history, without inventing a zero or a failed sample.
+  const unobservedLatest=!!latestEmpty&&(!observed||latestEmpty.at>=details.get(observed.key)!.at)
+  const group=unobservedLatest?undefined:observed
+  const observations=group?details.get(group.key)!.observations:{failed:0,cancelled:0,notExecuted:0,sourceLimited:0}
+  const readComplete=group?latencyReadComplete(e,group):unobservedLatest?e.reads.latency.complete:e.reads.latency.complete&&e.reads.monitor.complete
+  const readError=group?e.reads[group.source==='monitor'?'monitor':'latency'].error:unobservedLatest?e.reads.latency.error:e.reads.latency.error||e.reads.monitor.error
   const gates={samples:qualityMatchesGate(e,group,'samples',e.until),response:qualityMatchesGate(e,group,'response',e.until),fresh:qualityMatchesGate(e,group,'fresh',e.until)}
   const reasons:SiteQualityReason[]=[]
   if(!identityKnown)reasons.push('unknown_identity')
   if(!windowValid)reasons.push('invalid_window')
   if(!group)reasons.push('unmeasured')
+  if(unobservedLatest)reasons.push('latest_unobserved_attempt')
   if(!readComplete)reasons.push('incomplete_read')
   if(unplacedSamples)reasons.push('unknown_observation_time')
   if(invalidSamples)reasons.push('invalid_samples')
+  if(conflictingIDs.size)reasons.push('conflicting_observations')
   if(ambiguous)reasons.push('ambiguous_latest_group')
   if(group&&!knownQualityConditions(group))reasons.push('unknown_conditions')
   if(group&&!gates.samples)reasons.push('insufficient_samples')
   if(group&&group.success<20)reasons.push('insufficient_p95_samples')
   if(group&&!gates.fresh)reasons.push('stale')
   const baseRankable=reasons.every(reason=>reason==='insufficient_p95_samples')&&!!group&&group.p50!==null
-  const state:SiteQualitySummary['state']=!group?(attemptStates.cancelled?'cancelled':attemptStates.notExecuted?'not_executed':'unmeasured'):
+  const state:SiteQualitySummary['state']=!group?(unobservedLatest&&latestEmpty?.test.status==='cancelled'?'cancelled':unobservedLatest&&latestEmpty?.test.status==='not_executed'?'not_executed':'unmeasured'):
    group.success>0?(observations.failed||group.excluded||partialGroups.has(group.key)?'partial':observations.sourceLimited===group.total?'source_limited':'responded'):
    observations.sourceLimited?'source_limited':group.total?'failed':observations.cancelled?'cancelled':observations.notExecuted?'not_executed':'unmeasured'
   return {targetId:target.id,nodeId,since:e.since,until:e.until,groups,group,total:group?.total||0,success:group?.success||0,excluded:group?.excluded||0,
-   p50:group?.p50??null,p95:group?.p95??null,successRate:group?.successRate??null,lastAt:group?.lastAt||'',state,observations,attemptStates,unplacedSamples,invalidSamples,
+   p50:group?.p50??null,p95:group?.p95??null,successRate:group?.successRate??null,lastAt:group?.lastAt||'',state,observations,attemptStates,unplacedSamples,invalidSamples,conflictingSamples:conflictingIDs.size,
    readComplete,readError,gates,reasons,rankable:{p50:baseRankable,p95:baseRankable&&group!.success>=20&&group!.p95!==null,rate:baseRankable&&group!.successRate!==null}}
  })
 }
