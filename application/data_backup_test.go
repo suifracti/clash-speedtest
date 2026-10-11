@@ -120,3 +120,47 @@ type failingBackupWriter struct{}
 func (failingBackupWriter) Write([]byte) (int, error) {
 	return 0, errors.New("destination unavailable")
 }
+
+// Cancellation after metadata was written must not finalize a readable ZIP.
+func TestDataBackupCancellationDoesNotFinalizeArchive(t *testing.T) {
+	paths, err := appdata.Resolve(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(paths.DataRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(paths.DataRoot, "settings.json"), []byte(`{"synthetic":true}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var output bytes.Buffer
+	service := &AppService{appPaths: paths}
+	if err := service.ExportDataBackup(ctx, &output); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancel error=%v", err)
+	}
+	if _, err := zip.NewReader(bytes.NewReader(output.Bytes()), int64(output.Len())); err == nil {
+		t.Fatal("failed export has a valid ZIP completion directory")
+	}
+}
+
+func TestDataBackupCancelledEmptyRootFailsClosed(t *testing.T) {
+	paths, err := appdata.Resolve(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(paths.DataRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	service := &AppService{appPaths: paths}
+	var output bytes.Buffer
+	if err := service.ExportDataBackup(ctx, &output); !errors.Is(err, context.Canceled) {
+		t.Fatalf("empty root cancelled export error=%v", err)
+	}
+	if _, err := zip.NewReader(bytes.NewReader(output.Bytes()), int64(output.Len())); err == nil {
+		t.Fatal("cancelled empty export was finalized")
+	}
+}

@@ -2,7 +2,9 @@ package history
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -11,14 +13,23 @@ import (
 
 // BackupDatabase creates a consistent SQLite snapshot of sourceDir at the
 // target history.db path. It deliberately uses SQLite's online backup API so
-// committed WAL pages are included in the snapshot.
+// committed WAL pages are included in the snapshot. The source is opened read-only
+// without OpenDB: this entry point must preserve the pre-upgrade schema.
 func BackupDatabase(ctx context.Context, sourceDir, targetDBPath string) error {
-	source, err := OpenDB(sourceDir)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	sourcePath, err := filepath.Abs(filepath.Join(sourceDir, "history.db"))
+	if err != nil {
+		return err
+	}
+	uri := (&url.URL{Scheme: "file", Path: sourcePath, RawQuery: "mode=ro"}).String()
+	raw, err := sql.Open("sqlite", uri)
 	if err != nil {
 		return fmt.Errorf("open source history: %w", err)
 	}
-	defer source.Close()
-	return source.BackupTo(ctx, targetDBPath)
+	defer raw.Close()
+	return (&DB{db: raw}).BackupTo(ctx, targetDBPath)
 }
 
 // ValidateDatabase opens a history directory through the normal schema
@@ -42,13 +53,33 @@ func (d *DB) BackupTo(ctx context.Context, targetDBPath string) error {
 	if targetDBPath == "" {
 		return fmt.Errorf("backup target is empty")
 	}
-	if _, err := os.Stat(targetDBPath); err == nil {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(targetDBPath); err == nil {
 		return fmt.Errorf("backup target already exists: %s", targetDBPath)
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("inspect backup target: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(targetDBPath), 0o755); err != nil {
 		return fmt.Errorf("create backup target directory: %w", err)
+	}
+
+	// Build privately in the destination filesystem. Link publishes atomically
+	// without replacing any target created while the snapshot was in progress.
+	temporary, err := os.CreateTemp(filepath.Dir(targetDBPath), ".history-backup-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create private backup: %w", err)
+	}
+	temporaryPath, err := filepath.Abs(temporary.Name())
+	if err != nil {
+		temporary.Close()
+		os.Remove(temporary.Name())
+		return err
+	}
+	defer removeSQLiteArtifacts(temporaryPath)
+	if err := temporary.Close(); err != nil {
+		return err
 	}
 
 	conn, err := d.db.Conn(ctx)
@@ -64,11 +95,21 @@ func (d *DB) BackupTo(ctx context.Context, targetDBPath string) error {
 		if !ok {
 			return fmt.Errorf("sqlite driver does not support online backup")
 		}
-		backup, err := backuper.NewBackup(targetDBPath)
+		backup, err := backuper.NewBackup((&url.URL{Scheme: "file", Path: temporaryPath}).String())
 		if err != nil {
 			return fmt.Errorf("create online backup: %w", err)
 		}
-		more, stepErr := backup.Step(-1)
+		var more bool
+		var stepErr error
+		for {
+			if stepErr = ctx.Err(); stepErr != nil {
+				break
+			}
+			more, stepErr = backup.Step(128)
+			if stepErr != nil || !more {
+				break
+			}
+		}
 		finishErr := backup.Finish()
 		if stepErr != nil {
 			return fmt.Errorf("copy online backup pages: %w", stepErr)
@@ -87,8 +128,13 @@ func (d *DB) BackupTo(ctx context.Context, targetDBPath string) error {
 		return nil
 	})
 	if err != nil {
-		removeSQLiteArtifacts(targetDBPath)
 		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := os.Link(temporaryPath, targetDBPath); err != nil {
+		return fmt.Errorf("publish backup without replacement: %w", err)
 	}
 	return nil
 }
