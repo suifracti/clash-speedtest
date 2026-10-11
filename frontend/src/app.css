@@ -65,11 +65,18 @@ section.home-view{padding-top:18px}
 .home-view .node-toolbar{padding-top:7px;padding-bottom:9px}
 @media(max-width:900px){
   section.home-view{padding-top:14px;padding-right:clamp(14px,3vw,24px);padding-left:clamp(14px,3vw,24px)}
-  .home-view .source-orbit{grid-template-columns:auto auto;justify-content:center;align-items:center;column-gap:16px;padding:10px 0}
+  .home-view .source-orbit{grid-template-columns:auto auto;justify-content:center;align-items:center;column-gap:16px;padding:6px 0}
   .home-view .orbit-meta{display:grid;gap:6px;align-items:start}
   .home-view .project-tabs{flex-wrap:wrap;gap:6px 14px}
   .home-view .project-tabs .tab-tail{margin-left:auto}
   .home-view .toolbar-filters{justify-content:flex-start;flex-wrap:wrap}
+}
+@media(min-width:741px) and (max-width:900px){
+  .home-view .orbit-shell{width:140px;height:140px}
+  .home-view .orbit-button{inset:8px;gap:4px;padding:3px}
+  .home-view .airport-logo{width:32px;height:32px;font-size:13px}
+  .home-view .orbit-button>strong{font-size:18px}
+  .home-view .orbit-names{max-width:116px}
 }
 @media(max-width:740px){
   .home-view .orbit-shell{width:164px;height:164px}
