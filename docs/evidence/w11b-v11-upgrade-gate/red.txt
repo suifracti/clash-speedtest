@@ -1,0 +1,28 @@
+=== RUN   TestV11UpgradeBackupIncludesWALAndIsolatedRollback
+    upgrade_backup_test.go:26: completed pre-upgrade backups = 0, want 1
+--- FAIL: TestV11UpgradeBackupIncludesWALAndIsolatedRollback (0.01s)
+=== RUN   TestV11UpgradeBackupFailureBlocksAllOpeners
+=== RUN   TestV11UpgradeBackupFailureBlocksAllOpeners/ValidateDatabase
+    upgrade_backup_test.go:103: backup failure did not block v11 upgrade
+=== RUN   TestV11UpgradeBackupFailureBlocksAllOpeners/NewStore
+    upgrade_backup_test.go:103: backup failure did not block v11 upgrade
+=== RUN   TestV11UpgradeBackupFailureBlocksAllOpeners/NewStoreWithLegacyDir
+    upgrade_backup_test.go:103: backup failure did not block v11 upgrade
+=== RUN   TestV11UpgradeBackupFailureBlocksAllOpeners/OpenDB
+    upgrade_backup_test.go:103: backup failure did not block v11 upgrade
+--- FAIL: TestV11UpgradeBackupFailureBlocksAllOpeners (0.04s)
+    --- FAIL: TestV11UpgradeBackupFailureBlocksAllOpeners/ValidateDatabase (0.01s)
+    --- FAIL: TestV11UpgradeBackupFailureBlocksAllOpeners/NewStore (0.01s)
+    --- FAIL: TestV11UpgradeBackupFailureBlocksAllOpeners/NewStoreWithLegacyDir (0.01s)
+    --- FAIL: TestV11UpgradeBackupFailureBlocksAllOpeners/OpenDB (0.01s)
+=== RUN   TestV11UpgradeBackupRejectsSymlinkAndPermission
+=== RUN   TestV11UpgradeBackupRejectsSymlinkAndPermission/symlink
+    upgrade_backup_test.go:134: unsafe backup destination did not block migration
+=== RUN   TestV11UpgradeBackupRejectsSymlinkAndPermission/permission
+    upgrade_backup_test.go:134: unsafe backup destination did not block migration
+--- FAIL: TestV11UpgradeBackupRejectsSymlinkAndPermission (0.02s)
+    --- FAIL: TestV11UpgradeBackupRejectsSymlinkAndPermission/symlink (0.01s)
+    --- FAIL: TestV11UpgradeBackupRejectsSymlinkAndPermission/permission (0.01s)
+FAIL
+FAIL	github.com/faceair/clash-speedtest/core/history	0.708s
+FAIL

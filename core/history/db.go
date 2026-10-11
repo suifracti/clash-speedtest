@@ -283,7 +283,11 @@ func OpenDB(dir string) (*DB, error) {
 
 	// Initialize or upgrade the schema inside one explicit transaction. This
 	// also rejects unknown future schemas before any DDL is applied.
-	if err := migrateSchema(db); err != nil {
+	if err := migrateSchema(db, func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		return createVerifiedV11Rollback(ctx, dir, upgradeBackupHooks{})
+	}); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate sqlite schema: %w", err)
 	}
@@ -298,7 +302,7 @@ func OpenDB(dir string) (*DB, error) {
 	return &DB{db: db}, nil
 }
 
-func migrateSchema(db *sql.DB) error {
+func migrateSchema(db *sql.DB, beforeV11Upgrade func() error) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin schema migration: %w", err)
@@ -318,6 +322,21 @@ func migrateSchema(db *sql.DB) error {
 		}
 		if err := validateCurrentSchema(tx, version); err != nil {
 			return fmt.Errorf("validate schema version %d: %w", version, err)
+		}
+		// Keep the schema recognition transaction open across the backup. In WAL
+		// mode, a concurrent committed writer makes this transaction's subsequent
+		// write fail rather than upgrading from a stale snapshot. Never retry DDL
+		// without re-entering this gate and taking a fresh backup.
+		if version == 11 {
+			if err := validateMonitorBudgetSchema(tx); err != nil {
+				return err
+			}
+			if beforeV11Upgrade == nil {
+				return fmt.Errorf("%w: missing pre-upgrade backup", ErrUpgradeBackup)
+			}
+			if err := beforeV11Upgrade(); err != nil {
+				return fmt.Errorf("%w: %w", ErrUpgradeBackup, err)
+			}
 		}
 	} else {
 		empty, knownLegacy, err := inspectUnversionedSchema(tx)
