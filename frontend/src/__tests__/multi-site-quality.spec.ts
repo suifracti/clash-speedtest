@@ -153,6 +153,17 @@ describe('six-site evidence without aggregate scoring',()=>{
    expect(s.reasons).toContain('conflicting_observations');expect(s.rankable.p50).toBe(false)
   }
  })
+ it('keeps legacy stream conflicts diagnostic without blocking complete current HTTP',()=>{
+  const legacy:MonitorSample={...node,sample_id:'legacy-conflict',run_id:'run',display_name_snapshot:'same',timestamp:at,target:latencyTargets[0].urls[0],probe_type:'rtt',success:true,latency:1e6,ttfb:0,sampling_tier:'fast'}
+  const conflicting={...legacy,latency:2e6}
+  for(const monitor of [[legacy,conflicting],[conflicting,legacy]]){
+   const s=site(evidence([test('http',0,20)],monitor))
+   expect(s.conflictingSamples).toBe(1);expect(s.success).toBe(20)
+   expect(s.reasons).not.toContain('conflicting_observations')
+   expect(s.rankable).toEqual({p50:true,p95:true,rate:true})
+   expect(site(evidence([],monitor)).rankable.p50).toBe(false)
+  }
+ })
  it('deduplicates repeated pages without mutating saved input or executing any API',()=>{
   const t=test('duplicate'),e=evidence([t,t]);const snapshot=JSON.stringify(e),fetch=vi.fn(()=>{throw Error('network forbidden')});vi.stubGlobal('fetch',fetch)
   try{expect(site(e).success).toBe(5);expect(JSON.stringify(e)).toBe(snapshot);expect(fetch).not.toHaveBeenCalled()}finally{vi.unstubAllGlobals()}
