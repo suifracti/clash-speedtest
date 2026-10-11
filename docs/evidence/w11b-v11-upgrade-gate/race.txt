@@ -1,0 +1,104 @@
+=== RUN   TestBackupDatabaseBeforeSchemaUpgrade
+--- PASS: TestBackupDatabaseBeforeSchemaUpgrade (0.30s)
+=== RUN   TestBackupDatabaseFailsClosed
+=== RUN   TestBackupDatabaseFailsClosed/existing
+=== RUN   TestBackupDatabaseFailsClosed/cancelled
+=== RUN   TestBackupDatabaseFailsClosed/permission
+=== RUN   TestBackupDatabaseFailsClosed/missing
+--- PASS: TestBackupDatabaseFailsClosed (0.46s)
+    --- PASS: TestBackupDatabaseFailsClosed/existing (0.12s)
+    --- PASS: TestBackupDatabaseFailsClosed/cancelled (0.12s)
+    --- PASS: TestBackupDatabaseFailsClosed/permission (0.12s)
+    --- PASS: TestBackupDatabaseFailsClosed/missing (0.11s)
+=== RUN   TestBackupDatabaseConcurrentPublication
+--- PASS: TestBackupDatabaseConcurrentPublication (0.13s)
+=== RUN   TestBackupToInterruptedConnectionWaitCleansPrivateSnapshot
+--- PASS: TestBackupToInterruptedConnectionWaitCleansPrivateSnapshot (0.15s)
+=== RUN   TestSchemaV11UpgradePreservesLatencyHistoryAndLeavesPathUnknown
+--- PASS: TestSchemaV11UpgradePreservesLatencyHistoryAndLeavesPathUnknown (0.24s)
+=== RUN   TestV11UpgradeBackupFailuresBeforeDDL
+=== RUN   TestV11UpgradeBackupFailuresBeforeDDL/copy
+    upgrade_backup_test.go:101: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+=== RUN   TestV11UpgradeBackupFailuresBeforeDDL/corrupt
+    upgrade_backup_test.go:101: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+=== RUN   TestV11UpgradeBackupFailuresBeforeDDL/wrong-version
+    upgrade_backup_test.go:101: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+=== RUN   TestV11UpgradeBackupFailuresBeforeDDL/v12-column
+    upgrade_backup_test.go:101: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+=== RUN   TestV11UpgradeBackupFailuresBeforeDDL/foreign-key
+    upgrade_backup_test.go:101: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+=== RUN   TestV11UpgradeBackupFailuresBeforeDDL/snapshot-sync
+    upgrade_backup_test.go:101: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+=== RUN   TestV11UpgradeBackupFailuresBeforeDDL/manifest-write
+    upgrade_backup_test.go:101: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+=== RUN   TestV11UpgradeBackupFailuresBeforeDDL/manifest-sync
+    upgrade_backup_test.go:101: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+=== RUN   TestV11UpgradeBackupFailuresBeforeDDL/manifest-publish
+    upgrade_backup_test.go:101: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+=== RUN   TestV11UpgradeBackupFailuresBeforeDDL/directory-sync
+    upgrade_backup_test.go:101: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+=== RUN   TestV11UpgradeBackupFailuresBeforeDDL/cancel-before
+    upgrade_backup_test.go:101: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+=== RUN   TestV11UpgradeBackupFailuresBeforeDDL/cancel-after-copy
+    upgrade_backup_test.go:101: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+--- PASS: TestV11UpgradeBackupFailuresBeforeDDL (3.09s)
+    --- PASS: TestV11UpgradeBackupFailuresBeforeDDL/copy (0.22s)
+    --- PASS: TestV11UpgradeBackupFailuresBeforeDDL/corrupt (0.28s)
+    --- PASS: TestV11UpgradeBackupFailuresBeforeDDL/wrong-version (0.30s)
+    --- PASS: TestV11UpgradeBackupFailuresBeforeDDL/v12-column (0.26s)
+    --- PASS: TestV11UpgradeBackupFailuresBeforeDDL/foreign-key (0.26s)
+    --- PASS: TestV11UpgradeBackupFailuresBeforeDDL/snapshot-sync (0.25s)
+    --- PASS: TestV11UpgradeBackupFailuresBeforeDDL/manifest-write (0.27s)
+    --- PASS: TestV11UpgradeBackupFailuresBeforeDDL/manifest-sync (0.26s)
+    --- PASS: TestV11UpgradeBackupFailuresBeforeDDL/manifest-publish (0.26s)
+    --- PASS: TestV11UpgradeBackupFailuresBeforeDDL/directory-sync (0.26s)
+    --- PASS: TestV11UpgradeBackupFailuresBeforeDDL/cancel-before (0.23s)
+    --- PASS: TestV11UpgradeBackupFailuresBeforeDDL/cancel-after-copy (0.24s)
+=== RUN   TestV11UpgradeBackupWriterCommitBlocksStaleMigration
+=== RUN   TestV11UpgradeBackupWriterCommitBlocksStaleMigration/before-backup
+    upgrade_backup_test.go:135: verified synthetic v11 snapshot SHA256=a36012b7a988bab43cfc29573342535a8594da56237864a7ac2fdb7743789c4d
+    upgrade_backup_test.go:150: verified synthetic v11 snapshot SHA256=a36012b7a988bab43cfc29573342535a8594da56237864a7ac2fdb7743789c4d
+    upgrade_backup_test.go:150: verified synthetic v11 snapshot SHA256=a36012b7a988bab43cfc29573342535a8594da56237864a7ac2fdb7743789c4d
+    upgrade_backup_test.go:177: before-backup: migration failed closed (migrate latency path evidence: database is locked (517)); retry kept both verified snapshots
+=== RUN   TestV11UpgradeBackupWriterCommitBlocksStaleMigration/after-backup
+    upgrade_backup_test.go:135: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+    upgrade_backup_test.go:150: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+    upgrade_backup_test.go:150: verified synthetic v11 snapshot SHA256=a36012b7a988bab43cfc29573342535a8594da56237864a7ac2fdb7743789c4d
+    upgrade_backup_test.go:177: after-backup: migration failed closed (migrate latency path evidence: database is locked (517)); retry kept both verified snapshots
+--- PASS: TestV11UpgradeBackupWriterCommitBlocksStaleMigration (0.59s)
+    --- PASS: TestV11UpgradeBackupWriterCommitBlocksStaleMigration/before-backup (0.30s)
+    --- PASS: TestV11UpgradeBackupWriterCommitBlocksStaleMigration/after-backup (0.29s)
+=== RUN   TestV11UpgradeBackupOnlyExistingRecognizedV11
+=== RUN   TestV11UpgradeBackupOnlyExistingRecognizedV11/new-and-v12
+=== RUN   TestV11UpgradeBackupOnlyExistingRecognizedV11/future
+=== RUN   TestV11UpgradeBackupOnlyExistingRecognizedV11/no-private-bypass
+--- PASS: TestV11UpgradeBackupOnlyExistingRecognizedV11 (0.41s)
+    --- PASS: TestV11UpgradeBackupOnlyExistingRecognizedV11/new-and-v12 (0.15s)
+    --- PASS: TestV11UpgradeBackupOnlyExistingRecognizedV11/future (0.12s)
+    --- PASS: TestV11UpgradeBackupOnlyExistingRecognizedV11/no-private-bypass (0.13s)
+=== RUN   TestV11UpgradeBackupConcurrentMigrators
+    upgrade_backup_test.go:267: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+    upgrade_backup_test.go:267: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+--- PASS: TestV11UpgradeBackupConcurrentMigrators (0.25s)
+=== RUN   TestV11UpgradeBackupIncludesWALAndIsolatedRollback
+    upgrade_backup_test.go:287: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+    upgrade_backup_test.go:329: verified synthetic v11 snapshot SHA256=a1d728006cb10ee985cbe5e72e28d9d5f0ee2e29f2b9701c5b0418e9372fccb1
+--- PASS: TestV11UpgradeBackupIncludesWALAndIsolatedRollback (0.54s)
+=== RUN   TestV11UpgradeBackupFailureBlocksAllOpeners
+=== RUN   TestV11UpgradeBackupFailureBlocksAllOpeners/ValidateDatabase
+=== RUN   TestV11UpgradeBackupFailureBlocksAllOpeners/NewStore
+=== RUN   TestV11UpgradeBackupFailureBlocksAllOpeners/NewStoreWithLegacyDir
+=== RUN   TestV11UpgradeBackupFailureBlocksAllOpeners/OpenDB
+--- PASS: TestV11UpgradeBackupFailureBlocksAllOpeners (0.64s)
+    --- PASS: TestV11UpgradeBackupFailureBlocksAllOpeners/ValidateDatabase (0.15s)
+    --- PASS: TestV11UpgradeBackupFailureBlocksAllOpeners/NewStore (0.16s)
+    --- PASS: TestV11UpgradeBackupFailureBlocksAllOpeners/NewStoreWithLegacyDir (0.17s)
+    --- PASS: TestV11UpgradeBackupFailureBlocksAllOpeners/OpenDB (0.16s)
+=== RUN   TestV11UpgradeBackupRejectsSymlinkAndPermission
+=== RUN   TestV11UpgradeBackupRejectsSymlinkAndPermission/symlink
+=== RUN   TestV11UpgradeBackupRejectsSymlinkAndPermission/permission
+--- PASS: TestV11UpgradeBackupRejectsSymlinkAndPermission (0.38s)
+    --- PASS: TestV11UpgradeBackupRejectsSymlinkAndPermission/symlink (0.19s)
+    --- PASS: TestV11UpgradeBackupRejectsSymlinkAndPermission/permission (0.19s)
+PASS
+ok  	github.com/faceair/clash-speedtest/core/history	8.647s

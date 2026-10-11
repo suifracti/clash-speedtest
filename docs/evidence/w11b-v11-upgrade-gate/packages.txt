@@ -1,0 +1,3 @@
+ok  	github.com/faceair/clash-speedtest/core/history	2.370s
+ok  	github.com/faceair/clash-speedtest/application	25.142s
+ok  	github.com/faceair/clash-speedtest/core/appdata	0.564s
