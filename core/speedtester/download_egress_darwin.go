@@ -95,6 +95,32 @@ func (c *physicalDNSConn) Write(p []byte) (int, error) {
 	return c.Conn.Write(p)
 }
 
+// Go's resolver selects DNS framing from PacketConn, not the requested
+// network string. Preserve UDP's capability without exposing it on TCP.
+func wrapPhysicalDNSConn(conn net.Conn, ctx context.Context, budget *physicalRequestBudget) net.Conn {
+	bounded := &physicalDNSConn{Conn: conn, ctx: ctx, budget: budget}
+	if packet, ok := conn.(net.PacketConn); ok {
+		return &physicalDNSPacketConn{physicalDNSConn: bounded, packet: packet}
+	}
+	return bounded
+}
+
+type physicalDNSPacketConn struct {
+	*physicalDNSConn
+	packet net.PacketConn
+}
+
+func (c *physicalDNSPacketConn) ReadFrom(p []byte) (int, net.Addr, error) {
+	return c.packet.ReadFrom(p)
+}
+
+func (c *physicalDNSPacketConn) WriteTo(p []byte, peer net.Addr) (int, error) {
+	if err := c.budget.reserve(c.ctx); err != nil {
+		return 0, err
+	}
+	return c.packet.WriteTo(p, peer)
+}
+
 // Use only numeric DNS servers explicitly scoped to this physical interface;
 // never adopt a VPN's scoped resolver or a loopback/fake-IP DNS listener.
 func physicalScopedDNS(text, iface string, index int) string {
@@ -468,7 +494,7 @@ func PreparePhysicalDownloadProxy(ctx context.Context, original *CProxy) (prepar
 				e.setFailure("dns_socket_bind_failed")
 				return nil, verifyErr
 			}
-			return &physicalDNSConn{Conn: conn, ctx: dialCtx, budget: e.dnsRequests}, nil
+			return wrapPhysicalDNSConn(conn, dialCtx, e.dnsRequests), nil
 		}}
 	}
 	ip, err := e.resolve(ctx, host)
