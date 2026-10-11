@@ -122,6 +122,37 @@ describe('six-site evidence without aggregate scoring',()=>{
   const s=site(evidence([t]));expect(s.groups).toHaveLength(2);expect(s.group?.target).toBe('https://cp.cloudflare.com/generate_204')
   expect(s.success).toBe(5);expect(s.p50).toBe(80);expect(s.observations.sourceLimited).toBe(1)
  })
+ it.each(['cancelled','not_executed'])('does not rank older path evidence after a newer empty %s attempt',status=>{
+  const old=test('old-path',0,20);old.samples=old.samples.map(s=>({...s,timestamp:'2026-10-10T22:00:00Z'}))
+  const latest=test('new-path',0,0,{status,network_path:{...path,interface:'en2',address_family:'IPv6',address_source:'AAAA'}})
+  const e=evidence([old,latest]);e.reads.monitor={complete:false,error:'unrelated legacy read'};e.complete=false
+  const s=site(e);expect(s.groups[0].success).toBe(20);expect(s.readComplete).toBe(true);expect(s.readError).toBeUndefined()
+  expect(s.group).toBeUndefined();expect(s.state).toBe(status);expect(s.p50).toBeNull()
+  expect(s.reasons).toContain('latest_unobserved_attempt')
+  expect(s.rankable).toEqual({p50:false,p95:false,rate:false})
+ })
+ it('treats contradictory copies of one observation as unknown in either input order',()=>{
+  const a=test('same-id',0,20),b=test('same-id',0,20,{network_path:{...path,interface:'en2',address_family:'IPv6',address_source:'AAAA'}})
+  for(const tests of [[a,b],[b,a]]){
+   const s=site(evidence(tests));expect(s.conflictingSamples).toBe(20)
+   expect(s.reasons).toContain('conflicting_observations');expect(s.group).toBeUndefined()
+   expect(s.rankable).toEqual({p50:false,p95:false,rate:false});expect(s.p50).toBeNull()
+  }
+ })
+ it('does not block a measured site with an older empty attempt or another site cancellation',()=>{
+  const oldEmpty=test('older-empty',0,0,{status:'not_executed',requested_at:'2026-10-10T21:00:00Z',finished_at:'2026-10-10T21:00:00Z'})
+  const measured=test('measured',0,20),otherSite=test('other-empty',1,0,{status:'cancelled'})
+  const summaries=multiSiteQuality(node,evidence([oldEmpty,measured,otherSite]))
+  expect(summaries[0].rankable.p95).toBe(true);expect(summaries[0].success).toBe(20)
+  expect(summaries[1].state).toBe('cancelled');expect(summaries[1].rankable.p50).toBe(false)
+ })
+ it('rejects contradictory numeric values even when the condition key agrees',()=>{
+  const a=test('same-values',0,20),b={...a,samples:a.samples.map(s=>({...s,latency_ms:s.seq===1?1:s.latency_ms}))}
+  for(const tests of [[a,b],[b,a]]){
+   const s=site(evidence(tests));expect(s.success).toBe(19);expect(s.conflictingSamples).toBe(1)
+   expect(s.reasons).toContain('conflicting_observations');expect(s.rankable.p50).toBe(false)
+  }
+ })
  it('deduplicates repeated pages without mutating saved input or executing any API',()=>{
   const t=test('duplicate'),e=evidence([t,t]);const snapshot=JSON.stringify(e),fetch=vi.fn(()=>{throw Error('network forbidden')});vi.stubGlobal('fetch',fetch)
   try{expect(site(e).success).toBe(5);expect(JSON.stringify(e)).toBe(snapshot);expect(fetch).not.toHaveBeenCalled()}finally{vi.unstubAllGlobals()}
