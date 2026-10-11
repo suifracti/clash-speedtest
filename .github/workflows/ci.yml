@@ -127,6 +127,10 @@ jobs:
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
 
+      - name: Test Darwin Physical DNS Offline Contracts
+        run: |
+          go test -race ./core/speedtester -run '^(TestStrictPhysicalDNS|TestStrictDNS|TestPhysicalDNS)' -count=1 -timeout=90s
+
       - name: Build macOS Native App
         run: |
           wails build -platform darwin/arm64 -s -v 2
