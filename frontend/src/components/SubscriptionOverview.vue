@@ -8,7 +8,7 @@ import UiSelect from './UiSelect.vue'
 import Modal from './Modal.vue'
 
 const props=defineProps<{airports:Airport[];notices:NodeOption[]}>()
-type SubscriptionDisclosureSummary={refreshState:'loading'|'ready'|'error';noticeCount:number;expiredAccountCount:number;unknownExpiryAccountCount:number;failedItemCount:number;runningItemCount:number;latestFailureAccount?:string}
+type SubscriptionDisclosureSummary={refreshState:'loading'|'ready'|'error';noticeCount:number;expiredAccountCount:number;unknownExpiryAccountCount:number;failedItemCount:number;interruptedItemCount:number;runningItemCount:number;latestRefreshIssueAccount?:string;latestRefreshIssueState?:'failed'|'interrupted'}
 const emit=defineEmits<{summary:[value:SubscriptionDisclosureSummary]}>()
 const workspace=useWorkspace(),accounts=computed(()=>airportAccounts(props.airports)),selectedKey=ref(''),jobs=ref<SubscriptionRefreshJob[]>([]),activeJob=ref<SubscriptionRefreshJob|null>(null),loading=ref(false),jobsReadState=ref<'loading'|'ready'|'error'>('loading'),noticeOpen=ref(false),error=ref('')
 const selected=computed(()=>accounts.value.find(account=>account.key===selectedKey.value)),accountNotices=computed(()=>noticesForAccount(props.notices,selected.value)),usage=computed(()=>selected.value?.subscription.usage),used=computed(()=>usage.value?(usage.value.upload||0)+(usage.value.download||0):null),remaining=computed(()=>usage.value?.total===undefined?null:Math.max(0,usage.value.total-(used.value||0)))
@@ -40,7 +40,9 @@ const latestRefreshByAccount=computed(()=>accounts.value.map(account=>{
 const disclosureSummary=computed<SubscriptionDisclosureSummary>(()=>{
   const expiry=accounts.value.map(account=>account.subscription.usage?.expire).filter((value):value is number=>typeof value==='number'&&Number.isFinite(value)&&value>0)
   const latest=latestRefreshByAccount.value
-  const failed=latest.filter(entry=>entry.item?.state==='failed').sort((a,b)=>Date.parse(b.job!.created_at)-Date.parse(a.job!.created_at))
+  const failed=latest.filter(entry=>entry.item?.state==='failed')
+  const interrupted=latest.filter(entry=>entry.item?.state==='interrupted')
+  const issues=latest.filter(entry=>entry.item?.state==='failed'||entry.item?.state==='interrupted').sort((a,b)=>Date.parse(b.job!.created_at)-Date.parse(a.job!.created_at))
   const runningStates=['queued','running','fetching','parsing','saving']
   const running=latest.filter(entry=>!!entry.item&&runningStates.includes(entry.item.state))
   return {
@@ -49,8 +51,10 @@ const disclosureSummary=computed<SubscriptionDisclosureSummary>(()=>{
     expiredAccountCount:expiry.filter(value=>value*1000<=Date.now()).length,
     unknownExpiryAccountCount:accounts.value.length-expiry.length,
     failedItemCount:failed.length,
+    interruptedItemCount:interrupted.length,
     runningItemCount:running.length,
-    latestFailureAccount:failed[0]?`${failed[0].account.airport.name} · ${failed[0].account.subscription.name}`:undefined,
+    latestRefreshIssueAccount:issues[0]?`${issues[0].account.airport.name} · ${issues[0].account.subscription.name}`:undefined,
+    latestRefreshIssueState:issues[0]?.item?.state==='interrupted'?'interrupted':issues[0]?'failed':undefined,
   }
 })
 const expireLabel=computed(()=>{
