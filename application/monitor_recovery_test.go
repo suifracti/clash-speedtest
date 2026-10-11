@@ -23,19 +23,25 @@ type recoveryRoundTripper func(*http.Request) (*http.Response, error)
 func (f recoveryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 type recoveryDialer struct {
-	mu        sync.Mutex
-	requests  map[string]int
-	blockNode string
-	started   chan string
-	release   chan struct{}
+	mu         sync.Mutex
+	requests   map[string]int
+	blockNode  string
+	blockFirst bool
+	started    chan string
+	release    chan struct{}
 }
 
 func (d *recoveryDialer) CreateClient(node monitor.MonitoredNode, _ time.Duration) (*http.Client, error) {
 	return &http.Client{Transport: recoveryRoundTripper(func(req *http.Request) (*http.Response, error) {
 		d.mu.Lock()
 		d.requests[node.NodeKey]++
+		// Block the actual first admitted transport, not a definition-order label.
+		if d.blockFirst && d.blockNode == "" {
+			d.blockNode = node.NodeKey
+		}
+		blocked := node.NodeKey == d.blockNode
 		d.mu.Unlock()
-		if node.NodeKey == d.blockNode {
+		if blocked {
 			select {
 			case d.started <- node.NodeKey:
 			default:
@@ -155,9 +161,20 @@ func createRecoveryJob(t *testing.T, svc *AppService, profileID string, tier mon
 }
 
 func TestMonitorRecoveryWaitCanBeCancelledByPauseStopDisableAndDelete(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		profiles []string
+	}{
+		{"occupier_defined_first", []string{"occupier", "pause", "stop", "disable", "delete"}},
+		{"occupier_defined_last", []string{"pause", "stop", "disable", "delete", "occupier"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) { testMonitorRecoveryWaitCancellation(t, tc.profiles) })
+	}
+}
+
+func testMonitorRecoveryWaitCancellation(t *testing.T, profileIDs []string) {
 	root := t.TempDir()
 	paths := profiles.Paths{Dir: filepath.Join(root, "profiles")}
-	profileIDs := []string{"occupier", "pause", "stop", "disable", "delete"}
 	saveP0MonitorProfileStore(t, paths, profileIDs...)
 	for i, profileID := range profileIDs {
 		writeP0MonitorProfileFixture(t, paths, profileID, "secret-"+profileID, "127.0.0."+string(rune('1'+i)))
@@ -199,8 +216,10 @@ func TestMonitorRecoveryWaitCanBeCancelledByPauseStopDisableAndDelete(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	for profileID, interval := range map[string]time.Duration{"occupier": 250 * time.Millisecond, "disable": 40 * time.Millisecond} {
-		if _, err := intervalDB.Exec(`UPDATE monitor_job_definitions SET interval_ns = ? WHERE job_id = ?`, interval.Nanoseconds(), jobs[profileID].ID); err != nil {
+	// All potential permit holders use the same short synthetic interval. The
+	// later-cycle assertion must not depend on which definition wins admission.
+	for _, job := range jobs {
+		if _, err := intervalDB.Exec(`UPDATE monitor_job_definitions SET interval_ns = ? WHERE job_id = ?`, (250 * time.Millisecond).Nanoseconds(), job.ID); err != nil {
 			_ = intervalDB.Close()
 			t.Fatal(err)
 		}
@@ -216,17 +235,40 @@ func TestMonitorRecoveryWaitCanBeCancelledByPauseStopDisableAndDelete(t *testing
 	reopened := NewAppService(reopenedStore, paths, nil)
 	defer reopened.Close()
 	blockedDialer := &recoveryDialer{
-		requests: make(map[string]int), blockNode: nodes["occupier"],
+		requests: make(map[string]int), blockFirst: true,
 		started: make(chan string, 1), release: make(chan struct{}),
 	}
 	secondSignals := setRecoveryRunner(reopened, reopenedStore, blockedDialer)
 	if err := reopened.RecoverMonitorJobs(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	var holderNode string
 	select {
-	case <-blockedDialer.started:
+	case holderNode = <-blockedDialer.started:
 	case <-time.After(4 * time.Second):
 		t.Fatal("first recovered request did not enter the controlled transport")
+	}
+	// Bind the action roles only after the transport proves who actually owns
+	// the shared permit. Recovery launch order does not promise admission order.
+	holderProfile := ""
+	for profileID, node := range nodes {
+		if node == holderNode {
+			holderProfile = profileID
+			break
+		}
+	}
+	if holderProfile == "" {
+		t.Fatalf("unknown admitted node %s", holderNode)
+	}
+	jobs["occupier"], jobs[holderProfile] = jobs[holderProfile], jobs["occupier"]
+	nodes["occupier"], nodes[holderProfile] = nodes[holderProfile], nodes["occupier"]
+	holder, err := reopened.GetMonitorJob(jobs["occupier"].ID)
+	if err != nil || holder.RecoveryState != monitor.RecoveryStateRestored || blockedDialer.count(holderNode) != 1 {
+		t.Fatalf("transport did not prove an admitted recovery: job=%+v requests=%d err=%v", holder, blockedDialer.count(holderNode), err)
+	}
+	budget, err := reopened.GetMonitorBudgetStatus(context.Background())
+	if err != nil || budget.ActiveRequests != 1 {
+		t.Fatalf("controlled transport did not hold the shared permit: status=%+v err=%v", budget, err)
 	}
 	if err := reopened.SetMonitorJobResumeOnLaunch(jobs["occupier"].ID, false); err != nil {
 		t.Fatal(err)
@@ -235,6 +277,9 @@ func TestMonitorRecoveryWaitCanBeCancelledByPauseStopDisableAndDelete(t *testing
 		job, err := reopened.GetMonitorJob(jobs[profileID].ID)
 		if err != nil || job.RecoveryState != monitor.RecoveryStateRestoring {
 			t.Fatalf("%s job did not wait for shared admission: job=%+v err=%v", profileID, job, err)
+		}
+		if got := blockedDialer.count(nodes[profileID]); got != 0 {
+			t.Fatalf("waiting %s recovery issued %d requests", profileID, got)
 		}
 	}
 	if err := reopened.PauseMonitorJob(jobs["pause"].ID); err != nil {
@@ -279,6 +324,171 @@ func TestMonitorRecoveryWaitCanBeCancelledByPauseStopDisableAndDelete(t *testing
 		t.Fatalf("cancelled recovery created a later run or failure sample: runs=%+v err=%v", disabledRuns, err)
 	}
 	reopened.StopAllMonitorJobs()
+	for _, action := range []string{"pause", "stop", "disable", "delete"} {
+		runs, err := reopened.QueryMonitorRuns(context.Background(), jobs[action].ID, 10)
+		if err != nil || len(runs) != 1 {
+			t.Fatalf("%s waiting cancellation changed saved history: runs=%+v err=%v", action, runs, err)
+		}
+	}
+	definitions, err := reopenedStore.ListMonitorJobDefinitions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	durable := make(map[string]*monitor.MonitorJobDefinition)
+	for _, definition := range definitions {
+		durable[definition.ID] = definition
+	}
+	for _, tc := range []struct {
+		action  string
+		desired monitor.JobState
+		resume  bool
+	}{
+		{"pause", monitor.JobStatePaused, true}, {"stop", monitor.JobStateStopped, true}, {"disable", monitor.JobStateRunning, false},
+	} {
+		d := durable[jobs[tc.action].ID]
+		if d == nil || d.DesiredState != tc.desired || d.ResumeOnLaunch != tc.resume {
+			t.Fatalf("%s intent was not durable: %+v", tc.action, d)
+		}
+	}
+	if durable[jobs["delete"].ID] != nil {
+		t.Fatal("deleted definition remains durable")
+	}
+}
+
+// Once the recovery request is admitted, pause preserves that request, stop
+// and delete drain it, and disabling launch recovery leaves the runtime active.
+// All requests below terminate inside the fake transport.
+func TestMonitorRecoveryAdmittedActionsPreserveDurableIntentAndHistory(t *testing.T) {
+	for _, tc := range []struct {
+		action       string
+		state        monitor.JobState
+		desired      monitor.JobState
+		resume       bool
+		keepsRequest bool
+	}{
+		{"pause", monitor.JobStatePaused, monitor.JobStatePaused, true, true},
+		{"stop", monitor.JobStateStopped, monitor.JobStateStopped, true, false},
+		{"disable", monitor.JobStateRunning, monitor.JobStateRunning, false, true},
+		{"delete", monitor.JobStateStopped, monitor.JobStateStopped, false, false},
+	} {
+		t.Run(tc.action, func(t *testing.T) {
+			root := t.TempDir()
+			paths := profiles.Paths{Dir: filepath.Join(root, "profiles")}
+			saveP0MonitorProfileStore(t, paths, "admitted")
+			writeP0MonitorProfileFixture(t, paths, "admitted", "secret-admitted", "127.0.0.1")
+			historyDir := filepath.Join(root, "history")
+			store, err := history.NewStore(historyDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			first := NewAppService(store, paths, nil)
+			firstSignals := setRecoveryRunner(first, store, &recoveryDialer{requests: make(map[string]int)})
+			job, nodeKey := createRecoveryJob(t, first, "admitted", monitor.SamplingTierRegular)
+			if err := first.SetMonitorJobResumeOnLaunch(job.ID, true); err != nil {
+				t.Fatal(err)
+			}
+			if err := first.StartMonitorJob(job.ID); err != nil {
+				t.Fatal(err)
+			}
+			original := waitRecoveryRuns(t, firstSignals.completed, job.ID)[job.ID]
+			if err := first.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			reopenedStore, err := history.NewStore(historyDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			svc := NewAppService(reopenedStore, paths, nil)
+			t.Cleanup(func() { _ = svc.Close() })
+			dialer := &recoveryDialer{requests: make(map[string]int), blockNode: nodeKey, started: make(chan string, 1), release: make(chan struct{})}
+			signals := setRecoveryRunner(svc, reopenedStore, dialer)
+			if err := svc.RecoverMonitorJobs(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-dialer.started:
+			case <-time.After(4 * time.Second):
+				t.Fatal("recovered request did not enter the controlled transport")
+			}
+			admitted, err := svc.GetMonitorJob(job.ID)
+			if err != nil || admitted.RecoveryState != monitor.RecoveryStateRestored {
+				t.Fatalf("request was not admitted: %+v err=%v", admitted, err)
+			}
+			switch tc.action {
+			case "pause":
+				err = svc.PauseMonitorJob(job.ID)
+			case "stop":
+				err = svc.StopMonitorJob(job.ID)
+			case "disable":
+				err = svc.SetMonitorJobResumeOnLaunch(job.ID, false)
+			case "delete":
+				err = svc.DeleteMonitorJob(job.ID)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			actual, err := svc.GetMonitorJob(job.ID)
+			if tc.action == "delete" {
+				if err == nil {
+					t.Fatal("deleted runtime remains registered")
+				}
+			} else if err != nil || actual.State != tc.state || actual.DesiredState != tc.desired || actual.ResumeOnLaunch != tc.resume {
+				t.Fatalf("wrong admitted %s state/intent: job=%+v err=%v", tc.action, actual, err)
+			}
+			budget, err := svc.GetMonitorBudgetStatus(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			expectedActive := 0
+			if tc.keepsRequest {
+				expectedActive = 1
+			}
+			if budget.ActiveRequests != expectedActive {
+				t.Fatalf("%s active requests=%d, want %d", tc.action, budget.ActiveRequests, expectedActive)
+			}
+			close(dialer.release)
+			if tc.keepsRequest {
+				waitRecoveryRuns(t, signals.completed, job.ID)
+			}
+			svc.StopAllMonitorJobs()
+			if got := dialer.count(nodeKey); got != 1 {
+				t.Fatalf("admitted %s sent %d requests, want exactly one", tc.action, got)
+			}
+			runs, err := svc.QueryMonitorRuns(context.Background(), job.ID, 10)
+			if err != nil || len(runs) != 2 {
+				t.Fatalf("%s did not preserve original and admitted history: runs=%+v err=%v", tc.action, runs, err)
+			}
+			foundOriginal := false
+			for _, run := range runs {
+				if run.RunID == original.RunID && run.Status == original.Status {
+					foundOriginal = true
+				}
+			}
+			if !foundOriginal {
+				t.Fatal("admitted action changed or removed the original saved run")
+			}
+			if err := svc.Close(); err != nil {
+				t.Fatal(err)
+			}
+			persisted, err := history.NewStore(historyDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer persisted.Close()
+			definitions, err := persisted.ListMonitorJobDefinitions(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.action == "delete" {
+				if len(definitions) != 0 {
+					t.Fatalf("deleted intent survived reopen: %+v", definitions)
+				}
+			} else if len(definitions) != 1 || definitions[0].DesiredState != tc.desired || definitions[0].ResumeOnLaunch != tc.resume {
+				t.Fatalf("admitted %s intent changed after reopen: %+v", tc.action, definitions)
+			}
+		})
+	}
 }
 
 func TestMonitorRecoveryRestoresOnlyExplicitlyRunningOptedInJobsOnce(t *testing.T) {
