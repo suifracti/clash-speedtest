@@ -155,15 +155,25 @@ func TestServerLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
+	t.Cleanup(func() {
+		if server.historyStore.DB() != nil {
+			t.Error("history store remained open after server test cleanup")
+		}
+	})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := server.Stop(ctx); err != nil {
+			t.Errorf("stop server during test cleanup: %v", err)
+		}
+		if err := server.historyStore.Close(); err != nil {
+			t.Errorf("close history store during test cleanup: %v", err)
+		}
+	})
 
 	if err := server.Start(); err != nil {
 		t.Fatalf("Start server failed: %v", err)
 	}
-	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = server.Stop(ctx)
-	}()
 
 	url := server.URL()
 
