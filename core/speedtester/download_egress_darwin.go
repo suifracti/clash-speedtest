@@ -26,7 +26,7 @@ type PhysicalDownloadEgress struct {
 	dnsMode          string
 	host             string
 	nodeIP           netip.Addr
-	resolver         *net.Resolver
+	dnsDial          func(context.Context, string) (net.Conn, error)
 	dnsRequests      *physicalRequestBudget
 	dnsDials         *physicalRequestBudget
 	tcpDials         *physicalRequestBudget
@@ -95,7 +95,7 @@ func (c *physicalDNSConn) Write(p []byte) (int, error) {
 	return c.Conn.Write(p)
 }
 
-// Go's resolver selects DNS framing from PacketConn, not the requested
+// DNS clients select framing from PacketConn, not the requested
 // network string. Preserve UDP's capability without exposing it on TCP.
 func wrapPhysicalDNSConn(conn net.Conn, ctx context.Context, budget *physicalRequestBudget) net.Conn {
 	bounded := &physicalDNSConn{Conn: conn, ctx: ctx, budget: budget}
@@ -145,13 +145,17 @@ func physicalScopedDNS(text, iface string, index int) string {
 	return ""
 }
 func usablePhysicalAddress(ip netip.Addr) bool {
-	return ip.IsValid() && ip.IsGlobalUnicast() && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() && !netip.MustParsePrefix("198.18.0.0/15").Contains(ip.Unmap())
+	return ip.IsValid() && ip.IsGlobalUnicast() && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() && !netip.MustParsePrefix("198.18.0.0/15").Contains(ip.Unmap()) && !netip.MustParsePrefix("fdfe:dcba:9876::/64").Contains(ip)
 }
 func (e *PhysicalDownloadEgress) resolve(ctx context.Context, host string) (netip.Addr, error) {
 	// Freeze only this run's freshly resolved node address, outside the timed
 	// body measurement. Keep the original hostname for TLS/HTTP identity.
-	if host == e.host && e.nodeIP.IsValid() {
-		return e.nodeIP, nil
+	if e.nodeIP.IsValid() {
+		if host == e.host || host == e.nodeIP.String() {
+			return e.nodeIP, nil
+		}
+		e.setFailure("frozen_node_destination_mismatch")
+		return netip.Addr{}, &PhysicalPathError{Cause: fmt.Errorf("dial destination differs from selected frozen node server")}
 	}
 	if ip, err := netip.ParseAddr(host); err == nil {
 		if !ip.Is4() || !usablePhysicalAddress(ip) {
@@ -168,24 +172,12 @@ func (e *PhysicalDownloadEgress) resolve(ctx context.Context, host string) (neti
 	markDownloadPhase(ctx, "dns")
 	started := time.Now()
 	lookupCtx, cancel := boundedPhysicalContext(ctx, physicalDownloadLookupTimeout)
-	ips, err := e.resolver.LookupNetIP(lookupCtx, "ip4", host)
+	ip, err := e.resolvePhysicalDNS(lookupCtx, host)
 	cancel()
 	e.mu.Lock()
 	e.dnsDuration += time.Since(started)
 	e.mu.Unlock()
-	if err != nil {
-		e.setFailure(physicalFailureReason(ctx, err))
-		return netip.Addr{}, fmt.Errorf("physical DNS lookup unavailable: %w", err)
-	}
-	for _, ip := range ips {
-		if usablePhysicalAddress(ip) {
-			ip = ip.Unmap()
-			e.setResolution("ipv4", "physical_ipv4_dns")
-			return ip, nil
-		}
-	}
-	e.setFailure("physical_dns_no_usable_ipv4")
-	return netip.Addr{}, fmt.Errorf("physical DNS returned no usable non-fake address")
+	return ip, err
 }
 
 func (e *PhysicalDownloadEgress) setResolution(family, source string) {
@@ -291,6 +283,13 @@ func physicalFailureReason(ctx context.Context, err error) string {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return "deadline_exceeded"
 	}
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return "deadline_exceeded"
+	}
+	var responseErr *physicalDNSResponseError
+	if errors.As(err, &responseErr) {
+		return "physical_dns_invalid_response"
+	}
 	var dnsErr *net.DNSError
 	if errors.As(err, &dnsErr) {
 		switch {
@@ -299,6 +298,10 @@ func physicalFailureReason(ctx context.Context, err error) string {
 		case dnsErr.IsTimeout:
 			return "ipv4_dns_timeout"
 		}
+	}
+	var networkErr net.Error
+	if errors.As(err, &networkErr) && networkErr.Timeout() {
+		return "physical_dns_timeout"
 	}
 	if errors.Is(err, errPhysicalDownloadBudgetExceeded) {
 		return "physical_request_budget_exhausted"
@@ -473,11 +476,7 @@ func PreparePhysicalDownloadProxy(ctx context.Context, original *CProxy) (prepar
 	}
 	host, ifaceName := e.host, e.iface
 	if dns != "" {
-		e.resolver = &net.Resolver{PreferGo: true, StrictErrors: true, Dial: func(dialCtx context.Context, network, _ string) (net.Conn, error) {
-			if err := e.dnsDials.reserve(dialCtx); err != nil {
-				e.setFailure(physicalFailureReason(dialCtx, err))
-				return nil, err
-			}
+		e.dnsDial = func(dialCtx context.Context, network string) (net.Conn, error) {
 			conn, dialErr := dialer.DialContext(dialCtx, network, net.JoinHostPort(dns, "53"), dialer.WithInterface(ifaceName), dialer.WithOnlySingleStack(true), dialer.WithFallbackBind(false))
 			if dialErr != nil {
 				e.setFailure(physicalFailureReason(dialCtx, dialErr))
@@ -494,15 +493,15 @@ func PreparePhysicalDownloadProxy(ctx context.Context, original *CProxy) (prepar
 				e.setFailure("dns_socket_bind_failed")
 				return nil, verifyErr
 			}
-			return wrapPhysicalDNSConn(conn, dialCtx, e.dnsRequests), nil
-		}}
+			return conn, nil
+		}
 	}
 	ip, err := e.resolve(ctx, host)
 	if err != nil {
 		if e.Snapshot().FailureReason == "" {
 			e.setFailure(physicalFailureReason(ctx, err))
 		}
-		return nil, e, fmt.Errorf("physical IPv4 DNS or address selection unavailable; download not executed")
+		return nil, e, fmt.Errorf("physical DNS or address selection unavailable; download not executed")
 	}
 	config, err := clonePhysicalProxyConfig(original.Config, ip, ifaceName)
 	if err != nil {
