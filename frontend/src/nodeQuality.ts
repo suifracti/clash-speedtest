@@ -189,7 +189,9 @@ export function multiSiteQuality(node:NodeScope,e:QualityEvidence):SiteQualitySu
   if(!readComplete)reasons.push('incomplete_read')
   if(unplacedSamples)reasons.push('unknown_observation_time')
   if(invalidSamples)reasons.push('invalid_samples')
-  if(conflictingIDs.size)reasons.push('conflicting_observations')
+  // Keep conflicts across saved streams diagnostic, but admit the selected
+  // stream independently, just as latencyReadComplete does for current HTTP.
+  if([...conflictingIDs].some(id=>id.startsWith(group?.source==='monitor'?'monitor:':'latency:')))reasons.push('conflicting_observations')
   if(ambiguous)reasons.push('ambiguous_latest_group')
   if(group&&!knownQualityConditions(group))reasons.push('unknown_conditions')
   if(group&&!gates.samples)reasons.push('insufficient_samples')
