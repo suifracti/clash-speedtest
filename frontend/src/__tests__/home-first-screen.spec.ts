@@ -125,6 +125,9 @@ describe('synthetic 256-node home first screen',()=>{
     expect(interruptedSummary).toContain('刷新中断 1 项')
     expect(interruptedSummary).toContain('合成机场 1 · 合成账户 1')
     expect(interruptedSummary).not.toContain('当前无公告、过期或刷新失败')
+    await interrupted.get('details.home-subscription-disclosure summary').trigger('click')
+    await flushPromises()
+    expect(interrupted.get('.subscription-overview-refresh .badge').text()).toBe('刷新中断')
 
     vi.mocked(api.refreshJobs).mockResolvedValueOnce([refreshJob('succeeded','2026-10-11T12:00:00Z'),refreshJob('interrupted')])
     const recovered=attachHome().wrapper;await flushPromises()
