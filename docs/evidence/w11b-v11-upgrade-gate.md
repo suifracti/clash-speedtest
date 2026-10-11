@@ -92,3 +92,42 @@ git diff --check
 ```
 
 These are synthetic error/permission experiments, not physical power-loss tests. Quarantine sync errors also remain observable; the helper cannot guarantee artifact removal or durable quarantine under arbitrary I/O/permission failure. Source DDL remains blocked on every failed gate. PR50 is stacked and has no Actions/checks observed at follow-up delivery; remote CI is not reported as passing. No real SQLite/WAL, dirty candidate, PR48/main/other-agent branch change, subscriptions/probes/VPN/TUN, merge or release.
+
+
+## Windows Relevant follow-up (Sol B, 2026-10-11)
+
+Scope: test/platform evidence only, following task [6106558257](https://github.com/suifracti/clash-speedtest/pull/50#issuecomment-6106558257) and Sol D [second review](https://github.com/suifracti/clash-speedtest/pull/50#issuecomment-6106493480). Production `db.go` and `upgrade_backup.go` remain byte-identical to verified head `897ebc09b8b474dddc06a4a2bbaab2ea8b69260d`. Prior macOS cleanup RED/GREEN evidence above remains applicable.
+
+Exact test difference:
+- Move the two real chmod cleanup regressions from `upgrade_backup_test.go` to `upgrade_backup_permissions_unix_test.go`, selecting darwin/linux/freebsd/netbsd/openbsd/dragonfly. Preserve their cleanup/quarantine/retry assertions. A non-root Unix capability probe uses its own `t.TempDir()` and requires actual `os.ErrPermission` on a write to a 0500 directory; unsupported runners fail visibly instead of silently skipping.
+- Add `upgrade_backup_windows_test.go`, Windows-only. Using only synthetic v11 + committed WAL in `t.TempDir()`, it checks the normal writable root's 0777 mode and two failed OpenDB attempts: explanatory ErrUpgradeBackup, schema11, unchanged DB/WAL hashes, committed sample47/all three samples, absent v12 column, empty backup root. This regression documents current refusal, not successful Windows upgrade support.
+
+Evidence: `w11b-platform-registration.txt` records the failing baseline and passing updated Windows test registration assertion from actual cross-compiled `_testmain.go`: Unix-only regressions were incorrectly registered before, and are absent after; the Windows-specific regression is now registered. This is a static build-selection RED/GREEN, NOT a Windows runtime RED/GREEN. The prior real macOS cleanup RED remains in `w11b-cleanup-red.txt`. `w11b-platform-unix.txt` is actual macOS non-root execution (both regressions, count3). `w11b-platform-packages.txt` and `w11b-platform-race.txt` are actual macOS package/race executions. Windows amd64 test binary cross-compilation succeeded; **Windows runtime is NOT verified** because no Windows host/runner is available in this task. The targeted Windows command prepared for an authorized runner is:
+
+```sh
+go test ./core/history -run '^TestV11UpgradeBackupWindowsUnsupportedPrivateRootBlocksDDL$' -count=1 -v
+```
+
+Do not report the full Windows history suite as green: shared successful-upgrade tests require a working platform backup implementation and currently encounter this functional gap. No Windows execution or physical durability claim is made. Existing CI does not run on this stacked PR base; its Windows job builds but does not execute these regressions.
+
+### Separate Windows functionality gap
+
+Installed Go 1.25.14 sources establish the static behavior: `os/types_windows.go` (`fileStat.mode`) maps normal writable directory attributes to 0666 + directory 0111 = 0777, or read-only to 0555. `os/file.go` documents that Windows Chmod only uses 0200 to control the read-only attribute; it neither establishes nor verifies owner-only ACLs. `syscall/syscall_windows.go` returns -1 from Geteuid. Therefore the unchanged production exact `root.Mode().Perm()==0700` check rejects every normal Windows v11 first upgrade, including directories whose ACLs might already be private. A safe refusal protects data but does **not** provide usable Windows first-upgrade support. Snapshot exact0600 validation is a further blocker after root support is added.
+
+Minimal future implementation proposal, requiring separate authorization:
+1. Add platform-specific private directory/file creation and verification. Keep Unix mode behavior; on Windows use an explicit owner-only DACL and verify ACL/owner, rejecting unsafe inherited access and reparse points. Cover both root and snapshot/manifest private checks; do not merely bypass 0700/0600 on Windows.
+2. Qualify Windows file FlushFileBuffers and directory durability behavior on the intended filesystem. Define publication/no-replace and same-volume quarantine semantics; unsupported durability must remain an explanatory gate error. Preserve the joined original/gate/cleanup error tree and observable residual path; never chmod/ACL-repair user data during failure cleanup.
+3. Run real Windows synthetic v11+WAL fixtures for successful verified backup and isolated rollback, committed WAL pages, ACL denial of deletion/rename/parent creation, final sync/publication failure, unchanged source schema/hash, stale complete.json rejection, and fresh retry after a new sample53. Restore permissions only on test fixtures. Cross-compilation cannot substitute for these tests.
+
+Commands actually used on macOS (Go 1.25.14 darwin/arm64, uid501):
+
+```sh
+go test ./core/history -run 'TestV11UpgradeBackupCleanup' -count=3 -v
+go test ./core/history ./application ./core/appdata -count=1
+go test -race ./core/history -run 'Test(V11Upgrade|Backup)' -count=1
+go vet ./core/history ./application ./core/appdata
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 GOPROXY=off GOSUMDB=off go test -c -work ./core/history -o <local-only-test-binary>
+git diff --check
+```
+
+No production SQLite/WAL, PR48/main, dirty candidate, subscription/probe/VPN/TUN, workflow, merge or release change. Windows safety acceptance remains open pending real runtime evidence and separately authorized functionality work.
