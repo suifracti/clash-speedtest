@@ -1,7 +1,7 @@
 import {mount} from '@vue/test-utils'
 import {it,expect} from 'vitest'
 import QualityMetrics from './QualityMetrics.vue'
-import type {LatencyTest} from '../domain'
+import {date,type LatencyTest} from '../domain'
 import type {QualityEvidence} from '../nodeQuality'
 it('shows absent and insufficient evidence without assigning a score or treating profile as business availability',()=>{
  const wrapper=mount(QualityMetrics,{props:{evidence:{tests:[],monitor:[],downloads:[],services:[],reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true,since:'',until:''},target:'cloudflare',catalog:[]}});expect(wrapper.text()).toContain('未测');expect(wrapper.text()).not.toContain('%');expect(wrapper.text()).not.toContain('评分')
@@ -22,7 +22,7 @@ it('shows the latest same-rule failure by observation time, not the first old su
 it('distinguishes the newest failed download from the previous valid speed and their different limits',()=>{
  const wrapper=mount(QualityMetrics,{props:{expanded:true,evidence:{tests:[],monitor:[],downloads:[oldDownload,newDownload],services:[],reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true,since:'',until:''},target:'cloudflare',catalog:[]}})
  expect(wrapper.get('.quality-download').text()).toContain('最近检测：超时');expect(wrapper.get('.quality-download').text()).toContain('历史有效速度：2.00 MiB/s')
- expect(wrapper.get('.quality-download').text()).toContain('10/09 19:00');expect(wrapper.get('.quality-download').text()).toContain('10/09 18:00')
+ expect(wrapper.get('.quality-download').text()).toContain(date(newDownload.result!.finished_at));expect(wrapper.get('.quality-download').text()).toContain(date(oldDownload.result!.finished_at))
  expect(wrapper.get('.quality-download').attributes('title')).toContain('10 MiB');expect(wrapper.get('.quality-download').attributes('title')).toContain('5 MiB')
 })
 it('does not label latency incomplete when only download history is incomplete',()=>{
