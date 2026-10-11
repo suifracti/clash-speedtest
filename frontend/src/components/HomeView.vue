@@ -25,7 +25,10 @@ import InlineHistory from './InlineHistory.vue'
 import SiteDisplayPicker from './SiteDisplayPicker.vue'
 import SubscriptionOverview from './SubscriptionOverview.vue'
 import {nodeDisplayName,nodeRegion,nodeRegionLabel} from '../nodePresentation'
+type HomeSubscriptionSummary={refreshState:'loading'|'ready'|'error';noticeCount:number;expiredAccountCount:number;unknownExpiryAccountCount:number;failedItemCount:number;runningItemCount:number;latestFailureAccount?:string}
 const w=useWorkspace(),inlineTab=ref<'round'|'history'>('round'),keepOpen=ref(false),picker=ref(false),currentPage=ref(1),hoverNode=ref<NodeOption|null>(null),activeRound=ref<TrendPoint|null>(null),hoverMode=ref<Exclude<Project,'combined'>>('latency'),monitorErrors=ref<Record<string,string>>({}),monitorData=ref<Record<string,import('../domain').MonitorSample[]>>({}),monitorHTTPData=ref<Record<string,import('../domain').MonitorSample[]>>({}),monitorHTTPErrors=ref<Record<string,string>>({})
+const subscriptionSummary=ref<HomeSubscriptionSummary|null>(null)
+function updateSubscriptionSummary(summary:HomeSubscriptionSummary){subscriptionSummary.value=summary}
 const extraFiltersOpen=ref(false),extraFiltersToggle=ref<HTMLButtonElement>()
 function closeExtraFilters(){if(!extraFiltersOpen.value)return;extraFiltersOpen.value=false;void nextTick(()=>extraFiltersToggle.value?.focus({preventScroll:true}))}
 const qualityView=ref(window.localStorage.getItem('speedtest-home-view')!=='detailed'),qualityHistory=ref(false),compareOpen=ref(false),qualityGate=ref('all'),qualitySort=ref('existing'),protocolFilter=ref('all')
@@ -81,6 +84,29 @@ watch(protocolFilter,()=>currentPage.value=1)
 watch([siteTarget,siteSort,siteGate],()=>{currentPage.value=1;closeHover();if(siteSort.value!=='existing'||siteGate.value!=='all')void readQualityNodes(w.proxyNodes.value)})
 function openSiteHistory(n:NodeOption,target:string){openNodeHistory(n);hoverMode.value='latency';hoverTarget.value=target;activeRound.value=null}
 const pageSize=20,chosen=computed(()=>w.airports.value.filter(a=>w.selectedAirportIds.value?.includes(a.id))),totalPages=computed(()=>Math.max(1,Math.ceil(visibleNodes.value.length/pageSize))),pageNodes=computed(()=>visibleNodes.value.slice((currentPage.value-1)*pageSize,currentPage.value*pageSize)),profiles=computed(()=>[...new Map(w.sourceNodes.value.map(n=>[n.profile_id,n.profile_name])).entries()]),allSelected=computed(()=>pageNodes.value.length>0&&pageNodes.value.every(n=>w.selectedKeys.value.includes(key(n)))),selectedServices=computed(()=>w.catalog.value.filter(r=>w.serviceIds.value.includes(r.service_id)))
+const subscriptionSummaryText=computed(()=>{
+ const summary=subscriptionSummary.value,parts:string[]=[]
+ if(summary?.noticeCount)parts.push(`公告 ${summary.noticeCount}`)
+ if(summary?.expiredAccountCount)parts.push(`已过期账户 ${summary.expiredAccountCount}`)
+ if(summary?.unknownExpiryAccountCount)parts.push(`到期信息未知 ${summary.unknownExpiryAccountCount} 个账户`)
+ if(summary?.failedItemCount)parts.push(`刷新失败 ${summary.failedItemCount} 项`)
+ if(summary?.latestFailureAccount)parts.push(`最近失败：${summary.latestFailureAccount}`)
+ if(summary?.runningItemCount)parts.push(`刷新中 ${summary.runningItemCount} 项`)
+ if(w.error.value)parts.push('订阅状态未知 · 展开查看')
+ else if(w.loading.value)parts.push('订阅状态读取中…')
+ else if(!chosen.value.length)parts.push('选择机场后查看订阅状态')
+ else if(!summary||summary.refreshState==='loading')parts.push('刷新状态读取中…')
+ else if(summary.refreshState==='error')parts.push('刷新状态未知 · 展开查看')
+ else if(!summary.noticeCount&&!summary.expiredAccountCount&&!summary.unknownExpiryAccountCount&&!summary.failedItemCount&&!summary.runningItemCount)parts.push('当前无公告、过期或刷新失败')
+ return parts.join(' · ')
+})
+const subscriptionSummaryTone=computed(()=>{
+ const summary=subscriptionSummary.value
+ if(summary?.expiredAccountCount||summary?.failedItemCount)return 'bad'
+ if(summary?.noticeCount||summary?.runningItemCount)return 'warn'
+ return 'muted'
+})
+const subscriptionSummaryHint=computed(()=>subscriptionSummaryText.value==='当前无公告、过期或刷新失败'?'查看用量、到期、刷新状态和公告':'展开查看详情')
 const hoverTarget=ref(w.displayTarget.value),hoverService=ref(''),servicePage=ref(1),servicesPerPage=3
 const inlineHistorySource=computed(()=>activeRound.value?.source||(hoverNode.value&&(hoverMode.value==='latency'&&hoverTarget.value==='cloudflare'&&presentation.monitor(hoverNode.value,hoverTarget.value).length&&!presentation.points(hoverNode.value,'latency','cloudflare').some(p=>p.tone!=='empty')||hoverMode.value==='service'&&httpPoints(hoverNode.value).length&&!presentation.services(hoverNode.value,visibleServiceIds.value).length)?'monitor':'manual'))
 const hoverPoints=computed(()=>hoverNode.value?inlineHistorySource.value==='monitor'?(hoverMode.value==='service'?httpPoints(hoverNode.value,hoverService.value):monitorPoints(hoverNode.value)):hoverMode.value==='service'&&!hoverService.value?presentation.services(hoverNode.value):presentation.points(hoverNode.value,hoverMode.value,hoverTarget.value,hoverService.value):[])
@@ -184,8 +210,8 @@ onMounted(()=>monitorTimer=setInterval(()=>{if(w.page.value==='home'&&document.v
       <div class="orbit-meta"><span><strong>{{w.proxyNodes.value.length}}</strong> 个节点</span><span><strong>{{profiles.length}}</strong> 个订阅</span></div>
     </section>
     <details class="home-subscription-disclosure">
-      <summary><strong>订阅账户</strong><span class="home-subscription-count">{{profiles.length}} 个节点来源订阅</span><span class="home-subscription-hint">查看用量、到期、刷新状态和公告</span></summary>
-      <SubscriptionOverview :airports="chosen" :notices="w.notices.value"/>
+      <summary><strong>订阅账户</strong><span class="home-subscription-count">{{profiles.length}} 个节点来源订阅</span><span class="home-subscription-hint">{{subscriptionSummaryHint}}</span><span class="home-subscription-status small" :class="subscriptionSummaryTone">{{subscriptionSummaryText}}</span></summary>
+      <SubscriptionOverview :airports="chosen" :notices="w.notices.value" @summary="updateSubscriptionSummary"/>
     </details>
     <div class="home-controls" :class="{following:followControls}">
     <nav class="project-tabs" aria-label="检测项目"><button v-for="p in (['latency','download','service','combined'] as Project[])" :key="p" :aria-selected="w.project.value===p" @click="w.project.value=p"><Icon :name="p==='latency'?'pulse':p==='download'?'download':p==='service'?'globe':'layers'"/>{{projectNames[p]}}</button><label class="follow-controls-switch" title="开启后，检测和筛选选项会在滚动时留在顶部"><input v-model="followControls" type="checkbox" aria-label="跟随滚动"><Icon name="pin"/>跟随滚动</label><button class="tab-tail" :disabled="!runNodes.length||w.busy.value||qualityFiltersPending" @click="openCombinedPlan"><Icon name="settings"/>组合检测 · {{w.selectedNodes.value.length?'已选':'筛选'}} {{runNodes.length}} 个</button></nav>

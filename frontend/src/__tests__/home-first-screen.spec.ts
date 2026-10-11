@@ -2,7 +2,7 @@ import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
 import {flushPromises,mount,type VueWrapper} from '@vue/test-utils'
 import HomeView from '../components/HomeView.vue'
 import {createWorkspace,workspaceKey} from '../workspace'
-import {api} from '../api'
+import {api,type SubscriptionRefreshJob} from '../api'
 import type {Airport,NodeOption,MonitorSample} from '../domain'
 
 vi.hoisted(()=>{
@@ -39,12 +39,21 @@ function nodes():NodeOption[]{
     profile_name:`合成账户 ${index%profileIds.length+1}`,display_name:`香港合成节点 ${String(index+1).padStart(3,'0')}`,type:index%2?'trojan':'ss',country_code:'HK',country_flag:''
   }))
 }
+function noticeNode(profileId=profileIds[0]):NodeOption{
+  const index=profileIds.indexOf(profileId)
+  return {profile_id:profileId,node_key:`synthetic-notice-${index+1}`,node_identity_key:`synthetic-notice-identity-${index+1}`,config_revision_key:'synthetic-revision',profile_name:`合成账户 ${index+1}`,display_name:'公告：合成维护通知',type:'',country_code:'XX',country_flag:''}
+}
+function failedRefreshJob():SubscriptionRefreshJob{
+  return {id:'synthetic-refresh-failed',state:'finished',created_at:'2026-10-11T10:00:00Z',finished_at:'2026-10-11T10:00:01Z',completed:1,success:0,failed:1,cancelled:0,not_executed:0,cancel_requested:false,items:[{
+    airport_id:'airport-1',subscription_id:profileIds[0],airport_name:'合成机场 1',subscription_name:'合成账户 1',source_fingerprint:'synthetic-source',source_version:1,state:'failed',error_code:'synthetic_failure',error_message:'synthetic refresh failure',duration_ms:100,node_count:0,stages:[{state:'failed',at:'2026-10-11T10:00:01Z'}]
+  }]}
+}
 
 const wrappers:VueWrapper[]=[]
 const workspaces:ReturnType<typeof createWorkspace>[]=[]
-function attachHome(){
+function attachHome(options:{airports?:Airport[];nodes?:NodeOption[]}={}){
   const workspace=createWorkspace();workspaces.push(workspace)
-  workspace.airports.value=airports();workspace.nodes.value=nodes();workspace.setAirports(workspace.airports.value.map(airport=>airport.id))
+  workspace.airports.value=options.airports||airports();workspace.nodes.value=options.nodes||nodes();workspace.setAirports(workspace.airports.value.map(airport=>airport.id))
   const wrapper=mount(HomeView,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:workspace}}});wrappers.push(wrapper)
   return {workspace,wrapper}
 }
@@ -60,6 +69,54 @@ afterEach(()=>{
 })
 
 describe('synthetic 256-node home first screen',()=>{
+  it('shows notices, expired accounts, and the latest failed refresh while collapsed',async()=>{
+    const syntheticAirports=airports()
+    syntheticAirports[0]!.subscriptions![0]!.usage!.expire=Math.floor(Date.now()/1000)-60
+    vi.mocked(api.refreshJobs).mockResolvedValueOnce([failedRefreshJob()])
+    const {wrapper}=attachHome({airports:syntheticAirports,nodes:[...nodes(),noticeNode()]});await flushPromises()
+    const disclosure=wrapper.get('details.home-subscription-disclosure')
+    const summary=disclosure.get('summary')
+    expect((disclosure.element as HTMLDetailsElement).open).toBe(false)
+    expect(summary.element.tagName).toBe('SUMMARY')
+    expect(summary.text()).toContain('公告 1')
+    expect(summary.text()).toContain('已过期账户 1')
+    expect(summary.text()).toContain('刷新失败 1 项')
+    expect(summary.text()).toContain('合成账户 1')
+
+    await summary.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.subscription-overview-account').text()).toContain('已过期')
+    expect(wrapper.get('.subscription-overview-notices').text()).toContain('公告 1')
+    expect(wrapper.get('.subscription-overview-refresh').text()).toContain('synthetic refresh failure')
+    const accountSelect=wrapper.get('select[aria-label="首页用量订阅"]')
+    await accountSelect.setValue((accountSelect.element as HTMLSelectElement).options[5]!.value)
+    await flushPromises()
+    expect(wrapper.get('.subscription-overview-account').text()).toContain('合成账户 6')
+    expect(summary.text()).toContain('公告 1')
+    expect(summary.text()).toContain('已过期账户 1')
+    expect(summary.text()).toContain('最近失败：合成机场 1 · 合成账户 1')
+    expect(api.startRefresh).not.toHaveBeenCalled()
+    await summary.trigger('click')
+    expect((disclosure.element as HTMLDetailsElement).open).toBe(false)
+  })
+
+  it('keeps refresh status unknown while the job read is pending or fails',async()=>{
+    let resolveJobs!:(jobs:SubscriptionRefreshJob[])=>void
+    vi.mocked(api.refreshJobs).mockImplementationOnce(()=>new Promise(resolve=>{resolveJobs=resolve}))
+    const pending=attachHome().wrapper
+    const pendingSummary=pending.get('details.home-subscription-disclosure summary').text()
+    expect(pendingSummary).toContain('刷新状态读取中')
+    expect(pendingSummary).not.toContain('当前无公告、过期或刷新失败')
+    resolveJobs([]);await flushPromises()
+    expect(pending.get('details.home-subscription-disclosure summary').text()).toContain('当前无公告、过期或刷新失败')
+
+    vi.mocked(api.refreshJobs).mockRejectedValueOnce(new Error('synthetic job read failed'))
+    const failed=attachHome().wrapper;await flushPromises()
+    const failedSummary=failed.get('details.home-subscription-disclosure summary').text()
+    expect(failedSummary).toContain('刷新状态未知')
+    expect(failedSummary).not.toContain('当前无公告、过期或刷新失败')
+  })
+
   it('keeps account details discoverable without changing the airport and node scope',async()=>{
     const {workspace,wrapper}=attachHome();await flushPromises()
     const disclosure=wrapper.get('details.home-subscription-disclosure')
