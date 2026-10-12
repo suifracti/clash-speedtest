@@ -1,0 +1,32 @@
+name: Windows Stage 0 Synthetic Storage Probe
+on:
+  push:
+    branches: ['codex/cst-windows-stage0-probe-20261011']
+    paths: ['tools/windows-stage0/**', '.github/workflows/windows-stage0-probe.yml']
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.14'
+          cache: false
+      - name: Run synthetic storage observations
+        shell: pwsh
+        working-directory: tools/windows-stage0
+        run: |
+          go test -json -count=1 -timeout=90s . | Tee-Object -FilePath stage0-results.jsonl
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve observations (test PASS is not durability GO)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-stage0-synthetic-observations
+          path: tools/windows-stage0/stage0-results.jsonl
+          retention-days: 14
