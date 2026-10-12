@@ -1,3 +1,11 @@
+<!-- CST_ARCHIVE_ROUTING_2026_10_12 -->
+> [!CAUTION]
+> **2026-10-05 Windows 历史验收摘要，非当前跨平台 PASS。** 文中所有样本数、路径、旧 schema、前端指纹只代表 2026-10-02—05 的旧候选，不应被后续 Agent 当成 2026-10-12 整合主线或 Windows v11 成功升级的当前证据。
+>
+> **现行项目接手在 Obsidian：** `03-项目与工程/机场/Clash SpeedTest Pro/README.md` → `03-项目与工程/机场/Clash SpeedTest Pro/Handoff.md`；本文件不授权重试旧测试、迁移旧数据或恢复原工作树。
+
+---
+
 # Windows 既有证据，迁移时复用
 
 这是脱敏说明，不包含真实订阅地址、节点密钥、账号凭据或用户配置。原始 QA、浏览器操作记录及截图保留在 Git 外的 private-evidence-20261005.zip 和 Windows 原目录。
