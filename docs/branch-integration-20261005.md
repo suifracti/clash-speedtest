@@ -1,3 +1,11 @@
+<!-- CST_ARCHIVE_ROUTING_2026_10_12 -->
+> [!CAUTION]
+> **2026-10-05 分支集成回溯：历史材料，不是现行 Agent 接手或运行说明。** 下方的整合分支、worktree 数量和“唯一当前基线”只属于当时迁移阶段。2026-10-12 原 17 个 PR 已合流；不得按本文重新创建分支、cherry-pick、清理旧工作树或从历史源码覆盖现有 App。
+>
+> **当前唯一入口（Obsidian）：** `03-项目与工程/机场/Clash SpeedTest Pro/README.md` → `03-项目与工程/机场/Clash SpeedTest Pro/Handoff.md`。源码以本机实际工作树与 Git HEAD 为准；原数据、WAL、凭据和旧证据不得被迁移历史脚本覆盖。
+
+---
+
 # 迁移前分支整合（2026-10-05）
 
 仓库：`suifracti/clash-speedtest`。整合唯一基线是已经推送的 `codex/mac-migration-20261005` / `70f25a0947d5acf9ac8d35a1414a0a6a85b1c9e9`；独立整合分支为 `codex/mac-integration-20261005`，本地提交 SHA 以交付记录为准。未经用户对新目标明确确认，不推送新分支；不更新 main、不强推、不合并或发布。
