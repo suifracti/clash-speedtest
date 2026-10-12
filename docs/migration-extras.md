@@ -1,3 +1,11 @@
+<!-- CST_ARCHIVE_ROUTING_2026_10_12 -->
+> [!CAUTION]
+> **2026-10-05 非 Git 文件/私人交付清单，非当前恢复方案。** 下文所列 private-state-20261005.zip、Git bundle、历史 GUI 嵌入资源等仅用于追溯当时迁移事实；不得因此覆盖现在的本机 App、订阅配置或 SQLite/WAL。
+>
+> **现行项目接手在 Obsidian：** `03-项目与工程/机场/Clash SpeedTest Pro/README.md` → `03-项目与工程/机场/Clash SpeedTest Pro/Handoff.md`；本文件不授权重试旧测试、迁移旧数据或恢复原工作树。
+
+---
+
 # 迁移必需的非 Git 文件
 
 编译产物、个人数据和凭据不放入候选树。以下区分「构建必须」与「继续个人状态时必须」。完整本地传输清单为 Git 外 `artifacts/migration-20261005/private-transfer-manifest.json`，包含每个私有文件的用途、大小和 SHA-256；此目录未推送。
