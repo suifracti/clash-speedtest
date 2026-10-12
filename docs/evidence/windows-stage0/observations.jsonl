@@ -1,0 +1,179 @@
+{"admin_member": true, "api_success": true, "arch": "amd64", "build": 26100, "go": "go1.25.14", "major": 10, "minor": 0, "ordinary_token": false, "probe": "platform", "token_elevation": 1, "x_sys": "v0.47.0 (module pinned)"}
+{"api_success": true, "filesystem": "NTFS", "flags": 65482495, "persistent_acls": true, "probe": "filesystem"}
+{"api_success": true, "directory": true, "mode": "0777", "probe": "go_mode"}
+{"api_success": true, "directory": false, "mode": "0666", "probe": "go_mode"}
+{"access": 2147483648, "api_success": true, "flags": 128, "probe": "file_open", "share": 7}
+{"access": 2147483648, "api_success": false, "error": "Access is denied.", "probe": "file_flush", "win32_error": 5}
+{"api_success": true, "probe": "file_close"}
+{"access": 1073741824, "api_success": true, "flags": 128, "probe": "file_open", "share": 7}
+{"access": 1073741824, "api_success": true, "probe": "file_flush"}
+{"api_success": true, "probe": "file_close"}
+{"access": 3221225472, "api_success": true, "flags": 128, "probe": "file_open", "share": 7}
+{"access": 3221225472, "api_success": true, "probe": "file_flush"}
+{"api_success": true, "probe": "file_close"}
+{"access": 1073741824, "api_success": true, "flags": 2147483648, "probe": "write_through_create", "share": 7}
+{"api_success": true, "probe": "write_through_write"}
+{"api_success": true, "probe": "write_through_flush"}
+{"api_success": true, "probe": "write_through_close"}
+{"access": 0, "api_success": true, "flags": 35651584, "object": "child", "probe": "directory_open", "share": 0}
+{"access": 0, "api_success": false, "error": "Access is denied.", "flags": 35651584, "object": "child", "probe": "directory_flush", "share": 0, "win32_error": 5}
+{"api_success": true, "object": "child", "probe": "directory_close"}
+{"access": 0, "api_success": true, "flags": 2183135232, "object": "child", "probe": "directory_open", "share": 0}
+{"access": 0, "api_success": false, "error": "Access is denied.", "flags": 2183135232, "object": "child", "probe": "directory_flush", "share": 0, "win32_error": 5}
+{"api_success": true, "object": "child", "probe": "directory_close"}
+{"access": 0, "api_success": true, "flags": 35651584, "object": "child", "probe": "directory_open", "share": 3}
+{"access": 0, "api_success": false, "error": "Access is denied.", "flags": 35651584, "object": "child", "probe": "directory_flush", "share": 3, "win32_error": 5}
+{"api_success": true, "object": "child", "probe": "directory_close"}
+{"access": 0, "api_success": true, "flags": 2183135232, "object": "child", "probe": "directory_open", "share": 3}
+{"access": 0, "api_success": false, "error": "Access is denied.", "flags": 2183135232, "object": "child", "probe": "directory_flush", "share": 3, "win32_error": 5}
+{"api_success": true, "object": "child", "probe": "directory_close"}
+{"access": 0, "api_success": true, "flags": 35651584, "object": "child", "probe": "directory_open", "share": 7}
+{"access": 0, "api_success": false, "error": "Access is denied.", "flags": 35651584, "object": "child", "probe": "directory_flush", "share": 7, "win32_error": 5}
+{"api_success": true, "object": "child", "probe": "directory_close"}
+{"access": 0, "api_success": true, "flags": 2183135232, "object": "child", "probe": "directory_open", "share": 7}
+{"access": 0, "api_success": false, "error": "Access is denied.", "flags": 2183135232, "object": "child", "probe": "directory_flush", "share": 7, "win32_error": 5}
+{"api_success": true, "object": "child", "probe": "directory_close"}
+{"access": 2147483648, "api_success": true, "flags": 35651584, "object": "child", "probe": "directory_open", "share": 0}
+{"access": 2147483648, "api_success": false, "error": "Access is denied.", "flags": 35651584, "object": "child", "probe": "directory_flush", "share": 0, "win32_error": 5}
+{"api_success": true, "object": "child", "probe": "directory_close"}
+{"access": 2147483648, "api_success": true, "flags": 2183135232, "object": "child", "probe": "directory_open", "share": 0}
+{"access": 2147483648, "api_success": false, "error": "Access is denied.", "flags": 2183135232, "object": "child", "probe": "directory_flush", "share": 0, "win32_error": 5}
+{"api_success": true, "object": "child", "probe": "directory_close"}
+{"access": 2147483648, "api_success": true, "flags": 35651584, "object": "child", "probe": "directory_open", "share": 3}
+{"access": 2147483648, "api_success": false, "error": "Access is denied.", "flags": 35651584, "object": "child", "probe": "directory_flush", "share": 3, "win32_error": 5}
+{"api_success": true, "object": "child", "probe": "directory_close"}
+{"access": 2147483648, "api_success": true, "flags": 2183135232, "object": "child", "probe": "directory_open", "share": 3}
+{"access": 2147483648, "api_success": false, "error": "Access is denied.", "flags": 2183135232, "object": "child", "probe": "directory_flush", "share": 3, "win32_error": 5}
+{"api_success": true, "object": "child", "probe": "directory_close"}
+{"access": 2147483648, "api_success": true, "flags": 35651584, "object": "child", "probe": "directory_open", "share": 7}
+{"access": 2147483648, "api_success": false, "error": "Access is denied.", "flags": 35651584, "object": "child", "probe": "directory_flush", "share": 7, "win32_error": 5}
+{"api_success": true, "object": "child", "probe": "directory_close"}
+{"access": 2147483648, "api_success": true, "flags": 2183135232, "object": "child", "probe": "directory_open", "share": 7}
+{"access": 2147483648, "api_success": false, "error": "Access is denied.", "flags": 2183135232, "object": "child", "probe": "directory_flush", "share": 7, "win32_error": 5}
+{"api_success": true, "object": "child", "probe": "directory_close"}
+{"access": 1073741824, "api_success": true, "flags": 35651584, "object": "child", "probe": "directory_open", "share": 0}
+{"access": 1073741824, "api_success": true, "flags": 35651584, "object": "child", "probe": "directory_flush", "share": 0}
+{"api_success": true, "object": "child", "probe": "directory_close"}
+{"access": 1073741824, "api_success": true, "flags": 2183135232, "object": "child", "probe": "directory_open", "share": 0}
+{"access": 1073741824, "api_success": true, "flags": 2183135232, "object": "child", "probe": "directory_flush", "share": 0}
+{"api_success": true, "object": "child", "probe": "directory_close"}
+{"access": 1073741824, "api_success": true, "flags": 35651584, "object": "child", "probe": "directory_open", "share": 3}
+{"access": 1073741824, "api_success": true, "flags": 35651584, "object": "child", "probe": "directory_flush", "share": 3}
+{"api_success": true, "object": "child", "probe": "directory_close"}
+{"access": 1073741824, "api_success": true, "flags": 2183135232, "object": "child", "probe": "directory_open", "share": 3}
+{"access": 1073741824, "api_success": true, "flags": 2183135232, "object": "child", "probe": "directory_flush", "share": 3}
+{"api_success": true, "object": "child", "probe": "directory_close"}
+{"access": 1073741824, "api_success": true, "flags": 35651584, "object": "child", "probe": "directory_open", "share": 7}
+{"access": 1073741824, "api_success": true, "flags": 35651584, "object": "child", "probe": "directory_flush", "share": 7}
+{"api_success": true, "object": "child", "probe": "directory_close"}
+{"access": 1073741824, "api_success": true, "flags": 2183135232, "object": "child", "probe": "directory_open", "share": 7}
+{"access": 1073741824, "api_success": true, "flags": 2183135232, "object": "child", "probe": "directory_flush", "share": 7}
+{"api_success": true, "object": "child", "probe": "directory_close"}
+{"access": 3221225472, "api_success": true, "flags": 35651584, "object": "child", "probe": "directory_open", "share": 0}
+{"access": 3221225472, "api_success": true, "flags": 35651584, "object": "child", "probe": "directory_flush", "share": 0}
+{"api_success": true, "object": "child", "probe": "directory_close"}
+{"access": 3221225472, "api_success": true, "flags": 2183135232, "object": "child", "probe": "directory_open", "share": 0}
+{"access": 3221225472, "api_success": true, "flags": 2183135232, "object": "child", "probe": "directory_flush", "share": 0}
+{"api_success": true, "object": "child", "probe": "directory_close"}
+{"access": 3221225472, "api_success": true, "flags": 35651584, "object": "child", "probe": "directory_open", "share": 3}
+{"access": 3221225472, "api_success": true, "flags": 35651584, "object": "child", "probe": "directory_flush", "share": 3}
+{"api_success": true, "object": "child", "probe": "directory_close"}
+{"access": 3221225472, "api_success": true, "flags": 2183135232, "object": "child", "probe": "directory_open", "share": 3}
+{"access": 3221225472, "api_success": true, "flags": 2183135232, "object": "child", "probe": "directory_flush", "share": 3}
+{"api_success": true, "object": "child", "probe": "directory_close"}
+{"access": 3221225472, "api_success": true, "flags": 35651584, "object": "child", "probe": "directory_open", "share": 7}
+{"access": 3221225472, "api_success": true, "flags": 35651584, "object": "child", "probe": "directory_flush", "share": 7}
+{"api_success": true, "object": "child", "probe": "directory_close"}
+{"access": 3221225472, "api_success": true, "flags": 2183135232, "object": "child", "probe": "directory_open", "share": 7}
+{"access": 3221225472, "api_success": true, "flags": 2183135232, "object": "child", "probe": "directory_flush", "share": 7}
+{"api_success": true, "object": "child", "probe": "directory_close"}
+{"access": 0, "api_success": true, "flags": 35651584, "object": "parent", "probe": "directory_open", "share": 0}
+{"access": 0, "api_success": false, "error": "Access is denied.", "flags": 35651584, "object": "parent", "probe": "directory_flush", "share": 0, "win32_error": 5}
+{"api_success": true, "object": "parent", "probe": "directory_close"}
+{"access": 0, "api_success": true, "flags": 2183135232, "object": "parent", "probe": "directory_open", "share": 0}
+{"access": 0, "api_success": false, "error": "Access is denied.", "flags": 2183135232, "object": "parent", "probe": "directory_flush", "share": 0, "win32_error": 5}
+{"api_success": true, "object": "parent", "probe": "directory_close"}
+{"access": 0, "api_success": true, "flags": 35651584, "object": "parent", "probe": "directory_open", "share": 3}
+{"access": 0, "api_success": false, "error": "Access is denied.", "flags": 35651584, "object": "parent", "probe": "directory_flush", "share": 3, "win32_error": 5}
+{"api_success": true, "object": "parent", "probe": "directory_close"}
+{"access": 0, "api_success": true, "flags": 2183135232, "object": "parent", "probe": "directory_open", "share": 3}
+{"access": 0, "api_success": false, "error": "Access is denied.", "flags": 2183135232, "object": "parent", "probe": "directory_flush", "share": 3, "win32_error": 5}
+{"api_success": true, "object": "parent", "probe": "directory_close"}
+{"access": 0, "api_success": true, "flags": 35651584, "object": "parent", "probe": "directory_open", "share": 7}
+{"access": 0, "api_success": false, "error": "Access is denied.", "flags": 35651584, "object": "parent", "probe": "directory_flush", "share": 7, "win32_error": 5}
+{"api_success": true, "object": "parent", "probe": "directory_close"}
+{"access": 0, "api_success": true, "flags": 2183135232, "object": "parent", "probe": "directory_open", "share": 7}
+{"access": 0, "api_success": false, "error": "Access is denied.", "flags": 2183135232, "object": "parent", "probe": "directory_flush", "share": 7, "win32_error": 5}
+{"api_success": true, "object": "parent", "probe": "directory_close"}
+{"access": 2147483648, "api_success": true, "flags": 35651584, "object": "parent", "probe": "directory_open", "share": 0}
+{"access": 2147483648, "api_success": false, "error": "Access is denied.", "flags": 35651584, "object": "parent", "probe": "directory_flush", "share": 0, "win32_error": 5}
+{"api_success": true, "object": "parent", "probe": "directory_close"}
+{"access": 2147483648, "api_success": true, "flags": 2183135232, "object": "parent", "probe": "directory_open", "share": 0}
+{"access": 2147483648, "api_success": false, "error": "Access is denied.", "flags": 2183135232, "object": "parent", "probe": "directory_flush", "share": 0, "win32_error": 5}
+{"api_success": true, "object": "parent", "probe": "directory_close"}
+{"access": 2147483648, "api_success": true, "flags": 35651584, "object": "parent", "probe": "directory_open", "share": 3}
+{"access": 2147483648, "api_success": false, "error": "Access is denied.", "flags": 35651584, "object": "parent", "probe": "directory_flush", "share": 3, "win32_error": 5}
+{"api_success": true, "object": "parent", "probe": "directory_close"}
+{"access": 2147483648, "api_success": true, "flags": 2183135232, "object": "parent", "probe": "directory_open", "share": 3}
+{"access": 2147483648, "api_success": false, "error": "Access is denied.", "flags": 2183135232, "object": "parent", "probe": "directory_flush", "share": 3, "win32_error": 5}
+{"api_success": true, "object": "parent", "probe": "directory_close"}
+{"access": 2147483648, "api_success": true, "flags": 35651584, "object": "parent", "probe": "directory_open", "share": 7}
+{"access": 2147483648, "api_success": false, "error": "Access is denied.", "flags": 35651584, "object": "parent", "probe": "directory_flush", "share": 7, "win32_error": 5}
+{"api_success": true, "object": "parent", "probe": "directory_close"}
+{"access": 2147483648, "api_success": true, "flags": 2183135232, "object": "parent", "probe": "directory_open", "share": 7}
+{"access": 2147483648, "api_success": false, "error": "Access is denied.", "flags": 2183135232, "object": "parent", "probe": "directory_flush", "share": 7, "win32_error": 5}
+{"api_success": true, "object": "parent", "probe": "directory_close"}
+{"access": 1073741824, "api_success": true, "flags": 35651584, "object": "parent", "probe": "directory_open", "share": 0}
+{"access": 1073741824, "api_success": true, "flags": 35651584, "object": "parent", "probe": "directory_flush", "share": 0}
+{"api_success": true, "object": "parent", "probe": "directory_close"}
+{"access": 1073741824, "api_success": true, "flags": 2183135232, "object": "parent", "probe": "directory_open", "share": 0}
+{"access": 1073741824, "api_success": true, "flags": 2183135232, "object": "parent", "probe": "directory_flush", "share": 0}
+{"api_success": true, "object": "parent", "probe": "directory_close"}
+{"access": 1073741824, "api_success": true, "flags": 35651584, "object": "parent", "probe": "directory_open", "share": 3}
+{"access": 1073741824, "api_success": true, "flags": 35651584, "object": "parent", "probe": "directory_flush", "share": 3}
+{"api_success": true, "object": "parent", "probe": "directory_close"}
+{"access": 1073741824, "api_success": true, "flags": 2183135232, "object": "parent", "probe": "directory_open", "share": 3}
+{"access": 1073741824, "api_success": true, "flags": 2183135232, "object": "parent", "probe": "directory_flush", "share": 3}
+{"api_success": true, "object": "parent", "probe": "directory_close"}
+{"access": 1073741824, "api_success": true, "flags": 35651584, "object": "parent", "probe": "directory_open", "share": 7}
+{"access": 1073741824, "api_success": true, "flags": 35651584, "object": "parent", "probe": "directory_flush", "share": 7}
+{"api_success": true, "object": "parent", "probe": "directory_close"}
+{"access": 1073741824, "api_success": true, "flags": 2183135232, "object": "parent", "probe": "directory_open", "share": 7}
+{"access": 1073741824, "api_success": true, "flags": 2183135232, "object": "parent", "probe": "directory_flush", "share": 7}
+{"api_success": true, "object": "parent", "probe": "directory_close"}
+{"access": 3221225472, "api_success": true, "flags": 35651584, "object": "parent", "probe": "directory_open", "share": 0}
+{"access": 3221225472, "api_success": true, "flags": 35651584, "object": "parent", "probe": "directory_flush", "share": 0}
+{"api_success": true, "object": "parent", "probe": "directory_close"}
+{"access": 3221225472, "api_success": true, "flags": 2183135232, "object": "parent", "probe": "directory_open", "share": 0}
+{"access": 3221225472, "api_success": true, "flags": 2183135232, "object": "parent", "probe": "directory_flush", "share": 0}
+{"api_success": true, "object": "parent", "probe": "directory_close"}
+{"access": 3221225472, "api_success": true, "flags": 35651584, "object": "parent", "probe": "directory_open", "share": 3}
+{"access": 3221225472, "api_success": true, "flags": 35651584, "object": "parent", "probe": "directory_flush", "share": 3}
+{"api_success": true, "object": "parent", "probe": "directory_close"}
+{"access": 3221225472, "api_success": true, "flags": 2183135232, "object": "parent", "probe": "directory_open", "share": 3}
+{"access": 3221225472, "api_success": true, "flags": 2183135232, "object": "parent", "probe": "directory_flush", "share": 3}
+{"api_success": true, "object": "parent", "probe": "directory_close"}
+{"access": 3221225472, "api_success": true, "flags": 35651584, "object": "parent", "probe": "directory_open", "share": 7}
+{"access": 3221225472, "api_success": true, "flags": 35651584, "object": "parent", "probe": "directory_flush", "share": 7}
+{"api_success": true, "object": "parent", "probe": "directory_close"}
+{"access": 3221225472, "api_success": true, "flags": 2183135232, "object": "parent", "probe": "directory_open", "share": 7}
+{"access": 3221225472, "api_success": true, "flags": 2183135232, "object": "parent", "probe": "directory_flush", "share": 7}
+{"api_success": true, "object": "parent", "probe": "directory_close"}
+{"api_success": true, "probe": "private_directory_create"}
+{"api_success": true, "dacl_nonnull": true, "links": 1, "object": "private_root", "owner_matches": true, "probe": "acl_readback", "protected": true, "reparse": false, "sddl": "O:LAD:P(A;OICI;FA;;;LA)"}
+{"api_success": true, "dacl_nonnull": true, "links": 1, "object": "inherited_file", "owner_matches": false, "probe": "acl_readback", "protected": false, "reparse": false, "sddl": "O:BAG:<runner-sid>D:(A;ID;FA;;;LA)"}
+{"api_success": true, "probe": "hardlink_publish"}
+{"api_success": false, "error": "link <fixture>\\private-acl\\inherited.txt <fixture>\\private-acl\\published.txt: Cannot create a file when that file already exists.", "expected_failure": true, "probe": "hardlink_existing_target", "win32_error": 183}
+{"api_success": true, "data_equal": true, "probe": "hardlink_read"}
+{"api_success": true, "probe": "hardlink_remove_source_name"}
+{"api_success": false, "error": "remove <fixture>\\private-acl\\published.txt: The process cannot access the file because it is being used by another process.", "expected_failure": true, "probe": "unlink_no_delete_share", "win32_error": 32}
+{"api_success": true, "probe": "sharing_handle_close"}
+{"api_success": true, "probe": "unlink_after_close"}
+{"api_success": false, "error": "remove <fixture>\\new-directory-entry: The directory is not empty.", "expected_failure": true, "probe": "remove_nonempty_directory", "win32_error": 145}
+{"api_success": true, "flags": 8, "probe": "move_write_through", "same_volume": true}
+{"api_success": false, "error": "Cannot create a file when that file already exists.", "expected_failure": true, "probe": "move_existing_destination", "replace_existing": false, "win32_error": 183}
+{"api_success": true, "probe": "junction_create"}
+{"api_success": true, "probe": "junction_open_no_follow"}
+{"api_success": true, "probe": "junction_readback", "reparse": true}
+{"api_success": true, "probe": "junction_remove_link"}
+{"api_success": true, "directory_entry_durability_proven": false, "ordinary_token": false, "power_loss_tested": false, "probe": "stage0_verdict", "reason": "API observations cannot establish documented new-directory-entry durability or power-loss guarantee; production compatibility unchanged", "verdict": "BLOCKED"}

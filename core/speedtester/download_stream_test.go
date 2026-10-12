@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -53,6 +55,69 @@ func TestMeasureDownloadStreamUsesActualBytesAndBitsPerSecond(t *testing.T) {
 	}
 	if got := *result.Samples[0].SpeedMbps; got != 8 {
 		t.Fatalf("1,000,000 bytes over one second must be 8 Mbps, got %v", got)
+	}
+}
+
+func TestMeasureDownloadStreamCompletesOfflineHTTPSFixture(t *testing.T) {
+	st := newDownloadStreamTester(t)
+	payload := strings.Repeat("v", 384)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/__down" {
+			t.Errorf("unexpected offline TLS request: %s %s", r.Method, r.URL)
+		}
+		_, _ = io.WriteString(w, payload)
+	}))
+	defer server.Close()
+	transport := server.Client().Transport.(*http.Transport).Clone()
+	transport.TLSClientConfig.ServerName = "127.0.0.1"
+	transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
+	}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport}
+	result := st.MeasureDownloadStream(context.Background(), client, DownloadStreamOptions{
+		MaximumBytes: 512, MaximumDuration: time.Second, SampleEveryBytes: 128,
+	}, nil)
+	if result.Outcome != "completed" || result.BytesRead != int64(len(payload)) || result.ErrorClass != "" {
+		t.Fatalf("offline TLS download result = %+v", result)
+	}
+	var sampled int64
+	for _, sample := range result.Samples {
+		sampled += sample.DeltaBytes
+	}
+	if sampled != int64(len(payload)) {
+		t.Fatalf("offline TLS samples counted %d of %d actual bytes", sampled, len(payload))
+	}
+}
+
+func TestMeasureDownloadStreamDeadlineStopsOfflineConnect(t *testing.T) {
+	st := newDownloadStreamTester(t)
+	entered := make(chan struct{})
+	var once sync.Once
+	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		once.Do(func() { close(entered) })
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	defer transport.CloseIdleConnections()
+	result := make(chan DownloadStreamResult, 1)
+	go func() {
+		result <- st.MeasureDownloadStream(context.Background(), &http.Client{Transport: transport}, DownloadStreamOptions{
+			MaximumBytes: 128, MaximumDuration: 40 * time.Millisecond,
+		}, nil)
+	}()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("offline connection dial did not start")
+	}
+	select {
+	case got := <-result:
+		if got.Outcome != "time_limit" || got.BytesRead != 0 {
+			t.Fatalf("connect deadline result = %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("connect did not stop at the download deadline")
 	}
 }
 

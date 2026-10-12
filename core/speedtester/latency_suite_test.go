@@ -71,3 +71,18 @@ func TestLatencyHTTPRefusalKeepsTimingWithoutClaimingBusinessSuccess(t *testing.
 		t.Fatalf("response latency and endpoint refusal not separated: %+v", result.samples)
 	}
 }
+
+func TestLatencyRedirectIsOneRequestAndKeepsFirstResponse(t *testing.T) {
+	calls := 0
+	client := &http.Client{Transport: downloadRoundTripper(func(r *http.Request) (*http.Response, error) {
+		calls++
+		h := make(http.Header)
+		h.Set("Location", "https://another.example/next")
+		return &http.Response{StatusCode: 302, Header: h, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+	})}
+	tester := &SpeedTester{config: &Config{LatencyTargetURL: "https://probe.example/"}}
+	result := tester.testLatencyWithClient(client, 1)
+	if calls != 1 || len(result.samples) != 1 || !result.samples[0].Success || !strings.Contains(result.samples[0].Error, "HTTP 302") {
+		t.Fatalf("redirect made %d requests, samples=%+v", calls, result.samples)
+	}
+}

@@ -1,6 +1,7 @@
 package application
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/faceair/clash-speedtest/core/history"
@@ -36,12 +37,13 @@ type SingleTestRequest struct {
 // WorkbenchLatencyTestRequest is the stable-identity request for the first
 // formal workbench path. Raw subscription config never crosses this boundary.
 type WorkbenchLatencyTestRequest struct {
-	TargetID       string `json:"target_id,omitempty"`
-	ProfileID      string `json:"profile_id"`
-	NodeKey        string `json:"node_key"`
-	TestProject    string `json:"test_project"`
-	TimeoutSeconds int64  `json:"timeout_seconds"`
-	SampleCount    int    `json:"sample_count,omitempty"`
+	TargetID          string `json:"target_id,omitempty"`
+	ProfileID         string `json:"profile_id"`
+	NodeKey           string `json:"node_key"`
+	ConfigRevisionKey string `json:"config_revision_key,omitempty"`
+	TestProject       string `json:"test_project"`
+	TimeoutSeconds    int64  `json:"timeout_seconds"`
+	SampleCount       int    `json:"sample_count,omitempty"`
 }
 
 type WorkbenchPublicServiceTestRequest struct {
@@ -210,6 +212,7 @@ type WorkbenchLatencySampleDTO struct {
 // PersistenceState is independent from the test Status so a valid result can
 // still be shown when the history transaction fails.
 type WorkbenchLatencyTestDTO struct {
+	NetworkPath       json.RawMessage             `json:"network_path,omitempty"`
 	AttemptID         string                      `json:"attempt_id"`
 	ProfileID         string                      `json:"profile_id"`
 	NodeKey           string                      `json:"node_key"`

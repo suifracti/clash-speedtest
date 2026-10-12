@@ -46,7 +46,8 @@ func (s *AppService) ExportDataBackup(ctx context.Context, destination io.Writer
 	}
 
 	archive := zip.NewWriter(destination)
-	defer archive.Close()
+	// Finalize only after every entry succeeds; failed streams must not gain a
+	// ZIP central directory that makes them look like complete backups.
 	metadata := map[string]any{
 		"exported_at":    time.Now().UTC().Format(time.RFC3339),
 		"format_version": 1,
@@ -99,6 +100,9 @@ func (s *AppService) ExportDataBackup(ctx context.Context, destination io.Writer
 		return nil
 	})
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return archive.Close()

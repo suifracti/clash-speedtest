@@ -1,0 +1,9 @@
+Windows amd64 test registration boundary check (cross-compiled _testmain.go; NOT Windows runtime):
+RED: baseline 897ebc0
+Unix permission test registrations: ['TestV11UpgradeBackupCleanupPermissionFailure', 'TestV11UpgradeBackupCleanupAndQuarantineDenied']
+Windows fail-closed regression registered: False
+Boundary assertion exit code: 1
+GREEN: platform split
+Unix permission test registrations: []
+Windows fail-closed regression registered: True
+Boundary assertion exit code: 0

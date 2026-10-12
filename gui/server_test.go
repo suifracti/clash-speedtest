@@ -108,11 +108,44 @@ func TestBroadcaster(t *testing.T) {
 }
 
 func TestServerLifecycle(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "server-test-*")
-	if err != nil {
-		t.Fatalf("temp dir failed: %v", err)
+	tempDir := t.TempDir()
+	testHome := filepath.Join(tempDir, "home")
+	testWorkingDir := filepath.Join(tempDir, "working")
+	sentinelHome := filepath.Join(tempDir, "sentinel-home")
+	appDataDir := filepath.Join(tempDir, "appdata")
+	localAppDataDir := filepath.Join(tempDir, "local-appdata")
+	xdgConfigDir := filepath.Join(tempDir, "xdg-config")
+	for _, dir := range []string{testHome, testWorkingDir, sentinelHome, appDataDir, localAppDataDir, xdgConfigDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("create isolated test directory: %v", err)
+		}
 	}
-	defer os.RemoveAll(tempDir)
+	for name, value := range map[string]string{
+		"HOME":            testHome,
+		"USERPROFILE":     testHome,
+		"APPDATA":         appDataDir,
+		"LOCALAPPDATA":    localAppDataDir,
+		"XDG_CONFIG_HOME": xdgConfigDir,
+	} {
+		t.Setenv(name, value)
+	}
+	t.Chdir(testWorkingDir)
+
+	sentinelPath := filepath.Join(sentinelHome, ".antigravity_token")
+	const sentinel = "synthetic-token-sentinel\n"
+	if err := os.WriteFile(sentinelPath, []byte(sentinel), 0o600); err != nil {
+		t.Fatalf("create synthetic token sentinel: %v", err)
+	}
+	t.Cleanup(func() {
+		data, err := os.ReadFile(sentinelPath)
+		if err != nil {
+			t.Errorf("synthetic token sentinel was removed during test cleanup: %v", err)
+			return
+		}
+		if string(data) != sentinel {
+			t.Errorf("synthetic token sentinel was overwritten during test cleanup")
+		}
+	})
 
 	server, err := NewServer(ServerConfig{
 		Port:         0, // Ephemeral port
@@ -122,15 +155,25 @@ func TestServerLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
+	t.Cleanup(func() {
+		if server.historyStore.DB() != nil {
+			t.Error("history store remained open after server test cleanup")
+		}
+	})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := server.Stop(ctx); err != nil {
+			t.Errorf("stop server during test cleanup: %v", err)
+		}
+		if err := server.historyStore.Close(); err != nil {
+			t.Errorf("close history store during test cleanup: %v", err)
+		}
+	})
 
 	if err := server.Start(); err != nil {
 		t.Fatalf("Start server failed: %v", err)
 	}
-	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = server.Stop(ctx)
-	}()
 
 	url := server.URL()
 
@@ -165,11 +208,14 @@ func TestServerLifecycle(t *testing.T) {
 	if respToken.StatusCode != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", respToken.StatusCode)
 	}
-	defer func() {
-		if home, err := os.UserHomeDir(); err == nil && home != "" {
-			_ = os.Remove(filepath.Join(home, ".antigravity_token"))
-		}
-	}()
+	tokenPath := filepath.Join(testHome, ".antigravity_token")
+	tokenFile, err := os.ReadFile(tokenPath)
+	if err != nil {
+		t.Fatalf("read token from isolated test home: %v", err)
+	}
+	if string(tokenFile) != "ya29.test-mock-token-for-testing\n" {
+		t.Fatal("token API did not persist the expected test token in the isolated home")
+	}
 
 	tok, _ := server.GetAntigravityToken()
 	if tok != "ya29.test-mock-token-for-testing" {
@@ -371,5 +417,17 @@ func TestServerLifecycle(t *testing.T) {
 	}
 	if airportHist.Nodes[0].TotalTests != 2 || airportHist.Nodes[0].MinLatencyMs != 140 {
 		t.Fatalf("unexpected node history metrics: tests=%d, minLat=%d", airportHist.Nodes[0].TotalTests, airportHist.Nodes[0].MinLatencyMs)
+	}
+
+	// Model a different synthetic home becoming current before test cleanup. Cleanup
+	// must remain scoped to t.TempDir and never remove this unrelated sentinel.
+	for name, value := range map[string]string{
+		"HOME":            sentinelHome,
+		"USERPROFILE":     sentinelHome,
+		"APPDATA":         filepath.Join(sentinelHome, "appdata"),
+		"LOCALAPPDATA":    filepath.Join(sentinelHome, "local-appdata"),
+		"XDG_CONFIG_HOME": filepath.Join(sentinelHome, "xdg-config"),
+	} {
+		t.Setenv(name, value)
 	}
 }

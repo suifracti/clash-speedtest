@@ -238,7 +238,7 @@ CREATE TABLE IF NOT EXISTS workbench_download_results (
 
 // CurrentSchemaVersion is the SQLite schema authority. Databases without a
 // schema_meta row are the explicitly recognized pre-version legacy schema.
-const CurrentSchemaVersion = 11
+const CurrentSchemaVersion = 12
 
 var (
 	ErrUnsupportedSchemaVersion = fmt.Errorf("unsupported SQLite schema version")
@@ -283,7 +283,11 @@ func OpenDB(dir string) (*DB, error) {
 
 	// Initialize or upgrade the schema inside one explicit transaction. This
 	// also rejects unknown future schemas before any DDL is applied.
-	if err := migrateSchema(db); err != nil {
+	if err := migrateSchema(db, func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		return createVerifiedV11Rollback(ctx, dir, upgradeBackupHooks{})
+	}); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate sqlite schema: %w", err)
 	}
@@ -298,7 +302,7 @@ func OpenDB(dir string) (*DB, error) {
 	return &DB{db: db}, nil
 }
 
-func migrateSchema(db *sql.DB) error {
+func migrateSchema(db *sql.DB, beforeV11Upgrade func() error) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin schema migration: %w", err)
@@ -318,6 +322,21 @@ func migrateSchema(db *sql.DB) error {
 		}
 		if err := validateCurrentSchema(tx, version); err != nil {
 			return fmt.Errorf("validate schema version %d: %w", version, err)
+		}
+		// Keep the schema recognition transaction open across the backup. In WAL
+		// mode, a concurrent committed writer makes this transaction's subsequent
+		// write fail rather than upgrading from a stale snapshot. Never retry DDL
+		// without re-entering this gate and taking a fresh backup.
+		if version == 11 {
+			if err := validateMonitorBudgetSchema(tx); err != nil {
+				return err
+			}
+			if beforeV11Upgrade == nil {
+				return fmt.Errorf("%w: missing pre-upgrade backup", ErrUpgradeBackup)
+			}
+			if err := beforeV11Upgrade(); err != nil {
+				return fmt.Errorf("%w: %w", ErrUpgradeBackup, err)
+			}
 		}
 	} else {
 		empty, knownLegacy, err := inspectUnversionedSchema(tx)
@@ -421,6 +440,21 @@ func migrateSchema(db *sql.DB) error {
 			return err
 		}
 		version = 11
+	}
+	if version == 11 {
+		columns, err := tableColumns(tx, "workbench_latency_tests")
+		if err != nil {
+			return err
+		}
+		if !columns["network_path_json"] {
+			if _, err := tx.Exec("ALTER TABLE workbench_latency_tests ADD COLUMN network_path_json TEXT NOT NULL DEFAULT ''"); err != nil {
+				return fmt.Errorf("migrate latency path evidence: %w", err)
+			}
+		}
+		if _, err := tx.Exec("UPDATE schema_meta SET schema_version=12 WHERE singleton=1"); err != nil {
+			return err
+		}
+		version = 12
 	}
 	if err := validateCurrentSchema(tx, version); err != nil {
 		return fmt.Errorf("validate schema version %d after migration: %w", version, err)
@@ -655,6 +689,11 @@ func validateCurrentSchema(tx *sql.Tx, version int) error {
 	if version >= 11 {
 		tables["measurement_rounds"] = []string{"round_id", "trigger_type", "started_at", "state", "plan_json"}
 		tables["measurement_round_items"] = []string{"round_id", "request_id", "project", "service_id", "profile_id", "node_key", "node_identity_key", "config_revision_key", "not_executed_reason"}
+	}
+	if version >= 12 {
+		if err := requireColumns(tx, "workbench_latency_tests", []string{"network_path_json"}); err != nil {
+			return err
+		}
 	}
 	if version >= 10 {
 		tables["subscription_usage_snapshots"] = []string{"account_key", "captured_at", "payload_json"}
@@ -1303,8 +1342,8 @@ func (d *DB) SaveLatencyTest(ctx context.Context, test *LatencyTest) error {
 			display_name, node_type, test_project, requested_at, started_at, finished_at,
 			status, latency_ms, jitter_ms, packet_loss, total_samples,
 			success_samples, failure_samples, error_message, source, method,
-			method_version, target, unit
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			method_version, target, unit, network_path_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		test.AttemptID,
 		test.ProfileID,
@@ -1330,6 +1369,7 @@ func (d *DB) SaveLatencyTest(ctx context.Context, test *LatencyTest) error {
 		test.MethodVersion,
 		test.Target,
 		test.Unit,
+		string(test.NetworkPath),
 	)
 	if err != nil {
 		return fmt.Errorf("insert latency test %s: %w", test.AttemptID, err)
@@ -1391,12 +1431,28 @@ func (d *DB) QueryLatencyTests(ctx context.Context, filter LatencyTestFilter) (*
 	where := `t.profile_id = ? AND t.node_key = ?`
 	args := []any{filter.ProfileID, filter.NodeKey}
 	if filter.Target != "" {
+		// Eligibility is decided from target children before LIMIT. A six-site
+		// parent uses multi://latency-v1 and must remain queryable by each site.
+		// Preflight failures have no samples; keep their explicit target/evidence
+		// visible in history without turning them into measurements.
+		where += ` AND (EXISTS (SELECT 1 FROM workbench_latency_samples AS target_sample
+			WHERE target_sample.attempt_id = t.attempt_id AND (
+				target_sample.target = ? OR (COALESCE(target_sample.target, '') = '' AND t.target = ?)`
+		args = append(args, filter.Target, filter.Target)
 		if filter.IncludeLegacyTarget {
-			where += ` AND (t.target = ? OR COALESCE(t.target, '') = '')`
-		} else {
-			where += ` AND t.target = ?`
+			where += ` OR (COALESCE(target_sample.target, '') = '' AND COALESCE(t.target, '') = '')`
 		}
+		where += `)`
+		if since != nil {
+			where += ` AND target_sample.timestamp >= ? AND target_sample.timestamp < ?`
+			args = append(args, *since, *until)
+		}
+		where += `) OR (t.status='not_executed' AND (t.target = ?`
 		args = append(args, filter.Target)
+		if filter.IncludeLegacyTarget {
+			where += ` OR COALESCE(t.target, '') = ''`
+		}
+		where += `)))`
 	}
 	if filter.NodeIdentityKey != "" {
 		where += ` AND t.node_identity_key = ?`
@@ -1409,13 +1465,14 @@ func (d *DB) QueryLatencyTests(ctx context.Context, filter LatencyTestFilter) (*
 	if since != nil {
 		// Scope attempts by raw sample timestamps before applying LIMIT. An
 		// attempt may straddle the boundary and remains eligible when any raw
-		// sample belongs to the requested half-open interval.
-		where += ` AND t.finished_at >= ? AND EXISTS (
+		// sample belongs to the requested half-open interval. A preflight
+		// not_executed record has no samples, so use its finish time instead.
+		where += ` AND (EXISTS (
 			SELECT 1 FROM workbench_latency_samples AS ws
 			WHERE ws.attempt_id = t.attempt_id
 			  AND ws.timestamp >= ? AND ws.timestamp < ?
-		)`
-		args = append(args, *since, *since, *until)
+		) OR (t.status='not_executed' AND t.finished_at >= ? AND t.finished_at < ?))`
+		args = append(args, *since, *until, *since, *until)
 	}
 	if (filter.BeforeFinishedAt == nil) != (filter.BeforeAttemptID == "") {
 		return nil, fmt.Errorf("latency history cursor requires before_finished_at and before_attempt_id")
@@ -1430,7 +1487,7 @@ func (d *DB) QueryLatencyTests(ctx context.Context, filter LatencyTestFilter) (*
 			display_name, node_type, test_project, requested_at, started_at, finished_at,
 			status, latency_ms, jitter_ms, packet_loss, total_samples,
 			 success_samples, failure_samples, error_message, source, method,
-			method_version, target, unit
+			method_version, target, unit, network_path_json
 		FROM workbench_latency_tests AS t
 		WHERE `+where+`
 		ORDER BY finished_at DESC, attempt_id DESC
@@ -1550,7 +1607,7 @@ func (d *DB) getLatencyTest(ctx context.Context, attemptID string, since, until 
 			display_name, node_type, test_project, requested_at, started_at, finished_at,
 			status, latency_ms, jitter_ms, packet_loss, total_samples,
 			success_samples, failure_samples, error_message, source, method,
-			method_version, target, unit
+			method_version, target, unit, network_path_json
 		FROM workbench_latency_tests
 		WHERE attempt_id = ?
 	`, attemptID)
@@ -1575,6 +1632,7 @@ func scanLatencyTest(scanner latencyTestScanner) (*LatencyTest, error) {
 	test := &LatencyTest{}
 	var requestedAt, startedAt, finishedAt time.Time
 	var errorMessage sql.NullString
+	var networkPath string
 	if err := scanner.Scan(
 		&test.AttemptID,
 		&test.ProfileID,
@@ -1600,6 +1658,7 @@ func scanLatencyTest(scanner latencyTestScanner) (*LatencyTest, error) {
 		&test.MethodVersion,
 		&test.Target,
 		&test.Unit,
+		&networkPath,
 	); err != nil {
 		return nil, err
 	}
@@ -1607,6 +1666,7 @@ func scanLatencyTest(scanner latencyTestScanner) (*LatencyTest, error) {
 	test.StartedAt = startedAt.UTC()
 	test.FinishedAt = finishedAt.UTC()
 	test.ErrorMessage = errorMessage.String
+	test.NetworkPath = json.RawMessage(networkPath)
 	return test, nil
 }
 

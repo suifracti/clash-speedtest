@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import {serviceConclusion} from '../measurementRounds'
 import {nodeDisplayName} from '../nodePresentation'
 import UiSelect from './UiSelect.vue'
 import {computed,onBeforeUnmount,ref,watch} from 'vue'
@@ -50,7 +51,7 @@ async function loadOlder(){
   catch(e){if(version===generation)error.value=e instanceof Error?e.message:'历史读取失败'}
   finally{if(version===generation)loading.value=false}
 }
-function serviceStatus(id:string){const attempt=recentService(w,props.node,id);return attempt?.result?outcomeLabel(attempt.result.outcome):'暂无记录'}
+function serviceStatus(id:string){const attempt=recentService(w,props.node,id);return attempt?serviceConclusion(attempt):'暂无记录'}
 function inspectService(_id:string,point:TrendPoint){inspected.value=point}
 watch(()=>comparisonNodes.value.map(key).sort().join('|')+'|'+props.project+'|'+w.hours.value+'|'+props.source+'|'+props.monitorServiceId+'|'+props.targetIds?.join(','),()=>{inspected.value=null;void load()},{immediate:true})
 watch(()=>props.project+'|'+w.hours.value+'|'+props.source+'|'+props.monitorServiceId+'|'+props.targetIds?.join(','),()=>{monitorHistory.value={}},{flush:'sync'})

@@ -1,0 +1,1 @@
+ok  	github.com/faceair/clash-speedtest/core/history	12.714s

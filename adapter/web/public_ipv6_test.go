@@ -17,7 +17,7 @@ func TestExplicitPublicIPv6HostAndOrigin(t *testing.T) {
 		{host, "http://evil.example", 403},
 		{"[2001:db8::999]:8999", "", 403},
 		{"evil.example:8999", "", 403},
-		{"127.0.0.1:8999", "http://127.0.0.1:8999", 204},
+		{"127.0.0.1:8999", "http://127.0.0.1:8999", 403},
 	} {
 		req := httptest.NewRequest(http.MethodPost, "http://"+tc.host+"/api/test", nil)
 		if tc.origin != "" {
@@ -32,9 +32,11 @@ func TestExplicitPublicIPv6HostAndOrigin(t *testing.T) {
 }
 
 func TestNetworkListenerSupportsTunnelSameOrigin(t *testing.T) {
-	handler := securityMiddlewareForHost(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }), "*")
-	for _, origin := range []string{"https://share.example", "https://evil.example"} {
-		req := httptest.NewRequest("POST", "http://share.example/api/test", nil)
+	const host = "share.example:8999"
+	handler := securityMiddlewareForHost(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }), host)
+	for _, origin := range []string{"https://" + host, "https://evil.example"} {
+		req := httptest.NewRequest("POST", "http://"+host+"/api/test", nil)
+		req.Host = host
 		req.Header.Set("Origin", origin)
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, req)

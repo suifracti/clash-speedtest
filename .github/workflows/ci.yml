@@ -43,6 +43,7 @@ jobs:
         run: |
           cd frontend
           npm ci
+          npm test
           npm run build
 
       - name: Run Go Unit Tests
@@ -78,6 +79,12 @@ jobs:
           cd frontend
           npm ci
           npm run build
+
+      - name: Test Windows Synthetic GUI Lifecycle
+        run: go test -v ./gui -run '^TestServerLifecycle$' -count=1 -timeout=90s
+
+      - name: Test Windows v11 Unsupported Upgrade Safety Refusal
+        run: go test -v ./core/history -run '^TestV11UpgradeBackupWindowsUnsupportedPrivateRootBlocksDDL$' -count=1 -timeout=90s
 
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
@@ -126,10 +133,24 @@ jobs:
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
 
+      - name: Test macOS Synthetic Persistence and GUI Contracts
+        run: go test -race ./core/history ./application ./core/appdata ./gui -count=1 -timeout=180s
+
+      - name: Test Darwin Physical DNS Offline Contracts
+        run: |
+          go test -race ./core/speedtester -run '^(TestStrictPhysicalDNS|TestStrictDNS|TestPhysicalDNS)' -count=1 -timeout=90s
+
       - name: Build macOS Native App
         run: |
           wails build -platform darwin/arm64 -s -v 2
 
       - name: Verify macOS App Bundle Exists
         run: |
-          test -d "build/bin/Clash SpeedTest Pro.app" || test -d "build/bin/clash-speedtest.app" || ls -la build/bin/
+          if [ -d "build/bin/Clash SpeedTest Pro.app" ]; then
+            echo "Found build/bin/Clash SpeedTest Pro.app"
+          elif [ -d "build/bin/clash-speedtest.app" ]; then
+            echo "Found build/bin/clash-speedtest.app"
+          else
+            echo "macOS app bundle was not produced" >&2
+            exit 1
+          fi

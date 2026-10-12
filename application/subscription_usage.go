@@ -71,6 +71,9 @@ func (s *AppService) seedSubscriptionUsageLocked(ctx context.Context, store *pro
 }
 
 func (s *AppService) saveUsageObservations(ctx context.Context, snapshots []subscriptionusage.Snapshot) error {
+	if s.subscriptionRefreshUsageSaveHook != nil {
+		return s.subscriptionRefreshUsageSaveHook(ctx, snapshots)
+	}
 	if s.historyStore == nil {
 		return nil
 	}

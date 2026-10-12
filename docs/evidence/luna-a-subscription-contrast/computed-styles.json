@@ -1,0 +1,536 @@
+{
+  "evidence": "Synthetic UI only; all bridge methods are local stubs and all non-local requests are blocked.",
+  "baseline": {
+    "darkAccountBackground": "#f5f7fa",
+    "darkAccountText": "#e4ebf5",
+    "contrast": 1.12
+  },
+  "screenshots": [
+    {
+      "name": "800-dark",
+      "width": 800,
+      "theme": "dark",
+      "colors": {
+        "root": {
+          "surface": "#1a202c",
+          "surfaceSoft": "#1e2634",
+          "ink": "#e4ebf5",
+          "muted": "#9caac1",
+          "line": "#2b3546",
+          "blue": "#82a2ff"
+        },
+        "frame": {
+          "color": "rgb(228, 235, 245)",
+          "background": "rgb(26, 32, 44)",
+          "border": "rgb(43, 53, 70)",
+          "outline": "rgb(228, 235, 245) none 3px",
+          "opacity": "1"
+        },
+        "account": {
+          "color": "rgb(228, 235, 245)",
+          "background": "rgb(30, 38, 52)",
+          "border": "rgb(43, 53, 70)",
+          "outline": "rgb(228, 235, 245) none 3px",
+          "opacity": "1"
+        },
+        "accountTitle": {
+          "color": "rgb(228, 235, 245)",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "rgb(228, 235, 245)",
+          "outline": "rgb(228, 235, 245) none 3px",
+          "opacity": "1"
+        },
+        "usage": {
+          "color": "rgb(228, 235, 245)",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "rgb(228, 235, 245)",
+          "outline": "rgb(228, 235, 245) none 3px",
+          "opacity": "1"
+        },
+        "expiry": {
+          "color": "rgb(228, 235, 245)",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "rgb(228, 235, 245)",
+          "outline": "rgb(228, 235, 245) none 3px",
+          "opacity": "1"
+        },
+        "mutedSubtitle": {
+          "color": "rgb(228, 235, 245)",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "rgb(228, 235, 245)",
+          "outline": "rgb(228, 235, 245) none 3px",
+          "opacity": "1"
+        },
+        "officialLink": {
+          "color": "rgb(130, 162, 255)",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "rgb(130, 162, 255)",
+          "outline": "rgb(130, 162, 255) none 3px",
+          "opacity": "1"
+        },
+        "progressTrack": {
+          "color": "rgb(228, 235, 245)",
+          "background": "rgb(43, 53, 70)",
+          "border": "rgb(228, 235, 245)",
+          "outline": "rgb(228, 235, 245) none 3px",
+          "opacity": "1"
+        },
+        "progressFill": {
+          "color": "rgb(228, 235, 245)",
+          "background": "rgb(130, 162, 255)",
+          "border": "rgb(228, 235, 245)",
+          "outline": "rgb(228, 235, 245) none 3px",
+          "opacity": "1"
+        },
+        "failureBadge": {
+          "color": "rgb(228, 235, 245)",
+          "background": "rgb(61, 41, 50)",
+          "border": "rgb(228, 235, 245)",
+          "outline": "rgb(228, 235, 245) none 3px",
+          "opacity": "1"
+        },
+        "failureText": {
+          "color": "rgb(228, 235, 245)",
+          "background": "rgb(61, 41, 50)",
+          "border": "rgb(228, 235, 245)",
+          "outline": "rgb(228, 235, 245) none 3px",
+          "opacity": "1"
+        },
+        "refreshButton": {
+          "color": "rgb(20, 35, 66)",
+          "background": "rgb(130, 162, 255)",
+          "border": "rgb(130, 162, 255)",
+          "outline": "rgb(20, 35, 66) none 3px",
+          "opacity": "1"
+        }
+      },
+      "contrast": {
+        "accountTitle": 12.66,
+        "usage": 12.66,
+        "expiry": 12.66,
+        "mutedSubtitle": 13.6,
+        "officialLink": 6.19,
+        "failureBadge": 11.21,
+        "failureText": 11.21,
+        "statusTones": {
+          "good": {
+            "color": "rgb(228, 235, 245)",
+            "background": "rgb(32, 59, 52)",
+            "contrast": 10.08
+          },
+          "warn": {
+            "color": "rgb(228, 235, 245)",
+            "background": "rgb(59, 50, 36)",
+            "contrast": 10.49
+          },
+          "bad": {
+            "color": "rgb(228, 235, 245)",
+            "background": "rgb(61, 41, 50)",
+            "contrast": 11.21
+          }
+        }
+      },
+      "visibleContent": "订阅账户\n\n独立查看用量、到期时间和刷新结果，不改变机场与节点选择。\n\n首页用量订阅\n合成机场 · 账户 A · 合成\n合成机场 · 账户 A · 合成\n合成机场 · 账户 A · 合成\n已用 6.00 GiB / 10.00 GiB · 剩余 4.00 GiB\n到期 2033/5/18\n机场入口\n官网 ↗\n备用入口 ↗\n合成公告入口 ↗\n刷新当前订阅\n刷新失败\n\n合成限流示例；旧缓存保留\n\n排队 → 抓取 → 失败\n只重试失败项\n公告 1",
+      "unexpectedRequests": []
+    },
+    {
+      "name": "800-light",
+      "width": 800,
+      "theme": "light",
+      "colors": {
+        "root": {
+          "surface": "#fff",
+          "surfaceSoft": "#f9fafc",
+          "ink": "#263146",
+          "muted": "#7a879b",
+          "line": "#e8edf5",
+          "blue": "#4269e8"
+        },
+        "frame": {
+          "color": "rgb(38, 49, 70)",
+          "background": "rgb(255, 255, 255)",
+          "border": "rgb(232, 237, 245)",
+          "outline": "rgb(38, 49, 70) none 3px",
+          "opacity": "1"
+        },
+        "account": {
+          "color": "rgb(38, 49, 70)",
+          "background": "rgb(249, 250, 252)",
+          "border": "rgb(232, 237, 245)",
+          "outline": "rgb(38, 49, 70) none 3px",
+          "opacity": "1"
+        },
+        "accountTitle": {
+          "color": "rgb(38, 49, 70)",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "rgb(38, 49, 70)",
+          "outline": "rgb(38, 49, 70) none 3px",
+          "opacity": "1"
+        },
+        "usage": {
+          "color": "rgb(38, 49, 70)",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "rgb(38, 49, 70)",
+          "outline": "rgb(38, 49, 70) none 3px",
+          "opacity": "1"
+        },
+        "expiry": {
+          "color": "rgb(38, 49, 70)",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "rgb(38, 49, 70)",
+          "outline": "rgb(38, 49, 70) none 3px",
+          "opacity": "1"
+        },
+        "mutedSubtitle": {
+          "color": "rgb(38, 49, 70)",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "rgb(38, 49, 70)",
+          "outline": "rgb(38, 49, 70) none 3px",
+          "opacity": "1"
+        },
+        "officialLink": {
+          "color": "rgb(66, 105, 232)",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "rgb(66, 105, 232)",
+          "outline": "rgb(66, 105, 232) none 3px",
+          "opacity": "1"
+        },
+        "progressTrack": {
+          "color": "rgb(38, 49, 70)",
+          "background": "rgb(232, 237, 245)",
+          "border": "rgb(38, 49, 70)",
+          "outline": "rgb(38, 49, 70) none 3px",
+          "opacity": "1"
+        },
+        "progressFill": {
+          "color": "rgb(38, 49, 70)",
+          "background": "rgb(66, 105, 232)",
+          "border": "rgb(38, 49, 70)",
+          "outline": "rgb(38, 49, 70) none 3px",
+          "opacity": "1"
+        },
+        "failureBadge": {
+          "color": "rgb(38, 49, 70)",
+          "background": "rgb(251, 237, 239)",
+          "border": "rgb(38, 49, 70)",
+          "outline": "rgb(38, 49, 70) none 3px",
+          "opacity": "1"
+        },
+        "failureText": {
+          "color": "rgb(38, 49, 70)",
+          "background": "rgb(251, 237, 239)",
+          "border": "rgb(38, 49, 70)",
+          "outline": "rgb(38, 49, 70) none 3px",
+          "opacity": "1"
+        },
+        "refreshButton": {
+          "color": "rgb(255, 255, 255)",
+          "background": "rgb(66, 105, 232)",
+          "border": "rgb(66, 105, 232)",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "opacity": "1"
+        }
+      },
+      "contrast": {
+        "accountTitle": 12.49,
+        "usage": 12.49,
+        "expiry": 12.49,
+        "mutedSubtitle": 13.04,
+        "officialLink": 4.55,
+        "failureBadge": 11.47,
+        "failureText": 11.47,
+        "statusTones": {
+          "good": {
+            "color": "rgb(38, 49, 70)",
+            "background": "rgb(233, 245, 239)",
+            "contrast": 11.66
+          },
+          "warn": {
+            "color": "rgb(38, 49, 70)",
+            "background": "rgb(252, 243, 227)",
+            "contrast": 11.84
+          },
+          "bad": {
+            "color": "rgb(38, 49, 70)",
+            "background": "rgb(251, 237, 239)",
+            "contrast": 11.47
+          }
+        }
+      },
+      "visibleContent": "订阅账户\n\n独立查看用量、到期时间和刷新结果，不改变机场与节点选择。\n\n首页用量订阅\n合成机场 · 账户 A · 合成\n合成机场 · 账户 A · 合成\n合成机场 · 账户 A · 合成\n已用 6.00 GiB / 10.00 GiB · 剩余 4.00 GiB\n到期 2033/5/18\n机场入口\n官网 ↗\n备用入口 ↗\n合成公告入口 ↗\n刷新当前订阅\n刷新失败\n\n合成限流示例；旧缓存保留\n\n排队 → 抓取 → 失败\n只重试失败项\n公告 1",
+      "unexpectedRequests": []
+    },
+    {
+      "name": "1440-dark",
+      "width": 1440,
+      "theme": "dark",
+      "colors": {
+        "root": {
+          "surface": "#1a202c",
+          "surfaceSoft": "#1e2634",
+          "ink": "#e4ebf5",
+          "muted": "#9caac1",
+          "line": "#2b3546",
+          "blue": "#82a2ff"
+        },
+        "frame": {
+          "color": "rgb(228, 235, 245)",
+          "background": "rgb(26, 32, 44)",
+          "border": "rgb(43, 53, 70)",
+          "outline": "rgb(228, 235, 245) none 3px",
+          "opacity": "1"
+        },
+        "account": {
+          "color": "rgb(228, 235, 245)",
+          "background": "rgb(30, 38, 52)",
+          "border": "rgb(43, 53, 70)",
+          "outline": "rgb(228, 235, 245) none 3px",
+          "opacity": "1"
+        },
+        "accountTitle": {
+          "color": "rgb(228, 235, 245)",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "rgb(228, 235, 245)",
+          "outline": "rgb(228, 235, 245) none 3px",
+          "opacity": "1"
+        },
+        "usage": {
+          "color": "rgb(228, 235, 245)",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "rgb(228, 235, 245)",
+          "outline": "rgb(228, 235, 245) none 3px",
+          "opacity": "1"
+        },
+        "expiry": {
+          "color": "rgb(228, 235, 245)",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "rgb(228, 235, 245)",
+          "outline": "rgb(228, 235, 245) none 3px",
+          "opacity": "1"
+        },
+        "mutedSubtitle": {
+          "color": "rgb(228, 235, 245)",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "rgb(228, 235, 245)",
+          "outline": "rgb(228, 235, 245) none 3px",
+          "opacity": "1"
+        },
+        "officialLink": {
+          "color": "rgb(130, 162, 255)",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "rgb(130, 162, 255)",
+          "outline": "rgb(130, 162, 255) none 3px",
+          "opacity": "1"
+        },
+        "progressTrack": {
+          "color": "rgb(228, 235, 245)",
+          "background": "rgb(43, 53, 70)",
+          "border": "rgb(228, 235, 245)",
+          "outline": "rgb(228, 235, 245) none 3px",
+          "opacity": "1"
+        },
+        "progressFill": {
+          "color": "rgb(228, 235, 245)",
+          "background": "rgb(130, 162, 255)",
+          "border": "rgb(228, 235, 245)",
+          "outline": "rgb(228, 235, 245) none 3px",
+          "opacity": "1"
+        },
+        "failureBadge": {
+          "color": "rgb(228, 235, 245)",
+          "background": "rgb(61, 41, 50)",
+          "border": "rgb(228, 235, 245)",
+          "outline": "rgb(228, 235, 245) none 3px",
+          "opacity": "1"
+        },
+        "failureText": {
+          "color": "rgb(228, 235, 245)",
+          "background": "rgb(61, 41, 50)",
+          "border": "rgb(228, 235, 245)",
+          "outline": "rgb(228, 235, 245) none 3px",
+          "opacity": "1"
+        },
+        "refreshButton": {
+          "color": "rgb(20, 35, 66)",
+          "background": "rgb(130, 162, 255)",
+          "border": "rgb(130, 162, 255)",
+          "outline": "rgb(20, 35, 66) none 3px",
+          "opacity": "1"
+        }
+      },
+      "contrast": {
+        "accountTitle": 12.66,
+        "usage": 12.66,
+        "expiry": 12.66,
+        "mutedSubtitle": 13.6,
+        "officialLink": 6.19,
+        "failureBadge": 11.21,
+        "failureText": 11.21,
+        "statusTones": {
+          "good": {
+            "color": "rgb(228, 235, 245)",
+            "background": "rgb(32, 59, 52)",
+            "contrast": 10.08
+          },
+          "warn": {
+            "color": "rgb(228, 235, 245)",
+            "background": "rgb(59, 50, 36)",
+            "contrast": 10.49
+          },
+          "bad": {
+            "color": "rgb(228, 235, 245)",
+            "background": "rgb(61, 41, 50)",
+            "contrast": 11.21
+          }
+        }
+      },
+      "visibleContent": "订阅账户\n\n独立查看用量、到期时间和刷新结果，不改变机场与节点选择。\n\n首页用量订阅\n合成机场 · 账户 A · 合成\n合成机场 · 账户 A · 合成\n合成机场 · 账户 A · 合成\n已用 6.00 GiB / 10.00 GiB · 剩余 4.00 GiB\n到期 2033/5/18\n机场入口\n官网 ↗\n备用入口 ↗\n合成公告入口 ↗\n刷新当前订阅\n刷新失败\n\n合成限流示例；旧缓存保留\n\n排队 → 抓取 → 失败\n只重试失败项\n公告 1",
+      "unexpectedRequests": []
+    },
+    {
+      "name": "1440-light",
+      "width": 1440,
+      "theme": "light",
+      "colors": {
+        "root": {
+          "surface": "#fff",
+          "surfaceSoft": "#f9fafc",
+          "ink": "#263146",
+          "muted": "#7a879b",
+          "line": "#e8edf5",
+          "blue": "#4269e8"
+        },
+        "frame": {
+          "color": "rgb(38, 49, 70)",
+          "background": "rgb(255, 255, 255)",
+          "border": "rgb(232, 237, 245)",
+          "outline": "rgb(38, 49, 70) none 3px",
+          "opacity": "1"
+        },
+        "account": {
+          "color": "rgb(38, 49, 70)",
+          "background": "rgb(249, 250, 252)",
+          "border": "rgb(232, 237, 245)",
+          "outline": "rgb(38, 49, 70) none 3px",
+          "opacity": "1"
+        },
+        "accountTitle": {
+          "color": "rgb(38, 49, 70)",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "rgb(38, 49, 70)",
+          "outline": "rgb(38, 49, 70) none 3px",
+          "opacity": "1"
+        },
+        "usage": {
+          "color": "rgb(38, 49, 70)",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "rgb(38, 49, 70)",
+          "outline": "rgb(38, 49, 70) none 3px",
+          "opacity": "1"
+        },
+        "expiry": {
+          "color": "rgb(38, 49, 70)",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "rgb(38, 49, 70)",
+          "outline": "rgb(38, 49, 70) none 3px",
+          "opacity": "1"
+        },
+        "mutedSubtitle": {
+          "color": "rgb(38, 49, 70)",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "rgb(38, 49, 70)",
+          "outline": "rgb(38, 49, 70) none 3px",
+          "opacity": "1"
+        },
+        "officialLink": {
+          "color": "rgb(66, 105, 232)",
+          "background": "rgba(0, 0, 0, 0)",
+          "border": "rgb(66, 105, 232)",
+          "outline": "rgb(66, 105, 232) none 3px",
+          "opacity": "1"
+        },
+        "progressTrack": {
+          "color": "rgb(38, 49, 70)",
+          "background": "rgb(232, 237, 245)",
+          "border": "rgb(38, 49, 70)",
+          "outline": "rgb(38, 49, 70) none 3px",
+          "opacity": "1"
+        },
+        "progressFill": {
+          "color": "rgb(38, 49, 70)",
+          "background": "rgb(66, 105, 232)",
+          "border": "rgb(38, 49, 70)",
+          "outline": "rgb(38, 49, 70) none 3px",
+          "opacity": "1"
+        },
+        "failureBadge": {
+          "color": "rgb(38, 49, 70)",
+          "background": "rgb(251, 237, 239)",
+          "border": "rgb(38, 49, 70)",
+          "outline": "rgb(38, 49, 70) none 3px",
+          "opacity": "1"
+        },
+        "failureText": {
+          "color": "rgb(38, 49, 70)",
+          "background": "rgb(251, 237, 239)",
+          "border": "rgb(38, 49, 70)",
+          "outline": "rgb(38, 49, 70) none 3px",
+          "opacity": "1"
+        },
+        "refreshButton": {
+          "color": "rgb(255, 255, 255)",
+          "background": "rgb(66, 105, 232)",
+          "border": "rgb(66, 105, 232)",
+          "outline": "rgb(255, 255, 255) none 3px",
+          "opacity": "1"
+        }
+      },
+      "contrast": {
+        "accountTitle": 12.49,
+        "usage": 12.49,
+        "expiry": 12.49,
+        "mutedSubtitle": 13.04,
+        "officialLink": 4.55,
+        "failureBadge": 11.47,
+        "failureText": 11.47,
+        "statusTones": {
+          "good": {
+            "color": "rgb(38, 49, 70)",
+            "background": "rgb(233, 245, 239)",
+            "contrast": 11.66
+          },
+          "warn": {
+            "color": "rgb(38, 49, 70)",
+            "background": "rgb(252, 243, 227)",
+            "contrast": 11.84
+          },
+          "bad": {
+            "color": "rgb(38, 49, 70)",
+            "background": "rgb(251, 237, 239)",
+            "contrast": 11.47
+          }
+        }
+      },
+      "visibleContent": "订阅账户\n\n独立查看用量、到期时间和刷新结果，不改变机场与节点选择。\n\n首页用量订阅\n合成机场 · 账户 A · 合成\n合成机场 · 账户 A · 合成\n合成机场 · 账户 A · 合成\n已用 6.00 GiB / 10.00 GiB · 剩余 4.00 GiB\n到期 2033/5/18\n机场入口\n官网 ↗\n备用入口 ↗\n合成公告入口 ↗\n刷新当前订阅\n刷新失败\n\n合成限流示例；旧缓存保留\n\n排队 → 抓取 → 失败\n只重试失败项\n公告 1",
+      "unexpectedRequests": []
+    },
+    {
+      "name": "800-dark-running",
+      "width": 800,
+      "theme": "dark",
+      "job": "running then cancelled",
+      "stages": "排队 → 抓取 → 已取消",
+      "disabledRefresh": {
+        "disabled": true,
+        "opacity": "0.45"
+      },
+      "focusOutline": "solid",
+      "cancelCall": {
+        "name": "CancelSubscriptionRefreshJob",
+        "args": [
+          "synthetic-running-refresh"
+        ]
+      }
+    }
+  ]
+}

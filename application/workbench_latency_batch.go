@@ -385,7 +385,7 @@ func (s *AppService) runWorkbenchLatencyBatchItem(runtime *workbenchLatencyBatch
 		return
 	}
 	snapshot := batch.Items[index]
-	selected, executionName, proxy, err := s.resolveWorkbenchLatencyProxy(snapshot.ProfileID, snapshot.NodeKey)
+	selected, executionName, proxy, err := s.resolveWorkbenchLatencyProxy(snapshot.ProfileID, snapshot.NodeKey, snapshot.ConfigRevisionKey)
 	if err != nil {
 		_ = update(index, func(item *history.LatencyBatchItem) {
 			item.ExecutionState = "skipped_config"

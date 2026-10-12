@@ -39,6 +39,51 @@
 .home-controls.following{position:sticky;top:0;z-index:15;background:var(--canvas);box-shadow:0 8px 14px rgba(25,43,78,.06);border-bottom:1px solid var(--line)}.follow-controls-switch{display:inline-flex;align-items:center;gap:5px;margin-left:auto;color:var(--muted);font-size:11px;white-space:nowrap;cursor:pointer}.follow-controls-switch input{margin:0;accent-color:var(--blue)}.follow-controls-switch .icon{width:13px;height:13px}.home-controls .project-tabs .tab-tail{margin-left:0}.home-controls.following .service-picker-list{max-height:min(200px,30vh)}
 @media(max-width:740px){.home-controls.following .project-tabs{gap:10px}.follow-controls-switch{font-size:10px}.follow-controls-switch .icon{display:none}.home-controls.following .view-context{padding-top:9px}.home-controls.following .node-toolbar{padding-bottom:10px}.home-controls.following .node-list-context{margin-bottom:8px}}
 
+/* W08: keep the existing airport and node controls in the first screen. */
+section.home-view{padding-top:18px}
+.home-view .home-top{gap:12px}
+.home-view .home-top p{margin-top:4px}
+.home-view .source-orbit{gap:8px;padding:12px 0 10px}
+.home-view .orbit-shell{width:164px;height:164px}
+.home-view .orbit-button{inset:9px;gap:5px;padding:10px}
+.home-view .orbit-button>strong{font-size:20px}
+.home-view .home-subscription-disclosure{margin:0 0 9px;border:1px solid var(--line);border-radius:9px;background:var(--surface)}
+.home-subscription-disclosure>summary{display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px;min-height:40px;padding:7px 12px;list-style:none;cursor:pointer}
+.home-subscription-disclosure>summary::-webkit-details-marker{display:none}
+.home-subscription-disclosure>summary::before{content:'▸';color:var(--muted);font-size:12px}
+.home-subscription-disclosure[open]>summary::before{content:'▾'}
+.home-subscription-disclosure>summary strong{font-size:12px}
+.home-subscription-count,.home-subscription-hint{color:var(--muted);font-size:11px}
+.home-subscription-hint{margin-left:auto;color:var(--blue)}
+.home-subscription-disclosure[open]{margin-bottom:12px}
+.home-subscription-disclosure[open]>summary{border-bottom:1px solid var(--line)}
+.home-subscription-disclosure[open] .subscription-overview{gap:10px;margin:0;padding:12px;border:0;border-radius:0;background:transparent}
+.home-subscription-disclosure[open] .subscription-overview-grid{gap:8px}
+.home-subscription-disclosure[open] .subscription-overview-grid>div{gap:6px;padding:10px}
+.home-view .project-tabs button{padding-top:9px;padding-bottom:9px}
+.home-view .view-context{padding-top:8px;padding-bottom:5px}
+.home-view .node-toolbar{padding-top:7px;padding-bottom:9px}
+@media(max-width:900px){
+  section.home-view{padding-top:14px;padding-right:clamp(14px,3vw,24px);padding-left:clamp(14px,3vw,24px)}
+  .home-view .source-orbit{grid-template-columns:auto auto;justify-content:center;align-items:center;column-gap:16px;padding:6px 0}
+  .home-view .orbit-meta{display:grid;gap:6px;align-items:start}
+  .home-view .project-tabs{flex-wrap:wrap;gap:6px 14px}
+  .home-view .project-tabs .tab-tail{margin-left:auto}
+  .home-view .toolbar-filters{justify-content:flex-start;flex-wrap:wrap}
+}
+@media(min-width:741px) and (max-width:900px){
+  .home-view .orbit-shell{width:140px;height:140px}
+  .home-view .orbit-button{inset:8px;gap:4px;padding:3px}
+  .home-view .airport-logo{width:32px;height:32px;font-size:13px}
+  .home-view .orbit-button>strong{font-size:18px}
+  .home-view .orbit-names{max-width:116px}
+}
+@media(max-width:740px){
+  .home-view .orbit-shell{width:164px;height:164px}
+  .home-view .home-subscription-hint{flex-basis:100%;margin-left:20px}
+  .home-view .home-controls .project-tabs{gap:6px 10px}
+}
+
 /* Provider usage history shares the existing subscription page. */
 .subscription-view-tabs{display:flex;gap:8px;margin:0 0 24px}.subscription-view-tabs .active,.usage-toolbar .active{color:var(--blue);background:var(--blue-soft)}
 .usage-schedule{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;padding:24px;background:var(--surface);border:1px solid var(--line);border-radius:12px;margin-bottom:24px}.usage-schedule h2{margin:0 0 8px}.usage-schedule p{max-width:750px;color:var(--muted);line-height:1.7}.usage-schedule small{display:block;margin-top:12px;color:var(--muted);line-height:1.7}.usage-toolbar{flex-wrap:wrap;gap:16px}.usage-toolbar .button-group{flex-wrap:wrap}.usage-date{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}.usage-date input{width:150px}.usage-previous{transform:rotate(180deg)}

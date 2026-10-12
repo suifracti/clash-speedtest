@@ -1,8 +1,10 @@
 package profiles
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 )
 
@@ -26,28 +28,36 @@ func TestSubscriptionUsageHeader(t *testing.T) {
 	}
 }
 
-func TestSubscriptionUsageFallbackDoesNotReplaceNodeConfig(t *testing.T) {
-	var primary, usageRequests int
+func TestCompatiblePrimaryUserAgentKeepsUsageAndBody(t *testing.T) {
+	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.UserAgent() == "clash.meta" {
-			usageRequests++
-			w.Header().Set("Subscription-Userinfo", "upload=1024; download=3072; total=8192")
-			_, _ = w.Write([]byte("different provider format"))
-			return
+		calls++
+		if r.UserAgent() != "clash.meta" {
+			t.Errorf("unexpected user agent %q", r.UserAgent())
 		}
-		primary++
+		w.Header().Set("Subscription-Userinfo", "upload=1024;download=3072;total=8192")
 		_, _ = w.Write([]byte("proxies: [fixture]"))
 	}))
 	defer server.Close()
+	body, usage, err := FetchSubscriptionWithUsage(server.URL, "clash.meta")
+	if err != nil || string(body) != "proxies: [fixture]" || usage == nil || usage.Download != 3072 || calls != 1 {
+		t.Fatalf("single compatible primary request failed: calls=%d usage=%+v err=%v", calls, usage, err)
+	}
+}
 
-	body, usage, err := FetchSubscriptionWithUsage(server.URL+"/sub?token=FAKE_TEST_TOKEN", "mihomo/test")
-	if err != nil || string(body) != "proxies: [fixture]" || usage == nil || usage.Download != 3072 {
-		t.Fatalf("fallback changed config or missed usage: body=%q usage=%+v err=%v", body, usage, err)
+func TestMissingUsageHeaderDoesNotFetchSubscriptionTwice(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte("proxies: []"))
+	}))
+	defer server.Close()
+
+	body, usage, err := FetchSubscriptionWithUsageContext(context.Background(), server.URL, "fixture")
+	if err != nil || string(body) != "proxies: []" || usage != nil {
+		t.Fatalf("fetch result = (%q, %v, %v)", body, usage, err)
 	}
-	if primary != 1 || usageRequests != 1 {
-		t.Fatalf("unexpected request count: config=%d usage=%d", primary, usageRequests)
-	}
-	if _, err := FetchSubscription(server.URL, "mihomo/test"); err != nil || usageRequests != 1 {
-		t.Fatal("ordinary config fetch should not issue a usage-only request")
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("missing usage header caused %d requests, want exactly one", got)
 	}
 }

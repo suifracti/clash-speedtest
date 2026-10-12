@@ -58,7 +58,11 @@ func (s *AppService) RunWorkbenchLatencyTest(ctx context.Context, req WorkbenchL
 	}
 	defer s.endWorkbenchSingle()
 
-	selected, executionName, proxy, err := s.resolveWorkbenchLatencyProxy(profileID, nodeKey)
+	var revision []string
+	if configRevisionKey := strings.TrimSpace(req.ConfigRevisionKey); configRevisionKey != "" {
+		revision = []string{configRevisionKey}
+	}
+	selected, executionName, proxy, err := s.resolveWorkbenchLatencyProxy(profileID, nodeKey, revision...)
 	if err != nil {
 		return nil, err
 	}
@@ -287,7 +291,9 @@ func projectLatencyTestForWindow(test history.LatencyTest) history.LatencyTest {
 	test.TotalSamples = len(test.Samples)
 	test.SuccessSamples = 0
 	test.FailureSamples = 0
-	test.ErrorMessage = ""
+	if test.TotalSamples > 0 {
+		test.ErrorMessage = ""
+	}
 	var successful []int64
 	for _, sample := range test.Samples {
 		if sample.Success {
@@ -301,7 +307,9 @@ func projectLatencyTestForWindow(test history.LatencyTest) history.LatencyTest {
 		}
 	}
 	if test.TotalSamples == 0 || test.SuccessSamples == 0 {
-		test.Status = "failed"
+		if test.Status != "not_executed" {
+			test.Status = "failed"
+		}
 		test.LatencyMs = 0
 		test.JitterMs = 0
 	} else {
@@ -329,7 +337,7 @@ func projectLatencyTestForWindow(test history.LatencyTest) history.LatencyTest {
 	return test
 }
 
-func (s *AppService) resolveWorkbenchLatencyProxy(profileID, nodeKey string) (monitor.MonitoredNode, string, *speedtester.CProxy, error) {
+func (s *AppService) resolveWorkbenchLatencyProxy(profileID, nodeKey string, revision ...string) (monitor.MonitoredNode, string, *speedtester.CProxy, error) {
 	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
 	if err != nil {
 		return monitor.MonitoredNode{}, "", nil, fmt.Errorf("加载订阅配置失败: %w", err)
@@ -354,10 +362,12 @@ func (s *AppService) resolveWorkbenchLatencyProxy(profileID, nodeKey string) (mo
 	var selected monitor.MonitoredNode
 	found := false
 	for _, node := range available {
-		if node.NodeKey == nodeKey {
+		if node.NodeKey == nodeKey && (len(revision) == 0 || revision[0] == node.ConfigRevisionKey) {
+			if found {
+				return monitor.MonitoredNode{}, "", nil, monitor.NewValidationError("同节点身份有多个 TLS/连接配置；请使用完整配置 revision")
+			}
 			selected = node
 			found = true
-			break
 		}
 	}
 	if !found || len(selected.RawConfig) == 0 {
@@ -383,7 +393,7 @@ func (s *AppService) resolveWorkbenchLatencyProxy(profileID, nodeKey string) (mo
 			continue
 		}
 		if candidate.NodeIdentityKey != selected.NodeIdentityKey || candidate.ConfigRevisionKey != selected.ConfigRevisionKey {
-			return monitor.MonitoredNode{}, "", nil, monitor.NewValidationError("所选节点配置已变化，请重新加载节点")
+			continue
 		}
 		return selected, name, proxy, nil
 	}
@@ -477,6 +487,7 @@ func workbenchLatencyDTO(test history.LatencyTest, persistenceState, persistence
 		})
 	}
 	return WorkbenchLatencyTestDTO{
+		NetworkPath:       test.NetworkPath,
 		AttemptID:         test.AttemptID,
 		ProfileID:         test.ProfileID,
 		NodeKey:           test.NodeKey,
