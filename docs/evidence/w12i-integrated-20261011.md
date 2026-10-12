@@ -1,3 +1,9 @@
+<!-- CST_HISTORICAL_EVIDENCE_2026_10_12 -->
+> [!IMPORTANT]
+> **2026-10-11 当时的集成候选证据，不代表今天仍是 Draft 或未合入 main。** 全部 17 个原 PR 已在 2026-10-12 合入业务集成提交 `89d7b248`；下文“Draft integration candidate only / Not main”等说法仅描述当日候选身份。后续文档提交未改变业务代码。最新工作只从 Obsidian `03-项目与工程/机场/Clash SpeedTest Pro/README.md` → `Handoff.md` 读取；不要据本证据恢复旧 PR、分支或集成指令。
+
+---
+
 # CST W12i temporary Git-object integration manifest (2026-10-11)
 
 **Draft integration candidate only. Not main, a release, or an installed desktop application.**
