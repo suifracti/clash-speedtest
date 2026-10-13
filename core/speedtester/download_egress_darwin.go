@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http/httptrace"
 	"net/netip"
 	"os/exec"
 	"strings"
@@ -39,6 +40,11 @@ type PhysicalDownloadEgress struct {
 	failureReason    string
 	prepared         time.Duration
 	dnsDuration      time.Duration
+
+	tcpConnectStarted, tcpConnectSucceeded, tcpConnectFailed                 int
+	tcpConnectDuration                                                       time.Duration
+	lastTCPConnectStartedAt, lastTCPConnectFinishedAt, lastTCPConnectOutcome string
+	lastTCPConnectErrno                                                      int
 }
 
 func newPhysicalDownloadEgress() *PhysicalDownloadEgress {
@@ -55,12 +61,15 @@ func (e *PhysicalDownloadEgress) Snapshot() DownloadNetworkPath {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return DownloadNetworkPath{
-		Method: "physical_socket_v1", Interface: e.iface, AddressFamily: e.addressFamily,
+		Method: "physical_socket_v1", Interface: e.iface, InterfaceIndex: e.index, AddressFamily: e.addressFamily,
 		AddressSource: e.resolutionSource, DNSMode: e.dnsMode,
 		TUNEvidence: "packet_route_not_observed", FailureReason: e.failureReason,
 		DNSRequests: e.dnsRequests.count(), DNSDialAttempts: e.dnsDials.count(),
 		TCPDialAttempts: e.tcpDials.count(), UDPDialAttempts: e.udpDials.count(),
 		DNSBindVerified: e.dnsVerified, SocketBindVerified: e.tcp+e.udp > 0,
+
+		TCPConnectStarted: e.tcpConnectStarted, TCPConnectSucceeded: e.tcpConnectSucceeded, TCPConnectFailed: e.tcpConnectFailed, TCPConnectDurationNS: e.tcpConnectDuration.Nanoseconds(),
+		LastTCPConnectStartedAt: e.lastTCPConnectStartedAt, LastTCPConnectFinishedAt: e.lastTCPConnectFinishedAt, LastTCPConnectOutcome: e.lastTCPConnectOutcome, LastTCPConnectErrno: e.lastTCPConnectErrno,
 		TCPBindings: e.tcp, UDPBindings: e.udp, PreparationDurationNS: e.prepared.Nanoseconds(), DNSDurationNS: e.dnsDuration.Nanoseconds(),
 	}
 }
@@ -392,12 +401,14 @@ func (e *PhysicalDownloadEgress) DialContext(ctx context.Context, network, addre
 		return nil, err
 	}
 	markDownloadPhase(ctx, "connection")
-	conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port), dialer.WithInterface(e.iface), dialer.WithOnlySingleStack(ip.Is4()), dialer.WithFallbackBind(false))
+	conn, err := e.dialNodeTCP(ctx, network, net.JoinHostPort(ip.String(), port), func(ctx context.Context, network, address string) (net.Conn, error) {
+		return dialer.DialContext(ctx, network, address, dialer.WithInterface(e.iface), dialer.WithOnlySingleStack(ip.Is4()), dialer.WithFallbackBind(false))
+	})
 	if err != nil {
 		e.setFailure(physicalSocketFailureReason(ctx, err))
 		return nil, err
 	}
-	markDownloadPhase(ctx, "proxy_handshake")
+	markDownloadPhase(ctx, "socket_verification")
 	raw, ok := conn.(syscall.Conn)
 	if !ok {
 		conn.Close()
@@ -408,6 +419,7 @@ func (e *PhysicalDownloadEgress) DialContext(ctx context.Context, network, addre
 		e.setFailure("physical_tcp_socket_bind_unverified")
 		return nil, &PhysicalPathError{Cause: err}
 	}
+	markDownloadPhase(ctx, "proxy_handshake")
 	return conn, nil
 }
 func (e *PhysicalDownloadEgress) ListenPacket(ctx context.Context, network, address string, remote netip.AddrPort) (net.PacketConn, error) {
@@ -543,4 +555,55 @@ func preparePhysicalProxy(ctx context.Context, original *CProxy, socketLimit int
 		return nil, e, fmt.Errorf("cannot create physical-path node proxy")
 	}
 	return &CProxy{Proxy: proxy, Config: config, sourceTLSPrepared: true}, e, nil
+}
+
+// Observe the existing node TCP dial without altering its interface, resolver,
+// timeout or retry policy. Trace callbacks are not evidence that a SYN left the
+// physical interface. Save safe categories/errno only, never socket addresses.
+func (e *PhysicalDownloadEgress) dialNodeTCP(ctx context.Context, network, address string, dial func(context.Context, string, string) (net.Conn, error)) (net.Conn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	started := time.Now()
+	trace := &httptrace.ClientTrace{ConnectStart: func(string, string) { e.mu.Lock(); e.tcpConnectStarted++; e.mu.Unlock() }}
+	conn, err := dial(httptrace.WithClientTrace(ctx, trace), network, address)
+	finished := time.Now()
+	state := "failed"
+	errno := 0
+	if err == nil && conn != nil {
+		state = "connected"
+	} else {
+		var code syscall.Errno
+		if errors.As(err, &code) {
+			errno = int(code)
+		}
+		var timeout net.Error
+		switch {
+		case errors.Is(err, context.Canceled):
+			state = "cancelled"
+		case errors.Is(err, context.DeadlineExceeded):
+			state = "deadline_exceeded"
+		case errors.Is(err, syscall.ECONNREFUSED):
+			state = "refused"
+		case errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.EHOSTUNREACH):
+			state = "network_unreachable"
+		case errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES):
+			state = "permission_denied"
+		case errors.As(err, &timeout) && timeout.Timeout():
+			state = "timed_out"
+		}
+	}
+	e.mu.Lock()
+	e.tcpConnectDuration += finished.Sub(started)
+	if state == "connected" {
+		e.tcpConnectSucceeded++
+	} else {
+		e.tcpConnectFailed++
+	}
+	e.lastTCPConnectStartedAt = started.UTC().Format(time.RFC3339Nano)
+	e.lastTCPConnectFinishedAt = finished.UTC().Format(time.RFC3339Nano)
+	e.lastTCPConnectOutcome = state
+	e.lastTCPConnectErrno = errno
+	e.mu.Unlock()
+	return conn, err
 }

@@ -77,6 +77,7 @@ func (e *PhysicalPathError) Unwrap() error { return e.Cause }
 type DownloadNetworkPath struct {
 	Method                string `json:"method"`
 	Interface             string `json:"interface,omitempty"`
+	InterfaceIndex        int    `json:"interface_index,omitempty"`
 	AddressFamily         string `json:"address_family,omitempty"`
 	AddressSource         string `json:"address_source,omitempty"`
 	DNSMode               string `json:"dns_mode,omitempty"`
@@ -92,4 +93,14 @@ type DownloadNetworkPath struct {
 	UDPBindings           int    `json:"udp_bindings"`
 	DNSDurationNS         int64  `json:"dns_duration_ns,omitempty"`
 	PreparationDurationNS int64  `json:"preparation_duration_ns,omitempty"`
+
+	// TCP evidence is separate from successful socket binding and packet routing.
+	TCPConnectStarted        int    `json:"tcp_connect_started,omitempty"`
+	TCPConnectSucceeded      int    `json:"tcp_connect_succeeded,omitempty"`
+	TCPConnectFailed         int    `json:"tcp_connect_failed,omitempty"`
+	TCPConnectDurationNS     int64  `json:"tcp_connect_duration_ns,omitempty"`
+	LastTCPConnectStartedAt  string `json:"last_tcp_connect_started_at,omitempty"`
+	LastTCPConnectFinishedAt string `json:"last_tcp_connect_finished_at,omitempty"`
+	LastTCPConnectOutcome    string `json:"last_tcp_connect_outcome,omitempty"`
+	LastTCPConnectErrno      int    `json:"last_tcp_connect_errno,omitempty"`
 }

@@ -41,3 +41,9 @@ python3 -m unittest discover -s scripts/tests -v
 迁回只复用有效源码与 fixture，不整包恢复旧 UI、旧调度或旧 schema，不打开/迁移生产与原 S5 SQLite。每项分别提交到同一原开发分支。发现的行为红测试均保存定位和修复证据；App 仍须从最后 clean、推送成功的完整提交重建并出具真实 manifest，不能给旧二进制补猜测 SHA。
 
 当前 S1–S4 已实现并保留，S5 仍为 PARTIAL：此前 Shadowsocks 物理 TCP 超时原因、实际包流向及完成瞬间质量快照刷新证据未闭环。迁回测试通过不替代这些真实验收。
+
+## S5 后续：节点 TCP 阶段与原生自动刷新
+
+2026-10-13 新增安全的节点 TCP 留证：接口 index、Dial 开始/结束、ConnectStart 回调次数、成功/失败次数、累计时长、最后安全错误分类和底层 errno。保持原 Mihomo 私有接口/IPv4/禁止 fallback/超时/预算，不增加请求，不记录 socket 地址或凭据。回调不等于 SYN 已发出，成功计时不等于绑定或无TUN；context截止没有底层errno时保留0，不伪造ETIMEDOUT。绑定核验完成后才进入proxy_handshake计时阶段；未知真实根因仍未知。
+
+真实 Wails 原生已完成零目标HTTP的受控验证：在新合成数据根，旧Cloudflare成功fixture → 点击一次Cloudflare检测 → 原生产门禁因loopback节点拒绝 → 结果saved/not_executed → 关闭结束弹窗后首页立即显示最新“未执行”。没有点击更新质量/进度、没有重开来促使刷新；原没测的六站仍未测。原生链通过不等于真实节点联网成功，SS连接/实际包流向仍需对应授权证据。未改前端或旧历史。
