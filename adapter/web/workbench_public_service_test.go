@@ -36,6 +36,10 @@ func TestWebPublicServiceCatalogUsesSharedApplicationDirectory(t *testing.T) {
 	if len(rules) < 16 || rules[0].ServiceID != "cloudflare_204" || rules[1].ServiceID != "google_204" || rules[2].ServiceID != "github_api_root" || rules[3].ServiceID != "antigravity" {
 		t.Fatalf("unexpected public-service directory: %+v", rules)
 	}
+	if len(rules) != 84 || rules[82].ServiceID != "ipok_ipv4" || rules[83].ServiceID != "ipok_ipv6" || rules[82].BatchDefault || rules[83].BatchDefault {
+		t.Fatal("new on-demand rules must be appended without moving the original catalog")
+	}
+
 	if rules[4].Category == "" || rules[4].ResultKind == "" {
 		t.Fatalf("expanded catalog metadata is missing: %+v", rules[4])
 	}

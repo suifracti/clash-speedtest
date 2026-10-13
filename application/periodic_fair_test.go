@@ -26,7 +26,7 @@ func TestPeriodicFairQueueBalancesProfilesNodesAndServices(t *testing.T) {
 			nodes = append(nodes, MonitorNodeOptionDTO{ProfileID: g.id, NodeKey: fmt.Sprint(i)})
 		}
 	}
-	tasks := periodicFairServiceTasks(nodes, publicservice.Catalog())
+	tasks := periodicFairServiceTasks(nodes, periodicServices(PeriodicSamplingConfig{IncludeAntigravity: true}))
 	if len(tasks) != 6*82 {
 		t.Fatalf("missing combinations: %d", len(tasks))
 	}

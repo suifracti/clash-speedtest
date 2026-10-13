@@ -46,8 +46,6 @@ type Rule struct {
 }
 
 var catalog = []Rule{
-	ipokRule("ipok_ipv4", "IPv4"),
-	ipokRule("ipok_ipv6", "IPv6"),
 	{
 		ServiceID: "cloudflare_204", Name: "Cloudflare 204 连通性", RuleVersion: RuleVersion,
 		Category: "基础网络", Region: "全球", ResultKind: "connectivity", Description: "轻量确认节点能否访问 Cloudflare 连通性端点。", BatchDefault: true,
@@ -263,6 +261,8 @@ var catalog = []Rule{
 	webRule("viu_web", "Viu", "其他地区", "香港/亚洲", "https://www.viu.com/", "检测网页入口；不声称播放解锁。"),
 	webRule("nowe_hk", "Now E 香港", "其他地区", "香港", "https://www.nowe.com/", "检测网页入口；不声称播放解锁。"),
 	webRule("kktv_tw", "KKTV 台湾", "其他地区", "台湾", "https://www.kktv.me/", "检测网页入口；不声称播放解锁。"),
+	ipokRule("ipok_ipv4", "IPv4"),
+	ipokRule("ipok_ipv6", "IPv6"),
 }
 
 func webRule(id, name, category, region, target, description string) Rule {

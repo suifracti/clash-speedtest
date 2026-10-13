@@ -13,7 +13,7 @@
 
 ## 当前 Mac 开发代码（2026-10-13）
 
-**版本核对发现三项旧未提交能力尚未迁回：IPOK 后端/缓存预算、VLESS pcs/vcn 特殊 TLS、Mac 订阅系统代理识别。** 已合并 PR 都在候选中不等于旧本地成果全部保留；当前不宣称完整收尾。详见 [核对结果与防丢检查](docs/version-consistency.md)，候选 CI 会保留这些实际缺口。
+**版本核对发现的三项旧本地遗漏现已最小迁回并同步原开发分支：IPOK 后端/缓存预算、VLESS pcs/vcn 特殊 TLS、Mac 订阅系统代理识别。** 原 82 项服务规则内容与顺序保留；新增 IPOK 两项按需执行。迁回经过离线回归，不升级为上游实网已通过。详见 [版本与功能保留检查](docs/version-consistency.md)。
 
 用户决定每次源码修改验证后同步 GitHub，以仓库中的明确分支与提交为准。当前 Mac 候选在 [原开发分支](https://github.com/suifracti/clash-speedtest/tree/codex/cst-w12i-integration-20261011-6aa2079)：完整节点配置作用域、队列接纳与保存、Grok 挑战分类、首页质量快照刷新，以及按需延迟/服务的私有物理出口保护。保留现有历史与功能；Windows 本轮不做。
 
