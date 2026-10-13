@@ -5,6 +5,8 @@
 > → `03-项目与工程/机场/Clash SpeedTest Pro/Handoff.md` 接续；
 > 只有要核对长期决定时再读同目录 `Decisions.md`，验证范围见 `状态与证据.md`，附件索引见 `资料与附件.md`。
 >
+> **2026-10-13 用户决定：开发围绕 GitHub，每次源码修改验证后同步仓库。** 代码以 GitHub 明确开发分支与提交为准；Obsidian 保留任务与交接，Drive 保留脱敏附件。同步前保留本地改动、核对远端并检查凭据，不以旧文档或远端版本覆盖 dirty。同步源码不自动授权 main 合并、发布或实网扩测。
+>
 > **不要从已关闭 [Issue #32](https://github.com/suifracti/clash-speedtest/issues/32)、[历史 Mac 交接](MAC_HANDOFF.md) 或 [2026-10-07 暂停记录](docs/development-paused-20261007.md) 重新执行旧“下一步”。** 无法读取 Obsidian 时标明当前交接不可核验，不把旧计划自动顶替为最新授权。
 
 ## 接手时的最少核验

@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -66,6 +68,7 @@ func (s *AppService) RunWorkbenchLatencyTest(ctx context.Context, req WorkbenchL
 	if err != nil {
 		return nil, err
 	}
+	defer closeWorkbenchDownloadProxy(proxy)
 	if s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized")
 	}
@@ -105,10 +108,18 @@ func (s *AppService) RunWorkbenchLatencyTest(ctx context.Context, req WorkbenchL
 	}
 
 	var lastResult *speedtester.Result
-	lastResult = st.TestSingle(executionName, proxy, func(result *speedtester.Result) bool {
-		lastResult = result
-		return ctx.Err() == nil
-	})
+	measuredTarget := st.LatencyProbeTarget()
+	if s.latencyMeasureHook != nil {
+		lastResult, measuredTarget, err = s.latencyMeasureHook(ctx, selected, time.Duration(timeoutSeconds)*time.Second)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		lastResult = st.TestSinglePhysicalContext(ctx, executionName, proxy, func(result *speedtester.Result) bool {
+			lastResult = result
+			return ctx.Err() == nil
+		})
+	}
 	finishedAt := time.Now().UTC()
 	if lastResult == nil {
 		return nil, fmt.Errorf("延迟测试未产生结果")
@@ -121,7 +132,10 @@ func (s *AppService) RunWorkbenchLatencyTest(ctx context.Context, req WorkbenchL
 	record.Source = "workbench_manual"
 	record.Method = workbenchLatencyMethod
 	record.MethodVersion = 1
-	record.Target = st.LatencyProbeTarget()
+	if lastResult.NetworkPath != nil {
+		record.MethodVersion = 2
+	}
+	record.Target = measuredTarget
 	record.Unit = "ms"
 	dto := workbenchLatencyDTO(*record, "saving", "")
 
@@ -301,6 +315,13 @@ func projectLatencyTestForWindow(test history.LatencyTest) history.LatencyTest {
 			successful = append(successful, sample.LatencyMs)
 			continue
 		}
+		if strings.HasPrefix(sample.Error, "未执行：物理出口") {
+			test.TotalSamples--
+			if test.ErrorMessage == "" {
+				test.ErrorMessage = sample.Error
+			}
+			continue
+		}
 		test.FailureSamples++
 		if test.ErrorMessage == "" {
 			test.ErrorMessage = sample.Error
@@ -338,67 +359,63 @@ func projectLatencyTestForWindow(test history.LatencyTest) history.LatencyTest {
 }
 
 func (s *AppService) resolveWorkbenchLatencyProxy(profileID, nodeKey string, revision ...string) (monitor.MonitoredNode, string, *speedtester.CProxy, error) {
+	revisionKey := ""
+	if len(revision) > 0 {
+		revisionKey = revision[0]
+	}
+	return s.resolveWorkbenchScopedProxy(profileID, nodeKey, "", revisionKey)
+}
+
+// Resolve the frozen subscription, identity and revision before ambiguity checks.
+// Keep legacy fingerprints unchanged; colliding revisions never authorize a
+// choice between different full connection/TLS/credential configurations.
+func (s *AppService) resolveWorkbenchScopedProxy(profileID, nodeKey, identityKey, revisionKey string) (monitor.MonitoredNode, string, *speedtester.CProxy, error) {
 	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
 	if err != nil {
 		return monitor.MonitoredNode{}, "", nil, fmt.Errorf("加载订阅配置失败: %w", err)
 	}
-	// Workbench selections are scoped by subscription ID. The primary
-	// subscription historically reused the airport ID, while additional
-	// subscriptions have their own IDs, so accepting only Store.Get here made
-	// every non-primary subscription look as if it had been removed.
 	profileExists := store.Get(profileID) != nil
 	if !profileExists {
-		_, subscription := store.FindSubscription(profileID)
-		profileExists = subscription != nil
+		_, sub := store.FindSubscription(profileID)
+		profileExists = sub != nil
 	}
 	if !profileExists {
 		return monitor.MonitoredNode{}, "", nil, monitor.NewValidationError("订阅不存在或已被移除")
 	}
-
-	available, err := s.loadMonitorNodes(profileID)
-	if err != nil {
-		return monitor.MonitoredNode{}, "", nil, monitor.WrapValidationError(err)
-	}
-	var selected monitor.MonitoredNode
-	found := false
-	for _, node := range available {
-		if node.NodeKey == nodeKey && (len(revision) == 0 || revision[0] == node.ConfigRevisionKey) {
-			if found {
-				return monitor.MonitoredNode{}, "", nil, monitor.NewValidationError("同节点身份有多个 TLS/连接配置；请使用完整配置 revision")
-			}
-			selected = node
-			found = true
-		}
-	}
-	if !found || len(selected.RawConfig) == 0 {
-		return monitor.MonitoredNode{}, "", nil, monitor.NewValidationError("所选节点已不存在或订阅配置已变化，请重新加载节点")
-	}
-
-	st, err := speedtester.New(&speedtester.Config{
-		ConfigPaths: s.profilePaths.CacheFile(profileID),
-		Mode:        speedtester.SpeedModeFast,
-		Metrics:     speedtester.MetricSet{Latency: true},
-		Concurrent:  1,
-	})
+	st, err := speedtester.New(&speedtester.Config{ConfigPaths: s.profilePaths.CacheFile(profileID), Mode: speedtester.SpeedModeFast, Metrics: speedtester.MetricSet{Latency: true}, Concurrent: 1})
 	if err != nil {
 		return monitor.MonitoredNode{}, "", nil, fmt.Errorf("初始化订阅配置失败: %w", err)
 	}
 	proxies, err := st.LoadProxies()
 	if err != nil {
-		return monitor.MonitoredNode{}, "", nil, fmt.Errorf("读取订阅配置失败: %w", err)
+		return monitor.MonitoredNode{}, "", nil, monitor.WrapValidationError(err)
 	}
-	for name, proxy := range proxies {
-		candidate := monitoredNodeFromProxy(name, proxy)
-		if candidate.NodeKey != nodeKey {
+	names := make([]string, 0, len(proxies))
+	for name := range proxies {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var selected monitor.MonitoredNode
+	var selectedProxy *speedtester.CProxy
+	selectedName := ""
+	for _, name := range names {
+		proxy := proxies[name]
+		node := monitoredNodeFromProxy(name, proxy)
+		if node.NodeKey != nodeKey || identityKey != "" && node.NodeIdentityKey != identityKey || revisionKey != "" && node.ConfigRevisionKey != revisionKey {
 			continue
 		}
-		if candidate.NodeIdentityKey != selected.NodeIdentityKey || candidate.ConfigRevisionKey != selected.ConfigRevisionKey {
+		if selectedProxy != nil {
+			if !speedtester.EquivalentProxyConfiguration(selectedProxy, proxy) {
+				return monitor.MonitoredNode{}, "", nil, monitor.NewValidationError("同节点身份有多个 TLS/连接配置；请使用完整配置 revision，无法区分的版本需重新载入配置")
+			}
 			continue
 		}
-		return selected, name, proxy, nil
+		selected, selectedProxy, selectedName = node, proxy, name
 	}
-
-	return monitor.MonitoredNode{}, "", nil, monitor.NewValidationError("所选节点已不存在或订阅配置已变化，请重新加载节点")
+	if selectedProxy == nil || len(selected.RawConfig) == 0 {
+		return monitor.MonitoredNode{}, "", nil, monitor.NewValidationError("所选节点已不存在或订阅配置已变化，请重新加载节点")
+	}
+	return selected, selectedName, selectedProxy, nil
 }
 
 func monitoredNodeFromProxy(name string, proxy *speedtester.CProxy) monitor.MonitoredNode {
@@ -420,10 +437,16 @@ func buildWorkbenchLatencyRecord(attemptID, profileID string, node monitor.Monit
 	samples := make([]history.LatencyTestSample, 0, len(result.LatencySamples))
 	successCount := 0
 	failureCount := 0
+	excludedCount := 0
 	firstError := ""
 	for _, sample := range result.LatencySamples {
 		if sample.Success {
 			successCount++
+		} else if strings.HasPrefix(sample.Error, "未执行：物理出口") {
+			excludedCount++
+			if firstError == "" {
+				firstError = sample.Error
+			}
 		} else {
 			failureCount++
 			if firstError == "" {
@@ -449,8 +472,26 @@ func buildWorkbenchLatencyRecord(attemptID, profileID string, node monitor.Monit
 	if firstError == "" && result.PacketLoss >= 100 {
 		firstError = "所有延迟样本均失败"
 	}
+	if result.LatencyErrorClass == "physical_path" {
+		status, firstError = "not_executed", result.LatencyError
+	}
+	packetLoss := result.PacketLoss
+	if excludedCount > 0 {
+		packetLoss = 0
+		if successCount+failureCount > 0 {
+			packetLoss = float64(failureCount) / float64(successCount+failureCount) * 100
+		}
+		if successCount+failureCount == 0 {
+			status = "not_executed"
+		}
+	}
+	var path json.RawMessage
+	if result.NetworkPath != nil {
+		path, _ = json.Marshal(result.NetworkPath)
+	}
 
 	return &history.LatencyTest{
+		NetworkPath:       path,
 		AttemptID:         attemptID,
 		ProfileID:         profileID,
 		NodeKey:           node.NodeKey,
@@ -465,8 +506,8 @@ func buildWorkbenchLatencyRecord(attemptID, profileID string, node monitor.Monit
 		Status:            status,
 		LatencyMs:         result.Latency.Milliseconds(),
 		JitterMs:          result.Jitter.Milliseconds(),
-		PacketLoss:        result.PacketLoss,
-		TotalSamples:      len(samples),
+		PacketLoss:        packetLoss,
+		TotalSamples:      len(samples) - excludedCount,
 		SuccessSamples:    successCount,
 		FailureSamples:    failureCount,
 		ErrorMessage:      firstError,

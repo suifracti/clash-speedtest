@@ -90,7 +90,7 @@ func (s *AppService) StartWorkbenchDownloadTest(ctx context.Context, req Workben
 	if err := s.validateMeasurementRequest(ctx, requestID, profileID, nodeKey, identityKey, revisionKey, "download", ""); err != nil {
 		return nil, err
 	}
-	node, proxy, err := s.resolveWorkbenchDownloadNode(profileID, nodeKey)
+	node, proxy, err := s.resolveWorkbenchDownloadNode(profileID, nodeKey, identityKey, revisionKey)
 	if err != nil {
 		return nil, monitor.NewValidationError("无法安全解析当前节点配置；未发出下载请求")
 	}
@@ -217,11 +217,15 @@ func validateWorkbenchDownloadRequest(prior *history.WorkbenchDownloadAttempt, p
 	return nil
 }
 
-func (s *AppService) resolveWorkbenchDownloadNode(profileID, nodeKey string) (monitor.MonitoredNode, *speedtester.CProxy, error) {
+func (s *AppService) resolveWorkbenchDownloadNode(profileID, nodeKey string, frozenScope ...string) (monitor.MonitoredNode, *speedtester.CProxy, error) {
 	if s.workbenchDownloadResolveHook != nil {
 		return s.workbenchDownloadResolveHook(profileID, nodeKey)
 	}
-	node, _, proxy, err := s.resolveWorkbenchLatencyProxy(profileID, nodeKey)
+	scopeIdentity, scopeRevision := "", ""
+	if len(frozenScope) == 2 {
+		scopeIdentity, scopeRevision = frozenScope[0], frozenScope[1]
+	}
+	node, _, proxy, err := s.resolveWorkbenchScopedProxy(profileID, nodeKey, scopeIdentity, scopeRevision)
 	return node, proxy, err
 }
 

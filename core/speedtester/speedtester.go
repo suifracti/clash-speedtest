@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -368,6 +369,15 @@ func deduplicateProxiesByServerPort(proxies map[string]*CProxy) map[string]*CPro
 	return deduplicated
 }
 
+// EquivalentProxyConfiguration compares full runtime configuration without
+// exposing credentials or changing persisted identity/revision algorithms.
+// It shares alias normalization with subscription deduplication.
+func EquivalentProxyConfiguration(a, b *CProxy) bool {
+	x, xok := buildProxyServerPortKey(a)
+	y, yok := buildProxyServerPortKey(b)
+	return xok && yok && x == y
+}
+
 func buildProxyServerPortKey(proxy *CProxy) (string, bool) {
 	if proxy == nil || proxy.Config == nil {
 		return "", false
@@ -556,28 +566,31 @@ type StabilityInfo struct {
 }
 
 type Result struct {
-	ProxyName         string          `json:"proxy_name"`
-	ProxyType         string          `json:"proxy_type"`
-	ProxyConfig       map[string]any  `json:"proxy_config"`
-	Latency           time.Duration   `json:"latency"`
-	Jitter            time.Duration   `json:"jitter"`
-	PacketLoss        float64         `json:"packet_loss"`
-	LatencySamples    []LatencySample `json:"latency_samples,omitempty"`
-	DownloadSize      float64         `json:"download_size"`
-	DownloadTime      time.Duration   `json:"download_time"`
-	DownloadSpeed     float64         `json:"download_speed"`
-	DownloadError     string          `json:"download_error"`
-	UploadSize        float64         `json:"upload_size"`
-	UploadTime        time.Duration   `json:"upload_time"`
-	UploadSpeed       float64         `json:"upload_speed"`
-	UploadError       string          `json:"upload_error"`
-	AntigravityStatus string          `json:"antigravity_status,omitempty"`
-	AntigravityDetail string          `json:"antigravity_detail,omitempty"`
-	GoogleTTFBMs      int64           `json:"google_ttfb_ms,omitempty"`
-	ExitCountry       string          `json:"exit_country,omitempty"`
-	ExitCountryCode   string          `json:"exit_country_code,omitempty"`
-	IPInfo            *IPInfo         `json:"ip_info,omitempty"`
-	Stability         *StabilityInfo  `json:"stability,omitempty"`
+	NetworkPath       *DownloadNetworkPath `json:"network_path,omitempty"`
+	LatencyErrorClass string               `json:"latency_error_class,omitempty"`
+	LatencyError      string               `json:"latency_error,omitempty"`
+	ProxyName         string               `json:"proxy_name"`
+	ProxyType         string               `json:"proxy_type"`
+	ProxyConfig       map[string]any       `json:"proxy_config"`
+	Latency           time.Duration        `json:"latency"`
+	Jitter            time.Duration        `json:"jitter"`
+	PacketLoss        float64              `json:"packet_loss"`
+	LatencySamples    []LatencySample      `json:"latency_samples,omitempty"`
+	DownloadSize      float64              `json:"download_size"`
+	DownloadTime      time.Duration        `json:"download_time"`
+	DownloadSpeed     float64              `json:"download_speed"`
+	DownloadError     string               `json:"download_error"`
+	UploadSize        float64              `json:"upload_size"`
+	UploadTime        time.Duration        `json:"upload_time"`
+	UploadSpeed       float64              `json:"upload_speed"`
+	UploadError       string               `json:"upload_error"`
+	AntigravityStatus string               `json:"antigravity_status,omitempty"`
+	AntigravityDetail string               `json:"antigravity_detail,omitempty"`
+	GoogleTTFBMs      int64                `json:"google_ttfb_ms,omitempty"`
+	ExitCountry       string               `json:"exit_country,omitempty"`
+	ExitCountryCode   string               `json:"exit_country_code,omitempty"`
+	IPInfo            *IPInfo              `json:"ip_info,omitempty"`
+	Stability         *StabilityInfo       `json:"stability,omitempty"`
 }
 
 func (r *Result) FormatDownloadSpeed() string {
@@ -977,6 +990,10 @@ rounds:
 				resp, err := probeClient.Do(req)
 				if err != nil {
 					sample.Error = err.Error()
+					var pathErr *PhysicalPathError
+					if errors.As(err, &pathErr) {
+						sample.Error = "未执行：物理出口约束未核实"
+					}
 					return
 				}
 				_, readErr := io.CopyN(io.Discard, resp.Body, 1)

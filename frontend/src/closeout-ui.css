@@ -167,3 +167,38 @@
  .airport-info-toggle{flex:none}
  .orbit-caption{font-size:11px;white-space:nowrap}
 }
+
+/* Closeout: compact the existing scope block; subscription controls remain intact. */
+.home-view .scope-overview{min-height:0;padding:8px 14px;gap:14px;margin-bottom:8px}
+.scope-overview .orbit-shell{width:72px;height:72px}
+.scope-overview .orbit-button{inset:6px;padding:2px;gap:2px}
+.scope-overview .airport-logos,.scope-overview .orbit-names,.scope-overview .orbit-link{display:none}
+.scope-overview .orbit-button strong{font-size:14px;line-height:1.4}
+.scope-overview .orbit-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;font-size:12px;min-width:0}
+.scope-overview .scope-airports{font-size:13px;text-align:left;overflow-wrap:anywhere}
+.home-subscription-disclosure{margin-bottom:10px}
+.queue-counts,.plan-budget{font-size:13px;line-height:1.6;margin:8px 0;color:var(--muted)}
+@media(min-width:741px){
+ .quality-view .quality-heading,.quality-view .node-row,.quality-view .node-row.combined,.quality-view .node-row.multi-target{grid-template-columns:20px minmax(170px,1fr) minmax(0,2.5fr) 72px;gap:10px}
+ .quality-view .node-row{min-height:64px;padding:8px 6px}
+ .quality-view .quality-metrics{font-size:12px;gap:10px}
+ .quality-view .quality-metrics small{font-size:11px;line-height:1.45}
+ .home-controls .node-toolbar{gap:6px}
+}
+@media(min-width:741px) and (max-width:1000px){
+ .quality-view .home-top{grid-template-columns:1fr auto;gap:6px 12px}
+ .quality-view .home-layout-switch{grid-column:1/-1;grid-row:2}
+ .quality-view .home-top>.button{grid-column:2;grid-row:1}
+ .quality-view .quality-metrics{grid-template-columns:1fr 1fr}
+ .quality-view .quality-services{grid-column:1/-1}
+ .quality-view .quality-heading,.quality-view .node-row,.quality-view .node-row.combined,.quality-view .node-row.multi-target{grid-template-columns:18px minmax(150px,1fr) minmax(0,1.6fr) 64px}
+}
+@media(min-width:741px) and (max-width:1000px){
+ .home-view:not(.filters-expanded) #home-extra-filters{display:none}
+ .home-view .filter-summary{display:flex;align-items:center;gap:8px;margin:4px 0;font-size:12px}
+ .home-view .filter-summary-text{min-width:0;flex:1;color:var(--muted);line-height:1.5}
+ .home-view .filters-toggle{font-size:12px;min-height:32px;white-space:nowrap}
+ .home-view .search-field,.home-view .search-field input:not([type=checkbox]){width:185px}
+ .home-view .toolbar-filters{gap:5px}
+ .scope-overview .orbit-shell{margin:0}
+}

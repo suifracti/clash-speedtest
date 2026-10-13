@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -98,7 +99,8 @@ func (a *App) ListWorkbenchPublicServiceCatalog() []publicservice.Rule {
 }
 
 func (a *App) StartWorkbenchPublicServiceTest(req application.WorkbenchPublicServiceTestRequest) (*history.PublicServiceAttempt, error) {
-	return a.app.StartWorkbenchPublicServiceTest(a.context(), req)
+	result, err := a.app.StartWorkbenchPublicServiceTest(a.context(), req)
+	return result, desktopStartError(err)
 }
 
 func (a *App) ListWorkbenchPublicServiceTests(query application.WorkbenchPublicServiceHistoryQuery) (application.WorkbenchPublicServiceHistoryResult, error) {
@@ -118,7 +120,8 @@ func (a *App) RetrySaveWorkbenchPublicServiceTest(attemptID string, query applic
 }
 
 func (a *App) StartWorkbenchDownloadTest(req application.WorkbenchDownloadTestRequest) (*history.WorkbenchDownloadAttempt, error) {
-	return a.app.StartWorkbenchDownloadTest(a.context(), req)
+	result, err := a.app.StartWorkbenchDownloadTest(a.context(), req)
+	return result, desktopStartError(err)
 }
 
 func (a *App) ListWorkbenchDownloadTests(query application.WorkbenchDownloadHistoryQuery) (application.WorkbenchDownloadHistoryResult, error) {
@@ -142,7 +145,8 @@ func (a *App) ListNodeHistoryRevisions(profileID, nodeIdentityKey string) ([]his
 }
 
 func (a *App) StartWorkbenchLatencyBatch(req application.WorkbenchLatencyBatchRequest) (*application.WorkbenchLatencyBatchDTO, error) {
-	return a.app.StartWorkbenchLatencyBatch(a.context(), req)
+	result, err := a.app.StartWorkbenchLatencyBatch(a.context(), req)
+	return result, desktopStartError(err)
 }
 
 func (a *App) ListWorkbenchLatencyBatches(limit int) ([]application.WorkbenchLatencyBatchDTO, error) {
@@ -446,4 +450,18 @@ func (a *App) GetMonitorSampleFacets(since, until *time.Time) (*monitor.MonitorS
 // never mutates the controller, and never triggers a monitor run.
 func (a *App) GetMonitorRecommendation(req application.MonitorRecommendationRequest) (*policy.MonitorRecommendation, error) {
 	return a.app.GetMonitorRecommendation(a.context(), req)
+}
+
+// Wails serializes error strings. Only typed validation failures prove rejection;
+// storage/transport/unknown errors must retain the original request for lookup.
+func desktopStartError(err error) error {
+	if err == nil || !monitor.IsValidationError(err) {
+		return err
+	}
+	payload, _ := json.Marshal(struct {
+		Admission string `json:"admission"`
+		Status    int    `json:"status"`
+		Message   string `json:"message"`
+	}{"not_accepted", 400, err.Error()})
+	return fmt.Errorf("CST_START_ERROR:%s", payload)
 }

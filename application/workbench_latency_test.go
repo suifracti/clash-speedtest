@@ -19,6 +19,7 @@ import (
 	"github.com/faceair/clash-speedtest/core/history"
 	"github.com/faceair/clash-speedtest/core/monitor"
 	"github.com/faceair/clash-speedtest/core/profiles"
+	"github.com/faceair/clash-speedtest/core/speedtester"
 	"gopkg.in/yaml.v2"
 )
 
@@ -139,6 +140,11 @@ func TestWorkbenchLatencyTestUsesStableIdentityPersistsAndSeparatesProfiles(t *t
 		emitter:      emitter,
 	}
 
+	// Storage/identity fixture: no real proxy route is required or bypassed.
+	service.latencyMeasureHook = func(context.Context, monitor.MonitoredNode, time.Duration) (*speedtester.Result, string, error) {
+		return knownWorkbenchLatencyResult(true), "https://speed.cloudflare.com/__down?bytes=1", nil
+	}
+
 	options, err := service.ListMonitorNodeOptions()
 	if err != nil {
 		t.Fatalf("ListMonitorNodeOptions: %v", err)
@@ -235,6 +241,10 @@ func TestWorkbenchLatencyTestUsesStableIdentityPersistsAndSeparatesProfiles(t *t
 			failureKey = option.NodeKey
 		}
 	}
+	service.latencyMeasureHook = func(context.Context, monitor.MonitoredNode, time.Duration) (*speedtester.Result, string, error) {
+		return knownWorkbenchLatencyResult(false), "https://speed.cloudflare.com/__down?bytes=1", nil
+	}
+
 	failureResult, err := service.RunWorkbenchLatencyTest(context.Background(), WorkbenchLatencyTestRequest{
 		ProfileID:      "profile-a",
 		NodeKey:        failureKey,
@@ -337,6 +347,11 @@ func TestWorkbenchLatencyTestReportsPersistenceFailureSeparately(t *testing.T) {
 	emitter := NewMemoryEventEmitter()
 	persistenceEvents := subscribeLatencyPersistence(emitter)
 	service := &AppService{historyStore: store, profilePaths: paths, emitter: emitter}
+	// Storage/identity fixture: no real proxy route is required or bypassed.
+	service.latencyMeasureHook = func(context.Context, monitor.MonitoredNode, time.Duration) (*speedtester.Result, string, error) {
+		return knownWorkbenchLatencyResult(true), "https://speed.cloudflare.com/__down?bytes=1", nil
+	}
+
 	options, err := service.ListMonitorNodeOptions()
 	if err != nil || len(options) != 1 {
 		t.Fatalf("node options: %v %+v", err, options)
@@ -402,6 +417,11 @@ func TestWorkbenchLatencyTestReturnsBeforeSlowPersistence(t *testing.T) {
 		release()
 		_ = service.Close()
 	})
+
+	// Storage/identity fixture: no real proxy route is required or bypassed.
+	service.latencyMeasureHook = func(context.Context, monitor.MonitoredNode, time.Duration) (*speedtester.Result, string, error) {
+		return knownWorkbenchLatencyResult(true), "https://speed.cloudflare.com/__down?bytes=1", nil
+	}
 
 	options, err := service.ListMonitorNodeOptions()
 	if err != nil || len(options) != 1 {

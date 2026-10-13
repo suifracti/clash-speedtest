@@ -12,7 +12,7 @@ const number=(value:number|null|undefined)=>value==null?'—':value.toFixed(1)
  <details class="site-quality" @toggle="($event.target as HTMLDetailsElement).open && $emit('load')">
   <summary>六站逐站质量 · {{error?'读取失败':!summaries?'尚未读取（展开读取）':summaries.filter(s=>s.total>0).length+' / 6 站有样本'}} · 查看统计与条件</summary>
   <p v-if="error" role="alert">{{error}}</p>
-  <p class="small muted">HTTP 首字节响应率不等于业务可用。P50 / 响应率排名需 ≥5 成功样本，P95 需 ≥20；均需完整、24h 内且条件一致。</p>
+  <p class="small muted">HTTP 首字节响应率不等于业务可用。同条件观察值排序可用1个成功样本，不代表稳定性。P50 / 响应率排名需 ≥5 成功样本，P95 需 ≥20；均需完整、24h 内且条件一致。</p>
   <div class="site-quality-scroll" tabindex="0" aria-label="六站质量证据表，可横向滚动">
    <table><thead><tr><th>站点 / 状态</th><th>P50 / P95</th><th>成功 / 总数 · 响应率</th><th>时效 / 准入</th><th>测量条件 / 原始历史</th></tr></thead>
     <tbody><tr v-for="(site,i) in latencyTargets" :key="site.id">

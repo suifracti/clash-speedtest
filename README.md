@@ -11,6 +11,12 @@
 >
 > **不要用本仓库的历史迁移说明、已关闭 [Issue #32](https://github.com/suifracti/clash-speedtest/issues/32)、旧 README、旧 PR 评论或截图作为现在的执行授权。** GitHub 管源码、提交与历史证据；Obsidian 管 CST 的当前任务和交接。本仓库的其他说明若与 Obsidian Handoff 冲突，以后者及本机真实工作树为准。
 
+## 当前 Mac 开发代码（2026-10-13）
+
+用户决定每次源码修改验证后同步 GitHub，以仓库中的明确分支与提交为准。当前 Mac 候选在 [原开发分支](https://github.com/suifracti/clash-speedtest/tree/codex/cst-w12i-integration-20261011-6aa2079)：完整节点配置作用域、队列接纳与保存、Grok 挑战分类、首页质量快照刷新，以及按需延迟/服务的私有物理出口保护。保留现有历史与功能；Windows 本轮不做。
+
+物理绑定成功与真实无 TUN 转发分别记录；没有独立包流向证据时仍标为未验证。HTTP 响应时延不等于业务可用，超时不自动认定永久节点故障。源码同步不代表正式发布或全部原生验收完成，长日志、截图、构建和私有数据不提交仓库。
+
 ## 2026-10-12 已知进展（历史截点，不是今日运行确认）
 
 - 17 个原有 PR 已合入 `main`，整合业务代码基线 `89d7b248`；[Linux/macOS/Windows 集成 CI](https://github.com/suifracti/clash-speedtest/actions/runs/38228748839) 已通过。**本文件以后的文档提交会改变 `main` HEAD，实际版本以 Git 与本机现场核对为准。**

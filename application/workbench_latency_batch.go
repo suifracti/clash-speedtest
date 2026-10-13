@@ -404,6 +404,7 @@ func (s *AppService) runWorkbenchLatencyBatchItem(runtime *workbenchLatencyBatch
 		})
 		return
 	}
+	defer closeWorkbenchDownloadProxy(proxy)
 	runtime.mu.Lock()
 	if runtime.cancelRequested || runtime.shutdown {
 		runtime.mu.Unlock()
@@ -443,12 +444,12 @@ func (s *AppService) runWorkbenchLatencyBatchItem(runtime *workbenchLatencyBatch
 			err = createErr
 		} else {
 			target = st.LatencyProbeTarget()
-			measured = st.TestSingleContext(runtime.ctx, executionName, proxy, func(*speedtester.Result) bool { return true })
+			measured = st.TestSinglePhysicalContext(runtime.ctx, executionName, proxy, func(*speedtester.Result) bool { return true })
 		}
 	}
 	finishedAt := time.Now().UTC()
 	cancelErr := runtime.ctx.Err()
-	if (err != nil && cancelErr == nil) || measured == nil || (cancelErr != nil && len(measured.LatencySamples) == 0) {
+	if (err != nil && cancelErr == nil) || measured == nil || (cancelErr != nil && len(measured.LatencySamples) == 0 && measured.NetworkPath == nil) {
 		executionState := "failed"
 		message := "延迟测试未产生结果"
 		if err != nil {
@@ -470,11 +471,17 @@ func (s *AppService) runWorkbenchLatencyBatchItem(runtime *workbenchLatencyBatch
 	record.Source = workbenchLatencySourceBatch
 	record.Method = workbenchLatencyMethod
 	record.MethodVersion = 1
+	if measured.NetworkPath != nil {
+		record.MethodVersion = 2
+	}
 	record.Target = target
 	record.Unit = "ms"
 	executionState := "completed"
 	if record.SuccessSamples == 0 {
 		executionState = "failed"
+	}
+	if record.Status == "not_executed" {
+		executionState = "not_executed"
 	}
 	if cancelErr != nil {
 		executionState = "cancelled"

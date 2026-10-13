@@ -8,8 +8,10 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,7 +21,9 @@ import (
 )
 
 func TestWebWorkbenchLatencyContractAndReopen(t *testing.T) {
+	var proxyRequests atomic.Int32
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		proxyRequests.Add(1)
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(proxy.Close)
@@ -88,8 +92,17 @@ func TestWebWorkbenchLatencyContractAndReopen(t *testing.T) {
 	if err := json.Unmarshal(testRec.Body.Bytes(), &result); err != nil {
 		t.Fatalf("decode result: %v", err)
 	}
-	if result.PersistenceState != "saving" || len(result.Samples) == 0 {
+	if result.PersistenceState != "saving" {
 		t.Fatalf("unexpected Web result: %+v", result)
+	}
+	if runtime.GOOS == "darwin" {
+		// The physical path must reject a loopback fixture before any
+		// target request, while the adapter still persists the attempt.
+		if result.Status != "not_executed" || len(result.Samples) != 0 || result.MethodVersion != 2 || len(result.NetworkPath) == 0 || proxyRequests.Load() != 0 {
+			t.Fatalf("physical constraint contract: status=%s samples=%d method=%d requests=%d", result.Status, len(result.Samples), result.MethodVersion, proxyRequests.Load())
+		}
+	} else if len(result.Samples) == 0 {
+		t.Fatal("legacy fixture path should retain its measured samples")
 	}
 	if rows := waitWebLatencyHistory(t, server.Handler(), options[0], result.AttemptID); len(rows) != 1 {
 		t.Fatalf("async Web history: %+v", rows)
@@ -103,8 +116,8 @@ func TestWebWorkbenchLatencyContractAndReopen(t *testing.T) {
 		t.Fatalf("reopen NewServer: %v", err)
 	}
 	defer server.Close()
-	windowSince := result.Samples[0].Timestamp.Add(-time.Second)
-	windowUntil := result.Samples[len(result.Samples)-1].Timestamp.Add(time.Second)
+	windowSince := result.StartedAt.Add(-time.Second)
+	windowUntil := result.FinishedAt.Add(time.Second)
 	windowQuery := fmt.Sprintf("profile_id=profile-web&node_key=%s&node_identity_key=%s&config_revision_key=%s&since=%s&until=%s", url.QueryEscape(options[0].NodeKey), url.QueryEscape(options[0].NodeIdentityKey), url.QueryEscape(options[0].ConfigRevisionKey), url.QueryEscape(windowSince.Format(time.RFC3339Nano)), url.QueryEscape(windowUntil.Format(time.RFC3339Nano)))
 	historyReq := httptest.NewRequest(http.MethodGet, "/api/workbench/latency-tests?"+windowQuery, nil)
 	historyReq.Host = "127.0.0.1:8080"
@@ -122,6 +135,9 @@ func TestWebWorkbenchLatencyContractAndReopen(t *testing.T) {
 	}
 	if historyPage.Tests[0].AttemptID != result.AttemptID || len(historyPage.Tests[0].Samples) != len(result.Samples) {
 		t.Fatalf("reopened Web history mismatch: %+v", historyPage.Tests)
+	}
+	if historyPage.Tests[0].Status != result.Status || string(historyPage.Tests[0].NetworkPath) != string(result.NetworkPath) || historyPage.Tests[0].PersistenceState != "saved" {
+		t.Fatal("reopen must preserve outcome, path and saved state")
 	}
 	batchPayload, _ := json.Marshal(map[string]any{
 		"since": windowSince.UTC(), "until": windowUntil.UTC(), "limit": 100,

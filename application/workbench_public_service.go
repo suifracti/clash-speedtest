@@ -152,7 +152,7 @@ func (s *AppService) startWorkbenchPublicServiceTest(ctx context.Context, req Wo
 		return nil, fmt.Errorf("已有公共服务检测正在运行，请等待完成或取消: %w", errWorkbenchAdmissionBusy)
 	}
 
-	node, err := s.resolveWorkbenchPublicServiceNode(profileID, nodeKey)
+	node, err := s.resolveWorkbenchPublicServiceNode(profileID, nodeKey, identityKey, revisionKey)
 	if err != nil {
 		s.publicServiceMu.Unlock()
 		return nil, monitor.NewValidationError("无法安全解析当前节点配置；未发出服务请求")
@@ -243,11 +243,15 @@ func (s *AppService) startWorkbenchPublicServiceTest(ctx context.Context, req Wo
 	return attempt, nil
 }
 
-func (s *AppService) resolveWorkbenchPublicServiceNode(profileID, nodeKey string) (monitor.MonitoredNode, error) {
+func (s *AppService) resolveWorkbenchPublicServiceNode(profileID, nodeKey string, frozenScope ...string) (monitor.MonitoredNode, error) {
 	if s.publicServiceResolveHook != nil {
 		return s.publicServiceResolveHook(profileID, nodeKey)
 	}
-	selected, _, _, err := s.resolveWorkbenchLatencyProxy(profileID, nodeKey)
+	scopeIdentity, scopeRevision := "", ""
+	if len(frozenScope) == 2 {
+		scopeIdentity, scopeRevision = frozenScope[0], frozenScope[1]
+	}
+	selected, _, _, err := s.resolveWorkbenchScopedProxy(profileID, nodeKey, scopeIdentity, scopeRevision)
 	return selected, err
 }
 

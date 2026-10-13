@@ -9,7 +9,7 @@ import {key,type Attempt,type NodeOption} from '../domain'
 vi.hoisted(()=>{Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:()=>null,setItem:()=>{}}})})
 vi.mock('../api',async importOriginal=>{
   const actual=await importOriginal<typeof import('../api')>()
-  return {...actual,api:{...actual.api,airports:vi.fn(),nodes:vi.fn(),startLatency:vi.fn(),startAttempt:vi.fn(),attemptAction:vi.fn()}}
+  return {...actual,api:{...actual.api,airports:vi.fn(),nodes:vi.fn(),startLatency:vi.fn(),startAttempt:vi.fn(),attemptAction:vi.fn(),createRound:vi.fn(),finishRound:vi.fn(),measurementRounds:vi.fn(),attemptHistory:vi.fn()}}
 })
 const node:NodeOption={profile_id:'sub-a',node_key:'node-a',node_identity_key:'identity-a',config_revision_key:'revision-a',profile_name:'Airport A',display_name:'Node A',type:'ss',country_code:'SG',country_flag:''}
 const airport={id:'airport-a',name:'Airport A',node_count:1,has_cache:true,url_display:'',subscriptions:[{id:'sub-a',airport_id:'airport-a',name:'Default',url_display:'',url_configured:true,node_count:1,has_cache:true}]}
@@ -19,6 +19,7 @@ function button(text:string){const found=Array.from(document.querySelectorAll('d
 beforeEach(()=>{
   vi.resetAllMocks();window.sessionStorage.clear()
   HTMLDialogElement.prototype.showModal=vi.fn();HTMLDialogElement.prototype.close=vi.fn()
+  vi.mocked(api.createRound).mockResolvedValue({});vi.mocked(api.finishRound).mockResolvedValue({});vi.mocked(api.measurementRounds).mockResolvedValue([]);vi.mocked(api.attemptHistory).mockResolvedValue({attempts:[],has_more:false} as any)
   w=createWorkspace();w.airports.value=[airport];w.nodes.value=[node];w.setAirports(['airport-a'])
 })
 afterEach(()=>{wrapper?.unmount();wrapper=undefined;w.dispose();document.body.innerHTML=''})
@@ -50,4 +51,22 @@ it('retries a failed service save from its queue row and retains it after a reje
   expect(w.services.value[key(node)][0].persistence_state).toBe('saved')
   expect(document.body.textContent).not.toContain('重试保存')
   expect(document.body.textContent).not.toContain('disk temporarily unavailable')
+})
+
+function downloadPlan(){const nodes=[node,{...node,node_key:'node-b',node_identity_key:'identity-b',display_name:'Node B'},{...node,node_key:'node-c',node_identity_key:'identity-c',display_name:'Node C'}];w.nodes.value=nodes;w.project.value='download';w.openPlan(nodes);return nodes}
+function savedDownload(body:any):Attempt{return {...body,attempt_id:body.request_id,requested_at:'2026-10-12T01:00:00Z',execution_state:'completed',persistence_state:'saved',result:{outcome:'completed'}}}
+it('continues after one explicitly rejected admission without counting it as a measurement failure',async()=>{
+ downloadPlan();vi.mocked(api.startAttempt).mockImplementation(async(_kind,body:any)=>{if(body.node_key==='node-b')throw Object.assign(new Error('configuration no longer available'),{status:400,admission:'not_accepted'});return savedDownload(body)})
+ await w.runPlan();expect(api.startAttempt).toHaveBeenCalledTimes(3);expect(w.queue.value.map(q=>q.state)).toEqual(['completed','not_executed','completed']);expect(w.queue.value[1].error).toContain('configuration');expect(w.done.value).toBe(3);expect(w.pendingStart.value).toBeNull()
+})
+it('pauses on storage or unknown admission and confirms only the original request ID without reposting',async()=>{
+ downloadPlan();vi.mocked(api.startAttempt).mockRejectedValue(new Error('storage unavailable'))
+ await w.runPlan();expect(api.finishRound).toHaveBeenCalledWith(expect.any(String),'interrupted');const original=w.pendingStart.value!.requestId;expect(api.startAttempt).toHaveBeenCalledTimes(1);expect(w.queue.value.map(q=>q.state)).toEqual(['running','not_executed','not_executed'])
+ await w.retryPending();expect(w.pendingStart.value?.requestId).toBe(original);expect(api.startAttempt).toHaveBeenCalledTimes(1)
+ vi.mocked(api.attemptHistory).mockResolvedValue({attempts:[savedDownload({...node,request_id:original})],has_more:false} as any)
+ await w.retryPending();expect(w.pendingStart.value).toBeNull();expect(w.queue.value[0].state).toBe('completed');expect(api.startAttempt).toHaveBeenCalledTimes(1)
+})
+it('cancellation after the first saved result prevents subsequent dispatch and preserves the result',async()=>{
+ downloadPlan();vi.mocked(api.startAttempt).mockImplementation(async(_kind,body:any)=>{w.cancelRequested.value=true;return savedDownload(body)})
+ await w.runPlan();expect(api.startAttempt).toHaveBeenCalledTimes(1);expect(w.queue.value.map(q=>q.state)).toEqual(['completed','cancelled','cancelled']);expect(w.queue.value[0].attempt?.persistence_state).toBe('saved');expect(w.done.value).toBe(3)
 })

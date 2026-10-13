@@ -6,8 +6,10 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,7 +20,9 @@ import (
 )
 
 func TestDesktopWorkbenchLatencyContractAndReopen(t *testing.T) {
+	var proxyRequests atomic.Int32
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		proxyRequests.Add(1)
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(proxy.Close)
@@ -70,8 +74,17 @@ func TestDesktopWorkbenchLatencyContractAndReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Wails latency test: %v", err)
 	}
-	if result.PersistenceState != "saving" || len(result.Samples) == 0 {
+	if result.PersistenceState != "saving" {
 		t.Fatalf("unexpected Wails result: %+v", result)
+	}
+	if runtime.GOOS == "darwin" {
+		// A loopback fixture is not a physical node. Persist the local
+		// constraint without fabricating a latency sample or sending HTTP.
+		if result.Status != "not_executed" || len(result.Samples) != 0 || result.MethodVersion != 2 || len(result.NetworkPath) == 0 || proxyRequests.Load() != 0 {
+			t.Fatalf("physical constraint contract: status=%s samples=%d method=%d requests=%d", result.Status, len(result.Samples), result.MethodVersion, proxyRequests.Load())
+		}
+	} else if len(result.Samples) == 0 {
+		t.Fatal("legacy fixture path should retain its measured samples")
 	}
 	waitDesktopLatencyHistory(t, app, options[0], result.AttemptID)
 	app.Shutdown(context.Background())
@@ -95,6 +108,9 @@ func TestDesktopWorkbenchLatencyContractAndReopen(t *testing.T) {
 	}
 	if reopened.ProfileID != "profile-wails" || len(reopened.Samples) != len(result.Samples) {
 		t.Fatalf("reopened Wails result mismatch: %+v", reopened)
+	}
+	if reopened.Status != result.Status || string(reopened.NetworkPath) != string(result.NetworkPath) || reopened.PersistenceState != "saved" {
+		t.Fatal("reopen must preserve outcome, path and saved state")
 	}
 }
 

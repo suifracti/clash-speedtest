@@ -2,6 +2,7 @@ package publicservice
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/faceair/clash-speedtest/core/monitor"
+	"github.com/faceair/clash-speedtest/core/speedtester"
 )
 
 const (
@@ -331,11 +333,22 @@ type Checker struct {
 
 func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rule, timeout time.Duration) (final Result) {
 	startedAt := time.Now().UTC()
+	var pathSnapshot func() speedtester.DownloadNetworkPath
 	defer func() {
 		if final.Details == nil {
 			final.Details = map[string]string{}
 		}
-		if final.RequestCount == 0 {
+		// Specialized rules may flatten transport errors. Restore a typed local
+		// constraint without discarding any earlier HTTP writes in a composite.
+		if final.Details["physical_constraint_failure"] == "true" && final.HTTPStatus == nil {
+			final.Outcome = "not_executed"
+			if final.Details["http_requests_written"] != "0" {
+				final.Outcome = "unknown"
+			}
+			final.FailurePhase = "physical_binding"
+			final.ErrorMessage = "物理出口约束未核实；未取得完整服务结论"
+		}
+		if final.RequestCount == 0 || final.Outcome == "not_executed" {
 			// No transport was entered: an exhausted/cancelled preparation
 			// budget is not evidence of a node network timeout.
 			if final.Outcome == "timed_out" || final.Outcome == "cancelled" {
@@ -356,6 +369,15 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 		final.Details["evidence_protocol"] = node.Type
 		final.Details["evidence_target"] = rule.TargetURL
 		final.Details["egress_verification"] = "unverified_default_node_proxy_route"
+		if pathSnapshot != nil {
+			path := pathSnapshot()
+			encoded, _ := json.Marshal(path)
+			final.Details["network_path"] = string(encoded)
+			final.Details["egress_verification"] = "physical_binding_unverified_route_unobserved"
+			if path.SocketBindVerified {
+				final.Details["egress_verification"] = "physical_binding_verified_route_unobserved"
+			}
+		}
 		final.Details["evidence_observed_at"] = final.FinishedAt.Format(time.RFC3339Nano)
 		final.Details["evidence_valid_until"] = final.FinishedAt.Add(5 * time.Minute).Format(time.RFC3339Nano)
 		final.Details["evidence_reuse"] = "disabled_exit_not_verified"
@@ -375,15 +397,22 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	if rule.ServiceID == "antigravity" && strings.TrimSpace(c.AntigravityToken) == "" {
 		return finish(Result{Outcome: "credentials_required", FailurePhase: "credentials", ErrorMessage: "请先在设置中绑定 Google 凭据；未发出检测请求"}, startedAt)
 	}
-	factory := c.ClientFactory
-	if factory == nil {
-		factory = defaultClientFactory
+	var client *http.Client
+	var err error
+	if c.ClientFactory != nil {
+		client, err = c.ClientFactory(node, timeout)
+	} else {
+		var cleanup func()
+		client, pathSnapshot, cleanup, err = defaultClientFactory(ctx, node, timeout)
+		defer cleanup()
 	}
-	client, err := factory(node, timeout)
 	if ctx.Err() != nil {
 		return finish(unexecutedPreparation(ctx.Err()), startedAt)
 	}
 	if err != nil {
+		if pathSnapshot != nil {
+			return finish(Result{Outcome: "not_executed", FailurePhase: "physical_preflight", ErrorMessage: "物理出口准备未完成；未发出服务请求"}, startedAt)
+		}
 		return finish(Result{Outcome: "transport_error", FailurePhase: "proxy_setup", ErrorMessage: "无法建立节点隔离代理连接"}, startedAt)
 	}
 	if client == nil {
@@ -437,6 +466,10 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 
 	response, err := client.Do(request)
 	if err != nil {
+		var pathErr *speedtester.PhysicalPathError
+		if errors.As(err, &pathErr) {
+			return finish(Result{Outcome: "not_executed", FailurePhase: "physical_binding", ErrorMessage: "物理出口约束未核实；未取得服务结论"}, startedAt)
+		}
 		if ctx.Err() == context.Canceled || err == context.Canceled {
 			return finish(Result{Outcome: "cancelled", FailurePhase: "cancelled", ErrorMessage: "检测已取消"}, startedAt)
 		}
@@ -452,7 +485,15 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 
 	status := response.StatusCode
 	result := Result{HTTPStatus: &status, RequestCount: 1}
+	if rule.ServiceID == "grok_web" && status == http.StatusTooManyRequests {
+		result.Outcome, result.FailurePhase, result.ErrorMessage = "rate_limited", "http_status", "目标返回 HTTP 429；不判为节点或业务能力故障"
+		if strings.EqualFold(strings.TrimSpace(response.Header.Get("cf-mitigated")), "challenge") {
+			result.Details = map[string]string{"challenge_evidence": "cf-mitigated header on HTTP 429"}
+		}
+		return finish(result, startedAt)
+	}
 	if strings.EqualFold(strings.TrimSpace(response.Header.Get("cf-mitigated")), "challenge") {
+		result.Details = map[string]string{"challenge_evidence": "cf-mitigated header"}
 		result.Outcome = "challenge"
 		result.Summary = "Cloudflare 要求浏览器验证"
 		result.ErrorMessage = "目标返回 Cloudflare Challenge；网络已连通，但无头请求未通过网页验证"
@@ -481,14 +522,32 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 		result.Summary = "服务与鉴权入口可达"
 		return finish(result, startedAt)
 	}
-	if isReachabilityRule(rule) && status >= 200 && status < 300 {
+	if isReachabilityRule(rule) && (status >= 200 && status < 300 || rule.ServiceID == "grok_web") {
 		body, readErr := io.ReadAll(io.LimitReader(response.Body, 8192))
 		result.BytesRead = int64(len(body))
 		if readErr != nil {
 			classifyRequestError(&result, ctx, readErr)
 			return finish(result, startedAt)
 		}
-		if pageHasChallenge(body) {
+		if rule.ServiceID == "grok_web" {
+			// This is a bounded prefix of the one response, never a new probe.
+			result.Details = map[string]string{"body_prefix_sha256": fmt.Sprintf("%x", sha256.Sum256(body)), "body_evidence_limit": "8192 bytes; prefix only"}
+			text := strings.ToLower(string(body))
+			if strings.Contains(text, "/cdn-cgi/challenge-platform/") || strings.Contains(text, "cf-chl-") {
+				result.Outcome, result.Summary = "challenge", "明确挑战标记；未验证聊天能力"
+				result.Details["challenge_evidence"] = "challenge platform marker"
+				return finish(result, startedAt)
+			}
+			if pageHasChallenge(body) {
+				result.Outcome, result.Summary = "suspected_challenge", "疑似验证页面；未确认挑战或业务能力"
+				result.Details["challenge_evidence"] = "page title or traffic warning only"
+				return finish(result, startedAt)
+			}
+			if status < 200 || status >= 300 {
+				result.Outcome, result.FailurePhase, result.ErrorMessage = "http_rejected", "http_status", fmt.Sprintf("入口返回 HTTP %d；未发现明确挑战标记", status)
+				return finish(result, startedAt)
+			}
+		} else if pageHasChallenge(body) {
 			result.Outcome, result.Summary = "challenge", "网页要求浏览器验证，未验证功能可用"
 			return finish(result, startedAt)
 		}
@@ -592,10 +651,6 @@ func fixedBodyExpectation(serviceID string) (string, bool) {
 	default:
 		return "", false
 	}
-}
-
-func defaultClientFactory(node monitor.MonitoredNode, timeout time.Duration) (*http.Client, error) {
-	return monitor.NewDefaultNodeDialer().CreateClient(node, timeout)
 }
 
 func finish(result Result, startedAt time.Time) Result {

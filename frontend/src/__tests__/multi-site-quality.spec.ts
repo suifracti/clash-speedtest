@@ -129,14 +129,14 @@ describe('six-site evidence without aggregate scoring',()=>{
   const s=site(e);expect(s.groups[0].success).toBe(20);expect(s.readComplete).toBe(true);expect(s.readError).toBeUndefined()
   expect(s.group).toBeUndefined();expect(s.state).toBe(status);expect(s.p50).toBeNull()
   expect(s.reasons).toContain('latest_unobserved_attempt')
-  expect(s.rankable).toEqual({p50:false,p95:false,rate:false})
+  expect(s.rankable).toEqual({observed:false,p50:false,p95:false,rate:false})
  })
  it('treats contradictory copies of one observation as unknown in either input order',()=>{
   const a=test('same-id',0,20),b=test('same-id',0,20,{network_path:{...path,interface:'en2',address_family:'IPv6',address_source:'AAAA'}})
   for(const tests of [[a,b],[b,a]]){
    const s=site(evidence(tests));expect(s.conflictingSamples).toBe(20)
    expect(s.reasons).toContain('conflicting_observations');expect(s.group).toBeUndefined()
-   expect(s.rankable).toEqual({p50:false,p95:false,rate:false});expect(s.p50).toBeNull()
+   expect(s.rankable).toEqual({observed:false,p50:false,p95:false,rate:false});expect(s.p50).toBeNull()
   }
  })
  it('does not block a measured site with an older empty attempt or another site cancellation',()=>{
@@ -160,7 +160,7 @@ describe('six-site evidence without aggregate scoring',()=>{
    const s=site(evidence([test('http',0,20)],monitor))
    expect(s.conflictingSamples).toBe(1);expect(s.success).toBe(20)
    expect(s.reasons).not.toContain('conflicting_observations')
-   expect(s.rankable).toEqual({p50:true,p95:true,rate:true})
+   expect(s.rankable).toEqual({observed:true,p50:true,p95:true,rate:true})
    expect(site(evidence([],monitor)).rankable.p50).toBe(false)
   }
  })
@@ -197,4 +197,14 @@ describe('explicit single-site pairwise comparison only',()=>{
   const equivalent=site(evidence([test('d')],[],{since:'2026-10-09T08:00:00+08:00',until:'2026-10-11T08:00:00+08:00'}))
   expect(compareSiteQuality(a,equivalent,'p50')).toMatchObject({comparable:true,order:0})
  })
+})
+
+it('admits a single complete same-condition observation without claiming stability/P95 ranking',()=>{
+ const a=site(evidence([test('one-a',0,1)])),b=site(evidence([test('one-b',0,1)]))
+ expect(compareSiteQuality(a,b,'observed').comparable).toBe(true)
+ expect(a.rankable.p50).toBe(false);expect(a.rankable.p95).toBe(false)
+ const other=site(evidence([test('other',0,1,{network_path:{...path,address_family:'IPv6',address_source:'AAAA'}})]))
+ expect(compareSiteQuality(a,other,'observed').comparable).toBe(false)
+ const missing=site(evidence([test('missing',0,1)],[],{reads:{latency:{complete:false},monitor:{complete:true},service:{complete:true},download:{complete:true}}}))
+ expect(compareSiteQuality(a,missing,'observed').comparable).toBe(false)
 })

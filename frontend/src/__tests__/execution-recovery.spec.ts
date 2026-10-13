@@ -37,17 +37,18 @@ describe('execution recovery',()=>{
     vi.mocked(api.startLatency).mockImplementation(async(body:any)=>({batch_id:'batch-a',request_id:body.request_id,state:'completed',requested_at:result.requested_at,item_count:1,items:[{...node,item_id:'item-a',batch_id:'batch-a',execution_state:'completed',persistence_state:'saved',result}]}))
     await w.runPlan();expect(w.latest(node)?.attempt_id).toBe('latency-a');expect(w.queue.value[0].state).toBe('completed');expect(w.busy.value).toBe(false)
     w.plan.value={...plan,projects:['latency']};vi.mocked(api.startLatency).mockRejectedValueOnce(Object.assign(new Error('invalid selections'),{status:400}));await w.runPlan()
-    expect(w.queue.value[0].state).toBe('failed');expect(w.queue.value[0].error).toBe('invalid selections');expect(w.busy.value).toBe(false)
+    expect(w.queue.value[0].state).toBe('not_executed');expect(w.queue.value[0].error).toBe('invalid selections');expect(w.busy.value).toBe(false)
   })
-  it('keeps an unknown start visible and explicitly retries its original request instead of silently creating another request',async()=>{
+  it('keeps an unknown start visible and only looks up its original request without resubmission',async()=>{
     const w=await workspace(),oldBatch={batch_id:'old-batch',request_id:'old-request',state:'completed',requested_at:'2026-10-02T11:00:00Z',item_count:0};w.activeBatch.value=oldBatch;w.plan.value={...plan};vi.mocked(api.startAttempt).mockRejectedValueOnce(new TypeError('network unavailable'))
     await w.runPlan();expect(w.busy.value).toBe(true);expect(w.pendingStart.value?.kind).toBe('download')
     onEvent('workbench_latency_batch_updated',oldBatch);expect(w.pendingStart.value?.kind).toBe('download')
     const original=vi.mocked(api.startAttempt).mock.calls[0][1] as Record<string,unknown>,saved=JSON.parse(window.sessionStorage.getItem('speedtest.active-work')!)
     expect(saved.node).toEqual({profile_id:'sub-a',node_key:'node-a',node_identity_key:'identity-a',config_revision_key:'revision-a'});expect(saved.body).toMatchObject({request_id:original.request_id,maximum_bytes:1048576,timeout_seconds:2})
     await w.cancelTests();expect(w.error.value).toContain('无法确认取消');expect(w.busy.value).toBe(true)
-    vi.mocked(api.startAttempt).mockImplementation(async(_kind,body:any)=>({...attempt('completed'),request_id:body.request_id}));await w.retryPending()
-    expect(vi.mocked(api.startAttempt).mock.calls[1][1]).toEqual(original);expect(w.pendingStart.value).toBe(null);expect(w.queue.value[0].state).toBe('completed');expect(w.busy.value).toBe(false);expect(window.sessionStorage.getItem('speedtest.active-work')).toBe(null)
+    await w.retryPending();expect(api.startAttempt).toHaveBeenCalledTimes(1);expect(w.pendingStart.value?.requestId).toBe(original.request_id)
+    vi.mocked(api.attemptHistory).mockResolvedValue({attempts:[{...attempt('completed'),request_id:String(original.request_id)}],has_more:false,complete:true});await w.retryPending()
+    expect(api.startAttempt).toHaveBeenCalledTimes(1);expect(w.pendingStart.value).toBe(null);expect(w.queue.value[0].state).toBe('completed');expect(w.busy.value).toBe(false);expect(window.sessionStorage.getItem('speedtest.active-work')).toBe(null)
   })
   it('keeps a latency batch recoverable while its measured results are still saving',async()=>{
     const first=await workspace();first.plan.value={...plan,projects:['latency']};vi.mocked(api.startLatency).mockImplementation(async(body:any)=>batch('saving',body.request_id))

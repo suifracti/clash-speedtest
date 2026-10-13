@@ -77,7 +77,7 @@ export async function readQuality(node:NodeOption,since:string,until:string,read
 }
 
 
-export type SiteQualityMetric='p50'|'p95'|'rate'
+export type SiteQualityMetric='observed'|'p50'|'p95'|'rate'
 export type SiteQualityReason='unknown_identity'|'invalid_window'|'unmeasured'|'incomplete_read'|'unknown_observation_time'|'unknown_conditions'|'insufficient_samples'|'insufficient_p95_samples'|'stale'|'ambiguous_latest_group'|'invalid_samples'|'latest_unobserved_attempt'|'conflicting_observations'
 export interface SiteQualityObservations {failed:number;cancelled:number;notExecuted:number;sourceLimited:number}
 export interface SiteQualitySummary {
@@ -203,7 +203,7 @@ export function multiSiteQuality(node:NodeScope,e:QualityEvidence):SiteQualitySu
    observations.sourceLimited?'source_limited':group.total?'failed':observations.cancelled?'cancelled':observations.notExecuted?'not_executed':'unmeasured'
   return {targetId:target.id,nodeId,since:e.since,until:e.until,groups,group,total:group?.total||0,success:group?.success||0,excluded:group?.excluded||0,
    p50:group?.p50??null,p95:group?.p95??null,successRate:group?.successRate??null,lastAt:group?.lastAt||'',state,observations,attemptStates,unplacedSamples,invalidSamples,conflictingSamples:conflictingIDs.size,
-   readComplete,readError,gates,reasons,rankable:{p50:baseRankable,p95:baseRankable&&group!.success>=20&&group!.p95!==null,rate:baseRankable&&group!.successRate!==null}}
+   readComplete,readError,gates,reasons,rankable:{observed:!!group&&group.p50!==null&&reasons.every(reason=>['insufficient_samples','insufficient_p95_samples'].includes(reason)),p50:baseRankable,p95:baseRankable&&group!.success>=20&&group!.p95!==null,rate:baseRankable&&group!.successRate!==null}}
  })
 }
 
@@ -215,8 +215,8 @@ export function compareSiteQuality(a:SiteQualitySummary,b:SiteQualitySummary,met
  if(a.targetId!==b.targetId)reasons.push('target_mismatch')
  if(observationTime(a.since)!==observationTime(b.since)||observationTime(a.until)!==observationTime(b.until))reasons.push('window_mismatch')
  if(!a.group||!b.group||a.group.key!==b.group.key)reasons.push('condition_mismatch')
- for(const [side,summary] of [['a',a],['b',b]] as const)if(!summary.rankable[metric])reasons.push(...summary.reasons.filter(reason=>metric==='p95'||reason!=='insufficient_p95_samples').map(reason=>side+':'+reason))
+ for(const [side,summary] of [['a',a],['b',b]] as const)if(!summary.rankable[metric])reasons.push(...summary.reasons.filter(reason=>metric==='observed'?!['insufficient_samples','insufficient_p95_samples'].includes(reason):metric==='p95'||reason!=='insufficient_p95_samples').map(reason=>side+':'+reason))
  if(reasons.length||!a.rankable[metric]||!b.rankable[metric])return {comparable:false,order:null,reasons}
- const av=metric==='rate'?a.successRate!:a[metric]!,bv=metric==='rate'?b.successRate!:b[metric]!
+ const av=metric==='rate'?a.successRate!:a[metric==='observed'?'p50':metric]!,bv=metric==='rate'?b.successRate!:b[metric==='observed'?'p50':metric]!
  return {comparable:true,order:Math.sign(metric==='rate'?bv-av:av-bv),reasons:[]}
 }

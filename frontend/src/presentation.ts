@@ -6,17 +6,19 @@ import type {MeasurementRound} from './domain'
 import {computed,type ComputedRef,type Ref} from 'vue'
 import type {Workspace} from './workspace'
 export type HealthTone='good'|'warn'|'bad'|'empty'
-export interface SamplePoint {id:string;time:string;value:number|null;tone:HealthTone;description:string;label:string;error?:string;note?:string;executionState?:'cancelled'}
+export interface SamplePoint {id:string;time:string;value:number|null;tone:HealthTone;description:string;label:string;error?:string;note?:string;executionState?:'cancelled'|'not_executed'}
 export interface SampleGroup {id:string;name:string;target:string;value:number|null;samples:SamplePoint[]}
 export interface TrendPoint {id:string;time:string;value:number|null;tone:HealthTone;description:string;samples?:SamplePoint[];sampleGroups?:SampleGroup[];attempts?:Attempt[];trigger?:'manual'|'scheduled'|'diagnostic'|'unknown';planned?:number;conditionKey?:string;source?:'manual'|'monitor';monitorSamples?:MonitorSample[];latencyTests?:LatencyTest[]}
-export function latencySampleState(sample:LatencyTest['samples'][number]):{tone:HealthTone;executionState?:'cancelled'} {
+export function latencySampleState(sample:LatencyTest['samples'][number]):{tone:HealthTone;executionState?:'cancelled'|'not_executed'} {
  if(!sample.success&&sample.error?.includes('context canceled'))return {tone:'empty',executionState:'cancelled'}
+ if(!sample.success&&sample.error?.startsWith('未执行：物理出口'))return {tone:'empty',executionState:'not_executed'}
  return {tone:sample.success?(sample.error?'warn':'good'):'bad'}
 }
 export function latencyPointLabel(point?:TrendPoint,target='all') {
  if(point?.value!=null)return Math.round(point.value)+' ms'
  const samples=point?.sampleGroups?.filter(g=>target==='all'||latencyTargetId(g.target)===target).flatMap(g=>g.samples)||point?.samples||[]
  if(samples.length&&samples.every(s=>s.executionState==='cancelled'))return '已取消'
+ if(samples.length&&samples.every(s=>s.executionState==='not_executed'))return '未执行'
  return point?.tone==='bad'?'失败':'未测'
 }
 export interface NodeSeries {id:string;name:string;airport:string;points:TrendPoint[]}

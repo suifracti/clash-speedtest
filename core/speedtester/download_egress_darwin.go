@@ -377,6 +377,9 @@ func (e *PhysicalDownloadEgress) verify(conn syscall.Conn, udp, dns bool) error 
 func (e *PhysicalDownloadEgress) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	if err := e.reserveDialBudget(ctx, false); err != nil {
 		e.setFailure(physicalFailureReason(ctx, err))
+		if errors.Is(err, errPhysicalDownloadBudgetExceeded) {
+			return nil, &PhysicalPathError{Cause: err}
+		}
 		return nil, err
 	}
 	host, port, err := net.SplitHostPort(address)
@@ -414,6 +417,9 @@ func (e *PhysicalDownloadEgress) ListenPacket(ctx context.Context, network, addr
 	}
 	if err := e.reserveDialBudget(ctx, true); err != nil {
 		e.setFailure(physicalFailureReason(ctx, err))
+		if errors.Is(err, errPhysicalDownloadBudgetExceeded) {
+			return nil, &PhysicalPathError{Cause: err}
+		}
 		return nil, err
 	}
 	conn, err := dialer.ListenPacket(ctx, network, address, remote, dialer.WithInterface(e.iface), dialer.WithFallbackBind(false))
@@ -458,8 +464,23 @@ func clonePhysicalProxyConfig(original map[string]any, ip netip.Addr, iface stri
 	return config, nil
 }
 func PreparePhysicalDownloadProxy(ctx context.Context, original *CProxy) (prepared *CProxy, e *PhysicalDownloadEgress, returnErr error) {
+	return preparePhysicalProxy(ctx, original, physicalDownloadSocketRequestLimit)
+}
+
+// Probe connection limits follow the frozen sample plan, independently of the
+// unchanged four-connection download guard. No global dialer state is changed.
+func PreparePhysicalProbeProxy(ctx context.Context, original *CProxy, socketLimit int) (*CProxy, *PhysicalDownloadEgress, error) {
+	return preparePhysicalProxy(ctx, original, socketLimit)
+}
+
+func preparePhysicalProxy(ctx context.Context, original *CProxy, socketLimit int) (prepared *CProxy, e *PhysicalDownloadEgress, returnErr error) {
 	started := time.Now()
 	e = newPhysicalDownloadEgress()
+	if socketLimit < 1 || socketLimit > 120 {
+		e.setFailure("invalid_probe_connection_budget")
+		return nil, e, &PhysicalPathError{Cause: fmt.Errorf("invalid physical connection budget")}
+	}
+	e.tcpDials, e.udpDials = newPhysicalRequestBudget(socketLimit), newPhysicalRequestBudget(socketLimit)
 	defer func() {
 		e.mu.Lock()
 		e.prepared = time.Since(started)

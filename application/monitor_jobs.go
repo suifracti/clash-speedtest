@@ -138,10 +138,11 @@ func (s *AppService) ListMonitorNodeOptions() ([]MonitorNodeOptionDTO, error) {
 					if node.NodeKey == "" {
 						continue
 					}
-					if _, exists := seen[node.NodeKey]; exists {
+					scopeKey := node.NodeKey + "\x00" + node.NodeIdentityKey + "\x00" + node.ConfigRevisionKey
+					if _, exists := seen[scopeKey]; exists {
 						continue
 					}
-					seen[node.NodeKey] = struct{}{}
+					seen[scopeKey] = struct{}{}
 					code := profiles.DetectCountry(node.DisplayName)
 					options = append(options, MonitorNodeOptionDTO{
 						ProfileID:         sub.ID,
@@ -166,10 +167,11 @@ func (s *AppService) ListMonitorNodeOptions() ([]MonitorNodeOptionDTO, error) {
 				if node.NodeKey == "" {
 					continue
 				}
-				if _, exists := seen[node.NodeKey]; exists {
+				scopeKey := node.NodeKey + "\x00" + node.NodeIdentityKey + "\x00" + node.ConfigRevisionKey
+				if _, exists := seen[scopeKey]; exists {
 					continue
 				}
-				seen[node.NodeKey] = struct{}{}
+				seen[scopeKey] = struct{}{}
 				code := profiles.DetectCountry(node.DisplayName)
 				options = append(options, MonitorNodeOptionDTO{
 					ProfileID:         airport.ID,

@@ -3,6 +3,8 @@ package publicservice
 import (
 	"context"
 	"crypto/tls"
+	"errors"
+	"github.com/faceair/clash-speedtest/core/speedtester"
 	"io"
 	"net"
 	"net/http"
@@ -16,19 +18,20 @@ import (
 // The proxy adapter can perform DNS and TCP work internally, so proxy dial is
 // deliberately not called a TCP handshake or a DNS lookup.
 type requestPhases struct {
-	mu        sync.Mutex
-	proxyDial time.Duration
-	tls       time.Duration
-	dns       time.Duration
-	firstByte time.Duration
-	dialCount int
-	tlsCount  int
-	dnsCount  int
-	byteCount int
-	requests  int
-	written   int
-	network   time.Duration
-	body      time.Duration
+	mu                 sync.Mutex
+	proxyDial          time.Duration
+	tls                time.Duration
+	dns                time.Duration
+	firstByte          time.Duration
+	dialCount          int
+	tlsCount           int
+	dnsCount           int
+	byteCount          int
+	requests           int
+	written            int
+	network            time.Duration
+	body               time.Duration
+	physicalConstraint bool
 }
 
 func (p *requestPhases) wrap(original http.RoundTripper, proxyDial bool) http.RoundTripper {
@@ -108,6 +111,10 @@ func (t phaseTransport) RoundTrip(request *http.Request) (*http.Response, error)
 	}
 	response, err := t.base.RoundTrip(request.WithContext(httptrace.WithClientTrace(request.Context(), trace)))
 	t.phases.mu.Lock()
+	var physical *speedtester.PhysicalPathError
+	if errors.As(err, &physical) {
+		t.phases.physicalConstraint = true
+	}
 	t.phases.network += time.Since(started)
 	t.phases.mu.Unlock()
 	if response != nil && response.Body != nil {
@@ -128,6 +135,9 @@ func (p *requestPhases) attach(result *Result) {
 	result.RequestCount = p.requests
 	result.Details["request_count_kind"] = "http_transport_attempts_including_pre_header_failure"
 	result.Details["http_requests_written"] = strconv.Itoa(p.written)
+	if p.physicalConstraint {
+		result.Details["physical_constraint_failure"] = "true"
+	}
 	result.Details["execution_status"] = "executed"
 	result.Details["conclusion"] = serviceEvidenceConclusion(*result)
 	format := func(d time.Duration) string {

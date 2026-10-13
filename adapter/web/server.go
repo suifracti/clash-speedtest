@@ -2301,6 +2301,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleExportWorkbenchClash(w http.ResponseWriter, r *http.Request) {
 	var nodeKeys []string
+	var selections []application.WorkbenchLatencyBatchSelection
 	groupName := "PROXY"
 
 	if r.Method == http.MethodGet {
@@ -2318,14 +2319,16 @@ func (s *Server) handleExportWorkbenchClash(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		nodeKeys = req.NodeKeys
+		selections = req.Selections
 		if req.GroupName != "" {
 			groupName = req.GroupName
 		}
 	}
 
 	resp, err := s.app.ExportNodesClashConfig(r.Context(), application.ExportClashConfigRequest{
-		NodeKeys:  nodeKeys,
-		GroupName: groupName,
+		NodeKeys:   nodeKeys,
+		Selections: selections,
+		GroupName:  groupName,
 	})
 	if err != nil {
 		if monitor.IsValidationError(err) {

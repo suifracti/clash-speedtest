@@ -11,8 +11,9 @@ import (
 )
 
 type ExportClashConfigRequest struct {
-	NodeKeys  []string `json:"node_keys"`
-	GroupName string   `json:"group_name,omitempty"`
+	NodeKeys   []string                         `json:"node_keys,omitempty"`
+	Selections []WorkbenchLatencyBatchSelection `json:"selections,omitempty"`
+	GroupName  string                           `json:"group_name,omitempty"`
 }
 
 type ExportClashConfigResponse struct {
@@ -24,45 +25,67 @@ type ExportClashConfigResponse struct {
 // ExportNodesClashConfig extracts the raw proxy configurations for the requested nodeKeys
 // and generates a complete, valid Clash/Mihomo YAML configuration file.
 func (s *AppService) ExportNodesClashConfig(_ context.Context, req ExportClashConfigRequest) (*ExportClashConfigResponse, error) {
-	if len(req.NodeKeys) == 0 {
+	if len(req.NodeKeys) == 0 && len(req.Selections) == 0 {
 		return nil, monitor.NewValidationError("请先勾选或指定至少一个要导出的节点")
 	}
-
-	requestedSet := make(map[string]struct{}, len(req.NodeKeys))
-	for _, k := range req.NodeKeys {
-		k = strings.TrimSpace(k)
-		if k != "" {
-			requestedSet[k] = struct{}{}
+	if len(req.NodeKeys) > 0 && len(req.Selections) > 0 {
+		return nil, monitor.NewValidationError("导出请求不能混合旧 node_keys 与完整作用域")
+	}
+	selected := make([]monitor.MonitoredNode, 0, len(req.Selections)+len(req.NodeKeys))
+	seen := map[string]bool{}
+	if len(req.Selections) > 0 {
+		for _, selection := range req.Selections {
+			if strings.TrimSpace(selection.ProfileID) == "" || strings.TrimSpace(selection.NodeKey) == "" || strings.TrimSpace(selection.NodeIdentityKey) == "" || strings.TrimSpace(selection.ConfigRevisionKey) == "" {
+				return nil, monitor.NewValidationError("导出必须包含完整 profile/node/identity/revision")
+			}
+			node, _, _, err := s.resolveWorkbenchScopedProxy(selection.ProfileID, selection.NodeKey, selection.NodeIdentityKey, selection.ConfigRevisionKey)
+			if err != nil {
+				return nil, err
+			}
+			id := selection.ProfileID + "\x00" + node.NodeKey + "\x00" + node.NodeIdentityKey + "\x00" + node.ConfigRevisionKey
+			if !seen[id] {
+				selected = append(selected, node)
+				seen[id] = true
+			}
 		}
-	}
-	if len(requestedSet) == 0 {
-		return nil, monitor.NewValidationError("节点标识不能为空")
-	}
-
-	allNodes, err := s.collectAllCachedNodes()
-	if err != nil {
-		return nil, fmt.Errorf("读取本地缓存节点失败: %w", err)
-	}
-
-	// Index nodes by NodeKey
-	nodeByKey := make(map[string]monitor.MonitoredNode, len(allNodes))
-	for _, node := range allNodes {
-		if node.NodeKey != "" {
-			if _, exists := nodeByKey[node.NodeKey]; !exists {
-				nodeByKey[node.NodeKey] = node
+	} else {
+		// Legacy clients may export only an unambiguous key. Never select the
+		// first airport/revision and never silently omit a stale selection.
+		allNodes, err := s.collectAllCachedNodes()
+		if err != nil {
+			return nil, fmt.Errorf("读取本地缓存节点失败: %w", err)
+		}
+		for _, rawKey := range req.NodeKeys {
+			key := strings.TrimSpace(rawKey)
+			if key == "" {
+				return nil, monitor.NewValidationError("节点标识不能为空")
+			}
+			candidates := []monitor.MonitoredNode{}
+			for _, n := range allNodes {
+				if n.NodeKey == key {
+					candidates = append(candidates, n)
+				}
+			}
+			if len(candidates) != 1 {
+				return nil, monitor.NewValidationError("旧节点标识无法唯一匹配，请使用完整作用域重新选择")
+			}
+			for _, n := range candidates {
+				if !seen[key] {
+					selected = append(selected, n)
+					seen[key] = true
+				}
 			}
 		}
 	}
 
-	// Preserve order of requested keys
-	proxies := make([]map[string]any, 0, len(req.NodeKeys))
-	nodeNames := make([]string, 0, len(req.NodeKeys))
+	// Preserve order of the exact frozen selections
+	proxies := make([]map[string]any, 0, len(selected))
+	nodeNames := make([]string, 0, len(selected))
 	nameSeen := make(map[string]int)
 
-	for _, key := range req.NodeKeys {
-		node, found := nodeByKey[key]
-		if !found || len(node.RawConfig) == 0 {
-			continue
+	for _, node := range selected {
+		if len(node.RawConfig) == 0 {
+			return nil, monitor.NewValidationError("所选节点缺少有效原始配置，未导出任何文件")
 		}
 
 		// Deep copy raw config
