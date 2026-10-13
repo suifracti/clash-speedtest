@@ -10,11 +10,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/net/http/httpproxy"
 )
 
 const MaxSubscriptionBytes = 8 << 20
 
 type FetchEvidence struct {
+	ProxyPolicy     string    `json:"proxy_policy,omitempty"`
 	Method          string    `json:"method"`
 	UserAgent       string    `json:"user_agent"`
 	RequestCount    int       `json:"request_count"`
@@ -66,6 +69,15 @@ func subscriptionClient(req *http.Request, evidence *FetchEvidence) *http.Client
 	transport = transport.Clone()
 	transport.DisableKeepAlives = true
 	var mu sync.Mutex
+	transport.Proxy = normalSubscriptionProxy(httpproxy.FromEnvironment(), func(ctx context.Context, scheme string) (*url.URL, error) {
+		return normalSystemProxy(ctx, scheme)
+	}, func(policy string) {
+		if evidence != nil {
+			mu.Lock()
+			evidence.ProxyPolicy = policy
+			mu.Unlock()
+		}
+	})
 	trace := &httptrace.ClientTrace{WroteRequest: func(httptrace.WroteRequestInfo) {
 		if evidence == nil {
 			return
@@ -97,4 +109,50 @@ func SourceOrigin(raw string) string {
 		return ""
 	}
 	return strings.ToLower(u.Scheme + "://" + u.Host)
+}
+
+// Subscription acquisition follows the user's normal network. Physical binding
+// is exclusively a node-measurement concern. A nil environment proxy may mean
+// an explicit bypass, so check NO_PROXY/loopback before the macOS fallback.
+func normalSubscriptionProxy(config *httpproxy.Config, system func(context.Context, string) (*url.URL, error), observe func(string)) func(*http.Request) (*url.URL, error) {
+	environment := config.ProxyFunc()
+	bypassConfig := *config
+	bypassConfig.HTTPProxy = "http://bypass-check.invalid:1"
+	bypassConfig.HTTPSProxy = "http://bypass-check.invalid:1"
+	bypassConfig.CGI = false
+	bypass := bypassConfig.ProxyFunc()
+	report := func(policy string) {
+		if observe != nil {
+			observe(policy)
+		}
+	}
+	return func(req *http.Request) (*url.URL, error) {
+		proxy, err := environment(req.URL)
+		if err != nil {
+			return nil, err
+		}
+		if proxy != nil {
+			report("environment_proxy")
+			return proxy, nil
+		}
+		check, err := bypass(req.URL)
+		if err != nil {
+			return nil, err
+		}
+		if check == nil {
+			report("direct_normal_network")
+			return nil, nil
+		}
+		proxy, err = system(req.Context(), req.URL.Scheme)
+		if err != nil {
+			report("system_proxy_unavailable")
+			return nil, err
+		}
+		if proxy != nil {
+			report("system_proxy")
+		} else {
+			report("direct_normal_network")
+		}
+		return proxy, nil
+	}
 }
