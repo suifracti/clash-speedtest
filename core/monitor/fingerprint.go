@@ -92,7 +92,7 @@ func ComputeConfigRevisionKey(identityKey string, rawConfig map[string]any) stri
 
 	var extraFlags []string
 	if rawConfig != nil {
-		flagKeys := []string{"alpn", "skip-cert-verify", "client-fingerprint", "udp", "tls"}
+		flagKeys := []string{"alpn", "skip-cert-verify", "client-fingerprint", "udp", "tls", "_cst_tls_pins", "_cst_tls_names"}
 		for _, k := range flagKeys {
 			if val, exists := rawConfig[k]; exists && val != nil {
 				extraFlags = append(extraFlags, fmt.Sprintf("%s=%v", k, val))

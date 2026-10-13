@@ -54,7 +54,12 @@ func parseConfigBody(body []byte) (*RawConfig, error) {
 // ValidateSubscriptionBody checks subscription syntax without opening or
 // probing any nodes from the returned configuration.
 func ValidateSubscriptionBody(body []byte) error {
-	if _, err := parseConfigBody(body); err == nil {
+	if cfg, err := parseConfigBody(body); err == nil {
+		for i, proxy := range cfg.Proxies {
+			if proxy["_cst_transport_condition"] != nil {
+				return fmt.Errorf("subscription node %d has invalid source TLS parameters", i)
+			}
+		}
 		return nil
 	} else {
 		var document map[interface{}]interface{}
@@ -147,6 +152,7 @@ func tryShareLinks(body []byte) (*RawConfig, error) {
 	if err != nil {
 		proxies = nil
 	}
+	enrichSourceTLS(proxies, prepared)
 	enrichHysteria2Ports(proxies, prepared)
 	extra := parseExtraShareLines(prepared)
 	merged := append(proxies, extra...)
@@ -386,4 +392,67 @@ func firstQuery(query url.Values, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+func enrichSourceTLS(proxies []map[string]any, body []byte) {
+	decoded := string(convert.DecodeBase64(bytes.TrimSpace(body)))
+	used := map[int]bool{}
+	for _, line := range strings.Split(decoded, "\n") {
+		u, err := url.Parse(strings.TrimSpace(line))
+		if err != nil || u.Scheme != "vless" || u.User == nil {
+			continue
+		}
+		q := u.Query()
+		why := ""
+		var pins []string
+		if raw := q.Get("pcs"); raw != "" {
+			pins, err = normalizedPins(raw)
+			if err != nil {
+				why = err.Error()
+			}
+		}
+		insecure, flagSeen := false, false
+		for _, alias := range []string{"insecure", "allowInsecure", "allowinsecure"} {
+			for _, raw := range q[alias] {
+				flag, parseErr := strconv.ParseBool(raw)
+				if parseErr != nil {
+					why = "TLS insecure alias has an invalid boolean"
+					continue
+				}
+				if flagSeen && flag != insecure {
+					why = "TLS insecure aliases conflict"
+				}
+				insecure, flagSeen = flag, true
+			}
+		}
+		for i, p := range proxies {
+			sni, _ := p["servername"].(string)
+			if !used[i] && p["type"] == "vless" && fmt.Sprint(p["server"]) == u.Hostname() && fmt.Sprint(p["port"]) == u.Port() && fmt.Sprint(p["uuid"]) == u.User.Username() && sni == q.Get("sni") {
+				used[i] = true
+				if p["network"] == "ws" {
+					p["_cst_generated_ws_ua"] = true
+				}
+				if insecure {
+					p["skip-cert-verify"] = true
+				}
+				if len(pins) > 0 {
+					p["_cst_tls_pins"] = pins
+				}
+				if raw := q.Get("vcn"); raw != "" {
+					names := strings.Split(raw, ",")
+					for i, name := range names {
+						names[i] = strings.TrimSpace(name)
+						if names[i] == "" {
+							why = "TLS vcn verification names must not be empty"
+						}
+					}
+					p["_cst_tls_names"] = names
+				}
+				if why != "" {
+					p["_cst_transport_condition"] = why
+				}
+				break
+			}
+		}
+	}
 }

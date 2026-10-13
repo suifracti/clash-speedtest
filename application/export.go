@@ -88,6 +88,10 @@ func (s *AppService) ExportNodesClashConfig(_ context.Context, req ExportClashCo
 			return nil, monitor.NewValidationError("所选节点缺少有效原始配置，未导出任何文件")
 		}
 
+		if monitor.HasSourceTLSConstraints(node.RawConfig) {
+			return nil, monitor.NewValidationError("普通 Clash/Mihomo 导出无法保留 pcs/vcn 证书约束；未导出任何文件")
+		}
+
 		// Deep copy raw config
 		cfg := make(map[string]any, len(node.RawConfig)+1)
 		for k, v := range node.RawConfig {

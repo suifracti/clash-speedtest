@@ -204,7 +204,8 @@ func resolveServerTarget(rawURL string) (*serverTarget, error) {
 
 type CProxy struct {
 	constant.Proxy
-	Config map[string]any
+	Config            map[string]any
+	sourceTLSPrepared bool
 }
 
 type RawConfig struct {
@@ -243,6 +244,9 @@ func (st *SpeedTester) LoadProxies() (map[string]*CProxy, error) {
 		providersConfig := rawCfg.Providers
 
 		for i, config := range proxiesConfig {
+			if config["_cst_transport_condition"] != nil {
+				return nil, fmt.Errorf("proxy %d: invalid source TLS parameters", i)
+			}
 			proxy, err := adapter.ParseProxy(config)
 			if err != nil {
 				return nil, fmt.Errorf("proxy %d: %w", i, err)

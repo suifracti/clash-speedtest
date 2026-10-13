@@ -532,10 +532,15 @@ func preparePhysicalProxy(ctx context.Context, original *CProxy, socketLimit int
 	e.mu.Lock()
 	e.host, e.nodeIP = host, ip
 	e.mu.Unlock()
-	proxy, err := adapter.ParseProxy(config, adapter.WithDialerForAPI(e))
+	effective, apiDialer, err := prepareSourceTLS(config, e)
+	if err != nil {
+		e.setFailure("source_tls_policy_unavailable")
+		return nil, e, &PhysicalPathError{Cause: err}
+	}
+	proxy, err := adapter.ParseProxy(effective, adapter.WithDialerForAPI(apiDialer))
 	if err != nil {
 		e.setFailure("proxy_adapter_unavailable")
 		return nil, e, fmt.Errorf("cannot create physical-path node proxy")
 	}
-	return &CProxy{Proxy: proxy, Config: config}, e, nil
+	return &CProxy{Proxy: proxy, Config: config, sourceTLSPrepared: true}, e, nil
 }

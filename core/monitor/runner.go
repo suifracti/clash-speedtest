@@ -38,6 +38,10 @@ func (d *DefaultNodeDialer) CreateClient(node MonitoredNode, timeout time.Durati
 		return nil, fmt.Errorf("node %s has empty raw config", node.NodeKey)
 	}
 
+	if HasSourceTLSConstraints(node.RawConfig) {
+		return nil, fmt.Errorf("source TLS certificate policy requires the private physical TLS path")
+	}
+
 	proxy, err := adapter.ParseProxy(node.RawConfig)
 	if err != nil {
 		return nil, fmt.Errorf("parse proxy for %s: %w", node.NodeKey, err)
@@ -547,4 +551,15 @@ func newID(prefix string) string {
 
 func unexecutedProbe(profile string, node MonitoredNode, target TargetSpec, runID, reason string) *MonitorSample {
 	return &MonitorSample{SampleID: newID("s"), RunID: runID, ProfileID: profile, NodeKey: node.NodeKey, NodeIdentityKey: node.NodeIdentityKey, ConfigRevisionKey: node.ConfigRevisionKey, DisplayNameSnapshot: node.DisplayName, ProbeType: target.ProbeType, Target: target.URL, Timestamp: time.Now(), ErrorClass: "not_executed", ErrorDetail: reason, Metadata: map[string]any{"execution_status": "not_executed", "conclusion": "unconfirmed"}}
+}
+
+// HasSourceTLSConstraints prevents generic Mihomo paths from silently dropping
+// the source's explicit certificate policy. Only the prepared TLS path supports it.
+func HasSourceTLSConstraints(config map[string]any) bool {
+	for _, key := range []string{"_cst_tls_pins", "_cst_tls_names", "_cst_transport_condition"} {
+		if value, ok := config[key]; ok && value != nil {
+			return true
+		}
+	}
+	return false
 }
