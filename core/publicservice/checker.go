@@ -46,6 +46,8 @@ type Rule struct {
 }
 
 var catalog = []Rule{
+	ipokRule("ipok_ipv4", "IPv4"),
+	ipokRule("ipok_ipv6", "IPv6"),
 	{
 		ServiceID: "cloudflare_204", Name: "Cloudflare 204 连通性", RuleVersion: RuleVersion,
 		Category: "基础网络", Region: "全球", ResultKind: "connectivity", Description: "轻量确认节点能否访问 Cloudflare 连通性端点。", BatchDefault: true,
@@ -327,6 +329,7 @@ type ClientFactory func(node monitor.MonitoredNode, timeout time.Duration) (*htt
 // path. Most rules make one request; explicitly versioned composite rules may
 // make a small fixed number. It has no cookie jar or browser session state.
 type Checker struct {
+	ReputationStore  ReputationStore
 	AntigravityToken string `json:"-"`
 	ClientFactory    ClientFactory
 }
@@ -397,6 +400,19 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	if rule.ServiceID == "antigravity" && strings.TrimSpace(c.AntigravityToken) == "" {
 		return finish(Result{Outcome: "credentials_required", FailurePhase: "credentials", ErrorMessage: "请先在设置中绑定 Google 凭据；未发出检测请求"}, startedAt)
 	}
+	// IPOK admission reads durable cooldown/quota before any proxy/DNS setup.
+	if rule.ServiceID == "ipok_ipv4" || rule.ServiceID == "ipok_ipv6" {
+		if c.ReputationStore == nil {
+			return finish(Result{Outcome: "not_executed", FailurePhase: "local_storage", ErrorMessage: "IPOK 预算存储未初始化；未发请求"}, startedAt)
+		}
+		allowed, budgetErr := c.ReputationStore.CheckIPReputationBudget(ctx, time.Now().UTC())
+		if budgetErr != nil {
+			return finish(Result{Outcome: "not_executed", FailurePhase: "local_storage", ErrorMessage: "IPOK 持久化预算预检失败；未发请求"}, startedAt)
+		}
+		if !allowed {
+			return finish(Result{Outcome: "not_executed", FailurePhase: "provider_quota", ErrorMessage: "IPOK 本地配额或冷却禁止查询；未发起出口观察", Details: map[string]string{"not_executed_reason": "ipok_budget_preflight_blocked"}}, startedAt)
+		}
+	}
 	var client *http.Client
 	var err error
 	if c.ClientFactory != nil {
@@ -427,6 +443,8 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 		return checkAntigravityObserved(ctx, client, c.AntigravityToken, startedAt)
 	}
 	switch rule.ServiceID {
+	case "ipok_ipv4", "ipok_ipv6":
+		return c.checkIPOK(ctx, client, rule, startedAt)
 	case "exit_ipv4", "exit_ipv6":
 		return checkIPify(ctx, client, rule, startedAt)
 	case "cloudflare_trace":

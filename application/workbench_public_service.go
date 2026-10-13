@@ -269,6 +269,9 @@ func (s *AppService) executeWorkbenchPublicServiceTest(ctx context.Context, runt
 		s.publicServiceMu.Unlock()
 	}()
 	checker := s.publicServiceChecker
+	if s.historyStore != nil {
+		checker.ReputationStore = s.historyStore.DB()
+	}
 	if runtime.rule.ServiceID == "antigravity" {
 		checker.AntigravityToken = s.GetAntigravityToken()
 	}

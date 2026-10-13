@@ -456,6 +456,11 @@ func migrateSchema(db *sql.DB, beforeV11Upgrade func() error) error {
 		}
 		version = 12
 	}
+	// Initialize only after all pre-upgrade backup gates, in the migration
+	// transaction. These additive auxiliary tables do not alter old samples.
+	if _, err := tx.Exec(ipReputationDDL); err != nil {
+		return fmt.Errorf("initialize IP reputation cache/budget: %w", err)
+	}
 	if err := validateCurrentSchema(tx, version); err != nil {
 		return fmt.Errorf("validate schema version %d after migration: %w", version, err)
 	}
