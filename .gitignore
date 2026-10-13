@@ -44,4 +44,6 @@ frontend/evidence/
 *.safetensors
 *.pt
 *.pth
+__pycache__/
+*.pyc
 

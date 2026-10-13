@@ -15,6 +15,7 @@
 2. 在**现有 Mac/Windows 工作树**核对 `git status --short`、`git rev-parse HEAD`、当前运行 App 或构建产物、数据根及未提交改动。远端 main 不自动等于本机最新成果；禁止 reset、覆盖 dirty、删除 worktree 或替换正在使用的 App。
 3. 复用已有 Go/Mihomo/Wails/Vue/SQLite 模块，围绕实际故障做最小修复，执行受影响的最少编译/测试；必要时做已获授权的有限原生验证。**完成一项、验证一项、回写 Handoff 再进下一项**。
 4. 清晰记录本次改动文件、确切测试结果、最新 HEAD/dirty、已验和未验。长日志、脱敏截图、构建、ZIP 放既有 Google Drive 项目文件夹，Obsidian 只放短结论和准确链接；不要反复复制完整证据到 GitHub。
+5. 交付前按 [版本与功能保留检查](docs/version-consistency.md) 核对远端、main 完整性、已接受能力和 App 构建来源。当前已确认旧未提交 IPOK 后端、VLESS pcs/vcn、Mac 订阅系统代理识别未迁回；不能只凭已合并 PR 完整就宣称功能都在。`scripts/candidate_audit.py` 的源码/manifest 检查不等于运行验收；不得删除能力条目或给旧未知二进制猜写 SHA 来取得通过。
 
 ## 安全与版本规则
 

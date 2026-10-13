@@ -1,0 +1,26 @@
+name: Candidate source and capability audit
+on:
+  push:
+    branches: ['codex/cst-w12i-integration-20261011-6aa2079']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Offline audit regression fixtures
+        run: python3 -m unittest discover -s scripts/tests -v
+      - name: Verify GitHub revision, main ancestry and accepted capabilities
+        run: python3 scripts/candidate_audit.py --online --branch '${{ github.ref_name }}' --json-output candidate-audit.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: candidate-audit-${{ github.sha }}
+          path: candidate-audit.json

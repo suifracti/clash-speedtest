@@ -1,0 +1,18 @@
+{
+  "scope": "Source-presence regression gate, not runtime or network acceptance. Keep accepted capabilities even when missing; replacements require an explicit mapping and behavioral regression.",
+  "features": [
+    {"id": "subscription_refresh", "required": [{"path": "application/subscription_refresh.go"}, {"path": "adapter/desktop/subscription_refresh.go"}, {"path": "frontend/src/components/SubscriptionOverview.vue"}]},
+    {"id": "six_site_quality", "required": [{"path": "frontend/src/components/SiteQuality.vue"}, {"path": "application/workbench_latency_batch.go"}]},
+    {"id": "bounded_download_queue", "required": [{"path": "application/workbench_download.go"}, {"path": "frontend/src/components/QueueModal.vue"}]},
+    {"id": "business_and_profile_semantics", "required": [{"path": "frontend/src/sharedResults.ts", "contains": ["ipok_ipv4"]}, {"path": "frontend/src/measurementRounds.ts"}]},
+    {"id": "quality_refresh_and_comparison", "required": [{"path": "frontend/src/components/HomeView.vue", "contains": ["readQuality"]}, {"path": "frontend/src/nodeQuality.ts"}, {"path": "frontend/src/sortSnapshot.ts"}]},
+    {"id": "history_drilldown", "required": [{"path": "frontend/src/components/HistoryView.vue"}, {"path": "frontend/src/components/InlineHistory.vue"}, {"path": "frontend/src/components/NodeDetailModal.vue"}]},
+    {"id": "settings_and_backup", "required": [{"path": "frontend/src/components/SettingsView.vue"}, {"path": "frontend/src/components/DataView.vue"}, {"path": "core/history/upgrade_backup.go"}]},
+    {"id": "monitor_preserved_not_started", "required": [{"path": "frontend/src/components/MonitorView.vue"}, {"path": "application/monitor_jobs.go"}]},
+    {"id": "physical_probe_path", "required": [{"path": "core/speedtester/physical_probe.go"}, {"path": "core/speedtester/download_dns_darwin.go"}, {"path": "core/publicservice/physical_client.go"}]},
+    {"id": "complete_export_scope", "required": [{"path": "application/export.go", "contains": ["ConfigRevisionKey"]}, {"path": "application/export_scope_test.go"}]},
+    {"id": "ipok_backend_cache_budget", "required": [{"path": "core/publicservice/reputation.go"}, {"path": "core/publicservice/reputation_evidence.go"}, {"path": "core/history/ip_reputation.go"}, {"path": "core/publicservice/checker.go", "contains": ["checkIPOK("]}, {"path": "application/workbench_public_service.go", "contains": ["ReputationStore"]}]},
+    {"id": "vless_source_tls_parameters", "required": [{"path": "core/speedtester/vless_tls.go"}, {"path": "core/speedtester/parse.go", "contains": ["enrichSourceTLS("]}]},
+    {"id": "mac_subscription_system_proxy", "required": [{"path": "core/profiles/fetch_network_darwin.go"}, {"path": "core/profiles/fetch_observation.go", "contains": ["normalSystemProxy("]}]}
+  ]
+}
