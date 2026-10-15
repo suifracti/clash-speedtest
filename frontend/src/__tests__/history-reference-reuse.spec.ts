@@ -19,11 +19,11 @@ describe('unchanged history response reuse',()=>{
  it('keeps saved latency monotonic through late saving events and raw round reads while allowing save retry',()=>{
   const w=createWorkspace(),failed={...t,persistence_state:'failed',persistence_error:'fixture save failure'}
   w.mergeLatency(failed);w.mergeLatency({...t,persistence_state:'saving'})
-  expect(w.latest(t)?.persistence_state).toBe('failed')
+  expect(w.latency.value[key(n)]?.[0]?.persistence_state).toBe('failed')
   w.mergeLatency(t);const saved=w.latency.value[key(t)]
   for(const persistence_state of ['saving','pending','failed'])w.mergeLatency({...t,persistence_state})
   const {persistence_state:_,...raw}=t;w.mergeLatency(raw as LatencyTest)
-  expect(w.latency.value[key(t)]).toBe(saved);expect(w.latest(t)?.persistence_state).toBe('saved');expect(w.latest(t)?.persistence_error).toBeUndefined()
+  expect(w.latency.value[key(t)]).toBe(saved);expect(w.latency.value[key(n)]?.[0]?.persistence_state).toBe('saved');expect(w.latency.value[key(n)]?.[0]?.persistence_error).toBeUndefined()
   w.dispose()
  })
 })
