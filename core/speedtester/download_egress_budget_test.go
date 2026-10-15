@@ -49,3 +49,40 @@ func TestPhysicalRequestBudgetChecksCancellationAndExhaustion(t *testing.T) {
 		t.Fatalf("cancelled request consumed the exhausted budget: err=%v count=%d", err, budget.count())
 	}
 }
+
+func TestPhysicalRequestBudgetNilDefenses(t *testing.T) {
+	var budget *physicalRequestBudget
+	if err := budget.reserve(context.Background()); err != nil {
+		t.Fatalf("nil budget reserve returned error: %v", err)
+	}
+	if got := budget.count(); got != 0 {
+		t.Fatalf("nil budget count expected 0, got %d", got)
+	}
+}
+
+func TestBoundedPhysicalContextNilParent(t *testing.T) {
+	ctx, cancel := boundedPhysicalContext(nil, 0)
+	defer cancel()
+	if ctx == nil {
+		t.Fatal("expected non-nil context for nil parent")
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		t.Fatal("expected deadline on bounded physical context")
+	}
+}
+
+func TestPhysicalPathErrorUnwrap(t *testing.T) {
+	var nilErr *PhysicalPathError
+	if nilErr.Unwrap() != nil {
+		t.Fatalf("expected nil unwrap from nil error, got %v", nilErr.Unwrap())
+	}
+	cause := errors.New("underlying cause")
+	err := &PhysicalPathError{Cause: cause}
+	if !errors.Is(err, cause) {
+		t.Fatalf("expected errors.Is to match cause: %v", err.Unwrap())
+	}
+	if err.Error() != "physical download path could not be verified" {
+		t.Fatalf("unexpected error message: %s", err.Error())
+	}
+}
+

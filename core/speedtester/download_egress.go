@@ -27,6 +27,9 @@ func newPhysicalRequestBudget(limit int) *physicalRequestBudget {
 }
 
 func (b *physicalRequestBudget) reserve(ctx context.Context) error {
+	if b == nil {
+		return nil
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -70,7 +73,12 @@ func boundedPhysicalContext(parent context.Context, maximum time.Duration) (cont
 type PhysicalPathError struct{ Cause error }
 
 func (e *PhysicalPathError) Error() string { return "physical download path could not be verified" }
-func (e *PhysicalPathError) Unwrap() error { return e.Cause }
+func (e *PhysicalPathError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
 
 // Network conditions are saved with the measurement so old system-DNS/default
 // binding runs are never silently treated as verified physical-path results.

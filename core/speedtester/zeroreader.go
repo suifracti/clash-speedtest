@@ -12,6 +12,9 @@ type ZeroReader struct {
 }
 
 func NewZeroReader(size int) *ZeroReader {
+	if size < 0 {
+		size = 0
+	}
 	return &ZeroReader{
 		remainBytes:  int64(size),
 		writtenBytes: 0,
@@ -19,7 +22,7 @@ func NewZeroReader(size int) *ZeroReader {
 }
 
 func (r *ZeroReader) Read(p []byte) (n int, err error) {
-	if r.remainBytes <= 0 {
+	if r == nil || r.remainBytes <= 0 {
 		return 0, io.EOF
 	}
 	toRead := min(int64(len(p)), r.remainBytes)
@@ -35,9 +38,15 @@ func (r *ZeroReader) Read(p []byte) (n int, err error) {
 }
 
 func (r *ZeroReader) WrittenBytes() int64 {
+	if r == nil {
+		return 0
+	}
 	return r.writtenBytes
 }
 
 func (r *ZeroReader) RemainBytes() int64 {
+	if r == nil {
+		return 0
+	}
 	return r.remainBytes
 }

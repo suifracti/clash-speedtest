@@ -253,3 +253,54 @@ func TestVLESSInvalidSourceTLSRejectedWithoutSecrets(t *testing.T) {
 		}
 	}
 }
+
+func TestCProxyNilAndUnderlyingNilDefense(t *testing.T) {
+	var nilProxy *CProxy
+	c, err := nilProxy.DialContext(context.Background(), &C.Metadata{Host: "target.invalid", DstPort: 443})
+	if c != nil || err == nil || !strings.Contains(err.Error(), "proxy is nil") {
+		t.Fatalf("expected proxy is nil error, got c=%v err=%v", c, err)
+	}
+
+	uninitProxy := &CProxy{}
+	c, err = uninitProxy.DialContext(context.Background(), &C.Metadata{Host: "target.invalid", DstPort: 443})
+	if c != nil || err == nil || !strings.Contains(err.Error(), "underlying proxy is not initialized") {
+		t.Fatalf("expected underlying proxy not initialized error, got c=%v err=%v", c, err)
+	}
+}
+
+func TestSourceTLSDialerNilDefense(t *testing.T) {
+	var nilDialer *sourceTLSDialer
+	c, err := nilDialer.DialContext(context.Background(), "tcp", "127.0.0.1:443")
+	if c != nil || err == nil || !strings.Contains(err.Error(), "dialer is not initialized") {
+		t.Fatalf("expected dialer is not initialized error, got c=%v err=%v", c, err)
+	}
+
+	emptyDialer := &sourceTLSDialer{}
+	c, err = emptyDialer.DialContext(context.Background(), "tcp", "127.0.0.1:443")
+	if c != nil || err == nil || !strings.Contains(err.Error(), "dialer is not initialized") {
+		t.Fatalf("expected dialer is not initialized error on empty dialer, got c=%v err=%v", c, err)
+	}
+}
+
+func TestNormalizedPinsTrailingAndEmptyCommas(t *testing.T) {
+	pin1 := strings.Repeat("0", 64)
+	pin2 := strings.Repeat("a", 64)
+	input := fmt.Sprintf("  %s  , ,  %s ,  ", pin1, pin2)
+	pins, err := normalizedPins(input)
+	if err != nil {
+		t.Fatalf("unexpected error parsing pins with commas: %v", err)
+	}
+	if len(pins) != 2 || pins[0] != pin1 || pins[1] != pin2 {
+		t.Fatalf("expected 2 pins [%s, %s], got %v", pin1, pin2, pins)
+	}
+
+	// Only empty commas should yield empty slice without error
+	emptyPins, err := normalizedPins(" , ,   , ")
+	if err != nil {
+		t.Fatalf("unexpected error on empty tokens: %v", err)
+	}
+	if len(emptyPins) != 0 {
+		t.Fatalf("expected 0 pins, got %v", emptyPins)
+	}
+}
+

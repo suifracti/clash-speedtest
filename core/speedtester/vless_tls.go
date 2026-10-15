@@ -81,6 +81,9 @@ func normalizedPins(raw string) ([]string, error) {
 	var pins []string
 	for _, s := range strings.Split(raw, ",") {
 		s = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(s), ":", ""))
+		if s == "" {
+			continue
+		}
 		b, err := hex.DecodeString(s)
 		if err != nil || len(b) != 32 {
 			return nil, fmt.Errorf("TLS pcs must contain SHA-256 certificate hashes")
@@ -128,17 +131,24 @@ func newSourceTLSDialer(config map[string]any, d C.Dialer) (C.Dialer, error) {
 	return &sourceTLSDialer{Dialer: d, config: tc, fingerprint: fp}, nil
 }
 func (d *sourceTLSDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	if d == nil || d.Dialer == nil {
+		return nil, fmt.Errorf("dialer is not initialized")
+	}
 	c, err := d.Dialer.DialContext(ctx, network, address)
 	if err != nil {
 		return nil, err
 	}
+	tlsCfg := d.config
+	if tlsCfg == nil {
+		tlsCfg = &tls.Config{}
+	}
 	var secured net.Conn
 	if fp, ok := tlsC.GetFingerprint(d.fingerprint); ok {
-		u := tlsC.UClient(c, tlsC.UConfig(d.config.Clone()), fp)
+		u := tlsC.UClient(c, tlsC.UConfig(tlsCfg.Clone()), fp)
 		err = u.HandshakeContext(ctx)
 		secured = u
 	} else {
-		t := tls.Client(c, d.config.Clone())
+		t := tls.Client(c, tlsCfg.Clone())
 		err = t.HandshakeContext(ctx)
 		secured = t
 	}
@@ -176,11 +186,19 @@ func prepareSourceTLS(original map[string]any, d C.Dialer) (map[string]any, C.Di
 // A CProxy which has only been parsed by Mihomo cannot silently ignore the
 // source certificate policy. The physical run constructor installs it first.
 func (p *CProxy) DialContext(ctx context.Context, metadata *C.Metadata) (C.Conn, error) {
-	if p.Config["_cst_transport_condition"] != nil {
-		return nil, &PhysicalPathError{Cause: fmt.Errorf("invalid source TLS parameters")}
+	if p == nil {
+		return nil, fmt.Errorf("proxy is nil")
 	}
-	if (len(stringList(p.Config["_cst_tls_pins"])) > 0 || len(stringList(p.Config["_cst_tls_names"])) > 0) && !p.sourceTLSPrepared {
-		return nil, &PhysicalPathError{Cause: fmt.Errorf("source TLS policy not installed for this path")}
+	if p.Config != nil {
+		if p.Config["_cst_transport_condition"] != nil {
+			return nil, &PhysicalPathError{Cause: fmt.Errorf("invalid source TLS parameters")}
+		}
+		if (len(stringList(p.Config["_cst_tls_pins"])) > 0 || len(stringList(p.Config["_cst_tls_names"])) > 0) && !p.sourceTLSPrepared {
+			return nil, &PhysicalPathError{Cause: fmt.Errorf("source TLS policy not installed for this path")}
+		}
+	}
+	if p.Proxy == nil {
+		return nil, fmt.Errorf("underlying proxy is not initialized")
 	}
 	return p.Proxy.DialContext(ctx, metadata)
 }
