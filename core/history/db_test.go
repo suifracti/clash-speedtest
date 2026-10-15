@@ -1611,3 +1611,31 @@ func TestSQLite_GetMonitorSampleFacets_RejectsUnknownColumn(t *testing.T) {
 		t.Fatalf("expected error for unsupported facet column")
 	}
 }
+
+func TestParseSQLiteTime_Formats(t *testing.T) {
+	testCases := []struct {
+		input    string
+		wantYear int
+	}{
+		{"2026-10-15T17:34:05.878205Z", 2026},
+		{"2026-10-15T17:34:05Z", 2026},
+		{"2026-10-15 17:34:05.878205+08:00", 2026},
+		{"2026-10-15 17:34:05.878205", 2026},
+		{"2026-10-15 17:34:05+08:00", 2026},
+		{"2026-10-15 17:34:05", 2026},
+		{"2026-10-15 17:34:05 +0800 CST", 2026},
+		{"2026-10-15T17:34:05.878205", 2026},
+		{"2026-10-15T17:34:05", 2026},
+		{"  2026-10-15 17:34:05  ", 2026},
+	}
+	for _, tc := range testCases {
+		got, err := parseSQLiteTime(tc.input)
+		if err != nil {
+			t.Fatalf("failed to parse %q: %v", tc.input, err)
+		}
+		if got.Year() != tc.wantYear {
+			t.Fatalf("parse %q got year %d, want %d", tc.input, got.Year(), tc.wantYear)
+		}
+	}
+}
+

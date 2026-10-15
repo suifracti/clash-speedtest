@@ -2442,6 +2442,7 @@ func (d *DB) GetDerivedStats(ctx context.Context, q monitor.StatsQuery) (*monito
 }
 
 func parseSQLiteTime(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
 	formats := []string{
 		time.RFC3339Nano,
 		time.RFC3339,
@@ -2450,6 +2451,11 @@ func parseSQLiteTime(s string) (time.Time, error) {
 		"2006-01-02 15:04:05-07:00",
 		"2006-01-02 15:04:05",
 		"2006-01-02 15:04:05 -0700 MST",
+		"2006-01-02 15:04:05.999999999 -0700 MST",
+		"2006-01-02T15:04:05.999999999-07:00",
+		"2006-01-02T15:04:05.999999999",
+		"2006-01-02T15:04:05-07:00",
+		"2006-01-02T15:04:05",
 	}
 	for _, f := range formats {
 		if t, err := time.Parse(f, s); err == nil {
