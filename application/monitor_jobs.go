@@ -139,6 +139,10 @@ func (s *AppService) ListMonitorNodeOptions() ([]MonitorNodeOptionDTO, error) {
 						continue
 					}
 					scopeKey := node.NodeKey + "\x00" + node.NodeIdentityKey + "\x00" + node.ConfigRevisionKey
+					// Information aliases must not occupy a real node's selection scope.
+					if periodicNotice(MonitorNodeOptionDTO{DisplayName: node.DisplayName, CountryCode: profiles.DetectCountry(node.DisplayName)}) {
+						scopeKey += "\x00notice:" + node.DisplayName
+					}
 					if _, exists := seen[scopeKey]; exists {
 						continue
 					}
@@ -168,6 +172,10 @@ func (s *AppService) ListMonitorNodeOptions() ([]MonitorNodeOptionDTO, error) {
 					continue
 				}
 				scopeKey := node.NodeKey + "\x00" + node.NodeIdentityKey + "\x00" + node.ConfigRevisionKey
+				// Information aliases must not occupy a real node's selection scope.
+				if periodicNotice(MonitorNodeOptionDTO{DisplayName: node.DisplayName, CountryCode: profiles.DetectCountry(node.DisplayName)}) {
+					scopeKey += "\x00notice:" + node.DisplayName
+				}
 				if _, exists := seen[scopeKey]; exists {
 					continue
 				}

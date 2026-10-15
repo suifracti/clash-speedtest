@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"encoding/json"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -227,5 +228,69 @@ func TestMonitorJobSelectionResolvesCachedConfigAndKeepsPublicDTOCredentialFree(
 	}
 	if len(svc.ListMonitorJobs()) != 1 {
 		t.Fatalf("stale Workbench context created an extra job: %+v", svc.ListMonitorJobs())
+	}
+}
+
+func TestNoticeAliasesKeepRealNodeSelectableInBothProfileLayouts(t *testing.T) {
+	for _, withSubscription := range []bool{false, true} {
+		t.Run(map[bool]string{false: "legacy", true: "subscription"}[withSubscription], func(t *testing.T) {
+			root := t.TempDir()
+			paths := profiles.Paths{Dir: filepath.Join(root, "profiles")}
+			if err := paths.InitializeEmpty(); err != nil {
+				t.Fatal(err)
+			}
+			airport := &profiles.Airport{ID: "airport", Name: "Fixture"}
+			profileID := "airport"
+			if withSubscription {
+				profileID = "sub"
+				airport.Subscriptions = []*profiles.Subscription{{ID: profileID, Name: "Default"}}
+			}
+			if err := profiles.SaveStore(paths.StoreFile(), &profiles.Store{Airports: []*profiles.Airport{airport}}); err != nil {
+				t.Fatal(err)
+			}
+			prefix := "vless://11111111-1111-1111-1111-111111111111@192.0.2.1:443?type=tcp#"
+			real := "🇯🇵日本高速01|CTCU|0.5x"
+			if err := paths.WriteCache(profileID, []byte(prefix+url.PathEscape("剩余流量：10 GB")+"\n"+prefix+url.PathEscape("套餐到期：长期有效")+"\n"+prefix+url.PathEscape(real))); err != nil {
+				t.Fatal(err)
+			}
+			historyDir := filepath.Join(root, "history")
+			store, err := history.NewStore(historyDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			svc := NewAppServiceWithOptions(store, appdata.FromLegacy(paths.Dir, historyDir), nil, Options{NoAutoCredentials: true})
+			defer svc.Close()
+			options, err := svc.ListMonitorNodeOptions()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var selected *MonitorNodeOptionDTO
+			notices := 0
+			for i := range options {
+				if options[i].DisplayName == real {
+					selected = &options[i]
+				}
+				if periodicNotice(options[i]) {
+					notices++
+				}
+			}
+			if selected == nil || notices != 2 || len(options) != 3 {
+				t.Fatalf("real node or account information lost: options=%v real=%t notices=%d", func() []string {
+					var names []string
+					for _, o := range options {
+						names = append(names, o.DisplayName)
+					}
+					return names
+				}(), selected != nil, notices)
+			}
+			resolved, name, proxy, err := svc.resolveWorkbenchScopedProxy(selected.ProfileID, selected.NodeKey, selected.NodeIdentityKey, selected.ConfigRevisionKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer proxy.Close()
+			if name != real || resolved.DisplayName != real {
+				t.Fatalf("selected real scope resolved to information alias %q", name)
+			}
+		})
 	}
 }

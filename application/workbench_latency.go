@@ -408,6 +408,10 @@ func (s *AppService) resolveWorkbenchScopedProxy(profileID, nodeKey, identityKey
 			if !speedtester.EquivalentProxyConfiguration(selectedProxy, proxy) {
 				return monitor.MonitoredNode{}, "", nil, monitor.NewValidationError("同节点身份有多个 TLS/连接配置；请使用完整配置 revision，无法区分的版本需重新载入配置")
 			}
+			// Prefer the runnable label when a notice reuses this exact config.
+			if periodicNotice(MonitorNodeOptionDTO{DisplayName: selectedName, CountryCode: profiles.DetectCountry(selectedName)}) && !periodicNotice(MonitorNodeOptionDTO{DisplayName: name, CountryCode: profiles.DetectCountry(name)}) {
+				selected, selectedProxy, selectedName = node, proxy, name
+			}
 			continue
 		}
 		selected, selectedProxy, selectedName = node, proxy, name
