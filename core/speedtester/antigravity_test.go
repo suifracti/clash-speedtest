@@ -118,6 +118,16 @@ func TestParseCountryFromName(t *testing.T) {
 		{"🇯🇵日本专线01|BGP|流媒体", "JP"},
 		{"🇸🇬新加坡高速01", "SG"},
 		{"🇺🇸美国02|流媒体", "US"},
+		{"US-Network-01", "US"},
+		{"Singapore-Network-01", "SG"},
+		{"Tokyo-Network-02", "JP"},
+		{"Plus-01", ""},
+		{"Business-01", ""},
+		{"Modern-01", ""},
+		{"Trust-01", ""},
+		{"首尔专线01", "KR"},
+		{"英国专线01", "UK"},
+		{"德国专线01", "DE"},
 	}
 	for _, tc := range cases {
 		got := parseCountryFromName(tc.name)

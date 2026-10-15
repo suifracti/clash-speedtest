@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/faceair/clash-speedtest/core/auth"
 	"github.com/metacubex/mihomo/constant"
@@ -819,28 +820,83 @@ func parseCountryFlag(s string) string {
 
 func parseCountryFromName(name string) string {
 	lower := strings.ToLower(name)
-	switch {
-	case strings.Contains(lower, "台湾") || strings.Contains(lower, "taiwan") || strings.Contains(lower, "tw"):
-		return "TW"
-	case strings.Contains(lower, "香港") || strings.Contains(lower, "hong kong") || strings.Contains(lower, "hongkong") || strings.Contains(lower, "hk"):
-		return "HK"
-	case strings.Contains(lower, "澳门") || strings.Contains(lower, "macau") || strings.Contains(lower, "mo"):
-		return "MO"
-	case strings.Contains(lower, "日本") || strings.Contains(lower, "japan") || strings.Contains(lower, "jp"):
-		return "JP"
-	case strings.Contains(lower, "新加坡") || strings.Contains(lower, "singapore") || strings.Contains(lower, "sg"):
-		return "SG"
-	case strings.Contains(lower, "美国") || strings.Contains(lower, "united states") || strings.Contains(lower, "us"):
-		return "US"
-	case strings.Contains(lower, "中国") || strings.Contains(lower, "china") || strings.Contains(lower, "cn"):
-		return "CN"
-	case strings.Contains(lower, "俄罗斯") || strings.Contains(lower, "russia") || strings.Contains(lower, "ru"):
-		return "RU"
+	tokens := extractNameTokens(name)
+
+	type rule struct {
+		code  string
+		words []string
+		codes []string
 	}
+
+	rules := []rule{
+		{code: "TW", words: []string{"台湾", "台灣", "台北", "taiwan"}, codes: []string{"tw"}},
+		{code: "HK", words: []string{"香港", "广港", "滬港", "沪港", "深港", "hong kong", "hongkong"}, codes: []string{"hk"}},
+		{code: "MO", words: []string{"澳门", "澳門", "macao", "macau"}, codes: []string{"mo"}},
+		{code: "JP", words: []string{"日本", "东京", "大阪", "名古屋", "japan", "tokyo", "osaka"}, codes: []string{"jp"}},
+		{code: "SG", words: []string{"新加坡", "狮城", "singapore"}, codes: []string{"sg"}},
+		{code: "US", words: []string{"美国", "美國", "洛杉矶", "圣何塞", "硅谷", "西雅图", "芝加哥", "纽约", "达拉斯", "united states", "america", "usa"}, codes: []string{"us"}},
+		{code: "KR", words: []string{"韩国", "韓國", "首尔", "首爾", "korea", "seoul"}, codes: []string{"kr"}},
+		{code: "UK", words: []string{"英国", "英國", "伦敦", "london", "england"}, codes: []string{"uk", "gb"}},
+		{code: "DE", words: []string{"德国", "德國", "法兰克福", "germany", "frankfurt"}, codes: []string{"de"}},
+		{code: "FR", words: []string{"法国", "法國", "巴黎", "france", "paris"}, codes: []string{"fr"}},
+		{code: "NL", words: []string{"荷兰", "荷蘭", "阿姆斯特丹", "netherlands", "amsterdam"}, codes: []string{"nl"}},
+		{code: "AU", words: []string{"澳大利亚", "澳洲", "悉尼", "australia", "sydney"}, codes: []string{"au"}},
+		{code: "CA", words: []string{"加拿大", "canada", "toronto"}, codes: []string{"ca"}},
+		{code: "RU", words: []string{"俄罗斯", "俄羅斯", "俄国", "russia", "moscow"}, codes: []string{"ru"}},
+		{code: "CN", words: []string{"中国", "中國", "大陆", "大陸", "回国", "china"}, codes: []string{"cn"}},
+		{code: "TH", words: []string{"泰国", "泰國", "曼谷", "thailand", "bangkok"}, codes: []string{"th"}},
+		{code: "MY", words: []string{"马来西亚", "馬來西亞", "malaysia"}, codes: []string{"my"}},
+		{code: "VN", words: []string{"越南", "vietnam"}, codes: []string{"vn"}},
+		{code: "PH", words: []string{"菲律宾", "菲律賓", "philippines", "manila"}, codes: []string{"ph"}},
+		{code: "IN", words: []string{"印度", "india", "mumbai"}, codes: []string{"in"}},
+		{code: "TR", words: []string{"土耳其", "turkey", "istanbul"}, codes: []string{"tr"}},
+	}
+
+	// 1. Explicit country or city word matches (override flags to handle e.g. 🇨🇳台湾)
+	for _, r := range rules {
+		for _, w := range r.words {
+			if strings.Contains(lower, w) {
+				return r.code
+			}
+		}
+	}
+
+	// 2. Regional indicator emoji flag matches
 	if flag := parseCountryFlag(name); flag != "" {
 		return flag
 	}
+
+	// 3. Isolated token matches (exact whole words/tokens, avoids "network" matching "tw" or "plus" matching "us")
+	for _, r := range rules {
+		for _, c := range r.codes {
+			if _, ok := tokens[c]; ok {
+				return r.code
+			}
+		}
+	}
+
 	return ""
+}
+
+func extractNameTokens(name string) map[string]struct{} {
+	tokens := make(map[string]struct{})
+	var b strings.Builder
+	flush := func() {
+		if b.Len() == 0 {
+			return
+		}
+		tokens[strings.ToLower(b.String())] = struct{}{}
+		b.Reset()
+	}
+	for _, r := range name {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+			continue
+		}
+		flush()
+	}
+	flush()
+	return tokens
 }
 
 func lookupExitCountry(client *http.Client) (country, countryCode string) {
