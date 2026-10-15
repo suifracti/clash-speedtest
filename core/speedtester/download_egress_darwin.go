@@ -17,8 +17,15 @@ import (
 
 	"github.com/metacubex/mihomo/adapter"
 	"github.com/metacubex/mihomo/component/dialer"
+	"github.com/metacubex/mihomo/component/resolver"
 	"golang.org/x/sys/unix"
 )
+
+// HY2 resolves its frozen numeric server before invoking the private API
+// dialer. Enable the kernel capability once, before any application requests;
+// never toggle this process-wide flag while measurements are running. Physical
+// runs still resolve/freeze their own address and bind every socket explicitly.
+func init() { resolver.DisableIPv6 = false }
 
 type PhysicalDownloadEgress struct {
 	iface            string
@@ -27,6 +34,7 @@ type PhysicalDownloadEgress struct {
 	dnsMode          string
 	host             string
 	nodeIP           netip.Addr
+	nodeIPVersion    string
 	nodeIPs          []netip.Addr
 	multiAddressTCP  bool
 	dnsDial          func(context.Context, string) (net.Conn, error)
@@ -178,11 +186,16 @@ func (e *PhysicalDownloadEgress) resolve(ctx context.Context, host string) (neti
 		return netip.Addr{}, &PhysicalPathError{Cause: fmt.Errorf("dial destination differs from selected frozen node server")}
 	}
 	if ip, err := netip.ParseAddr(host); err == nil {
-		if !ip.Is4() || !usablePhysicalAddress(ip) {
+		ip = ip.Unmap()
+		if !usablePhysicalAddress(ip) {
 			e.setFailure("node_address_unusable_or_unverified_family")
-			return netip.Addr{}, fmt.Errorf("proxy server is local, virtual, fake-ip or outside the verified IPv4 path")
+			return netip.Addr{}, fmt.Errorf("proxy server is local, virtual or fake-ip")
 		}
-		e.setResolution("ipv4", "literal_ip")
+		family := "ipv4"
+		if ip.Is6() {
+			family = "ipv6"
+		}
+		e.setResolution(family, "literal_ip")
 		return ip, nil
 	}
 	if err := ctx.Err(); err != nil {
@@ -238,14 +251,15 @@ func (e *PhysicalDownloadEgress) discoverPhysicalPath(ctx context.Context, origi
 	e.iface, e.index = ifaceName, iface.Index
 	host, _ := original.Config["server"].(string)
 	e.host = host
+	e.nodeIPVersion, _ = original.Config["ip-version"].(string)
 	if host == "" {
 		e.setFailure("proxy_server_unavailable")
 		return "", fmt.Errorf("proxy server address unavailable")
 	}
 	literal, literalErr := netip.ParseAddr(host)
-	if literalErr == nil && (!literal.Is4() || !usablePhysicalAddress(literal)) {
+	if literalErr == nil && !usablePhysicalAddress(literal.Unmap()) {
 		e.setFailure("node_address_unusable_or_unverified_family")
-		return "", fmt.Errorf("proxy server is local, virtual, fake-ip or outside the verified IPv4 path")
+		return "", fmt.Errorf("proxy server is local, virtual or fake-ip")
 	}
 	dns := ""
 	if literalErr == nil {
@@ -475,8 +489,19 @@ func (e *PhysicalDownloadEgress) DialContext(ctx context.Context, network, addre
 }
 func (e *PhysicalDownloadEgress) ListenPacket(ctx context.Context, network, address string, remote netip.AddrPort) (net.PacketConn, error) {
 	if remote.IsValid() && !remote.Addr().Is4() {
-		e.setFailure("unverified_ipv6_socket_family")
-		return nil, &PhysicalPathError{Cause: fmt.Errorf("IPv6 packet sockets are outside the verified Darwin AF_INET path")}
+		if network != "udp" && network != "udp6" {
+			e.setFailure("unverified_ipv6_socket_family")
+			return nil, &PhysicalPathError{Cause: fmt.Errorf("IPv6 node requires an IPv6 packet socket")}
+		}
+		host, port, err := net.SplitHostPort(address)
+		if err != nil || (host != "" && host != "::") {
+			e.setFailure("unverified_ipv6_socket_family")
+			return nil, &PhysicalPathError{Cause: fmt.Errorf("IPv6 node requires an IPv6 listener address")}
+		}
+		// Keep the wildcard host empty: Mihomo's Darwin bind control treats
+		// an explicit unspecified IP as a non-unicast destination and skips
+		// binding. udp6 selects AF_INET6 without triggering that shortcut.
+		network, address = "udp6", ":"+port
 	}
 	if err := e.reserveDialBudget(ctx, true); err != nil {
 		e.setFailure(physicalFailureReason(ctx, err))
@@ -527,12 +552,32 @@ func clonePhysicalProxyConfig(original map[string]any, ip netip.Addr, iface stri
 	return config, nil
 }
 
-// DNS and config cloning retain IPv6 identity. Actual Darwin measurements
-// currently verify AF_INET sockets, so reject that path before opening a proxy.
+func usablePhysicalIPv6(addrs []net.Addr) bool {
+	for _, addr := range addrs {
+		prefix, err := netip.ParsePrefix(addr.String())
+		if err == nil && prefix.Addr().Is6() && !prefix.Addr().Is4In6() && usablePhysicalAddress(prefix.Addr()) {
+			return true
+		}
+	}
+	return false
+}
+
 func (e *PhysicalDownloadEgress) physicalNodeConfig(original map[string]any, ip netip.Addr, iface string) (map[string]any, error) {
-	if !ip.Is4() {
-		e.setFailure("unverified_ipv6_node_family")
-		return nil, &PhysicalPathError{Cause: fmt.Errorf("IPv6 node address is outside the current physical-interface path; measurement not executed")}
+	version, _ := original["ip-version"].(string)
+	if (version == "ipv4" && ip.Is6()) || (version == "ipv6" && ip.Is4()) {
+		e.setFailure("node_address_family_mismatch")
+		return nil, &PhysicalPathError{Cause: fmt.Errorf("resolved node address conflicts with the configured IP family")}
+	}
+	if ip.Is6() {
+		physical, err := net.InterfaceByName(iface)
+		var addrs []net.Addr
+		if err == nil {
+			addrs, err = physical.Addrs()
+		}
+		if err != nil || !usablePhysicalIPv6(addrs) {
+			e.setFailure("physical_ipv6_interface_unavailable")
+			return nil, &PhysicalPathError{Cause: fmt.Errorf("selected physical interface has no usable IPv6 address")}
+		}
 	}
 	config, err := clonePhysicalProxyConfig(original, ip, iface)
 	if err != nil {

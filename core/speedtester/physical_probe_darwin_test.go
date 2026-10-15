@@ -237,7 +237,7 @@ func TestPhysicalProbeExhaustedTCPAndUDPBudgetIsALocalConstraint(t *testing.T) {
 	}
 }
 
-func TestPhysicalIPv6PreparationDoesNotBecomeThirtySixNodeFailures(t *testing.T) {
+func TestPhysicalIPv6WithoutUsableInterfaceDoesNotBecomeThirtySixNodeFailures(t *testing.T) {
 	p := &physicalFixtureProxy{dial: func(context.Context) error { return errors.New("must not dial an unsupported family") }}
 	config := map[string]any{"type": "hysteria2", "server": "node.example", "port": 443, "sni": "tls.example"}
 	st := &SpeedTester{config: &Config{PingCount: 6, Timeout: time.Second, LatencyTargetURL: "multi://latency-v1"}}

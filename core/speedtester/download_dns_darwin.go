@@ -174,7 +174,13 @@ func (e *PhysicalDownloadEgress) lookupPhysicalDNS(ctx context.Context, host str
 }
 
 func (e *PhysicalDownloadEgress) resolvePhysicalDNS(ctx context.Context, host string) (netip.Addr, error) {
-	for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+	qtypes := []uint16{dns.TypeA, dns.TypeAAAA}
+	if e.nodeIPVersion == "ipv4" {
+		qtypes = []uint16{dns.TypeA}
+	} else if e.nodeIPVersion == "ipv6" {
+		qtypes = []uint16{dns.TypeAAAA}
+	}
+	for i, qtype := range qtypes {
 		label := strings.ToLower(dns.TypeToString[qtype])
 		if err := ctx.Err(); err != nil {
 			e.setFailure(label + "_" + physicalFailureReason(ctx, err))
@@ -230,9 +236,9 @@ func (e *PhysicalDownloadEgress) resolvePhysicalDNS(ctx context.Context, host st
 			e.setFailure(label + "_records_unusable")
 			return netip.Addr{}, fmt.Errorf("physical DNS %s records unusable", label)
 		}
-		if qtype == dns.TypeAAAA {
-			e.setFailure("aaaa_nodata")
-			return netip.Addr{}, fmt.Errorf("physical DNS AAAA NOERROR/NODATA")
+		if i == len(qtypes)-1 {
+			e.setFailure(label + "_nodata")
+			return netip.Addr{}, fmt.Errorf("physical DNS %s NOERROR/NODATA", strings.ToUpper(label))
 		}
 	}
 	return netip.Addr{}, fmt.Errorf("physical DNS unavailable")

@@ -119,9 +119,9 @@ func TestPhysicalIPv4DNSFailureReasonIsSpecific(t *testing.T) {
 	}
 }
 
-func TestPhysicalDownloadDoesNotBindUnverifiedIPv6PacketSocket(t *testing.T) {
+func TestPhysicalDownloadDoesNotPutIPv6PeerOnIPv4PacketSocket(t *testing.T) {
 	e := &PhysicalDownloadEgress{udpDials: newPhysicalRequestBudget(physicalDownloadSocketRequestLimit)}
-	_, err := e.ListenPacket(context.Background(), "udp", ":0", netip.MustParseAddrPort("[2001:db8::9]:443"))
+	_, err := e.ListenPacket(context.Background(), "udp4", ":0", netip.MustParseAddrPort("[2001:db8::9]:443"))
 	if err == nil || e.udpDials.count() != 0 || e.Snapshot().FailureReason != "unverified_ipv6_socket_family" {
 		t.Fatalf("B3 must not attempt an unverified IPv6 socket: err=%v path=%+v", err, e.Snapshot())
 	}
