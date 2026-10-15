@@ -277,3 +277,11 @@ func publicServiceQueryForTest(attempt *history.PublicServiceAttempt) WorkbenchP
 		ConfigRevisionKey: attempt.ConfigRevisionKey, ServiceID: attempt.ServiceID,
 	}
 }
+
+func TestValidateWorkbenchPublicServiceRequestNilDefense(t *testing.T) {
+	err := validateWorkbenchPublicServiceRequest(nil, "p", "n", "i", "r", "s", 10)
+	if err == nil {
+		t.Fatal("expected error for nil prior attempt")
+	}
+}
+

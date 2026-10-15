@@ -44,7 +44,7 @@ func (s *AppService) StartWorkbenchPublicServiceTest(ctx context.Context, req Wo
 func (s *AppService) startWorkbenchPublicServiceTest(ctx context.Context, req WorkbenchPublicServiceTestRequest, periodicLimit int) (returnedAttempt *history.PublicServiceAttempt, startErr error) {
 	received := time.Now()
 	defer func() {
-		if s.historyStore != nil && startErr == nil && returnedAttempt != nil {
+		if s.historyStore != nil && s.historyStore.DB() != nil && startErr == nil && returnedAttempt != nil {
 			_ = s.historyStore.DB().MarkMeasurementNotExecuted(context.Background(), req.RequestID, "")
 			return
 		}
@@ -52,8 +52,10 @@ func (s *AppService) startWorkbenchPublicServiceTest(ctx context.Context, req Wo
 			return
 		}
 		if _, err := s.historyStore.GetPublicServiceAttemptByRequestID(context.Background(), req.RequestID); errors.Is(err, history.ErrPublicServiceAttemptNotFound) {
-			_ = s.historyStore.DB().MarkMeasurementNotExecuted(context.Background(), req.RequestID, startErr.Error())
-			_ = s.historyStore.DB().FinishAutomaticMeasurementRound(context.Background(), req.RequestID)
+			if s.historyStore.DB() != nil {
+				_ = s.historyStore.DB().MarkMeasurementNotExecuted(context.Background(), req.RequestID, startErr.Error())
+				_ = s.historyStore.DB().FinishAutomaticMeasurementRound(context.Background(), req.RequestID)
+			}
 		}
 	}()
 	if err := ctx.Err(); err != nil {
@@ -258,7 +260,9 @@ func (s *AppService) resolveWorkbenchPublicServiceNode(profileID, nodeKey string
 func (s *AppService) executeWorkbenchPublicServiceTest(ctx context.Context, runtime *publicServiceRuntime) {
 	defer s.publicServiceWG.Done()
 	defer func() {
-		_ = s.historyStore.DB().FinishAutomaticMeasurementRound(context.Background(), runtime.requestID)
+		if s.historyStore != nil && s.historyStore.DB() != nil {
+			_ = s.historyStore.DB().FinishAutomaticMeasurementRound(context.Background(), runtime.requestID)
+		}
 	}()
 	finishNetwork := finishProbeNetwork(runtime.networkDone)
 	defer finishNetwork()
@@ -494,6 +498,9 @@ func (s *AppService) beginPublicServiceStorageTransition() error {
 }
 
 func validateWorkbenchPublicServiceRequest(prior *history.PublicServiceAttempt, profileID, nodeKey, identityKey, revisionKey, serviceID string, timeoutSeconds int64) error {
+	if prior == nil {
+		return monitor.NewValidationError("prior public service attempt is nil")
+	}
 	if prior.ProfileID != profileID || prior.NodeKey != nodeKey || prior.NodeIdentityKey != identityKey ||
 		prior.ConfigRevisionKey != revisionKey || prior.ServiceID != serviceID || prior.Rule.TimeoutSeconds != timeoutSeconds {
 		return monitor.NewValidationError("request_id 已用于另一组检测参数")

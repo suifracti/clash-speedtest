@@ -148,4 +148,12 @@ func TestIPifyMappedAddress(t *testing.T) {
 	}
 }
 
+func TestRuleForWhitespaceResilience(t *testing.T) {
+	rule, ok := RuleFor("  cloudflare_204  ")
+	if !ok || rule.ServiceID != "cloudflare_204" {
+		t.Fatalf("expected to find cloudflare_204 with surrounding whitespace, got: %+v, ok=%v", rule, ok)
+	}
+}
+
+
 

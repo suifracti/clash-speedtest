@@ -300,6 +300,7 @@ func Catalog() []Rule {
 }
 
 func RuleFor(serviceID string) (Rule, bool) {
+	serviceID = strings.TrimSpace(serviceID)
 	for _, rule := range catalog {
 		if rule.ServiceID == serviceID {
 			return rule, true
