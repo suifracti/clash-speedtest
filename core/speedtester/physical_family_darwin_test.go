@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -206,9 +207,23 @@ func TestPhysicalAutoPreparationRespectsScopeAndFamily(t *testing.T) {
 		})
 	}
 	for _, config := range []map[string]any{
+		{"type": "hysteria2", "server": "node.invalid"},
+		{"type": "vless", "server": "node.invalid"},
+		{"type": "vmess", "server": "node.invalid"},
+		{"type": "trojan", "server": "node.invalid"},
+		{"type": "ss", "server": "node.invalid"},
+		{"type": "tuic", "server": "node.invalid"},
+		{"type": "hysteria", "server": "node.invalid"},
+	} {
+		if !autoFamilyConfig(config) {
+			t.Fatalf("supported protocol rejected: %v", config)
+		}
+	}
+	for _, config := range []map[string]any{
 		{"type": "hysteria2", "server": "203.0.113.9"},
 		{"type": "hysteria2", "server": "2001:db8::9"},
-		{"type": "vless", "server": "node.invalid"},
+		{"type": "wireguard", "server": "node.invalid"},
+		{"type": "direct", "server": "node.invalid"},
 	} {
 		if autoFamilyConfig(config) {
 			t.Fatal("literal/protocol outside current fallback scope")
@@ -328,3 +343,56 @@ func TestPhysicalFamilyKeepsSharedSocketBudgetAndCountsItOnce(t *testing.T) {
 		t.Fatalf("fallback expanded original socket budget: %v", err)
 	}
 }
+
+func TestPhysicalFamilyFallbackConnectionReset(t *testing.T) {
+	p4, p6 := familyPath("ipv4"), familyPath("ipv6")
+	ipv4 := &physicalFixtureProxy{connect: func(context.Context, *C.Metadata) (C.Conn, error) {
+		return nil, fmt.Errorf("node TLS policy v1: %w", syscall.ECONNRESET)
+	}}
+	ipv6 := &physicalFixtureProxy{connect: func(context.Context, *C.Metadata) (C.Conn, error) {
+		p6.mu.Lock()
+		p6.tcp++
+		p6.mu.Unlock()
+		conn, server := familyMemoryStream()
+		server.Close()
+		return conn, nil
+	}}
+	wrapped := wrapPhysicalFamilies(&CProxy{Proxy: ipv4, Config: map[string]any{"type": "vless", "server": "fixture.invalid"}}, p4, &CProxy{Proxy: ipv6}, p6, time.Second)
+	defer wrapped.Close()
+	conn, err := wrapped.DialContext(context.Background(), &C.Metadata{Host: "fixture.invalid"})
+	if err != nil {
+		t.Fatalf("expected successful fallback on connection reset: %v", err)
+	}
+	conn.Close()
+	evidence := p4.Snapshot()
+	if evidence.AddressFallback != "used_ipv6" || len(evidence.FamilyAttempts) != 2 || evidence.FamilyAttempts[0].Outcome != "connection_failed" || evidence.FamilyAttempts[1].Outcome != "connected" {
+		t.Fatalf("unexpected evidence: %+v", evidence)
+	}
+}
+
+func TestPhysicalFamilyFallbackVLESSConnectionRefused(t *testing.T) {
+	p4, p6 := familyPath("ipv4"), familyPath("ipv6")
+	ipv4 := &physicalFixtureProxy{connect: func(context.Context, *C.Metadata) (C.Conn, error) {
+		return nil, fmt.Errorf("dial tcp4: %w", syscall.ECONNREFUSED)
+	}}
+	ipv6 := &physicalFixtureProxy{connect: func(context.Context, *C.Metadata) (C.Conn, error) {
+		p6.mu.Lock()
+		p6.tcp++
+		p6.mu.Unlock()
+		conn, server := familyMemoryStream()
+		server.Close()
+		return conn, nil
+	}}
+	wrapped := wrapPhysicalFamilies(&CProxy{Proxy: ipv4, Config: map[string]any{"type": "vless", "server": "fixture.invalid"}}, p4, &CProxy{Proxy: ipv6}, p6, time.Second)
+	defer wrapped.Close()
+	conn, err := wrapped.DialContext(context.Background(), &C.Metadata{Host: "fixture.invalid"})
+	if err != nil {
+		t.Fatalf("expected successful fallback on connection refused: %v", err)
+	}
+	conn.Close()
+	evidence := p4.Snapshot()
+	if evidence.AddressFallback != "used_ipv6" || len(evidence.FamilyAttempts) != 2 || evidence.FamilyAttempts[0].Outcome != "connection_failed" || evidence.FamilyAttempts[1].Outcome != "connected" {
+		t.Fatalf("unexpected evidence: %+v", evidence)
+	}
+}
+

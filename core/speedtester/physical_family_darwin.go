@@ -5,8 +5,10 @@ package speedtester
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/netip"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -48,7 +50,19 @@ func familyConnectFailed(ctx context.Context, err error) bool {
 		return false
 	}
 	var network net.Error
-	return errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &network) && network.Timeout()) || errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EHOSTUNREACH) || errors.Is(err, syscall.ENETUNREACH)
+	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &network) && network.Timeout()) ||
+		errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.EHOSTUNREACH) ||
+		errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "broken pipe") ||
+		strings.Contains(msg, "i/o timeout") ||
+		strings.Contains(msg, "unexpected eof")
 }
 
 func (p *physicalFamilyProxy) attempt(ctx context.Context, proxy *CProxy, family string, metadata *C.Metadata) (C.Conn, error) {
@@ -199,11 +213,20 @@ func (p *physicalFamilyProxy) snapshot() DownloadNetworkPath {
 	return result
 }
 
+func autoFamilySupported(kind string) bool {
+	switch kind {
+	case "hysteria2", "hysteria", "tuic", "vless", "vmess", "trojan", "ss":
+		return true
+	default:
+		return false
+	}
+}
+
 func autoFamilyConfig(config map[string]any) bool {
 	kind, _ := config["type"].(string)
 	host, _ := config["server"].(string)
 	version, _ := config["ip-version"].(string)
-	if kind != "hysteria2" || host == "" || (version != "" && version != "dual" && version != "ipv4-prefer") {
+	if !autoFamilySupported(kind) || host == "" || (version != "" && version != "dual" && version != "ipv4-prefer") {
 		return false
 	}
 	_, err := netip.ParseAddr(host)
