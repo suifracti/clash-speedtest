@@ -21,6 +21,9 @@ func NewWailsEventEmitter() *WailsEventEmitter {
 
 // SetContext sets the active Wails application context.
 func (e *WailsEventEmitter) SetContext(ctx context.Context) {
+	if e == nil {
+		return
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.ctx = ctx
@@ -28,6 +31,9 @@ func (e *WailsEventEmitter) SetContext(ctx context.Context) {
 
 // Emit pushes the event to the frontend via Wails event bus.
 func (e *WailsEventEmitter) Emit(event application.Event) {
+	if e == nil {
+		return
+	}
 	e.mu.RLock()
 	ctx := e.ctx
 	e.mu.RUnlock()

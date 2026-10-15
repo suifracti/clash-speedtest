@@ -14,7 +14,7 @@ import (
 // SetWindowTheme keeps Windows decorations and the WebView's loading background
 // aligned with the existing frontend appearance preference.
 func (a *App) SetWindowTheme(theme string) error {
-	if a.ctx == nil {
+	if a == nil || a.ctx == nil {
 		return fmt.Errorf("桌面窗口尚未就绪")
 	}
 	switch theme {
@@ -33,7 +33,7 @@ func (a *App) SetWindowTheme(theme string) error {
 // A cancelled native dialog returns an empty path; the frontend keeps its
 // current source and does not begin an import or claim an export succeeded.
 func (a *App) SelectProfileSourceDirectory() (string, error) {
-	if a.ctx == nil {
+	if a == nil || a.ctx == nil {
 		return "", fmt.Errorf("桌面窗口尚未就绪")
 	}
 	return wailsruntime.OpenDirectoryDialog(a.ctx, wailsruntime.OpenDialogOptions{
@@ -42,7 +42,7 @@ func (a *App) SelectProfileSourceDirectory() (string, error) {
 }
 
 func (a *App) SaveTextFile(contents, filename string) (bool, error) {
-	if a.ctx == nil {
+	if a == nil || a.ctx == nil {
 		return false, fmt.Errorf("桌面窗口尚未就绪")
 	}
 	filename = filepath.Base(filename)
@@ -70,7 +70,7 @@ func (a *App) SaveTextFile(contents, filename string) (bool, error) {
 }
 
 func (a *App) ExportDataBackup() (bool, error) {
-	if a.ctx == nil {
+	if a == nil || a.app == nil || a.ctx == nil {
 		return false, fmt.Errorf("桌面窗口尚未就绪")
 	}
 	path, err := wailsruntime.SaveFileDialog(a.ctx, wailsruntime.SaveDialogOptions{
