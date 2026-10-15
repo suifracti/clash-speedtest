@@ -198,6 +198,7 @@ func enrichHysteria2Ports(proxies []map[string]any, body []byte) {
 	}
 	decoded := string(convert.DecodeBase64(bytes.TrimSpace(body)))
 	decoded = strings.ReplaceAll(decoded, "\r\n", "\n")
+	used := make([]bool, len(proxies))
 	for _, line := range strings.Split(decoded, "\n") {
 		line = strings.TrimSpace(line)
 		u, err := url.Parse(line)
@@ -208,21 +209,27 @@ func enrichHysteria2Ports(proxies []map[string]any, body []byte) {
 		if scheme != "hysteria2" && scheme != "hy2" {
 			continue
 		}
+		// Use the same conversion defaults (including port 443) and compare
+		// every connection/TLS field; names and endpoints alone are not identity.
+		converted, err := convert.ConvertsV2Ray([]byte(line))
+		if err != nil || len(converted) != 1 {
+			continue
+		}
 		mport := u.Query().Get("mport")
 		if mport == "" {
 			mport = u.Query().Get("ports")
 		}
-		if mport == "" {
-			continue
-		}
-		host, port := u.Hostname(), u.Port()
-		for _, proxy := range proxies {
-			if fmt.Sprint(proxy["type"]) != "hysteria2" {
+		for i, proxy := range proxies {
+			if used[i] || !EquivalentProxyConfiguration(&CProxy{Config: proxy}, &CProxy{Config: converted[0]}) {
 				continue
 			}
-			if fmt.Sprint(proxy["server"]) == host && fmt.Sprint(proxy["port"]) == port {
+			// Conversion preserves source order. Consume even a no-hopping
+			// entry so identical configurations keep their own source range.
+			used[i] = true
+			if mport != "" {
 				proxy["ports"] = mport
 			}
+			break
 		}
 	}
 }
