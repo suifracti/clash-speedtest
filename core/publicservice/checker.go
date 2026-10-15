@@ -491,11 +491,12 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 		if ctx.Err() == context.Canceled || err == context.Canceled {
 			return finish(Result{Outcome: "cancelled", FailurePhase: "cancelled", ErrorMessage: "检测已取消"}, startedAt)
 		}
-		if ctx.Err() == context.DeadlineExceeded || err == context.DeadlineExceeded {
-			return finish(Result{Outcome: "timed_out", FailurePhase: "timeout", ErrorMessage: "请求超过设定超时"}, startedAt)
+		if ctx.Err() == context.DeadlineExceeded {
+			return finish(Result{Outcome: "timed_out", FailurePhase: "timeout", ErrorMessage: "请求超过设定超时", Details: map[string]string{"timeout_origin": "checker_deadline"}}, startedAt)
 		}
-		if networkErr, ok := err.(net.Error); ok && networkErr.Timeout() {
-			return finish(Result{Outcome: "timed_out", FailurePhase: "timeout", ErrorMessage: "请求超过设定超时"}, startedAt)
+		var networkErr net.Error
+		if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &networkErr) && networkErr.Timeout()) {
+			return finish(Result{Outcome: "timed_out", FailurePhase: "timeout", ErrorMessage: "网络连接或响应超时；检查总时限尚未到达，服务结论未确认", Details: map[string]string{"timeout_origin": "transport"}}, startedAt)
 		}
 		return finish(Result{Outcome: "transport_error", FailurePhase: "transport", ErrorMessage: "节点代理或 HTTP 传输失败；具体阶段未知"}, startedAt)
 	}
@@ -604,6 +605,14 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 			result.Outcome = "timed_out"
 			result.FailurePhase = "timeout"
 			result.ErrorMessage = "请求超过设定超时"
+			if result.Details == nil {
+				result.Details = map[string]string{}
+			}
+			result.Details["timeout_origin"] = "checker_deadline"
+			if ctx.Err() != context.DeadlineExceeded {
+				result.Details["timeout_origin"] = "transport"
+				result.ErrorMessage = "读取响应超时；检查总时限尚未到达，服务结论未确认"
+			}
 		default:
 			result.Outcome = "transport_error"
 			result.FailurePhase = "response_read"

@@ -344,3 +344,58 @@ func TestCheckerCapsBodyReadsAndDistinguishesTimeoutFromCancellation(t *testing.
 		t.Fatalf("body network timeout result = %+v", result)
 	}
 }
+
+func TestCheckerDistinguishesTransportTimeoutFromCheckDeadline(t *testing.T) {
+	cloudflare, _ := RuleFor("cloudflare_204")
+	github, _ := RuleFor("github_api_root")
+	for _, tt := range []struct {
+		name string
+		err  error
+	}{
+		{"network timeout before checker deadline", networkTimeoutError{}},
+		{"wrapped inner deadline", fmt.Errorf("inner handshake: %w", context.DeadlineExceeded)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			checker := Checker{ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+				calls++
+				if req.Context().Err() != nil {
+					t.Fatal("fixture checker already expired")
+				}
+				return nil, tt.err
+			})}
+			result := checker.Check(context.Background(), monitor.MonitoredNode{}, cloudflare, 15*time.Second)
+			if result.Outcome != "timed_out" || result.FailurePhase != "timeout" || result.Details["timeout_origin"] != "transport" || result.ErrorMessage == "请求超过设定超时" || calls != 1 || result.Details["conclusion"] != "unconfirmed" {
+				t.Fatalf("inner timeout incorrectly attributed to checker or node verdict: calls=%d result=%+v", calls, result)
+			}
+		})
+	}
+	t.Run("body network timeout", func(t *testing.T) {
+		checker := Checker{ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: timeoutBody{}, Request: req}, nil
+		})}
+		result := checker.Check(context.Background(), monitor.MonitoredNode{}, github, 15*time.Second)
+		if result.Outcome != "timed_out" || result.Details["timeout_origin"] != "transport" || result.ErrorMessage == "请求超过设定超时" || result.HTTPStatus == nil || *result.HTTPStatus != 200 || result.Details["conclusion"] != "unconfirmed" {
+			t.Fatalf("body timeout incorrectly classified: %+v", result)
+		}
+	})
+	for _, body := range []bool{false, true} {
+		t.Run(fmt.Sprintf("actual checker deadline body=%t", body), func(t *testing.T) {
+			checker := Checker{ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+				if body {
+					return &http.Response{StatusCode: 200, Header: make(http.Header), Body: &contextBody{ctx: req.Context(), started: make(chan struct{})}, Request: req}, nil
+				}
+				<-req.Context().Done()
+				return nil, req.Context().Err()
+			})}
+			rule := cloudflare
+			if body {
+				rule = github
+			}
+			result := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, 15*time.Millisecond)
+			if result.Outcome != "timed_out" || result.Details["timeout_origin"] != "checker_deadline" || result.ErrorMessage != "请求超过设定超时" {
+				t.Fatalf("actual checker deadline lost: %+v", result)
+			}
+		})
+	}
+}
