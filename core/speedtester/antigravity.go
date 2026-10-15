@@ -178,12 +178,20 @@ func firstLine(text string) string {
 }
 
 func (st *SpeedTester) testAntigravity(proxy constant.Proxy) (status, country, countryCode, detail string, ipInfo *IPInfo, stab *StabilityInfo) {
+	if st == nil {
+		return AntigravityUnknown, "", "", "SpeedTester is nil", nil, nil
+	}
+	if proxy == nil {
+		return AntigravityUnknown, "", "", "Proxy is nil", nil, nil
+	}
 	timeout := st.config.Timeout
 	if timeout < 10*time.Second {
 		timeout = 10 * time.Second
 	}
 	client := st.createClient(proxy, timeout)
-	defer client.CloseIdleConnections()
+	if client != nil {
+		defer client.CloseIdleConnections()
+	}
 
 	// 1. Probe IP attributes & purity (ping0.cc / ip-api)
 	ipInfo = probeIPAttributes(client)
@@ -333,12 +341,12 @@ func probeAntigravityStability(client *http.Client, token, currentCountry, curre
 
 	// Calculate TTFB latency metrics
 	if len(validTTFBs) > 0 {
-		var minTTFB int64 = 999999
-		var maxTTFB int64 = 0
-		var sumTTFB int64 = 0
-		for _, t := range validTTFBs {
+		var minTTFB int64
+		var maxTTFB int64
+		var sumTTFB int64
+		for i, t := range validTTFBs {
 			sumTTFB += t
-			if t < minTTFB {
+			if i == 0 || t < minTTFB {
 				minTTFB = t
 			}
 			if t > maxTTFB {
@@ -432,6 +440,9 @@ func probeAntigravityStability(client *http.Client, token, currentCountry, curre
 }
 
 func probeIPAttributes(client *http.Client) *IPInfo {
+	if client == nil {
+		return nil
+	}
 	var wg sync.WaitGroup
 	var ping0Res *Ping0Info
 	var ippureRes *IPPureInfo
@@ -631,6 +642,9 @@ func probeIPAttributes(client *http.Client) *IPInfo {
 }
 
 func probeIPAttributesFallback(client *http.Client) *IPInfo {
+	if client == nil {
+		return nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://ip-api.com/json/?fields=status,country,countryCode,city,isp,org,as,query,hosting", nil)
@@ -691,6 +705,9 @@ func probeIPAttributesFallback(client *http.Client) *IPInfo {
 }
 
 func lookupExitIPQuick(client *http.Client) string {
+	if client == nil {
+		return ""
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
 	defer cancel()
 
@@ -722,6 +739,9 @@ func lookupExitIPQuick(client *http.Client) string {
 // fetchGoogleRegion queries Google's authoritative internal geofence endpoint (fetchUserInfo).
 // It returns Google's internal 2-letter ISO region code for the exit IP (e.g. "CN", "HK", "SG", "US").
 func fetchGoogleRegion(client *http.Client, token string) string {
+	if client == nil {
+		return ""
+	}
 	req, err := http.NewRequest(http.MethodPost, antigravityUserInfoURL, bytes.NewBufferString("{}"))
 	if err != nil {
 		return ""
@@ -782,6 +802,9 @@ func probeAntigravity(client *http.Client, token string) (status, googleRegion, 
 }
 
 func probeAntigravityURL(client *http.Client, endpoint, accept, token, googleRegion string) (status, detail string, reached bool, ttfbMs int64) {
+	if client == nil {
+		return AntigravityUnreachable, "HTTP client is nil", false, 0
+	}
 	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewBufferString(antigravityProbeBody))
 	if err != nil {
 		return AntigravityUnknown, err.Error(), true, 0
@@ -901,6 +924,9 @@ func extractNameTokens(name string) map[string]struct{} {
 }
 
 func lookupExitCountry(client *http.Client) (country, countryCode string) {
+	if client == nil {
+		return "", ""
+	}
 	// 1. Primary provider: ip-api.com
 	country, countryCode = lookupExitCountryIPAPI(client)
 	if countryCode != "" {
@@ -918,6 +944,9 @@ func lookupExitCountry(client *http.Client) (country, countryCode string) {
 }
 
 func lookupExitCountryIPAPI(client *http.Client) (country, countryCode string) {
+	if client == nil {
+		return "", ""
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
 
@@ -952,6 +981,9 @@ func lookupExitCountryIPAPI(client *http.Client) (country, countryCode string) {
 }
 
 func lookupExitCountryCloudflare(client *http.Client) string {
+	if client == nil {
+		return ""
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
@@ -981,6 +1013,9 @@ func lookupExitCountryCloudflare(client *http.Client) string {
 }
 
 func lookupExitCountryIPSB(client *http.Client) (country, countryCode string) {
+	if client == nil {
+		return "", ""
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 

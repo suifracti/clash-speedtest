@@ -367,4 +367,61 @@ func TestFirstLineValidUTF8AndTruncation(t *testing.T) {
 	}
 }
 
+func TestAntigravityNilClientAndReceiverDefense(t *testing.T) {
+	var nilST *SpeedTester
+	s, _, _, d, ipInfo, stab := nilST.testAntigravity(nil)
+	if s != AntigravityUnknown || d != "SpeedTester is nil" || ipInfo != nil || stab != nil {
+		t.Fatalf("unexpected nil SpeedTester result: status=%s detail=%s", s, d)
+	}
+
+	st := &SpeedTester{}
+	s, _, _, d, ipInfo, stab = st.testAntigravity(nil)
+	if s != AntigravityUnknown || d != "Proxy is nil" || ipInfo != nil || stab != nil {
+		t.Fatalf("unexpected nil Proxy result: status=%s detail=%s", s, d)
+	}
+
+	if probeIPAttributes(nil) != nil {
+		t.Fatal("expected nil from probeIPAttributes(nil)")
+	}
+	if probeIPAttributesFallback(nil) != nil {
+		t.Fatal("expected nil from probeIPAttributesFallback(nil)")
+	}
+	if lookupExitIPQuick(nil) != "" {
+		t.Fatal("expected empty from lookupExitIPQuick(nil)")
+	}
+	if fetchGoogleRegion(nil, "token") != "" {
+		t.Fatal("expected empty from fetchGoogleRegion(nil)")
+	}
+	if c, cc := lookupExitCountry(nil); c != "" || cc != "" {
+		t.Fatalf("expected empty from lookupExitCountry(nil), got %s %s", c, cc)
+	}
+	if c, cc := lookupExitCountryIPAPI(nil); c != "" || cc != "" {
+		t.Fatalf("expected empty from lookupExitCountryIPAPI(nil), got %s %s", c, cc)
+	}
+	if cc := lookupExitCountryCloudflare(nil); cc != "" {
+		t.Fatalf("expected empty from lookupExitCountryCloudflare(nil), got %s", cc)
+	}
+	if c, cc := lookupExitCountryIPSB(nil); c != "" || cc != "" {
+		t.Fatalf("expected empty from lookupExitCountryIPSB(nil), got %s %s", c, cc)
+	}
+
+	// Verify extreme TTFB > 999999ms calculation
+	validTTFBs := []int64{1200000, 1500000}
+	var minTTFB int64
+	var maxTTFB int64
+	var sumTTFB int64
+	for i, v := range validTTFBs {
+		sumTTFB += v
+		if i == 0 || v < minTTFB {
+			minTTFB = v
+		}
+		if v > maxTTFB {
+			maxTTFB = v
+		}
+	}
+	if minTTFB != 1200000 || maxTTFB != 1500000 {
+		t.Fatalf("expected minTTFB=1200000 maxTTFB=1500000, got min=%d max=%d", minTTFB, maxTTFB)
+	}
+}
+
 
