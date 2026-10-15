@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestClassifyAntigravityResponse(t *testing.T) {
@@ -341,6 +342,29 @@ func TestProbeAntigravityStabilityMock(t *testing.T) {
 		t.Fatalf("expected detail to mention 负载均衡/偶发送中, got %s", detail)
 	}
 	t.Logf("Flapping detail: %s, country: %s, countryCode: %s, TTFB: %dms (grade: %s)", detail, country, countryCode, stab.GoogleTTFBMs, stab.LatencyGrade)
+}
+
+func TestFirstLineValidUTF8AndTruncation(t *testing.T) {
+	s := "ab" + strings.Repeat("中", 60)
+	got := firstLine(s)
+	if !utf8.ValidString(got) {
+		t.Fatalf("firstLine produced invalid UTF-8: %q", got)
+	}
+	if utf8.RuneCountInString(got) > 160 {
+		t.Fatalf("firstLine exceeded 160 runes: %d", utf8.RuneCountInString(got))
+	}
+
+	multiline := "首行" + strings.Repeat("长文本", 70) + "\n次行忽略"
+	gotMulti := firstLine(multiline)
+	if !utf8.ValidString(gotMulti) {
+		t.Fatalf("firstLine multiline produced invalid UTF-8: %q", gotMulti)
+	}
+	if utf8.RuneCountInString(gotMulti) > 160 {
+		t.Fatalf("firstLine multiline exceeded 160 runes: %d", utf8.RuneCountInString(gotMulti))
+	}
+	if strings.Contains(gotMulti, "次行忽略") {
+		t.Fatalf("firstLine should not contain subsequent lines: %q", gotMulti)
+	}
 }
 
 

@@ -168,10 +168,11 @@ func firstLine(text string) string {
 		return ""
 	}
 	if i := strings.IndexAny(text, "\r\n"); i >= 0 {
-		return strings.TrimSpace(text[:i])
+		text = strings.TrimSpace(text[:i])
 	}
-	if len(text) > 160 {
-		return text[:160]
+	runes := []rune(text)
+	if len(runes) > 160 {
+		return string(runes[:160])
 	}
 	return text
 }

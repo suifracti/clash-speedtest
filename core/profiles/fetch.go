@@ -123,10 +123,11 @@ func RedactURL(raw string) string {
 }
 
 func compactDisplay(s string, max int) string {
-	if len(s) <= max {
+	runes := []rune(s)
+	if len(runes) <= max {
 		return s
 	}
-	return s[:max] + "..."
+	return string(runes[:max]) + "..."
 }
 
 func ExpandLocalPath(raw string) string {

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestStoreSaveLoad(t *testing.T) {
@@ -83,6 +84,14 @@ func TestRedactURL(t *testing.T) {
 	}
 	if !strings.Contains(got, "token=") || !strings.Contains(got, "REDACTED") {
 		t.Fatalf("redacted url = %s", got)
+	}
+}
+
+func TestCompactDisplayValidUTF8(t *testing.T) {
+	s := "a" + strings.Repeat("中", 30)
+	got := compactDisplay(s, 72)
+	if !utf8.ValidString(got) {
+		t.Fatalf("compactDisplay produced invalid UTF-8: %q", got)
 	}
 }
 
