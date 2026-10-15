@@ -422,7 +422,7 @@ func buildProxyServerPortKey(proxy *CProxy) (string, bool) {
 	}
 	config := make(map[string]any, len(proxy.Config))
 	for k, v := range proxy.Config {
-		if k != "name" {
+		if k != "name" && k != "_cst_generated_ws_ua" {
 			config[k] = v
 		}
 	}

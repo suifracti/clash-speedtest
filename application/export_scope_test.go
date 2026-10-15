@@ -169,3 +169,64 @@ func TestExportAirportMultipleSubscriptionsFallbackNoDuplication(t *testing.T) {
 	}
 }
 
+func TestExportClashConfigGroupNameValidation(t *testing.T) {
+	cfg := scopeHTTPConfig("plain", false)
+	a, _ := scopedWorkbenchFixture(t, cfg)
+	identity := monitor.ComputeNodeIdentityKeyFromConfig(cfg)
+	selected := WorkbenchLatencyBatchSelection{
+		ProfileID:         "scope-a",
+		NodeKey:           monitor.ComputeNodeKeyFromConfig(cfg),
+		NodeIdentityKey:   identity,
+		ConfigRevisionKey: monitor.ComputeConfigRevisionKey(identity, cfg),
+	}
+
+	for _, invalidName := range []string{
+		"Group,Name",
+		"Group\nName",
+		"Group\rName",
+		"AUTO",
+		"FALLBACK",
+		"DIRECT",
+		"REJECT",
+		"GLOBAL",
+		"COMPATIBLE",
+	} {
+		_, err := a.ExportNodesClashConfig(context.Background(), ExportClashConfigRequest{
+			Selections: []WorkbenchLatencyBatchSelection{selected},
+			GroupName:  invalidName,
+		})
+		if err == nil {
+			t.Errorf("expected error for invalid group name %q, got nil", invalidName)
+		}
+	}
+}
+
+func TestExportClashConfigNodeNameSanitization(t *testing.T) {
+	cfg := scopeHTTPConfig("AUTO", false)
+	cfg["name"] = "AUTO\r\n"
+	a, _ := scopedWorkbenchFixture(t, cfg)
+	identity := monitor.ComputeNodeIdentityKeyFromConfig(cfg)
+	selected := WorkbenchLatencyBatchSelection{
+		ProfileID:         "scope-a",
+		NodeKey:           monitor.ComputeNodeKeyFromConfig(cfg),
+		NodeIdentityKey:   identity,
+		ConfigRevisionKey: monitor.ComputeConfigRevisionKey(identity, cfg),
+	}
+
+	res, err := a.ExportNodesClashConfig(context.Background(), ExportClashConfigRequest{
+		Selections: []WorkbenchLatencyBatchSelection{selected},
+		GroupName:  "CUSTOM",
+	})
+	if err != nil {
+		t.Fatalf("unexpected export error: %v", err)
+	}
+	if len(res.NodeNames) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(res.NodeNames))
+	}
+	// Name should have been disambiguated from reserved "AUTO"
+	if res.NodeNames[0] == "AUTO" {
+		t.Fatalf("expected AUTO node name to be disambiguated, got %q", res.NodeNames[0])
+	}
+}
+
+

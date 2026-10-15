@@ -92,7 +92,7 @@ func ExportCSV(results []*history.RunNodeResult) ([]byte, error) {
 			dlSpeedStr,
 			ulSpeedStr,
 			statusLabel,
-			strings.ReplaceAll(r.AntigravityDetail, "\n", " "),
+			strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(r.AntigravityDetail, "\r\n", " "), "\r", " "), "\n", " "),
 			r.ExitCountry,
 		}
 		if err := w.Write(row); err != nil {

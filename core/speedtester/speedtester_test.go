@@ -181,3 +181,58 @@ func TestSafeServerNormalization(t *testing.T) {
 	}
 }
 
+func TestEquivalentProxyConfigurationIgnoresInternalMarkers(t *testing.T) {
+	a := &CProxy{
+		Config: map[string]any{
+			"name":                 "node-a",
+			"type":                 "ss",
+			"server":               "192.0.2.1",
+			"port":                 443,
+			"cipher":               "aes-128-gcm",
+			"password":             "pass",
+			"_cst_generated_ws_ua": true,
+		},
+	}
+	b := &CProxy{
+		Config: map[string]any{
+			"name":     "node-b",
+			"type":     "ss",
+			"server":   "192.0.2.1",
+			"port":     443,
+			"cipher":   "aes-128-gcm",
+			"password": "pass",
+		},
+	}
+	if !EquivalentProxyConfiguration(a, b) {
+		t.Fatal("expected proxies with and without internal _cst_generated_ws_ua to be equivalent")
+	}
+}
+
+func TestLatencyTargetURLNormalization(t *testing.T) {
+	for _, tc := range []struct {
+		input   string
+		wantURL string
+		wantErr bool
+	}{
+		{"cloudflare", "https://speed.cloudflare.com/__down?bytes=1", false},
+		{"Cloudflare", "https://speed.cloudflare.com/__down?bytes=1", false},
+		{"  CLOUDFLARE  ", "https://speed.cloudflare.com/__down?bytes=1", false},
+		{"google", "https://www.gstatic.com/generate_204", false},
+		{" Google ", "https://www.gstatic.com/generate_204", false},
+		{"ALL", "multi://latency-v1", false},
+		{"", "https://speed.cloudflare.com/__down?bytes=1", false},
+		{"unknown_xyz", "", true},
+	} {
+		url, err := LatencyTargetURL(tc.input)
+		if tc.wantErr && err == nil {
+			t.Errorf("LatencyTargetURL(%q) expected error, got nil", tc.input)
+		} else if !tc.wantErr && err != nil {
+			t.Errorf("LatencyTargetURL(%q) unexpected error: %v", tc.input, err)
+		} else if !tc.wantErr && url != tc.wantURL {
+			t.Errorf("LatencyTargetURL(%q) = %q, want %q", tc.input, url, tc.wantURL)
+		}
+	}
+}
+
+
+

@@ -23,21 +23,29 @@ func checkCloudflareTrace(ctx context.Context, client *http.Client, rule Rule, s
 	}
 	values := map[string]string{}
 	for _, line := range strings.Split(string(body), "\n") {
-		key, value, found := strings.Cut(strings.TrimSpace(line), "=")
+		trimmedLine := strings.TrimSpace(line)
+		key, value, found := strings.Cut(trimmedLine, "=")
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
 		if found && key != "" && value != "" {
 			values[key] = value
 		}
 	}
-	if net.ParseIP(values["ip"]) == nil || len(values["loc"]) != 2 {
+	parsedIP := net.ParseIP(values["ip"])
+	loc := strings.ToUpper(values["loc"])
+	if parsedIP == nil || len(loc) != 2 {
 		result.Outcome = "criteria_mismatch"
 		result.FailurePhase = "trace_document"
 		result.ErrorMessage = "Cloudflare trace 未包含出口 IP 或国家"
 		return finish(result, started)
 	}
+	ipStr := parsedIP.String()
+	values["ip"] = ipStr
+	values["loc"] = loc
 	result.Outcome = "profiled"
-	result.Summary = strings.TrimSpace(values["loc"] + " · " + values["ip"] + valueSuffix(" · ", values["colo"]))
+	result.Summary = strings.TrimSpace(loc + " · " + ipStr + valueSuffix(" · ", values["colo"]))
 	result.Details = map[string]string{
-		"ip": values["ip"], "country_code": values["loc"], "cloudflare_colo": values["colo"],
+		"ip": ipStr, "country_code": loc, "cloudflare_colo": values["colo"],
 		"tls": values["tls"], "http_protocol": values["http"],
 	}
 	return finish(result, started)
@@ -64,9 +72,22 @@ func checkIPify(ctx context.Context, client *http.Client, rule Rule, started tim
 		return finish(result, started)
 	}
 	ip := net.ParseIP(strings.TrimSpace(payload.IP))
-	if ip == nil || (family == "IPv4" && ip.To4() == nil) || (family == "IPv6" && ip.To4() != nil) {
+	if ip == nil {
 		result.Outcome, result.FailurePhase, result.ErrorMessage = "unknown", "ip_family", "出口服务返回的地址与检测的 IP 类型不符"
 		return finish(result, started)
+	}
+	if family == "IPv4" {
+		v4 := ip.To4()
+		if v4 == nil {
+			result.Outcome, result.FailurePhase, result.ErrorMessage = "unknown", "ip_family", "出口服务返回的地址与检测的 IP 类型不符"
+			return finish(result, started)
+		}
+		ip = v4
+	} else if family == "IPv6" {
+		if ip.To4() != nil {
+			result.Outcome, result.FailurePhase, result.ErrorMessage = "unknown", "ip_family", "出口服务返回的地址与检测的 IP 类型不符"
+			return finish(result, started)
+		}
 	}
 	result.Outcome = "profiled"
 	result.Summary = family + " 出口 " + ip.String()

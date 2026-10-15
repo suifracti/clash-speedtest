@@ -78,6 +78,17 @@ func (s *AppService) ExportNodesClashConfig(_ context.Context, req ExportClashCo
 		}
 	}
 
+	groupName := strings.TrimSpace(req.GroupName)
+	if groupName == "" {
+		groupName = "PROXY"
+	}
+	if strings.ContainsAny(groupName, ",\r\n") {
+		return nil, monitor.NewValidationError("策略组名称不能包含逗号或换行符")
+	}
+	if strings.EqualFold(groupName, "AUTO") || strings.EqualFold(groupName, "FALLBACK") || strings.EqualFold(groupName, "DIRECT") || strings.EqualFold(groupName, "REJECT") || strings.EqualFold(groupName, "GLOBAL") || strings.EqualFold(groupName, "COMPATIBLE") {
+		return nil, monitor.NewValidationError("策略组名称不能使用保留名称: " + groupName)
+	}
+
 	// Preserve order of the exact frozen selections
 	proxies := make([]map[string]any, 0, len(selected))
 	nodeNames := make([]string, 0, len(selected))
@@ -102,8 +113,13 @@ func (s *AppService) ExportNodesClashConfig(_ context.Context, req ExportClashCo
 		}
 
 		displayName := strings.TrimSpace(node.DisplayName)
+		displayName = strings.ReplaceAll(strings.ReplaceAll(displayName, "\r", " "), "\n", " ")
+		displayName = strings.TrimSpace(displayName)
 		if displayName == "" {
 			displayName = "Node"
+		}
+		if strings.EqualFold(displayName, "AUTO") || strings.EqualFold(displayName, "FALLBACK") || strings.EqualFold(displayName, groupName) {
+			displayName = displayName + " (Proxy)"
 		}
 
 		// Ensure unique name in clash config
@@ -119,11 +135,6 @@ func (s *AppService) ExportNodesClashConfig(_ context.Context, req ExportClashCo
 
 	if len(proxies) == 0 {
 		return nil, monitor.NewValidationError("未能匹配到有效节点配置，请确保所选节点的缓存文件存在")
-	}
-
-	groupName := strings.TrimSpace(req.GroupName)
-	if groupName == "" {
-		groupName = "PROXY"
 	}
 
 	clashConfig := map[string]any{

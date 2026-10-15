@@ -1,10 +1,13 @@
 package speedtester
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // LatencyTargetURL is an allowlist, not an arbitrary outbound URL supplied by a client.
 func LatencyTargetURL(id string) (string, error) {
-	switch id {
+	switch strings.ToLower(strings.TrimSpace(id)) {
 	case "all":
 		return "multi://latency-v1", nil
 	case "", "cloudflare":

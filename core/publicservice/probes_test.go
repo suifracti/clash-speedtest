@@ -106,3 +106,46 @@ func TestIPQualityASNFormatResilience(t *testing.T) {
 	}
 }
 
+func TestCloudflareTraceWhitespaceAndCasingResilience(t *testing.T) {
+	rule, ok := RuleFor("cloudflare_trace")
+	if !ok {
+		t.Fatal("missing cloudflare_trace rule")
+	}
+	body := "fl=123\n ip = 203.0.113.10 \n loc = jp \n colo = NRT \n tls=TLSv1.3\n http=http/2\n"
+	checker := Checker{ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+		return fixtureResponse(req, http.StatusOK, "text/plain", body), nil
+	})}
+	result := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
+	if result.Outcome != "profiled" {
+		t.Fatalf("expected profiled, got %s: %s", result.Outcome, result.ErrorMessage)
+	}
+	if result.Details["ip"] != "203.0.113.10" {
+		t.Fatalf("expected ip 203.0.113.10, got %q", result.Details["ip"])
+	}
+	if result.Details["country_code"] != "JP" {
+		t.Fatalf("expected country_code JP, got %q", result.Details["country_code"])
+	}
+	if result.Details["cloudflare_colo"] != "NRT" {
+		t.Fatalf("expected colo NRT, got %q", result.Details["cloudflare_colo"])
+	}
+}
+
+func TestIPifyMappedAddress(t *testing.T) {
+	rule, ok := RuleFor("exit_ipv4")
+	if !ok {
+		t.Fatal("missing exit_ipv4 rule")
+	}
+	body := `{"ip": "::ffff:203.0.113.15"}`
+	checker := Checker{ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+		return fixtureResponse(req, http.StatusOK, "application/json", body), nil
+	})}
+	result := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
+	if result.Outcome != "profiled" {
+		t.Fatalf("expected profiled, got %s: %s", result.Outcome, result.ErrorMessage)
+	}
+	if result.Details["ip"] != "203.0.113.15" {
+		t.Fatalf("expected cleanly converted IPv4 203.0.113.15, got %q", result.Details["ip"])
+	}
+}
+
+
