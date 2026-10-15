@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -431,11 +432,17 @@ func downloadErrorClass(err error) string {
 	if errors.Is(err, context.Canceled) {
 		return "cancelled"
 	}
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
+		return "connection_reset"
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return "connection_refused"
+	}
 	message := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(message, "failed to create session"):
 		return "proxy_session"
-	case strings.Contains(message, "connection reset"):
+	case strings.Contains(message, "connection reset") || strings.Contains(message, "broken pipe"):
 		return "connection_reset"
 	case strings.Contains(message, "connection refused"):
 		return "connection_refused"

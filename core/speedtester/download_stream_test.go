@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -315,5 +316,27 @@ func TestDownloadProxyHandshakeFailureRetainsObservedPhase(t *testing.T) {
 	got := st.MeasureDownloadStream(context.Background(), client, DownloadStreamOptions{MaximumBytes: 100, MaximumDuration: time.Second}, nil)
 	if got.FailurePhase != "proxy_handshake" || got.Phase != "proxy_handshake" || got.ErrorClass != "proxy_session" {
 		t.Fatalf("observed handshake overwritten: %+v", got)
+	}
+}
+
+func TestDownloadErrorClassConnectionResetAndRefused(t *testing.T) {
+	cases := []struct {
+		err      error
+		expected string
+	}{
+		{err: syscall.ECONNRESET, expected: "connection_reset"},
+		{err: syscall.EPIPE, expected: "connection_reset"},
+		{err: errors.New("read: connection reset by peer"), expected: "connection_reset"},
+		{err: errors.New("write: broken pipe"), expected: "connection_reset"},
+		{err: syscall.ECONNREFUSED, expected: "connection_refused"},
+		{err: errors.New("dial tcp 127.0.0.1:443: connect: connection refused"), expected: "connection_refused"},
+		{err: io.ErrUnexpectedEOF, expected: "unexpected_eof"},
+		{err: io.EOF, expected: "unexpected_eof"},
+	}
+	for _, tc := range cases {
+		got := downloadErrorClass(tc.err)
+		if got != tc.expected {
+			t.Errorf("downloadErrorClass(%v) = %q, expected %q", tc.err, got, tc.expected)
+		}
 	}
 }
