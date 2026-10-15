@@ -212,3 +212,58 @@ func TestParseConfigBodyUTF8BOMAndURLSafeBase64(t *testing.T) {
 		t.Fatalf("url-safe base64: got %d", len(cfg.Proxies))
 	}
 }
+
+func TestSnellAndWireGuardNilUserDefense(t *testing.T) {
+	names := make(map[string]int)
+
+	// Snell URI without userinfo should not panic
+	snellNoUser := "snell://snell.example.com:440?version=4"
+	if _, ok := parseSnellURI(snellNoUser, names); ok {
+		t.Fatal("expected parseSnellURI to fail gracefully without userinfo, got ok")
+	}
+
+	// WireGuard URI without userinfo but with query privatekey should not panic and succeed
+	wgQueryKey := "wireguard://wg.example.com:51820?publickey=PUBKEY123&privatekey=PRIVKEY123#WG-Query"
+	proxy, ok := parseWireGuardURI(wgQueryKey, names)
+	if !ok {
+		t.Fatal("expected parseWireGuardURI to succeed with query privatekey")
+	}
+	if proxy["private-key"] != "PRIVKEY123" || proxy["public-key"] != "PUBKEY123" {
+		t.Fatalf("unexpected wg keys: %#v", proxy)
+	}
+
+	// WireGuard URI without userinfo and without query privatekey should fail gracefully without panic
+	wgNoKey := "wireguard://wg.example.com:51820?publickey=PUBKEY123#WG-NoPriv"
+	if _, ok := parseWireGuardURI(wgNoKey, names); ok {
+		t.Fatal("expected parseWireGuardURI to fail gracefully without private key")
+	}
+}
+
+func TestSplitHostPortFieldResilience(t *testing.T) {
+	for _, tc := range []struct {
+		raw      string
+		wantHost string
+		wantPort string
+		wantOK   bool
+	}{
+		{"example.com:443", "example.com", "443", true},
+		{"[2001:db8::1]:8443", "2001:db8::1", "8443", true},
+		{"2001:db8::1", "", "", false},            // unbracketed IPv6 without port
+		{"[2001:db8::1]8443", "", "", false},         // missing colon separator
+		{"example.com:notaport", "", "", false},      // non-numeric port
+		{"example.com:0", "", "", false},             // zero port
+		{"example.com:70000", "", "", false},         // out of range port
+		{"example.com", "", "", false},               // missing port
+		{"", "", "", false},                          // empty
+	} {
+		h, p, ok := splitHostPortField(tc.raw)
+		if ok != tc.wantOK {
+			t.Errorf("splitHostPortField(%q) ok = %v, want %v", tc.raw, ok, tc.wantOK)
+		} else if ok {
+			if h != tc.wantHost || p != tc.wantPort {
+				t.Errorf("splitHostPortField(%q) = (%q, %q), want (%q, %q)", tc.raw, h, p, tc.wantHost, tc.wantPort)
+			}
+		}
+	}
+}
+

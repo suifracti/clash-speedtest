@@ -261,7 +261,7 @@ func parseExtraShareLines(body []byte) []map[string]any {
 
 func parseSnellURI(line string, names map[string]int) (map[string]any, bool) {
 	u, err := url.Parse(line)
-	if err != nil || u.Hostname() == "" || u.Port() == "" {
+	if err != nil || u.Hostname() == "" || u.Port() == "" || u.User == nil {
 		return nil, false
 	}
 	psk := u.User.Username()
@@ -306,7 +306,10 @@ func parseWireGuardURI(line string, names map[string]int) (map[string]any, bool)
 		return nil, false
 	}
 	query := u.Query()
-	privateKey := u.User.Username()
+	var privateKey string
+	if u.User != nil {
+		privateKey = u.User.Username()
+	}
 	if privateKey == "" {
 		privateKey = firstQuery(query, "privatekey", "private-key", "private_key")
 	}

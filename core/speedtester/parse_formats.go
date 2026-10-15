@@ -658,6 +658,9 @@ func parseSurgeLine(line string, names map[string]int) (map[string]any, bool) {
 	typ := strings.ToLower(strings.TrimSpace(fields[0]))
 	server := strings.TrimSpace(fields[1])
 	port := strings.TrimSpace(fields[2])
+	if p, err := strconv.Atoi(port); err != nil || p <= 0 || p > 65535 {
+		return nil, false
+	}
 	opts := parseKeyValues(fields[3:])
 	display := uniqueProxyName(names, name)
 	switch typ {
@@ -864,18 +867,33 @@ func splitHostPortField(raw string) (string, string, bool) {
 		if end < 1 {
 			return "", "", false
 		}
-		host := raw[1:end]
-		port := strings.TrimPrefix(raw[end+1:], ":")
+		host := strings.TrimSpace(raw[1:end])
+		rest := raw[end+1:]
+		if !strings.HasPrefix(rest, ":") {
+			return "", "", false
+		}
+		port := strings.TrimSpace(strings.TrimPrefix(rest, ":"))
 		if host == "" || port == "" {
+			return "", "", false
+		}
+		if p, err := strconv.Atoi(port); err != nil || p <= 0 || p > 65535 {
 			return "", "", false
 		}
 		return host, port, true
 	}
-	i := strings.LastIndex(raw, ":")
-	if i <= 0 || i == len(raw)-1 {
+	if strings.Count(raw, ":") != 1 {
 		return "", "", false
 	}
-	return raw[:i], raw[i+1:], true
+	i := strings.Index(raw, ":")
+	host := strings.TrimSpace(raw[:i])
+	port := strings.TrimSpace(raw[i+1:])
+	if host == "" || port == "" {
+		return "", "", false
+	}
+	if p, err := strconv.Atoi(port); err != nil || p <= 0 || p > 65535 {
+		return "", "", false
+	}
+	return host, port, true
 }
 
 func firstSlice(m map[string]any, keys ...string) any {
