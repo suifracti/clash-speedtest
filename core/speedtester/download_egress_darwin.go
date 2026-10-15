@@ -27,6 +27,8 @@ type PhysicalDownloadEgress struct {
 	dnsMode          string
 	host             string
 	nodeIP           netip.Addr
+	nodeIPs          []netip.Addr
+	multiAddressTCP  bool
 	dnsDial          func(context.Context, string) (net.Conn, error)
 	dnsRequests      *physicalRequestBudget
 	dnsDials         *physicalRequestBudget
@@ -60,9 +62,13 @@ func newPhysicalDownloadEgress() *PhysicalDownloadEgress {
 func (e *PhysicalDownloadEgress) Snapshot() DownloadNetworkPath {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	source := e.resolutionSource
+	if e.multiAddressTCP {
+		source = "physical_ipv4_dns_multi_v2"
+	}
 	return DownloadNetworkPath{
 		Method: "physical_socket_v1", Interface: e.iface, InterfaceIndex: e.index, AddressFamily: e.addressFamily,
-		AddressSource: e.resolutionSource, DNSMode: e.dnsMode,
+		AddressSource: source, DNSMode: e.dnsMode,
 		TUNEvidence: "packet_route_not_observed", FailureReason: e.failureReason,
 		DNSRequests: e.dnsRequests.count(), DNSDialAttempts: e.dnsDials.count(),
 		TCPDialAttempts: e.tcpDials.count(), UDPDialAttempts: e.udpDials.count(),
@@ -162,6 +168,11 @@ func (e *PhysicalDownloadEgress) resolve(ctx context.Context, host string) (neti
 	if e.nodeIP.IsValid() {
 		if host == e.host || host == e.nodeIP.String() {
 			return e.nodeIP, nil
+		}
+		for _, ip := range e.nodeIPs {
+			if host == ip.String() {
+				return ip, nil
+			}
 		}
 		e.setFailure("frozen_node_destination_mismatch")
 		return netip.Addr{}, &PhysicalPathError{Cause: fmt.Errorf("dial destination differs from selected frozen node server")}
@@ -383,14 +394,10 @@ func (e *PhysicalDownloadEgress) verify(conn syscall.Conn, udp, dns bool) error 
 	e.mu.Unlock()
 	return nil
 }
-func (e *PhysicalDownloadEgress) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	if err := e.reserveDialBudget(ctx, false); err != nil {
-		e.setFailure(physicalFailureReason(ctx, err))
-		if errors.Is(err, errPhysicalDownloadBudgetExceeded) {
-			return nil, &PhysicalPathError{Cause: err}
-		}
-		return nil, err
-	}
+
+// Both candidates share the original TCP deadline. Only connection establishment
+// can fall back: TLS, proxy negotiation and HTTP begin after this returns.
+func (e *PhysicalDownloadEgress) dialPhysicalTCP(ctx context.Context, network, address string, dial func(context.Context, string, string) (net.Conn, error)) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
 		return nil, err
@@ -400,12 +407,56 @@ func (e *PhysicalDownloadEgress) DialContext(ctx context.Context, network, addre
 	if err != nil {
 		return nil, err
 	}
+	ips := []netip.Addr{ip}
+	if e.multiAddressTCP && (host == e.host || host == e.nodeIP.String()) && strings.HasPrefix(network, "tcp") {
+		ips = e.nodeIPs
+	}
+	dialCtx, cancel := context.WithTimeout(ctx, dialer.DefaultTCPTimeout)
+	defer cancel()
+	deadline, _ := dialCtx.Deadline()
 	markDownloadPhase(ctx, "connection")
-	conn, err := e.dialNodeTCP(ctx, network, net.JoinHostPort(ip.String(), port), func(ctx context.Context, network, address string) (net.Conn, error) {
+	for i, candidate := range ips {
+		if err = e.reserveDialBudget(dialCtx, false); err != nil {
+			e.setFailure(physicalSocketFailureReason(dialCtx, err))
+			if errors.Is(err, errPhysicalDownloadBudgetExceeded) {
+				return nil, &PhysicalPathError{Cause: err}
+			}
+			return nil, err
+		}
+		attemptCtx, stop := context.WithTimeout(dialCtx, time.Until(deadline)/time.Duration(len(ips)-i))
+		conn, dialErr := e.dialNodeTCP(attemptCtx, network, net.JoinHostPort(candidate.String(), port), dial)
+		// A late connection must not survive cancellation. Cancelling a
+		// completed dial context does not close a successfully returned stream.
+		if dialErr == nil {
+			dialErr = attemptCtx.Err()
+		}
+		stop()
+		if dialErr == nil && conn != nil {
+			return conn, nil
+		}
+		if conn != nil {
+			_ = conn.Close()
+		}
+		if dialErr == nil {
+			dialErr = fmt.Errorf("physical TCP dial returned no connection")
+		}
+		err = dialErr
+		if dialCtx.Err() != nil {
+			err = dialCtx.Err()
+			break
+		}
+	}
+	e.setFailure(physicalSocketFailureReason(dialCtx, err))
+	return nil, err
+}
+
+func (e *PhysicalDownloadEgress) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	conn, err := e.dialPhysicalTCP(ctx, network, address, func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, _, _ := net.SplitHostPort(address)
+		ip, _ := netip.ParseAddr(host)
 		return dialer.DialContext(ctx, network, address, dialer.WithInterface(e.iface), dialer.WithOnlySingleStack(ip.Is4()), dialer.WithFallbackBind(false))
 	})
 	if err != nil {
-		e.setFailure(physicalSocketFailureReason(ctx, err))
 		return nil, err
 	}
 	markDownloadPhase(ctx, "socket_verification")
@@ -485,6 +536,27 @@ func PreparePhysicalProbeProxy(ctx context.Context, original *CProxy, socketLimi
 	return preparePhysicalProxy(ctx, original, socketLimit)
 }
 
+func (e *PhysicalDownloadEgress) freezeNodeAddresses(host string, ip netip.Addr, kind string, socketLimit int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.host, e.nodeIP = host, ip
+	// QUIC resolves outside the TCP API dialer. Keep its original single
+	// frozen destination and both original budgets; a UDP dial is not proof
+	// that an alternate endpoint is reachable.
+	e.multiAddressTCP = ip.Is4() && len(e.nodeIPs) == 2 && kind != "hysteria2" && kind != "hysteria" && kind != "tuic"
+	if !e.multiAddressTCP {
+		e.nodeIPs = []netip.Addr{ip}
+	} else {
+		e.nodeIPs = append([]netip.Addr(nil), e.nodeIPs...)
+	}
+	tcpLimit := socketLimit
+	if e.multiAddressTCP {
+		tcpLimit *= 2
+	}
+	e.tcpDials = newPhysicalRequestBudget(tcpLimit)
+	e.udpDials = newPhysicalRequestBudget(socketLimit)
+}
+
 func preparePhysicalProxy(ctx context.Context, original *CProxy, socketLimit int) (prepared *CProxy, e *PhysicalDownloadEgress, returnErr error) {
 	started := time.Now()
 	e = newPhysicalDownloadEgress()
@@ -541,9 +613,8 @@ func preparePhysicalProxy(ctx context.Context, original *CProxy, socketLimit int
 		e.setFailure("proxy_configuration_rejected")
 		return nil, e, err
 	}
-	e.mu.Lock()
-	e.host, e.nodeIP = host, ip
-	e.mu.Unlock()
+	kind, _ := original.Config["type"].(string)
+	e.freezeNodeAddresses(host, ip, kind, socketLimit)
 	effective, apiDialer, err := prepareSourceTLS(config, e)
 	if err != nil {
 		e.setFailure("source_tls_policy_unavailable")

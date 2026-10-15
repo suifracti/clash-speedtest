@@ -196,16 +196,34 @@ func (e *PhysicalDownloadEgress) resolvePhysicalDNS(ctx context.Context, host st
 			e.setFailure(label + "_rcode_" + strings.ToLower(name))
 			return netip.Addr{}, fmt.Errorf("physical DNS %s returned %s", label, name)
 		}
+		var candidates []netip.Addr
 		for _, ip := range answer.Addresses {
 			ip = ip.Unmap()
 			if usablePhysicalAddress(ip) && ((qtype == dns.TypeA && ip.Is4()) || (qtype == dns.TypeAAAA && ip.Is6())) {
-				family, source := "ipv4", "physical_ipv4_dns"
-				if qtype == dns.TypeAAAA {
-					family, source = "ipv6", "physical_ipv6_dns"
+				duplicate := false
+				for _, previous := range candidates {
+					duplicate = duplicate || previous == ip
 				}
-				e.setResolution(family, source)
-				return ip, nil
+				if !duplicate {
+					candidates = append(candidates, ip)
+				}
+				// Only IPv4 TCP gains a second candidate. Keep the existing
+				// NODATA -> AAAA policy and its single address unchanged.
+				if len(candidates) == 2 || qtype == dns.TypeAAAA {
+					break
+				}
 			}
+		}
+		if len(candidates) > 0 {
+			family, source := "ipv4", "physical_ipv4_dns"
+			if qtype == dns.TypeAAAA {
+				family, source = "ipv6", "physical_ipv6_dns"
+			}
+			e.mu.Lock()
+			e.nodeIPs = candidates
+			e.mu.Unlock()
+			e.setResolution(family, source)
+			return candidates[0], nil
 		}
 		// Unusable/fake/malformed records are not proven NODATA. Fail closed.
 		if answer.AnswerCount > 0 || (answer.AnswerRecordCount > 0 && answer.CNAMECount == 0) {

@@ -54,3 +54,11 @@ it('preserves download values but excludes unknown route evidence from numeric r
  expect(downloadGroup(download(route())).comparable).toBe(false)
  expect(downloadGroup(download({...route('IPv4','A'),method:''})).comparable).toBe(false)
 })
+
+it('keeps multi-address physical results usable without mixing old single-address conditions',()=>{
+ const oldPath=route('ipv4','physical_ipv4_dns'),newPath=route('ipv4','physical_ipv4_dns_multi_v2')
+ const download=(path:NetworkPath):Attempt=>({...attempt('download',path),rule:{target_url:url,method:'GET',rule_version:1,maximum_bytes:1048576,maximum_duration_ns:1000000000,network_path_method:'physical_socket_v1',physical_interface:'en1',dns_mode:'physical_interface_dns_v1'},result:{outcome:'byte_limit',bytes_read:1048576,duration_ns:1000000000,finished_at:'2026-10-09T00:00:01Z',network_path:path}})
+ expect(downloadGroup(download(newPath)).comparable).toBe(true)
+ expect(downloadGroup(download(newPath)).key).not.toBe(downloadGroup(download(oldPath)).key)
+ expect(latencyComparisonGroup(manualLatencyPoint(latency('new',newPath))).key).not.toBe(latencyComparisonGroup(manualLatencyPoint(latency('old',oldPath))).key)
+})
