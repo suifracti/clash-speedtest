@@ -43,6 +43,9 @@ func validatePeriodicSample(req PeriodicSampleRequest) error {
 // Explicit small experiments use the original measurement/save path. They do
 // not change the persistent full catalog or latency configuration.
 func (s *AppService) RunPeriodicSamplingSample(ctx context.Context, req PeriodicSampleRequest) (PeriodicCycle, error) {
+	if s == nil || s.periodic == nil {
+		return PeriodicCycle{}, fmt.Errorf("periodic sampling is not initialized")
+	}
 	if err := validatePeriodicSample(req); err != nil {
 		return PeriodicCycle{}, err
 	}
@@ -85,6 +88,9 @@ func (s *AppService) RunPeriodicSamplingSample(ctx context.Context, req Periodic
 // experiments suspend only the full service/download loops. Persist before
 // stopping so an unexpected restart cannot collide with the sample.
 func (s *AppService) PausePeriodicMeasurementsForSample() (*PeriodicSamplingStatus, error) {
+	if s == nil || s.periodic == nil {
+		return nil, fmt.Errorf("periodic sampling is not initialized")
+	}
 	p := s.periodic
 	p.lifecycle.Lock()
 	defer p.lifecycle.Unlock()

@@ -17,6 +17,9 @@ type probeOperation struct {
 }
 
 func (a *probeActivity) begin(kind string) func() []string {
+	if a == nil {
+		return func() []string { return nil }
+	}
 	a.mu.Lock()
 	if a.active == nil {
 		a.active = map[*probeOperation]bool{}
@@ -63,6 +66,9 @@ func finishProbeNetwork(done chan struct{}) func() {
 	}
 }
 func (a *probeActivity) count(kind string) int {
+	if a == nil {
+		return 0
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	n := 0

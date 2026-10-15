@@ -111,7 +111,7 @@ func (s *AppService) GetMonitorRecommendation(
 	ctx context.Context,
 	req MonitorRecommendationRequest,
 ) (*policy.MonitorRecommendation, error) {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return nil, fmt.Errorf("monitor evidence store is not initialized")
 	}
 
@@ -245,6 +245,10 @@ func (s *AppService) collectEvidenceNodes(
 	source := policy.EvidenceSource{
 		LookbackSince: since,
 		LookbackUntil: now,
+	}
+
+	if s == nil {
+		return nil, source, fmt.Errorf("app service is not initialized")
 	}
 
 	if strings.TrimSpace(jobID) == "" {
@@ -448,6 +452,9 @@ func (s *AppService) resolveEvidenceCurrentNode(
 	req MonitorRecommendationRequest,
 	nodes []policy.EvidenceNode,
 ) (policy.EvidenceNode, bool, error) {
+	if s == nil {
+		return policy.EvidenceNode{}, false, fmt.Errorf("app service is not initialized")
+	}
 	// An explicit identifier that cannot be honoured must not be silently ignored: falling
 	// back to a different node would answer a question the caller did not ask. This mirrors
 	// the candidate_node_keys behaviour.

@@ -67,7 +67,7 @@ func usageSnapshot(ap *profiles.Airport, sub *profiles.Subscription, status, sou
 }
 
 func (s *AppService) seedSubscriptionUsageLocked(ctx context.Context, store *profiles.Store) error {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil || store == nil {
 		return nil
 	}
 	for _, ap := range store.Airports {
@@ -93,6 +93,9 @@ func (s *AppService) seedSubscriptionUsageLocked(ctx context.Context, store *pro
 }
 
 func (s *AppService) saveUsageObservations(ctx context.Context, snapshots []subscriptionusage.Snapshot) error {
+	if s == nil {
+		return fmt.Errorf("app service is not initialized")
+	}
 	if s.subscriptionRefreshUsageSaveHook != nil {
 		return s.subscriptionRefreshUsageSaveHook(ctx, snapshots)
 	}
@@ -110,10 +113,16 @@ func (s *AppService) saveUsageObservations(ctx context.Context, snapshots []subs
 // UpdateSubscriptionUsage refreshes subscriptions first; those refreshes save
 // both node cache and counter snapshots. It does not trigger node probes.
 func (s *AppService) UpdateSubscriptionUsage(ctx context.Context, userAgent string) (*subscriptionusage.RefreshState, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	return s.collectSubscriptionUsage(ctx, time.Now(), userAgent, true)
 }
 
 func (s *AppService) collectSubscriptionUsage(ctx context.Context, now time.Time, userAgent string, force bool) (*subscriptionusage.RefreshState, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	if !s.usageRefreshMu.TryLock() {
 		return nil, fmt.Errorf("订阅用量更新正在执行，请稍后查看")
 	}
@@ -174,6 +183,9 @@ func (s *AppService) collectSubscriptionUsage(ctx context.Context, now time.Time
 }
 
 func (s *AppService) GetSubscriptionUsage(ctx context.Context, from, until, period, account string) (*subscriptionusage.Report, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	a, b, err := subscriptionusage.ParseRange(from, until, period)
 	if err != nil {
 		return nil, err

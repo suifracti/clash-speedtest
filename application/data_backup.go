@@ -17,6 +17,15 @@ import (
 // the existing archive layout and exclusions, but snapshot the live SQLite
 // database so committed WAL data is included without copying transient files.
 func (s *AppService) ExportDataBackup(ctx context.Context, destination io.Writer) error {
+	if s == nil {
+		return fmt.Errorf("app service is not initialized")
+	}
+	if destination == nil {
+		return fmt.Errorf("destination writer is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	root := s.appPaths.DataRoot
 	if root == "" {
 		return fmt.Errorf("数据根目录未配置")
@@ -109,6 +118,9 @@ func (s *AppService) ExportDataBackup(ctx context.Context, destination io.Writer
 }
 
 func appendBackupFile(archive *zip.Writer, name, path string, info os.FileInfo) error {
+	if archive == nil || info == nil {
+		return fmt.Errorf("invalid archive or file info")
+	}
 	header, err := zip.FileInfoHeader(info)
 	if err != nil {
 		return err

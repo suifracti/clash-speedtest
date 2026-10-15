@@ -913,6 +913,9 @@ func (s *AppService) CompareRuns(baseID, targetID string) (*history.RunCompariso
 // GetProfileSetup returns the current canonical profile state and safe source
 // summaries. It does not create a store or import anything.
 func (s *AppService) GetProfileSetup() (*ProfileSetupDTO, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	status := s.profilePaths.InspectSetup()
 	migration, _ := s.GetDataMigration()
 	dto := &ProfileSetupDTO{
@@ -971,18 +974,27 @@ func (s *AppService) InspectProfileSource(sourcePath string) (*ProfileSourceDTO,
 // InitializeEmptyProfileStore records the explicit user's choice to start
 // with a real empty canonical store.
 func (s *AppService) InitializeEmptyProfileStore() error {
+	if s == nil {
+		return fmt.Errorf("app service is not initialized")
+	}
 	return s.profilePaths.InitializeEmpty()
 }
 
 // ImportProfileSource commits only the explicitly selected local source. No
 // network request or subscription refresh is performed here.
 func (s *AppService) ImportProfileSource(ctx context.Context, sourcePath string) error {
+	if s == nil {
+		return fmt.Errorf("app service is not initialized")
+	}
 	return s.profilePaths.ImportFrom(ctx, sourcePath)
 }
 
 // DiscardProfileImport removes only unfinished import staging after explicit
 // user recovery action; it never removes canonical profile data.
 func (s *AppService) DiscardProfileImport() error {
+	if s == nil {
+		return fmt.Errorf("app service is not initialized")
+	}
 	return s.profilePaths.DiscardUnfinishedImport()
 }
 
@@ -1000,6 +1012,9 @@ func profileSourceDTO(source profiles.SourceInfo) ProfileSourceDTO {
 }
 
 func (s *AppService) ListAirports() ([]AirportDTO, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	status := s.profilePaths.InspectSetup()
 	if status.Error != "" {
 		return nil, errors.New(status.Error)
@@ -1051,6 +1066,9 @@ func (s *AppService) ListAirports() ([]AirportDTO, error) {
 // deliberately separate from AirportDTO so ordinary list/card reads never
 // need to carry the complete configured source.
 func (s *AppService) GetAirportURL(id string) (string, error) {
+	if s == nil {
+		return "", fmt.Errorf("app service is not initialized")
+	}
 	status := s.profilePaths.InspectSetup()
 	if status.Error != "" {
 		return "", errors.New(status.Error)
@@ -1080,6 +1098,9 @@ func (s *AppService) GetAirportURL(id string) (string, error) {
 }
 
 func (s *AppService) CountCachedNodes(airportID string) int {
+	if s == nil {
+		return 0
+	}
 	cacheFile := s.profilePaths.CacheFile(airportID)
 	st, err := speedtester.New(&speedtester.Config{
 		ConfigPaths: cacheFile,
@@ -1096,6 +1117,9 @@ func (s *AppService) CountCachedNodes(airportID string) int {
 }
 
 func (s *AppService) CreateAirport(name, rawURL, userAgent string, optionalLinks ...string) (*AirportDTO, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	s.profileWriteMu.Lock()
 	defer s.profileWriteMu.Unlock()
 	name = strings.TrimSpace(name)
@@ -1185,6 +1209,9 @@ func (s *AppService) CreateAirport(name, rawURL, userAgent string, optionalLinks
 }
 
 func (s *AppService) UpdateAirport(id, name, rawURL, userAgent string, optionalLinks ...string) (*AirportDTO, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	s.profileWriteMu.Lock()
 	defer s.profileWriteMu.Unlock()
 	name = strings.TrimSpace(name)
@@ -1287,6 +1314,9 @@ func (s *AppService) UpdateAirport(id, name, rawURL, userAgent string, optionalL
 }
 
 func (s *AppService) DeleteAirport(id string) error {
+	if s == nil {
+		return fmt.Errorf("app service is not initialized")
+	}
 	s.profileWriteMu.Lock()
 	defer s.profileWriteMu.Unlock()
 	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
@@ -1307,12 +1337,18 @@ func (s *AppService) DeleteAirport(id string) error {
 }
 
 func (s *AppService) RefreshAirport(id, userAgent string) (*AirportDTO, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	s.profileWriteMu.Lock()
 	defer s.profileWriteMu.Unlock()
 	return s.refreshAirportLocked(context.Background(), id, userAgent)
 }
 
 func (s *AppService) refreshAirportLocked(ctx context.Context, id, userAgent string) (*AirportDTO, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
 	if err != nil {
 		return nil, err
@@ -1353,6 +1389,9 @@ func (s *AppService) refreshAirportLocked(ctx context.Context, id, userAgent str
 
 // AddSubscription adds a new subscription link to an existing airport.
 func (s *AppService) AddSubscription(airportID, name, rawURL, note, userAgent string) (*SubscriptionDTO, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	s.profileWriteMu.Lock()
 	defer s.profileWriteMu.Unlock()
 	name = strings.TrimSpace(name)
@@ -1412,6 +1451,9 @@ func (s *AppService) AddSubscription(airportID, name, rawURL, note, userAgent st
 
 // UpdateSubscription updates an existing subscription's alias, url, and note.
 func (s *AppService) UpdateSubscription(airportID, subID, name, rawURL, note, userAgent string) (*SubscriptionDTO, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	s.profileWriteMu.Lock()
 	defer s.profileWriteMu.Unlock()
 	name = strings.TrimSpace(name)
@@ -1486,6 +1528,9 @@ func (s *AppService) UpdateSubscription(airportID, subID, name, rawURL, note, us
 
 // DeleteSubscription removes a subscription from an airport.
 func (s *AppService) DeleteSubscription(airportID, subID string) error {
+	if s == nil {
+		return fmt.Errorf("app service is not initialized")
+	}
 	s.profileWriteMu.Lock()
 	defer s.profileWriteMu.Unlock()
 	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
@@ -1510,11 +1555,17 @@ func (s *AppService) DeleteSubscription(airportID, subID string) error {
 
 // RefreshSubscription refreshes a single subscription.
 func (s *AppService) RefreshSubscription(airportID, subID, userAgent string) (*SubscriptionDTO, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	return s.refreshSubscriptionContext(context.Background(), airportID, subID, userAgent, "", nil)
 }
 
 // GetSubscriptionURL retrieves the full unmasked subscription URL for editing.
 func (s *AppService) GetSubscriptionURL(subID string) (string, error) {
+	if s == nil {
+		return "", fmt.Errorf("app service is not initialized")
+	}
 	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
 	if err != nil {
 		return "", err
@@ -1533,6 +1584,9 @@ func (s *AppService) GetSubscriptionURL(subID string) (string, error) {
 }
 
 func (s *AppService) GetAirportNodes(id string) ([]map[string]any, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	airportStore, err := profiles.LoadStore(s.profilePaths.StoreFile())
 	if err != nil {
 		return nil, err
@@ -1583,6 +1637,9 @@ func (s *AppService) GetAirportNodes(id string) ([]map[string]any, error) {
 }
 
 func (s *AppService) loadNodesFromCache(cacheFile, profileName string) ([]map[string]any, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	st, err := speedtester.New(&speedtester.Config{
 		ConfigPaths: cacheFile,
 		Mode:        speedtester.SpeedModeFast,
@@ -1619,32 +1676,46 @@ func (s *AppService) loadNodesFromCache(cacheFile, profileName string) ([]map[st
 // Antigravity Token & OAuth operations
 
 func (s *AppService) GetAntigravityToken() string {
+	if s == nil {
+		return ""
+	}
 	s.antigravityMu.RLock()
 	defer s.antigravityMu.RUnlock()
 	return s.antigravityToken
 }
 
 func (s *AppService) GetAntigravitySource() string {
+	if s == nil {
+		return ""
+	}
 	s.antigravityMu.RLock()
 	defer s.antigravityMu.RUnlock()
 	return s.antigravitySource
 }
 
 func (s *AppService) SetAntigravityToken(token, source string) {
+	if s == nil {
+		return
+	}
 	s.antigravityMu.Lock()
 	s.antigravityToken = token
 	s.antigravitySource = source
 	s.antigravityMu.Unlock()
 
-	s.emitter.Emit(Event{
-		Type: "antigravity_token_updated",
-		Payload: map[string]any{
-			"source": source,
-		},
-	})
+	if s.emitter != nil {
+		s.emitter.Emit(Event{
+			Type: "antigravity_token_updated",
+			Payload: map[string]any{
+				"source": source,
+			},
+		})
+	}
 }
 
 func (s *AppService) GetTokenStatus() TokenStatusDTO {
+	if s == nil {
+		return TokenStatusDTO{}
+	}
 	s.antigravityMu.Lock()
 	defer s.antigravityMu.Unlock()
 
@@ -1675,6 +1746,9 @@ func (s *AppService) GetTokenStatus() TokenStatusDTO {
 // Config Export operations
 
 func (s *AppService) ExportClashConfig(airportID string, nodeNames []string) ([]byte, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	airportStore, err := profiles.LoadStore(s.profilePaths.StoreFile())
 	if err != nil {
 		return nil, fmt.Errorf("load airport store: %w", err)
@@ -1721,6 +1795,12 @@ func (s *AppService) ExportClashConfig(airportID string, nodeNames []string) ([]
 
 // ExportClashConfigFromResults creates Clash YAML from node results of a test run.
 func (s *AppService) ExportClashConfigFromResults(runID string, nodeNames []string) ([]byte, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
+	if s.historyStore == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
 	run, err := s.historyStore.Get(runID)
 	if err != nil {
 		return nil, fmt.Errorf("get run %s: %w", runID, err)
@@ -1779,6 +1859,9 @@ func defaultSettingsPath() string {
 }
 
 func (s *AppService) settingsPath() string {
+	if s == nil {
+		return defaultSettingsPath()
+	}
 	if info := s.appPaths.InspectMigration(); info.State == appdata.MigrationStatePending && info.SourceSettingsFile != "" {
 		return info.SourceSettingsFile
 	}
@@ -1789,6 +1872,9 @@ func (s *AppService) settingsPath() string {
 }
 
 func (s *AppService) GetSettings() (*AppSettings, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	p := s.settingsPath()
 	data, err := os.ReadFile(p)
 	if err != nil {
@@ -1843,6 +1929,9 @@ func validateMonitorRetentionPreference(policy monitor.RetentionPolicy, customDa
 }
 
 func (s *AppService) SaveSettings(settings *AppSettings) error {
+	if s == nil {
+		return fmt.Errorf("app service is not initialized")
+	}
 	if settings == nil {
 		return nil
 	}
@@ -1931,6 +2020,9 @@ func writeAtomicFile(path string, data []byte, mode os.FileMode) error {
 
 // SetController allows directly setting a controller instance (useful for tests or custom adapters).
 func (s *AppService) SetController(ctrl controller.Controller, cfg ControllerConfigDTO) {
+	if s == nil {
+		return
+	}
 	s.ctrlMu.Lock()
 	defer s.ctrlMu.Unlock()
 	s.controller = ctrl
@@ -1939,6 +2031,9 @@ func (s *AppService) SetController(ctrl controller.Controller, cfg ControllerCon
 
 // ConfigureController reconfigures the external controller connection.
 func (s *AppService) ConfigureController(ctx context.Context, cfg ControllerConfigDTO) error {
+	if s == nil {
+		return fmt.Errorf("app service is not initialized")
+	}
 	s.ctrlMu.Lock()
 	defer s.ctrlMu.Unlock()
 
@@ -1955,18 +2050,23 @@ func (s *AppService) ConfigureController(ctx context.Context, cfg ControllerConf
 	s.controller = client
 	s.controllerCfg = cfg
 
-	s.emitter.Emit(Event{
-		Type: "controller_status_changed",
-		Payload: map[string]any{
-			"endpoint": cfg.Endpoint,
-			"mode":     cfg.Mode,
-		},
-	})
+	if s.emitter != nil {
+		s.emitter.Emit(Event{
+			Type: "controller_status_changed",
+			Payload: map[string]any{
+				"endpoint": cfg.Endpoint,
+				"mode":     cfg.Mode,
+			},
+		})
+	}
 	return nil
 }
 
 // GetControllerStatus returns the connection and operational status of the controller.
 func (s *AppService) GetControllerStatus(ctx context.Context) (ControllerStatusDTO, error) {
+	if s == nil {
+		return ControllerStatusDTO{}, fmt.Errorf("app service is not initialized")
+	}
 	s.ctrlMu.RLock()
 	ctrl := s.controller
 	cfg := s.controllerCfg
@@ -2018,6 +2118,9 @@ func (s *AppService) GetControllerStatus(ctx context.Context) (ControllerStatusD
 
 // ListControllerGroups lists all selector/proxy groups from the external core.
 func (s *AppService) ListControllerGroups(ctx context.Context) ([]controller.Group, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	s.ctrlMu.RLock()
 	ctrl := s.controller
 	s.ctrlMu.RUnlock()
@@ -2030,6 +2133,9 @@ func (s *AppService) ListControllerGroups(ctx context.Context) ([]controller.Gro
 
 // SelectControllerNode explicitly switches the active proxy node for a group.
 func (s *AppService) SelectControllerNode(ctx context.Context, group string, nodeName string) error {
+	if s == nil {
+		return fmt.Errorf("app service is not initialized")
+	}
 	s.ctrlMu.Lock()
 	ctrl := s.controller
 	pol := s.policy
@@ -2048,15 +2154,17 @@ func (s *AppService) SelectControllerNode(ctx context.Context, group string, nod
 	}
 
 	if err := ctrl.SelectNode(ctx, group, nodeName); err != nil {
-		s.emitter.Emit(Event{
-			Type: "controller_switch_failed",
-			Payload: map[string]any{
-				"group":     group,
-				"from_node": fromNode,
-				"to_node":   nodeName,
-				"error":     err.Error(),
-			},
-		})
+		if s.emitter != nil {
+			s.emitter.Emit(Event{
+				Type: "controller_switch_failed",
+				Payload: map[string]any{
+					"group":     group,
+					"from_node": fromNode,
+					"to_node":   nodeName,
+					"error":     err.Error(),
+				},
+			})
+		}
 		return err
 	}
 
@@ -2064,21 +2172,26 @@ func (s *AppService) SelectControllerNode(ctx context.Context, group string, nod
 	s.decisionEngine.RecordSwitch(&s.decisionState, fromNode, nodeName, group, "手动在控制台切换", "manual_override", 0, 0)
 	s.ctrlMu.Unlock()
 
-	s.emitter.Emit(Event{
-		Type: "controller_node_switched",
-		Payload: map[string]any{
-			"group":        group,
-			"from_node":    fromNode,
-			"to_node":      nodeName,
-			"trigger_type": "manual_override",
-			"timestamp":    time.Now(),
-		},
-	})
+	if s.emitter != nil {
+		s.emitter.Emit(Event{
+			Type: "controller_node_switched",
+			Payload: map[string]any{
+				"group":        group,
+				"from_node":    fromNode,
+				"to_node":      nodeName,
+				"trigger_type": "manual_override",
+				"timestamp":    time.Now(),
+			},
+		})
+	}
 	return nil
 }
 
 // GetSwitchPolicy returns the active auto-switch policy.
 func (s *AppService) GetSwitchPolicy(ctx context.Context) (policy.SwitchPolicy, error) {
+	if s == nil {
+		return policy.SwitchPolicy{}, fmt.Errorf("app service is not initialized")
+	}
 	s.ctrlMu.RLock()
 	defer s.ctrlMu.RUnlock()
 	return s.policy, nil
@@ -2086,6 +2199,9 @@ func (s *AppService) GetSwitchPolicy(ctx context.Context) (policy.SwitchPolicy, 
 
 // UpdateSwitchPolicy updates the auto-switch policy.
 func (s *AppService) UpdateSwitchPolicy(ctx context.Context, p policy.SwitchPolicy) error {
+	if s == nil {
+		return fmt.Errorf("app service is not initialized")
+	}
 	// Reject an unimplemented mode at the write boundary. Storing it would leave the
 	// orchestrator holding a policy it cannot honour, and every later read would have to
 	// guess what the operator meant. Empty is normalized to the safe default instead.
@@ -2099,15 +2215,20 @@ func (s *AppService) UpdateSwitchPolicy(ctx context.Context, p policy.SwitchPoli
 	defer s.ctrlMu.Unlock()
 	s.policy = p
 
-	s.emitter.Emit(Event{
-		Type:    "controller_policy_updated",
-		Payload: p,
-	})
+	if s.emitter != nil {
+		s.emitter.Emit(Event{
+			Type:    "controller_policy_updated",
+			Payload: p,
+		})
+	}
 	return nil
 }
 
 // GetSwitchAuditTrail returns recent switch events.
 func (s *AppService) GetSwitchAuditTrail(ctx context.Context) ([]policy.SwitchEvent, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	s.ctrlMu.RLock()
 	defer s.ctrlMu.RUnlock()
 	trail := make([]policy.SwitchEvent, len(s.decisionState.AuditTrail))
@@ -2118,6 +2239,9 @@ func (s *AppService) GetSwitchAuditTrail(ctx context.Context) ([]policy.SwitchEv
 // EvaluateAndAutoSwitch evaluates latest probe results against policy, checks freshness,
 // and executes switch, recommendation, or resilient verification with rollback.
 func (s *AppService) EvaluateAndAutoSwitch(ctx context.Context, evals []policy.NodeEvaluation) (policy.DecisionResult, error) {
+	if s == nil {
+		return policy.DecisionResult{}, fmt.Errorf("app service is not initialized")
+	}
 	s.ctrlMu.Lock()
 	pol := s.policy
 	engine := s.decisionEngine
@@ -2160,21 +2284,25 @@ func (s *AppService) EvaluateAndAutoSwitch(ctx context.Context, evals []policy.N
 
 	// 1. If candidate data is stale or insufficient, notify clients that fresh probes are needed
 	if res.RequiresFreshProbe && len(res.StaleNodes) > 0 {
-		s.emitter.Emit(Event{
-			Type: "controller_fresh_probe_required",
-			Payload: map[string]any{
-				"stale_nodes": res.StaleNodes,
-				"reason":      "候选节点样本过旧或样本数不足，需轻量复测后方可参评",
-			},
-		})
+		if s.emitter != nil {
+			s.emitter.Emit(Event{
+				Type: "controller_fresh_probe_required",
+				Payload: map[string]any{
+					"stale_nodes": res.StaleNodes,
+					"reason":      "候选节点样本过旧或样本数不足，需轻量复测后方可参评",
+				},
+			})
+		}
 	}
 
 	// 2. If in Recommend mode and a recommendation was produced, emit recommendation event
 	if res.Recommendation != nil {
-		s.emitter.Emit(Event{
-			Type:    "controller_switch_recommended",
-			Payload: res.Recommendation,
-		})
+		if s.emitter != nil {
+			s.emitter.Emit(Event{
+				Type:    "controller_switch_recommended",
+				Payload: res.Recommendation,
+			})
+		}
 		return res, nil
 	}
 
@@ -2205,16 +2333,18 @@ func (s *AppService) EvaluateAndAutoSwitch(ctx context.Context, evals []policy.N
 
 	// Execute switch in external proxy core
 	if err := ctrl.SelectNode(ctx, group, res.TargetNode); err != nil {
-		s.emitter.Emit(Event{
-			Type: "controller_switch_failed",
-			Payload: map[string]any{
-				"group":     group,
-				"from_node": fromNode,
-				"to_node":   res.TargetNode,
-				"reason":    res.Reason,
-				"error":     err.Error(),
-			},
-		})
+		if s.emitter != nil {
+			s.emitter.Emit(Event{
+				Type: "controller_switch_failed",
+				Payload: map[string]any{
+					"group":     group,
+					"from_node": fromNode,
+					"to_node":   res.TargetNode,
+					"reason":    res.Reason,
+					"error":     err.Error(),
+				},
+			})
+		}
 		return res, fmt.Errorf("execute switch: %w", err)
 	}
 
@@ -2223,17 +2353,19 @@ func (s *AppService) EvaluateAndAutoSwitch(ctx context.Context, evals []policy.N
 	s.decisionEngine.RecordSwitch(&s.decisionState, fromNode, res.TargetNode, group, res.Reason, res.TriggerType, 0, 0)
 	s.ctrlMu.Unlock()
 
-	s.emitter.Emit(Event{
-		Type: "controller_node_switched",
-		Payload: map[string]any{
-			"group":        group,
-			"from_node":    fromNode,
-			"to_node":      res.TargetNode,
-			"reason":       res.Reason,
-			"trigger_type": res.TriggerType,
-			"timestamp":    time.Now(),
-		},
-	})
+	if s.emitter != nil {
+		s.emitter.Emit(Event{
+			Type: "controller_node_switched",
+			Payload: map[string]any{
+				"group":        group,
+				"from_node":    fromNode,
+				"to_node":      res.TargetNode,
+				"reason":       res.Reason,
+				"trigger_type": res.TriggerType,
+				"timestamp":    time.Now(),
+			},
+		})
+	}
 
 	// 4. Post-Switch Verification & Resilient Rollback:
 	// If RollbackOnFailure is enabled, run multiple lightweight verification probes.
@@ -2283,17 +2415,19 @@ func (s *AppService) EvaluateAndAutoSwitch(ctx context.Context, evals []policy.N
 			s.decisionEngine.RecordRollback(&s.decisionState, group, res.TargetNode, verifResult.Reason)
 			s.ctrlMu.Unlock()
 
-			s.emitter.Emit(Event{
-				Type: "controller_node_rolled_back",
-				Payload: map[string]any{
-					"group":          group,
-					"rolled_back_to": fromNode,
-					"failed_node":    res.TargetNode,
-					"reason":         verifResult.Reason,
-					"probes":         verificationProbes,
-					"timestamp":      time.Now(),
-				},
-			})
+			if s.emitter != nil {
+				s.emitter.Emit(Event{
+					Type: "controller_node_rolled_back",
+					Payload: map[string]any{
+						"group":          group,
+						"rolled_back_to": fromNode,
+						"failed_node":    res.TargetNode,
+						"reason":         verifResult.Reason,
+						"probes":         verificationProbes,
+						"timestamp":      time.Now(),
+					},
+				})
+			}
 		}
 	}
 
@@ -2304,6 +2438,9 @@ func (s *AppService) EvaluateAndAutoSwitch(ctx context.Context, evals []policy.N
 
 // SetMonitorRunner injects a custom runner (useful for testing).
 func (s *AppService) SetMonitorRunner(runner *monitor.Runner) {
+	if s == nil {
+		return
+	}
 	s.monitorMu.Lock()
 	defer s.monitorMu.Unlock()
 	if runner != nil {
@@ -2322,8 +2459,15 @@ func (s *AppService) SetMonitorRunner(runner *monitor.Runner) {
 // A JobID must be unique among registered schedulers. Re-creating a job with an existing JobID
 // (regardless of running, paused, or stopped state) is rejected.
 func (s *AppService) CreateMonitorJob(job monitor.MonitorJob) (*monitor.MonitorJob, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	s.monitorMu.Lock()
 	defer s.monitorMu.Unlock()
+
+	if s.monitorSchedulers == nil {
+		s.monitorSchedulers = make(map[string]*monitor.Scheduler)
+	}
 
 	if job.ID != "" {
 		if _, exists := s.monitorSchedulers[job.ID]; exists {
@@ -2401,14 +2545,16 @@ func (s *AppService) CreateMonitorJob(job monitor.MonitorJob) (*monitor.MonitorJ
 
 	s.monitorSchedulers[job.ID] = sched
 
-	s.emitter.Emit(Event{
-		Type: "monitor_job_created",
-		Payload: map[string]any{
-			"job_id": job.ID,
-			"name":   job.Name,
-			"nodes":  len(job.Nodes),
-		},
-	})
+	if s.emitter != nil {
+		s.emitter.Emit(Event{
+			Type: "monitor_job_created",
+			Payload: map[string]any{
+				"job_id": job.ID,
+				"name":   job.Name,
+				"nodes":  len(job.Nodes),
+			},
+		})
+	}
 
 	return &job, nil
 }
@@ -2417,6 +2563,9 @@ func (s *AppService) CreateMonitorJob(job monitor.MonitorJob) (*monitor.MonitorJ
 // intent is durable. A stopped runtime never becomes launchable from stale run
 // history alone.
 func (s *AppService) StartMonitorJob(jobID string) error {
+	if s == nil {
+		return fmt.Errorf("app service is not initialized")
+	}
 	s.monitorMu.Lock()
 	sched, ok := s.monitorSchedulers[jobID]
 	if !ok {
@@ -2453,12 +2602,17 @@ func (s *AppService) StartMonitorJob(jobID string) error {
 	}
 	s.monitorMu.Unlock()
 
-	s.emitter.Emit(Event{Type: "monitor_job_started", Payload: map[string]any{"job_id": jobID}})
+	if s.emitter != nil {
+		s.emitter.Emit(Event{Type: "monitor_job_started", Payload: map[string]any{"job_id": jobID}})
+	}
 	return nil
 }
 
 // PauseMonitorJob cancels waiting admission before persisting the paused intent.
 func (s *AppService) PauseMonitorJob(jobID string) error {
+	if s == nil {
+		return fmt.Errorf("app service is not initialized")
+	}
 	s.monitorMu.Lock()
 	sched, ok := s.monitorSchedulers[jobID]
 	if !ok {
@@ -2478,12 +2632,17 @@ func (s *AppService) PauseMonitorJob(jobID string) error {
 	}
 	sched.SetLaunchIntent(before.ResumeOnLaunch, monitor.JobStatePaused, monitor.RecoveryStatePaused, "", "")
 	s.monitorMu.Unlock()
-	s.emitter.Emit(Event{Type: "monitor_job_paused", Payload: map[string]any{"job_id": jobID}})
+	if s.emitter != nil {
+		s.emitter.Emit(Event{Type: "monitor_job_paused", Payload: map[string]any{"job_id": jobID}})
+	}
 	return nil
 }
 
 // ResumeMonitorJob records an explicit running intent before resuming a loop.
 func (s *AppService) ResumeMonitorJob(jobID string) error {
+	if s == nil {
+		return fmt.Errorf("app service is not initialized")
+	}
 	s.monitorMu.Lock()
 	sched, ok := s.monitorSchedulers[jobID]
 	if !ok {
@@ -2519,12 +2678,17 @@ func (s *AppService) ResumeMonitorJob(jobID string) error {
 		return fmt.Errorf("resume monitor job %s: %w", jobID, err)
 	}
 	s.monitorMu.Unlock()
-	s.emitter.Emit(Event{Type: "monitor_job_resumed", Payload: map[string]any{"job_id": jobID}})
+	if s.emitter != nil {
+		s.emitter.Emit(Event{Type: "monitor_job_resumed", Payload: map[string]any{"job_id": jobID}})
+	}
 	return nil
 }
 
 // StopMonitorJob stops current work before saving the user's stopped intent.
 func (s *AppService) StopMonitorJob(jobID string) error {
+	if s == nil {
+		return fmt.Errorf("app service is not initialized")
+	}
 	s.monitorMu.Lock()
 	sched, ok := s.monitorSchedulers[jobID]
 	if !ok {
@@ -2545,11 +2709,16 @@ func (s *AppService) StopMonitorJob(jobID string) error {
 	state := recoveryStateForIntent(before.ResumeOnLaunch, monitor.JobStateStopped)
 	sched.SetLaunchIntent(before.ResumeOnLaunch, monitor.JobStateStopped, state, "", "")
 	s.monitorMu.Unlock()
-	s.emitter.Emit(Event{Type: "monitor_job_stopped", Payload: map[string]any{"job_id": jobID}})
+	if s.emitter != nil {
+		s.emitter.Emit(Event{Type: "monitor_job_stopped", Payload: map[string]any{"job_id": jobID}})
+	}
 	return nil
 }
 
 func (s *AppService) SetMonitorJobResumeOnLaunch(jobID string, enabled bool) error {
+	if s == nil {
+		return fmt.Errorf("app service is not initialized")
+	}
 	s.monitorMu.Lock()
 	defer s.monitorMu.Unlock()
 	sched, ok := s.monitorSchedulers[jobID]
@@ -2580,13 +2749,18 @@ func (s *AppService) SetMonitorJobResumeOnLaunch(jobID string, enabled bool) err
 		state = monitor.RecoveryStateStopped
 	}
 	sched.SetLaunchIntent(enabled, job.DesiredState, state, "", "")
-	s.emitter.Emit(Event{Type: "monitor_job_recovery_preference_updated", Payload: map[string]any{"job_id": jobID, "enabled": enabled}})
+	if s.emitter != nil {
+		s.emitter.Emit(Event{Type: "monitor_job_recovery_preference_updated", Payload: map[string]any{"job_id": jobID, "enabled": enabled}})
+	}
 	return nil
 }
 
 // DeleteMonitorJob cancels runtime work, durably clears launch intent, then
 // deletes only the definition. Historical runs and raw samples remain queryable.
 func (s *AppService) DeleteMonitorJob(jobID string) error {
+	if s == nil {
+		return fmt.Errorf("app service is not initialized")
+	}
 	s.monitorMu.Lock()
 	defer s.monitorMu.Unlock()
 	sched, ok := s.monitorSchedulers[jobID]
@@ -2607,12 +2781,14 @@ func (s *AppService) DeleteMonitorJob(jobID string) error {
 		return fmt.Errorf("delete monitor job %s: %w", jobID, err)
 	}
 	delete(s.monitorSchedulers, jobID)
-	s.emitter.Emit(Event{Type: "monitor_job_deleted", Payload: map[string]any{"job_id": jobID}})
+	if s.emitter != nil {
+		s.emitter.Emit(Event{Type: "monitor_job_deleted", Payload: map[string]any{"job_id": jobID}})
+	}
 	return nil
 }
 
 func (s *AppService) persistMonitorIntent(jobID string, resumeOnLaunch bool, desired monitor.JobState) error {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return fmt.Errorf("history store is not initialized")
 	}
 	return s.historyStore.UpdateMonitorJobLaunchIntent(context.Background(), jobID, resumeOnLaunch, desired, time.Now())
@@ -2630,6 +2806,9 @@ func monitorIntentFailureWarning(action string, previous monitor.MonitorJob, err
 
 // StopAllMonitorJobs stops all configured monitor schedulers.
 func (s *AppService) StopAllMonitorJobs() {
+	if s == nil {
+		return
+	}
 	s.monitorMu.RLock()
 	schedulers := make([]*monitor.Scheduler, 0, len(s.monitorSchedulers))
 	for _, sched := range s.monitorSchedulers {
@@ -2644,6 +2823,9 @@ func (s *AppService) StopAllMonitorJobs() {
 
 // GetMonitorJob returns the current status and config of the specified job.
 func (s *AppService) GetMonitorJob(jobID string) (*monitor.MonitorJob, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	s.monitorMu.RLock()
 	sched, ok := s.monitorSchedulers[jobID]
 	s.monitorMu.RUnlock()
@@ -2658,6 +2840,9 @@ func (s *AppService) GetMonitorJob(jobID string) (*monitor.MonitorJob, error) {
 // UpdateMonitorJobSamplingTier persists a periodic source setting without
 // changing a job's interval, selected nodes, probe set, or lifecycle state.
 func (s *AppService) UpdateMonitorJobSamplingTier(jobID string, tier monitor.SamplingTier) error {
+	if s == nil {
+		return fmt.Errorf("app service is not initialized")
+	}
 	if tier != monitor.SamplingTierRegular && tier != monitor.SamplingTierFocus && tier != monitor.SamplingTierSparse {
 		return monitor.NewValidationError("sampling_tier 必须是 regular、focus 或 sparse")
 	}
@@ -2678,18 +2863,23 @@ func (s *AppService) UpdateMonitorJobSamplingTier(jobID string, tier monitor.Sam
 	if err := sched.UpdateSamplingTier(tier, updatedAt); err != nil {
 		return fmt.Errorf("update monitor job %s runtime sampling tier: %w", jobID, err)
 	}
-	s.emitter.Emit(Event{
-		Type: "monitor_job_updated",
-		Payload: map[string]any{
-			"job_id":        jobID,
-			"sampling_tier": tier,
-		},
-	})
+	if s.emitter != nil {
+		s.emitter.Emit(Event{
+			Type: "monitor_job_updated",
+			Payload: map[string]any{
+				"job_id":        jobID,
+				"sampling_tier": tier,
+			},
+		})
+	}
 	return nil
 }
 
 // ListMonitorJobs returns all configured monitor jobs.
 func (s *AppService) ListMonitorJobs() []monitor.MonitorJob {
+	if s == nil {
+		return []monitor.MonitorJob{}
+	}
 	s.monitorMu.RLock()
 	defer s.monitorMu.RUnlock()
 
@@ -2709,6 +2899,9 @@ func (s *AppService) ListMonitorJobs() []monitor.MonitorJob {
 
 // TriggerMonitorJob triggers an immediate single round execution of the specified job.
 func (s *AppService) TriggerMonitorJob(jobID string) (*monitor.MonitorRun, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	s.monitorMu.RLock()
 	sched, ok := s.monitorSchedulers[jobID]
 	s.monitorMu.RUnlock()

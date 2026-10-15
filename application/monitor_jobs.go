@@ -105,8 +105,11 @@ const (
 // ListMonitorNodeOptions resolves the currently cached subscription configs into
 // stable, credential-free choices for monitor-job creation.
 func (s *AppService) ListMonitorNodeOptions() ([]MonitorNodeOptionDTO, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
-	if err != nil {
+	if err != nil || store == nil {
 		return nil, err
 	}
 
@@ -208,6 +211,9 @@ func (s *AppService) ListMonitorNodeOptions() ([]MonitorNodeOptionDTO, error) {
 // CreateMonitorJobFromRequest resolves node keys against the current cached
 // subscription before registering and durably saving the scheduler definition.
 func (s *AppService) CreateMonitorJobFromRequest(req MonitorJobCreateRequest) (*MonitorJobDTO, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	profileID := strings.TrimSpace(req.ProfileID)
 	if profileID == "" {
 		return nil, monitor.NewValidationError("profile_id 不能为空")
@@ -327,6 +333,9 @@ func monitorNodeContextIndex(req MonitorJobCreateRequest) (map[string]MonitorNod
 
 // ListMonitorJobDTOs returns the safe status projection used by Web and Wails.
 func (s *AppService) ListMonitorJobDTOs() ([]MonitorJobDTO, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	if s.monitorLoadErr != nil {
 		return nil, fmt.Errorf("load monitor job definitions: %w", s.monitorLoadErr)
 	}
@@ -348,7 +357,7 @@ func (s *AppService) ListMonitorJobDTOs() ([]MonitorJobDTO, error) {
 // loadPersistedMonitorJobs reconstructs scheduler objects from durable product
 // definitions. It never starts a scheduler or executes a probe.
 func (s *AppService) loadPersistedMonitorJobs() error {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return nil
 	}
 	definitions, err := s.historyStore.ListMonitorJobDefinitions(context.Background())
@@ -544,6 +553,9 @@ func resolvePersistedMonitorNodes(references []monitor.MonitorJobNodeReference, 
 
 // GetMonitorJobDTO returns the safe status projection for one job.
 func (s *AppService) GetMonitorJobDTO(jobID string) (*MonitorJobDTO, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	job, err := s.GetMonitorJob(jobID)
 	if err != nil {
 		return nil, err
@@ -577,6 +589,9 @@ func monitorProfileName(store *profiles.Store, profileID string) (string, bool) 
 }
 
 func (s *AppService) loadMonitorNodes(profileID string) ([]monitor.MonitoredNode, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	cacheID := profileID
 	if !s.profilePaths.HasCache(profileID) {
 		if store, err := profiles.LoadStore(s.profilePaths.StoreFile()); err == nil {

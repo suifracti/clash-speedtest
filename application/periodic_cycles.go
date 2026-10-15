@@ -34,6 +34,9 @@ func (p *periodicSampling) archivePeriodicCycleLocked(kind string, cycle Periodi
 	}
 }
 func (p *periodicSampling) loadPeriodicCycles() {
+	if p == nil || p.app == nil || p.app.appPaths.DataRoot == "" {
+		return
+	}
 	data, err := os.ReadFile(filepath.Join(p.app.appPaths.DataRoot, "periodic_sampling_cycles.json"))
 	if os.IsNotExist(err) {
 		return

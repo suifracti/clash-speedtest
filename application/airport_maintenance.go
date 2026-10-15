@@ -12,6 +12,9 @@ import (
 )
 
 func (s *AppService) SaveAirportMaintenance(id string, next profiles.AirportMaintenance) error {
+	if s == nil {
+		return fmt.Errorf("app service is not initialized")
+	}
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return fmt.Errorf("机场标识不能为空")
@@ -63,6 +66,9 @@ func (s *AppService) SaveAirportMaintenance(id string, next profiles.AirportMain
 
 // One worker, no catch-up queue. Claim is persisted before any network operation.
 func (s *AppService) StartSubscriptionRefresh(userAgent string) {
+	if s == nil {
+		return
+	}
 	s.maintenanceOnce.Do(func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		s.maintenanceCancel = cancel
@@ -96,6 +102,9 @@ func (s *AppService) StartSubscriptionRefresh(userAgent string) {
 }
 
 func (s *AppService) refreshDueAirport(ctx context.Context, now time.Time, userAgent string) error {
+	if s == nil {
+		return fmt.Errorf("app service is not initialized")
+	}
 	s.profileWriteMu.Lock()
 	defer s.profileWriteMu.Unlock()
 	if ctx.Err() != nil {

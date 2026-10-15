@@ -39,10 +39,17 @@ func validateMonitorBudget(settings *AppSettings) error {
 }
 
 func (s *AppService) monitorBudgetLimits() (monitor.BudgetLimits, error) {
+	if s == nil {
+		return monitor.BudgetLimits{}, fmt.Errorf("app service is not initialized")
+	}
 	settings, err := s.GetSettings()
 	if err != nil {
 		return monitor.BudgetLimits{}, err
 	}
+	if settings == nil {
+		settings = &AppSettings{}
+	}
+	fillDefaultMonitorBudget(settings)
 	return monitor.BudgetLimits{
 		MaxConcurrent: *settings.MonitorBudgetMaxConcurrent,
 		ResponseBytes: *settings.MonitorBudgetResponseBytes,
@@ -50,6 +57,9 @@ func (s *AppService) monitorBudgetLimits() (monitor.BudgetLimits, error) {
 }
 
 func (s *AppService) GetMonitorBudgetStatus(ctx context.Context) (*monitor.BudgetStatus, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	if err := s.canonicalMonitorHistory(); err != nil {
 		return nil, err
 	}
@@ -64,6 +74,9 @@ func (s *AppService) GetMonitorBudgetStatus(ctx context.Context) (*monitor.Budge
 }
 
 func (s *AppService) monitorBudgetGuard() (string, string) {
+	if s == nil {
+		return "budget_unavailable", "app service is not initialized"
+	}
 	status, err := s.GetMonitorBudgetStatus(context.Background())
 	if err != nil {
 		if block, ok := monitor.AsBudgetBlock(err); ok {

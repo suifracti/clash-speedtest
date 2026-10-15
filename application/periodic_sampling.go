@@ -191,6 +191,9 @@ func (p *periodicSampling) persistLocked(cfg PeriodicSamplingConfig) error {
 }
 
 func (s *AppService) GetPeriodicSampling() (*PeriodicSamplingStatus, error) {
+	if s == nil || s.periodic == nil {
+		return nil, fmt.Errorf("periodic sampling is not initialized")
+	}
 	p := s.periodic
 	p.mu.Lock()
 	status := &PeriodicSamplingStatus{Config: p.cfg, Running: p.cancel != nil, PauseReason: p.pauseReason, Error: p.lastError, Cycles: map[string]PeriodicCycle{}}
@@ -282,6 +285,9 @@ func (p *periodicSampling) nodes(cfg PeriodicSamplingConfig) ([]MonitorNodeOptio
 }
 
 func (s *AppService) ConfigurePeriodicSampling(cfg PeriodicSamplingConfig) (*PeriodicSamplingStatus, error) {
+	if s == nil || s.periodic == nil {
+		return nil, fmt.Errorf("periodic sampling is not initialized")
+	}
 	cfg.LatencyProbeSet = monitor.ProbeSetLatencySix
 	cfg.ServiceConcurrency = periodicServiceConcurrency(cfg)
 	if err := validatePeriodicSamplingConfig(cfg); err != nil {

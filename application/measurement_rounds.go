@@ -19,7 +19,7 @@ func periodicRoundRequestID(round string, n MonitorNodeOptionDTO, service string
 	return round + ":" + fmt.Sprintf("%x", sum[:16])
 }
 func (s *AppService) CreateManualMeasurementRound(ctx context.Context, r history.MeasurementRound) error {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil || s.historyStore.DB() == nil {
 		return fmt.Errorf("history store is not initialized")
 	}
 	// Origin and creation time are assigned here, never accepted from Web JSON.
@@ -61,6 +61,9 @@ func (s *AppService) CreateManualMeasurementRound(ctx context.Context, r history
 	return s.historyStore.DB().CreateMeasurementRound(ctx, r)
 }
 func (s *AppService) validateMeasurementRequest(ctx context.Context, requestID, profile, node, nid, rev, project, service string) error {
+	if s == nil || s.historyStore == nil || s.historyStore.DB() == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
 	trigger, err := s.historyStore.DB().MeasurementRequestTrigger(ctx, requestID, profile, nid, rev, project, service)
 	if err != nil {
 		return err
@@ -85,19 +88,22 @@ func (s *AppService) validateMeasurementRequest(ctx context.Context, requestID, 
 	return nil
 }
 func (s *AppService) ListMeasurementRoundNodes(ctx context.Context, profile, node, nid, rev string, limit int) ([]history.MeasurementRound, error) {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil || s.historyStore.DB() == nil {
 		return nil, fmt.Errorf("history store is not initialized")
 	}
 	return s.historyStore.DB().QueryMeasurementRoundNodes(ctx, profile, node, nid, rev, limit)
 }
 func (s *AppService) FinishManualMeasurementRound(ctx context.Context, id, state string) error {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil || s.historyStore.DB() == nil {
 		return fmt.Errorf("history store is not initialized")
 	}
 	return s.historyStore.DB().FinishManualMeasurementRound(ctx, id, state)
 }
 
 func (s *AppService) ensureManualLatencyRound(ctx context.Context, req WorkbenchLatencyBatchRequest, selections []WorkbenchLatencyBatchSelection) error {
+	if s == nil || s.historyStore == nil || s.historyStore.DB() == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
 	if len(selections) == 0 {
 		return nil
 	}

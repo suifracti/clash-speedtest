@@ -362,6 +362,9 @@ func projectLatencyTestForWindow(test history.LatencyTest) history.LatencyTest {
 }
 
 func (s *AppService) resolveWorkbenchLatencyProxy(profileID, nodeKey string, revision ...string) (monitor.MonitoredNode, string, *speedtester.CProxy, error) {
+	if s == nil {
+		return monitor.MonitoredNode{}, "", nil, fmt.Errorf("app service is not initialized")
+	}
 	revisionKey := ""
 	if len(revision) > 0 {
 		revisionKey = revision[0]
@@ -373,8 +376,11 @@ func (s *AppService) resolveWorkbenchLatencyProxy(profileID, nodeKey string, rev
 // Keep legacy fingerprints unchanged; colliding revisions never authorize a
 // choice between different full connection/TLS/credential configurations.
 func (s *AppService) resolveWorkbenchScopedProxy(profileID, nodeKey, identityKey, revisionKey string) (monitor.MonitoredNode, string, *speedtester.CProxy, error) {
+	if s == nil {
+		return monitor.MonitoredNode{}, "", nil, fmt.Errorf("app service is not initialized")
+	}
 	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
-	if err != nil {
+	if err != nil || store == nil {
 		return monitor.MonitoredNode{}, "", nil, fmt.Errorf("加载订阅配置失败: %w", err)
 	}
 	profileExists := store.Get(profileID) != nil

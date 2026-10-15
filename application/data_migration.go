@@ -54,6 +54,9 @@ func dataMigrationDTO(info appdata.MigrationInfo) DataMigrationDTO {
 
 // GetDataMigration returns a safe migration summary for Web and Wails.
 func (s *AppService) GetDataMigration() (DataMigrationDTO, error) {
+	if s == nil {
+		return DataMigrationDTO{}, fmt.Errorf("app service is not initialized")
+	}
 	return dataMigrationDTO(s.appPaths.InspectMigration()), nil
 }
 
@@ -63,6 +66,9 @@ func (s *AppService) GetDataMigration() (DataMigrationDTO, error) {
 // method recovers opted-in running Monitor jobs only after the canonical data
 // root is ready and their profile, budget, and capacity gates are rechecked.
 func (s *AppService) MigrateLegacyData() error {
+	if s == nil {
+		return fmt.Errorf("app service is not initialized")
+	}
 	if s.Status().IsRunning {
 		return fmt.Errorf("请先停止正在运行的测速任务")
 	}
@@ -112,6 +118,9 @@ func (s *AppService) MigrateLegacyData() error {
 }
 
 func (s *AppService) restoreHistoryAfterMigrationFailure() {
+	if s == nil {
+		return
+	}
 	store, err := OpenHistoryStore(s.appPaths)
 	if err != nil {
 		s.historyStore = nil
@@ -129,6 +138,9 @@ func (s *AppService) restoreHistoryAfterMigrationFailure() {
 }
 
 func (s *AppService) resetMonitorRuntime() {
+	if s == nil {
+		return
+	}
 	s.monitorMu.Lock()
 	s.monitorSchedulers = make(map[string]*monitor.Scheduler)
 	s.monitorRunner = nil

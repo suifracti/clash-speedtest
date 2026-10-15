@@ -25,8 +25,14 @@ func periodicDownloadYield(count int, elapsed time.Duration) bool {
 	return count >= periodicDownloadBatchSize || elapsed >= 15*time.Second
 }
 func (p *periodicSampling) adjustActivity(kind string, waiting, active, started int) {
+	if p == nil {
+		return
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.cycles == nil {
+		p.cycles = make(map[string]PeriodicCycle)
+	}
 	c := p.cycles[kind]
 	c.Waiting += waiting
 	c.Active += active
@@ -34,8 +40,14 @@ func (p *periodicSampling) adjustActivity(kind string, waiting, active, started 
 	p.cycles[kind] = c
 }
 func (p *periodicSampling) observeExecution(kind string, seconds float64) {
+	if p == nil {
+		return
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.cycles == nil {
+		p.cycles = make(map[string]PeriodicCycle)
+	}
 	c := p.cycles[kind]
 	c.ExecutionSeconds += seconds
 	p.cycles[kind] = c
@@ -59,6 +71,9 @@ func periodicObserveLegacy(c PeriodicCycle) PeriodicCycle {
 }
 
 func (p *periodicSampling) observeWaitPart(kind, part string, seconds float64) {
+	if p == nil {
+		return
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.cycles == nil {
@@ -86,13 +101,15 @@ func (p *periodicSampling) observeWaitPart(kind, part string, seconds float64) {
 const periodicServiceRefillWindow = 5 * time.Second
 
 func (p *periodicSampling) releaseDownloadGate(held *bool) {
-	if !*held {
+	if p == nil || held == nil || !*held {
 		return
 	}
 	p.mu.Lock()
-	c := p.cycles["service"]
-	if c.Running && c.Processed < c.Total {
-		p.serviceTurnUntil = time.Now().Add(periodicServiceRefillWindow)
+	if p.cycles != nil {
+		c := p.cycles["service"]
+		if c.Running && c.Processed < c.Total {
+			p.serviceTurnUntil = time.Now().Add(periodicServiceRefillWindow)
+		}
 	}
 	p.mu.Unlock()
 	*held = false
@@ -100,13 +117,19 @@ func (p *periodicSampling) releaseDownloadGate(held *bool) {
 }
 
 func (p *periodicSampling) waitServiceTurn(ctx context.Context) (time.Duration, error) {
+	if p == nil {
+		return 0, nil
+	}
 	started := time.Now()
 	for {
 		if err := ctx.Err(); err != nil {
 			return time.Since(started), err
 		}
 		p.mu.Lock()
-		c := p.cycles["service"]
+		c := PeriodicCycle{}
+		if p.cycles != nil {
+			c = p.cycles["service"]
+		}
 		until := p.serviceTurnUntil
 		pending := c.Running && c.Processed < c.Total
 		p.mu.Unlock()
@@ -131,7 +154,7 @@ func (p *periodicSampling) waitServiceTurn(ctx context.Context) (time.Duration, 
 // completion is signalled before staging/saving. The actual probe retains its
 // original timeout and cancellation; a gate is never freed by a guessed timeout.
 func (p *periodicSampling) drainPeriodicNetwork(kind string, done <-chan struct{}) {
-	if done == nil {
+	if p == nil || done == nil {
 		return
 	}
 	begin := time.Now()

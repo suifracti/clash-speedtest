@@ -188,8 +188,11 @@ func (s *AppService) ExportNodesClashConfig(_ context.Context, req ExportClashCo
 }
 
 func (s *AppService) collectAllCachedNodes() ([]monitor.MonitoredNode, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
-	if err != nil {
+	if err != nil || store == nil {
 		return nil, err
 	}
 

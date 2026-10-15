@@ -62,6 +62,9 @@ func periodicFairServiceTasks(nodes []MonitorNodeOptionDTO, rules []publicservic
 // Admission retries reuse RequestID. Only a typed busy condition is retried;
 // real measurement, revision and storage failures are never remeasured here.
 func (p *periodicSampling) startPeriodicPublicService(ctx context.Context, req WorkbenchPublicServiceTestRequest, limit int) (*history.PublicServiceAttempt, float64, error) {
+	if p == nil || p.app == nil {
+		return nil, 0, fmt.Errorf("periodic sampling is not initialized")
+	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	waited := 0.0
@@ -86,6 +89,9 @@ func (p *periodicSampling) startPeriodicPublicService(ctx context.Context, req W
 	}
 }
 func (p *periodicSampling) addPeriodicWait(kind string, seconds float64) {
+	if p == nil {
+		return
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.cycles == nil {
@@ -97,6 +103,9 @@ func (p *periodicSampling) addPeriodicWait(kind string, seconds float64) {
 }
 
 func (p *periodicSampling) startPeriodicDownload(ctx context.Context, req WorkbenchDownloadTestRequest) (*history.WorkbenchDownloadAttempt, float64, error) {
+	if p == nil || p.app == nil {
+		return nil, 0, fmt.Errorf("periodic sampling is not initialized")
+	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	waited := 0.0

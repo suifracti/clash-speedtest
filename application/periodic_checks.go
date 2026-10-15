@@ -22,6 +22,12 @@ type PeriodicChecks struct {
 }
 
 func (s *AppService) GetPeriodicServiceChecks(ctx context.Context, profile, nodeKey string) (PeriodicChecks, error) {
+	if s == nil || s.periodic == nil {
+		return PeriodicChecks{}, fmt.Errorf("periodic sampling is not initialized")
+	}
+	if s.historyStore == nil || s.historyStore.DB() == nil {
+		return PeriodicChecks{}, fmt.Errorf("history store is not initialized")
+	}
 	p := s.periodic
 	p.mu.Lock()
 	cfg := p.cfg

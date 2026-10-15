@@ -453,6 +453,9 @@ func (s *AppService) findRefreshLocked(id string) *SubscriptionRefreshJob {
 }
 
 func (s *AppService) ListSubscriptionRefreshJobs() ([]*SubscriptionRefreshJob, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	s.refreshMu.Lock()
 	defer s.refreshMu.Unlock()
 	if err := s.loadRefreshLocked(); err != nil {
@@ -466,6 +469,9 @@ func (s *AppService) ListSubscriptionRefreshJobs() ([]*SubscriptionRefreshJob, e
 }
 
 func (s *AppService) GetSubscriptionRefresh(id string) (*SubscriptionRefreshJob, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	s.refreshMu.Lock()
 	defer s.refreshMu.Unlock()
 	if err := s.loadRefreshLocked(); err != nil {
@@ -479,6 +485,9 @@ func (s *AppService) GetSubscriptionRefresh(id string) (*SubscriptionRefreshJob,
 }
 
 func (s *AppService) StartSubscriptionRefreshJob(req SubscriptionRefreshRequest, userAgent string) (*SubscriptionRefreshJob, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	s.refreshMu.Lock()
 	defer s.refreshMu.Unlock()
 	if s.refreshClosed {
@@ -689,6 +698,9 @@ func (s *AppService) runSubscriptionRefresh(ctx context.Context, job *Subscripti
 }
 
 func (s *AppService) CancelSubscriptionRefresh(id string) (*SubscriptionRefreshJob, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	s.refreshMu.Lock()
 	defer s.refreshMu.Unlock()
 	if err := s.loadRefreshLocked(); err != nil {
@@ -711,6 +723,9 @@ func (s *AppService) CancelSubscriptionRefresh(id string) (*SubscriptionRefreshJ
 }
 
 func (s *AppService) closeSubscriptionRefreshJobs() {
+	if s == nil {
+		return
+	}
 	s.refreshMu.Lock()
 	s.refreshClosed = true
 	if s.refreshCancel != nil {

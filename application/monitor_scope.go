@@ -20,7 +20,13 @@ func monitorResolutionIssues(refs []monitor.MonitorJobNodeReference, current []m
 	return issues
 }
 func (s *AppService) enrichMonitorScope(dto *MonitorJobDTO, job monitor.MonitorJob) {
+	if dto == nil {
+		return
+	}
 	dto.ScopeKind = "frozen_task"
+	if s == nil {
+		return
+	}
 	if s.periodic != nil {
 		s.periodic.mu.Lock()
 		for _, entry := range s.periodic.jobs {

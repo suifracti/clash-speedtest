@@ -51,6 +51,9 @@ func (s *AppService) canonicalMonitorHistory() error {
 }
 
 func (s *AppService) GetMonitorStorageUsage() (*monitor.StorageUsage, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	if err := s.canonicalMonitorHistory(); err != nil {
 		return nil, err
 	}
@@ -58,6 +61,10 @@ func (s *AppService) GetMonitorStorageUsage() (*monitor.StorageUsage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read Monitor storage thresholds: %w", err)
 	}
+	if settings == nil {
+		settings = &AppSettings{}
+	}
+	fillDefaultMonitorStorageThresholds(settings)
 	usage, err := s.historyStore.StorageUsage(*settings.MonitorStorageWarningBytes, *settings.MonitorStorageHardBytes)
 	if err != nil {
 		return nil, err
@@ -66,6 +73,9 @@ func (s *AppService) GetMonitorStorageUsage() (*monitor.StorageUsage, error) {
 }
 
 func (s *AppService) monitorStorageGuard() string {
+	if s == nil {
+		return "app service is not initialized"
+	}
 	usage, err := s.GetMonitorStorageUsage()
 	if err != nil {
 		return fmt.Sprintf("无法核对 Monitor 存储空间：%v", err)
@@ -77,6 +87,9 @@ func (s *AppService) monitorStorageGuard() string {
 }
 
 func (s *AppService) PreviewMonitorRetention(ctx context.Context, req monitor.RetentionRequest) (*monitor.RetentionPreview, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	if err := s.canonicalMonitorHistory(); err != nil {
 		return nil, err
 	}

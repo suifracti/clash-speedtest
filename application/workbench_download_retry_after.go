@@ -24,6 +24,9 @@ func sameDownloadSource(a, b string) bool {
 // Admission only: no sleep, no new retry task and no additional source request.
 // The existing round skips this item with an explicit reason and serves others.
 func (s *AppService) checkDownloadRetryAfter(ctx context.Context, req WorkbenchDownloadTestRequest, target string) error {
+	if s == nil || s.historyStore == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
 	page, err := s.historyStore.QueryWorkbenchDownloadAttempts(ctx, history.WorkbenchDownloadFilter{ProfileID: req.ProfileID, NodeKey: req.NodeKey, NodeIdentityKey: req.NodeIdentityKey, ConfigRevisionKey: req.ConfigRevisionKey, Limit: 16})
 	if err != nil {
 		return fmt.Errorf("无法核对测速源等待条件，本次未执行: %w", err)

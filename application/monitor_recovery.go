@@ -13,6 +13,9 @@ import (
 // explicit so construction, tests, and ordinary settings writes never start a
 // scheduler. Calling it more than once in one process is harmless.
 func (s *AppService) RecoverMonitorJobs(ctx context.Context) error {
+	if s == nil {
+		return fmt.Errorf("app service is not initialized")
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -98,6 +101,9 @@ func (s *AppService) RecoverMonitorJobs(ctx context.Context) error {
 }
 
 func (s *AppService) blockEligibleMonitorRecoveries(reason string) {
+	if s == nil {
+		return
+	}
 	s.monitorMu.RLock()
 	schedulers := make([]*monitor.Scheduler, 0, len(s.monitorSchedulers))
 	for _, sched := range s.monitorSchedulers {
@@ -115,6 +121,9 @@ func (s *AppService) blockEligibleMonitorRecoveries(reason string) {
 }
 
 func (s *AppService) resolveRecoveryNodes(definition *monitor.MonitorJobDefinition, profileStore *profiles.Store, profileErr error) ([]monitor.MonitoredNode, string) {
+	if s == nil || definition == nil {
+		return nil, "invalid service or definition"
+	}
 	if definition.DefinitionVersion != monitor.MonitorJobDefinitionVersion {
 		return nil, fmt.Sprintf("任务定义版本 %d 不受当前版本支持", definition.DefinitionVersion)
 	}
@@ -136,6 +145,9 @@ func (s *AppService) resolveRecoveryNodes(definition *monitor.MonitorJobDefiniti
 }
 
 func (s *AppService) setRecoveryBlocked(sched *monitor.Scheduler, nodes []monitor.MonitoredNode, reason string, configBlocked bool) {
+	if s == nil || sched == nil {
+		return
+	}
 	s.monitorMu.Lock()
 	defer s.monitorMu.Unlock()
 	job := sched.Job()
@@ -153,6 +165,9 @@ func (s *AppService) setRecoveryBlocked(sched *monitor.Scheduler, nodes []monito
 }
 
 func (s *AppService) refreshBlockedMonitorJob(sched *monitor.Scheduler) error {
+	if s == nil || sched == nil {
+		return fmt.Errorf("invalid service or scheduler")
+	}
 	job := sched.Job()
 	if job.State != monitor.JobStateBlocked {
 		return nil
