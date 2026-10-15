@@ -8,6 +8,7 @@ import (
 	"github.com/faceair/clash-speedtest/core/publicservice"
 	"github.com/faceair/clash-speedtest/core/speedtester"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -140,19 +141,40 @@ func TestPeriodicReadFailureAfterNetworkStartIsNotUnexecuted(t *testing.T) {
 }
 
 func TestPeriodicNetworkPhaseYieldsBeforeSlowResultSave(t *testing.T) {
-	saveEntered := make(chan struct{})
+	t.Run("save_succeeds", func(t *testing.T) { testPeriodicNetworkPhaseYieldsBeforeSlowResultSave(t, false) })
+	t.Run("save_retries", func(t *testing.T) { testPeriodicNetworkPhaseYieldsBeforeSlowResultSave(t, true) })
+}
+
+func testPeriodicNetworkPhaseYieldsBeforeSlowResultSave(t *testing.T, failFirstSave bool) {
+	saveEntered := make(chan string, 1)
 	releaseSave := make(chan struct{})
+	var saveCalls atomic.Int32
+	var serviceRequests atomic.Int32
+	downloadEntered := make(chan struct{}, 1)
 	app, _ := newPublicServiceApplication(t, func(_ string, n string) (monitor.MonitoredNode, error) {
 		return monitor.MonitoredNode{NodeKey: n, NodeIdentityKey: "0", ConfigRevisionKey: "r"}, nil
 	}, func(req *http.Request) (*http.Response, error) {
+		serviceRequests.Add(1)
 		return publicServiceHTTPResponse(req, 204, "text/plain", ""), nil
 	})
-	app.publicServiceSaveHook = func(context.Context, string) error { close(saveEntered); <-releaseSave; return nil }
+	app.publicServiceSaveHook = func(_ context.Context, attemptID string) error {
+		// Persistence may retry this hook for the same staged result. Only the
+		// initial save signals and blocks the network-yield observation.
+		if saveCalls.Add(1) == 1 {
+			saveEntered <- attemptID
+			<-releaseSave
+			if failFirstSave {
+				return errors.New("fixture first save failure")
+			}
+		}
+		return nil
+	}
 	app.workbenchDownloadResolveHook = func(_ string, n string) (monitor.MonitoredNode, *speedtester.CProxy, error) {
 		return monitor.MonitoredNode{NodeKey: n, NodeIdentityKey: "0", ConfigRevisionKey: "r"}, nil, nil
 	}
 	app.workbenchDownloadClientFactory = func(*speedtester.SpeedTester, *speedtester.CProxy, time.Duration) (*http.Client, error) {
 		return &http.Client{Transport: publicServiceRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			downloadEntered <- struct{}{}
 			return publicServiceHTTPResponse(req, 200, "application/octet-stream", "bounded fixture"), nil
 		})}, nil
 	}
@@ -163,14 +185,20 @@ func TestPeriodicNetworkPhaseYieldsBeforeSlowResultSave(t *testing.T) {
 	}
 	serviceDone := make(chan struct{})
 	go func() { p.runCycle(context.Background(), "service", time.Now(), p.cfg); close(serviceDone) }()
-	<-saveEntered
+	attemptID := <-saveEntered
 	downloadDone := make(chan struct{})
 	go func() { p.runCycle(context.Background(), "download", time.Now(), p.cfg); close(downloadDone) }()
 	progressed := false
 	select {
-	case <-downloadDone:
+	case <-downloadEntered:
 		progressed = true
-	case <-time.After(600 * time.Millisecond):
+	case <-downloadDone:
+		select {
+		case <-downloadEntered:
+			progressed = true
+		default:
+		}
+	case <-time.After(5 * time.Second):
 	}
 	close(releaseSave)
 	<-serviceDone
@@ -178,6 +206,21 @@ func TestPeriodicNetworkPhaseYieldsBeforeSlowResultSave(t *testing.T) {
 	app.publicServiceWG.Wait()
 	app.workbenchWG.Wait()
 	if !progressed {
-		t.Fatal("finished service network still blocks download while only saving")
+		t.Fatalf("download did not enter while service save was blocked: %+v", p.cycles["download"])
+	}
+	if failFirstSave && saveCalls.Load() < 2 {
+		t.Fatal("injected save failure did not exercise persistence retry")
+	}
+	if serviceRequests.Load() != 1 {
+		t.Fatalf("persistence retry repeated the service request: %d", serviceRequests.Load())
+	}
+	saved, err := app.GetWorkbenchPublicServiceAttempt(context.Background(), attemptID, WorkbenchPublicServiceHistoryQuery{
+		ProfileID: "p", NodeKey: "0", NodeIdentityKey: "0", ConfigRevisionKey: "r", ServiceID: publicservice.Catalog()[0].ServiceID,
+	})
+	if err != nil || saved == nil || saved.PersistenceState != "saved" || saved.Result == nil || saved.Result.RequestCount != 1 {
+		t.Fatalf("original attempt was not saved after the network yielded: %+v %v", saved, err)
+	}
+	if cycle := p.cycles["service"]; cycle.Saved != 1 || cycle.Unsaved != 0 {
+		t.Fatalf("saved service result was not observed: %+v", cycle)
 	}
 }
