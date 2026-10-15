@@ -993,6 +993,14 @@ rounds:
 				}
 				resp, err := probeClient.Do(req)
 				if err != nil {
+					// net/http detaches dialing (including target TLS) from the
+					// request deadline for connection reuse. Physical probes do
+					// not reuse connections: cancel abandoned dials now, before
+					// another sample starts. Waiting siblings and the shared
+					// proxy adapter remain open. Keep legacy pooling unchanged.
+					if transport, ok := probeClient.Transport.(*http.Transport); ok && transport.DisableKeepAlives {
+						transport.CloseIdleConnections()
+					}
 					sample.Error = err.Error()
 					var pathErr *PhysicalPathError
 					if errors.As(err, &pathErr) {

@@ -1,0 +1,9 @@
+# 物理延迟超时后的未完成连接
+
+2026-10-15 离线复现：Go net/http 会为连接复用将建连context从请求取消信号中分离。CST物理延迟不复用HTTP连接，但原来只在整个节点所有样本结束后CloseIdleConnections；某样本已返回超时，其代理拨号或目标TLS仍可能继续，随后下一轮又开始。原HTTP timeout只保证调用返回，不证明底层建连已经取消。
+
+最小修复位于testLatencyWithClientContext：Do返回错误且底层是禁止keep-alive的http.Transport时，立即CloseIdleConnections。它取消已无人等待的pending dial（包括其中的目标TLS）；仍在等待连接的其它请求、共享HY2 adapter保留。没有关闭节点adapter、没有新增重试，也没有更改5秒默认值、用户选定超时/并发、物理绑定、DNS、TLS/SNI或凭据。legacy启用HTTP连接池的通路不改。
+
+新Darwin纯内存fixture覆盖：两轮超时不能保留上轮未取消dial；目标TLS超时不残留管道；一枚失败不取消同transport另一枚仍在等待的请求，共享adapter不被关闭。前两项在修复前失败，修后通过。不创建真实socket、DNS或目标HTTP流量。
+
+CloseIdleConnections发出取消，不同步等待所有adapter goroutine退出；不因此把NetworkPath快照或TCP计时称为最终包流向。真实批次原570个timeout没有足够逐样本阶段证据，不能判定全由此缺陷产生。旧失败/attempt不改写，新版本实网改善和实际TUN流向仍未验证。另发现的适配器丢失PhysicalPathError类型问题待另行定向验证，与本批预算未越界记录没有已证实因果，未顺带更改第三方协议代码。
