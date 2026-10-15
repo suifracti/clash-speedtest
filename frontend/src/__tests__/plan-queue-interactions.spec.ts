@@ -53,6 +53,32 @@ it('retries a failed service save from its queue row and retains it after a reje
   expect(document.body.textContent).not.toContain('disk temporarily unavailable')
 })
 
+it('shows exact service outcomes instead of green task completion and keeps old timeout evidence intact',()=>{
+ const at='2026-10-15T09:27:25Z'
+ const saved:Attempt={...node,attempt_id:'saved-timeout',request_id:'saved-request',service_id:'cloudflare_204',requested_at:at,execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://cp.cloudflare.com/generate_204'},result:{outcome:'timed_out',duration_ms:5058,bytes_read:0,finished_at:at,failure_phase:'timeout',error_message:'请求超过设定超时',details:{proxy_connect_ms:'5002.3',request_headers_network_ms:'5002.4',http_requests_written:'0'}}}
+ const raw=JSON.stringify(saved)
+ const attempts=[saved,{...saved,attempt_id:'matched',result:{...saved.result!,outcome:'matched',http_status:204,details:{http_requests_written:'1'}}},{...saved,attempt_id:'limited',result:{...saved.result!,outcome:'rate_limited',http_status:429,details:{http_requests_written:'1'}}},{...saved,attempt_id:'unknown',result:{...saved.result!,outcome:'unknown',details:{}}},{...saved,attempt_id:'missing',result:undefined},{...saved,attempt_id:'http-rejected',result:{...saved.result!,outcome:'http_rejected',http_status:403,details:{http_requests_written:'1'}}},{...saved,attempt_id:'response-timeout',result:{...saved.result!,details:{http_requests_written:'1',proxy_connect_ms:'12.3'}}}]
+ w.queue.value=attempts.map(a=>({id:a.attempt_id,node,project:'service',serviceId:'cloudflare_204',state:'completed',attempt:a}))
+ attach(QueueModal)
+ const rows=Array.from(document.querySelectorAll('.queue-row')).map(el=>new DOMWrapper(el))
+ expect(rows[0].find('.badge').text()).toBe('超时 · 未确认')
+ expect(rows[0].find('.badge').classes()).toContain('warn')
+ expect(rows[0].text()).toContain('代理连接耗时约 5.00 秒')
+ expect(rows[0].text()).toContain('未记录完整 HTTP 请求写出')
+ expect(rows[1].find('.badge').text()).toBe('通过')
+ expect(rows[1].find('.badge').classes()).toContain('good')
+ expect(rows[2].find('.badge').text()).toBe('限流 · 未确认')
+ expect(rows[3].find('.badge').text()).toBe('未确认')
+ expect(rows[4].find('.badge').text()).toBe('已结束 · 无结果')
+ expect(rows[5].find('.badge').text()).toBe('HTTP 拒绝')
+ expect(rows[5].find('.badge').classes()).toContain('bad')
+ expect(rows[6].find('.badge').text()).toBe('超时 · 未确认')
+ expect(rows[6].text()).not.toContain('代理连接耗时约')
+ for(const i of [0,2,3,4])expect(rows[i].find('.badge').classes()).not.toContain('good')
+ expect(JSON.stringify(saved)).toBe(raw)
+ expect(api.startAttempt).not.toHaveBeenCalled()
+})
+
 function downloadPlan(){const nodes=[node,{...node,node_key:'node-b',node_identity_key:'identity-b',display_name:'Node B'},{...node,node_key:'node-c',node_identity_key:'identity-c',display_name:'Node C'}];w.nodes.value=nodes;w.project.value='download';w.openPlan(nodes);return nodes}
 function savedDownload(body:any):Attempt{return {...body,attempt_id:body.request_id,requested_at:'2026-10-12T01:00:00Z',execution_state:'completed',persistence_state:'saved',result:{outcome:'completed'}}}
 it('continues after one explicitly rejected admission without counting it as a measurement failure',async()=>{
