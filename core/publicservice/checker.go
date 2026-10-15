@@ -392,6 +392,9 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	if timeout > MaximumTimeout {
 		timeout = MaximumTimeout
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if ctx.Err() != nil {

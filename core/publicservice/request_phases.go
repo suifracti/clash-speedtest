@@ -35,6 +35,12 @@ type requestPhases struct {
 }
 
 func (p *requestPhases) wrap(original http.RoundTripper, proxyDial bool) http.RoundTripper {
+	if p == nil {
+		if original == nil {
+			return http.DefaultTransport
+		}
+		return original
+	}
 	if original == nil {
 		original = http.DefaultTransport
 	}
@@ -62,6 +68,16 @@ type phaseTransport struct {
 }
 
 func (t phaseTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	if request == nil {
+		return nil, errors.New("request is nil")
+	}
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	if t.phases == nil {
+		return base.RoundTrip(request)
+	}
 	started := time.Now()
 	t.phases.mu.Lock()
 	t.phases.requests++
@@ -109,7 +125,7 @@ func (t phaseTransport) RoundTrip(request *http.Request) (*http.Response, error)
 			t.phases.mu.Unlock()
 		},
 	}
-	response, err := t.base.RoundTrip(request.WithContext(httptrace.WithClientTrace(request.Context(), trace)))
+	response, err := base.RoundTrip(request.WithContext(httptrace.WithClientTrace(request.Context(), trace)))
 	t.phases.mu.Lock()
 	var physical *speedtester.PhysicalPathError
 	if errors.As(err, &physical) {
@@ -124,6 +140,9 @@ func (t phaseTransport) RoundTrip(request *http.Request) (*http.Response, error)
 }
 
 func (p *requestPhases) attach(result *Result) {
+	if p == nil || result == nil {
+		return
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.requests == 0 {
@@ -168,11 +187,16 @@ type timedServiceBody struct {
 }
 
 func (b timedServiceBody) Read(buffer []byte) (int, error) {
+	if b.ReadCloser == nil {
+		return 0, io.EOF
+	}
 	start := time.Now()
 	n, err := b.ReadCloser.Read(buffer)
-	b.phases.mu.Lock()
-	b.phases.body += time.Since(start)
-	b.phases.mu.Unlock()
+	if b.phases != nil {
+		b.phases.mu.Lock()
+		b.phases.body += time.Since(start)
+		b.phases.mu.Unlock()
+	}
 	return n, err
 }
 func serviceEvidenceConclusion(r Result) string {

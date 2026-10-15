@@ -140,6 +140,9 @@ func (b *BudgetController) config() (BudgetLimits, error) {
 func budgetDay(now time.Time) string { return now.UTC().Format("2006-01-02") }
 
 func (b *BudgetController) Status(ctx context.Context) (BudgetStatus, error) {
+	if b == nil {
+		return BudgetStatus{}, nil
+	}
 	limits, err := b.config()
 	if err != nil {
 		return BudgetStatus{}, err
@@ -189,6 +192,12 @@ func roundIdentities(job *MonitorJob) []string {
 // AcquireRound gives each job at most one staggered admission and rejects
 // duplicate stable identities. It never creates a durable run on rejection.
 func (b *BudgetController) AcquireRound(ctx context.Context, job *MonitorJob) (context.Context, func(), error) {
+	if b == nil {
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		return ctx, func() {}, nil
+	}
 	if job == nil {
 		return nil, nil, budgetBlock("invalid_job", "Monitor 任务无效")
 	}

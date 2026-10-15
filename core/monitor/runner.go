@@ -107,7 +107,12 @@ func NewRunner(cfg RunnerConfig) *Runner {
 	return runner
 }
 
-func (r *Runner) SetBudget(budget *BudgetController) { r.budget.Store(budget) }
+func (r *Runner) SetBudget(budget *BudgetController) {
+	if r == nil {
+		return
+	}
+	r.budget.Store(budget)
+}
 
 // TargetSpec defines a probe URL target and its expected probe type.
 type TargetSpec struct {
@@ -158,6 +163,12 @@ func (r *Runner) ExecuteRun(ctx context.Context, job *MonitorJob, scheduledAt ti
 // ExecuteRunWithAdmission lets the scheduler distinguish a cancellable wait
 // from an admitted round. Direct runner callers use ExecuteRun.
 func (r *Runner) ExecuteRunWithAdmission(ctx context.Context, job *MonitorJob, scheduledAt time.Time, onAdmitted func() error) (*MonitorRun, []*MonitorSample, error) {
+	if r == nil {
+		return nil, nil, fmt.Errorf("runner is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if job == nil {
 		return nil, nil, fmt.Errorf("job is nil")
 	}

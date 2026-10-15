@@ -311,3 +311,30 @@ func TestRunner_ZeroControllerOrSelectNodeProof(t *testing.T) {
 		}
 	}
 }
+
+func TestRunnerAndBudgetNilSafety(t *testing.T) {
+	var r *Runner = nil
+	r.SetBudget(nil)
+	if _, _, err := r.ExecuteRun(context.Background(), nil, time.Now()); err == nil {
+		t.Fatal("expected error from ExecuteRun on nil Runner")
+	}
+	if _, _, err := r.ExecuteRunWithAdmission(nil, nil, time.Now(), nil); err == nil {
+		t.Fatal("expected error from ExecuteRunWithAdmission on nil Runner")
+	}
+
+	validRunner := NewRunner(RunnerConfig{})
+	if _, _, err := validRunner.ExecuteRun(context.Background(), nil, time.Now()); err == nil {
+		t.Fatal("expected error from ExecuteRun with nil job")
+	}
+
+	var bc *BudgetController = nil
+	status, err := bc.Status(context.Background())
+	if err != nil || status.ActiveRequests != 0 {
+		t.Fatalf("expected zero status and nil error from Status on nil BudgetController, got status=%+v, err=%v", status, err)
+	}
+	ctx, release, err := bc.AcquireRound(nil, nil)
+	if err != nil || ctx == nil || release == nil {
+		t.Fatalf("expected non-nil ctx, release func and nil error from AcquireRound on nil BudgetController, got err=%v", err)
+	}
+	release()
+}
