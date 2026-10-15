@@ -29,10 +29,10 @@ const excludedError=(error='')=>/cancel(?:led|ed)|context canceled|未执行|not
 function latencyConditions(t:LatencyTest){const p=t.network_path;return [t.method_version??'unknown',t.node_type||'unknown',p?.method||'unknown',p?.interface||'unknown',p?.dns_mode||'unknown',p?.socket_bind_verified??'unknown',p?.dns_bind_verified??'unknown',p?.address_family||'unknown',p?.address_source||'unknown']}
 const qualityGroupKey=(source:string,method:string,url:string,condition:unknown)=>JSON.stringify([source,method,url,condition])
 export function qualityGroups(tests:LatencyTest[],monitor:MonitorSample[],target:string):QualityGroup[]{
- const groups=new Map<string,{g:QualityGroup;values:number[]}>(),seen=new Set<string>()
+ const groups=new Map<string,{g:QualityGroup;values:number[];lastSeenAt:number}>(),seen=new Set<string>()
  function add(id:string,source:string,method:string,url:string,condition:unknown,comparable:boolean,timestamp:string,success:boolean,value:number,error=''){
   if(seen.has(id)||latencyTargetId(url)!==target)return;seen.add(id)
-  const conditionText=JSON.stringify(condition),k=qualityGroupKey(source,method,url,condition),entry=groups.get(k)||{g:{key:k,source,method,target:url,condition:conditionText,comparable,total:0,success:0,excluded:0,p50:null,p95:null,jitter:null,successRate:null,lastAt:'',insufficient:true},values:[]};groups.set(k,entry)
+  const conditionText=JSON.stringify(condition),k=qualityGroupKey(source,method,url,condition),entry=groups.get(k)||{g:{key:k,source,method,target:url,condition:conditionText,comparable,total:0,success:0,excluded:0,p50:null,p95:null,jitter:null,successRate:null,lastAt:'',insufficient:true},values:[],lastSeenAt:Number.NEGATIVE_INFINITY};groups.set(k,entry);entry.lastSeenAt=Math.max(entry.lastSeenAt,observationTime(timestamp))
   if(!success&&excludedError(error)){entry.g.excluded++;return}
   const g=entry.g;g.total++;if(!g.lastAt||observationTime(timestamp)>observationTime(g.lastAt))g.lastAt=timestamp
   if(success&&Number.isFinite(value)&&value>=0){g.success++;entry.values.push(value)}
@@ -42,7 +42,8 @@ export function qualityGroups(tests:LatencyTest[],monitor:MonitorSample[],target
  }
  for(const s of monitor)if(s.probe_type==='rtt')add('monitor:'+s.sample_id,'monitor','旧监测 RTT（条件未记录）',s.target,['legacy-unverified'],false,s.timestamp,s.success,s.latency/1e6,s.error_class+' '+(s.error_detail||''))
  for(const {g,values} of groups.values()){values.sort((a,b)=>a-b);g.p50=median(values);g.p95=values.length?values[Math.ceil(values.length*.95)-1]:null;const mean=values.length?values.reduce((a,b)=>a+b,0)/values.length:0;g.jitter=values.length>1?Math.sqrt(values.reduce((sum,v)=>sum+(v-mean)**2,0)/values.length):null;g.successRate=g.total?g.success/g.total*100:null;g.insufficient=g.total<5||g.success<5}
- return [...groups.values()].map(e=>e.g).filter(g=>g.total||g.excluded).sort((a,b)=>observationTime(b.lastAt)-observationTime(a.lastAt)||a.key.localeCompare(b.key))
+ // A newer unexecuted condition must stay current without refreshing older valid statistics.
+ return [...groups.values()].filter(e=>e.g.total||e.g.excluded).sort((a,b)=>b.lastSeenAt-a.lastSeenAt||a.g.key.localeCompare(b.g.key)).map(e=>e.g)
 }
 interface Readers {latency:typeof api.latencyHistory;monitor:typeof api.monitorSamples;attempts:typeof api.attemptHistory}
 // Bounded local database reads only. Never dispatches a measurement. A cap or

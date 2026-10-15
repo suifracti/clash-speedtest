@@ -20,6 +20,11 @@ it('does not count saved IP-version preparation errors as node failures or rewri
  const raw=JSON.stringify(saved),point=manualLatencyPoint(saved,'cloudflare'),group=qualityGroups([saved],[],'cloudflare')[0]
  expect(point.tone).toBe('empty');expect(latencyPointLabel(point,'cloudflare')).toBe('未执行')
  expect(group.total).toBe(0);expect(group.excluded).toBe(6);expect(group.successRate).toBe(null)
+
+ const oldAt='2026-10-14T08:00:00Z',older={...saved,attempt_id:'older-ipv4',status:'completed',requested_at:oldAt,finished_at:oldAt,total_samples:1,success_samples:1,failure_samples:0,latency_ms:321,network_path:{...saved.network_path!,address_family:'ipv4',address_source:'physical_ipv4_dns',socket_bind_verified:true},samples:[{...saved.samples[0],timestamp:oldAt,success:true,latency_ms:321,error:undefined}]}
+ const groupsWithOldSuccess=qualityGroups([older,saved],[],'cloudflare')
+ expect(groupsWithOldSuccess[0].excluded).toBe(6);expect(groupsWithOldSuccess[0].total).toBe(0)
+ expect(groupsWithOldSuccess[1].p50).toBe(321)
  expect(JSON.stringify(saved)).toBe(raw)
  const realFailure={...saved,attempt_id:'real-timeout',samples:[{...saved.samples[0],error:'context deadline exceeded'}]}
  expect(manualLatencyPoint(realFailure,'cloudflare').tone).toBe('bad')
