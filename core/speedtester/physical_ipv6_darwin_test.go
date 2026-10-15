@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/metacubex/mihomo/adapter"
+	"github.com/metacubex/mihomo/component/proxydialer"
 	C "github.com/metacubex/mihomo/constant"
+	M "github.com/metacubex/sing/common/metadata"
 )
 
 // Stop before creating any socket, while exercising the real HY2 resolver.
@@ -166,5 +168,44 @@ func TestPhysicalIPv6PreparationOnCapableInterfacePreservesSource(t *testing.T) 
 		if e.Snapshot().UDPDialAttempts != 0 || e.Snapshot().TCPDialAttempts != 0 {
 			t.Fatal("configuration preparation opened a socket")
 		}
+	}
+}
+
+// HY2's real SingDialer bridge passes an empty local address. Exercise that
+// bridge with a documentation destination, opening a listener but sending no packets.
+func TestPhysicalIPv6HysteriaSingListenerEmptyAddress(t *testing.T) {
+	iface, err := net.InterfaceByName(AutoDetectPhysicalInterface())
+	if err != nil {
+		t.Skip("no physical interface on test host")
+	}
+	e := newPhysicalDownloadEgress()
+	e.iface, e.index = iface.Name, iface.Index
+	bridge := proxydialer.NewSingDialer(e)
+	remote := M.SocksaddrFromNet(&net.UDPAddr{IP: net.ParseIP("2001:db8::9"), Port: 443})
+	conn, err := bridge.ListenPacket(context.Background(), remote)
+	if err != nil {
+		t.Fatalf("HY2 empty listener address rejected before IPv6 binding: %v path=%+v", err, e.Snapshot())
+	}
+	defer conn.Close()
+	local, err := netip.ParseAddrPort(conn.LocalAddr().String())
+	path := e.Snapshot()
+	if err != nil || !local.Addr().Is6() || !path.SocketBindVerified || path.UDPBindings != 1 || path.UDPDialAttempts != 1 || path.TUNEvidence != "packet_route_not_observed" {
+		t.Fatalf("HY2 bridge lost IPv6 binding: local=%v path=%+v", conn.LocalAddr(), path)
+	}
+}
+
+func TestPhysicalIPv6ListenerStillRejectsConflictingFamily(t *testing.T) {
+	for _, tt := range []struct{ network, address string }{{"udp4", ""}, {"udp", "0.0.0.0:0"}, {"udp6", "127.0.0.1:0"}, {"udp", "not-an-address"}} {
+		t.Run(tt.network+tt.address, func(t *testing.T) {
+			e := newPhysicalDownloadEgress()
+			conn, err := e.ListenPacket(context.Background(), tt.network, tt.address, netip.MustParseAddrPort("[2001:db8::9]:443"))
+			if conn != nil {
+				conn.Close()
+			}
+			path := e.Snapshot()
+			if err == nil || path.FailureReason != "unverified_ipv6_socket_family" || path.UDPDialAttempts != 0 || path.SocketBindVerified {
+				t.Fatalf("conflicting family reached socket creation: err=%v path=%+v", err, path)
+			}
+		})
 	}
 }

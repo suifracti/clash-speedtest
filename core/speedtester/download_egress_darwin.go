@@ -493,6 +493,11 @@ func (e *PhysicalDownloadEgress) ListenPacket(ctx context.Context, network, addr
 			e.setFailure("unverified_ipv6_socket_family")
 			return nil, &PhysicalPathError{Cause: fmt.Errorf("IPv6 node requires an IPv6 packet socket")}
 		}
+		// Mihomo's HY2 SingDialer uses an empty local address for an
+		// ephemeral wildcard listener. It does not request an IPv4 socket.
+		if address == "" {
+			address = ":0"
+		}
 		host, port, err := net.SplitHostPort(address)
 		if err != nil || (host != "" && host != "::") {
 			e.setFailure("unverified_ipv6_socket_family")
