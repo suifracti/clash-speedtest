@@ -4,7 +4,7 @@ import {computed,ref} from 'vue'
 import {api} from '../api'
 import {latencySampleState} from '../presentation'
 import {useWorkspace} from '../workspace'
-import {projectNames,stateLabel,outcomeLabel,outcomeTone,type QueueItem} from '../domain'
+import {projectNames,stateLabel,outcomeLabel,outcomeTone,downloadSpeed,downloadTone,type QueueItem} from '../domain'
 import Modal from './Modal.vue'
 const w=useWorkspace(),retrying=ref('')
 const counts=computed(()=>{
@@ -19,6 +19,20 @@ function resultStatus(q:QueueItem):{label:string;tone:string;notExecuted?:boolea
   const outcome=result.outcome
   if(['not_executed','cancelled','user_cancelled','interrupted'].includes(outcome))return {label:stateLabel(outcome==='user_cancelled'?'cancelled':outcome),tone:'',notExecuted:true}
   if(['timed_out','transport_error','rate_limited'].includes(outcome))return {label:outcomeLabel(outcome)+' · 未确认',tone:'warn'}
+  return {label:outcomeLabel(outcome),tone:outcomeTone(outcome)}
+ }
+ if(q.project==='download'&&['completed','failed'].includes(q.state)){
+  const a=q.attempt
+  if(a?.persistence_state==='failed')return {label:'保存失败',tone:'bad'}
+  const result=a?.result
+  if(!a||!result)return {label:'已结束 · 无结果',tone:''}
+  const outcome=result.outcome
+  if(['not_executed','cancelled','user_cancelled','interrupted'].includes(outcome))return {label:stateLabel(outcome==='user_cancelled'?'cancelled':outcome),tone:'',notExecuted:true}
+  const speed=downloadSpeed(a)
+  if(speed!==null)return {label:`${speed.toFixed(2)} MB/s · ${(result.bytes_read/1048576).toFixed(1)}MB`,tone:downloadTone(a)}
+  if(outcome==='source_rate_limited'||result.http_status===429)return {label:'下载源限流',tone:'warn'}
+  if(result.bytes_read>0)return {label:`${(result.bytes_read/1048576).toFixed(2)} MB · 中断`,tone:'warn'}
+  if(['timed_out','transport_error','connection_failed'].includes(outcome))return {label:outcomeLabel(outcome)+' · 未确认',tone:'warn'}
   return {label:outcomeLabel(outcome),tone:outcomeTone(outcome)}
  }
  if(q.project!=='latency'||!['completed','failed'].includes(q.state))return null

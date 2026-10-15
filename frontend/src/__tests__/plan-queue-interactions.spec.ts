@@ -154,3 +154,28 @@ it('labels a saved local IP-version failure as unexecuted in the queue and its t
  expect(document.querySelector('.queue-counts')?.textContent).toContain('未运行/取消 1')
  expect(w.done.value).toBe(1)
 })
+
+it('shows exact download outcomes and speeds instead of green task completion',()=>{
+ const at='2026-10-15T09:27:25Z'
+ const success:Attempt={...node,attempt_id:'download-success',request_id:'req-success',requested_at:at,execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://speed.cloudflare.com/__down?bytes=10485760'},result:{outcome:'completed',bytes_read:10485760,duration_ns:2000000000,finished_at:at}}
+ const failed:Attempt={...node,attempt_id:'download-failed',request_id:'req-failed',requested_at:at,execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://speed.cloudflare.com/__down?bytes=10485760'},result:{outcome:'transport_error',bytes_read:0,duration_ns:500000000,finished_at:at,error_message:'connection reset'}}
+ const timeout:Attempt={...node,attempt_id:'download-timeout',request_id:'req-timeout',requested_at:at,execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://speed.cloudflare.com/__down?bytes=10485760'},result:{outcome:'timed_out',bytes_read:0,duration_ns:5000000000,finished_at:at}}
+ const rateLimited:Attempt={...node,attempt_id:'download-429',request_id:'req-429',requested_at:at,execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://speed.cloudflare.com/__down?bytes=10485760'},result:{outcome:'source_rate_limited',http_status:429,bytes_read:0,duration_ns:200000000,finished_at:at}}
+ const saveFailed:Attempt={...node,attempt_id:'download-save-fail',request_id:'req-save-fail',requested_at:at,execution_state:'completed',persistence_state:'failed',persistence_error:'disk write failed',rule:{target_url:'https://speed.cloudflare.com/__down?bytes=10485760'},result:{outcome:'completed',bytes_read:5242880,duration_ns:1000000000,finished_at:at}}
+ w.queue.value=[success,failed,timeout,rateLimited,saveFailed].map(a=>({id:a.attempt_id,node,project:'download',state:a.execution_state,attempt:a,error:a.persistence_error||a.result?.error_message}))
+ attach(QueueModal)
+ const rows=Array.from(document.querySelectorAll('.queue-row')).map(el=>new DOMWrapper(el))
+ expect(rows[0].find('.badge').text()).toBe('5.00 MB/s · 10.0MB')
+ expect(rows[0].find('.badge').classes()).toContain('good')
+ expect(rows[1].find('.badge').text()).toBe('连接或读取失败 · 未确认')
+ expect(rows[1].find('.badge').classes()).not.toContain('good')
+ expect(rows[1].find('.badge').classes()).toContain('warn')
+ expect(rows[2].find('.badge').text()).toBe('超时 · 未确认')
+ expect(rows[2].find('.badge').classes()).not.toContain('good')
+ expect(rows[2].find('.badge').classes()).toContain('warn')
+ expect(rows[3].find('.badge').text()).toBe('下载源限流')
+ expect(rows[3].find('.badge').classes()).toContain('warn')
+ expect(rows[4].find('.badge').text()).toBe('保存失败')
+ expect(rows[4].find('.badge').classes()).toContain('bad')
+ expect(rows[4].text()).toContain('重试保存')
+})
