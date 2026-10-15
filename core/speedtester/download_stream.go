@@ -438,6 +438,9 @@ func downloadErrorClass(err error) string {
 	if errors.Is(err, syscall.ECONNREFUSED) {
 		return "connection_refused"
 	}
+	if errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.EHOSTUNREACH) {
+		return "network_unreachable"
+	}
 	message := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(message, "failed to create session"):
@@ -446,6 +449,8 @@ func downloadErrorClass(err error) string {
 		return "connection_reset"
 	case strings.Contains(message, "connection refused"):
 		return "connection_refused"
+	case strings.Contains(message, "no route to host") || strings.Contains(message, "network is unreachable") || strings.Contains(message, "host is down"):
+		return "network_unreachable"
 	case strings.Contains(message, "tls:") || strings.Contains(message, "x509:"):
 		return "tls"
 	case errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF):

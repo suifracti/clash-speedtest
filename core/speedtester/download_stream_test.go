@@ -330,6 +330,11 @@ func TestDownloadErrorClassConnectionResetAndRefused(t *testing.T) {
 		{err: errors.New("write: broken pipe"), expected: "connection_reset"},
 		{err: syscall.ECONNREFUSED, expected: "connection_refused"},
 		{err: errors.New("dial tcp 127.0.0.1:443: connect: connection refused"), expected: "connection_refused"},
+		{err: syscall.ENETUNREACH, expected: "network_unreachable"},
+		{err: syscall.EHOSTUNREACH, expected: "network_unreachable"},
+		{err: errors.New("dial tcp 192.0.2.1:443: connect: no route to host"), expected: "network_unreachable"},
+		{err: errors.New("dial tcp 192.0.2.1:443: connect: network is unreachable"), expected: "network_unreachable"},
+		{err: errors.New("dial tcp 192.0.2.1:443: connect: host is down"), expected: "network_unreachable"},
 		{err: io.ErrUnexpectedEOF, expected: "unexpected_eof"},
 		{err: io.EOF, expected: "unexpected_eof"},
 	}
