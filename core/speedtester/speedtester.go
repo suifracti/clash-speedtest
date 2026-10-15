@@ -1258,6 +1258,9 @@ func (st *SpeedTester) createClient(proxy constant.Proxy, timeout time.Duration)
 		Timeout: timeout,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				if proxy == nil {
+					return nil, fmt.Errorf("proxy is nil")
+				}
 				host, port, err := net.SplitHostPort(addr)
 				if err != nil {
 					return nil, err
@@ -1278,6 +1281,11 @@ func (st *SpeedTester) createClient(proxy constant.Proxy, timeout time.Duration)
 func calculateLatencyStats(latencies []time.Duration, failedPings, pingCount int) *latencyResult {
 	if pingCount <= 0 {
 		pingCount = 6
+	}
+	if failedPings < 0 {
+		failedPings = 0
+	} else if failedPings > pingCount {
+		failedPings = pingCount
 	}
 	result := &latencyResult{
 		packetLoss: float64(failedPings) / float64(pingCount) * 100,
@@ -1307,7 +1315,11 @@ func calculateLatencyStats(latencies []time.Duration, failedPings, pingCount int
 }
 
 func convertMappedIPv6ToIPv4(server string) string {
-	ip := net.ParseIP(server)
+	raw := server
+	if strings.HasPrefix(raw, "[") && strings.HasSuffix(raw, "]") {
+		raw = raw[1 : len(raw)-1]
+	}
+	ip := net.ParseIP(raw)
 	if ip == nil {
 		return server
 	}

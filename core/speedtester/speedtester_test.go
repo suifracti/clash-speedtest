@@ -1,6 +1,9 @@
 package speedtester
 
 import (
+	"context"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -160,6 +163,8 @@ func TestSafeServerNormalization(t *testing.T) {
 		expected any
 	}{
 		{"mapped ipv6", "::ffff:192.0.2.1", "192.0.2.1"},
+		{"bracketed mapped ipv6", "[::ffff:192.0.2.1]", "192.0.2.1"},
+		{"bracketed ipv6", "[2001:db8::1]", "[2001:db8::1]"},
 		{"regular ipv4", "192.0.2.1", "192.0.2.1"},
 		{"domain", "example.com", "example.com"},
 		{"int server safe", 12345, 12345},
@@ -231,6 +236,42 @@ func TestLatencyTargetURLNormalization(t *testing.T) {
 		} else if !tc.wantErr && url != tc.wantURL {
 			t.Errorf("LatencyTargetURL(%q) = %q, want %q", tc.input, url, tc.wantURL)
 		}
+	}
+}
+
+func TestCalculateLatencyStatsBoundaries(t *testing.T) {
+	// Negative failed pings clamp to 0
+	r1 := calculateLatencyStats([]time.Duration{10 * time.Millisecond}, -1, 5)
+	if r1.packetLoss != 0 {
+		t.Fatalf("expected 0 packet loss for negative failed pings, got %f", r1.packetLoss)
+	}
+
+	// Failed pings greater than pingCount clamp to pingCount (100% loss)
+	r2 := calculateLatencyStats(nil, 10, 5)
+	if r2.packetLoss != 100 {
+		t.Fatalf("expected 100 packet loss for excessive failed pings, got %f", r2.packetLoss)
+	}
+
+	// Non-positive pingCount defaults to 6
+	r3 := calculateLatencyStats(nil, 3, 0)
+	if r3.packetLoss != 50 {
+		t.Fatalf("expected 50 packet loss when pingCount defaults to 6 (3/6), got %f", r3.packetLoss)
+	}
+}
+
+func TestCreateClientNilProxyDefense(t *testing.T) {
+	st := &SpeedTester{}
+	client := st.createClient(nil, time.Second)
+	if client == nil || client.Transport == nil {
+		t.Fatal("expected client and transport to be initialized")
+	}
+	tr, ok := client.Transport.(*http.Transport)
+	if !ok || tr.DialContext == nil {
+		t.Fatal("expected http.Transport with DialContext")
+	}
+	_, err := tr.DialContext(context.Background(), "tcp", "1.1.1.1:80")
+	if err == nil || !strings.Contains(err.Error(), "proxy is nil") {
+		t.Fatalf("expected 'proxy is nil' error, got %v", err)
 	}
 }
 
