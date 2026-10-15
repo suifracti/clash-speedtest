@@ -79,3 +79,61 @@ func TestExportAcrossAirportsSameKeyKeepsSelectedConfiguration(t *testing.T) {
 		t.Fatal("target request during export")
 	}
 }
+
+func TestExportStripsInternalCSTMarkersAndPreservesStandardFields(t *testing.T) {
+	cfg := map[string]any{
+		"name":                 "vless-ws-reality",
+		"type":                 "vless",
+		"server":               "203.0.113.10",
+		"port":                 443,
+		"uuid":                 "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+		"tls":                  true,
+		"network":              "ws",
+		"ws-opts":              map[string]any{"path": "/graphql", "headers": map[string]any{"Host": "example.com"}},
+		"reality-opts":         map[string]any{"public-key": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE", "short-id": "01"},
+		"_cst_generated_ws_ua": true,
+	}
+	a, requests := scopedWorkbenchFixture(t, cfg)
+	nodes, err := a.loadMonitorNodes("scope-a")
+	if err != nil {
+		t.Fatalf("loadMonitorNodes failed: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(nodes))
+	}
+	selected := WorkbenchLatencyBatchSelection{
+		ProfileID:         "scope-a",
+		NodeKey:           nodes[0].NodeKey,
+		NodeIdentityKey:   nodes[0].NodeIdentityKey,
+		ConfigRevisionKey: nodes[0].ConfigRevisionKey,
+	}
+	result, err := a.ExportNodesClashConfig(context.Background(), ExportClashConfigRequest{Selections: []WorkbenchLatencyBatchSelection{selected}})
+	if err != nil {
+		t.Fatalf("export failed: %v", err)
+	}
+	var content struct {
+		Proxies []map[string]any `yaml:"proxies"`
+	}
+	if err := yaml.Unmarshal([]byte(result.YAMLContent), &content); err != nil {
+		t.Fatalf("failed to unmarshal yaml: %v", err)
+	}
+	if len(content.Proxies) != 1 {
+		t.Fatalf("expected 1 proxy, got %d", len(content.Proxies))
+	}
+	proxy := content.Proxies[0]
+	if _, ok := proxy["_cst_generated_ws_ua"]; ok {
+		t.Fatal("exported proxy config leaked internal _cst_generated_ws_ua marker")
+	}
+	if proxy["type"] != "vless" || proxy["network"] != "ws" || proxy["tls"] != true {
+		t.Fatalf("standard proxy fields corrupted: %+v", proxy)
+	}
+	if proxy["reality-opts"] == nil {
+		t.Fatal("reality-opts was not preserved in exported proxy")
+	}
+	if proxy["ws-opts"] == nil {
+		t.Fatal("ws-opts was not preserved in exported proxy")
+	}
+	if requests.Load() != 0 {
+		t.Fatal("target request during export")
+	}
+}

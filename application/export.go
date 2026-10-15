@@ -92,9 +92,12 @@ func (s *AppService) ExportNodesClashConfig(_ context.Context, req ExportClashCo
 			return nil, monitor.NewValidationError("普通 Clash/Mihomo 导出无法保留 pcs/vcn 证书约束；未导出任何文件")
 		}
 
-		// Deep copy raw config
+		// Deep copy raw config, omitting internal CST runtime markers
 		cfg := make(map[string]any, len(node.RawConfig)+1)
 		for k, v := range node.RawConfig {
+			if strings.HasPrefix(k, "_cst_") {
+				continue
+			}
 			cfg[k] = v
 		}
 
