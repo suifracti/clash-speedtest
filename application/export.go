@@ -184,26 +184,36 @@ func (s *AppService) collectAllCachedNodes() ([]monitor.MonitoredNode, error) {
 		if airport == nil {
 			continue
 		}
+		seenInAirport := make(map[string]bool)
+		appendAirportNodes := func(nodes []monitor.MonitoredNode) {
+			for _, n := range nodes {
+				key := n.NodeKey + "\x00" + n.NodeIdentityKey + "\x00" + n.ConfigRevisionKey
+				if !seenInAirport[key] {
+					seenInAirport[key] = true
+					allNodes = append(allNodes, n)
+				}
+			}
+		}
+
+		loadedAnySub := false
 		if len(airport.Subscriptions) > 0 {
 			for _, sub := range airport.Subscriptions {
 				if sub == nil {
 					continue
 				}
 				nodes, err := s.loadMonitorNodes(sub.ID)
-				if err != nil {
-					nodes, err = s.loadMonitorNodes(airport.ID)
-					if err != nil {
-						continue
-					}
+				if err == nil && len(nodes) > 0 {
+					loadedAnySub = true
+					appendAirportNodes(nodes)
 				}
-				allNodes = append(allNodes, nodes...)
 			}
-		} else {
+		}
+
+		if !loadedAnySub {
 			nodes, err := s.loadMonitorNodes(airport.ID)
-			if err != nil {
-				continue
+			if err == nil && len(nodes) > 0 {
+				appendAirportNodes(nodes)
 			}
-			allNodes = append(allNodes, nodes...)
 		}
 	}
 	return allNodes, nil

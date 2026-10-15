@@ -137,3 +137,35 @@ func TestExportStripsInternalCSTMarkersAndPreservesStandardFields(t *testing.T) 
 		t.Fatal("target request during export")
 	}
 }
+
+func TestExportAirportMultipleSubscriptionsFallbackNoDuplication(t *testing.T) {
+	cfg := scopeHTTPConfig("unique-node", true)
+	a, _ := scopedWorkbenchFixture(t, cfg)
+	store := &profiles.Store{
+		Airports: []*profiles.Airport{
+			{
+				ID:   "scope-a",
+				Name: "Multi-Sub-Airport",
+				Subscriptions: []*profiles.Subscription{
+					{ID: "sub-1", Name: "Sub 1", URL: "https://example.com/sub1"},
+					{ID: "sub-2", Name: "Sub 2", URL: "https://example.com/sub2"},
+				},
+			},
+		},
+	}
+	if err := profiles.SaveStore(a.profilePaths.StoreFile(), store); err != nil {
+		t.Fatal(err)
+	}
+
+	nodeKey := monitor.ComputeNodeKeyFromConfig(cfg)
+	res, err := a.ExportNodesClashConfig(context.Background(), ExportClashConfigRequest{
+		NodeKeys: []string{nodeKey},
+	})
+	if err != nil {
+		t.Fatalf("expected export to succeed without false duplicate error, got: %v", err)
+	}
+	if res.NodeCount != 1 {
+		t.Fatalf("expected 1 exported node, got %d", res.NodeCount)
+	}
+}
+
