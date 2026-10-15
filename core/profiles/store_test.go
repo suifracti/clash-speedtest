@@ -174,3 +174,38 @@ func TestMultiSubscriptionStore(t *testing.T) {
 	}
 }
 
+func TestStoreNilSafety(t *testing.T) {
+	var nilStore *Store
+	nilStore.Add(&Airport{ID: "test"})
+	if nilStore.Get("test") != nil {
+		t.Fatal("expected nil from nil store Get")
+	}
+	if nilStore.Remove("test") != nil {
+		t.Fatal("expected nil from nil store Remove")
+	}
+	if ap, sub := nilStore.FindSubscription("test"); ap != nil || sub != nil {
+		t.Fatal("expected nil from nil store FindSubscription")
+	}
+
+	store := &Store{
+		Airports: []*Airport{
+			nil,
+			{ID: "ap1", Name: "正常机场"},
+			nil,
+		},
+	}
+	if got := store.Get("ap1"); got == nil || got.Name != "正常机场" {
+		t.Fatalf("expected to find ap1 despite nil elements, got %+v", got)
+	}
+	if got := store.Get("nonexistent"); got != nil {
+		t.Fatalf("expected nil for nonexistent id, got %+v", got)
+	}
+	if removed := store.Remove("ap1"); removed == nil || removed.ID != "ap1" {
+		t.Fatalf("expected to remove ap1, got %+v", removed)
+	}
+	if ap, sub := store.FindSubscription("none"); ap != nil || sub != nil {
+		t.Fatal("expected nil from FindSubscription with nil elements")
+	}
+}
+
+

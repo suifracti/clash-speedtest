@@ -197,12 +197,18 @@ func SaveStore(path string, store *Store) error {
 }
 
 func (s *Store) Add(airport *Airport) {
+	if s == nil || airport == nil {
+		return
+	}
 	s.Airports = append(s.Airports, airport)
 }
 
 func (s *Store) Remove(id string) *Airport {
+	if s == nil {
+		return nil
+	}
 	for i, airport := range s.Airports {
-		if airport.ID == id {
+		if airport != nil && airport.ID == id {
 			s.Airports = append(s.Airports[:i], s.Airports[i+1:]...)
 			return airport
 		}
@@ -244,8 +250,11 @@ func applyAirportEdit(airport *Airport, name, url string) (urlChanged bool) {
 }
 
 func (s *Store) Get(id string) *Airport {
+	if s == nil {
+		return nil
+	}
 	for _, airport := range s.Airports {
-		if airport.ID == id {
+		if airport != nil && airport.ID == id {
 			return airport
 		}
 	}
@@ -253,6 +262,9 @@ func (s *Store) Get(id string) *Airport {
 }
 
 func (s *Store) FindSubscription(id string) (*Airport, *Subscription) {
+	if s == nil {
+		return nil, nil
+	}
 	for _, airport := range s.Airports {
 		if airport == nil {
 			continue

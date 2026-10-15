@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -84,3 +85,12 @@ func TestAirportMaintenanceSchedule(t *testing.T) {
 		t.Fatal("accepted unsafe link")
 	}
 }
+
+func TestSaveAirportMaintenanceEmptyID(t *testing.T) {
+	s, _ := newAirportURLTestService(t)
+	err := s.SaveAirportMaintenance("   ", profiles.AirportMaintenance{})
+	if err == nil || !strings.Contains(err.Error(), "机场标识不能为空") {
+		t.Fatalf("expected 机场标识不能为空 error, got: %v", err)
+	}
+}
+

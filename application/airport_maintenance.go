@@ -12,6 +12,10 @@ import (
 )
 
 func (s *AppService) SaveAirportMaintenance(id string, next profiles.AirportMaintenance) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Errorf("机场标识不能为空")
+	}
 	if next.RefreshHours != 0 && (next.RefreshHours < 1 || next.RefreshHours > 720) {
 		return fmt.Errorf("刷新间隔须为 1–720 小时，或关闭")
 	}
