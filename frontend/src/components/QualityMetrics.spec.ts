@@ -49,3 +49,22 @@ it('keeps every latest service conclusion reachable from a comparison cell',()=>
  const ui=mount(QualityMetrics,{props:{evidence:e,target:'cloudflare',catalog:[],comparisonField:'service'}})
  expect(ui.text()).toContain('rule-third');expect(ui.text()).toContain('rule-second');expect(ui.text()).toContain('HTTP 拒绝');ui.unmount()
 })
+
+it('keeps a usable single observation distinct from missing conditions or incomplete history',async()=>{
+ const e=comparisonEvidence(),test=e.tests[0]
+ test.samples=test.samples.slice(0,1)
+ test.network_path={method:'physical_socket_v1',interface:'en1',dns_mode:'physical_interface_dns_v1',socket_bind_verified:true,dns_bind_verified:true,address_family:'ipv4',address_source:'physical_ipv4_dns',tcp_bindings:1,udp_bindings:0}
+ const ui=mount(QualityMetrics,{props:{evidence:e,target:'cloudflare',catalog:[]}})
+ expect(ui.get('.quality-latency').text()).toContain('P50 10 ms')
+ expect(ui.get('.quality-latency').text()).toContain('稳定性未确认')
+ expect(ui.get('.quality-latency').text()).not.toContain('不可比较')
+ expect(ui.get('.quality-latency').text()).toContain('P95 样本不足')
+ test.network_path.dns_bind_verified=false
+ await ui.setProps({evidence:{...e}})
+ expect(ui.get('.quality-latency').text()).toContain('不可比较')
+ expect(ui.get('.quality-latency').text()).toContain('出口条件证据不足')
+ test.network_path.dns_bind_verified=true;e.reads.latency.complete=false
+ await ui.setProps({evidence:{...e}})
+ expect(ui.get('.quality-latency').text()).toContain('读取不完整 · 不可比较')
+ ui.unmount()
+})
