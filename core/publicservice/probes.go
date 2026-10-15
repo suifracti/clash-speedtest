@@ -83,14 +83,14 @@ func checkPing0(ctx context.Context, client *http.Client, rule Rule, started tim
 		return finish(result, started)
 	}
 	var payload struct {
-		IP       string `json:"ip"`
-		Location string `json:"location"`
-		Country  string `json:"country"`
-		City     string `json:"city"`
-		ASN      string `json:"asn"`
-		Org      string `json:"org"`
-		IsIDC    *bool  `json:"isidc"`
-		IPRisk   *int   `json:"iprisk"`
+		IP       string          `json:"ip"`
+		Location string          `json:"location"`
+		Country  string          `json:"country"`
+		City     string          `json:"city"`
+		ASN      json.RawMessage `json:"asn"`
+		Org      string          `json:"org"`
+		IsIDC    *bool           `json:"isidc"`
+		IPRisk   *int            `json:"iprisk"`
 	}
 	if json.Unmarshal(body, &payload) != nil || strings.TrimSpace(payload.IP) == "" {
 		result.Outcome = "criteria_mismatch"
@@ -107,7 +107,7 @@ func checkPing0(ctx context.Context, client *http.Client, rule Rule, started tim
 	result.Outcome = "profiled"
 	result.Summary = fmt.Sprintf("第三方风险分 %s · %s", risk, ipType)
 	result.Details = map[string]string{
-		"ip": payload.IP, "location": location, "country": payload.Country, "asn": payload.ASN,
+		"ip": payload.IP, "location": location, "country": payload.Country, "asn": formatRawASN(payload.ASN),
 		"organization": payload.Org, "ip_type": ipType, "risk_score": risk,
 	}
 	return finish(result, started)
@@ -119,15 +119,15 @@ func checkIPPure(ctx context.Context, client *http.Client, rule Rule, started ti
 		return finish(result, started)
 	}
 	var payload struct {
-		IP            string `json:"ip"`
-		ASN           int    `json:"asn"`
-		ASOrg         string `json:"asOrganization"`
-		Country       string `json:"country"`
-		CountryCode   string `json:"countryCode"`
-		City          string `json:"city"`
-		FraudScore    *int   `json:"fraudScore"`
-		IsResidential *bool  `json:"isResidential"`
-		IsBroadcast   *bool  `json:"isBroadcast"`
+		IP            string          `json:"ip"`
+		ASN           json.RawMessage `json:"asn"`
+		ASOrg         string          `json:"asOrganization"`
+		Country       string          `json:"country"`
+		CountryCode   string          `json:"countryCode"`
+		City          string          `json:"city"`
+		FraudScore    *int            `json:"fraudScore"`
+		IsResidential *bool           `json:"isResidential"`
+		IsBroadcast   *bool           `json:"isBroadcast"`
 	}
 	if json.Unmarshal(body, &payload) != nil || strings.TrimSpace(payload.IP) == "" {
 		result.Outcome = "criteria_mismatch"
@@ -142,7 +142,7 @@ func checkIPPure(ctx context.Context, client *http.Client, rule Rule, started ti
 	result.Summary = fmt.Sprintf("第三方欺诈分 %s · %s · %s", risk, ipType, originType)
 	result.Details = map[string]string{
 		"ip": payload.IP, "country": payload.Country, "country_code": payload.CountryCode,
-		"location": strings.TrimSpace(payload.Country + " " + payload.City), "asn": formatASN(payload.ASN),
+		"location": strings.TrimSpace(payload.Country + " " + payload.City), "asn": formatRawASN(payload.ASN),
 		"organization": payload.ASOrg, "ip_type": ipType, "origin_type": originType,
 		"fraud_score": risk,
 	}
@@ -565,6 +565,29 @@ func formatASN(asn int) string {
 		return ""
 	}
 	return fmt.Sprintf("AS%d", asn)
+}
+
+func cleanASN(raw json.RawMessage) string {
+	s := strings.TrimSpace(string(raw))
+	if s == "" || s == "null" {
+		return ""
+	}
+	s = strings.Trim(s, "\"")
+	return s
+}
+
+func formatRawASN(raw json.RawMessage) string {
+	s := cleanASN(raw)
+	if s == "" {
+		return ""
+	}
+	if strings.HasPrefix(strings.ToUpper(s), "AS") {
+		return strings.ToUpper(s)
+	}
+	if n, err := strconv.Atoi(s); err == nil && n > 0 {
+		return formatASN(n)
+	}
+	return s
 }
 
 func availabilityLabel(value bool) string {

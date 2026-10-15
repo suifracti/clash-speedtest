@@ -593,8 +593,8 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 		result.ErrorMessage = fmt.Sprintf("服务返回 HTTP %d；判据要求 HTTP 200", status)
 		return finish(result, startedAt)
 	}
-	body, readErr := io.ReadAll(io.LimitReader(response.Body, MaximumResponseBytes))
-	result.BytesRead = int64(len(body))
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, MaximumResponseBytes+1))
+	result.BytesRead = int64(min(len(body), MaximumResponseBytes))
 	if readErr != nil {
 		var networkErr net.Error
 		switch {
@@ -621,7 +621,7 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 		}
 		return finish(result, startedAt)
 	}
-	if len(body) >= MaximumResponseBytes {
+	if len(body) > MaximumResponseBytes {
 		result.Outcome = "criteria_mismatch"
 		result.FailurePhase = "response_limit"
 		result.ErrorMessage = "响应达到 64 KiB 读取上限，无法按规则确认"

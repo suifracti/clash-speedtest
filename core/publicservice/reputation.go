@@ -191,7 +191,7 @@ func (c Checker) checkIPOK(ctx context.Context, client *http.Client, rule Rule, 
 	}
 	result.Outcome = "profiled"
 	result.Summary = "IPOK 独立风险分 " + risk + " · " + family + " · 不代表服务可用"
-	profileDetails := map[string]string{"risk_score": risk, "asn": string(document.Geo.ASN), "organization": document.Geo.ASName, "isp": document.Geo.ISP, "country": document.Geo.Country, "ip_type": document.IPType, "risk_flags": string(document.Signals), "source_observations": string(document.Sources), "provider_quota": string(document.Quota), "query_at": now.Format(time.RFC3339Nano), "cache_valid_until": now.Add(24 * time.Hour).Format(time.RFC3339Nano), "data_freshness": "sources.observedAt 保留；缺失为未知。x-ipok-upstream 单独保留，不假定实时；本地缓存命中不刷新厂商查询时间", "provider_result_json": result.Details["provider_response_body"]}
+	profileDetails := map[string]string{"risk_score": risk, "asn": cleanASN(document.Geo.ASN), "organization": document.Geo.ASName, "isp": document.Geo.ISP, "country": document.Geo.Country, "ip_type": document.IPType, "risk_flags": string(document.Signals), "source_observations": string(document.Sources), "provider_quota": string(document.Quota), "query_at": now.Format(time.RFC3339Nano), "cache_valid_until": now.Add(24 * time.Hour).Format(time.RFC3339Nano), "data_freshness": "sources.observedAt 保留；缺失为未知。x-ipok-upstream 单独保留，不假定实时；本地缓存命中不刷新厂商查询时间", "provider_result_json": result.Details["provider_response_body"]}
 	for k, v := range profileDetails {
 		result.Details[k] = v
 	}

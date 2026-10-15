@@ -75,3 +75,34 @@ func TestIPFamilyObservationNeedsAnAddressOfTheRequestedFamily(t *testing.T) {
 		}
 	}
 }
+
+func TestIPQualityASNFormatResilience(t *testing.T) {
+	for _, tc := range []struct {
+		service string
+		body    string
+		wantASN string
+	}{
+		{"ping0_ip_quality", `{"ip":"203.0.113.7","asn":64500}`, "AS64500"},
+		{"ping0_ip_quality", `{"ip":"203.0.113.7","asn":"AS64500"}`, "AS64500"},
+		{"ping0_ip_quality", `{"ip":"203.0.113.7","asn":null}`, ""},
+		{"ippure_ip_quality", `{"ip":"203.0.113.7","asn":"AS64500"}`, "AS64500"},
+		{"ippure_ip_quality", `{"ip":"203.0.113.7","asn":64500}`, "AS64500"},
+		{"ippure_ip_quality", `{"ip":"203.0.113.7","asn":null}`, ""},
+	} {
+		rule, ok := RuleFor(tc.service)
+		if !ok {
+			t.Fatalf("missing rule %s", tc.service)
+		}
+		checker := Checker{ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+			return fixtureResponse(req, http.StatusOK, "application/json", tc.body), nil
+		})}
+		result := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
+		if result.Outcome != "profiled" {
+			t.Fatalf("%s with %s failed: outcome=%s, err=%s", tc.service, tc.body, result.Outcome, result.ErrorMessage)
+		}
+		if result.Details["asn"] != tc.wantASN {
+			t.Fatalf("%s with %s: got asn %q, want %q", tc.service, tc.body, result.Details["asn"], tc.wantASN)
+		}
+	}
+}
+

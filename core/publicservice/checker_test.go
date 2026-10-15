@@ -270,6 +270,18 @@ func TestCheckerCapsBodyReadsAndDistinguishesTimeoutFromCancellation(t *testing.
 		t.Fatalf("bounded read result = %+v", large)
 	}
 
+	exactBody := `{"current_user_url":"https://api.github.com/user","repository_url":"https://api.github.com/repos/a/b","pad":"` + strings.Repeat("a", MaximumResponseBytes-len(`{"current_user_url":"https://api.github.com/user","repository_url":"https://api.github.com/repos/a/b","pad":""}`)) + `"}`
+	if len(exactBody) != MaximumResponseBytes {
+		t.Fatalf("exactBody len = %d, want %d", len(exactBody), MaximumResponseBytes)
+	}
+	exactChecker := Checker{ClientFactory: fixtureClient(func(request *http.Request) (*http.Response, error) {
+		return fixtureResponse(request, http.StatusOK, "application/json", exactBody), nil
+	})}
+	exact := exactChecker.Check(context.Background(), monitor.MonitoredNode{}, github, DefaultTimeout)
+	if exact.Outcome != "matched" {
+		t.Fatalf("exact 64KiB response should be matched, got %+v", exact)
+	}
+
 	waitingRequest := make(chan struct{}, 1)
 	blockedChecker := Checker{ClientFactory: fixtureClient(func(request *http.Request) (*http.Response, error) {
 		waitingRequest <- struct{}{}

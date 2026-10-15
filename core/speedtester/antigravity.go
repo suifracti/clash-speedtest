@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -458,14 +459,14 @@ func probeIPAttributes(client *http.Client) *IPInfo {
 		}
 
 		var p struct {
-			IP       string `json:"ip"`
-			Location string `json:"location"`
-			Country  string `json:"country"`
-			City     string `json:"city"`
-			ASN      string `json:"asn"`
-			Org      string `json:"org"`
-			IsIDC    bool   `json:"isidc"`
-			IPRisk   int    `json:"iprisk"`
+			IP       string          `json:"ip"`
+			Location string          `json:"location"`
+			Country  string          `json:"country"`
+			City     string          `json:"city"`
+			ASN      json.RawMessage `json:"asn"`
+			Org      string          `json:"org"`
+			IsIDC    bool            `json:"isidc"`
+			IPRisk   int             `json:"iprisk"`
 		}
 		body, err := io.ReadAll(io.LimitReader(resp.Body, 8192))
 		if err != nil || json.Unmarshal(body, &p) != nil || p.IP == "" {
@@ -476,12 +477,21 @@ func probeIPAttributes(client *http.Client) *IPInfo {
 		if loc == "" {
 			loc = strings.TrimSpace(p.Country + " " + p.City)
 		}
+		asnStr := strings.Trim(strings.TrimSpace(string(p.ASN)), "\"")
+		if asnStr == "null" {
+			asnStr = ""
+		}
+		if asnStr != "" && !strings.HasPrefix(strings.ToUpper(asnStr), "AS") {
+			if _, err := strconv.Atoi(asnStr); err == nil {
+				asnStr = "AS" + asnStr
+			}
+		}
 		mu.Lock()
 		ping0Res = &Ping0Info{
 			IP:        p.IP,
 			Location:  loc,
 			Country:   p.Country,
-			ASN:       p.ASN,
+			ASN:       asnStr,
 			Org:       p.Org,
 			IsIDC:     p.IsIDC,
 			RiskScore: p.IPRisk,
@@ -511,25 +521,32 @@ func probeIPAttributes(client *http.Client) *IPInfo {
 		}
 
 		var ipr struct {
-			IP            string `json:"ip"`
-			ASN           int    `json:"asn"`
-			ASOrg         string `json:"asOrganization"`
-			Country       string `json:"country"`
-			CountryCode   string `json:"countryCode"`
-			City          string `json:"city"`
-			FraudScore    int    `json:"fraudScore"`
-			IsResidential bool   `json:"isResidential"`
-			IsBroadcast   bool   `json:"isBroadcast"`
+			IP            string          `json:"ip"`
+			ASN           json.RawMessage `json:"asn"`
+			ASOrg         string          `json:"asOrganization"`
+			Country       string          `json:"country"`
+			CountryCode   string          `json:"countryCode"`
+			City          string          `json:"city"`
+			FraudScore    int             `json:"fraudScore"`
+			IsResidential bool            `json:"isResidential"`
+			IsBroadcast   bool            `json:"isBroadcast"`
 		}
 		body, err := io.ReadAll(io.LimitReader(resp.Body, 8192))
 		if err != nil || json.Unmarshal(body, &ipr) != nil || ipr.IP == "" {
 			return
 		}
 
+		asnVal := 0
+		s := strings.Trim(strings.TrimSpace(string(ipr.ASN)), "\"")
+		s = strings.TrimPrefix(strings.ToUpper(s), "AS")
+		if n, err := strconv.Atoi(s); err == nil {
+			asnVal = n
+		}
+
 		mu.Lock()
 		ippureRes = &IPPureInfo{
 			IP:            ipr.IP,
-			ASN:           ipr.ASN,
+			ASN:           asnVal,
 			ASOrg:         ipr.ASOrg,
 			Country:       ipr.Country,
 			CountryCode:   ipr.CountryCode,

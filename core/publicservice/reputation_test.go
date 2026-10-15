@@ -324,3 +324,35 @@ func TestIPOKProjectionOverflowDoesNotRestoreUnsafeSourceFields(t *testing.T) {
 		t.Fatal("projection overflow became an effective profile")
 	}
 }
+
+func TestIPOKASNFormatting(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		asnJSON string
+		wantASN string
+	}{
+		{"number asn", `"asn":15169`, "15169"},
+		{"string asn with prefix", `"asn":"AS15169"`, "AS15169"},
+		{"string asn number", `"asn":"15169"`, "15169"},
+		{"null asn", `"asn":null`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &memoryReputation{}
+			c := Checker{ReputationStore: store, ClientFactory: fixtureClient(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Host == "api.ipify.org" {
+					return fixtureResponse(r, 200, "application/json", `{"ip":"8.8.8.8"}`), nil
+				}
+				return fixtureResponse(r, 200, "application/json", fmt.Sprintf(`{"apiVersion":"1","geo":{"ip":"8.8.8.8",%s,"asName":"Google"},"risk":25}`, tc.asnJSON)), nil
+			})}
+			rule, _ := RuleFor("ipok_ipv4")
+			r := c.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
+			if r.Outcome != "profiled" {
+				t.Fatalf("expected profiled, got %s: %s", r.Outcome, r.ErrorMessage)
+			}
+			if r.Details["asn"] != tc.wantASN {
+				t.Fatalf("got asn %q, want %q", r.Details["asn"], tc.wantASN)
+			}
+		})
+	}
+}
+

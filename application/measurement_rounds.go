@@ -98,6 +98,9 @@ func (s *AppService) FinishManualMeasurementRound(ctx context.Context, id, state
 }
 
 func (s *AppService) ensureManualLatencyRound(ctx context.Context, req WorkbenchLatencyBatchRequest, selections []WorkbenchLatencyBatchSelection) error {
+	if len(selections) == 0 {
+		return nil
+	}
 	trigger, err := s.historyStore.DB().MeasurementRequestTrigger(ctx, req.RequestID, selections[0].ProfileID, selections[0].NodeIdentityKey, selections[0].ConfigRevisionKey, "latency", "")
 	if err != nil {
 		return err
