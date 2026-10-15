@@ -222,3 +222,93 @@ func TestOAuthCallbackHandler(t *testing.T) {
 		t.Errorf("expected 400 on error, got %d", rrError.Code)
 	}
 }
+
+func TestParseAntigravityTokenQuotesAndHeaders(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "bare token",
+			input:    "ya29.bare123",
+			expected: "ya29.bare123",
+		},
+		{
+			name:     "double quoted token",
+			input:    `"ya29.quoted456"`,
+			expected: "ya29.quoted456",
+		},
+		{
+			name:     "single quoted token",
+			input:    `'ya29.single789'`,
+			expected: "ya29.single789",
+		},
+		{
+			name:     "standard authorization header",
+			input:    "Authorization: Bearer ya29.standard",
+			expected: "ya29.standard",
+		},
+		{
+			name:     "quoted bearer token in header",
+			input:    `Authorization: Bearer "ya29.bearer_quoted"`,
+			expected: "ya29.bearer_quoted",
+		},
+		{
+			name:     "quoted entire header value",
+			input:    `Authorization: "Bearer ya29.quoted_val"`,
+			expected: "ya29.quoted_val",
+		},
+		{
+			name:     "curl format with -H flag and single quotes",
+			input:    `-H 'Authorization: Bearer ya29.curl_flag'`,
+			expected: "ya29.curl_flag",
+		},
+		{
+			name:     "whitespace and carriage returns",
+			input:    "  \r\n  Authorization: Bearer ya29.whitespaced  \r\n",
+			expected: "ya29.whitespaced",
+		},
+		{
+			name:     "comment line and empty lines skipped",
+			input:    "# this is a comment\n\n\nAuthorization: Bearer ya29.after_comment\n",
+			expected: "ya29.after_comment",
+		},
+		{
+			name:     "bearer only with no token",
+			input:    "Bearer ",
+			expected: "",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ParseAntigravityToken(tc.input)
+			if got != tc.expected {
+				t.Errorf("ParseAntigravityToken(%q) = %q, want %q", tc.input, got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestSaveOAuthCredsFileNilCreds(t *testing.T) {
+	err := saveOAuthCredsFile(filepath.Join(t.TempDir(), "creds.json"), nil)
+	if err == nil {
+		t.Error("expected error for nil creds, got nil")
+	}
+}
+
+func TestSaveTokenFileEmpty(t *testing.T) {
+	dir := t.TempDir()
+	if err := saveTokenFile(filepath.Join(dir, "token1"), ""); err == nil {
+		t.Error("expected error for empty token, got nil")
+	}
+	if err := saveTokenFile(filepath.Join(dir, "token2"), "   \n\t "); err == nil {
+		t.Error("expected error for whitespace token, got nil")
+	}
+}

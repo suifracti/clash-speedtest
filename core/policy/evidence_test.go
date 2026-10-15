@@ -911,3 +911,31 @@ func TestConsecutiveFailures_RespectsProbeScope(t *testing.T) {
 		t.Fatalf("expected 0 consecutive AI failures, got %d", got)
 	}
 }
+
+func TestEvidenceSnapshotNilCurrentNode(t *testing.T) {
+	var s *EvidenceSnapshot
+	cur := s.CurrentNode()
+	if cur != nil {
+		t.Fatalf("expected nil for nil snapshot, got %v", cur)
+	}
+
+	emptySnap := &EvidenceSnapshot{}
+	curEmpty := emptySnap.CurrentNode()
+	if curEmpty != nil {
+		t.Fatalf("expected nil for empty snapshot, got %v", curEmpty)
+	}
+}
+
+func TestMonitorRecommendationNilSafety(t *testing.T) {
+	var r *MonitorRecommendation
+	// Neither should panic on nil receiver
+	r.addReason("test_code", SeverityInfo, "test_msg", nil, nil)
+	r.reject(nil, "reject_code", "reject_reason", nil)
+
+	rReal := &MonitorRecommendation{}
+	// Reject with nil node should not panic
+	rReal.reject(nil, "reject_code", "reject_reason", nil)
+	if len(rReal.RejectedCandidates) != 0 {
+		t.Errorf("expected 0 rejected candidates when node is nil, got %d", len(rReal.RejectedCandidates))
+	}
+}

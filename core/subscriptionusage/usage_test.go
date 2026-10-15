@@ -88,3 +88,19 @@ func TestDailyUpdateUsesShanghaiBoundary(t *testing.T) {
 		}
 	}
 }
+
+func TestAddNilPointerSafety(t *testing.T) {
+	// Should safely return without panicking when value is nil
+	add(nil, 42)
+
+	var p *int64
+	add(&p, 100)
+	if p == nil || *p != 100 {
+		t.Fatalf("expected p to point to 100, got %v", p)
+	}
+
+	add(&p, 50)
+	if *p != 150 {
+		t.Fatalf("expected *p to be 150, got %d", *p)
+	}
+}

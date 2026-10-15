@@ -83,8 +83,11 @@ func buildNodeNameData(countryCode string, latency time.Duration, downloadSpeed,
 	if speedUnit == "ms" {
 		speedMBps = speed
 	}
-	count := nameCount[upperCountryCode] + 1
-	nameCount[upperCountryCode] = count
+	count := 1
+	if nameCount != nil {
+		count = nameCount[upperCountryCode] + 1
+		nameCount[upperCountryCode] = count
+	}
 	dlMBps := downloadSpeed / (1024 * 1024)
 	ulMBps := uploadSpeed / (1024 * 1024)
 	latencyMs := "N/A"

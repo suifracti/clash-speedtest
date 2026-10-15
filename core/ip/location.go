@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -14,18 +15,22 @@ type IPLocation struct {
 }
 
 func GetIPLocation(ip string) (*IPLocation, error) {
+	cleanIP := strings.TrimSpace(ip)
+	if cleanIP == "" {
+		return nil, fmt.Errorf("ip is empty")
+	}
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(fmt.Sprintf("http://ip-api.com/json/%s?fields=country,countryCode", ip))
+	resp, err := client.Get(fmt.Sprintf("http://ip-api.com/json/%s?fields=country,countryCode", cleanIP))
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to get location for IP %s", ip)
+		return nil, fmt.Errorf("failed to get location for IP %s", cleanIP)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 65536))
 	if err != nil {
 		return nil, err
 	}

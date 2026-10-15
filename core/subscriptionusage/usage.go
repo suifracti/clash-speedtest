@@ -107,6 +107,9 @@ func bucketKey(at time.Time, period string) string {
 }
 
 func add(value **int64, n int64) {
+	if value == nil {
+		return
+	}
 	if *value == nil {
 		v := int64(0)
 		*value = &v

@@ -1009,3 +1009,40 @@ func TestWebServer_MigrationContinuity_Endpoint(t *testing.T) {
 		t.Errorf("unexpected continuous item sequence: %s, %s", page.Items[0].SampleID, page.Items[1].SampleID)
 	}
 }
+
+func TestSSEEmitterNilAndDoubleCloseSafety(t *testing.T) {
+	var nilEmitter *SSEEmitter
+
+	// Operations on nil emitter must not panic
+	if ch := nilEmitter.Subscribe(); ch != nil {
+		t.Errorf("expected nil chan from nil emitter, got %v", ch)
+	}
+	nilEmitter.Unsubscribe(nil)
+	nilEmitter.Emit(application.Event{Type: "test"})
+
+	// Operations on real emitter
+	emitter := NewSSEEmitter()
+	ch1 := emitter.Subscribe()
+	if ch1 == nil {
+		t.Fatal("expected non-nil channel from Subscribe")
+	}
+
+	emitter.Emit(application.Event{Type: "ping"})
+	select {
+	case msg := <-ch1:
+		if len(msg) == 0 {
+			t.Error("expected non-empty event payload")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for emitted event")
+	}
+
+	// First unsubscribe closes channel
+	emitter.Unsubscribe(ch1)
+
+	// Second unsubscribe on the same channel MUST NOT panic with "close of closed channel"
+	emitter.Unsubscribe(ch1)
+
+	// Unsubscribing nil channel MUST NOT panic
+	emitter.Unsubscribe(nil)
+}

@@ -150,3 +150,29 @@ func TestMihomoClient_FullWorkflow(t *testing.T) {
 		t.Fatalf("expected 42ms delay, got %v, err: %v", delay, err)
 	}
 }
+
+func TestMihomoClientNilSafety(t *testing.T) {
+	var c *Client
+
+	if _, err := c.GetVersion(nil); err == nil {
+		t.Error("expected error for nil client GetVersion")
+	}
+	if _, err := c.GetCapabilities(nil); err == nil {
+		t.Error("expected error for nil client GetCapabilities")
+	}
+	if _, err := c.ListGroups(nil); err == nil {
+		t.Error("expected error for nil client ListGroups")
+	}
+	if _, err := c.ListNodes(nil, "PROXY"); err == nil {
+		t.Error("expected error for nil client ListNodes")
+	}
+	if _, err := c.GetCurrentSelection(nil, "PROXY"); err == nil {
+		t.Error("expected error for nil client GetCurrentSelection")
+	}
+	if err := c.SelectNode(nil, "PROXY", "node"); err == nil {
+		t.Error("expected error for nil client SelectNode")
+	}
+	if _, err := c.TestDelay(nil, "node", "", 0); err == nil {
+		t.Error("expected error for nil client TestDelay")
+	}
+}

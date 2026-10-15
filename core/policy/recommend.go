@@ -281,6 +281,9 @@ type MonitorRecommendation struct {
 }
 
 func (r *MonitorRecommendation) addReason(code, severity, message string, ev *NodeEvidence, extra map[string]any) {
+	if r == nil {
+		return
+	}
 	reason := RecommendationReason{
 		Code:     code,
 		Severity: severity,
@@ -714,6 +717,9 @@ func (e *DecisionEngine) RecommendFromEvidence(
 }
 
 func (r *MonitorRecommendation) reject(node *NodeEvidence, code, reason string, extra map[string]any) {
+	if r == nil || node == nil {
+		return
+	}
 	r.RejectedCandidates = append(r.RejectedCandidates, CandidateRejection{
 		ProfileID:         node.ProfileID,
 		NodeKey:           node.NodeKey,

@@ -347,3 +347,43 @@ func TestDecisionEngine_PolicyPurpose(t *testing.T) {
 		t.Fatalf("AI policy must NOT select candidate that is blocked on AI (expected HK-AI-PASS, got %s)", resAI.TargetNode)
 	}
 }
+
+func TestDecisionEngine_NilStateAndRollbackSafety(t *testing.T) {
+	engine := NewDecisionEngine()
+
+	// Calling with nil state should safely do nothing and never panic
+	engine.RecordSwitch(nil, "a", "b", "grp", "rsn", "trg", 10*time.Millisecond, 20*time.Millisecond)
+	engine.RecordRollback(nil, "grp", "b", "rsn")
+	engine.RecordFailure(nil)
+	engine.RecordSuccess(nil)
+
+	// State with empty PreviousNode should safely do nothing on RecordRollback
+	state := &DecisionState{
+		CurrentNode:  "node-b",
+		PreviousNode: "",
+	}
+	engine.RecordRollback(state, "grp", "node-b", "failed verification")
+	if state.CurrentNode != "node-b" {
+		t.Errorf("expected CurrentNode to remain node-b, got %s", state.CurrentNode)
+	}
+	if len(state.AuditTrail) != 0 {
+		t.Errorf("expected empty audit trail, got %d events", len(state.AuditTrail))
+	}
+
+	// Normal RecordSwitch and RecordRollback should work properly
+	engine.RecordSwitch(state, "node-a", "node-b", "grp", "speed", "test", 50*time.Millisecond, 20*time.Millisecond)
+	if state.CurrentNode != "node-b" || state.PreviousNode != "node-a" {
+		t.Errorf("RecordSwitch failed: current=%s, prev=%s", state.CurrentNode, state.PreviousNode)
+	}
+	if len(state.AuditTrail) != 1 {
+		t.Errorf("expected 1 audit event, got %d", len(state.AuditTrail))
+	}
+
+	engine.RecordRollback(state, "grp", "node-b", "timeout")
+	if state.CurrentNode != "node-a" || state.PreviousNode != "" {
+		t.Errorf("RecordRollback failed: current=%s, prev=%s", state.CurrentNode, state.PreviousNode)
+	}
+	if len(state.AuditTrail) != 2 {
+		t.Errorf("expected 2 audit events, got %d", len(state.AuditTrail))
+	}
+}

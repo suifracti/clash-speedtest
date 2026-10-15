@@ -527,6 +527,9 @@ type EvidenceSnapshot struct {
 
 // CurrentNode resolves the evidence bundle for the current node, if present.
 func (s *EvidenceSnapshot) CurrentNode() *NodeEvidence {
+	if s == nil {
+		return nil
+	}
 	for i := range s.Nodes {
 		if s.Nodes[i].IsCurrent {
 			return &s.Nodes[i]

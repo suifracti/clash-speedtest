@@ -597,6 +597,9 @@ func (e *DecisionEngine) RecordSwitch(
 	oldRTT time.Duration,
 	newRTT time.Duration,
 ) {
+	if state == nil {
+		return
+	}
 	now := time.Now()
 	event := SwitchEvent{
 		ID:          fmt.Sprintf("sw-%d", now.UnixNano()),
@@ -631,7 +634,7 @@ func (e *DecisionEngine) RecordRollback(
 	failedNode string,
 	reason string,
 ) {
-	if state.PreviousNode == "" {
+	if state == nil || state.PreviousNode == "" {
 		return
 	}
 	now := time.Now()

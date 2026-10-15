@@ -91,6 +91,9 @@ func NewClient(cfg Config) (*Client, error) {
 
 // GetVersion returns Mihomo Core version information.
 func (c *Client) GetVersion(ctx context.Context) (controller.VersionInfo, error) {
+	if c == nil {
+		return controller.VersionInfo{}, fmt.Errorf("mihomo client is nil")
+	}
 	req, err := c.newRequest(ctx, http.MethodGet, "/version", nil)
 	if err != nil {
 		return controller.VersionInfo{}, err
@@ -113,6 +116,9 @@ func (c *Client) GetVersion(ctx context.Context) (controller.VersionInfo, error)
 
 // GetCapabilities returns supported features of the Mihomo external controller.
 func (c *Client) GetCapabilities(ctx context.Context) (controller.Capabilities, error) {
+	if c == nil {
+		return controller.Capabilities{}, fmt.Errorf("mihomo client is nil")
+	}
 	return controller.Capabilities{
 		CanSelectNode:       true,
 		CanTestDelay:        true,
@@ -124,6 +130,9 @@ func (c *Client) GetCapabilities(ctx context.Context) (controller.Capabilities, 
 
 // ListGroups returns all proxy groups (Selector, URLTest, Fallback, etc.)
 func (c *Client) ListGroups(ctx context.Context) ([]controller.Group, error) {
+	if c == nil {
+		return nil, fmt.Errorf("mihomo client is nil")
+	}
 	proxies, err := c.fetchProxiesMap(ctx)
 	if err != nil {
 		return nil, err
@@ -146,6 +155,9 @@ func (c *Client) ListGroups(ctx context.Context) ([]controller.Group, error) {
 
 // ListNodes returns all candidate nodes belonging to a specific group, or all nodes if group is empty.
 func (c *Client) ListNodes(ctx context.Context, group string) ([]controller.Node, error) {
+	if c == nil {
+		return nil, fmt.Errorf("mihomo client is nil")
+	}
 	proxies, err := c.fetchProxiesMap(ctx)
 	if err != nil {
 		return nil, err
@@ -178,6 +190,9 @@ func (c *Client) ListNodes(ctx context.Context, group string) ([]controller.Node
 
 // GetCurrentSelection returns the currently selected node for the specified group.
 func (c *Client) GetCurrentSelection(ctx context.Context, group string) (string, error) {
+	if c == nil {
+		return "", fmt.Errorf("mihomo client is nil")
+	}
 	raw, err := c.getGroupRaw(ctx, group)
 	if err != nil {
 		return "", err
@@ -192,6 +207,9 @@ func (c *Client) GetCurrentSelection(ctx context.Context, group string) (string,
 // 2. Updating the selection instructs Mihomo to route new connections via nodeName; existing active user
 //    connections are preserved by default (no DELETE /connections call).
 func (c *Client) SelectNode(ctx context.Context, group string, nodeName string) error {
+	if c == nil {
+		return fmt.Errorf("mihomo client is nil")
+	}
 	groupInfo, err := c.getGroupRaw(ctx, group)
 	if err != nil {
 		return fmt.Errorf("verify group %q: %w", group, err)
@@ -215,6 +233,9 @@ func (c *Client) SelectNode(ctx context.Context, group string, nodeName string) 
 	}
 	req.Header.Set("Content-Type", "application/json")
 
+	if c.client == nil {
+		return fmt.Errorf("mihomo client is not initialized")
+	}
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("select node %q in group %q: %w", nodeName, group, err)
@@ -222,7 +243,7 @@ func (c *Client) SelectNode(ctx context.Context, group string, nodeName string) 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("select node failed with status %d: %s", resp.StatusCode, string(body))
 	}
 	return nil
@@ -230,6 +251,9 @@ func (c *Client) SelectNode(ctx context.Context, group string, nodeName string) 
 
 // TestDelay invokes Mihomo's built-in delay test for a single proxy.
 func (c *Client) TestDelay(ctx context.Context, proxyName string, testURL string, timeout time.Duration) (time.Duration, error) {
+	if c == nil {
+		return 0, fmt.Errorf("mihomo client is nil")
+	}
 	if testURL == "" {
 		testURL = "http://www.gstatic.com/generate_204"
 	}
@@ -303,6 +327,12 @@ func (c *Client) fetchProxiesMap(ctx context.Context) (map[string]rawProxy, erro
 }
 
 func (c *Client) newRequest(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {
+	if c == nil {
+		return nil, fmt.Errorf("mihomo client is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	fullURL := c.endpoint + path
 	req, err := http.NewRequestWithContext(ctx, method, fullURL, body)
 	if err != nil {
@@ -315,6 +345,9 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body io.Re
 }
 
 func (c *Client) doJSON(req *http.Request, target interface{}) error {
+	if c == nil || c.client == nil {
+		return fmt.Errorf("mihomo client is not initialized")
+	}
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return err
@@ -322,7 +355,7 @@ func (c *Client) doJSON(req *http.Request, target interface{}) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		b, _ := io.ReadAll(resp.Body)
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("http %d: %s", resp.StatusCode, string(b))
 	}
 	return json.NewDecoder(resp.Body).Decode(target)

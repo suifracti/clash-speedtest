@@ -6,6 +6,10 @@ import (
 	"strings"
 )
 
+func trimQuotesAndSpace(s string) string {
+	return strings.TrimSpace(strings.Trim(strings.TrimSpace(s), `"'`))
+}
+
 // ParseAntigravityToken extracts a bearer token from user-supplied text.
 // It accepts a bare token, or a pasted header line such as
 // "Authorization: Bearer ya29....". Blank lines and #-comments are skipped.
@@ -15,14 +19,21 @@ func ParseAntigravityToken(raw string) string {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
+		line = trimQuotesAndSpace(line)
 		if idx := strings.Index(strings.ToLower(line), "authorization:"); idx >= 0 {
 			line = line[idx+len("authorization:"):]
 		}
-		line = strings.TrimSpace(line)
-		if len(line) > 7 && strings.EqualFold(line[:7], "bearer ") {
-			line = strings.TrimSpace(line[7:])
+		line = trimQuotesAndSpace(line)
+		if strings.EqualFold(line, "bearer") {
+			continue
 		}
-		return line
+		if len(line) > 7 && strings.EqualFold(line[:7], "bearer ") {
+			line = line[7:]
+		}
+		line = trimQuotesAndSpace(line)
+		if line != "" && !strings.EqualFold(line, "bearer") {
+			return line
+		}
 	}
 	return ""
 }

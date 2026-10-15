@@ -236,6 +236,9 @@ func TryAutoDetectAntigravityToken() (token string, source string, err error) {
 }
 
 func saveOAuthCredsFile(path string, creds *OAuthCreds) error {
+	if creds == nil {
+		return fmt.Errorf("oauth credentials are nil")
+	}
 	data, err := json.MarshalIndent(creds, "", "  ")
 	if err != nil {
 		return err
@@ -244,7 +247,11 @@ func saveOAuthCredsFile(path string, creds *OAuthCreds) error {
 }
 
 func saveTokenFile(path string, token string) error {
-	return os.WriteFile(path, []byte(strings.TrimSpace(token)+"\n"), 0600)
+	trimmed := strings.TrimSpace(token)
+	if trimmed == "" {
+		return fmt.Errorf("token is empty")
+	}
+	return os.WriteFile(path, []byte(trimmed+"\n"), 0600)
 }
 
 // OpenBrowser attempts to open a URL using the default system browser.

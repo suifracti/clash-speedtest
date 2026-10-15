@@ -117,3 +117,31 @@ func TestGenerateNodeNameFromTemplateFastModeLatencyField(t *testing.T) {
 		t.Errorf("Expected %s, got %s", expected, name)
 	}
 }
+
+func TestGenerateNodeNameNilNameCount(t *testing.T) {
+	// Should safely generate default index 001 without panicking on nil map assignment
+	name := GenerateNodeName("US", 0, 10*1024*1024, 0, nil)
+	expected := "🇺🇸 US 001 | ⬇️ 10.00MB/s"
+	if name != expected {
+		t.Errorf("Expected %s, got %s", expected, name)
+	}
+
+	nameTmpl, err := GenerateNodeNameFromTemplate("{{.CountryCode}}-{{.Index}}", "HK", 0, 5*1024*1024, 0, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if nameTmpl != "HK-001" {
+		t.Errorf("Expected HK-001, got %s", nameTmpl)
+	}
+}
+
+func TestGetIPLocationEmptyIP(t *testing.T) {
+	loc, err := GetIPLocation("")
+	if err == nil {
+		t.Errorf("expected error on empty IP, got loc=%v", loc)
+	}
+	loc2, err := GetIPLocation("   ")
+	if err == nil {
+		t.Errorf("expected error on whitespace IP, got loc=%v", loc2)
+	}
+}
