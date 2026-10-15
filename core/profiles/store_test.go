@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/faceair/clash-speedtest/core/speedtester"
 )
 
 func TestStoreSaveLoad(t *testing.T) {
@@ -208,4 +210,121 @@ func TestStoreNilSafety(t *testing.T) {
 	}
 }
 
+func TestFlagFromCodeSanitization(t *testing.T) {
+	if got := flagFromCode("12"); got != "🏳️" {
+		t.Fatalf("expected 🏳️ for numeric 2-char code, got %q", got)
+	}
+	if got := flagFromCode("!@"); got != "🏳️" {
+		t.Fatalf("expected 🏳️ for symbol 2-char code, got %q", got)
+	}
+	if got := flagFromCode("HK"); got != "🇭🇰" {
+		t.Fatalf("expected 🇭🇰 for HK, got %q", got)
+	}
+	if got := flagFromCode("US"); got != "🇺🇸" {
+		t.Fatalf("expected 🇺🇸 for US, got %q", got)
+	}
+	if got := flagFromCode(""); got != "🏳️" {
+		t.Fatalf("expected 🏳️ for empty code, got %q", got)
+	}
+}
 
+func TestValidateStoreNilAndEdge(t *testing.T) {
+	if err := validateStore(nil); err == nil {
+		t.Fatal("expected error from validateStore(nil)")
+	}
+	if err := validateStore(&Store{}); err != nil {
+		t.Fatalf("expected no error from validateStore(&Store{}), got %v", err)
+	}
+}
+
+func TestSummarizeCachesNilStore(t *testing.T) {
+	count, missing := summarizeCaches(sourceSnapshot{})
+	if count != 0 || len(missing) != 0 {
+		t.Fatalf("expected count=0 missing=0 for nil store, got count=%d missing=%v", count, missing)
+	}
+}
+
+func TestSnapshotsEqualMissingKeyDefense(t *testing.T) {
+	a := sourceSnapshot{
+		storeBytes: []byte("test"),
+		caches:     map[string][]byte{"keyA": {}},
+	}
+	b := sourceSnapshot{
+		storeBytes: []byte("test"),
+		caches:     map[string][]byte{"keyB": {}},
+	}
+	if snapshotsEqual(a, b) {
+		t.Fatal("expected snapshots with different cache keys to be unequal")
+	}
+}
+
+func TestAirportNilSubscriptionDefense(t *testing.T) {
+	ap := &Airport{
+		ID:   "ap1",
+		Name: "测试",
+		Subscriptions: []*Subscription{
+			nil,
+			{ID: "sub1", URL: "https://example.com/s1"},
+		},
+	}
+	if got := ap.GetSubscription("sub1"); got == nil || got.ID != "sub1" {
+		t.Fatalf("expected to find sub1 despite nil elements, got %+v", got)
+	}
+	if got := ap.GetSubscription("none"); got != nil {
+		t.Fatalf("expected nil for nonexistent sub, got %+v", got)
+	}
+	if rem := ap.RemoveSubscription("sub1"); rem == nil || rem.ID != "sub1" {
+		t.Fatalf("expected to remove sub1, got %+v", rem)
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nil_sub.json")
+	storeWithNilSub := &Store{
+		Airports: []*Airport{
+			{
+				ID: "ap_nil",
+				Subscriptions: []*Subscription{
+					nil,
+				},
+			},
+		},
+	}
+	if err := SaveStore(path, storeWithNilSub); err != nil {
+		t.Fatalf("expected SaveStore to succeed with nil sub, got %v", err)
+	}
+}
+
+func TestAppNilReceiverSafety(t *testing.T) {
+	var a *App = nil
+	// printf should not panic
+	a.printf("hello %s", "world")
+
+	if _, err := a.readLine("prompt"); err == nil {
+		t.Fatal("expected error from readLine on nil App")
+	}
+	if yes, err := a.confirm("prompt", true); !yes || err == nil {
+		t.Fatal("expected defaultYes and error from confirm on nil App")
+	}
+	if _, err := a.SelectAirport(); err == nil {
+		t.Fatal("expected error from SelectAirport on nil App")
+	}
+	// printAirportMenu should not panic
+	a.printAirportMenu(nil)
+	a.printAirportMenu(&Store{Airports: []*Airport{nil}})
+
+	if _, _, err := a.SelectCountries([]string{"HK"}); err == nil {
+		t.Fatal("expected error from SelectCountries on nil App")
+	}
+	if _, err := a.SelectMetrics(); err == nil {
+		t.Fatal("expected error from SelectMetrics on nil App")
+	}
+	if _, err := a.SelectDuration(); err == nil {
+		t.Fatal("expected error from SelectDuration on nil App")
+	}
+	if _, _, err := a.SelectPlan(speedtester.MetricSet{}); err == nil {
+		t.Fatal("expected error from SelectPlan on nil App")
+	}
+	if _, err := a.SelectTestPlan(); err == nil {
+		t.Fatal("expected error from SelectTestPlan on nil App")
+	}
+}

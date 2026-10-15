@@ -47,7 +47,7 @@ func (a *Airport) GetSubscription(id string) *Subscription {
 		return nil
 	}
 	for _, sub := range a.Subscriptions {
-		if sub.ID == id {
+		if sub != nil && sub.ID == id {
 			return sub
 		}
 	}
@@ -72,10 +72,10 @@ func (a *Airport) RemoveSubscription(id string) *Subscription {
 		return nil
 	}
 	for i, sub := range a.Subscriptions {
-		if sub.ID == id {
+		if sub != nil && sub.ID == id {
 			a.Subscriptions = append(a.Subscriptions[:i], a.Subscriptions[i+1:]...)
 			if a.URL == sub.URL {
-				if len(a.Subscriptions) > 0 {
+				if len(a.Subscriptions) > 0 && a.Subscriptions[0] != nil {
 					a.URL = a.Subscriptions[0].URL
 				} else {
 					a.URL = ""
@@ -164,9 +164,11 @@ func SaveStore(path string, store *Store) error {
 			continue
 		}
 		if len(ap.Subscriptions) > 0 && ap.URL == "" {
-			ap.URL = ap.Subscriptions[0].URL
-			if ap.UpdatedAt.IsZero() {
-				ap.UpdatedAt = ap.Subscriptions[0].UpdatedAt
+			if ap.Subscriptions[0] != nil {
+				ap.URL = ap.Subscriptions[0].URL
+				if ap.UpdatedAt.IsZero() {
+					ap.UpdatedAt = ap.Subscriptions[0].UpdatedAt
+				}
 			}
 		}
 	}
@@ -229,13 +231,15 @@ func applyAirportEdit(airport *Airport, name, url string) (urlChanged bool) {
 		airport.UpdatedAt = time.Time{}
 	}
 	if len(airport.Subscriptions) > 0 {
-		if airport.Subscriptions[0].URL != url {
-			urlChanged = true
-			airport.Subscriptions[0].URL = url
-			airport.Subscriptions[0].UpdatedAt = time.Time{}
-		}
-		if name != "" && airport.Subscriptions[0].Name == "默认订阅" {
-			// keep alias or unchanged
+		if airport.Subscriptions[0] != nil {
+			if airport.Subscriptions[0].URL != url {
+				urlChanged = true
+				airport.Subscriptions[0].URL = url
+				airport.Subscriptions[0].UpdatedAt = time.Time{}
+			}
+			if name != "" && airport.Subscriptions[0].Name == "默认订阅" {
+				// keep alias or unchanged
+			}
 		}
 	} else if url != "" {
 		airport.Subscriptions = []*Subscription{
@@ -274,7 +278,7 @@ func (s *Store) FindSubscription(id string) (*Airport, *Subscription) {
 				return airport, sub
 			}
 		}
-		if airport.ID == id && len(airport.Subscriptions) > 0 {
+		if airport.ID == id && len(airport.Subscriptions) > 0 && airport.Subscriptions[0] != nil {
 			return airport, airport.Subscriptions[0]
 		}
 	}

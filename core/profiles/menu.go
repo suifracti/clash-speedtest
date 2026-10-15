@@ -46,10 +46,16 @@ func IsInteractive() bool {
 }
 
 func (a *App) printf(format string, args ...any) {
+	if a == nil || a.Out == nil {
+		return
+	}
 	fmt.Fprintf(a.Out, format, args...)
 }
 
 func (a *App) readLine(prompt string) (string, error) {
+	if a == nil || a.In == nil {
+		return "", fmt.Errorf("app input reader is nil")
+	}
 	a.printf("%s", prompt)
 	line, err := a.In.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
@@ -60,6 +66,9 @@ func (a *App) readLine(prompt string) (string, error) {
 }
 
 func (a *App) confirm(prompt string, defaultYes bool) (bool, error) {
+	if a == nil {
+		return defaultYes, fmt.Errorf("app is nil")
+	}
 	hint := "[Y/n] "
 	if !defaultYes {
 		hint = "[y/N] "
@@ -82,6 +91,9 @@ func (a *App) confirm(prompt string, defaultYes bool) (bool, error) {
 }
 
 func (a *App) SelectAirport() (*Selection, error) {
+	if a == nil {
+		return nil, fmt.Errorf("app is nil")
+	}
 	store, err := LoadStore(a.Paths.StoreFile())
 	if err != nil {
 		return nil, err
@@ -138,6 +150,9 @@ func (a *App) SelectAirport() (*Selection, error) {
 }
 
 func (a *App) printAirportMenu(store *Store) {
+	if a == nil || store == nil {
+		return
+	}
 	a.printf("\n========================================\n")
 	a.printf(" Clash SpeedTest  机场管理\n")
 	a.printf("========================================\n\n")
@@ -145,6 +160,9 @@ func (a *App) printAirportMenu(store *Store) {
 		a.printf("  （还没有保存的机场）\n\n")
 	} else {
 		for i, airport := range store.Airports {
+			if airport == nil {
+				continue
+			}
 			updated := "尚未下载"
 			if !airport.UpdatedAt.IsZero() {
 				updated = "上次更新 " + airport.UpdatedAt.Local().Format("01-02 15:04")
@@ -323,6 +341,9 @@ func (a *App) prepareConfig(store *Store, airport *Airport) (string, error) {
 }
 
 func (a *App) SelectCountries(names []string) (selected []string, all bool, err error) {
+	if a == nil {
+		return nil, false, fmt.Errorf("app is nil")
+	}
 	if len(names) == 0 {
 		return nil, true, nil
 	}
@@ -365,19 +386,31 @@ func (a *App) SelectCountries(names []string) (selected []string, all bool, err 
 }
 
 func (a *App) SelectMetrics() (speedtester.MetricSet, error) {
+	if a == nil {
+		return speedtester.MetricSet{}, fmt.Errorf("app is nil")
+	}
 	return a.selectMetrics()
 }
 
 func (a *App) SelectDuration() (time.Duration, error) {
+	if a == nil {
+		return 0, fmt.Errorf("app is nil")
+	}
 	d, _, err := a.selectPlan(speedtester.MetricSet{})
 	return d, err
 }
 
 func (a *App) SelectPlan(metrics speedtester.MetricSet) (time.Duration, int, error) {
+	if a == nil {
+		return 0, 0, fmt.Errorf("app is nil")
+	}
 	return a.selectPlan(metrics)
 }
 
 func (a *App) SelectTestPlan() (TestPlan, error) {
+	if a == nil {
+		return TestPlan{}, fmt.Errorf("app is nil")
+	}
 	metrics, err := a.selectMetrics()
 	if err != nil {
 		return TestPlan{}, err

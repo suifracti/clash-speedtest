@@ -273,5 +273,8 @@ func flagFromCode(code string) string {
 		return "🏳️"
 	}
 	r := []rune(code)
+	if r[0] < 'A' || r[0] > 'Z' || r[1] < 'A' || r[1] > 'Z' {
+		return "🏳️"
+	}
 	return string([]rune{0x1F1E6 + (r[0] - 'A'), 0x1F1E6 + (r[1] - 'A')})
 }

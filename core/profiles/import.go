@@ -94,7 +94,9 @@ func InspectSource(sourceDir string) (SourceInfo, error) {
 		return info, err
 	}
 	info.Available = true
-	info.ProfileCount = len(snapshot.store.Airports)
+	if snapshot.store != nil {
+		info.ProfileCount = len(snapshot.store.Airports)
+	}
 	info.CacheCount, info.Missing = summarizeCaches(snapshot)
 	info.PossibleTestData = looksLikeTestData(sourceDir)
 	return info, nil
@@ -297,10 +299,14 @@ func (p Paths) importWithOptions(ctx context.Context, sourceDir string, beforeCo
 	for name, body := range snapshot.caches {
 		cacheHashes[name] = digestHex(body)
 	}
+	profileCount := 0
+	if snapshot.store != nil {
+		profileCount = len(snapshot.store.Airports)
+	}
 	if err := writeManifest(stage, importManifest{
 		Version:      1,
 		Source:       sourceDir,
-		ProfileCount: len(snapshot.store.Airports),
+		ProfileCount: profileCount,
 		CacheCount:   len(snapshot.caches),
 		StoreSHA256:  digestHex(snapshot.storeBytes),
 		CacheSHA256:  cacheHashes,
@@ -582,6 +588,9 @@ func readSourceSnapshot(sourceDir string) (sourceSnapshot, error) {
 }
 
 func validateStore(store *Store) error {
+	if store == nil {
+		return fmt.Errorf("source profile store is nil")
+	}
 	seenAirports := make(map[string]struct{})
 	seenSubs := make(map[string]struct{})
 	for _, airport := range store.Airports {
@@ -626,6 +635,9 @@ func validateCache(body []byte) error {
 func summarizeCaches(snapshot sourceSnapshot) (int, []string) {
 	count := 0
 	missing := make([]string, 0)
+	if snapshot.store == nil {
+		return 0, missing
+	}
 	for _, airport := range snapshot.store.Airports {
 		if airport == nil {
 			continue
@@ -659,7 +671,8 @@ func snapshotsEqual(a, b sourceSnapshot) bool {
 		return false
 	}
 	for name, body := range a.caches {
-		if !bytes.Equal(body, b.caches[name]) {
+		bBody, ok := b.caches[name]
+		if !ok || !bytes.Equal(body, bBody) {
 			return false
 		}
 	}
