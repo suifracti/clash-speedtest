@@ -1180,6 +1180,8 @@ func TestSQLite_Retention_SafetyGuards(t *testing.T) {
 		{RunID: "run_skipped", JobID: "j1", ScheduledAt: tPast, StartedAt: tPast, Status: monitor.RunStatusSkipped},
 		{RunID: "run_partial_failed", JobID: "j1", ScheduledAt: tPast, StartedAt: tPast, Status: monitor.RunStatusPartialFailed},
 		{RunID: "run_completed", JobID: "j1", ScheduledAt: tPast, StartedAt: tPast, Status: monitor.RunStatusCompleted},
+		{RunID: "run_interrupted", JobID: "j1", ScheduledAt: tPast, StartedAt: tPast, Status: monitor.RunStatusInterrupted},
+		{RunID: "run_persistence_failed", JobID: "j1", ScheduledAt: tPast, StartedAt: tPast, Status: monitor.RunStatusPersistenceFailed},
 	}
 	for _, r := range runs {
 		if err := store.SaveMonitorRun(ctx, r); err != nil {
@@ -1224,8 +1226,8 @@ func TestSQLite_Retention_SafetyGuards(t *testing.T) {
 	if res.SamplesDeleted != 1 {
 		t.Errorf("expected exactly 1 sample deleted (s_before_cutoff), got %d", res.SamplesDeleted)
 	}
-	if res.RunsDeleted != 2 {
-		t.Errorf("expected exactly 2 runs deleted (completed and partial_failed), got %d", res.RunsDeleted)
+	if res.RunsDeleted != 4 {
+		t.Errorf("expected exactly 4 runs deleted (completed, partial_failed, interrupted, persistence_failed), got %d", res.RunsDeleted)
 	}
 
 	// Verify runs status: running and skipped must exist
@@ -1249,6 +1251,12 @@ func TestSQLite_Retention_SafetyGuards(t *testing.T) {
 	}
 	if _, ok := runMap["run_completed"]; ok {
 		t.Errorf("run_completed was not cleaned up!")
+	}
+	if _, ok := runMap["run_interrupted"]; ok {
+		t.Errorf("run_interrupted was not cleaned up!")
+	}
+	if _, ok := runMap["run_persistence_failed"]; ok {
+		t.Errorf("run_persistence_failed was not cleaned up!")
 	}
 
 	// Verify remaining sample is s_after_cutoff

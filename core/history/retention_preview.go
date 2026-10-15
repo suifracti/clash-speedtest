@@ -77,7 +77,7 @@ func (d *DB) PreviewRetention(ctx context.Context, req monitor.RetentionRequest)
 	if err := tx.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM monitor_runs r
 		WHERE r.scheduled_at < ?
-		  AND r.status IN ('completed', 'failed', 'partial_failed', 'resource_limited')
+		  AND r.status IN ('completed', 'failed', 'partial_failed', 'resource_limited', 'interrupted', 'persistence_failed')
 		  AND NOT EXISTS (
 			SELECT 1 FROM monitor_samples s WHERE s.run_id = r.run_id AND s.timestamp >= ?
 		  )

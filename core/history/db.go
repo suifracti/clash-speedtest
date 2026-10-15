@@ -2716,7 +2716,7 @@ func (d *DB) ApplyRetention(ctx context.Context, req monitor.RetentionRequest) (
 		res, err := d.db.ExecContext(ctx, `
 			DELETE FROM monitor_runs
 			WHERE scheduled_at < ?
-			  AND status IN ('completed', 'failed', 'partial_failed', 'resource_limited')
+			  AND status IN ('completed', 'failed', 'partial_failed', 'resource_limited', 'interrupted', 'persistence_failed')
 			  AND run_id NOT IN (SELECT DISTINCT run_id FROM monitor_samples)
 		`, cutoff)
 		if err != nil {
