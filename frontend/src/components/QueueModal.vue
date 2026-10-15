@@ -2,20 +2,22 @@
 import {nodeDisplayName} from '../nodePresentation'
 import {computed,ref} from 'vue'
 import {api} from '../api'
+import {latencySampleState} from '../presentation'
 import {useWorkspace} from '../workspace'
 import {projectNames,stateLabel,type QueueItem} from '../domain'
 import Modal from './Modal.vue'
 const w=useWorkspace(),retrying=ref('')
 const counts=computed(()=>{
  const rows=w.queue.value,unknown=w.pendingStart.value?rows.filter(q=>q.id===w.pendingStart.value?.requestId||w.pendingStart.value?.kind==='latency'&&q.project==='latency'&&q.state==='running'&&!q.batchId).length:0
- return {queued:rows.filter(q=>q.state==='queued').length,running:Math.max(0,rows.filter(q=>['running','cancelling'].includes(q.state)).length-unknown),unknown,notRun:rows.filter(q=>['not_executed','cancelled'].includes(q.state)).length,saveFailed:rows.filter(q=>q.attempt?.persistence_state==='failed'||q.error?.startsWith('保存失败')).length}
+ return {queued:rows.filter(q=>q.state==='queued').length,running:Math.max(0,rows.filter(q=>['running','cancelling'].includes(q.state)).length-unknown),unknown,notRun:rows.filter(q=>['not_executed','cancelled'].includes(q.state)||responseCoverage(q)?.notExecuted).length,saveFailed:rows.filter(q=>q.attempt?.persistence_state==='failed'||q.error?.startsWith('保存失败')).length}
 })
-function responseCoverage(q:QueueItem){
+function responseCoverage(q:QueueItem):{label:string;tone:string;notExecuted?:boolean}|null{
  if(q.project!=='latency'||!['completed','failed'].includes(q.state))return null
  const item=w.batches.value.find(b=>b.batch_id===q.batchId)?.items?.find(i=>i.item_id===q.itemId)
  if(item?.persistence_state==='failed')return {label:'保存失败',tone:'bad'}
  const result=item?.result
  if(!result||!result.total_samples)return {label:q.state==='completed'?'已结束 · 无采样':stateLabel(q.state),tone:q.state==='failed'?'bad':''}
+ if(result.samples?.length&&result.samples.every(sample=>latencySampleState(sample).executionState==='not_executed'))return {label:'未执行 · 条件不足',tone:'',notExecuted:true}
  const ok=result.success_samples,total=result.total_samples
  return {label:`${ok===total?'已响应':ok?'部分响应':'无响应'} · ${ok}/${total}`,tone:ok===total?'good':ok?'warn':'bad'}
 }

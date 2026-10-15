@@ -236,3 +236,27 @@ func TestPhysicalProbeExhaustedTCPAndUDPBudgetIsALocalConstraint(t *testing.T) {
 		t.Fatal("exhausted budget fabricated a bound socket")
 	}
 }
+
+func TestPhysicalIPv6PreparationDoesNotBecomeThirtySixNodeFailures(t *testing.T) {
+	p := &physicalFixtureProxy{dial: func(context.Context) error { return errors.New("must not dial an unsupported family") }}
+	config := map[string]any{"type": "hysteria2", "server": "node.example", "port": 443, "sni": "tls.example"}
+	st := &SpeedTester{config: &Config{PingCount: 6, Timeout: time.Second, LatencyTargetURL: "multi://latency-v1"}}
+	got := st.testSinglePhysicalContext(context.Background(), "selected", &CProxy{Proxy: p, Config: config}, nil, func(context.Context, *CProxy, int) (*CProxy, *PhysicalDownloadEgress, error) {
+		e := newPhysicalDownloadEgress()
+		e.setResolution("ipv6", "physical_ipv6_dns")
+		effective, err := e.physicalNodeConfig(config, netip.MustParseAddr("2001:db8::9"), "fixture-physical")
+		if err != nil {
+			return nil, e, err
+		}
+		return &CProxy{Proxy: p, Config: effective}, e, nil
+	})
+	if got.LatencyErrorClass != "physical_path" || len(got.LatencySamples) != 0 || p.calls.Load() != 0 {
+		t.Fatalf("unsupported IPv6 reached node measurements: class=%q samples=%d dials=%d", got.LatencyErrorClass, len(got.LatencySamples), p.calls.Load())
+	}
+	if got.NetworkPath == nil || got.NetworkPath.AddressFamily != "ipv6" || got.NetworkPath.SocketBindVerified {
+		t.Fatal("original IPv6 evidence was lost or replaced")
+	}
+	if config["server"] != "node.example" || config["sni"] != "tls.example" {
+		t.Fatal("source configuration changed")
+	}
+}

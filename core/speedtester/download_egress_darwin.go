@@ -526,6 +526,21 @@ func clonePhysicalProxyConfig(original map[string]any, ip netip.Addr, iface stri
 	config["interface-name"] = iface
 	return config, nil
 }
+
+// DNS and config cloning retain IPv6 identity. Actual Darwin measurements
+// currently verify AF_INET sockets, so reject that path before opening a proxy.
+func (e *PhysicalDownloadEgress) physicalNodeConfig(original map[string]any, ip netip.Addr, iface string) (map[string]any, error) {
+	if !ip.Is4() {
+		e.setFailure("unverified_ipv6_node_family")
+		return nil, &PhysicalPathError{Cause: fmt.Errorf("IPv6 node address is outside the current physical-interface path; measurement not executed")}
+	}
+	config, err := clonePhysicalProxyConfig(original, ip, iface)
+	if err != nil {
+		e.setFailure("proxy_configuration_rejected")
+	}
+	return config, err
+}
+
 func PreparePhysicalDownloadProxy(ctx context.Context, original *CProxy) (prepared *CProxy, e *PhysicalDownloadEgress, returnErr error) {
 	return preparePhysicalProxy(ctx, original, physicalDownloadSocketRequestLimit)
 }
@@ -608,9 +623,8 @@ func preparePhysicalProxy(ctx context.Context, original *CProxy, socketLimit int
 		}
 		return nil, e, fmt.Errorf("physical DNS or address selection unavailable; download not executed")
 	}
-	config, err := clonePhysicalProxyConfig(original.Config, ip, ifaceName)
+	config, err := e.physicalNodeConfig(original.Config, ip, ifaceName)
 	if err != nil {
-		e.setFailure("proxy_configuration_rejected")
 		return nil, e, err
 	}
 	kind, _ := original.Config["type"].(string)

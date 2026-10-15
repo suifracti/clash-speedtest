@@ -135,3 +135,20 @@ func TestDeduplicateProxies(t *testing.T) {
 		}
 	})
 }
+
+func TestSubscriptionInfoAliasDoesNotHideRealNode(t *testing.T) {
+	config := func(name, password string) *CProxy {
+		return &CProxy{Config: map[string]any{"name": name, "type": "ss", "server": "192.0.2.1", "port": 443, "cipher": "aes-128-gcm", "password": password}}
+	}
+	real := "🇯🇵日本高速01|CTCU|0.5x"
+	quota, expiry := "剩余流量：10 GB", "套餐到期：长期有效"
+	proxies := map[string]*CProxy{real: config(real, "fixture"), "🇯🇵日本高速99|同配置别名": config("🇯🇵日本高速99|同配置别名", "fixture"), quota: config(quota, "fixture"), expiry: config(expiry, "fixture"), "different credentials": config("different credentials", "other")}
+	got := deduplicateProxiesByServerPort(proxies)
+	if got[real] == nil || got[quota] == nil || got[expiry] == nil || got["different credentials"] == nil || len(got) != 4 {
+		names := make([]string, 0, len(got))
+		for name := range got {
+			names = append(names, name)
+		}
+		t.Fatalf("real node, information and credential variants must remain distinct; got %v", names)
+	}
+}

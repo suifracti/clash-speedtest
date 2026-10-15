@@ -25,7 +25,7 @@ export function qualityMatchesGate(e:QualityEvidence|undefined,g:QualityGroup|un
  return gate==='samples'?g!.success>=5:gate==='response'?g!.success>=5&&(g!.successRate||0)>=90:gate==='fresh'?Date.parse(until)-Date.parse(g!.lastAt)>=0&&Date.parse(until)-Date.parse(g!.lastAt)<=86400000:false
 }
 const observationTime=(raw:string)=>{const at=Date.parse(raw);return raw&&!raw.startsWith('0001')&&Number.isFinite(at)?at:Number.NEGATIVE_INFINITY}
-const excludedError=(error='')=>/cancel(?:led|ed)|context canceled|未执行|not.executed|local.physical|local.path|budget.exhausted|取消|物理出口未确认/i.test(error)
+const excludedError=(error='')=>/cancel(?:led|ed)|context canceled|未执行|not.executed|local.physical|local.path|budget.exhausted|取消|物理出口未确认|(?:^|:\s)ip version error$/i.test(error)
 function latencyConditions(t:LatencyTest){const p=t.network_path;return [t.method_version??'unknown',t.node_type||'unknown',p?.method||'unknown',p?.interface||'unknown',p?.dns_mode||'unknown',p?.socket_bind_verified??'unknown',p?.dns_bind_verified??'unknown',p?.address_family||'unknown',p?.address_source||'unknown']}
 const qualityGroupKey=(source:string,method:string,url:string,condition:unknown)=>JSON.stringify([source,method,url,condition])
 export function qualityGroups(tests:LatencyTest[],monitor:MonitorSample[],target:string):QualityGroup[]{

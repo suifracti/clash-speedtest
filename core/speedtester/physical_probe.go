@@ -116,6 +116,9 @@ func (st *SpeedTester) testSinglePhysicalContext(ctx context.Context, name strin
 	if path != nil {
 		snapshot := path()
 		result.NetworkPath = &snapshot
+		if err != nil && snapshot.FailureReason == "unverified_ipv6_node_family" {
+			result.LatencyError = "未执行：物理出口当前不支持此节点的 IPv6 地址"
+		}
 	}
 	if emit != nil {
 		emit(result.snapshot())

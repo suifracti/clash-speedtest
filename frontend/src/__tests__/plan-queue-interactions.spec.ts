@@ -116,3 +116,15 @@ it('does not turn cancellation, missing results or save failure into successful 
  expect(document.querySelector('.queue-counts')?.textContent).toContain('保存失败 1')
  expect(document.body.textContent).toContain('重试保存')
 })
+
+it('labels a saved local IP-version failure as unexecuted in the queue and its totals',()=>{
+ const target='https://speed.cloudflare.com/__down?bytes=1',at='2026-10-15T08:33:30Z'
+ const result:LatencyTest={...node,attempt_id:'legacy-ip-family',display_name:'Node A',node_type:'Hysteria2',requested_at:at,finished_at:at,status:'failed',persistence_state:'saved',latency_ms:0,total_samples:1,success_samples:0,failure_samples:1,samples:[{seq:1,target,timestamp:at,success:false,latency_ms:0,error:`Get "${target}": ip version error`}]}
+ w.queue.value=[{id:'family',node,project:'latency',state:'running',batchId:'family-batch',itemId:'family-item'}]
+ w.absorbBatch({batch_id:'family-batch',request_id:'family',state:'completed_with_issues',requested_at:at,item_count:1,items:[{...node,item_id:'family-item',batch_id:'family-batch',display_name:'Node A',execution_state:'failed',persistence_state:'saved',result}]})
+ attach(QueueModal)
+ expect(document.querySelector('.queue-row .badge')?.textContent).toBe('未执行 · 条件不足')
+ expect(document.querySelector('.queue-row .badge')?.classList.contains('bad')).toBe(false)
+ expect(document.querySelector('.queue-counts')?.textContent).toContain('未运行/取消 1')
+ expect(w.done.value).toBe(1)
+})
