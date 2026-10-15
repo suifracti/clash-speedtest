@@ -111,19 +111,15 @@ func (d *DB) GetLatencyBatch(ctx context.Context, batchID string) (*LatencyBatch
 	if err != nil {
 		return nil, fmt.Errorf("query latency batch items: %w", err)
 	}
+	defer rows.Close()
 	for rows.Next() {
 		item, err := scanLatencyBatchItem(rows)
 		if err != nil {
-			rows.Close()
 			return nil, err
 		}
 		batch.Items = append(batch.Items, *item)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, err
-	}
-	if err := rows.Close(); err != nil {
 		return nil, err
 	}
 	for i := range batch.Items {

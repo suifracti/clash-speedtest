@@ -438,6 +438,23 @@ func monitoredNodeFromProxy(name string, proxy *speedtester.CProxy) monitor.Moni
 }
 
 func buildWorkbenchLatencyRecord(attemptID, profileID string, node monitor.MonitoredNode, project string, requestedAt, startedAt, finishedAt time.Time, result *speedtester.Result) *history.LatencyTest {
+	if result == nil {
+		return &history.LatencyTest{
+			AttemptID:         attemptID,
+			ProfileID:         profileID,
+			NodeKey:           node.NodeKey,
+			NodeIdentityKey:   node.NodeIdentityKey,
+			ConfigRevisionKey: node.ConfigRevisionKey,
+			DisplayName:       node.DisplayName,
+			NodeType:          node.Type,
+			TestProject:       project,
+			RequestedAt:       requestedAt,
+			StartedAt:         startedAt,
+			FinishedAt:        finishedAt,
+			Status:            "failed",
+			ErrorMessage:      "延迟测试未产生结果",
+		}
+	}
 	samples := make([]history.LatencyTestSample, 0, len(result.LatencySamples))
 	successCount := 0
 	failureCount := 0

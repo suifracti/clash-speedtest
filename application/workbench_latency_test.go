@@ -557,3 +557,25 @@ func writeLatencyProxyCache(t *testing.T, paths profiles.Paths, profileID, name,
 		t.Fatalf("unexpected cache body: %s", body)
 	}
 }
+
+func TestBuildWorkbenchLatencyRecordNilResultDefense(t *testing.T) {
+	node := monitor.MonitoredNode{
+		NodeKey:           "key-test",
+		NodeIdentityKey:   "ident-test",
+		ConfigRevisionKey: "rev-test",
+		DisplayName:       "Test Node",
+		Type:              "ss",
+	}
+	now := time.Now().UTC()
+	record := buildWorkbenchLatencyRecord("attempt-nil", "profile-test", node, WorkbenchLatencyProject, now, now, now, nil)
+	if record == nil {
+		t.Fatal("expected non-nil record from buildWorkbenchLatencyRecord with nil result")
+	}
+	if record.Status != "failed" {
+		t.Fatalf("expected status failed, got %q", record.Status)
+	}
+	if record.AttemptID != "attempt-nil" || record.DisplayName != "Test Node" {
+		t.Fatalf("unexpected record contents: %+v", record)
+	}
+}
+
