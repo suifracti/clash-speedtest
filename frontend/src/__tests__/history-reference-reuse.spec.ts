@@ -16,4 +16,14 @@ describe('unchanged history response reuse',()=>{
   const w=createWorkspace();w.mergeLatency(t);const list=w.latency.value[key(n)];w.mergeLatency(JSON.parse(JSON.stringify(t)));expect(w.latency.value[key(n)]).toBe(list)
   w.mergeLatency({...t,target:'https://speed.cloudflare.com/__down?bytes=1',samples:[{...t.samples[0],latency_ms:120}]});expect(w.latency.value[key(n)]).not.toBe(list);expect(w.latency.value[key(n)][0].samples[0].latency_ms).toBe(120);expect(w.latency.value[key(n)][0].target).toContain('cloudflare');w.dispose()
  })
+ it('keeps saved latency monotonic through late saving events and raw round reads while allowing save retry',()=>{
+  const w=createWorkspace(),failed={...t,persistence_state:'failed',persistence_error:'fixture save failure'}
+  w.mergeLatency(failed);w.mergeLatency({...t,persistence_state:'saving'})
+  expect(w.latest(t)?.persistence_state).toBe('failed')
+  w.mergeLatency(t);const saved=w.latency.value[key(t)]
+  for(const persistence_state of ['saving','pending','failed'])w.mergeLatency({...t,persistence_state})
+  const {persistence_state:_,...raw}=t;w.mergeLatency(raw as LatencyTest)
+  expect(w.latency.value[key(t)]).toBe(saved);expect(w.latest(t)?.persistence_state).toBe('saved');expect(w.latest(t)?.persistence_error).toBeUndefined()
+  w.dispose()
+ })
 })

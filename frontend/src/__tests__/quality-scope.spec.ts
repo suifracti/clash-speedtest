@@ -3,14 +3,14 @@ import {flushPromises,mount,type VueWrapper} from '@vue/test-utils'
 import HomeView from '../components/HomeView.vue'
 import {createWorkspace,workspaceKey} from '../workspace'
 import {api} from '../api'
-import {key,type Attempt,type LatencyTest,type NetworkPath,type NodeOption,type NodeScope} from '../domain'
+import {key,targets,type Attempt,type LatencyBatch,type LatencyTest,type NetworkPath,type NodeOption,type NodeScope} from '../domain'
 import type {QualityEvidence} from '../nodeQuality'
 import s5 from './fixtures/s5-saved-quality.json'
 
 const readQualityMock=vi.hoisted(()=>vi.fn())
 const localStorageItems=vi.hoisted(()=>new Map<string,string>())
 vi.mock('../nodeQuality',async importOriginal=>{const actual=await importOriginal<typeof import('../nodeQuality')>();return {...actual,readQuality:readQualityMock}})
-vi.mock('../api',async importOriginal=>{const actual=await importOriginal<typeof import('../api')>();return {...actual,api:{...actual.api,refreshJobs:vi.fn(async()=>[]),latencyHistory:vi.fn(async()=>({tests:[],has_more:false,complete:true})),measurementRounds:vi.fn(async()=>[]),createRound:vi.fn(async()=>undefined),finishRound:vi.fn(async()=>undefined),monitorSamples:vi.fn(async()=>({items:[],has_more:false,next_cursor:''})),latencySummaries:vi.fn(async()=>[]),attemptHistory:vi.fn(async()=>({attempts:[],has_more:false,complete:true})),jobs:vi.fn(async()=>[]),createJob:vi.fn(),jobAction:vi.fn(async()=>{}),startLatency:vi.fn(),startAttempt:vi.fn(),attempt:vi.fn(),attemptAction:vi.fn()}}})
+vi.mock('../api',async importOriginal=>{const actual=await importOriginal<typeof import('../api')>();return {...actual,api:{...actual.api,refreshJobs:vi.fn(async()=>[]),latencyHistory:vi.fn(async()=>({tests:[],has_more:false,complete:true})),measurementRounds:vi.fn(async()=>[]),createRound:vi.fn(async()=>undefined),finishRound:vi.fn(async()=>undefined),monitorSamples:vi.fn(async()=>({items:[],has_more:false,next_cursor:''})),latencySummaries:vi.fn(async()=>[]),attemptHistory:vi.fn(async()=>({attempts:[],has_more:false,complete:true})),jobs:vi.fn(async()=>[]),createJob:vi.fn(),jobAction:vi.fn(async()=>{}),startLatency:vi.fn(),batch:vi.fn(),startAttempt:vi.fn(),attempt:vi.fn(),attemptAction:vi.fn()}}})
 vi.hoisted(()=>Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:(k:string)=>localStorageItems.get(k)||null,setItem:(k:string,v:string)=>localStorageItems.set(k,v),removeItem:(k:string)=>localStorageItems.delete(k),clear:()=>localStorageItems.clear()}}))
 
 const stale:NodeOption={profile_id:'sub-a',node_key:'stale',node_identity_key:'stale-identity',config_revision_key:'stale-revision',profile_name:'机场 A',display_name:'旧范围节点',type:'trojan',country_code:'HK',country_flag:''}
@@ -68,6 +68,42 @@ it('refreshes the completed saved round without a manual click, but not while th
  expect(wrapper!.get('.quality-latency').text()).toContain('P95 样本不足')
  expect(w!.sortSnapshots.value).toEqual(snapshot)
  expect(api.startLatency).not.toHaveBeenCalled();expect(api.startAttempt).not.toHaveBeenCalled()
+})
+
+it('refreshes after real runPlan polling and raw measurement-round readback before busy clears',async()=>{
+ const {readQuality}=await vi.importActual<typeof import('../nodeQuality')>('../nodeQuality')
+ const node=fresh[0],finished='2026-10-10T00:02:19.000Z'
+ // Anonymous six-site sample shape/timings from the saved native SG01 run.
+ const saved:LatencyTest={...evidence(node,0).tests[0],attempt_id:'native-six-site',method_version:2,finished_at:finished,total_samples:6,success_samples:6,failure_samples:0,network_path:{...evidence(node,0).tests[0].network_path!,address_source:'physical_ipv4_dns_multi_v2'},samples:targets.map((site,i)=>({seq:i+1,target:site.urls[0],timestamp:finished,success:true,latency_ms:[5118,7557,5795,9009,8443,5232][i]}))}
+ const old:LatencyTest={...evidence(node,0).tests[0],attempt_id:'old-seven-failures',status:'failed',total_samples:7,success_samples:0,failure_samples:7,samples:Array.from({length:7},(_,i)=>({seq:i+1,target,timestamp:at,success:false,latency_ms:0}))}
+ let available=false,requestId=''
+ readQualityMock.mockImplementation((n:NodeOption,since:string,until:string)=>readQuality(n,since,until,{
+  latency:async()=>({tests:available&&Date.parse(until)>=Date.parse(finished)?[saved,old]:[old],has_more:false,complete:true}),
+  monitor:async()=>({items:[],has_more:false,next_cursor:''}),attempts:async()=>({attempts:[],has_more:false,complete:true})
+ }))
+ const batch=(state:string):LatencyBatch=>({batch_id:'native-batch',request_id:requestId,state,requested_at:at,item_count:1,items:[{...node,item_id:'native-item',batch_id:'native-batch',display_name:node.display_name,execution_state:state==='running'?'running':'completed',persistence_state:state==='running'?'pending':'saved',result:state==='running'?undefined:saved}]})
+ vi.mocked(api.startLatency).mockImplementationOnce(async(body:any)=>{requestId=body.request_id;return batch('running')})
+ vi.mocked(api.batch).mockImplementationOnce(async()=>{available=true;return batch('completed')})
+ // Batch Get/emit uses WorkbenchLatencyTestDTO (state inside result). The
+ // separate ListMeasurementRoundNodes API returns history.LatencyTest without it.
+ const {persistence_state:_,...rawResult}=saved
+ vi.mocked(api.measurementRounds).mockImplementation(async()=>available?[{round_id:'native-round',trigger_type:'manual',started_at:at,state:'finished',items:[{...node,request_id:requestId,project:'latency',execution_state:'completed',persistence_state:'saved',latency:rawResult as LatencyTest}]}]:[])
+ attachSavedSnapshot();await flushPromises()
+ expect(wrapper!.get('.quality-latency').text()).toContain('0 / 7 样本')
+ const previousReads=readQualityMock.mock.calls.length
+ vi.useFakeTimers({toFake:['Date','setTimeout','clearTimeout']})
+ w!.plan.value={nodes:[node],projects:['latency'],target:'all',samples:1,timeout:10,concurrency:1,downloadMiB:1,downloadSeconds:1,serviceIds:[],repeats:1}
+ const run=w!.runPlan();await flushPromises();expect(w!.busy.value).toBe(true)
+ vi.setSystemTime(new Date(finished));await vi.advanceTimersByTimeAsync(1200);await run;await flushPromises()
+ expect(w!.busy.value).toBe(false)
+ expect(api.batch).toHaveBeenCalledTimes(1);expect(api.measurementRounds).toHaveBeenCalled()
+ expect(wrapper!.get('.quality-latency').text()).toContain('1 / 1 样本')
+ expect(wrapper!.get('.quality-latency').text()).toContain('P50 5118 ms')
+ expect(wrapper!.get('.quality-latency').text()).toContain('P95 样本不足')
+ expect(readQualityMock.mock.calls.length).toBeGreaterThan(previousReads)
+ expect(Date.parse(readQualityMock.mock.calls.at(-1)![2])).toBeGreaterThanOrEqual(Date.parse(finished))
+ expect(w!.latest(node)?.persistence_state).toBe('saved')
+ expect(api.startLatency).toHaveBeenCalledTimes(1);expect(api.startAttempt).not.toHaveBeenCalled()
 })
 
 it('refreshes a later successful save without treating a failed save as saved evidence',async()=>{
