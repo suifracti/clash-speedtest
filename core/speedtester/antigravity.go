@@ -184,6 +184,9 @@ func (st *SpeedTester) testAntigravity(proxy constant.Proxy) (status, country, c
 	if proxy == nil {
 		return AntigravityUnknown, "", "", "Proxy is nil", nil, nil
 	}
+	if st.config == nil {
+		return AntigravityUnknown, "", "", "SpeedTester is not configured", nil, nil
+	}
 	timeout := st.config.Timeout
 	if timeout < 10*time.Second {
 		timeout = 10 * time.Second

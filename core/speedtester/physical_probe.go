@@ -85,15 +85,25 @@ func openPhysicalProbeClient(ctx context.Context, original *CProxy, timeout time
 // This entry is used only by the on-demand Mac workbench, not subscription
 // fetching or the legacy monitor runner. Each sample keeps its original timeout.
 func (st *SpeedTester) TestSinglePhysicalContext(ctx context.Context, name string, proxy *CProxy, emit func(*Result) bool) *Result {
+	if st == nil {
+		return nil
+	}
 	if runtime.GOOS != "darwin" {
 		return st.TestSingleContext(ctx, name, proxy, emit)
 	}
+	var configTimeout time.Duration
+	if st.config != nil {
+		configTimeout = st.config.Timeout
+	}
 	return st.testSinglePhysicalContext(ctx, name, proxy, emit, func(ctx context.Context, p *CProxy, n int) (*CProxy, *PhysicalDownloadEgress, error) {
-		return PreparePhysicalAutoProxy(ctx, p, st.config.Timeout, n)
+		return PreparePhysicalAutoProxy(ctx, p, configTimeout, n)
 	})
 }
 
 func (st *SpeedTester) testSinglePhysicalContext(ctx context.Context, name string, proxy *CProxy, emit func(*Result) bool, prepare physicalProbePreparer) *Result {
+	if st == nil {
+		return nil
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -104,13 +114,15 @@ func (st *SpeedTester) testSinglePhysicalContext(ctx context.Context, name strin
 			result.ProxyType = proxy.Type().String()
 		}
 	}
-	samples := st.config.PingCount
-	if samples <= 0 {
-		samples = 6
-	}
-	timeout := st.config.Timeout
-	if timeout <= 0 {
-		timeout = 5 * time.Second
+	samples := 6
+	timeout := 5 * time.Second
+	if st.config != nil {
+		if st.config.PingCount > 0 {
+			samples = st.config.PingCount
+		}
+		if st.config.Timeout > 0 {
+			timeout = st.config.Timeout
+		}
 	}
 	prepCtx, cancel := context.WithTimeout(ctx, timeout)
 	client, path, cleanup, err := openPhysicalProbeClient(prepCtx, proxy, timeout, samples*len(LatencyProbeURLs(st.probeURL())), prepare)

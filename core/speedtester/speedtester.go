@@ -68,13 +68,16 @@ func defaultFetchConfigUA() string {
 }
 
 func (st *SpeedTester) fetchConfigUA() string {
-	if st.config.UserAgent != "" {
+	if st != nil && st.config != nil && st.config.UserAgent != "" {
 		return st.config.UserAgent
 	}
 	return defaultFetchConfigUA()
 }
 
 func (st *SpeedTester) fetchHTTPConfig(targetURL string) ([]byte, error) {
+	if st == nil {
+		return nil, fmt.Errorf("speedtester is nil")
+	}
 	req, err := http.NewRequest(http.MethodGet, targetURL, nil)
 	if err != nil {
 		return nil, err
@@ -106,6 +109,9 @@ type SpeedTester struct {
 }
 
 func New(config *Config) (*SpeedTester, error) {
+	if config == nil {
+		return nil, fmt.Errorf("speedtester config is nil")
+	}
 	if config.Concurrent <= 0 {
 		config.Concurrent = 1
 	}
@@ -162,10 +168,16 @@ func New(config *Config) (*SpeedTester, error) {
 }
 
 func (st *SpeedTester) Mode() SpeedMode {
+	if st == nil {
+		return SpeedModeDownload
+	}
 	return st.mode
 }
 
 func (st *SpeedTester) Metrics() MetricSet {
+	if st == nil {
+		return MetricsFromMode(SpeedModeDownload)
+	}
 	if st.metrics.IsZero() {
 		return MetricsFromMode(st.mode)
 	}
@@ -215,6 +227,9 @@ type RawConfig struct {
 }
 
 func (st *SpeedTester) LoadProxies() (map[string]*CProxy, error) {
+	if st == nil || st.config == nil {
+		return nil, fmt.Errorf("speedtester is not configured")
+	}
 	allProxies := make(map[string]*CProxy)
 	st.blockedNodes = make([]string, 0)
 	st.blockedNodeCount = 0
@@ -466,11 +481,17 @@ func buildProxyServerPortKey(proxy *CProxy) (string, bool) {
 }
 
 func (st *SpeedTester) TestSingle(name string, proxy *CProxy, emit func(*Result) bool) *Result {
+	if st == nil {
+		return nil
+	}
 	return st.TestSingleContext(context.Background(), name, proxy, emit)
 }
 
 // TestSingleContext allows latency probing to follow the caller's cancellation.
 func (st *SpeedTester) TestSingleContext(ctx context.Context, name string, proxy *CProxy, emit func(*Result) bool) *Result {
+	if st == nil {
+		return nil
+	}
 	var last *Result
 	st.testProxyEmitContext(ctx, name, proxy, func(result *Result) bool {
 		last = result
@@ -483,13 +504,21 @@ func (st *SpeedTester) TestSingleContext(ctx context.Context, name string, proxy
 }
 
 func (st *SpeedTester) TestProxies(proxies map[string]*CProxy, tester func(result *Result)) {
+	if st == nil {
+		return
+	}
 	st.TestProxiesUntil(proxies, func(result *Result) bool {
-		tester(result)
+		if tester != nil {
+			tester(result)
+		}
 		return true
 	})
 }
 
 func (st *SpeedTester) TestProxiesUntil(proxies map[string]*CProxy, tester func(result *Result) bool) {
+	if st == nil {
+		return
+	}
 	names := make([]string, 0, len(proxies))
 	for name := range proxies {
 		names = append(names, name)
@@ -523,7 +552,7 @@ func (st *SpeedTester) TestProxiesUntil(proxies map[string]*CProxy, tester func(
 }
 
 func (st *SpeedTester) Rounds() int {
-	if st.config != nil && st.config.Rounds > 0 {
+	if st != nil && st.config != nil && st.config.Rounds > 0 {
 		return st.config.Rounds
 	}
 	return 1
@@ -727,6 +756,9 @@ func formatSpeed(bytesPerSecond float64) string {
 }
 
 func (st *SpeedTester) testProxy(name string, proxy *CProxy) *Result {
+	if st == nil {
+		return nil
+	}
 	var last *Result
 	st.testProxyEmit(name, proxy, func(result *Result) bool {
 		last = result
@@ -744,11 +776,14 @@ func (r *Result) snapshot() *Result {
 }
 
 func (st *SpeedTester) testProxyEmit(name string, proxy *CProxy, emit func(*Result) bool) bool {
+	if st == nil {
+		return false
+	}
 	return st.testProxyEmitContext(context.Background(), name, proxy, emit)
 }
 
 func (st *SpeedTester) testProxyEmitContext(ctx context.Context, name string, proxy *CProxy, emit func(*Result) bool) bool {
-	if ctx.Err() != nil {
+	if st == nil || st.config == nil || ctx.Err() != nil {
 		return false
 	}
 	if proxy == nil {
@@ -948,10 +983,16 @@ type latencyResult struct {
 }
 
 func (st *SpeedTester) testLatency(proxy constant.Proxy, minLatency time.Duration, pingCount int) *latencyResult {
+	if st == nil {
+		return &latencyResult{packetLoss: 100}
+	}
 	return st.testLatencyContext(context.Background(), proxy, minLatency, pingCount)
 }
 
 func (st *SpeedTester) testLatencyContext(ctx context.Context, proxy constant.Proxy, timeout time.Duration, pingCount int) *latencyResult {
+	if st == nil {
+		return &latencyResult{packetLoss: 100}
+	}
 	if pingCount <= 0 {
 		pingCount = 6
 	}
@@ -959,7 +1000,9 @@ func (st *SpeedTester) testLatencyContext(ctx context.Context, proxy constant.Pr
 		timeout = st.config.Timeout
 	}
 	client := st.createClient(proxy, timeout)
-	defer client.CloseIdleConnections()
+	if client != nil {
+		defer client.CloseIdleConnections()
+	}
 	return st.testLatencyWithClientContext(ctx, client, pingCount)
 }
 
@@ -968,6 +1011,9 @@ func (st *SpeedTester) testLatencyWithClient(client *http.Client, pingCount int)
 }
 
 func (st *SpeedTester) testLatencyWithClientContext(ctx context.Context, client *http.Client, pingCount int) *latencyResult {
+	if client == nil {
+		return &latencyResult{packetLoss: 100}
+	}
 	latencies := make([]time.Duration, 0, pingCount)
 	samples := make([]LatencySample, 0, pingCount)
 	failedPings := 0
@@ -1082,6 +1128,9 @@ rounds:
 }
 
 func (st *SpeedTester) probeURL() string {
+	if st == nil {
+		return ""
+	}
 	if st.config != nil && st.config.LatencyTargetURL != "" {
 		return st.config.LatencyTargetURL
 	}
@@ -1180,8 +1229,13 @@ func (s *transferSummary) averageDuration() time.Duration {
 }
 
 func (st *SpeedTester) testDownload(proxy constant.Proxy, size int, timeout time.Duration) *downloadResult {
+	if st == nil {
+		return &downloadResult{error: "speedtester is nil"}
+	}
 	client := st.createClient(proxy, timeout)
-	defer client.CloseIdleConnections()
+	if client != nil {
+		defer client.CloseIdleConnections()
+	}
 
 	start := time.Now()
 	var downloadURL string
@@ -1222,8 +1276,13 @@ func (st *SpeedTester) testDownload(proxy constant.Proxy, size int, timeout time
 }
 
 func (st *SpeedTester) testUpload(proxy constant.Proxy, size int, timeout time.Duration) *downloadResult {
+	if st == nil {
+		return &downloadResult{error: "speedtester is nil"}
+	}
 	client := st.createClient(proxy, timeout)
-	defer client.CloseIdleConnections()
+	if client != nil {
+		defer client.CloseIdleConnections()
+	}
 
 	reader := NewZeroReader(size)
 	uploadURL := fmt.Sprintf("%s/__up", st.serverBaseURL)

@@ -275,5 +275,111 @@ func TestCreateClientNilProxyDefense(t *testing.T) {
 	}
 }
 
+func TestSpeedTesterNilSafety(t *testing.T) {
+	_, err := New(nil)
+	if err == nil {
+		t.Fatal("expected New(nil) to return error, got nil")
+	}
 
+	var st *SpeedTester = nil
 
+	if mode := st.Mode(); mode != SpeedModeDownload {
+		t.Fatalf("expected Mode() on nil to return SpeedModeDownload, got %v", mode)
+	}
+	if metrics := st.Metrics(); !metrics.Download {
+		t.Fatalf("expected Metrics() on nil to have Download enabled, got %+v", metrics)
+	}
+	if rounds := st.Rounds(); rounds != 1 {
+		t.Fatalf("expected Rounds() on nil to be 1, got %d", rounds)
+	}
+	if target := st.LatencyProbeTarget(); target != "" {
+		t.Fatalf("expected LatencyProbeTarget() on nil to be empty, got %q", target)
+	}
+	if probe := st.probeURL(); probe != "" {
+		t.Fatalf("expected probeURL() on nil to be empty, got %q", probe)
+	}
+	if ua := st.fetchConfigUA(); ua == "" {
+		t.Fatalf("expected fetchConfigUA() on nil to return default UA")
+	}
+	if _, err := st.fetchHTTPConfig("https://example.com"); err == nil {
+		t.Fatal("expected fetchHTTPConfig on nil to return error")
+	}
+	if _, err := st.LoadProxies(); err == nil {
+		t.Fatal("expected LoadProxies on nil to return error")
+	}
+	if res := st.TestSingle("test", nil, nil); res != nil {
+		t.Fatalf("expected TestSingle on nil to return nil, got %v", res)
+	}
+	if res := st.TestSingleContext(context.Background(), "test", nil, nil); res != nil {
+		t.Fatalf("expected TestSingleContext on nil to return nil, got %v", res)
+	}
+	// TestProxies and TestProxiesUntil should safely return without panic
+	st.TestProxies(nil, nil)
+	st.TestProxiesUntil(nil, nil)
+
+	if res := st.testProxy("test", nil); res != nil {
+		t.Fatalf("expected testProxy on nil to return nil, got %v", res)
+	}
+	if ok := st.testProxyEmit("test", nil, nil); ok {
+		t.Fatal("expected testProxyEmit on nil to return false")
+	}
+	if ok := st.testProxyEmitContext(context.Background(), "test", nil, nil); ok {
+		t.Fatal("expected testProxyEmitContext on nil to return false")
+	}
+
+	latRes := st.testLatency(nil, 0, 0)
+	if latRes == nil || latRes.packetLoss != 100 {
+		t.Fatalf("expected 100%% packet loss for testLatency on nil, got %+v", latRes)
+	}
+	latResCtx := st.testLatencyContext(context.Background(), nil, 0, 0)
+	if latResCtx == nil || latResCtx.packetLoss != 100 {
+		t.Fatalf("expected 100%% packet loss for testLatencyContext on nil, got %+v", latResCtx)
+	}
+	latResClient := st.testLatencyWithClient(nil, 0)
+	if latResClient == nil || latResClient.packetLoss != 100 {
+		t.Fatalf("expected 100%% packet loss for testLatencyWithClient on nil, got %+v", latResClient)
+	}
+	latResClientCtx := st.testLatencyWithClientContext(context.Background(), nil, 0)
+	if latResClientCtx == nil || latResClientCtx.packetLoss != 100 {
+		t.Fatalf("expected 100%% packet loss for testLatencyWithClientContext on nil, got %+v", latResClientCtx)
+	}
+
+	dr := st.testDownload(nil, 1024, time.Second)
+	if dr == nil || dr.error == "" {
+		t.Fatalf("expected testDownload on nil to return error, got %+v", dr)
+	}
+	ur := st.testUpload(nil, 1024, time.Second)
+	if ur == nil || ur.error == "" {
+		t.Fatalf("expected testUpload on nil to return error, got %+v", ur)
+	}
+
+	status, _, _, detail, _, _ := st.testAntigravity(nil)
+	if status != AntigravityUnknown || detail == "" {
+		t.Fatalf("expected testAntigravity on nil to return AntigravityUnknown, got status=%s detail=%s", status, detail)
+	}
+
+	physRes := st.TestSinglePhysicalContext(context.Background(), "test", nil, nil)
+	if physRes != nil {
+		t.Fatalf("expected TestSinglePhysicalContext on nil to return nil, got %v", physRes)
+	}
+
+	// Defense against uninitialized config struct
+	emptyST := &SpeedTester{}
+	if _, err := emptyST.LoadProxies(); err == nil {
+		t.Fatal("expected LoadProxies on empty SpeedTester to return error")
+	}
+	if rounds := emptyST.Rounds(); rounds != 1 {
+		t.Fatalf("expected Rounds() on empty SpeedTester to be 1, got %d", rounds)
+	}
+	if ok := emptyST.testProxyEmitContext(context.Background(), "test", nil, nil); ok {
+		t.Fatal("expected testProxyEmitContext on empty SpeedTester to return false")
+	}
+	agStatus, _, _, _, _, _ := emptyST.testAntigravity(nil)
+	if agStatus != AntigravityUnknown {
+		t.Fatalf("expected testAntigravity on empty SpeedTester to return AntigravityUnknown, got %s", agStatus)
+	}
+	physResEmpty := emptyST.TestSinglePhysicalContext(context.Background(), "test", nil, nil)
+	if physResEmpty == nil {
+		t.Fatal("expected non-nil result from physical test on empty SpeedTester")
+	}
+}
