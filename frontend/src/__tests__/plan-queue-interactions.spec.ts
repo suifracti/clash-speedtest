@@ -1,10 +1,10 @@
 import {afterEach,beforeEach,expect,it,vi} from 'vitest'
-import {flushPromises,mount,type VueWrapper} from '@vue/test-utils'
+import {DOMWrapper,flushPromises,mount,type VueWrapper} from '@vue/test-utils'
 import TestPlanModal from '../components/TestPlanModal.vue'
 import QueueModal from '../components/QueueModal.vue'
 import {createWorkspace,workspaceKey,type Workspace} from '../workspace'
 import {api} from '../api'
-import {key,type Attempt,type NodeOption} from '../domain'
+import {key,type Attempt,type NodeOption,type LatencyTest} from '../domain'
 
 vi.hoisted(()=>{Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:()=>null,setItem:()=>{}}})})
 vi.mock('../api',async importOriginal=>{
@@ -69,4 +69,50 @@ it('pauses on storage or unknown admission and confirms only the original reques
 it('cancellation after the first saved result prevents subsequent dispatch and preserves the result',async()=>{
  downloadPlan();vi.mocked(api.startAttempt).mockImplementation(async(_kind,body:any)=>{w.cancelRequested.value=true;return savedDownload(body)})
  await w.runPlan();expect(api.startAttempt).toHaveBeenCalledTimes(1);expect(w.queue.value.map(q=>q.state)).toEqual(['completed','cancelled','cancelled']);expect(w.queue.value[0].attempt?.persistence_state).toBe('saved');expect(w.done.value).toBe(3)
+})
+
+
+it('shows response coverage for each exact latency batch item instead of green completion',()=>{
+ const items=[
+  {name:'partial',state:'completed',status:'partial_failed',ok:5,bad:1,error:'EOF'},
+  {name:'none',state:'failed',status:'failed',ok:0,bad:6,error:'context deadline exceeded'},
+  {name:'all',state:'completed',status:'completed',ok:6,bad:0,error:undefined},
+ ].map((v,index)=>{
+  const n={...node,node_key:v.name,node_identity_key:'identity-'+v.name,display_name:v.name}
+  w.queue.value.push({id:'queue-'+index,node:n,project:'latency',state:'running',batchId:'batch-current',itemId:v.name})
+  return {...n,item_id:v.name,batch_id:'batch-current',execution_state:v.state,persistence_state:'saved',error_message:v.error,result:{...n,attempt_id:'test-'+v.name,node_type:'ss',requested_at:'2026-10-15T06:00:00Z',finished_at:'2026-10-15T06:00:01Z',status:v.status,latency_ms:123,total_samples:6,success_samples:v.ok,failure_samples:v.bad,samples:[],persistence_state:'saved'} as LatencyTest}
+ })
+ // A newer result for the same node must not replace this queue item's own evidence.
+ w.mergeLatency({...items[0].result,attempt_id:'unrelated-newer',requested_at:'2026-10-15T07:00:00Z',success_samples:6,failure_samples:0,status:'completed'})
+ w.absorbBatch({batch_id:'batch-current',request_id:'req-current',state:'completed',requested_at:'2026-10-15T06:00:00Z',item_count:3,items})
+ attach(QueueModal)
+ const rows=Array.from(document.querySelectorAll('.queue-row')).map(el=>new DOMWrapper(el))
+ expect(rows[0].find('.badge').text()).toBe('部分响应 · 5/6')
+ expect(rows[0].find('.badge').classes()).toContain('warn')
+ expect(rows[0].find('.badge').classes()).not.toContain('good')
+ expect(rows[0].text()).toContain('EOF')
+ expect(rows[1].find('.badge').text()).toBe('无响应 · 0/6')
+ expect(rows[1].find('.badge').classes()).toContain('bad')
+ expect(rows[2].find('.badge').text()).toBe('已响应 · 6/6')
+ expect(rows[2].find('.badge').classes()).toContain('good')
+ expect(w.done.value).toBe(3)
+ expect(document.querySelector('.queue-counts')?.textContent).toContain('终态 3 / 3')
+})
+
+
+it('does not turn cancellation, missing results or save failure into successful coverage',()=>{
+ const result:LatencyTest={...node,attempt_id:'test-a',display_name:'Node A',node_type:'ss',requested_at:'2026-10-15T06:00:00Z',finished_at:'2026-10-15T06:00:01Z',status:'completed',latency_ms:123,total_samples:1,success_samples:1,failure_samples:0,samples:[],persistence_state:'saved'}
+ const items=[
+  {...node,item_id:'cancelled',batch_id:'batch-a',display_name:'cancelled',execution_state:'cancelled',persistence_state:'saved',result},
+  {...node,item_id:'missing',batch_id:'batch-a',display_name:'missing',execution_state:'completed',persistence_state:'saved'},
+  {...node,item_id:'save-failed',batch_id:'batch-a',display_name:'save-failed',execution_state:'completed',persistence_state:'failed',persistence_error:'disk full',result},
+ ]
+ w.queue.value=items.map(i=>({id:i.item_id,node,project:'latency',state:'running',batchId:'batch-a',itemId:i.item_id}))
+ w.absorbBatch({batch_id:'batch-a',request_id:'request-a',state:'completed',requested_at:result.requested_at,item_count:3,items})
+ attach(QueueModal)
+ const badges=Array.from(document.querySelectorAll('.queue-row .badge'))
+ expect(badges.map(b=>b.textContent)).toEqual(['已取消','已结束 · 无采样','保存失败'])
+ expect(badges.every(b=>!b.classList.contains('good'))).toBe(true)
+ expect(document.querySelector('.queue-counts')?.textContent).toContain('保存失败 1')
+ expect(document.body.textContent).toContain('重试保存')
 })
