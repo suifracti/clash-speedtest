@@ -13,6 +13,9 @@ const (
 )
 
 func fillDefaultMonitorBudget(settings *AppSettings) {
+	if settings == nil {
+		return
+	}
 	if settings.MonitorBudgetMaxConcurrent == nil {
 		value := defaultBudgetConcurrent
 		settings.MonitorBudgetMaxConcurrent = &value
@@ -24,6 +27,9 @@ func fillDefaultMonitorBudget(settings *AppSettings) {
 }
 
 func validateMonitorBudget(settings *AppSettings) error {
+	if settings == nil {
+		return nil
+	}
 	fillDefaultMonitorBudget(settings)
 	concurrent, responseBytes := *settings.MonitorBudgetMaxConcurrent, *settings.MonitorBudgetResponseBytes
 	if concurrent < 1 || concurrent > 64 || responseBytes < 1 || responseBytes > 16<<20 {

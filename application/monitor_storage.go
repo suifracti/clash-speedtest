@@ -15,6 +15,9 @@ const (
 )
 
 func fillDefaultMonitorStorageThresholds(settings *AppSettings) {
+	if settings == nil {
+		return
+	}
 	if settings.MonitorStorageWarningBytes == nil {
 		value := defaultMonitorStorageWarningBytes
 		settings.MonitorStorageWarningBytes = &value
@@ -26,6 +29,9 @@ func fillDefaultMonitorStorageThresholds(settings *AppSettings) {
 }
 
 func validateMonitorStorageThresholds(settings *AppSettings) error {
+	if settings == nil {
+		return nil
+	}
 	fillDefaultMonitorStorageThresholds(settings)
 	warning, hard := *settings.MonitorStorageWarningBytes, *settings.MonitorStorageHardBytes
 	if warning <= 0 || hard <= 0 || warning >= hard || hard > maxMonitorStorageThresholdBytes {

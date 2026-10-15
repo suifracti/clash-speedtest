@@ -12,6 +12,9 @@ import (
 )
 
 func fillDefaultSubscriptionUsage(settings *AppSettings) {
+	if settings == nil {
+		return
+	}
 	if settings.SubscriptionDailyUpdateEnabled == nil {
 		enabled := true
 		settings.SubscriptionDailyUpdateEnabled = &enabled
@@ -25,8 +28,27 @@ func usageAccountKey(source string) string {
 }
 
 func usageSnapshot(ap *profiles.Airport, sub *profiles.Subscription, status, source string, at time.Time) subscriptionusage.Snapshot {
-	snap := subscriptionusage.Snapshot{AccountKey: usageAccountKey(sub.URL), AirportID: ap.ID, AirportName: ap.Name, SubscriptionID: sub.ID, SubscriptionName: sub.Name, CapturedAt: at.UTC(), Status: status, Source: source}
-	if status == "ok" && sub.Usage != nil {
+	var airportID, airportName, subID, subName, subURL string
+	if ap != nil {
+		airportID = ap.ID
+		airportName = ap.Name
+	}
+	if sub != nil {
+		subID = sub.ID
+		subName = sub.Name
+		subURL = sub.URL
+	}
+	snap := subscriptionusage.Snapshot{
+		AccountKey:       usageAccountKey(subURL),
+		AirportID:        airportID,
+		AirportName:      airportName,
+		SubscriptionID:   subID,
+		SubscriptionName: subName,
+		CapturedAt:       at.UTC(),
+		Status:           status,
+		Source:           source,
+	}
+	if status == "ok" && sub != nil && sub.Usage != nil {
 		up, down := sub.Usage.Upload, sub.Usage.Download
 		snap.Upload = &up
 		snap.Download = &down
@@ -103,7 +125,11 @@ func (s *AppService) collectSubscriptionUsage(ctx context.Context, now time.Time
 	if err != nil {
 		return nil, err
 	}
-	if !force && !*settings.SubscriptionDailyUpdateEnabled {
+	dailyEnabled := true
+	if settings != nil && settings.SubscriptionDailyUpdateEnabled != nil {
+		dailyEnabled = *settings.SubscriptionDailyUpdateEnabled
+	}
+	if !force && !dailyEnabled {
 		return s.historyStore.SubscriptionRefreshState(ctx)
 	}
 	claimed, err := s.historyStore.ClaimSubscriptionRefresh(ctx, now, subscriptionusage.NextDaily(now), force)
@@ -178,6 +204,10 @@ func (s *AppService) GetSubscriptionUsage(ctx context.Context, from, until, peri
 	if err != nil {
 		return nil, err
 	}
-	report.DailyEnabled = *settings.SubscriptionDailyUpdateEnabled
+	dailyEnabled := true
+	if settings != nil && settings.SubscriptionDailyUpdateEnabled != nil {
+		dailyEnabled = *settings.SubscriptionDailyUpdateEnabled
+	}
+	report.DailyEnabled = dailyEnabled
 	return &report, nil
 }
