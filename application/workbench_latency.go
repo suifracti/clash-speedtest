@@ -30,6 +30,9 @@ const (
 // emits a second update for the same attempt_id. This keeps a slow history
 // transaction from blocking the user's measured result.
 func (s *AppService) RunWorkbenchLatencyTest(ctx context.Context, req WorkbenchLatencyTestRequest) (*WorkbenchLatencyTestDTO, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not available")
+	}
 	targetURL, targetErr := speedtester.LatencyTargetURL(req.TargetID)
 	if targetErr != nil {
 		return nil, monitor.NewValidationError(targetErr.Error())
@@ -192,7 +195,7 @@ func (s *AppService) ListWorkbenchLatencyTests(ctx context.Context, query Workbe
 	if profileID == "" || nodeKey == "" || nodeIdentityKey == "" || configRevisionKey == "" {
 		return WorkbenchLatencyHistoryResult{}, monitor.NewValidationError("历史查询必须同时提供 profile_id、node_key、node_identity_key 和 config_revision_key")
 	}
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return WorkbenchLatencyHistoryResult{}, fmt.Errorf("history store is not initialized")
 	}
 	since, until, err := normalizeWorkbenchLatencyWindow(query.Since, query.Until)
@@ -246,7 +249,7 @@ func (s *AppService) ListWorkbenchLatencyTests(ctx context.Context, query Workbe
 // GetWorkbenchLatencyTest returns one persisted record and all raw samples
 // only when its immutable attempt ID belongs to the requested profile/node.
 func (s *AppService) GetWorkbenchLatencyTest(ctx context.Context, query WorkbenchLatencyHistoryDetailQuery) (*WorkbenchLatencyTestDTO, error) {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized")
 	}
 	profileID := strings.TrimSpace(query.ProfileID)

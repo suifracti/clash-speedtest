@@ -42,6 +42,9 @@ func (s *AppService) StartWorkbenchPublicServiceTest(ctx context.Context, req Wo
 // The scheduler uses the same identity, execution, cancellation and save path.
 // Only scheduler-owned requests can share its bounded background lane.
 func (s *AppService) startWorkbenchPublicServiceTest(ctx context.Context, req WorkbenchPublicServiceTestRequest, periodicLimit int) (returnedAttempt *history.PublicServiceAttempt, startErr error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not available")
+	}
 	received := time.Now()
 	defer func() {
 		if s.historyStore != nil && s.historyStore.DB() != nil && startErr == nil && returnedAttempt != nil {
@@ -364,7 +367,7 @@ func (s *AppService) saveWorkbenchPublicServiceResult(attemptID string) error {
 }
 
 func (s *AppService) CancelWorkbenchPublicServiceTest(ctx context.Context, attemptID string, query WorkbenchPublicServiceHistoryQuery) (*history.PublicServiceAttempt, error) {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized")
 	}
 	filter, err := publicServiceHistoryFilter(query)
@@ -391,6 +394,9 @@ func (s *AppService) CancelWorkbenchPublicServiceTest(ctx context.Context, attem
 }
 
 func (s *AppService) RetrySaveWorkbenchPublicServiceTest(ctx context.Context, attemptID string, query WorkbenchPublicServiceHistoryQuery) (*history.PublicServiceAttempt, error) {
+	if s == nil || s.historyStore == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
 	filter, err := publicServiceHistoryFilter(query)
 	if err != nil {
 		return nil, err
@@ -400,10 +406,6 @@ func (s *AppService) RetrySaveWorkbenchPublicServiceTest(ctx context.Context, at
 	if s.publicServiceClosed || s.publicServiceTransition {
 		s.publicServiceMu.Unlock()
 		return nil, fmt.Errorf("应用正在关闭或切换存储，不能重试保存")
-	}
-	if s.historyStore == nil {
-		s.publicServiceMu.Unlock()
-		return nil, fmt.Errorf("history store is not initialized")
 	}
 	current, err := s.historyStore.GetPublicServiceAttempt(ctx, attemptID, filter)
 	if err != nil {
@@ -434,7 +436,7 @@ func (s *AppService) RetrySaveWorkbenchPublicServiceTest(ctx context.Context, at
 }
 
 func (s *AppService) GetWorkbenchPublicServiceAttempt(ctx context.Context, attemptID string, query WorkbenchPublicServiceHistoryQuery) (*history.PublicServiceAttempt, error) {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized")
 	}
 	filter, err := publicServiceHistoryFilter(query)
@@ -445,7 +447,7 @@ func (s *AppService) GetWorkbenchPublicServiceAttempt(ctx context.Context, attem
 }
 
 func (s *AppService) ListWorkbenchPublicServiceTests(ctx context.Context, query WorkbenchPublicServiceHistoryQuery) (WorkbenchPublicServiceHistoryResult, error) {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return WorkbenchPublicServiceHistoryResult{}, fmt.Errorf("history store is not initialized")
 	}
 	filter, err := publicServiceHistoryFilter(query)

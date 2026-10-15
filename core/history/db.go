@@ -254,6 +254,9 @@ type DB struct {
 
 // SetTestBatchFailAt configures a deterministic fault on retention batch #n (for test verification).
 func (d *DB) SetTestBatchFailAt(n int) {
+	if d == nil {
+		return
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.testBatchFailAt = n
@@ -836,6 +839,9 @@ func requireColumns(tx *sql.Tx, table string, required []string) error {
 
 // Close closes the underlying database.
 func (d *DB) Close() error {
+	if d == nil {
+		return nil
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.db != nil {
@@ -850,6 +856,9 @@ func (d *DB) Close() error {
 // definition. Runtime scheduler state and raw node configuration never enter
 // this transaction.
 func (d *DB) SaveMonitorJobDefinition(ctx context.Context, definition *monitor.MonitorJobDefinition) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	if definition == nil {
 		return fmt.Errorf("monitor job definition is nil")
 	}
@@ -929,6 +938,9 @@ func normalizedMonitorDesiredState(state monitor.JobState) monitor.JobState {
 // UpdateMonitorJobLaunchIntent persists user-controlled launch permission and
 // desired lifecycle state together. Runtime scheduler state is never written.
 func (d *DB) UpdateMonitorJobLaunchIntent(ctx context.Context, jobID string, resumeOnLaunch bool, desired monitor.JobState, updatedAt time.Time) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	if strings.TrimSpace(jobID) == "" {
 		return fmt.Errorf("monitor job definition id is empty")
 	}
@@ -962,6 +974,9 @@ func (d *DB) UpdateMonitorJobLaunchIntent(ctx context.Context, jobID string, res
 }
 
 func (d *DB) DeleteMonitorJobDefinition(ctx context.Context, jobID string) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	if strings.TrimSpace(jobID) == "" {
 		return fmt.Errorf("monitor job definition id is empty")
 	}
@@ -987,6 +1002,9 @@ func (d *DB) DeleteMonitorJobDefinition(ctx context.Context, jobID string) error
 // UpdateMonitorJobSamplingTier changes only the persisted cadence class. It
 // leaves the selected nodes, interval, probe set, and runtime state untouched.
 func (d *DB) UpdateMonitorJobSamplingTier(ctx context.Context, jobID string, tier monitor.SamplingTier, updatedAt time.Time) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	if strings.TrimSpace(jobID) == "" {
 		return fmt.Errorf("monitor job definition id is empty")
 	}
@@ -1076,6 +1094,9 @@ func (d *DB) ListMonitorJobDefinitions(ctx context.Context) ([]*monitor.MonitorJ
 }
 
 func (d *DB) listMonitorJobNodes(ctx context.Context, jobID string) ([]monitor.MonitorJobNodeReference, error) {
+	if d == nil || d.db == nil {
+		return nil, fmt.Errorf("history database is closed")
+	}
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT node_key, node_identity_key, config_revision_key, display_name, node_type
 		FROM monitor_job_nodes
@@ -1104,6 +1125,9 @@ func (d *DB) listMonitorJobNodes(ctx context.Context, jobID string) ([]monitor.M
 
 // SaveMonitorRun persists a new MonitorRun record.
 func (d *DB) SaveMonitorRun(ctx context.Context, run *monitor.MonitorRun) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	if run == nil {
 		return fmt.Errorf("run is nil")
 	}
@@ -1122,6 +1146,9 @@ func (d *DB) SaveMonitorRun(ctx context.Context, run *monitor.MonitorRun) error 
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 
 	query := `
 		INSERT INTO monitor_runs (
@@ -1159,12 +1186,18 @@ func (d *DB) SaveMonitorRun(ctx context.Context, run *monitor.MonitorRun) error 
 
 // UpdateMonitorRun updates an existing MonitorRun record (status, finish time, counts).
 func (d *DB) UpdateMonitorRun(ctx context.Context, run *monitor.MonitorRun) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	if run == nil {
 		return fmt.Errorf("run is nil")
 	}
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 
 	query := `
 		UPDATE monitor_runs SET
@@ -1205,6 +1238,9 @@ func (d *DB) UpdateMonitorRun(ctx context.Context, run *monitor.MonitorRun) erro
 // their timestamps or any raw samples. The precise interruption time is not
 // inferred from a later application launch.
 func (d *DB) MarkRunningMonitorRunsInterrupted(ctx context.Context) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.db == nil {
@@ -1228,12 +1264,18 @@ func (d *DB) MarkRunningMonitorRunsInterrupted(ctx context.Context) error {
 
 // SaveMonitorSamples atomically inserts multiple MonitorSample records in a single transaction.
 func (d *DB) SaveMonitorSamples(ctx context.Context, samples []*monitor.MonitorSample) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	if len(samples) == 0 {
 		return nil
 	}
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1303,6 +1345,9 @@ func (d *DB) SaveMonitorSamples(ctx context.Context, samples []*monitor.MonitorS
 // completed execution is a no-op, while reusing it for another node/scope is
 // rejected.
 func (d *DB) SaveLatencyTest(ctx context.Context, test *LatencyTest) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	if test == nil {
 		return fmt.Errorf("latency test is nil")
 	}
@@ -1318,6 +1363,9 @@ func (d *DB) SaveLatencyTest(ctx context.Context, test *LatencyTest) error {
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1418,6 +1466,9 @@ func (d *DB) SaveLatencyTest(ctx context.Context, test *LatencyTest) error {
 // subscription node. Samples are loaded with each record so the UI never has
 // to synthesize a graph from aggregate values.
 func (d *DB) QueryLatencyTests(ctx context.Context, filter LatencyTestFilter) (*LatencyTestQueryResult, error) {
+	if d == nil || d.db == nil {
+		return nil, fmt.Errorf("history database is closed")
+	}
 	if strings.TrimSpace(filter.ProfileID) == "" || strings.TrimSpace(filter.NodeKey) == "" {
 		return nil, fmt.Errorf("latency history requires profile_id and node_key")
 	}
@@ -1529,12 +1580,18 @@ func (d *DB) QueryLatencyTests(ctx context.Context, filter LatencyTestFilter) (*
 
 // GetLatencyTest returns one persisted on-demand test by its immutable attempt ID.
 func (d *DB) GetLatencyTest(ctx context.Context, attemptID string) (*LatencyTest, error) {
+	if d == nil {
+		return nil, fmt.Errorf("history database is closed")
+	}
 	return d.getLatencyTest(ctx, attemptID, nil, nil)
 }
 
 // GetLatencyTestInWindow returns one attempt with only raw samples in the
 // requested half-open observation window.
 func (d *DB) GetLatencyTestInWindow(ctx context.Context, attemptID string, since, until *time.Time) (*LatencyTest, error) {
+	if d == nil {
+		return nil, fmt.Errorf("history database is closed")
+	}
 	normalizedSince, normalizedUntil, err := normalizeLatencyWindow(since, until)
 	if err != nil {
 		return nil, err
@@ -1545,6 +1602,9 @@ func (d *DB) GetLatencyTestInWindow(ctx context.Context, attemptID string, since
 // ListNodeHistoryRevisions enumerates observed revisions for one stable node
 // identity across the independent Monitor and Workbench history domains.
 func (d *DB) ListNodeHistoryRevisions(ctx context.Context, profileID, nodeIdentityKey string) ([]NodeHistoryRevision, error) {
+	if d == nil || d.db == nil {
+		return nil, fmt.Errorf("history database is closed")
+	}
 	if strings.TrimSpace(profileID) == "" || strings.TrimSpace(nodeIdentityKey) == "" {
 		return nil, fmt.Errorf("node history revisions require profile_id and node_identity_key")
 	}
@@ -1603,6 +1663,9 @@ func (d *DB) ListNodeHistoryRevisions(ctx context.Context, profileID, nodeIdenti
 }
 
 func (d *DB) getLatencyTest(ctx context.Context, attemptID string, since, until *time.Time) (*LatencyTest, error) {
+	if d == nil || d.db == nil {
+		return nil, fmt.Errorf("history database is closed")
+	}
 	attemptID = strings.TrimSpace(attemptID)
 	if attemptID == "" {
 		return nil, fmt.Errorf("latency test attempt_id is empty")
@@ -1676,6 +1739,9 @@ func scanLatencyTest(scanner latencyTestScanner) (*LatencyTest, error) {
 }
 
 func (d *DB) loadLatencyTestSamples(ctx context.Context, test *LatencyTest, since, until *time.Time) error {
+	if d == nil || d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	query := `
 		SELECT seq, timestamp, latency_ms, success, error, target
 		FROM workbench_latency_samples
@@ -1729,6 +1795,9 @@ func normalizeLatencyWindow(since, until *time.Time) (*time.Time, *time.Time, er
 
 // QueryMonitorRuns retrieves recent MonitorRuns for a given job.
 func (d *DB) QueryMonitorRuns(ctx context.Context, jobID string, limit int) ([]*monitor.MonitorRun, error) {
+	if d == nil || d.db == nil {
+		return nil, fmt.Errorf("history database is closed")
+	}
 	if limit <= 0 {
 		limit = 50
 	}
@@ -1794,6 +1863,9 @@ func (d *DB) QueryMonitorRuns(ctx context.Context, jobID string, limit int) ([]*
 
 // QueryMonitorSamples retrieves raw samples according to the filter parameters.
 func (d *DB) QueryMonitorSamples(ctx context.Context, filter monitor.SampleFilter) ([]*monitor.MonitorSample, error) {
+	if d == nil || d.db == nil {
+		return nil, fmt.Errorf("history database is closed")
+	}
 	var whereClauses []string
 	var args []any
 
@@ -1956,6 +2028,9 @@ func scanMonitorSample(scanner monitorSampleScanner) (*monitor.MonitorSample, er
 
 // GetNodeTimelineSamples retrieves chronologically ordered raw samples for a specific node since a given time.
 func (d *DB) GetNodeTimelineSamples(ctx context.Context, nodeKey string, since time.Time) ([]*monitor.MonitorSample, error) {
+	if d == nil {
+		return nil, fmt.Errorf("history database is closed")
+	}
 	return d.QueryMonitorSamples(ctx, monitor.SampleFilter{
 		NodeKey:   nodeKey,
 		Since:     &since,
@@ -2023,6 +2098,9 @@ func DecodeCursor(cursorStr string, expectedDir string) (time.Time, string, erro
 // QueryMonitorSamplesCursor executes keyset pagination based on (timestamp, sample_id).
 // It ensures that dynamic sample insertions during paging will not duplicate or shift historical windows.
 func (d *DB) QueryMonitorSamplesCursor(ctx context.Context, filter monitor.CursorFilter) (*monitor.SampleCursorPage, error) {
+	if d == nil || d.db == nil {
+		return nil, fmt.Errorf("history database is closed")
+	}
 	if filter.Since != nil && filter.Until != nil && filter.Since.After(*filter.Until) {
 		return nil, monitor.WrapValidationError(monitor.ErrInvalidTimeRange)
 	}
@@ -2171,6 +2249,9 @@ func (d *DB) QueryMonitorSamplesCursor(ctx context.Context, filter monitor.Curso
 // It is read-only, never overwrites raw samples, calculates exact quantiles via SQL rank in O(1) memory,
 // and gracefully handles edge cases (zero samples, all fail/pass).
 func (d *DB) GetDerivedStats(ctx context.Context, q monitor.StatsQuery) (*monitor.DerivedStats, error) {
+	if d == nil || d.db == nil {
+		return nil, fmt.Errorf("history database is closed")
+	}
 	if q.Since != nil && q.Until != nil {
 		if q.Since.After(*q.Until) {
 			return nil, monitor.WrapValidationError(monitor.ErrInvalidTimeRange)
@@ -2473,6 +2554,9 @@ func parseSQLiteTime(s string) (time.Time, error) {
 // summarizes them, and never replaces them as the source of truth. The caller is responsible
 // for bounding the window; the limits here only bound the number of distinct values returned.
 func (d *DB) GetMonitorSampleFacets(ctx context.Context, since, until time.Time, maxNodes, maxValues int) (*monitor.MonitorSampleFacets, error) {
+	if d == nil || d.db == nil {
+		return nil, fmt.Errorf("history database is closed")
+	}
 	if maxNodes <= 0 {
 		maxNodes = 500
 	}
@@ -2548,6 +2632,9 @@ func (d *DB) GetMonitorSampleFacets(ctx context.Context, since, until time.Time,
 // distinctSampleValues returns the distinct non-empty values of a monitor_samples column.
 // column must be an internal compile-time constant; it is never derived from user input.
 func (d *DB) distinctSampleValues(ctx context.Context, column string, since, until time.Time, limit int) ([]string, bool, error) {
+	if d == nil || d.db == nil {
+		return nil, false, fmt.Errorf("history database is closed")
+	}
 	switch column {
 	case "profile_id", "probe_type", "target":
 	default:
@@ -2590,6 +2677,9 @@ func (d *DB) distinctSampleValues(ctx context.Context, column string, since, unt
 // It executes deletions in bounded batches to prevent monopolizing the SQLite write lock.
 // Default policy is KeepAll, which performs no deletions.
 func (d *DB) ApplyRetention(ctx context.Context, req monitor.RetentionRequest) (*monitor.RetentionResult, error) {
+	if d == nil {
+		return nil, fmt.Errorf("history database is closed")
+	}
 	if req.Policy == "" || req.Policy == monitor.RetentionKeepAll {
 		return &monitor.RetentionResult{
 			Policy:         monitor.RetentionKeepAll,
@@ -2654,6 +2744,9 @@ func (d *DB) ApplyRetention(ctx context.Context, req monitor.RetentionRequest) (
 		err := func() error {
 			d.mu.Lock()
 			defer d.mu.Unlock()
+			if d.db == nil {
+				return fmt.Errorf("history database is closed")
+			}
 
 			tx, err := d.db.BeginTx(ctx, nil)
 			if err != nil {
@@ -2712,6 +2805,9 @@ func (d *DB) ApplyRetention(ctx context.Context, req monitor.RetentionRequest) (
 	err = func() error {
 		d.mu.Lock()
 		defer d.mu.Unlock()
+		if d.db == nil {
+			return fmt.Errorf("history database is closed")
+		}
 
 		res, err := d.db.ExecContext(ctx, `
 			DELETE FROM monitor_runs
@@ -2755,8 +2851,14 @@ func (d *DB) ApplyRetention(ctx context.Context, req monitor.RetentionRequest) (
 // CleanupWorkbenchHistory prunes old latency tests, latency batches, download attempts,
 // and public service attempts older than the specified cutoff.
 func (d *DB) CleanupWorkbenchHistory(ctx context.Context, cutoff time.Time) (int64, error) {
+	if d == nil {
+		return 0, fmt.Errorf("history database is closed")
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return 0, fmt.Errorf("history database is closed")
+	}
 
 	var totalDeleted int64
 	if res, err := d.db.ExecContext(ctx, `DELETE FROM workbench_latency_tests WHERE finished_at < ?`, cutoff); err == nil {

@@ -97,6 +97,9 @@ type WorkbenchDownloadQueryResult struct {
 }
 
 func (d *DB) CreateWorkbenchDownloadAttempt(ctx context.Context, attempt *WorkbenchDownloadAttempt) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	if attempt == nil || strings.TrimSpace(attempt.AttemptID) == "" || strings.TrimSpace(attempt.RequestID) == "" {
 		return fmt.Errorf("download attempt and request IDs are required")
 	}
@@ -121,6 +124,9 @@ func (d *DB) CreateWorkbenchDownloadAttempt(ctx context.Context, attempt *Workbe
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	_, err = d.db.ExecContext(ctx, `INSERT INTO workbench_download_attempts (
 		attempt_id,request_id,profile_id,node_key,node_identity_key,config_revision_key,
 		display_name,node_type,source,requested_at,execution_state,persistence_state,rule_snapshot_json
@@ -134,8 +140,14 @@ func (d *DB) CreateWorkbenchDownloadAttempt(ctx context.Context, attempt *Workbe
 }
 
 func (d *DB) BeginWorkbenchDownloadAttempt(ctx context.Context, attemptID string, startedAt time.Time) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	res, err := d.db.ExecContext(ctx, `UPDATE workbench_download_attempts SET execution_state='running',started_at=? WHERE attempt_id=? AND execution_state='queued'`, startedAt.UTC(), attemptID)
 	if err != nil {
 		return fmt.Errorf("start Workbench download attempt %s: %w", attemptID, err)
@@ -147,8 +159,14 @@ func (d *DB) BeginWorkbenchDownloadAttempt(ctx context.Context, attemptID string
 }
 
 func (d *DB) RequestWorkbenchDownloadCancellation(ctx context.Context, attemptID string) (bool, error) {
+	if d == nil {
+		return false, fmt.Errorf("history database is closed")
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return false, fmt.Errorf("history database is closed")
+	}
 	res, err := d.db.ExecContext(ctx, `UPDATE workbench_download_attempts SET execution_state='cancelling' WHERE attempt_id=? AND execution_state='running'`, attemptID)
 	if err != nil {
 		return false, fmt.Errorf("cancel Workbench download attempt %s: %w", attemptID, err)
@@ -158,10 +176,16 @@ func (d *DB) RequestWorkbenchDownloadCancellation(ctx context.Context, attemptID
 }
 
 func (d *DB) StageWorkbenchDownloadResult(ctx context.Context, attemptID, executionState string, measurement WorkbenchDownloadMeasurement) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	waiting := time.Now()
 	d.mu.Lock()
 	waitNS := time.Since(waiting).Nanoseconds()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	if measurement.TimingNS != nil {
 		measurement.TimingNS["stage_save_lock_wait_ns"] = waitNS
 	}
@@ -180,8 +204,14 @@ func (d *DB) StageWorkbenchDownloadResult(ctx context.Context, attemptID, execut
 }
 
 func (d *DB) MarkWorkbenchDownloadStageFailed(ctx context.Context, attemptID, executionState string, finishedAt time.Time, safeMessage string) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	res, err := d.db.ExecContext(ctx, `UPDATE workbench_download_attempts SET finished_at=?,execution_state=?,persistence_state='failed',persistence_error=? WHERE attempt_id=? AND execution_state IN ('running','cancelling') AND staged_result_json=''`, finishedAt.UTC(), executionState, safeMessage, attemptID)
 	if err != nil {
 		return fmt.Errorf("mark Workbench download stage failure %s: %w", attemptID, err)
@@ -193,8 +223,14 @@ func (d *DB) MarkWorkbenchDownloadStageFailed(ctx context.Context, attemptID, ex
 }
 
 func (d *DB) MarkWorkbenchDownloadSaveFailed(ctx context.Context, attemptID, safeMessage string) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	_, err := d.db.ExecContext(ctx, `UPDATE workbench_download_attempts SET persistence_state='failed',persistence_error=? WHERE attempt_id=? AND staged_result_json<>'' AND persistence_state<>'saved'`, safeMessage, attemptID)
 	if err != nil {
 		return fmt.Errorf("mark Workbench download save failed %s: %w", attemptID, err)
@@ -203,10 +239,16 @@ func (d *DB) MarkWorkbenchDownloadSaveFailed(ctx context.Context, attemptID, saf
 }
 
 func (d *DB) CommitWorkbenchDownloadResult(ctx context.Context, attemptID string) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	waiting := time.Now()
 	d.mu.Lock()
 	waitNS := time.Since(waiting).Nanoseconds()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin Workbench download commit: %w", err)
@@ -256,8 +298,14 @@ func (d *DB) CommitWorkbenchDownloadResult(ctx context.Context, attemptID string
 }
 
 func (d *DB) ReconcileWorkbenchDownloadAttempts(ctx context.Context) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin Workbench download recovery: %w", err)
@@ -287,6 +335,9 @@ func (d *DB) GetWorkbenchDownloadAttempt(ctx context.Context, attemptID string, 
 }
 
 func (d *DB) getWorkbenchDownloadAttempt(ctx context.Context, where string, args ...any) (*WorkbenchDownloadAttempt, error) {
+	if d == nil || d.db == nil {
+		return nil, fmt.Errorf("history database is closed")
+	}
 	attempt, err := scanWorkbenchDownloadAttempt(d.db.QueryRowContext(ctx, workbenchDownloadSelect+` WHERE `+where, args...))
 	if err == sql.ErrNoRows {
 		return nil, ErrWorkbenchDownloadAttemptNotFound
@@ -295,6 +346,9 @@ func (d *DB) getWorkbenchDownloadAttempt(ctx context.Context, where string, args
 }
 
 func (d *DB) QueryWorkbenchDownloadAttempts(ctx context.Context, filter WorkbenchDownloadFilter) (*WorkbenchDownloadQueryResult, error) {
+	if d == nil || d.db == nil {
+		return nil, fmt.Errorf("history database is closed")
+	}
 	if err := validateWorkbenchDownloadFilter(filter); err != nil {
 		return nil, err
 	}

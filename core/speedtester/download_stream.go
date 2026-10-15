@@ -378,6 +378,9 @@ type downloadStreamSampler struct {
 }
 
 func (s *downloadStreamSampler) add(totalBytes int64, now time.Time, force bool) (DownloadStreamSample, bool) {
+	if s == nil {
+		return DownloadStreamSample{}, false
+	}
 	if totalBytes <= s.lastBytes {
 		return DownloadStreamSample{}, false
 	}
@@ -411,6 +414,9 @@ func (s *downloadStreamSampler) add(totalBytes int64, now time.Time, force bool)
 // Preserve useful typed evidence without storing raw exceptions containing
 // proxy addresses, credentials or private URL query parameters.
 func downloadErrorClass(err error) string {
+	if err == nil {
+		return "none"
+	}
 	var local *PhysicalPathError
 	if errors.As(err, &local) {
 		return "local_path_unverified"

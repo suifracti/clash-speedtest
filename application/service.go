@@ -219,16 +219,25 @@ func newAppService(hStore *history.Store, appPaths appdata.AppPaths, profilePath
 
 // Emitter returns the configured EventEmitter.
 func (s *AppService) Emitter() EventEmitter {
+	if s == nil {
+		return nil
+	}
 	return s.emitter
 }
 
 // HistoryStore returns the configured history Store.
 func (s *AppService) HistoryStore() *history.Store {
+	if s == nil {
+		return nil
+	}
 	return s.historyStore
 }
 
 // Status returns a copy of the current active test status.
 func (s *AppService) Status() TestStatus {
+	if s == nil {
+		return TestStatus{}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.status
@@ -236,6 +245,9 @@ func (s *AppService) Status() TestStatus {
 
 // Stop interrupts any running test task and stops background monitor jobs.
 func (s *AppService) Stop() {
+	if s == nil {
+		return
+	}
 	if s.periodic != nil {
 		s.periodic.stop()
 	}
@@ -250,16 +262,21 @@ func (s *AppService) Stop() {
 
 	s.StopAllMonitorJobs()
 
-	s.emitter.Emit(Event{
-		Type: "test_stopped",
-		Payload: map[string]any{
-			"message": "测试已被用户中断",
-		},
-	})
+	if s.emitter != nil {
+		s.emitter.Emit(Event{
+			Type: "test_stopped",
+			Payload: map[string]any{
+				"message": "测试已被用户中断",
+			},
+		})
+	}
 }
 
 // Close stops all background tasks and cleanly releases database connections.
 func (s *AppService) Close() error {
+	if s == nil {
+		return nil
+	}
 	s.closeSubscriptionRefreshJobs()
 	if s.periodic != nil {
 		s.periodic.close()
@@ -301,7 +318,7 @@ func (s *AppService) Close() error {
 
 // StartBatch starts a batch speed test across specified or all nodes of an airport.
 func (s *AppService) StartBatch(req BatchTestRequest, explicitToken string) error {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return fmt.Errorf("history store is not initialized; confirm data migration first")
 	}
 	s.mu.Lock()
@@ -599,6 +616,9 @@ func (s *AppService) runBatchTest(ctx context.Context, cancel context.CancelFunc
 
 // TestSingle executes a single node test synchronously.
 func (s *AppService) TestSingle(req SingleTestRequest, token string) (*history.RunNodeResult, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not available")
+	}
 	metrics := ParseMetricSlice(req.Config.Metrics)
 	// SpeedTester.New falls back to the selected mode when ParseMetricSlice
 	// produces an empty set, and that mode includes latency. Guard that same
@@ -852,35 +872,35 @@ func ParseMetricSlice(metrics []string) speedtester.MetricSet {
 // History operations
 
 func (s *AppService) ListHistory() ([]*history.RunSummary, error) {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized; confirm data migration first")
 	}
 	return s.historyStore.List()
 }
 
 func (s *AppService) GetHistory(id string) (*history.TestRun, error) {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized; confirm data migration first")
 	}
 	return s.historyStore.Get(id)
 }
 
 func (s *AppService) DeleteHistory(id string) error {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return fmt.Errorf("history store is not initialized; confirm data migration first")
 	}
 	return s.historyStore.Delete(id)
 }
 
 func (s *AppService) GetAirportTimeline(airportID string) (*history.AirportHistory, error) {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized; confirm data migration first")
 	}
 	return s.historyStore.GetAirportHistory(airportID)
 }
 
 func (s *AppService) CompareRuns(baseID, targetID string) (*history.RunComparison, error) {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized; confirm data migration first")
 	}
 	return s.historyStore.Compare(baseID, targetID)
@@ -2701,7 +2721,7 @@ func (s *AppService) TriggerMonitorJob(jobID string) (*monitor.MonitorRun, error
 
 // QueryMonitorSamples retrieves raw probe samples according to the filter.
 func (s *AppService) QueryMonitorSamples(ctx context.Context, filter monitor.SampleFilter) ([]*monitor.MonitorSample, error) {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized")
 	}
 	return s.historyStore.QueryMonitorSamples(ctx, filter)
@@ -2709,7 +2729,7 @@ func (s *AppService) QueryMonitorSamples(ctx context.Context, filter monitor.Sam
 
 // QueryMonitorRuns retrieves past monitor run metadata.
 func (s *AppService) QueryMonitorRuns(ctx context.Context, jobID string, limit int) ([]*monitor.MonitorRun, error) {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized")
 	}
 	return s.historyStore.QueryMonitorRuns(ctx, jobID, limit)
@@ -2717,7 +2737,7 @@ func (s *AppService) QueryMonitorRuns(ctx context.Context, jobID string, limit i
 
 // GetNodeTimelineSamples retrieves timestamp-ordered samples for a node key.
 func (s *AppService) GetNodeTimelineSamples(ctx context.Context, nodeKey string, since time.Time) ([]*monitor.MonitorSample, error) {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized")
 	}
 	return s.historyStore.GetNodeTimelineSamples(ctx, nodeKey, since)
@@ -2725,7 +2745,7 @@ func (s *AppService) GetNodeTimelineSamples(ctx context.Context, nodeKey string,
 
 // QueryMonitorSamplesCursor retrieves raw probe samples via keyset pagination.
 func (s *AppService) QueryMonitorSamplesCursor(ctx context.Context, filter monitor.CursorFilter) (*monitor.SampleCursorPage, error) {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized")
 	}
 	return s.historyStore.QueryMonitorSamplesCursor(ctx, filter)
@@ -2733,7 +2753,7 @@ func (s *AppService) QueryMonitorSamplesCursor(ctx context.Context, filter monit
 
 // GetMonitorStats dynamically derives aggregated statistical metrics across raw samples.
 func (s *AppService) GetMonitorStats(ctx context.Context, query monitor.StatsQuery) (*monitor.DerivedStats, error) {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized")
 	}
 	return s.historyStore.GetDerivedStats(ctx, query)
@@ -2742,7 +2762,7 @@ func (s *AppService) GetMonitorStats(ctx context.Context, query monitor.StatsQue
 // ListNodeHistoryRevisions returns observed revision choices for a stable
 // profile/identity without combining the Monitor and Workbench measurements.
 func (s *AppService) ListNodeHistoryRevisions(ctx context.Context, profileID, nodeIdentityKey string) ([]history.NodeHistoryRevision, error) {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized")
 	}
 	profileID = strings.TrimSpace(profileID)
@@ -2776,7 +2796,7 @@ const (
 // This is a presentation-only projection used to populate UI filters. It does not aggregate
 // or replace raw samples, and it does not participate in any monitoring decision.
 func (s *AppService) GetMonitorSampleFacets(ctx context.Context, since, until *time.Time) (*monitor.MonitorSampleFacets, error) {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized")
 	}
 
@@ -2802,6 +2822,9 @@ func (s *AppService) GetMonitorSampleFacets(ctx context.Context, since, until *t
 
 // ApplyRetention applies a retention policy by pruning historical raw samples and orphaned runs.
 func (s *AppService) ApplyRetention(ctx context.Context, req monitor.RetentionRequest) (*monitor.RetentionResult, error) {
+	if s == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
 	if err := s.canonicalMonitorHistory(); err != nil {
 		return nil, err
 	}
@@ -2809,40 +2832,44 @@ func (s *AppService) ApplyRetention(ctx context.Context, req monitor.RetentionRe
 	if err != nil {
 		var retErr *monitor.RetentionError
 		if errors.As(err, &retErr) && retErr.Result != nil && retErr.Result.Partial {
-			s.emitter.Emit(Event{
-				Type: "monitor_retention_partial_failure",
-				Payload: map[string]any{
-					"policy":          retErr.Result.Policy,
-					"cutoff":          retErr.Result.Cutoff,
-					"samples_deleted": retErr.Result.SamplesDeleted,
-					"runs_deleted":    retErr.Result.RunsDeleted,
-					"duration_ms":     retErr.Result.DurationMs,
-					"partial":         true,
-					"error":           retErr.Err.Error(),
-				},
-			})
+			if s.emitter != nil {
+				s.emitter.Emit(Event{
+					Type: "monitor_retention_partial_failure",
+					Payload: map[string]any{
+						"policy":          retErr.Result.Policy,
+						"cutoff":          retErr.Result.Cutoff,
+						"samples_deleted": retErr.Result.SamplesDeleted,
+						"runs_deleted":    retErr.Result.RunsDeleted,
+						"duration_ms":     retErr.Result.DurationMs,
+						"partial":         true,
+						"error":           retErr.Err.Error(),
+					},
+				})
+			}
 			return retErr.Result, err
 		}
 		return nil, err
 	}
 
-	s.emitter.Emit(Event{
-		Type: "monitor_retention_applied",
-		Payload: map[string]any{
-			"policy":          res.Policy,
-			"cutoff":          res.Cutoff,
-			"samples_deleted": res.SamplesDeleted,
-			"runs_deleted":    res.RunsDeleted,
-			"duration_ms":     res.DurationMs,
-			"partial":         false,
-		},
-	})
+	if s.emitter != nil {
+		s.emitter.Emit(Event{
+			Type: "monitor_retention_applied",
+			Payload: map[string]any{
+				"policy":          res.Policy,
+				"cutoff":          res.Cutoff,
+				"samples_deleted": res.SamplesDeleted,
+				"runs_deleted":    res.RunsDeleted,
+				"duration_ms":     res.DurationMs,
+				"partial":         false,
+			},
+		})
+	}
 	return res, nil
 }
 
 // CleanupWorkbenchHistory prunes old workbench tests and batches older than olderThanDays.
 func (s *AppService) CleanupWorkbenchHistory(ctx context.Context, olderThanDays int) (int64, error) {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return 0, fmt.Errorf("history store is not initialized")
 	}
 	if olderThanDays <= 0 {

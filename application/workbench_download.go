@@ -36,6 +36,9 @@ type workbenchDownloadRuntime struct {
 }
 
 func (s *AppService) StartWorkbenchDownloadTest(ctx context.Context, req WorkbenchDownloadTestRequest) (returnedAttempt *history.WorkbenchDownloadAttempt, startErr error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not available")
+	}
 	received := time.Now()
 	defer func() {
 		if s.historyStore != nil && startErr == nil && returnedAttempt != nil {
@@ -498,7 +501,7 @@ func (s *AppService) emitWorkbenchDownloadUpdate(requestID string) {
 }
 
 func (s *AppService) CancelWorkbenchDownloadTest(ctx context.Context, attemptID string, query WorkbenchDownloadHistoryQuery) (*history.WorkbenchDownloadAttempt, error) {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized")
 	}
 	filter, err := workbenchDownloadHistoryFilter(query)
@@ -526,7 +529,7 @@ func (s *AppService) CancelWorkbenchDownloadTest(ctx context.Context, attemptID 
 }
 
 func (s *AppService) RetrySaveWorkbenchDownloadTest(ctx context.Context, attemptID string, query WorkbenchDownloadHistoryQuery) (*history.WorkbenchDownloadAttempt, error) {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized")
 	}
 	filter, err := workbenchDownloadHistoryFilter(query)
@@ -566,7 +569,7 @@ func (s *AppService) RetrySaveWorkbenchDownloadTest(ctx context.Context, attempt
 }
 
 func (s *AppService) GetWorkbenchDownloadAttempt(ctx context.Context, attemptID string, query WorkbenchDownloadHistoryQuery) (*history.WorkbenchDownloadAttempt, error) {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized")
 	}
 	filter, err := workbenchDownloadHistoryFilter(query)
@@ -577,7 +580,7 @@ func (s *AppService) GetWorkbenchDownloadAttempt(ctx context.Context, attemptID 
 }
 
 func (s *AppService) ListWorkbenchDownloadTests(ctx context.Context, query WorkbenchDownloadHistoryQuery) (WorkbenchDownloadHistoryResult, error) {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return WorkbenchDownloadHistoryResult{}, fmt.Errorf("history store is not initialized")
 	}
 	filter, err := workbenchDownloadHistoryFilter(query)

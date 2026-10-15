@@ -10,6 +10,9 @@ import (
 // withMonitorBudget serializes one ledger decision with all other Monitor
 // reservations. Unknown/closed stores fail before any request is permitted.
 func (d *DB) withMonitorBudget(ctx context.Context, utcDay string, decide func(*monitor.BudgetUsage) (bool, error)) (monitor.BudgetUsage, error) {
+	if d == nil {
+		return monitor.BudgetUsage{}, fmt.Errorf("Monitor budget database is closed")
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.db == nil {

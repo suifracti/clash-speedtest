@@ -95,6 +95,9 @@ type PublicServiceQueryResult struct {
 }
 
 func (d *DB) CreatePublicServiceAttempt(ctx context.Context, attempt *PublicServiceAttempt) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	if attempt == nil || strings.TrimSpace(attempt.AttemptID) == "" || strings.TrimSpace(attempt.RequestID) == "" {
 		return fmt.Errorf("public-service attempt and request IDs are required")
 	}
@@ -120,6 +123,9 @@ func (d *DB) CreatePublicServiceAttempt(ctx context.Context, attempt *PublicServ
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	_, err = d.db.ExecContext(ctx, `
 		INSERT INTO workbench_public_service_attempts (
 			attempt_id, request_id, profile_id, node_key, node_identity_key, config_revision_key,
@@ -137,8 +143,14 @@ func (d *DB) CreatePublicServiceAttempt(ctx context.Context, attempt *PublicServ
 }
 
 func (d *DB) BeginPublicServiceAttempt(ctx context.Context, attemptID string, startedAt time.Time) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	res, err := d.db.ExecContext(ctx, `UPDATE workbench_public_service_attempts
 		SET execution_state='running', started_at=? WHERE attempt_id=? AND execution_state='queued'`, startedAt.UTC(), attemptID)
 	if err != nil {
@@ -151,8 +163,14 @@ func (d *DB) BeginPublicServiceAttempt(ctx context.Context, attemptID string, st
 }
 
 func (d *DB) RequestPublicServiceCancellation(ctx context.Context, attemptID string) (bool, error) {
+	if d == nil {
+		return false, fmt.Errorf("history database is closed")
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return false, fmt.Errorf("history database is closed")
+	}
 	res, err := d.db.ExecContext(ctx, `UPDATE workbench_public_service_attempts
 		SET execution_state='cancelling' WHERE attempt_id=? AND execution_state='running'`, attemptID)
 	if err != nil {
@@ -163,10 +181,16 @@ func (d *DB) RequestPublicServiceCancellation(ctx context.Context, attemptID str
 }
 
 func (d *DB) StagePublicServiceResult(ctx context.Context, attemptID, executionState string, measurement PublicServiceMeasurement) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	waiting := time.Now()
 	d.mu.Lock()
 	waitNS := time.Since(waiting).Nanoseconds()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	if measurement.Details["timing_version"] == "1" {
 		measurement.Details["stage_save_lock_wait_ns"] = strconv.FormatInt(waitNS, 10)
 		measurement.Details["save_lock_scope"] = "in_process_writer_mutex_only"
@@ -189,8 +213,14 @@ func (d *DB) StagePublicServiceResult(ctx context.Context, attemptID, executionS
 }
 
 func (d *DB) MarkPublicServiceStageFailed(ctx context.Context, attemptID, executionState string, finishedAt time.Time, safeMessage string) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	res, err := d.db.ExecContext(ctx, `UPDATE workbench_public_service_attempts SET
 		finished_at=?, execution_state=?, persistence_state='failed', persistence_error=?
 		WHERE attempt_id=? AND execution_state IN ('running','cancelling') AND staged_result_json=''`,
@@ -205,8 +235,14 @@ func (d *DB) MarkPublicServiceStageFailed(ctx context.Context, attemptID, execut
 }
 
 func (d *DB) MarkPublicServiceSaveFailed(ctx context.Context, attemptID, safeMessage string) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	_, err := d.db.ExecContext(ctx, `UPDATE workbench_public_service_attempts SET
 		persistence_state='failed', persistence_error=?
 		WHERE attempt_id=? AND staged_result_json<>'' AND persistence_state<>'saved'`, safeMessage, attemptID)
@@ -220,10 +256,16 @@ func (d *DB) MarkPublicServiceSaveFailed(ctx context.Context, attemptID, safeMes
 // immutable fact table and updates the attempt's save state. Repeating it for
 // the same attempt is idempotent.
 func (d *DB) CommitPublicServiceResult(ctx context.Context, attemptID string) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	waiting := time.Now()
 	d.mu.Lock()
 	waitNS := time.Since(waiting).Nanoseconds()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin public-service result transaction: %w", err)
@@ -273,8 +315,14 @@ func (d *DB) CommitPublicServiceResult(ctx context.Context, attemptID string) er
 }
 
 func (d *DB) ReconcilePublicServiceAttempts(ctx context.Context) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin public-service recovery: %w", err)
@@ -316,6 +364,9 @@ func (d *DB) GetPublicServiceAttempt(ctx context.Context, attemptID string, filt
 }
 
 func (d *DB) getPublicServiceAttempt(ctx context.Context, where string, args ...any) (*PublicServiceAttempt, error) {
+	if d == nil || d.db == nil {
+		return nil, fmt.Errorf("history database is closed")
+	}
 	row := d.db.QueryRowContext(ctx, publicServiceAttemptSelect+` WHERE `+where, args...)
 	attempt, err := scanPublicServiceAttempt(row)
 	if err != nil {
@@ -328,6 +379,9 @@ func (d *DB) getPublicServiceAttempt(ctx context.Context, where string, args ...
 }
 
 func (d *DB) QueryPublicServiceAttempts(ctx context.Context, filter PublicServiceFilter) (*PublicServiceQueryResult, error) {
+	if d == nil || d.db == nil {
+		return nil, fmt.Errorf("history database is closed")
+	}
 	if err := validatePublicServiceFilter(filter, false); err != nil {
 		return nil, err
 	}

@@ -49,6 +49,9 @@ const measurementRoundSchema = `CREATE TABLE IF NOT EXISTS measurement_rounds (
  CREATE INDEX IF NOT EXISTS measurement_node_round ON measurement_round_items(profile_id,node_key,node_identity_key,config_revision_key,round_id);`
 
 func (d *DB) CreateMeasurementRound(ctx context.Context, r MeasurementRound) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	if strings.TrimSpace(r.RoundID) == "" || len(r.RoundID) > 96 || r.StartedAt.IsZero() || len(r.Items) == 0 || len(r.Items) > 25000 {
 		return fmt.Errorf("invalid round identity or bounded plan")
 	}
@@ -66,6 +69,9 @@ func (d *DB) CreateMeasurementRound(ctx context.Context, r MeasurementRound) err
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -99,6 +105,9 @@ func (d *DB) CreateMeasurementRound(ctx context.Context, r MeasurementRound) err
 	return tx.Commit()
 }
 func (d *DB) FinishMeasurementRound(ctx context.Context, id, state string) error {
+	if d == nil || d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	if state != "finished" && state != "interrupted" {
 		return fmt.Errorf("invalid finished round state")
 	}
@@ -106,10 +115,16 @@ func (d *DB) FinishMeasurementRound(ctx context.Context, id, state string) error
 	return err
 }
 func (d *DB) ReconcileMeasurementRounds(ctx context.Context) error {
+	if d == nil || d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	_, err := d.db.ExecContext(ctx, "UPDATE measurement_rounds SET state='interrupted' WHERE state='running'")
 	return err
 }
 func (d *DB) MeasurementRequestTrigger(ctx context.Context, requestID, profile, nid, rev, project, service string) (string, error) {
+	if d == nil || d.db == nil {
+		return "", fmt.Errorf("history database is closed")
+	}
 	var trigger string
 	err := d.db.QueryRowContext(ctx, `SELECT r.trigger_type FROM measurement_rounds r JOIN measurement_round_items i ON i.round_id=r.round_id WHERE i.request_id=? AND i.profile_id=? AND i.node_identity_key=? AND i.config_revision_key=? AND i.project=? AND i.service_id=?`, requestID, profile, nid, rev, project, service).Scan(&trigger)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -118,10 +133,16 @@ func (d *DB) MeasurementRequestTrigger(ctx context.Context, requestID, profile, 
 	return trigger, err
 }
 func (d *DB) MarkMeasurementNotExecuted(ctx context.Context, requestID, reason string) error {
+	if d == nil || d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	_, err := d.db.ExecContext(ctx, "UPDATE measurement_round_items SET not_executed_reason=? WHERE request_id=?", reason, requestID)
 	return err
 }
 func (d *DB) QueryMeasurementRoundNodes(ctx context.Context, profile, node, nid, rev string, limit int) ([]MeasurementRound, error) {
+	if d == nil || d.db == nil {
+		return nil, fmt.Errorf("history database is closed")
+	}
 	if profile == "" || node == "" || nid == "" || rev == "" {
 		return nil, fmt.Errorf("round query requires exact node scope")
 	}
@@ -225,6 +246,9 @@ func (d *DB) QueryMeasurementRoundNodes(ctx context.Context, profile, node, nid,
 }
 
 func (d *DB) FinishManualMeasurementRound(ctx context.Context, id, state string) error {
+	if d == nil || d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	var trigger string
 	if err := d.db.QueryRowContext(ctx, "SELECT trigger_type FROM measurement_rounds WHERE round_id=?", id).Scan(&trigger); err != nil {
 		return err
@@ -238,6 +262,9 @@ func (d *DB) FinishManualMeasurementRound(ctx context.Context, id, state string)
 // Single compatibility requests have no external plan runner to close their
 // parent. Never close a multi-item/user-created plan from one child callback.
 func (d *DB) FinishAutomaticMeasurementRound(ctx context.Context, requestID string) error {
+	if d == nil || d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	_, err := d.db.ExecContext(ctx, `UPDATE measurement_rounds SET state='finished' WHERE state='running' AND round_id LIKE 'manual-%' AND round_id IN(SELECT round_id FROM measurement_round_items WHERE request_id=?) AND (SELECT COUNT(*) FROM measurement_round_items i WHERE i.round_id=measurement_rounds.round_id)=1`, requestID)
 	return err
 }

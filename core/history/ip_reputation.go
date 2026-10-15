@@ -11,6 +11,9 @@ const ipReputationDDL = `CREATE TABLE IF NOT EXISTS ip_reputation_cache (cache_k
 CREATE TABLE IF NOT EXISTS ip_reputation_budget (singleton INTEGER PRIMARY KEY CHECK(singleton=1), utc_day TEXT NOT NULL, used INTEGER NOT NULL, next_allowed TEXT NOT NULL);`
 
 func (d *DB) LoadIPReputation(ctx context.Context, key string, now time.Time) (string, error) {
+	if d == nil || d.db == nil {
+		return "", fmt.Errorf("IPOK budget database is closed")
+	}
 	var data, validUntil string
 	err := d.db.QueryRowContext(ctx, "SELECT result_json,valid_until FROM ip_reputation_cache WHERE cache_key=?", key).Scan(&data, &validUntil)
 	if err == sql.ErrNoRows {
@@ -29,8 +32,14 @@ func (d *DB) LoadIPReputation(ctx context.Context, key string, now time.Time) (s
 	return data, nil
 }
 func (d *DB) SaveIPReputation(ctx context.Context, key, data string, at time.Time) error {
+	if d == nil {
+		return fmt.Errorf("IPOK budget database is closed")
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("IPOK budget database is closed")
+	}
 	_, err := d.db.ExecContext(ctx, "INSERT INTO ip_reputation_cache(cache_key,result_json,queried_at,valid_until)VALUES(?,?,?,?) ON CONFLICT(cache_key) DO UPDATE SET result_json=excluded.result_json,queried_at=excluded.queried_at,valid_until=excluded.valid_until", key, data, at.UTC().Format(time.RFC3339Nano), at.Add(24*time.Hour).UTC().Format(time.RFC3339Nano))
 	return err
 }
@@ -66,8 +75,14 @@ func (d *DB) CheckIPReputationBudget(ctx context.Context, at time.Time) (bool, e
 }
 
 func (d *DB) ReserveIPReputation(ctx context.Context, at time.Time) (bool, error) {
+	if d == nil {
+		return false, fmt.Errorf("IPOK budget database is closed")
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return false, fmt.Errorf("IPOK budget database is closed")
+	}
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -97,8 +112,14 @@ func (d *DB) ReserveIPReputation(ctx context.Context, at time.Time) (bool, error
 	return true, tx.Commit()
 }
 func (d *DB) CoolIPReputation(ctx context.Context, until time.Time) error {
+	if d == nil {
+		return fmt.Errorf("IPOK budget database is closed")
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("IPOK budget database is closed")
+	}
 	_, err := d.db.ExecContext(ctx, "UPDATE ip_reputation_budget SET next_allowed=CASE WHEN next_allowed>? THEN next_allowed ELSE ? END WHERE singleton=1", until.UTC().Format(time.RFC3339Nano), until.UTC().Format(time.RFC3339Nano))
 	return err
 }

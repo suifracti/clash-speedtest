@@ -11,11 +11,17 @@ import (
 )
 
 func (d *DB) CreateLatencyBatch(ctx context.Context, batch *LatencyBatch) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	if batch == nil || strings.TrimSpace(batch.BatchID) == "" || strings.TrimSpace(batch.RequestID) == "" || len(batch.Items) == 0 {
 		return fmt.Errorf("latency batch identity or selection is incomplete")
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin latency batch: %w", err)
@@ -56,6 +62,9 @@ func (d *DB) CreateLatencyBatch(ctx context.Context, batch *LatencyBatch) error 
 }
 
 func (d *DB) UpdateLatencyBatchItem(ctx context.Context, item *LatencyBatchItem) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	if item == nil || item.ItemID == "" || item.BatchID == "" {
 		return fmt.Errorf("latency batch item identity is incomplete")
 	}
@@ -69,6 +78,9 @@ func (d *DB) UpdateLatencyBatchItem(ctx context.Context, item *LatencyBatchItem)
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	result, err := d.db.ExecContext(ctx, `UPDATE workbench_latency_batch_items SET execution_state=?,persistence_state=?,attempt_id=?,started_at=?,finished_at=?,error_message=?,persistence_error=?,result_json=? WHERE batch_id=? AND item_id=?`, item.ExecutionState, item.PersistenceState, nullableText(item.AttemptID), nullableTime(item.StartedAt), nullableTime(item.FinishedAt), item.ErrorMessage, item.PersistenceError, resultJSON, item.BatchID, item.ItemID)
 	if err != nil {
 		return fmt.Errorf("update latency batch item %s: %w", item.ItemID, err)
@@ -84,8 +96,14 @@ func (d *DB) UpdateLatencyBatchItem(ctx context.Context, item *LatencyBatchItem)
 }
 
 func (d *DB) UpdateLatencyBatchState(ctx context.Context, batchID, state string) error {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	result, err := d.db.ExecContext(ctx, `UPDATE workbench_latency_batches SET state=? WHERE batch_id=?`, state, batchID)
 	if err != nil {
 		return fmt.Errorf("update latency batch %s: %w", batchID, err)
@@ -101,6 +119,9 @@ func (d *DB) UpdateLatencyBatchState(ctx context.Context, batchID, state string)
 }
 
 func (d *DB) GetLatencyBatch(ctx context.Context, batchID string) (*LatencyBatch, error) {
+	if d == nil || d.db == nil {
+		return nil, fmt.Errorf("history database is closed")
+	}
 	batch := &LatencyBatch{}
 	err := d.db.QueryRowContext(ctx, `SELECT batch_id,request_id,test_project,timeout_seconds,requested_at,state,target_id,(SELECT COUNT(*) FROM workbench_latency_batch_items i WHERE i.batch_id=b.batch_id) FROM workbench_latency_batches b WHERE batch_id=?`, batchID).Scan(&batch.BatchID, &batch.RequestID, &batch.TestProject, &batch.TimeoutSeconds, &batch.RequestedAt, &batch.State, &batch.TargetID, &batch.ItemCount)
 	if err != nil {
@@ -166,6 +187,9 @@ func scanLatencyBatchItem(scanner interface{ Scan(...any) error }) (*LatencyBatc
 }
 
 func (d *DB) FindLatencyBatchByRequestID(ctx context.Context, requestID string) (*LatencyBatch, error) {
+	if d == nil || d.db == nil {
+		return nil, fmt.Errorf("history database is closed")
+	}
 	var batchID string
 	if err := d.db.QueryRowContext(ctx, `SELECT batch_id FROM workbench_latency_batches WHERE request_id=?`, requestID).Scan(&batchID); err != nil {
 		if err == sql.ErrNoRows {
@@ -177,6 +201,9 @@ func (d *DB) FindLatencyBatchByRequestID(ctx context.Context, requestID string) 
 }
 
 func (d *DB) ListLatencyBatches(ctx context.Context, limit int) ([]LatencyBatch, error) {
+	if d == nil || d.db == nil {
+		return nil, fmt.Errorf("history database is closed")
+	}
 	if limit <= 0 {
 		limit = 20
 	}
@@ -204,6 +231,9 @@ func (d *DB) ListLatencyBatches(ctx context.Context, limit int) ([]LatencyBatch,
 // terminal parents whose child item still has unresolved execution or save
 // state. A committed attempt is checked separately when each batch is loaded.
 func (d *DB) ListLatencyBatchesNeedingRecovery(ctx context.Context) ([]LatencyBatch, error) {
+	if d == nil || d.db == nil {
+		return nil, fmt.Errorf("history database is closed")
+	}
 	rows, err := d.db.QueryContext(ctx, `SELECT b.batch_id,b.request_id,b.test_project,b.timeout_seconds,b.requested_at,b.state,b.target_id,(SELECT COUNT(*) FROM workbench_latency_batch_items i WHERE i.batch_id=b.batch_id) FROM workbench_latency_batches b WHERE b.state IN ('queued','running','cancelling','saving') OR EXISTS (SELECT 1 FROM workbench_latency_batch_items i WHERE i.batch_id=b.batch_id AND (i.execution_state IN ('queued','running') OR i.persistence_state IN ('pending','saving'))) ORDER BY b.requested_at DESC,b.batch_id DESC`)
 	if err != nil {
 		return nil, err

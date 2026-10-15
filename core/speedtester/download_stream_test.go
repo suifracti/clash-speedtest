@@ -335,6 +335,7 @@ func TestDownloadErrorClassConnectionResetAndRefused(t *testing.T) {
 		{err: errors.New("dial tcp 192.0.2.1:443: connect: no route to host"), expected: "network_unreachable"},
 		{err: errors.New("dial tcp 192.0.2.1:443: connect: network is unreachable"), expected: "network_unreachable"},
 		{err: errors.New("dial tcp 192.0.2.1:443: connect: host is down"), expected: "network_unreachable"},
+		{err: nil, expected: "none"},
 		{err: io.ErrUnexpectedEOF, expected: "unexpected_eof"},
 		{err: io.EOF, expected: "unexpected_eof"},
 	}
@@ -345,3 +346,12 @@ func TestDownloadErrorClassConnectionResetAndRefused(t *testing.T) {
 		}
 	}
 }
+
+func TestDownloadStreamSamplerNilDefense(t *testing.T) {
+	var sampler *downloadStreamSampler
+	sample, ok := sampler.add(1024, time.Now(), false)
+	if ok || sample.CumulativeBytes != 0 {
+		t.Fatalf("expected nil sampler to return false, got ok=%v sample=%+v", ok, sample)
+	}
+}
+

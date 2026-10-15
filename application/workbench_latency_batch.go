@@ -61,7 +61,7 @@ func (s *AppService) StartWorkbenchLatencyBatch(ctx context.Context, req Workben
 	if _, err := speedtester.LatencyTargetURL(req.TargetID); err != nil {
 		return nil, monitor.NewValidationError(err.Error())
 	}
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized")
 	}
 	requestID := strings.TrimSpace(req.RequestID)
@@ -168,6 +168,9 @@ func (s *AppService) StartWorkbenchLatencyBatch(ctx context.Context, req Workben
 }
 
 func (s *AppService) CancelWorkbenchLatencyBatch(batchID string) (*WorkbenchLatencyBatchDTO, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not available")
+	}
 	batchID = strings.TrimSpace(batchID)
 	s.workbenchMu.Lock()
 	runtime := s.workbenchActiveBatch
@@ -193,7 +196,7 @@ func (s *AppService) CancelWorkbenchLatencyBatch(batchID string) (*WorkbenchLate
 }
 
 func (s *AppService) GetWorkbenchLatencyBatch(ctx context.Context, batchID string) (*WorkbenchLatencyBatchDTO, error) {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized")
 	}
 	batch, err := s.historyStore.GetLatencyBatch(ctx, strings.TrimSpace(batchID))
@@ -204,7 +207,7 @@ func (s *AppService) GetWorkbenchLatencyBatch(ctx context.Context, batchID strin
 }
 
 func (s *AppService) ListWorkbenchLatencyBatches(ctx context.Context, limit int) ([]WorkbenchLatencyBatchDTO, error) {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized")
 	}
 	batches, err := s.historyStore.ListLatencyBatches(ctx, limit)
@@ -219,6 +222,9 @@ func (s *AppService) ListWorkbenchLatencyBatches(ctx context.Context, limit int)
 }
 
 func (s *AppService) RetryWorkbenchLatencyBatchItem(ctx context.Context, batchID, itemID string) (*WorkbenchLatencyBatchDTO, error) {
+	if s == nil || s.historyStore == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
 	s.workbenchRetryMu.Lock()
 	defer s.workbenchRetryMu.Unlock()
 	if err := s.beginWorkbenchSingle(); err != nil {

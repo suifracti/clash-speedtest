@@ -41,7 +41,7 @@ func validateMonitorStorageThresholds(settings *AppSettings) error {
 }
 
 func (s *AppService) canonicalMonitorHistory() error {
-	if s.historyStore == nil {
+	if s == nil || s.historyStore == nil {
 		return fmt.Errorf("history store is not initialized")
 	}
 	if !s.appPaths.Explicit && s.appPaths.HistoryDir != "" && filepath.Clean(s.historyStore.Dir()) != filepath.Clean(s.appPaths.HistoryDir) {
