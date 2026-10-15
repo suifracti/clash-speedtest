@@ -19,14 +19,28 @@ func physicalGatewayMetrics() map[int]uint32 {
 	if err != nil {
 		return metrics
 	}
+	return physicalRouteGatewayMetrics(messages)
+}
+
+func physicalRouteGatewayMetrics(messages []route.Message) map[int]uint32 {
+	metrics := map[int]uint32{}
 	for _, m := range messages {
 		r, ok := m.(*route.RouteMessage)
-		if !ok || r.Flags&syscall.RTF_UP == 0 || r.Flags&syscall.RTF_GATEWAY == 0 || len(r.Addrs) <= syscall.RTAX_GATEWAY {
+		if !ok || r.Flags&syscall.RTF_UP == 0 || r.Flags&syscall.RTF_GATEWAY == 0 || r.Flags&syscall.RTF_HOST != 0 || len(r.Addrs) <= syscall.RTAX_GATEWAY {
 			continue
 		}
 		dst, ok := r.Addrs[syscall.RTAX_DST].(*route.Inet4Addr)
 		if !ok || dst.IP != [4]byte{} {
 			continue
+		}
+		// A zero destination can also be a VPN /1 split or another subnet.
+		// Only a zero mask is an explicit default; retain absent-mask handling
+		// for non-host routes, as before.
+		if len(r.Addrs) > syscall.RTAX_NETMASK && r.Addrs[syscall.RTAX_NETMASK] != nil {
+			mask, ok := r.Addrs[syscall.RTAX_NETMASK].(*route.Inet4Addr)
+			if !ok || mask.IP != [4]byte{} {
+				continue
+			}
 		}
 		gateway, ok := r.Addrs[syscall.RTAX_GATEWAY].(*route.Inet4Addr)
 		if !ok || gateway.IP == [4]byte{} {
