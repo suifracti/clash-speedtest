@@ -182,6 +182,50 @@ class GuardTests(unittest.TestCase):
         self.assertEqual((self.folder / 'run-boundary.json').read_bytes(), before)
         self.assertEqual(self.signals, [])
 
+    def test_data_root_prefix_cannot_select_another_process(self):
+        self.command = self.command.replace(str(self.root), str(self.root) + '-other')
+        with self.assertRaises(RuntimeError):
+            self.run_guard(lambda: None)
+        self.assertEqual(self.signals, [])
+        self.assertFalse((self.folder / 'run-boundary.json').exists())
+
+    def test_expired_arm_stops_before_accepting_saved_completion(self):
+        def first():
+            self.write('arm-live-guard.json', {'armed_at_epoch': self.clock - 181})
+            self.results()
+        result = self.run_guard(first)
+        self.assertEqual(result['stop_reason'], 'absolute_deadline')
+        self.assertEqual(len(self.signals), 1)
+
+    def test_partial_arm_input_stops_with_recorded_boundary(self):
+        def first():
+            (self.folder / 'arm-live-guard.json').write_text('{')
+        try:
+            result = self.run_guard(first)
+        except json.JSONDecodeError as exc:
+            self.fail(f'partial arm input escaped the observer safety boundary: {exc}')
+        self.assertEqual(result['state'], 'stopped')
+        self.assertNotEqual(result['stop_reason'], 'completed_saved')
+        self.assertEqual(len(self.signals), 1)
+
+    def test_budget_stop_rechecks_identity_before_signalling(self):
+        original_connect = sqlite3.connect
+
+        def connect(*args, **kwargs):
+            if self.ticks:
+                self.command = '/usr/bin/unrelated-replacement-process'
+            return original_connect(*args, **kwargs)
+
+        def first():
+            self.conn.execute("INSERT INTO workbench_download_attempts VALUES ('unauthorized')")
+            self.conn.commit()
+
+        with patch('sqlite3.connect', side_effect=connect):
+            result = self.run_guard(first)
+        self.assertEqual(self.signals, [])
+        self.assertEqual(result['state'], 'stopped')
+        self.assertNotEqual(result['stop_reason'], 'completed_saved')
+
 
 if __name__ == '__main__':
     unittest.main()

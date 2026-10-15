@@ -7,7 +7,7 @@ SQLite; SIGTERM is reserved for a still-identical isolated process at a safety
 boundary. A saved terminal round ends observation without closing the App.
 Do not point this at a previous run: its evidence must remain immutable.
 """
-import os,json,time,signal,sqlite3,subprocess,hashlib
+import os,json,time,signal,sqlite3,subprocess,hashlib,re,math
 from pathlib import Path
 from contextlib import closing
 import sys
@@ -22,8 +22,25 @@ r=Path(sys.argv[1]).resolve()
 if (r/'run-boundary.json').exists():
  raise SystemExit('refusing to overwrite an existing run')
 entry=json.loads((r/'candidate-entry.json').read_text()); root=Path(entry['data_root']);core=entry['core']
+def matching_process(command):
+ command=command.strip()
+ if not command.startswith(core+' '):return False
+ if not re.search(r'(?:^|\s)--gui(?:\s|$)',command):return False
+ if not re.search(r'(?:^|\s)--no-auto-credentials(?:\s|$)',command):return False
+ roots=re.findall(r'(?:^|\s)--data-dir(?:=|\s+)(.*?)(?=\s--[A-Za-z]|$)',command)
+ return len(roots)==1 and roots[0].strip()==str(root)
+
+def terminate_verified():
+ try:
+  current=subprocess.check_output(['ps','-ww','-p',str(pid),'-o','command='],timeout=2).decode()
+  if not matching_process(current):return False
+  os.kill(pid,signal.SIGTERM)
+  return True
+ except (subprocess.SubprocessError,ProcessLookupError):
+  return False
+
 ps=subprocess.check_output(['ps','-axww','-o','pid=,command=']).decode().splitlines()
-ps=[x.strip().split(maxsplit=1) for x in ps if core+' --gui ' in x and str(root) in x]
+ps=[x.strip().split(maxsplit=1) for x in ps if len(x.strip().split(maxsplit=1))==2 and matching_process(x.strip().split(maxsplit=1)[1])]
 require(len(ps)==1,'single isolated writer gate failed')
 pid=int(ps[0][0]);require('--no-auto-credentials' in ps[0][1], 'automatic credentials must be disabled')
 require(hashlib.sha256(Path(core).read_bytes()).hexdigest()==json.loads((r/'build-manifest.json').read_text())['core_sha256'], 'candidate binary mismatch')
@@ -72,16 +89,20 @@ while True:
  reason=None
  if (r/'stop-live-guard').exists():reason='operator_stop'
  elif not deadline and (r/'arm-live-guard.json').exists():
-  arm=json.loads((r/'arm-live-guard.json').read_text());deadline=arm['armed_at_epoch']+180;boundary.update(state='armed',started_epoch=arm['armed_at_epoch'],absolute_deadline_epoch=deadline)
+  try:
+   arm=json.loads((r/'arm-live-guard.json').read_text());armed=float(arm['armed_at_epoch'])
+   require(math.isfinite(armed) and armed<=time.time(),'invalid arm time')
+   deadline=armed+180;boundary.update(state='armed',started_epoch=armed,absolute_deadline_epoch=deadline)
+  except (OSError,ValueError,TypeError,KeyError,GateViolation):reason='invalid_arm'
  elif not deadline and time.time()-created>600:reason='prestart_timeout'
- elif deadline and time.time()>=deadline:reason='absolute_deadline'
+ if reason is None and deadline and time.time()>=deadline:reason='absolute_deadline'
  try:
   command=subprocess.check_output(['ps','-ww','-p',str(pid),'-o','command=']).decode()
-  if core+' --gui ' not in command or str(root) not in command:reason='process_identity_changed'
+  if not matching_process(command):reason='process_identity_changed'
  except subprocess.CalledProcessError:reason='process_exited'
  if reason:
   if reason not in ['process_exited','prestart_timeout']:
-   if core+' --gui ' in command and str(root) in command:os.kill(pid,signal.SIGTERM)
+   boundary['signal_sent']=terminate_verified()
   boundary.update(state='stopped',stop_reason=reason,finished_epoch=time.time());(r/'run-boundary.json').write_text(json.dumps(boundary,indent=2));break
  try:
   with closing(db()) as d:
@@ -104,7 +125,7 @@ while True:
  except Exception as e:
   failures+=1;events.append({'at':time.time(),'observer_error':type(e).__name__,'consecutive':failures})
   if isinstance(e,GateViolation) or failures>=3:
-   os.kill(pid,signal.SIGTERM);boundary.update(state='stopped',stop_reason='budget_or_observer_gate',finished_epoch=time.time());break
+   boundary['signal_sent']=terminate_verified();boundary.update(state='stopped',stop_reason='budget_or_observer_gate',finished_epoch=time.time());break
  try:
   sockets=subprocess.run(['lsof','-nP','-a','-p',str(pid),'-i'],capture_output=True,text=True,timeout=2).stdout
   with (r/'private/live-sockets.log').open('a') as f:f.write(str(time.time())+'\n'+sockets)
