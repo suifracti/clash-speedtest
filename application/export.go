@@ -25,6 +25,9 @@ type ExportClashConfigResponse struct {
 // ExportNodesClashConfig extracts the raw proxy configurations for the requested nodeKeys
 // and generates a complete, valid Clash/Mihomo YAML configuration file.
 func (s *AppService) ExportNodesClashConfig(_ context.Context, req ExportClashConfigRequest) (*ExportClashConfigResponse, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
 	if len(req.NodeKeys) == 0 && len(req.Selections) == 0 {
 		return nil, monitor.NewValidationError("请先勾选或指定至少一个要导出的节点")
 	}

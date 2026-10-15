@@ -28,6 +28,9 @@ INSERT OR IGNORE INTO subscription_usage_refresh(singleton) VALUES(1);
 `
 
 func (s *Store) SaveSubscriptionUsage(ctx context.Context, snapshot subscriptionusage.Snapshot) error {
+	if s == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
 	if snapshot.AccountKey == "" || snapshot.CapturedAt.IsZero() {
 		return fmt.Errorf("incomplete subscription usage snapshot")
 	}
@@ -53,6 +56,9 @@ func (s *Store) SaveSubscriptionUsage(ctx context.Context, snapshot subscription
 }
 
 func (s *Store) HasSubscriptionUsage(ctx context.Context, accountKey string) (bool, error) {
+	if s == nil {
+		return false, fmt.Errorf("history store is not initialized")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.db == nil {
@@ -69,6 +75,9 @@ func (s *Store) HasSubscriptionUsage(ctx context.Context, accountKey string) (bo
 }
 
 func (s *Store) QuerySubscriptionUsage(ctx context.Context, from, until time.Time) ([]subscriptionusage.Snapshot, error) {
+	if s == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.db == nil {
@@ -100,6 +109,9 @@ func (s *Store) QuerySubscriptionUsage(ctx context.Context, from, until time.Tim
 }
 
 func (s *Store) ClaimSubscriptionRefresh(ctx context.Context, now, next time.Time, force bool) (bool, error) {
+	if s == nil {
+		return false, fmt.Errorf("history store is not initialized")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.db == nil {
@@ -119,6 +131,9 @@ func (s *Store) ClaimSubscriptionRefresh(ctx context.Context, now, next time.Tim
 }
 
 func (s *Store) FinishSubscriptionRefresh(ctx context.Context, state, message string) error {
+	if s == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.db == nil {
@@ -134,6 +149,9 @@ func (s *Store) FinishSubscriptionRefresh(ctx context.Context, state, message st
 }
 
 func (s *Store) SubscriptionRefreshState(ctx context.Context) (*subscriptionusage.RefreshState, error) {
+	if s == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.db == nil {

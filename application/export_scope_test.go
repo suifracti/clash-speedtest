@@ -229,4 +229,12 @@ func TestExportClashConfigNodeNameSanitization(t *testing.T) {
 	}
 }
 
+func TestExportNodesClashConfigNilServiceDefense(t *testing.T) {
+	var a *AppService
+	_, err := a.ExportNodesClashConfig(context.Background(), ExportClashConfigRequest{})
+	if err == nil {
+		t.Fatal("expected error on nil AppService")
+	}
+}
+
 

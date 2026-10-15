@@ -1,11 +1,15 @@
 package history
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/faceair/clash-speedtest/core/monitor"
+	"github.com/faceair/clash-speedtest/core/subscriptionusage"
 )
 
 func TestHistoryStore(t *testing.T) {
@@ -567,6 +571,48 @@ func TestStoreNilSafetyAndAirportHistoryBoundaries(t *testing.T) {
 	}
 	if node.MaxLatencyMs != 1500000 {
 		t.Fatalf("expected MaxLatencyMs=1500000, got %d", node.MaxLatencyMs)
+	}
+}
+
+func TestStoreNilDBComprehensiveDefense(t *testing.T) {
+	ctx := context.Background()
+	stores := []*Store{nil, {}}
+
+	for _, s := range stores {
+		if err := s.CreatePublicServiceAttempt(ctx, &PublicServiceAttempt{}); err == nil {
+			t.Fatal("expected error from CreatePublicServiceAttempt")
+		}
+		if err := s.BeginPublicServiceAttempt(ctx, "id", time.Now()); err == nil {
+			t.Fatal("expected error from BeginPublicServiceAttempt")
+		}
+		if _, err := s.RequestPublicServiceCancellation(ctx, "id"); err == nil {
+			t.Fatal("expected error from RequestPublicServiceCancellation")
+		}
+		if err := s.CreateWorkbenchDownloadAttempt(ctx, &WorkbenchDownloadAttempt{}); err == nil {
+			t.Fatal("expected error from CreateWorkbenchDownloadAttempt")
+		}
+		if err := s.SaveMonitorRun(ctx, &monitor.MonitorRun{}); err == nil {
+			t.Fatal("expected error from SaveMonitorRun")
+		}
+		if _, err := s.ApplyRetention(ctx, monitor.RetentionRequest{}); err == nil {
+			t.Fatal("expected error from ApplyRetention")
+		}
+		if _, err := s.GetDerivedStats(ctx, monitor.StatsQuery{}); err == nil {
+			t.Fatal("expected error from GetDerivedStats")
+		}
+		if _, err := s.GetNodeTimelineSamples(ctx, "key", time.Now()); err == nil {
+			t.Fatal("expected error from GetNodeTimelineSamples")
+		}
+		if err := s.SaveSubscriptionUsage(ctx, subscriptionusage.Snapshot{AccountKey: "acc", CapturedAt: time.Now()}); err == nil {
+			t.Fatal("expected error from SaveSubscriptionUsage")
+		}
+		if _, err := s.HasSubscriptionUsage(ctx, "acc"); err == nil {
+			t.Fatal("expected error from HasSubscriptionUsage")
+		}
+		if _, err := s.QuerySubscriptionUsage(ctx, time.Now(), time.Now()); err == nil {
+			t.Fatal("expected error from QuerySubscriptionUsage")
+		}
+		s.SetTestBatchFailAt(5)
 	}
 }
 

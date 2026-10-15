@@ -325,100 +325,172 @@ func (s *Store) DB() *DB {
 }
 
 func (s *Store) CreatePublicServiceAttempt(ctx context.Context, attempt *PublicServiceAttempt) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
 	return s.db.CreatePublicServiceAttempt(ctx, attempt)
 }
 
 func (s *Store) BeginPublicServiceAttempt(ctx context.Context, attemptID string, startedAt time.Time) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
 	return s.db.BeginPublicServiceAttempt(ctx, attemptID, startedAt)
 }
 
 func (s *Store) RequestPublicServiceCancellation(ctx context.Context, attemptID string) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, fmt.Errorf("history store is not initialized")
+	}
 	return s.db.RequestPublicServiceCancellation(ctx, attemptID)
 }
 
 func (s *Store) StagePublicServiceResult(ctx context.Context, attemptID, executionState string, measurement PublicServiceMeasurement) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
 	return s.db.StagePublicServiceResult(ctx, attemptID, executionState, measurement)
 }
 
 func (s *Store) MarkPublicServiceStageFailed(ctx context.Context, attemptID, executionState string, finishedAt time.Time, safeMessage string) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
 	return s.db.MarkPublicServiceStageFailed(ctx, attemptID, executionState, finishedAt, safeMessage)
 }
 
 func (s *Store) MarkPublicServiceSaveFailed(ctx context.Context, attemptID, safeMessage string) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
 	return s.db.MarkPublicServiceSaveFailed(ctx, attemptID, safeMessage)
 }
 
 func (s *Store) CommitPublicServiceResult(ctx context.Context, attemptID string) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
 	return s.db.CommitPublicServiceResult(ctx, attemptID)
 }
 
 func (s *Store) ReconcilePublicServiceAttempts(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
 	return s.db.ReconcilePublicServiceAttempts(ctx)
 }
 
 func (s *Store) GetPublicServiceAttemptByRequestID(ctx context.Context, requestID string) (*PublicServiceAttempt, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
 	return s.db.GetPublicServiceAttemptByRequestID(ctx, requestID)
 }
 
 func (s *Store) GetPublicServiceAttempt(ctx context.Context, attemptID string, filter PublicServiceFilter) (*PublicServiceAttempt, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
 	return s.db.GetPublicServiceAttempt(ctx, attemptID, filter)
 }
 
 func (s *Store) QueryPublicServiceAttempts(ctx context.Context, filter PublicServiceFilter) (*PublicServiceQueryResult, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
 	return s.db.QueryPublicServiceAttempts(ctx, filter)
 }
 
 func (s *Store) CreateWorkbenchDownloadAttempt(ctx context.Context, attempt *WorkbenchDownloadAttempt) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
 	return s.db.CreateWorkbenchDownloadAttempt(ctx, attempt)
 }
 
 func (s *Store) BeginWorkbenchDownloadAttempt(ctx context.Context, attemptID string, startedAt time.Time) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
 	return s.db.BeginWorkbenchDownloadAttempt(ctx, attemptID, startedAt)
 }
 
 func (s *Store) RequestWorkbenchDownloadCancellation(ctx context.Context, attemptID string) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, fmt.Errorf("history store is not initialized")
+	}
 	return s.db.RequestWorkbenchDownloadCancellation(ctx, attemptID)
 }
 
 func (s *Store) StageWorkbenchDownloadResult(ctx context.Context, attemptID, executionState string, result WorkbenchDownloadMeasurement) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
 	return s.db.StageWorkbenchDownloadResult(ctx, attemptID, executionState, result)
 }
 
 func (s *Store) MarkWorkbenchDownloadStageFailed(ctx context.Context, attemptID, executionState string, finishedAt time.Time, message string) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
 	return s.db.MarkWorkbenchDownloadStageFailed(ctx, attemptID, executionState, finishedAt, message)
 }
 
 func (s *Store) MarkWorkbenchDownloadSaveFailed(ctx context.Context, attemptID, message string) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
 	return s.db.MarkWorkbenchDownloadSaveFailed(ctx, attemptID, message)
 }
 
 func (s *Store) CommitWorkbenchDownloadResult(ctx context.Context, attemptID string) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
 	return s.db.CommitWorkbenchDownloadResult(ctx, attemptID)
 }
 
 func (s *Store) ReconcileWorkbenchDownloadAttempts(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
 	return s.db.ReconcileWorkbenchDownloadAttempts(ctx)
 }
 
 func (s *Store) GetWorkbenchDownloadAttemptByRequestID(ctx context.Context, requestID string) (*WorkbenchDownloadAttempt, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
 	return s.db.GetWorkbenchDownloadAttemptByRequestID(ctx, requestID)
 }
 
 func (s *Store) GetWorkbenchDownloadAttempt(ctx context.Context, attemptID string, filter WorkbenchDownloadFilter) (*WorkbenchDownloadAttempt, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
 	return s.db.GetWorkbenchDownloadAttempt(ctx, attemptID, filter)
 }
 
 func (s *Store) QueryWorkbenchDownloadAttempts(ctx context.Context, filter WorkbenchDownloadFilter) (*WorkbenchDownloadQueryResult, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
 	return s.db.QueryWorkbenchDownloadAttempts(ctx, filter)
 }
 
 // SampleStore interface implementation delegating to SQLite DB
 
 func (s *Store) SaveMonitorRun(ctx context.Context, run *monitor.MonitorRun) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
 	return s.db.SaveMonitorRun(ctx, run)
 }
 
 func (s *Store) UpdateMonitorRun(ctx context.Context, run *monitor.MonitorRun) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
 	return s.db.UpdateMonitorRun(ctx, run)
 }
 
@@ -430,14 +502,23 @@ func (s *Store) MarkRunningMonitorRunsInterrupted(ctx context.Context) error {
 }
 
 func (s *Store) SaveMonitorSamples(ctx context.Context, samples []*monitor.MonitorSample) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("history store is not initialized")
+	}
 	return s.db.SaveMonitorSamples(ctx, samples)
 }
 
 func (s *Store) QueryMonitorRuns(ctx context.Context, jobID string, limit int) ([]*monitor.MonitorRun, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
 	return s.db.QueryMonitorRuns(ctx, jobID, limit)
 }
 
 func (s *Store) QueryMonitorSamples(ctx context.Context, filter monitor.SampleFilter) ([]*monitor.MonitorSample, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
 	return s.db.QueryMonitorSamples(ctx, filter)
 }
 
@@ -477,23 +558,35 @@ func (s *Store) ListMonitorJobDefinitions(ctx context.Context) ([]*monitor.Monit
 }
 
 func (s *Store) GetNodeTimelineSamples(ctx context.Context, nodeKey string, since time.Time) ([]*monitor.MonitorSample, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
 	return s.db.GetNodeTimelineSamples(ctx, nodeKey, since)
 }
 
 func (s *Store) QueryMonitorSamplesCursor(ctx context.Context, filter monitor.CursorFilter) (*monitor.SampleCursorPage, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
 	return s.db.QueryMonitorSamplesCursor(ctx, filter)
 }
 
 func (s *Store) GetDerivedStats(ctx context.Context, query monitor.StatsQuery) (*monitor.DerivedStats, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
 	return s.db.GetDerivedStats(ctx, query)
 }
 
 func (s *Store) ApplyRetention(ctx context.Context, req monitor.RetentionRequest) (*monitor.RetentionResult, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
 	return s.db.ApplyRetention(ctx, req)
 }
 
 func (s *Store) CleanupWorkbenchHistory(ctx context.Context, cutoff time.Time) (int64, error) {
-	if s.db == nil {
+	if s == nil || s.db == nil {
 		return 0, nil
 	}
 	return s.db.CleanupWorkbenchHistory(ctx, cutoff)
@@ -502,6 +595,9 @@ func (s *Store) CleanupWorkbenchHistory(ctx context.Context, cutoff time.Time) (
 // GetMonitorSampleFacets returns the distinct filter dimensions present in raw samples.
 // Presentation-only read model; see DB.GetMonitorSampleFacets.
 func (s *Store) GetMonitorSampleFacets(ctx context.Context, since, until time.Time, maxNodes, maxValues int) (*monitor.MonitorSampleFacets, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
 	return s.db.GetMonitorSampleFacets(ctx, since, until, maxNodes, maxValues)
 }
 
@@ -596,7 +692,7 @@ func (s *Store) ListLatencyBatchesNeedingRecovery(ctx context.Context) ([]Latenc
 
 // SetTestBatchFailAt injects a batch failure on batch n for testing partial retention semantics.
 func (s *Store) SetTestBatchFailAt(n int) {
-	if s.db != nil {
+	if s != nil && s.db != nil {
 		s.db.SetTestBatchFailAt(n)
 	}
 }
