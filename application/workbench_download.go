@@ -460,10 +460,14 @@ func workbenchDownloadMeasurement(result speedtester.DownloadStreamResult) histo
 func safeDownloadError(message string) string {
 	const maxErrorLength = 240
 	message = strings.TrimSpace(message)
-	if len(message) > maxErrorLength {
-		message = message[:maxErrorLength]
+	if len(message) <= maxErrorLength {
+		return message
 	}
-	return message
+	runes := []rune(message)
+	if len(runes) > maxErrorLength {
+		runes = runes[:maxErrorLength]
+	}
+	return string(runes)
 }
 
 func (s *AppService) stageWorkbenchDownloadResult(attemptID, state string, result history.WorkbenchDownloadMeasurement) error {

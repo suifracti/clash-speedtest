@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/faceair/clash-speedtest/core/history"
 	"github.com/faceair/clash-speedtest/core/monitor"
@@ -543,5 +544,28 @@ func TestWorkbenchDownloadAdmissionRejectsExistingPublicServiceAttempt(t *testin
 	_, err := app.StartWorkbenchDownloadTest(context.Background(), downloadRequest("download-during-service"))
 	if err == nil || requests.Load() != 0 {
 		t.Fatalf("download must reject an existing public-service test before networking: err=%v requests=%d", err, requests.Load())
+	}
+}
+
+func TestSafeDownloadErrorValidUTF8(t *testing.T) {
+	// 80 Chinese characters (3 bytes each = 240 bytes) + 1 character (3 bytes = 243 bytes total).
+	// Byte slicing at 240 would truncate the 81st character into a corrupt 1-byte sequence.
+	longChinese := strings.Repeat("测", 81)
+	res := safeDownloadError(longChinese)
+	if !utf8.ValidString(res) {
+		t.Fatalf("safeDownloadError produced invalid UTF-8: %q", res)
+	}
+	if utf8.RuneCountInString(res) != 81 { // 81 runes < 240 runes
+		t.Fatalf("expected 81 runes, got %d", utf8.RuneCountInString(res))
+	}
+
+	// 250 Chinese characters (> 240 runes)
+	veryLongChinese := strings.Repeat("测", 250)
+	res2 := safeDownloadError(veryLongChinese)
+	if !utf8.ValidString(res2) {
+		t.Fatalf("safeDownloadError produced invalid UTF-8 on overflow: %q", res2)
+	}
+	if utf8.RuneCountInString(res2) != 240 {
+		t.Fatalf("expected 240 runes, got %d", utf8.RuneCountInString(res2))
 	}
 }
