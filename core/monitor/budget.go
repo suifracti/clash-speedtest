@@ -163,6 +163,9 @@ func (b *BudgetController) Status(ctx context.Context) (BudgetStatus, error) {
 }
 
 func roundIdentities(job *MonitorJob) []string {
+	if job == nil {
+		return nil
+	}
 	seen := make(map[string]bool)
 	keys := make([]string, 0, len(job.Nodes))
 	for _, node := range job.Nodes {
@@ -186,6 +189,9 @@ func roundIdentities(job *MonitorJob) []string {
 // AcquireRound gives each job at most one staggered admission and rejects
 // duplicate stable identities. It never creates a durable run on rejection.
 func (b *BudgetController) AcquireRound(ctx context.Context, job *MonitorJob) (context.Context, func(), error) {
+	if job == nil {
+		return nil, nil, budgetBlock("invalid_job", "Monitor 任务无效")
+	}
 	status, err := b.Status(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -548,6 +554,9 @@ func (b *budgetBody) Close() error {
 }
 
 func budgetedClient(client *http.Client, budget *BudgetController, heavy bool, priority int) *http.Client {
+	if client == nil {
+		client = &http.Client{}
+	}
 	copy := *client
 	base := client.Transport
 	if base == nil {

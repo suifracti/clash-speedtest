@@ -344,3 +344,28 @@ func waitForBudgetWaiters(t *testing.T, b *BudgetController, count int) {
 	}
 	t.Fatalf("waiter count did not reach %d", count)
 }
+
+func TestBudgetNilSafety(t *testing.T) {
+	if keys := roundIdentities(nil); keys != nil {
+		t.Fatalf("expected nil keys for nil job, got: %v", keys)
+	}
+
+	ledger := &fairnessLedger{}
+	b := NewBudgetController(ledger, func() (BudgetLimits, error) {
+		return BudgetLimits{MaxConcurrent: 2, ResponseBytes: 4096}, nil
+	}, nil)
+
+	_, _, err := b.AcquireRound(context.Background(), nil)
+	if err == nil {
+		t.Fatal("expected error for nil job in AcquireRound")
+	}
+	if block, ok := AsBudgetBlock(err); !ok || block.Code != "invalid_job" {
+		t.Fatalf("expected invalid_job block code, got: %v", err)
+	}
+
+	client := budgetedClient(nil, b, false, 0)
+	if client == nil || client.Transport == nil {
+		t.Fatal("expected non-nil budgeted client even with nil input client")
+	}
+}
+
