@@ -59,13 +59,30 @@ func airportDTO(airport *profiles.Airport, nodeCount int, hasCache bool, subs ..
 		return AirportDTO{}
 	}
 	urlDisplay := safeAirportURLDisplay(airport.URL)
-	if urlDisplay == "" && len(subs) > 0 {
-		urlDisplay = subs[0].URLDisplay
+	if urlDisplay == "" {
+		for _, sub := range subs {
+			if sub.URLDisplay != "" {
+				urlDisplay = sub.URLDisplay
+				break
+			}
+		}
 	}
-	urlConfigured := strings.TrimSpace(airport.URL) != "" || len(subs) > 0
+	urlConfigured := strings.TrimSpace(airport.URL) != ""
+	if !urlConfigured {
+		for _, sub := range subs {
+			if sub.URLConfigured {
+				urlConfigured = true
+				break
+			}
+		}
+	}
 	updatedAt := airport.UpdatedAt
-	if updatedAt.IsZero() && len(subs) > 0 {
-		updatedAt = subs[0].UpdatedAt
+	if updatedAt.IsZero() {
+		for _, sub := range subs {
+			if !sub.UpdatedAt.IsZero() && (updatedAt.IsZero() || sub.UpdatedAt.After(updatedAt)) {
+				updatedAt = sub.UpdatedAt
+			}
+		}
 	}
 	if subs == nil {
 		subs = []SubscriptionDTO{}

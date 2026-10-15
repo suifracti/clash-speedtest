@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/faceair/clash-speedtest/core/history"
 	"github.com/faceair/clash-speedtest/core/profiles"
@@ -135,4 +136,51 @@ func newAirportURLTestService(t *testing.T) (*AppService, profiles.Paths) {
 	service := NewAppService(historyStore, paths, nil)
 	t.Cleanup(func() { _ = service.Close() })
 	return service, paths
+}
+
+func TestAirportDTOMultipleSubscriptionsResilience(t *testing.T) {
+	// Nil airport
+	nilDTO := airportDTO(nil, 0, false)
+	if nilDTO.ID != "" || nilDTO.Name != "" {
+		t.Fatalf("expected empty DTO on nil airport, got %+v", nilDTO)
+	}
+
+	// Airport with unconfigured first sub, configured second sub
+	t2 := time.Now().Add(-10 * time.Minute)
+	sub1 := SubscriptionDTO{
+		ID:            "sub-1",
+		URLConfigured: false,
+		URLDisplay:    "",
+	}
+	sub2 := SubscriptionDTO{
+		ID:            "sub-2",
+		URLConfigured: true,
+		URLDisplay:    "https://example.com/•••",
+		UpdatedAt:     t2,
+	}
+
+	ap := &profiles.Airport{
+		ID:   "ap-multi",
+		Name: "Multi Sub Airport",
+	}
+
+	dto := airportDTO(ap, 5, true, sub1, sub2)
+	if dto.URLDisplay != "https://example.com/•••" {
+		t.Fatalf("expected URLDisplay from sub2, got %q", dto.URLDisplay)
+	}
+	if !dto.URLConfigured {
+		t.Fatalf("expected URLConfigured to be true from sub2")
+	}
+	if !dto.UpdatedAt.Equal(t2) {
+		t.Fatalf("expected UpdatedAt %v from sub2, got %v", t2, dto.UpdatedAt)
+	}
+
+	// Airport with only unconfigured sub
+	dtoUnconfigured := airportDTO(ap, 0, false, sub1)
+	if dtoUnconfigured.URLConfigured {
+		t.Fatalf("expected URLConfigured to be false when no sub has configured URL")
+	}
+	if dtoUnconfigured.URLDisplay != "" {
+		t.Fatalf("expected empty URLDisplay, got %q", dtoUnconfigured.URLDisplay)
+	}
 }

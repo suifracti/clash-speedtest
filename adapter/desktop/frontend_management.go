@@ -20,14 +20,23 @@ type FrontendAirportRequest struct {
 }
 
 func (a *App) CreateFrontendAirport(req FrontendAirportRequest) (*application.AirportDTO, error) {
+	if a == nil || a.app == nil {
+		return nil, fmt.Errorf("应用服务未初始化")
+	}
 	return a.app.CreateAirport(req.Name, req.URL, a.userAgent, req.WebsiteURL, req.BackupURL, req.Note)
 }
 
 func (a *App) UpdateFrontendAirport(id string, req FrontendAirportRequest) (*application.AirportDTO, error) {
+	if a == nil || a.app == nil {
+		return nil, fmt.Errorf("应用服务未初始化")
+	}
 	return a.app.UpdateAirport(id, req.Name, req.URL, a.userAgent, req.WebsiteURL, req.BackupURL, req.Note)
 }
 
 func (a *App) OpenDataFolder() error {
+	if a == nil || a.app == nil {
+		return fmt.Errorf("应用服务未初始化")
+	}
 	setup, err := a.app.GetProfileSetup()
 	if err != nil {
 		return err
@@ -54,37 +63,64 @@ func (a *App) OpenDataFolder() error {
 
 // Keep subscription management on the same IPC boundary as airport management.
 func (a *App) AddSubscription(airportID, name, source, note string) (*application.SubscriptionDTO, error) {
+	if a == nil || a.app == nil {
+		return nil, fmt.Errorf("应用服务未初始化")
+	}
 	return a.app.AddSubscription(airportID, name, source, note, a.userAgent)
 }
 
 func (a *App) UpdateSubscription(airportID, subscriptionID, name, source, note string) (*application.SubscriptionDTO, error) {
+	if a == nil || a.app == nil {
+		return nil, fmt.Errorf("应用服务未初始化")
+	}
 	return a.app.UpdateSubscription(airportID, subscriptionID, name, source, note, a.userAgent)
 }
 
 func (a *App) DeleteSubscription(airportID, subscriptionID string) error {
+	if a == nil || a.app == nil {
+		return fmt.Errorf("应用服务未初始化")
+	}
 	return a.app.DeleteSubscription(airportID, subscriptionID)
 }
 
 func (a *App) RefreshSubscription(airportID, subscriptionID string) (*application.SubscriptionDTO, error) {
+	if a == nil || a.app == nil {
+		return nil, fmt.Errorf("应用服务未初始化")
+	}
 	return a.app.RefreshSubscription(airportID, subscriptionID, a.userAgent)
 }
 
 func (a *App) GetSubscriptionURL(airportID, subscriptionID string) (string, error) {
+	if a == nil || a.app == nil {
+		return "", fmt.Errorf("应用服务未初始化")
+	}
 	return a.app.GetSubscriptionURL(subscriptionID)
 }
 
 func (a *App) SaveAirportMaintenance(airportID string, settings profiles.AirportMaintenance) error {
+	if a == nil || a.app == nil {
+		return fmt.Errorf("应用服务未初始化")
+	}
 	return a.app.SaveAirportMaintenance(airportID, settings)
 }
 
 func (a *App) GetSubscriptionUsage(from, until, period, account string) (*subscriptionusage.Report, error) {
+	if a == nil || a.app == nil {
+		return nil, fmt.Errorf("应用服务未初始化")
+	}
 	return a.app.GetSubscriptionUsage(a.context(), from, until, period, account)
 }
 
 func (a *App) UpdateSubscriptionUsage() (*subscriptionusage.RefreshState, error) {
+	if a == nil || a.app == nil {
+		return nil, fmt.Errorf("应用服务未初始化")
+	}
 	return a.app.UpdateSubscriptionUsage(a.context(), a.userAgent)
 }
 
 func (a *App) ExportNodesClashConfig(request application.ExportClashConfigRequest) (*application.ExportClashConfigResponse, error) {
+	if a == nil || a.app == nil {
+		return nil, fmt.Errorf("应用服务未初始化")
+	}
 	return a.app.ExportNodesClashConfig(a.context(), request)
 }

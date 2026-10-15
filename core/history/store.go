@@ -304,6 +304,9 @@ func NewStoreWithLegacyDir(dir, legacyDir string) (*Store, error) {
 }
 
 func (s *Store) Close() error {
+	if s == nil {
+		return nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.db != nil {
@@ -315,6 +318,9 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) DB() *DB {
+	if s == nil {
+		return nil
+	}
 	return s.db
 }
 
@@ -596,6 +602,9 @@ func (s *Store) SetTestBatchFailAt(n int) {
 }
 
 func (s *Store) Dir() string {
+	if s == nil {
+		return ""
+	}
 	return s.dir
 }
 
@@ -612,6 +621,9 @@ func (s *Store) LegacyDir() string {
 }
 
 func (s *Store) Save(run *TestRun) (string, error) {
+	if s == nil {
+		return "", fmt.Errorf("history store is nil")
+	}
 	if run == nil {
 		return "", fmt.Errorf("run is nil")
 	}
@@ -639,6 +651,9 @@ func (s *Store) Save(run *TestRun) (string, error) {
 }
 
 func (s *Store) Get(id string) (*TestRun, error) {
+	if s == nil {
+		return nil, fmt.Errorf("history store is nil")
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -656,6 +671,9 @@ func (s *Store) Get(id string) (*TestRun, error) {
 }
 
 func (s *Store) Delete(id string) error {
+	if s == nil {
+		return fmt.Errorf("history store is nil")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -664,6 +682,9 @@ func (s *Store) Delete(id string) error {
 }
 
 func (s *Store) List() ([]*RunSummary, error) {
+	if s == nil {
+		return nil, fmt.Errorf("history store is nil")
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -734,6 +755,9 @@ func (s *Store) List() ([]*RunSummary, error) {
 
 // GetAllRuns loads and returns all full test runs, sorted newest first.
 func (s *Store) GetAllRuns() ([]*TestRun, error) {
+	if s == nil {
+		return nil, fmt.Errorf("history store is nil")
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -766,6 +790,9 @@ func (s *Store) GetAllRuns() ([]*TestRun, error) {
 }
 
 func (s *Store) Compare(baseID, targetID string) (*RunComparison, error) {
+	if s == nil {
+		return nil, fmt.Errorf("history store is nil")
+	}
 	baseRun, err := s.Get(baseID)
 	if err != nil {
 		return nil, fmt.Errorf("load base run: %w", err)
@@ -914,6 +941,9 @@ func (s *Store) Compare(baseID, targetID string) (*RunComparison, error) {
 
 // GetNodeTimeline retrieves all historical test records for a specific node name across all saved runs.
 func (s *Store) GetNodeTimeline(nodeName string) ([]*NodeTimelineItem, error) {
+	if s == nil {
+		return nil, fmt.Errorf("history store is nil")
+	}
 	runs, err := s.GetAllRuns()
 	if err != nil {
 		return nil, err
@@ -956,6 +986,9 @@ func (s *Store) GetNodeTimeline(nodeName string) ([]*NodeTimelineItem, error) {
 
 // ListAllDistinctNodes returns a sorted list of all unique node names present across all history runs.
 func (s *Store) ListAllDistinctNodes() ([]string, error) {
+	if s == nil {
+		return nil, fmt.Errorf("history store is nil")
+	}
 	runs, err := s.GetAllRuns()
 	if err != nil {
 		return nil, err
@@ -980,6 +1013,9 @@ func (s *Store) ListAllDistinctNodes() ([]string, error) {
 
 // ListHistoryAirports aggregates all saved runs by Airport, returning summary info for each airport.
 func (s *Store) ListHistoryAirports() ([]*AirportSummary, error) {
+	if s == nil {
+		return nil, fmt.Errorf("history store is nil")
+	}
 	runs, err := s.GetAllRuns()
 	if err != nil {
 		return nil, err
@@ -1073,6 +1109,9 @@ func (s *Store) ListHistoryAirports() ([]*AirportSummary, error) {
 
 // GetAirportHistory consolidates all historical test runs belonging to the specified airport.
 func (s *Store) GetAirportHistory(airportIDOrName string) (*AirportHistory, error) {
+	if s == nil {
+		return nil, fmt.Errorf("history store is nil")
+	}
 	runs, err := s.GetAllRuns()
 	if err != nil {
 		return nil, err
@@ -1204,8 +1243,8 @@ func (s *Store) GetAirportHistory(airportIDOrName string) (*AirportHistory, erro
 
 			var sumLat int64
 			var countLat int64
-			var minLat int64 = 999999
-			var maxLat int64 = 0
+			var minLat int64
+			var maxLat int64
 
 			var sumSpeed float64
 			var countSpeed int
@@ -1220,7 +1259,7 @@ func (s *Store) GetAirportHistory(airportIDOrName string) (*AirportHistory, erro
 				if pt.LatencyMs > 0 {
 					sumLat += pt.LatencyMs
 					countLat++
-					if pt.LatencyMs < minLat {
+					if countLat == 1 || pt.LatencyMs < minLat {
 						minLat = pt.LatencyMs
 					}
 					if pt.LatencyMs > maxLat {

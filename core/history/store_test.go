@@ -481,3 +481,92 @@ func TestGetAirportHistoryAndListAirports(t *testing.T) {
 	}
 }
 
+func TestStoreNilSafetyAndAirportHistoryBoundaries(t *testing.T) {
+	var nilStore *Store
+
+	if nilStore.Dir() != "" {
+		t.Fatalf("expected empty dir on nil store, got %q", nilStore.Dir())
+	}
+	if nilStore.LegacyDir() != "" {
+		t.Fatalf("expected empty legacy dir on nil store, got %q", nilStore.LegacyDir())
+	}
+	if nilStore.DB() != nil {
+		t.Fatal("expected nil DB on nil store")
+	}
+	if err := nilStore.Close(); err != nil {
+		t.Fatalf("expected nil close on nil store, got %v", err)
+	}
+	if _, err := nilStore.Save(&TestRun{}); err == nil {
+		t.Fatal("expected error on Save with nil store")
+	}
+	if _, err := nilStore.Get("test"); err == nil {
+		t.Fatal("expected error on Get with nil store")
+	}
+	if err := nilStore.Delete("test"); err == nil {
+		t.Fatal("expected error on Delete with nil store")
+	}
+	if _, err := nilStore.List(); err == nil {
+		t.Fatal("expected error on List with nil store")
+	}
+	if _, err := nilStore.GetAllRuns(); err == nil {
+		t.Fatal("expected error on GetAllRuns with nil store")
+	}
+	if _, err := nilStore.Compare("a", "b"); err == nil {
+		t.Fatal("expected error on Compare with nil store")
+	}
+	if _, err := nilStore.GetNodeTimeline("node"); err == nil {
+		t.Fatal("expected error on GetNodeTimeline with nil store")
+	}
+	if _, err := nilStore.ListAllDistinctNodes(); err == nil {
+		t.Fatal("expected error on ListAllDistinctNodes with nil store")
+	}
+	if _, err := nilStore.ListHistoryAirports(); err == nil {
+		t.Fatal("expected error on ListHistoryAirports with nil store")
+	}
+	if _, err := nilStore.GetAirportHistory("ap"); err == nil {
+		t.Fatal("expected error on GetAirportHistory with nil store")
+	}
+
+	// Test boundary latency (> 999999ms) in GetAirportHistory
+	tempDir := t.TempDir()
+	store, err := NewStore(tempDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	run := &TestRun{
+		AirportID:   "ap-highlat",
+		AirportName: "High Lat Airport",
+		CreatedAt:   time.Now(),
+		Results: []*RunNodeResult{
+			{
+				ProxyName: "Extreme-1",
+				LatencyMs: 1200000,
+			},
+			{
+				ProxyName: "Extreme-1",
+				LatencyMs: 1500000,
+			},
+		},
+	}
+	if _, err := store.Save(run); err != nil {
+		t.Fatal(err)
+	}
+
+	hist, err := store.GetAirportHistory("ap-highlat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hist.Nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(hist.Nodes))
+	}
+	node := hist.Nodes[0]
+	if node.MinLatencyMs != 1200000 {
+		t.Fatalf("expected MinLatencyMs=1200000, got %d", node.MinLatencyMs)
+	}
+	if node.MaxLatencyMs != 1500000 {
+		t.Fatalf("expected MaxLatencyMs=1500000, got %d", node.MaxLatencyMs)
+	}
+}
+
