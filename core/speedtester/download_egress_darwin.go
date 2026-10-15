@@ -55,6 +55,8 @@ type PhysicalDownloadEgress struct {
 	tcpConnectDuration                                                       time.Duration
 	lastTCPConnectStartedAt, lastTCPConnectFinishedAt, lastTCPConnectOutcome string
 	lastTCPConnectErrno                                                      int
+	method                                                                   string
+	autoSnapshot                                                             func() DownloadNetworkPath
 }
 
 func newPhysicalDownloadEgress() *PhysicalDownloadEgress {
@@ -69,13 +71,27 @@ func newPhysicalDownloadEgress() *PhysicalDownloadEgress {
 
 func (e *PhysicalDownloadEgress) Snapshot() DownloadNetworkPath {
 	e.mu.Lock()
+	snapshot := e.autoSnapshot
+	e.mu.Unlock()
+	if snapshot != nil {
+		return snapshot()
+	}
+	return e.snapshotBase()
+}
+
+func (e *PhysicalDownloadEgress) snapshotBase() DownloadNetworkPath {
+	e.mu.Lock()
 	defer e.mu.Unlock()
+	method := e.method
+	if method == "" {
+		method = "physical_socket_v1"
+	}
 	source := e.resolutionSource
 	if e.multiAddressTCP {
 		source = "physical_ipv4_dns_multi_v2"
 	}
 	return DownloadNetworkPath{
-		Method: "physical_socket_v1", Interface: e.iface, InterfaceIndex: e.index, AddressFamily: e.addressFamily,
+		Method: method, Interface: e.iface, InterfaceIndex: e.index, AddressFamily: e.addressFamily,
 		AddressSource: source, DNSMode: e.dnsMode,
 		TUNEvidence: "packet_route_not_observed", FailureReason: e.failureReason,
 		DNSRequests: e.dnsRequests.count(), DNSDialAttempts: e.dnsDials.count(),
@@ -623,8 +639,11 @@ func (e *PhysicalDownloadEgress) freezeNodeAddresses(host string, ip netip.Addr,
 }
 
 func preparePhysicalProxy(ctx context.Context, original *CProxy, socketLimit int) (prepared *CProxy, e *PhysicalDownloadEgress, returnErr error) {
+	return preparePhysicalProxyUsing(ctx, original, socketLimit, newPhysicalDownloadEgress())
+}
+
+func preparePhysicalProxyUsing(ctx context.Context, original *CProxy, socketLimit int, e *PhysicalDownloadEgress) (prepared *CProxy, path *PhysicalDownloadEgress, returnErr error) {
 	started := time.Now()
-	e = newPhysicalDownloadEgress()
 	if socketLimit < 1 || socketLimit > 120 {
 		e.setFailure("invalid_probe_connection_budget")
 		return nil, e, &PhysicalPathError{Cause: fmt.Errorf("invalid physical connection budget")}

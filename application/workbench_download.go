@@ -132,7 +132,9 @@ func (s *AppService) StartWorkbenchDownloadTest(ctx context.Context, req Workben
 		ctx: runCtx, cancel: cancel, ready: make(chan struct{}), node: node, proxy: proxy, engine: engine, rule: rule,
 	}
 	if s.workbenchDownloadResolveHook == nil {
-		runtime.preparePhysical = speedtester.PreparePhysicalDownloadProxy
+		runtime.preparePhysical = func(ctx context.Context, p *speedtester.CProxy) (*speedtester.CProxy, *speedtester.PhysicalDownloadEgress, error) {
+			return speedtester.PreparePhysicalAutoProxy(ctx, p, time.Duration(timeoutSeconds)*time.Second, 4)
+		}
 	}
 	waitForExisting, duplicate, err := s.beginWorkbenchDownload(runtime)
 	if err != nil {
@@ -171,7 +173,7 @@ func (s *AppService) StartWorkbenchDownloadTest(ctx context.Context, req Workben
 		return nil, fmt.Errorf("检查下载检测请求失败: %w", err)
 	}
 	if runtime.preparePhysical != nil {
-		pathPlan := speedtester.PlanPhysicalDownloadPath(runtime.ctx, proxy)
+		pathPlan := speedtester.PlanPhysicalAutoDownloadPath(runtime.ctx, proxy)
 		applyWorkbenchDownloadRulePath(&rule, pathPlan)
 		runtime.rule = rule
 	}

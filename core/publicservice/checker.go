@@ -419,7 +419,8 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 		client, err = c.ClientFactory(node, timeout)
 	} else {
 		var cleanup func()
-		client, pathSnapshot, cleanup, err = defaultClientFactory(ctx, node, timeout)
+		autoFamily := rule.ServiceID != "ipok_ipv4" && rule.ServiceID != "ipok_ipv6" && rule.ServiceID != "antigravity"
+		client, pathSnapshot, cleanup, err = defaultClientFactory(ctx, node, timeout, autoFamily)
 		defer cleanup()
 	}
 	if ctx.Err() != nil {

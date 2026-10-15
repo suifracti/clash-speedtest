@@ -18,6 +18,14 @@ func OpenPhysicalProbeClient(ctx context.Context, original *CProxy, timeout time
 	return openPhysicalProbeClient(ctx, original, timeout, sockets, PreparePhysicalProbeProxy)
 }
 
+// Workbench opt-in; the strict entry above remains unchanged for IPOK and
+// single-path diagnostics with separately authorized network budgets.
+func OpenPhysicalAutoProbeClient(ctx context.Context, original *CProxy, timeout time.Duration, sockets int) (*http.Client, func() DownloadNetworkPath, func(), error) {
+	return openPhysicalProbeClient(ctx, original, timeout, sockets, func(ctx context.Context, p *CProxy, n int) (*CProxy, *PhysicalDownloadEgress, error) {
+		return PreparePhysicalAutoProxy(ctx, p, timeout, n)
+	})
+}
+
 func openPhysicalProbeClient(ctx context.Context, original *CProxy, timeout time.Duration, sockets int, prepare physicalProbePreparer) (*http.Client, func() DownloadNetworkPath, func(), error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -80,7 +88,9 @@ func (st *SpeedTester) TestSinglePhysicalContext(ctx context.Context, name strin
 	if runtime.GOOS != "darwin" {
 		return st.TestSingleContext(ctx, name, proxy, emit)
 	}
-	return st.testSinglePhysicalContext(ctx, name, proxy, emit, PreparePhysicalProbeProxy)
+	return st.testSinglePhysicalContext(ctx, name, proxy, emit, func(ctx context.Context, p *CProxy, n int) (*CProxy, *PhysicalDownloadEgress, error) {
+		return PreparePhysicalAutoProxy(ctx, p, st.config.Timeout, n)
+	})
 }
 
 func (st *SpeedTester) testSinglePhysicalContext(ctx context.Context, name string, proxy *CProxy, emit func(*Result) bool, prepare physicalProbePreparer) *Result {

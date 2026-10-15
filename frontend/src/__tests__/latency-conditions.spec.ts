@@ -62,3 +62,16 @@ it('keeps multi-address physical results usable without mixing old single-addres
  expect(downloadGroup(download(newPath)).key).not.toBe(downloadGroup(download(oldPath)).key)
  expect(latencyComparisonGroup(manualLatencyPoint(latency('new',newPath))).key).not.toBe(latencyComparisonGroup(manualLatencyPoint(latency('old',oldPath))).key)
 })
+
+it('keeps automatic-family measurements separate from strict history and the other family',()=>{
+ const strict=route('ipv4','physical_ipv4_dns')
+ const auto4={...strict,method:'physical_socket_auto_family_v1',address_fallback:'not_needed'}
+ const auto6={...route('ipv6','physical_ipv6_dns'),method:'physical_socket_auto_family_v1',address_fallback:'used_ipv6',family_attempts:[{address_family:'ipv4',outcome:'timeout',duration_ns:2500000000},{address_family:'ipv6',outcome:'connected',duration_ns:200000000}]}
+ const histories=[latency('strict',strict),latency('auto4',auto4),latency('auto6',auto6)]
+ expect(qualityGroups(histories,[],'cloudflare')).toHaveLength(3)
+ expect(new Set(histories.map(test=>latencyComparisonGroup(manualLatencyPoint(test)).key)).size).toBe(3)
+ const download=(path:NetworkPath):Attempt=>({...attempt('download',path),rule:{target_url:url,method:'GET',rule_version:1,maximum_bytes:1048576,maximum_duration_ns:1000000000,network_path_method:path.method,physical_interface:path.interface,dns_mode:path.dns_mode},result:{outcome:'byte_limit',bytes_read:1048576,duration_ns:1000000000,finished_at:'2026-10-09T00:00:01Z',network_path:path}})
+ const downloads=[strict,auto4,auto6].map(download)
+ expect(downloads.every(item=>downloadGroup(item).comparable)).toBe(true)
+ expect(new Set(downloads.map(downloadCondition)).size).toBe(3)
+})

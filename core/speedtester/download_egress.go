@@ -75,24 +75,27 @@ func (e *PhysicalPathError) Unwrap() error { return e.Cause }
 // Network conditions are saved with the measurement so old system-DNS/default
 // binding runs are never silently treated as verified physical-path results.
 type DownloadNetworkPath struct {
-	Method                string `json:"method"`
-	Interface             string `json:"interface,omitempty"`
-	InterfaceIndex        int    `json:"interface_index,omitempty"`
-	AddressFamily         string `json:"address_family,omitempty"`
-	AddressSource         string `json:"address_source,omitempty"`
-	DNSMode               string `json:"dns_mode,omitempty"`
-	TUNEvidence           string `json:"tun_evidence,omitempty"`
-	FailureReason         string `json:"failure_reason,omitempty"`
-	DNSRequests           int    `json:"dns_requests,omitempty"`
-	DNSDialAttempts       int    `json:"dns_dial_attempts,omitempty"`
-	TCPDialAttempts       int    `json:"tcp_dial_attempts,omitempty"`
-	UDPDialAttempts       int    `json:"udp_dial_attempts,omitempty"`
-	DNSBindVerified       bool   `json:"dns_bind_verified"`
-	SocketBindVerified    bool   `json:"socket_bind_verified"`
-	TCPBindings           int    `json:"tcp_bindings"`
-	UDPBindings           int    `json:"udp_bindings"`
-	DNSDurationNS         int64  `json:"dns_duration_ns,omitempty"`
-	PreparationDurationNS int64  `json:"preparation_duration_ns,omitempty"`
+	Method                 string                  `json:"method"`
+	Interface              string                  `json:"interface,omitempty"`
+	InterfaceIndex         int                     `json:"interface_index,omitempty"`
+	AddressFamily          string                  `json:"address_family,omitempty"`
+	AddressSource          string                  `json:"address_source,omitempty"`
+	DNSMode                string                  `json:"dns_mode,omitempty"`
+	TUNEvidence            string                  `json:"tun_evidence,omitempty"`
+	FailureReason          string                  `json:"failure_reason,omitempty"`
+	DNSRequests            int                     `json:"dns_requests,omitempty"`
+	DNSDialAttempts        int                     `json:"dns_dial_attempts,omitempty"`
+	TCPDialAttempts        int                     `json:"tcp_dial_attempts,omitempty"`
+	UDPDialAttempts        int                     `json:"udp_dial_attempts,omitempty"`
+	DNSBindVerified        bool                    `json:"dns_bind_verified"`
+	SocketBindVerified     bool                    `json:"socket_bind_verified"`
+	TCPBindings            int                     `json:"tcp_bindings"`
+	UDPBindings            int                     `json:"udp_bindings"`
+	DNSDurationNS          int64                   `json:"dns_duration_ns,omitempty"`
+	PreparationDurationNS  int64                   `json:"preparation_duration_ns,omitempty"`
+	AddressFallback        string                  `json:"address_fallback,omitempty"`
+	AddressFallbackFailure string                  `json:"address_fallback_failure,omitempty"`
+	FamilyAttempts         []PhysicalFamilyAttempt `json:"family_attempts,omitempty"`
 
 	// TCP evidence is separate from successful socket binding and packet routing.
 	TCPConnectStarted        int    `json:"tcp_connect_started,omitempty"`
@@ -103,4 +106,11 @@ type DownloadNetworkPath struct {
 	LastTCPConnectFinishedAt string `json:"last_tcp_connect_finished_at,omitempty"`
 	LastTCPConnectOutcome    string `json:"last_tcp_connect_outcome,omitempty"`
 	LastTCPConnectErrno      int    `json:"last_tcp_connect_errno,omitempty"`
+}
+
+// These are node-connection attempts, never extra target HTTP requests.
+type PhysicalFamilyAttempt struct {
+	AddressFamily string `json:"address_family"`
+	Outcome       string `json:"outcome"`
+	DurationNS    int64  `json:"duration_ns"`
 }
