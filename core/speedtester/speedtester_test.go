@@ -152,3 +152,32 @@ func TestSubscriptionInfoAliasDoesNotHideRealNode(t *testing.T) {
 		t.Fatalf("real node, information and credential variants must remain distinct; got %v", names)
 	}
 }
+
+func TestSafeServerNormalization(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		input    any
+		expected any
+	}{
+		{"mapped ipv6", "::ffff:192.0.2.1", "192.0.2.1"},
+		{"regular ipv4", "192.0.2.1", "192.0.2.1"},
+		{"domain", "example.com", "example.com"},
+		{"int server safe", 12345, 12345},
+		{"nil server safe", nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &CProxy{
+				Config: map[string]any{"server": tc.input, "port": 443},
+			}
+			if server, ok := p.Config["server"]; ok && server != nil {
+				if s, ok := server.(string); ok {
+					p.Config["server"] = convertMappedIPv6ToIPv4(s)
+				}
+			}
+			if p.Config["server"] != tc.expected {
+				t.Fatalf("got server %v, want %v", p.Config["server"], tc.expected)
+			}
+		})
+	}
+}
+

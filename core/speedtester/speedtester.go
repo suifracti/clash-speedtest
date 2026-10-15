@@ -271,7 +271,12 @@ func (st *SpeedTester) LoadProxies() (map[string]*CProxy, error) {
 				continue
 			}
 
-			body, err = st.fetchHTTPConfig(config["url"].(string))
+			urlStr, _ := config["url"].(string)
+			if urlStr == "" {
+				log.Printf("proxy provider %s has missing or invalid url", name)
+				continue
+			}
+			body, err = st.fetchHTTPConfig(urlStr)
 			if err != nil {
 				log.Printf("failed to fetch config: %s", err)
 				continue
@@ -285,7 +290,11 @@ func (st *SpeedTester) LoadProxies() (map[string]*CProxy, error) {
 				if pdProxy["name"] == nil || pdProxy["server"] == nil {
 					continue
 				}
-				pdProxies[pdProxy["name"].(string)] = pdProxy
+				nameStr, ok := pdProxy["name"].(string)
+				if !ok {
+					continue
+				}
+				pdProxies[nameStr] = pdProxy
 			}
 			for _, proxy := range pd.Proxies() {
 				proxies[fmt.Sprintf("[%s] %s", name, proxy.Name())] = &CProxy{
@@ -302,8 +311,10 @@ func (st *SpeedTester) LoadProxies() (map[string]*CProxy, error) {
 			default:
 				continue
 			}
-			if server, ok := p.Config["server"]; ok {
-				p.Config["server"] = convertMappedIPv6ToIPv4(server.(string))
+			if server, ok := p.Config["server"]; ok && server != nil {
+				if s, ok := server.(string); ok {
+					p.Config["server"] = convertMappedIPv6ToIPv4(s)
+				}
 			}
 			if _, ok := allProxies[k]; !ok {
 				allProxies[k] = p
