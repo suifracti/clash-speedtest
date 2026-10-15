@@ -85,6 +85,27 @@ func TestRedactURL(t *testing.T) {
 	if !strings.Contains(got, "token=") || !strings.Contains(got, "REDACTED") {
 		t.Fatalf("redacted url = %s", got)
 	}
+
+	gotSecret := RedactURL("https://example.com/api?client_secret=123456")
+	if strings.Contains(gotSecret, "123456") || !strings.Contains(gotSecret, "REDACTED") {
+		t.Fatalf("secret param should be redacted, got %s", gotSecret)
+	}
+
+	gotUserPass := RedactURL("https://alice:supersecret@example.com/sub")
+	if strings.Contains(gotUserPass, "supersecret") {
+		t.Fatalf("userinfo password should be redacted, got %s", gotUserPass)
+	}
+	if !strings.Contains(gotUserPass, "alice:REDACTED@example.com") {
+		t.Fatalf("expected alice:REDACTED, got %s", gotUserPass)
+	}
+
+	gotTokenUser := RedactURL("https://rawtoken123@example.com/sub")
+	if strings.Contains(gotTokenUser, "rawtoken123") {
+		t.Fatalf("userinfo token username should be redacted, got %s", gotTokenUser)
+	}
+	if !strings.Contains(gotTokenUser, "REDACTED@example.com") {
+		t.Fatalf("expected REDACTED@example.com, got %s", gotTokenUser)
+	}
 }
 
 func TestCompactDisplayValidUTF8(t *testing.T) {

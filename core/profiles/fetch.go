@@ -107,16 +107,30 @@ func RedactURL(raw string) string {
 	if err != nil || parsed.Scheme == "" {
 		return compactDisplay(raw, 72)
 	}
-	query := parsed.Query()
 	changed := false
-	for key := range query {
-		lower := strings.ToLower(key)
-		if strings.Contains(lower, "token") || strings.Contains(lower, "key") || strings.Contains(lower, "password") || lower == "auth" {
-			query.Set(key, "REDACTED")
+	if parsed.User != nil {
+		if _, hasPassword := parsed.User.Password(); hasPassword {
+			parsed.User = url.UserPassword(parsed.User.Username(), "REDACTED")
+			changed = true
+		} else if parsed.User.Username() != "" {
+			parsed.User = url.User("REDACTED")
 			changed = true
 		}
 	}
-	if changed {
+	query := parsed.Query()
+	queryChanged := false
+	for key := range query {
+		lower := strings.ToLower(key)
+		if strings.Contains(lower, "token") || strings.Contains(lower, "key") || strings.Contains(lower, "password") || strings.Contains(lower, "secret") || lower == "auth" {
+			query.Set(key, "REDACTED")
+			queryChanged = true
+			changed = true
+		}
+	}
+	if !changed {
+		return compactDisplay(raw, 72)
+	}
+	if queryChanged {
 		parsed.RawQuery = query.Encode()
 	}
 	return compactDisplay(parsed.String(), 72)
