@@ -33,6 +33,9 @@ func openPhysicalProbeClient(ctx context.Context, original *CProxy, timeout time
 	if err := ctx.Err(); err != nil {
 		return nil, nil, func() {}, err
 	}
+	if prepare == nil {
+		return nil, nil, func() {}, fmt.Errorf("physical probe preparer is nil")
+	}
 	proxy, path, err := prepare(ctx, original, sockets)
 	var snapshot func() DownloadNetworkPath
 	if path != nil {

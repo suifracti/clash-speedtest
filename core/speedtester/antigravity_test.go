@@ -405,6 +405,13 @@ func TestAntigravityNilClientAndReceiverDefense(t *testing.T) {
 		t.Fatalf("expected empty from lookupExitCountryIPSB(nil), got %s %s", c, cc)
 	}
 
+	if status, _, _, detail, stab := probeAntigravityStability(nil, "token", "CN", "CN", nil); status != AntigravityUnreachable || detail != "HTTP client is nil" || stab != nil {
+		t.Fatalf("expected Unreachable on nil client for probeAntigravityStability, got status=%s detail=%s", status, detail)
+	}
+	if status, region, detail, ttfb := probeAntigravity(nil, "token"); status != AntigravityUnreachable || region != "" || detail != "HTTP client is nil" || ttfb != 0 {
+		t.Fatalf("expected Unreachable on nil client for probeAntigravity, got status=%s detail=%s", status, detail)
+	}
+
 	// Verify extreme TTFB > 999999ms calculation
 	validTTFBs := []int64{1200000, 1500000}
 	var minTTFB int64

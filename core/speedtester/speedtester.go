@@ -648,6 +648,9 @@ type Result struct {
 }
 
 func (r *Result) FormatDownloadSpeed() string {
+	if r == nil {
+		return "N/A"
+	}
 	if r.DownloadError != "" {
 		return r.DownloadError
 	}
@@ -655,28 +658,37 @@ func (r *Result) FormatDownloadSpeed() string {
 }
 
 func (r *Result) FormatDownloadSpeedValue() string {
+	if r == nil {
+		return "N/A"
+	}
 	return formatSpeed(r.DownloadSpeed)
 }
 
 func (r *Result) FormatLatency() string {
-	if r.Latency == 0 {
+	if r == nil || r.Latency == 0 {
 		return "N/A"
 	}
 	return fmt.Sprintf("%dms", r.Latency.Milliseconds())
 }
 
 func (r *Result) FormatJitter() string {
-	if r.Jitter == 0 {
+	if r == nil || r.Jitter == 0 {
 		return "N/A"
 	}
 	return fmt.Sprintf("%dms", r.Jitter.Milliseconds())
 }
 
 func (r *Result) FormatPacketLoss() string {
+	if r == nil {
+		return "N/A"
+	}
 	return fmt.Sprintf("%.1f%%", r.PacketLoss)
 }
 
 func (r *Result) FormatUploadSpeed() string {
+	if r == nil {
+		return "N/A"
+	}
 	if r.UploadError != "" {
 		return r.UploadError
 	}
@@ -684,18 +696,21 @@ func (r *Result) FormatUploadSpeed() string {
 }
 
 func (r *Result) FormatUploadSpeedValue() string {
+	if r == nil {
+		return "N/A"
+	}
 	return formatSpeed(r.UploadSpeed)
 }
 
 func (r *Result) FormatDownloadError() string {
-	if r.DownloadError == "" {
+	if r == nil || r.DownloadError == "" {
 		return "N/A"
 	}
 	return r.DownloadError
 }
 
 func (r *Result) FormatUploadError() string {
-	if r.UploadError == "" {
+	if r == nil || r.UploadError == "" {
 		return "N/A"
 	}
 	return r.UploadError
@@ -1195,7 +1210,7 @@ func newTransferSummary() *transferSummary {
 }
 
 func (s *transferSummary) add(result *downloadResult) {
-	if result == nil {
+	if s == nil || result == nil {
 		return
 	}
 	if result.error != "" {
@@ -1208,7 +1223,7 @@ func (s *transferSummary) add(result *downloadResult) {
 }
 
 func (s *transferSummary) appendError(message string) {
-	if message == "" {
+	if s == nil || message == "" {
 		return
 	}
 	if s.errorSeen == nil {
@@ -1222,7 +1237,7 @@ func (s *transferSummary) appendError(message string) {
 }
 
 func (s *transferSummary) averageDuration() time.Duration {
-	if s.successCount == 0 {
+	if s == nil || s.successCount == 0 {
 		return 0
 	}
 	return s.totalDuration / time.Duration(s.successCount)

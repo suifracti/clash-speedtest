@@ -383,3 +383,81 @@ func TestSpeedTesterNilSafety(t *testing.T) {
 		t.Fatal("expected non-nil result from physical test on empty SpeedTester")
 	}
 }
+
+func TestResultNilFormatting(t *testing.T) {
+	var r *Result = nil
+
+	if got := r.FormatDownloadSpeed(); got != "N/A" {
+		t.Fatalf("expected 'N/A', got %q", got)
+	}
+	if got := r.FormatDownloadSpeedValue(); got != "N/A" {
+		t.Fatalf("expected 'N/A', got %q", got)
+	}
+	if got := r.FormatLatency(); got != "N/A" {
+		t.Fatalf("expected 'N/A', got %q", got)
+	}
+	if got := r.FormatJitter(); got != "N/A" {
+		t.Fatalf("expected 'N/A', got %q", got)
+	}
+	if got := r.FormatPacketLoss(); got != "N/A" {
+		t.Fatalf("expected 'N/A', got %q", got)
+	}
+	if got := r.FormatUploadSpeed(); got != "N/A" {
+		t.Fatalf("expected 'N/A', got %q", got)
+	}
+	if got := r.FormatUploadSpeedValue(); got != "N/A" {
+		t.Fatalf("expected 'N/A', got %q", got)
+	}
+	if got := r.FormatDownloadError(); got != "N/A" {
+		t.Fatalf("expected 'N/A', got %q", got)
+	}
+	if got := r.FormatUploadError(); got != "N/A" {
+		t.Fatalf("expected 'N/A', got %q", got)
+	}
+	if got := r.FormatAntigravity(); got != "N/A" {
+		t.Fatalf("expected 'N/A', got %q", got)
+	}
+	if got := r.FormatExitCountry(); got != "N/A" {
+		t.Fatalf("expected 'N/A', got %q", got)
+	}
+}
+
+func TestTransferSummaryNilSafety(t *testing.T) {
+	var s *transferSummary
+	// None of these should panic
+	s.add(nil)
+	s.add(&downloadResult{bytes: 100})
+	s.appendError("boom")
+	if avg := s.averageDuration(); avg != 0 {
+		t.Fatalf("expected 0 average duration on nil transferSummary, got %v", avg)
+	}
+
+	size, duration, speed, err := applyTransferSummary(nil)
+	if size != 0 || duration != 0 || speed != 0 || err != "" {
+		t.Fatalf("expected zeroes from applyTransferSummary(nil), got size=%f duration=%v speed=%f err=%q", size, duration, speed, err)
+	}
+}
+
+func TestMarkDownloadPhaseNilContext(t *testing.T) {
+	// Should not panic on nil context or context without phase hook
+	markDownloadPhase(nil, "phase1")
+	markDownloadPhase(context.Background(), "phase2")
+}
+
+func TestUniqueProxyNameNilMap(t *testing.T) {
+	if got := uniqueProxyName(nil, "my-node"); got != "my-node" {
+		t.Fatalf("expected 'my-node', got %q", got)
+	}
+	if got := uniqueProxyName(nil, ""); got != "proxy" {
+		t.Fatalf("expected 'proxy', got %q", got)
+	}
+}
+
+func TestOpenPhysicalProbeClientNilPreparer(t *testing.T) {
+	_, _, cleanup, err := openPhysicalProbeClient(context.Background(), nil, time.Second, 1, nil)
+	defer cleanup()
+	if err == nil || !strings.Contains(err.Error(), "physical probe preparer is nil") {
+		t.Fatalf("expected 'physical probe preparer is nil' error, got %v", err)
+	}
+}
+

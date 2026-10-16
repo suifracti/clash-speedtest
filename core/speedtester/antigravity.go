@@ -230,6 +230,9 @@ func (st *SpeedTester) testAntigravity(proxy constant.Proxy) (status, country, c
 }
 
 func probeAntigravityStability(client *http.Client, token, currentCountry, currentCountryCode string, initialIPInfo *IPInfo) (status, country, countryCode, detail string, stab *StabilityInfo) {
+	if client == nil {
+		return AntigravityUnreachable, currentCountry, currentCountryCode, "HTTP client is nil", nil
+	}
 	country = currentCountry
 	countryCode = currentCountryCode
 
@@ -777,6 +780,9 @@ func fetchGoogleRegion(client *http.Client, token string) string {
 // probeAntigravity asks Google about the exit's eligibility using caller credentials.
 // It dual-checks fetchUserInfo and streamGenerateContent on daily-cloudcode-pa.
 func probeAntigravity(client *http.Client, token string) (status, googleRegion, detail string, ttfbMs int64) {
+	if client == nil {
+		return AntigravityUnreachable, "", "HTTP client is nil", 0
+	}
 	if token == "" {
 		return AntigravityUnknown, "", "需要绑定 Google 凭据以测试 Antigravity", 0
 	}

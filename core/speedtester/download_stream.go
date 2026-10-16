@@ -468,7 +468,10 @@ func downloadErrorClass(err error) string {
 type downloadPhaseKey struct{}
 
 func markDownloadPhase(ctx context.Context, phase string) {
-	if mark, ok := ctx.Value(downloadPhaseKey{}).(func(string)); ok {
+	if ctx == nil {
+		return
+	}
+	if mark, ok := ctx.Value(downloadPhaseKey{}).(func(string)); ok && mark != nil {
 		mark(phase)
 	}
 }

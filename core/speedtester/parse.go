@@ -376,6 +376,9 @@ func uniqueProxyName(names map[string]int, name string) string {
 	if name == "" {
 		name = "proxy"
 	}
+	if names == nil {
+		return name
+	}
 	if index, ok := names[name]; ok {
 		index++
 		names[name] = index

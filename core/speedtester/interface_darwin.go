@@ -26,7 +26,7 @@ func physicalRouteGatewayMetrics(messages []route.Message) map[int]uint32 {
 	metrics := map[int]uint32{}
 	for _, m := range messages {
 		r, ok := m.(*route.RouteMessage)
-		if !ok || r.Flags&syscall.RTF_UP == 0 || r.Flags&syscall.RTF_GATEWAY == 0 || r.Flags&syscall.RTF_HOST != 0 || len(r.Addrs) <= syscall.RTAX_GATEWAY {
+		if !ok || r == nil || r.Flags&syscall.RTF_UP == 0 || r.Flags&syscall.RTF_GATEWAY == 0 || r.Flags&syscall.RTF_HOST != 0 || len(r.Addrs) <= syscall.RTAX_GATEWAY {
 			continue
 		}
 		dst, ok := r.Addrs[syscall.RTAX_DST].(*route.Inet4Addr)

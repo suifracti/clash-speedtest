@@ -40,3 +40,14 @@ func TestPhysicalGatewayIgnoresZeroDestinationSplitRoutes(t *testing.T) {
 		})
 	}
 }
+
+func TestPhysicalGatewayNilRouteMessages(t *testing.T) {
+	if got := physicalRouteGatewayMetrics(nil); len(got) != 0 {
+		t.Fatalf("expected empty map for nil messages, got %v", got)
+	}
+	messages := []route.Message{nil, (*route.RouteMessage)(nil)}
+	if got := physicalRouteGatewayMetrics(messages); len(got) != 0 {
+		t.Fatalf("expected empty map for nil messages list, got %v", got)
+	}
+}
+
