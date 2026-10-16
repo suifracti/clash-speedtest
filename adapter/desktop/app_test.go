@@ -202,6 +202,9 @@ func TestDesktopAppNilSafety(t *testing.T) {
 			}
 
 			_ = a.GetTokenStatus()
+			if _, err := a.DiscoverToken(); err == nil {
+				t.Fatalf("expected errAppNotInitialized")
+			}
 			if err := a.SetToken("abc"); err == nil {
 				t.Fatalf("expected errAppNotInitialized")
 			}

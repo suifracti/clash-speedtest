@@ -392,6 +392,13 @@ func (a *App) GetTokenStatus() application.TokenStatusDTO {
 	return a.app.GetTokenStatus()
 }
 
+func (a *App) DiscoverToken() (application.TokenStatusDTO, error) {
+	if a == nil || a.app == nil {
+		return application.TokenStatusDTO{}, errAppNotInitialized
+	}
+	return a.app.DiscoverAntigravityToken()
+}
+
 func (a *App) SetToken(token string) error {
 	if a == nil || a.app == nil {
 		return errAppNotInitialized

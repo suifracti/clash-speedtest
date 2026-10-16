@@ -74,3 +74,47 @@ func TestNoAutoCredentialsDefaultRetriesDiscoveryForStatus(t *testing.T) {
 		t.Fatalf("default constructor/status discovery calls=%d, want 2", calls)
 	}
 }
+
+func TestDiscoverAntigravityTokenExplicitUserAction(t *testing.T) {
+	paths, err := appdata.Resolve(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	app := NewAppServiceWithOptions(nil, paths, nil, Options{
+		NoAutoCredentials: true,
+		CredentialDiscovery: func() (string, string, error) {
+			calls++
+			return "ya29.discovered-user-action", "discovered source", nil
+		},
+	})
+	defer app.Close()
+
+	// Initial status without discovery
+	status := app.GetTokenStatus()
+	if status.HasToken || calls != 0 {
+		t.Fatalf("expected no token before discover, got %+v, calls=%d", status, calls)
+	}
+
+	// Explicit discovery
+	discovered, err := app.DiscoverAntigravityToken()
+	if err != nil {
+		t.Fatalf("discover failed: %v", err)
+	}
+	if !discovered.HasToken || discovered.Source != "discovered source" || calls != 1 {
+		t.Fatalf("unexpected discovered status: %+v, calls=%d", discovered, calls)
+	}
+
+	// Verify persistence in DataRoot
+	dataTokenPath := filepath.Join(paths.DataRoot, ".antigravity_token")
+	if data, err := os.ReadFile(dataTokenPath); err != nil || string(data) != "ya29.discovered-user-action\n" {
+		t.Fatalf("token not persisted in DataRoot: %v, content=%q", err, string(data))
+	}
+
+	// Verify GetTokenStatus reflects discovered token
+	statusAfter := app.GetTokenStatus()
+	if !statusAfter.HasToken || statusAfter.Source != "discovered source" {
+		t.Fatalf("GetTokenStatus after discover: %+v", statusAfter)
+	}
+}
+

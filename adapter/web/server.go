@@ -205,6 +205,7 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("GET /api/history/compare", s.handleCompareHistory)
 
 	mux.HandleFunc("GET /api/antigravity/status", s.handleAntigravityStatus)
+	mux.HandleFunc("POST /api/antigravity/discover", s.handleAntigravityDiscover)
 	mux.HandleFunc("POST /api/antigravity/token", s.handleAntigravityToken)
 	mux.HandleFunc("POST /api/antigravity/login", s.handleAntigravityLogin)
 
@@ -845,7 +846,23 @@ func (s *Server) handleCompareHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAntigravityStatus(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("discover") == "true" || r.URL.Query().Get("discover") == "1" {
+		status, err := s.app.DiscoverAntigravityToken()
+		if err == nil {
+			writeJSON(w, http.StatusOK, status)
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, s.app.GetTokenStatus())
+}
+
+func (s *Server) handleAntigravityDiscover(w http.ResponseWriter, r *http.Request) {
+	status, err := s.app.DiscoverAntigravityToken()
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
 }
 
 type tokenReq struct {

@@ -176,6 +176,7 @@ func CandidateTokenPaths() []string {
 		// Priority 1: Real user credentials containing refresh_token
 		paths = append(paths,
 			filepath.Join(home, ".gemini", "oauth_creds.json"),
+			filepath.Join(home, ".gemini", "antigravity", "oauth_creds.json"),
 		)
 		if runtime.GOOS == "darwin" {
 			paths = append(paths,
@@ -190,7 +191,13 @@ func CandidateTokenPaths() []string {
 				)
 			}
 		}
-		paths = append(paths, filepath.Join(home, ".antigravity_token"))
+		paths = append(paths,
+			filepath.Join(home, ".antigravity_token"),
+			filepath.Join(home, ".gemini", "antigravity", ".antigravity_token"),
+		)
+	}
+	if dataDir := os.Getenv("CLASH_SPEEDTEST_DATA_DIR"); dataDir != "" {
+		paths = append(paths, filepath.Join(dataDir, ".antigravity_token"))
 	}
 	paths = append(paths, ".antigravity_token", "antigravity.token")
 	return paths

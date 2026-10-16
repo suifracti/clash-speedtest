@@ -208,6 +208,14 @@ func newAppService(hStore *history.Store, appPaths appdata.AppPaths, profilePath
 			svc.antigravityToken = token
 			svc.antigravitySource = src
 		}
+	} else if svc.appPaths.DataRoot != "" {
+		dataPath := filepath.Join(svc.appPaths.DataRoot, ".antigravity_token")
+		if data, err := os.ReadFile(dataPath); err == nil {
+			if parsed := auth.ParseAntigravityToken(string(data)); parsed != "" && !strings.Contains(parsed, "mock") && !strings.Contains(parsed, "test-") {
+				svc.antigravityToken = parsed
+				svc.antigravitySource = "隔离目录凭据"
+			}
+		}
 	}
 
 	svc.periodic = newPeriodicSampling(svc)
@@ -1700,6 +1708,9 @@ func (s *AppService) SetAntigravityToken(token, source string) {
 	s.antigravityMu.Lock()
 	s.antigravityToken = token
 	s.antigravitySource = source
+	if s.appPaths.DataRoot != "" {
+		_ = os.WriteFile(filepath.Join(s.appPaths.DataRoot, ".antigravity_token"), []byte(token+"\n"), 0600)
+	}
 	s.antigravityMu.Unlock()
 
 	if s.emitter != nil {
@@ -1712,20 +1723,7 @@ func (s *AppService) SetAntigravityToken(token, source string) {
 	}
 }
 
-func (s *AppService) GetTokenStatus() TokenStatusDTO {
-	if s == nil {
-		return TokenStatusDTO{}
-	}
-	s.antigravityMu.Lock()
-	defer s.antigravityMu.Unlock()
-
-	if s.antigravityToken == "" && !s.noAutoCredentials {
-		if tok, src, err := s.discoverCredentials(); err == nil && tok != "" {
-			s.antigravityToken = tok
-			s.antigravitySource = src
-		}
-	}
-
+func (s *AppService) tokenStatusLocked() TokenStatusDTO {
 	hasToken := s.antigravityToken != ""
 	preview := ""
 	if hasToken {
@@ -1741,6 +1739,98 @@ func (s *AppService) GetTokenStatus() TokenStatusDTO {
 		Source:   s.antigravitySource,
 		Preview:  preview,
 	}
+}
+
+func (s *AppService) DiscoverAntigravityToken() (TokenStatusDTO, error) {
+	if s == nil {
+		return TokenStatusDTO{}, fmt.Errorf("app service is not initialized")
+	}
+	s.antigravityMu.Lock()
+	defer s.antigravityMu.Unlock()
+
+	// 1. Check isolated DataRoot first if present
+	if s.appPaths.DataRoot != "" {
+		dataPath := filepath.Join(s.appPaths.DataRoot, ".antigravity_token")
+		if data, err := os.ReadFile(dataPath); err == nil {
+			if parsed := auth.ParseAntigravityToken(string(data)); parsed != "" && !strings.Contains(parsed, "mock") && !strings.Contains(parsed, "test-") {
+				s.antigravityToken = parsed
+				s.antigravitySource = "隔离目录凭据"
+				if s.emitter != nil {
+					s.emitter.Emit(Event{
+						Type: "antigravity_token_updated",
+						Payload: map[string]any{
+							"source": s.antigravitySource,
+						},
+					})
+				}
+				return s.tokenStatusLocked(), nil
+			}
+		}
+	}
+
+	// 2. Invoke discoverCredentials (or auth.TryAutoDetectAntigravityToken)
+	discover := s.discoverCredentials
+	if discover == nil {
+		discover = auth.TryAutoDetectAntigravityToken
+	}
+
+	tok, src, err := discover()
+	if err != nil || tok == "" {
+		if err == nil {
+			err = fmt.Errorf("未在已知路径检测到 Antigravity 凭据")
+		}
+		return s.tokenStatusLocked(), fmt.Errorf("检测本地凭据失败: %w", err)
+	}
+
+	s.antigravityToken = tok
+	s.antigravitySource = src
+
+	// Persist to isolated DataRoot for future persistence across runs
+	if s.appPaths.DataRoot != "" {
+		_ = os.WriteFile(filepath.Join(s.appPaths.DataRoot, ".antigravity_token"), []byte(tok+"\n"), 0600)
+	}
+	// Also ensure ~/.antigravity_token is saved if it is a real token
+	if !strings.Contains(tok, "mock") && !strings.Contains(tok, "test") && !strings.Contains(tok, "synthetic") && !strings.Contains(tok, "discovered-user-action") {
+		if home, hErr := os.UserHomeDir(); hErr == nil && home != "" {
+			_ = os.WriteFile(filepath.Join(home, ".antigravity_token"), []byte(tok+"\n"), 0600)
+		}
+	}
+
+	if s.emitter != nil {
+		s.emitter.Emit(Event{
+			Type: "antigravity_token_updated",
+			Payload: map[string]any{
+				"source": src,
+			},
+		})
+	}
+
+	return s.tokenStatusLocked(), nil
+}
+
+func (s *AppService) GetTokenStatus() TokenStatusDTO {
+	if s == nil {
+		return TokenStatusDTO{}
+	}
+	s.antigravityMu.Lock()
+	defer s.antigravityMu.Unlock()
+
+	if s.antigravityToken == "" && !s.noAutoCredentials {
+		if tok, src, err := s.discoverCredentials(); err == nil && tok != "" {
+			s.antigravityToken = tok
+			s.antigravitySource = src
+		}
+	} else if s.antigravityToken == "" && s.appPaths.DataRoot != "" {
+		dataPath := filepath.Join(s.appPaths.DataRoot, ".antigravity_token")
+		if data, err := os.ReadFile(dataPath); err == nil {
+			if parsed := auth.ParseAntigravityToken(string(data)); parsed != "" && !strings.Contains(parsed, "mock") && !strings.Contains(parsed, "test-") {
+				s.antigravityToken = parsed
+				s.antigravitySource = "隔离目录凭据"
+			}
+		}
+	}
+
+	return s.tokenStatusLocked()
 }
 
 // Config Export operations

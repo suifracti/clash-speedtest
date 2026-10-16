@@ -216,6 +216,9 @@ func TestAppServiceNilReceiverSafety(t *testing.T) {
 	if status.HasToken {
 		t.Fatal("expected empty token status for nil service")
 	}
+	if _, err := s.DiscoverAntigravityToken(); err == nil {
+		t.Fatal("expected error on DiscoverAntigravityToken for nil service")
+	}
 	if _, err := s.ExportClashConfig("a1", nil); err == nil {
 		t.Fatal("expected error on ExportClashConfig for nil service")
 	}
