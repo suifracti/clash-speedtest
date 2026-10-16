@@ -333,6 +333,7 @@ type Checker struct {
 	ReputationStore  ReputationStore
 	AntigravityToken string `json:"-"`
 	ClientFactory    ClientFactory
+	DriftSamples     int
 }
 
 func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rule, timeout time.Duration) (final Result) {
@@ -419,13 +420,15 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	}
 	var client *http.Client
 	var err error
+	var cleanup func()
 	if c.ClientFactory != nil {
 		client, err = c.ClientFactory(node, timeout)
 	} else {
-		var cleanup func()
 		autoFamily := rule.ServiceID != "ipok_ipv4" && rule.ServiceID != "ipok_ipv6" && rule.ServiceID != "antigravity"
 		client, pathSnapshot, cleanup, err = defaultClientFactory(ctx, node, timeout, autoFamily)
-		defer cleanup()
+		if cleanup != nil {
+			defer cleanup()
+		}
 	}
 	if ctx.Err() != nil {
 		return finish(unexecutedPreparation(ctx.Err()), startedAt)
@@ -443,6 +446,152 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	phases := &requestPhases{}
 	client.Transport = phases.wrap(client.Transport, c.ClientFactory == nil)
 	defer phases.attach(&final)
+
+	res1 := c.checkOnce(ctx, client, node, rule, startedAt)
+	driftTarget := c.DriftSamples
+	if driftTarget <= 1 || rule.ServiceID == "ipok_ipv4" || rule.ServiceID == "ipok_ipv6" ||
+		res1.Outcome == "credentials_required" || res1.Outcome == "not_executed" || res1.Outcome == "cancelled" {
+		final = res1
+		return final
+	}
+
+	extractIPAndColo := func(r Result) (string, string) {
+		ip := r.Details["ip"]
+		colo := r.Details["cloudflare_colo"]
+		if colo == "" {
+			colo = r.Details["cf_colo"]
+		}
+		return ip, colo
+	}
+
+	type sampleEntry struct {
+		mode       string
+		outcome    string
+		httpStatus *int
+		ip         string
+		colo       string
+		res        Result
+	}
+
+	ip1, colo1 := extractIPAndColo(res1)
+	samples := []sampleEntry{
+		{mode: "fresh", outcome: res1.Outcome, httpStatus: res1.HTTPStatus, ip: ip1, colo: colo1, res: res1},
+	}
+
+	for i := 2; i <= driftTarget; i++ {
+		if ctx.Err() != nil {
+			break
+		}
+		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < 400*time.Millisecond {
+			break
+		}
+		var mode string
+		if i%2 == 0 {
+			mode = "keepalive"
+		} else {
+			mode = "reconnect"
+			if client != nil {
+				client.CloseIdleConnections()
+			}
+		}
+
+		probeStart := time.Now().UTC()
+		subRes := c.checkOnce(ctx, client, node, rule, probeStart)
+		subIP, subColo := extractIPAndColo(subRes)
+		samples = append(samples, sampleEntry{
+			mode:       mode,
+			outcome:    subRes.Outcome,
+			httpStatus: subRes.HTTPStatus,
+			ip:         subIP,
+			colo:       subColo,
+			res:        subRes,
+		})
+		res1.RequestCount += subRes.RequestCount
+		res1.BytesRead += subRes.BytesRead
+	}
+
+	totalSamples := len(samples)
+	successSamples := 0
+	failureSamples := 0
+	var observedIPs []string
+	var observedColos []string
+	var observedOutcomes []string
+	seenIPs := make(map[string]bool)
+	seenColos := make(map[string]bool)
+	seenOutcomes := make(map[string]bool)
+	keepaliveCount := 0
+	reconnectCount := 0
+
+	for _, s := range samples {
+		if s.mode == "keepalive" {
+			keepaliveCount++
+		} else if s.mode == "reconnect" {
+			reconnectCount++
+		}
+		if s.ip != "" && !seenIPs[s.ip] {
+			seenIPs[s.ip] = true
+			observedIPs = append(observedIPs, s.ip)
+		}
+		if s.colo != "" && !seenColos[s.colo] {
+			seenColos[s.colo] = true
+			observedColos = append(observedColos, s.colo)
+		}
+		if s.outcome != "" && !seenOutcomes[s.outcome] {
+			seenOutcomes[s.outcome] = true
+			observedOutcomes = append(observedOutcomes, s.outcome)
+		}
+		if isSuccessOutcome(s.outcome) {
+			successSamples++
+		} else {
+			failureSamples++
+		}
+	}
+
+	ipDrift := len(observedIPs) > 1 || len(observedColos) > 1
+	flapping := successSamples > 0 && failureSamples > 0
+
+	if res1.Details == nil {
+		res1.Details = make(map[string]string)
+	}
+	res1.Details["sample_total"] = fmt.Sprint(totalSamples)
+	res1.Details["sample_success"] = fmt.Sprint(successSamples)
+	res1.Details["sample_failure"] = fmt.Sprint(failureSamples)
+	res1.Details["sample_success_rate"] = fmt.Sprintf("%d%%", successSamples*100/totalSamples)
+	res1.Details["keepalive_probes"] = fmt.Sprint(keepaliveCount)
+	res1.Details["reconnect_probes"] = fmt.Sprint(reconnectCount)
+	res1.Details["ip_drift_detected"] = fmt.Sprint(ipDrift)
+	res1.Details["flapping_detected"] = fmt.Sprint(flapping)
+	if len(observedIPs) > 0 {
+		res1.Details["observed_ips"] = strings.Join(observedIPs, ", ")
+	}
+	if len(observedColos) > 0 {
+		res1.Details["observed_colos"] = strings.Join(observedColos, ", ")
+	}
+	res1.Details["observed_outcomes"] = strings.Join(observedOutcomes, ", ")
+
+	if flapping {
+		res1.Outcome = "flapping"
+		res1.FailurePhase = "drift_validation"
+		res1.Summary = fmt.Sprintf("%d/%d 次测试通过 · 存在漂移或抖动（非稳定可用）", successSamples, totalSamples)
+		res1.ErrorMessage = fmt.Sprintf("多轮测试发现结果抖动：%d次成功 / %d次失败（含%d次断开重连+%d次保持连接），已排除偶发通过假阳性", successSamples, failureSamples, reconnectCount, keepaliveCount)
+		res1.Details["drift_summary"] = fmt.Sprintf("%d次测试(%d重连+%d保持): %d通过/%d未通过 · 存在漂移抖动", totalSamples, reconnectCount, keepaliveCount, successSamples, failureSamples)
+	} else if successSamples == totalSamples {
+		if ipDrift {
+			res1.Summary = fmt.Sprintf("%d/%d 次探测一致通过（出口观察到漂移：%s）", totalSamples, totalSamples, strings.Join(observedIPs, " -> "))
+			res1.Details["drift_summary"] = fmt.Sprintf("%d次测试全通过 · 观察到出口IP漂移", totalSamples)
+		} else {
+			res1.Summary = fmt.Sprintf("%d/%d 次探测一致通过（重连与保持连接均稳定）", totalSamples, totalSamples)
+			res1.Details["drift_summary"] = fmt.Sprintf("%d次测试全通过 · 连接与出口稳定", totalSamples)
+		}
+	} else {
+		res1.Summary = fmt.Sprintf("%d/%d 次探测全部失败（%s）", totalSamples, totalSamples, res1.ErrorMessage)
+		res1.Details["drift_summary"] = fmt.Sprintf("%d次测试全失败 · %s", totalSamples, res1.Outcome)
+	}
+	final = res1
+	return final
+}
+
+func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monitor.MonitoredNode, rule Rule, startedAt time.Time) Result {
 
 	if rule.ServiceID == "antigravity" {
 		return checkAntigravityObserved(ctx, client, c.AntigravityToken, startedAt)
@@ -508,7 +657,13 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	defer response.Body.Close()
 
 	status := response.StatusCode
-	result := Result{HTTPStatus: &status, RequestCount: 1}
+	result := Result{HTTPStatus: &status, RequestCount: 1, Details: map[string]string{}}
+	if ray := response.Header.Get("CF-Ray"); ray != "" {
+		result.Details["cf_ray"] = ray
+		if parts := strings.Split(ray, "-"); len(parts) > 1 {
+			result.Details["cf_colo"] = strings.TrimSpace(parts[1])
+		}
+	}
 	if rule.ServiceID == "grok_web" && status == http.StatusTooManyRequests {
 		result.Outcome, result.FailurePhase, result.ErrorMessage = "rate_limited", "http_status", "目标返回 HTTP 429；不判为节点或业务能力故障"
 		if strings.EqualFold(strings.TrimSpace(response.Header.Get("cf-mitigated")), "challenge") {
@@ -698,4 +853,13 @@ func unexecutedPreparation(err error) Result {
 		why = "cancelled_before_network"
 	}
 	return Result{Outcome: "not_executed", FailurePhase: "preparation", ErrorMessage: "准备阶段原请求预算已耗尽或取消；未发起网络探测", Details: map[string]string{"not_executed_reason": why}}
+}
+
+func isSuccessOutcome(outcome string) bool {
+	switch outcome {
+	case "matched", "unlocked", "reachable", "profiled":
+		return true
+	default:
+		return false
+	}
 }

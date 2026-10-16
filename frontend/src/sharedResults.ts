@@ -13,7 +13,7 @@ export function serviceAvailability(a?:Attempt):0|1|null {
  if(!serviceExecuted(a)||serviceIsProfile(a))return null
  const r=a!.result!
  if(servicePassed(a))return 1
- if(['region_blocked','region_limited','originals_only','service_rejected','challenge'].includes(r.outcome))return 0
+ if(['region_blocked','region_limited','originals_only','service_rejected','challenge','flapping'].includes(r.outcome))return 0
  if(r.outcome==='http_rejected'&&r.http_status!==undefined&&r.http_status>=400&&r.http_status<500&&![401,429].includes(r.http_status))return 0
  if(r.outcome==='criteria_mismatch'&&!['response_limit','response_evidence_limit','json_document','response_body'].includes(r.failure_phase||'')&&r.http_status!==undefined)return 0
  return null

@@ -54,6 +54,7 @@ type WorkbenchPublicServiceTestRequest struct {
 	ConfigRevisionKey string `json:"config_revision_key"`
 	ServiceID         string `json:"service_id"`
 	TimeoutSeconds    int64  `json:"timeout_seconds,omitempty"`
+	DriftSamples      int    `json:"drift_samples,omitempty"`
 }
 
 type WorkbenchPublicServiceHistoryQuery struct {

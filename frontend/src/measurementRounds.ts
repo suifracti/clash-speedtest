@@ -10,9 +10,10 @@ export function serviceConclusion(a:Attempt){
  const r=a.result;if(!r)return stateLabel(a.execution_state)
  if(a.execution_state==='not_executed'||r.details?.execution_status==='not_executed'||r.outcome==='not_executed')return '未执行'
  if(['cancelled','interrupted','not_executed'].includes(r.outcome))return outcomeLabel(r.outcome)
+ if(r.outcome==='flapping')return `漂移/抖动（${r.details?.sample_success||0}/${r.details?.sample_total||0} 通过，非稳定可用）`
  if(r.outcome==='reachable')return 'HTTP 可达（业务／解锁未验证）'
- if(r.outcome==='matched')return '探针规则通过（仅此端点）'
- if(r.outcome==='unlocked')return '解锁规则通过（播放未验证）'
+ if(r.outcome==='matched')return r.details?.sample_total?`探针规则通过（${r.details.sample_success}/${r.details.sample_total} 一致）`:'探针规则通过（仅此端点）'
+ if(r.outcome==='unlocked')return r.details?.sample_total?`解锁规则通过（${r.details.sample_success}/${r.details.sample_total} 一致）`:'解锁规则通过（播放未验证）'
  if(r.outcome==='profiled')return '已获取端点画像'
  if(serviceAvailability(a)===0)return '判据未通过（'+outcomeLabel(r.outcome)+'）'
  return '未确认（'+outcomeLabel(r.outcome)+'）'

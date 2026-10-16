@@ -2,7 +2,7 @@
 import {computed,onBeforeUnmount,onMounted,ref,watch} from 'vue'
 import {api,type SubscriptionRefreshJob,type SubscriptionRefreshRequest} from '../api'
 import {bytes,type Airport,type NodeOption} from '../domain'
-import {airportAccounts,noticesForAccount,safeAirportLink,type AirportAccount} from '../airportViewing'
+import {airportAccounts,noticesForAccount,safeAirportLink,parseNoticeUsage,type AirportAccount,type NoticeParsedUsage} from '../airportViewing'
 import {useWorkspace} from '../workspace'
 import UiSelect from './UiSelect.vue'
 import Modal from './Modal.vue'
@@ -11,7 +11,24 @@ const props=defineProps<{airports:Airport[];notices:NodeOption[]}>()
 type SubscriptionDisclosureSummary={refreshState:'loading'|'ready'|'error';noticeCount:number;expiredAccountCount:number;unknownExpiryAccountCount:number;failedItemCount:number;interruptedItemCount:number;runningItemCount:number;latestRefreshIssueAccount?:string;latestRefreshIssueState?:'failed'|'interrupted'}
 const emit=defineEmits<{summary:[value:SubscriptionDisclosureSummary]}>()
 const workspace=useWorkspace(),accounts=computed(()=>airportAccounts(props.airports)),selectedKey=ref(''),jobs=ref<SubscriptionRefreshJob[]>([]),activeJob=ref<SubscriptionRefreshJob|null>(null),loading=ref(false),jobsReadState=ref<'loading'|'ready'|'error'>('loading'),noticeOpen=ref(false),error=ref('')
-const selected=computed(()=>accounts.value.find(account=>account.key===selectedKey.value)),accountNotices=computed(()=>noticesForAccount(props.notices,selected.value)),usage=computed(()=>selected.value?.subscription.usage),used=computed(()=>usage.value?(usage.value.upload||0)+(usage.value.download||0):null),remaining=computed(()=>usage.value?.total===undefined?null:Math.max(0,usage.value.total-(used.value||0)))
+
+
+const selected=computed(()=>accounts.value.find(account=>account.key===selectedKey.value)),accountNotices=computed(()=>noticesForAccount(props.notices,selected.value)),usage=computed(()=>selected.value?.subscription.usage)
+const parsedNoticeUsage=computed(()=>parseNoticeUsage(accountNotices.value))
+const used=computed(()=>{
+  if(usage.value)return (usage.value.upload||0)+(usage.value.download||0)
+  return parsedNoticeUsage.value.used??null
+})
+const remaining=computed(()=>{
+  if(usage.value?.total!==undefined)return Math.max(0,usage.value.total-(used.value||0))
+  return parsedNoticeUsage.value.remaining??null
+})
+const total=computed(()=>{
+  if(usage.value?.total!==undefined)return usage.value.total
+  if(parsedNoticeUsage.value.total!==undefined)return parsedNoticeUsage.value.total
+  if(used.value!==null&&remaining.value!==null)return used.value+remaining.value
+  return undefined
+})
 const links=computed(()=>{
   const airport=selected.value?.airport
   if(!airport)return []
@@ -38,6 +55,12 @@ const latestRefreshByAccount=computed(()=>accounts.value.map(account=>{
   return {account,...latest}
 }))
 const disclosureSummary=computed<SubscriptionDisclosureSummary>(()=>{
+  const hasExpiry=(account:AirportAccount)=>{
+    const exp=account.subscription.usage?.expire
+    if(typeof exp==='number'&&Number.isFinite(exp)&&exp>0)return true
+    const parsed=parseNoticeUsage(noticesForAccount(props.notices,account))
+    return !!parsed.expireText
+  }
   const expiry=accounts.value.map(account=>account.subscription.usage?.expire).filter((value):value is number=>typeof value==='number'&&Number.isFinite(value)&&value>0)
   const latest=latestRefreshByAccount.value
   const failed=latest.filter(entry=>entry.item?.state==='failed')
@@ -49,7 +72,7 @@ const disclosureSummary=computed<SubscriptionDisclosureSummary>(()=>{
     refreshState:error.value||jobsReadState.value==='error'?'error':jobsReadState.value,
     noticeCount:props.notices.length,
     expiredAccountCount:expiry.filter(value=>value*1000<=Date.now()).length,
-    unknownExpiryAccountCount:accounts.value.length-expiry.length,
+    unknownExpiryAccountCount:accounts.value.filter(a=>!hasExpiry(a)).length,
     failedItemCount:failed.length,
     interruptedItemCount:interrupted.length,
     runningItemCount:running.length,
@@ -59,10 +82,15 @@ const disclosureSummary=computed<SubscriptionDisclosureSummary>(()=>{
 })
 const expireLabel=computed(()=>{
   const expire=usage.value?.expire
-  if(!expire)return ''
-  const at=new Date(expire*1000)
-  if(!Number.isFinite(at.getTime()))return ''
-  return at.getTime()<=Date.now()?`已过期 · ${at.toLocaleDateString('zh-CN')}`:`到期 ${at.toLocaleDateString('zh-CN')}`
+  if(expire){
+    const at=new Date(expire*1000)
+    if(Number.isFinite(at.getTime()))return at.getTime()<=Date.now()?`已过期 · ${at.toLocaleDateString('zh-CN')}`:`到期 ${at.toLocaleDateString('zh-CN')}`
+  }
+  if(parsedNoticeUsage.value.expireText){
+    if(parsedNoticeUsage.value.isPerpetual)return '套餐到期：长期有效'
+    return `到期 ${parsedNoticeUsage.value.expireText}`
+  }
+  return ''
 })
 const jobRunning=(job:SubscriptionRefreshJob|null)=>job?.state==='running'
 watch(disclosureSummary,value=>emit('summary',value),{immediate:true})
@@ -86,7 +114,7 @@ onBeforeUnmount(()=>{disposed=true;clearTimeout(pollTimer)})
     <p v-if="!selected" class="muted">先在机场选择中选择要查看的机场。</p>
     <template v-else>
       <div class="subscription-overview-grid">
-        <div class="subscription-overview-account"><strong>{{selected.airport.name}} · {{selected.subscription.name}}</strong><span v-if="used!==null">已用 {{bytes(used)}}<template v-if="usage?.total!==undefined"> / {{bytes(usage.total)}} · 剩余 {{bytes(remaining||0)}}</template></span><span v-else>暂无用量记录</span><span v-if="expireLabel">{{expireLabel}}</span><div v-if="usage?.total!==undefined" class="usage-track"><i :style="{width:`${Math.min(100,(used||0)/usage.total*100)}%`}"/></div></div>
+        <div class="subscription-overview-account"><strong>{{selected.airport.name}} · {{selected.subscription.name}}</strong><span v-if="used!==null">已用 {{bytes(used)}}<template v-if="total!==undefined"> / {{bytes(total)}} · 剩余 {{bytes(remaining||0)}}</template></span><span v-else-if="remaining!==null">剩余 {{bytes(remaining)}}<template v-if="total!==undefined"> / {{bytes(total)}}</template><small class="muted">（由公告识别）</small></span><span v-else>暂无用量记录</span><span v-if="expireLabel">{{expireLabel}}</span><div v-if="total!==undefined&&used!==null" class="usage-track"><i :style="{width:`${Math.min(100,(used||0)/total*100)}%`}"/></div></div>
         <div class="subscription-overview-links"><strong>机场入口</strong><div><a v-for="link in links" :key="link.label+link.url" :href="link.url" target="_blank" rel="noopener noreferrer">{{link.label}} ↗</a><span v-if="!links.length" class="muted">未配置</span></div></div>
         <div class="subscription-overview-refresh"><button class="button primary" :disabled="loading||jobRunning(activeJob)" @click="startCurrent">{{loading?'提交中…':'刷新当前订阅'}}</button><span v-if="visibleItem" class="badge" :class="visibleItem.state==='succeeded'?'good':['failed','interrupted'].includes(visibleItem.state)?'bad':'warn'">{{visibleItem.state==='succeeded'?'刷新成功':visibleItem.state==='failed'?'刷新失败':visibleItem.state==='interrupted'?'刷新中断':visibleItem.state==='not_executed'?'未执行':visibleItem.state==='cancelled'?'已取消':'刷新中'}}</span><p v-if="visibleItem?.error_message" class="inline-error">{{visibleItem.error_message}}</p><div v-if="visibleItem?.stages?.length" class="small muted">{{visibleItem.stages.map(stage=>({queued:'排队',fetching:'抓取',parsing:'解析',saving:'保存',succeeded:'完成',failed:'失败',interrupted:'中断',not_executed:'未执行',cancelled:'已取消'} as Record<string,string>)[stage.state]||stage.state).join(' → ')}}</div><button v-if="visibleItem?.state==='failed'" class="text-button" :disabled="loading" @click="retryFailed">只重试失败项</button><button v-if="visibleJob&&jobRunning(visibleJob)" class="text-button" @click="cancelCurrent">取消刷新</button><small v-if="visibleJob?.persistence_error" class="inline-error">{{visibleJob.persistence_error}}</small></div>
       </div>

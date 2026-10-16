@@ -35,7 +35,7 @@ function inspect(e:PointerEvent){const box=(e.currentTarget as SVGElement).getBo
 }
 function valueText(p:TrendPoint){return p.tone==='bad'?'失败':p.tone==='empty'?'暂无记录':props.unit==='状态'?p.value===null?'暂无记录':Math.round(p.value*100)+'% 本轮通过':p.value===null?'—':p.value.toFixed(props.unit==='MiB/s'?2:0)+' '+props.unit}
 function latest(s:ChartSeries){const p=s.points[s.points.length-1];return p?valueText(p):'暂无记录'}
-function seriesLabel(s:ChartSeries){return [s.name,s.airport,s.targetName].filter(Boolean).join(' · ')}
+function seriesLabel(s:ChartSeries){return [s.targetName||s.name,s.targetName&&nodeCount.value>1?s.name:'',s.airport].filter(Boolean).join(' · ')}
 watch(()=>props.series.map(s=>s.id).sort().join('|'),()=>{hidden.value=hidden.value.filter(id=>props.series.some(s=>s.id===id));hovered.value=null})
 watch(plotted,list=>{
   const current=hovered.value;if(!current)return
@@ -53,10 +53,10 @@ watch(plotted,list=>{
       <line v-if="hovered" :x1="hovered.x" :x2="hovered.x" y1="30" y2="271" class="overview-guide"/>
       <text x="44" y="293">{{date(new Date(minTime).toISOString())}}</text><text x="946" y="293" text-anchor="end">{{date(new Date(maxTime).toISOString())}}</text>
     </svg>
-    <div class="overview-readout"><template v-if="hovered"><strong>{{hovered.series.name}}<template v-if="hovered.series.targetName"> · {{hovered.series.targetName}}</template></strong><span>{{hovered.series.airport}} · {{hovered.point.description}}</span><b>{{valueText(hovered.point)}}</b></template><span v-else>{{series.length===1?'悬停图中记录查看数值；上方可加入其它节点对比。':multiTarget?'各'+comparisonItem+'共用真实时间轴；没有记录的'+comparisonItem+'标为未测。':'所有节点共用真实时间轴；可在下方挑选要比较的曲线。'}}</span></div>
+    <div class="overview-readout"><template v-if="hovered"><strong>{{multiTarget&&hovered.series.targetName?hovered.series.targetName:hovered.series.name}}<template v-if="!multiTarget&&hovered.series.targetName"> · {{hovered.series.targetName}}</template></strong><span>{{hovered.series.airport}}{{multiTarget&&hovered.series.targetName&&nodeCount>1?' · '+hovered.series.name:''}} · {{hovered.point.description}}</span><b>{{valueText(hovered.point)}}</b></template><span v-else>{{series.length===1?'悬停图中记录查看数值；上方可加入其它节点对比。':multiTarget?'各'+comparisonItem+'共用真实时间轴；没有记录的'+comparisonItem+'标为未测。':'所有节点共用真实时间轴；可在下方挑选要比较的曲线。'}}</span></div>
     <details v-if="series.length>1||!foldLegend" class="chart-comparison-picker" :open="multiTarget||!foldLegend"><summary>{{multiTarget?'挑选节点与'+comparisonItem+'曲线':'挑选对比节点'}} · 当前显示 {{shown.length}} {{multiTarget?'条':'个'}}</summary>
     <input v-model="search" type="search" :aria-label="multiTarget?'搜索图表节点、机场或'+comparisonItem:'搜索图表节点'" :placeholder="multiTarget?'搜索节点、机场或'+comparisonItem:'搜索要对比的节点或机场'">
-    <div class="overview-legend"><label v-for="s in legend" :key="s.id"><input type="checkbox" :checked="!hidden.includes(s.id)" :aria-label="'图表显示 '+seriesLabel(s)" @change="toggle(s.id)"><i :style="{background:color(s.id)}"/><span><strong>{{s.name}}<template v-if="s.targetName"> · {{s.targetName}}</template></strong><small>{{s.airport}}</small></span><b>{{s.points.some(point=>point.tone!=='empty')?latest(s):multiTarget?'未测':'暂无记录'}}</b></label></div>
+    <div class="overview-legend"><label v-for="s in legend" :key="s.id"><input type="checkbox" :checked="!hidden.includes(s.id)" :aria-label="'图表显示 '+seriesLabel(s)" @change="toggle(s.id)"><i :style="{background:color(s.id)}"/><span><strong>{{multiTarget?(s.targetName||s.name):s.name}}</strong><small>{{multiTarget?(nodeCount>1?s.name+' · ':'')+s.airport:s.airport}}</small></span><b>{{s.points.some(point=>point.tone!=='empty')?latest(s):multiTarget?'未测':'暂无记录'}}</b></label></div>
     </details>
   </section>
 </template>

@@ -411,3 +411,83 @@ func TestCheckerDistinguishesTransportTimeoutFromCheckDeadline(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckerMultiSampleDriftAndFlappingDetection(t *testing.T) {
+	rule, _ := RuleFor("cloudflare_204")
+
+	t.Run("detects flapping when some probes fail and some succeed", func(t *testing.T) {
+		var calls atomic.Int32
+		checker := Checker{
+			DriftSamples: 3,
+			ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+				c := calls.Add(1)
+				if c == 1 {
+					// First probe succeeds
+					return fixtureResponse(req, http.StatusNoContent, "", ""), nil
+				}
+				// Subsequent probes fail with HTTP 500 or timeout
+				return fixtureResponse(req, http.StatusInternalServerError, "", "server error"), nil
+			}),
+		}
+		result := checker.Check(context.Background(), monitor.MonitoredNode{NodeKey: "node-a"}, rule, DefaultTimeout)
+		if result.Outcome != "flapping" {
+			t.Fatalf("outcome = %s, want flapping", result.Outcome)
+		}
+		if result.Details["flapping_detected"] != "true" {
+			t.Fatalf("flapping_detected = %s, want true", result.Details["flapping_detected"])
+		}
+		if result.Details["sample_total"] != "3" || result.Details["sample_success"] != "1" || result.Details["sample_failure"] != "2" {
+			t.Fatalf("sample counts mismatch: %+v", result.Details)
+		}
+		if calls.Load() != 3 {
+			t.Fatalf("calls = %d, want 3", calls.Load())
+		}
+	})
+
+	t.Run("detects IP drift across reconnected probes", func(t *testing.T) {
+		traceRule, _ := RuleFor("cloudflare_trace")
+		var calls atomic.Int32
+		checker := Checker{
+			DriftSamples: 3,
+			ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+				c := calls.Add(1)
+				ip := "198.51.100.1"
+				colo := "SIN"
+				if c > 1 {
+					ip = "198.51.100.2"
+					colo = "HKG"
+				}
+				return fixtureResponse(req, http.StatusOK, "text/plain", fmt.Sprintf("ip=%s\ncolo=%s\nloc=SG\n", ip, colo)), nil
+			}),
+		}
+		result := checker.Check(context.Background(), monitor.MonitoredNode{NodeKey: "node-a"}, traceRule, DefaultTimeout)
+		if result.Outcome != "profiled" {
+			t.Fatalf("outcome = %s, want profiled", result.Outcome)
+		}
+		if result.Details["ip_drift_detected"] != "true" {
+			t.Fatalf("ip_drift_detected = %s, want true", result.Details["ip_drift_detected"])
+		}
+		if !strings.Contains(result.Details["observed_ips"], "198.51.100.1") || !strings.Contains(result.Details["observed_ips"], "198.51.100.2") {
+			t.Fatalf("observed_ips = %s, want both IPs", result.Details["observed_ips"])
+		}
+	})
+
+	t.Run("solid consistent success marks full pass", func(t *testing.T) {
+		var calls atomic.Int32
+		checker := Checker{
+			DriftSamples: 3,
+			ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+				calls.Add(1)
+				return fixtureResponse(req, http.StatusNoContent, "", ""), nil
+			}),
+		}
+		result := checker.Check(context.Background(), monitor.MonitoredNode{NodeKey: "node-a"}, rule, DefaultTimeout)
+		if result.Outcome != "matched" {
+			t.Fatalf("outcome = %s, want matched", result.Outcome)
+		}
+		if result.Details["flapping_detected"] != "false" || result.Details["sample_success"] != "3" {
+			t.Fatalf("result = %+v", result)
+		}
+	})
+}
+

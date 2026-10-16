@@ -17,15 +17,16 @@ const workbenchPublicServiceSource = "workbench_public_service"
 var errWorkbenchAdmissionBusy = errors.New("主动检测通道繁忙")
 
 type publicServiceRuntime struct {
-	timingNS    map[string]int64
-	networkDone chan struct{}
-	attemptID   string
-	requestID   string
-	cancel      context.CancelFunc
-	node        monitor.MonitoredNode
-	rule        publicservice.Rule
-	timeout     time.Duration
-	periodic    bool
+	timingNS     map[string]int64
+	networkDone  chan struct{}
+	attemptID    string
+	requestID    string
+	cancel       context.CancelFunc
+	node         monitor.MonitoredNode
+	rule         publicservice.Rule
+	timeout      time.Duration
+	periodic     bool
+	driftSamples int
 }
 
 func (s *AppService) ListWorkbenchPublicServiceCatalog() []publicservice.Rule {
@@ -92,6 +93,9 @@ func (s *AppService) startWorkbenchPublicServiceTest(ctx context.Context, req Wo
 	}
 	if timeoutSeconds < 1 || timeoutSeconds > int64(publicservice.MaximumTimeout.Seconds()) {
 		return nil, monitor.NewValidationError("公共服务检测超时必须在 1 到 30 秒之间")
+	}
+	if req.DriftSamples < 0 || req.DriftSamples > 10 {
+		return nil, monitor.NewValidationError("漂移采样次数必须在 1 到 10 之间")
 	}
 	rule.TimeoutSeconds = int(timeoutSeconds)
 	ruleSnapshot := publicServiceRuleSnapshot(rule, timeoutSeconds)
@@ -230,15 +234,16 @@ func (s *AppService) startWorkbenchPublicServiceTest(ctx context.Context, req Wo
 		ctx, cancel = context.WithCancel(context.Background())
 	}
 	runtime := &publicServiceRuntime{
-		timingNS:    timings,
-		networkDone: make(chan struct{}),
-		attemptID:   attempt.AttemptID,
-		periodic:    periodicLimit > 0,
-		requestID:   attempt.RequestID,
-		cancel:      cancel,
-		node:        node,
-		rule:        rule,
-		timeout:     time.Duration(timeoutSeconds) * time.Second,
+		timingNS:     timings,
+		networkDone:  make(chan struct{}),
+		attemptID:    attempt.AttemptID,
+		periodic:     periodicLimit > 0,
+		requestID:    attempt.RequestID,
+		cancel:       cancel,
+		node:         node,
+		rule:         rule,
+		timeout:      time.Duration(timeoutSeconds) * time.Second,
+		driftSamples: req.DriftSamples,
 	}
 	s.publicServiceActive[attempt.AttemptID] = runtime
 	s.publicServiceWG.Add(1)
@@ -282,6 +287,9 @@ func (s *AppService) executeWorkbenchPublicServiceTest(ctx context.Context, runt
 	if runtime.rule.ServiceID == "antigravity" {
 		checker.AntigravityToken = s.GetAntigravityToken()
 	}
+	if runtime.driftSamples > 0 {
+		checker.DriftSamples = runtime.driftSamples
+	}
 	finishActivity := s.probeActivity.begin("service")
 	result := checker.Check(ctx, runtime.node, runtime.rule, runtime.timeout)
 	peers := finishActivity()
@@ -307,7 +315,7 @@ func (s *AppService) executeWorkbenchPublicServiceTest(ctx context.Context, runt
 		executionState = "not_executed"
 	}
 	switch result.Outcome {
-	case "matched", "profiled", "reachable", "challenge", "unlocked", "originals_only", "region_limited", "service_rejected", "region_blocked", "unknown", "auth_failed", "permission_denied", "setup_required", "rate_limited":
+	case "matched", "profiled", "reachable", "challenge", "unlocked", "originals_only", "region_limited", "service_rejected", "region_blocked", "unknown", "auth_failed", "permission_denied", "setup_required", "rate_limited", "flapping":
 		executionState = "completed"
 	case "cancelled":
 		executionState = "cancelled"
