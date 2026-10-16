@@ -819,6 +819,9 @@ func (s *Store) List() ([]*RunSummary, error) {
 		var totalSpeed float64
 		var speedCount int
 		for _, r := range run.Results {
+			if r == nil {
+				continue
+			}
 			if r.LatencyMs > 0 {
 				totalLatency += r.LatencyMs
 				latencyCount++
@@ -900,11 +903,17 @@ func (s *Store) Compare(baseID, targetID string) (*RunComparison, error) {
 
 	baseMap := make(map[string]*RunNodeResult, len(baseRun.Results))
 	for _, r := range baseRun.Results {
+		if r == nil {
+			continue
+		}
 		baseMap[r.ProxyName] = r
 	}
 
 	targetMap := make(map[string]*RunNodeResult, len(targetRun.Results))
 	for _, r := range targetRun.Results {
+		if r == nil {
+			continue
+		}
 		targetMap[r.ProxyName] = r
 	}
 
@@ -1047,7 +1056,13 @@ func (s *Store) GetNodeTimeline(nodeName string) ([]*NodeTimelineItem, error) {
 
 	items := make([]*NodeTimelineItem, 0)
 	for _, run := range runs {
+		if run == nil {
+			continue
+		}
 		for _, r := range run.Results {
+			if r == nil {
+				continue
+			}
 			if r.ProxyName == nodeName {
 				items = append(items, &NodeTimelineItem{
 					RunID:             run.ID,
@@ -1092,10 +1107,14 @@ func (s *Store) ListAllDistinctNodes() ([]string, error) {
 
 	set := make(map[string]struct{})
 	for _, run := range runs {
+		if run == nil {
+			continue
+		}
 		for _, r := range run.Results {
-			if r.ProxyName != "" {
-				set[r.ProxyName] = struct{}{}
+			if r == nil || r.ProxyName == "" {
+				continue
 			}
+			set[r.ProxyName] = struct{}{}
 		}
 	}
 
@@ -1131,6 +1150,9 @@ func (s *Store) ListHistoryAirports() ([]*AirportSummary, error) {
 
 	groups := make(map[string]*airportGroup)
 	for _, run := range runs {
+		if run == nil {
+			continue
+		}
 		key := run.AirportID
 		if key == "" {
 			key = run.AirportName
@@ -1164,6 +1186,9 @@ func (s *Store) ListHistoryAirports() ([]*AirportSummary, error) {
 		}
 
 		for _, r := range run.Results {
+			if r == nil {
+				continue
+			}
 			if r.ProxyName != "" {
 				g.nodeSet[r.ProxyName] = struct{}{}
 			}
@@ -1215,6 +1240,9 @@ func (s *Store) GetAirportHistory(airportIDOrName string) (*AirportHistory, erro
 
 	var matchedRuns []*TestRun
 	for _, run := range runs {
+		if run == nil {
+			continue
+		}
 		if airportIDOrName == "" || run.AirportID == airportIDOrName || run.AirportName == airportIDOrName {
 			matchedRuns = append(matchedRuns, run)
 		}
@@ -1225,6 +1253,9 @@ func (s *Store) GetAirportHistory(airportIDOrName string) (*AirportHistory, erro
 		targetAirportName := matchedRuns[0].AirportName
 		var narrowed []*TestRun
 		for _, r := range matchedRuns {
+			if r == nil {
+				continue
+			}
 			if (targetAirportID != "" && r.AirportID == targetAirportID) || (r.AirportName == targetAirportName) {
 				narrowed = append(narrowed, r)
 			}
@@ -1260,6 +1291,9 @@ func (s *Store) GetAirportHistory(airportIDOrName string) (*AirportHistory, erro
 	nodeOrder := make([]string, 0)
 
 	for _, run := range matchedRuns {
+		if run == nil {
+			continue
+		}
 		moments = append(moments, &AirportTimelineMoment{
 			RunID:       run.ID,
 			CreatedAt:   run.CreatedAt,
@@ -1277,7 +1311,7 @@ func (s *Store) GetAirportHistory(airportIDOrName string) (*AirportHistory, erro
 		})
 
 		for _, r := range run.Results {
-			if r.ProxyName == "" {
+			if r == nil || r.ProxyName == "" {
 				continue
 			}
 
@@ -1334,6 +1368,9 @@ func (s *Store) GetAirportHistory(airportIDOrName string) (*AirportHistory, erro
 		if len(hist.Points) > 0 {
 			hist.Earliest = hist.Points[0]
 			hist.Latest = hist.Points[len(hist.Points)-1]
+			if hist.Earliest == nil || hist.Latest == nil {
+				continue
+			}
 			hist.LatestSpeedMBps = hist.Latest.DownloadSpeedMBps
 			hist.LatestGoogleTTFB = hist.Latest.GoogleTTFBMs
 
@@ -1352,6 +1389,9 @@ func (s *Store) GetAirportHistory(airportIDOrName string) (*AirportHistory, erro
 			ipMap := make(map[string]struct{})
 
 			for _, pt := range hist.Points {
+				if pt == nil {
+					continue
+				}
 				if pt.LatencyMs > 0 {
 					sumLat += pt.LatencyMs
 					countLat++

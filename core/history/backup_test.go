@@ -263,3 +263,30 @@ func TestBackupToInterruptedConnectionWaitCleansPrivateSnapshot(t *testing.T) {
 		t.Fatalf("interruption leaked private snapshot: %v %v", leftovers, err)
 	}
 }
+
+func TestBackupNilContexts(t *testing.T) {
+	root := t.TempDir()
+	db, err := OpenDB(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// BackupTo with nil context
+	target1 := filepath.Join(root, "out1", "history.db")
+	if err := db.BackupTo(nil, target1); err != nil {
+		t.Fatalf("expected BackupTo with nil context to succeed, got %v", err)
+	}
+	if _, err := os.Stat(target1); err != nil {
+		t.Fatalf("target1 does not exist: %v", err)
+	}
+
+	// BackupDatabase with nil context
+	target2 := filepath.Join(root, "out2", "history.db")
+	if err := BackupDatabase(nil, root, target2); err != nil {
+		t.Fatalf("expected BackupDatabase with nil context to succeed, got %v", err)
+	}
+	if _, err := os.Stat(target2); err != nil {
+		t.Fatalf("target2 does not exist: %v", err)
+	}
+}

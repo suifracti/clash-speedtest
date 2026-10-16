@@ -16,6 +16,9 @@ import (
 // committed WAL pages are included in the snapshot. The source is opened read-only
 // without OpenDB: this entry point must preserve the pre-upgrade schema.
 func BackupDatabase(ctx context.Context, sourceDir, targetDBPath string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -49,6 +52,9 @@ func ValidateDatabase(dir string) error {
 func (d *DB) BackupTo(ctx context.Context, targetDBPath string) error {
 	if d == nil || d.db == nil {
 		return fmt.Errorf("history database is not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	if targetDBPath == "" {
 		return fmt.Errorf("backup target is empty")

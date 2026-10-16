@@ -616,3 +616,111 @@ func TestStoreNilDBComprehensiveDefense(t *testing.T) {
 	}
 }
 
+func TestStoreNilElementsInRunAndResultsDefenses(t *testing.T) {
+	tempDir := t.TempDir()
+	store, err := NewStore(tempDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	run1 := &TestRun{
+		ID:          "run-nil-res-1",
+		AirportID:   "ap-alpha",
+		AirportName: "Alpha Airport",
+		CreatedAt:   time.Now().Add(-10 * time.Minute),
+		Results: []*RunNodeResult{
+			nil,
+			{
+				ProxyName:         "Alpha-HK-1",
+				LatencyMs:         80,
+				DownloadSpeedMBps: 30.0,
+				AntigravityStatus: "available",
+			},
+			nil,
+			{
+				ProxyName:         "Alpha-US-1",
+				LatencyMs:         150,
+				DownloadSpeedMBps: 15.0,
+			},
+		},
+	}
+
+	run2 := &TestRun{
+		ID:          "run-nil-res-2",
+		AirportID:   "ap-alpha",
+		AirportName: "Alpha Airport",
+		CreatedAt:   time.Now(),
+		Results: []*RunNodeResult{
+			{
+				ProxyName:         "Alpha-HK-1",
+				LatencyMs:         70,
+				DownloadSpeedMBps: 45.0,
+				AntigravityStatus: "available",
+			},
+			nil,
+		},
+	}
+
+	if _, err := store.Save(run1); err != nil {
+		t.Fatalf("Save run1 failed: %v", err)
+	}
+	if _, err := store.Save(run2); err != nil {
+		t.Fatalf("Save run2 failed: %v", err)
+	}
+
+	// 1. List
+	summaries, err := store.List()
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if len(summaries) != 2 {
+		t.Fatalf("expected 2 summaries, got %d", len(summaries))
+	}
+
+	// 2. Compare
+	comp, err := store.Compare("run-nil-res-1", "run-nil-res-2")
+	if err != nil {
+		t.Fatalf("Compare failed: %v", err)
+	}
+	if comp == nil || len(comp.NodeDiffs) != 2 || comp.Summary.TotalCompared != 1 {
+		t.Fatalf("expected 2 diffs with 1 compared, got %+v", comp)
+	}
+
+	// 3. GetNodeTimeline
+	timeline, err := store.GetNodeTimeline("Alpha-HK-1")
+	if err != nil {
+		t.Fatalf("GetNodeTimeline failed: %v", err)
+	}
+	if len(timeline) != 2 {
+		t.Fatalf("expected 2 timeline items, got %d", len(timeline))
+	}
+
+	// 4. ListAllDistinctNodes
+	nodes, err := store.ListAllDistinctNodes()
+	if err != nil {
+		t.Fatalf("ListAllDistinctNodes failed: %v", err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("expected 2 distinct nodes, got %d", len(nodes))
+	}
+
+	// 5. ListHistoryAirports
+	airports, err := store.ListHistoryAirports()
+	if err != nil {
+		t.Fatalf("ListHistoryAirports failed: %v", err)
+	}
+	if len(airports) != 1 || airports[0].AirportID != "ap-alpha" {
+		t.Fatalf("expected ap-alpha airport, got %+v", airports)
+	}
+
+	// 6. GetAirportHistory
+	hist, err := store.GetAirportHistory("ap-alpha")
+	if err != nil {
+		t.Fatalf("GetAirportHistory failed: %v", err)
+	}
+	if hist == nil || len(hist.Nodes) != 2 {
+		t.Fatalf("expected 2 nodes in history, got %+v", hist)
+	}
+}
+
