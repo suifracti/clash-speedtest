@@ -379,8 +379,8 @@ func TestSpeedTesterNilSafety(t *testing.T) {
 		t.Fatalf("expected testAntigravity on empty SpeedTester to return AntigravityUnknown, got %s", agStatus)
 	}
 	physResEmpty := emptyST.TestSinglePhysicalContext(context.Background(), "test", nil, nil)
-	if physResEmpty == nil {
-		t.Fatal("expected non-nil result from physical test on empty SpeedTester")
+	if physResEmpty != nil {
+		t.Fatalf("expected nil result from physical test on nil proxy, got %v", physResEmpty)
 	}
 }
 

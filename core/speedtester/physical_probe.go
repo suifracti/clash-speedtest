@@ -88,7 +88,7 @@ func openPhysicalProbeClient(ctx context.Context, original *CProxy, timeout time
 // This entry is used only by the on-demand Mac workbench, not subscription
 // fetching or the legacy monitor runner. Each sample keeps its original timeout.
 func (st *SpeedTester) TestSinglePhysicalContext(ctx context.Context, name string, proxy *CProxy, emit func(*Result) bool) *Result {
-	if st == nil {
+	if st == nil || proxy == nil {
 		return nil
 	}
 	if runtime.GOOS != "darwin" {
@@ -104,7 +104,7 @@ func (st *SpeedTester) TestSinglePhysicalContext(ctx context.Context, name strin
 }
 
 func (st *SpeedTester) testSinglePhysicalContext(ctx context.Context, name string, proxy *CProxy, emit func(*Result) bool, prepare physicalProbePreparer) *Result {
-	if st == nil {
+	if st == nil || proxy == nil {
 		return nil
 	}
 	if ctx == nil {
