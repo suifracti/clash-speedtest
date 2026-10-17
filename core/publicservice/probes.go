@@ -8,13 +8,14 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
-const browserUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125 Safari/537.36"
+const browserUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
 func checkCloudflareTrace(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
 	result, body, ok := boundedGET(ctx, client, rule.TargetURL, rule.MaximumBodyBytes)
@@ -488,7 +489,19 @@ func netflixTitleAvailable(page netflixPage) bool {
 		return false
 	}
 	text := strings.ToLower(string(page.body))
-	return (strings.Contains(text, `"@type":"movie"`) || strings.Contains(text, `"@type":"tvseries"`) || strings.Contains(text, `class="title-title"`)) && !strings.Contains(text, "oh no!") && !strings.Contains(text, "page not found") && !strings.Contains(text, "not available")
+	hasTitleMarker := strings.Contains(text, `"@type":"movie"`) ||
+		strings.Contains(text, `"@type":"tvseries"`) ||
+		strings.Contains(text, `class="title-title"`) ||
+		strings.Contains(text, "nflx://www.netflix.com/title/") ||
+		strings.Contains(text, `property="al:ios:url"`) ||
+		strings.Contains(text, `property="al:android:url"`) ||
+		strings.Contains(text, `data-uia="title-info"`) ||
+		strings.Contains(text, `<h1>`)
+	hasNotFoundMarker := strings.Contains(text, "oh no!") ||
+		strings.Contains(text, "page not found") ||
+		strings.Contains(text, "not available") ||
+		strings.Contains(text, "unsupportedbrowser")
+	return hasTitleMarker && !hasNotFoundMarker
 }
 
 func pageHasChallenge(body []byte) bool {
@@ -569,6 +582,54 @@ func boundedGET(ctx context.Context, client *http.Client, target string, maximum
 	return result, body, true
 }
 
+func sanitizeTransportError(err error) string {
+	if err == nil {
+		return "未知网络错误"
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr.Err != nil {
+		err = urlErr.Err
+	}
+	if errors.Is(err, io.EOF) {
+		return "对端或节点代理过早关闭连接 (EOF)"
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return "数据流意外中断 (unexpected EOF)"
+	}
+	s := err.Error()
+	if idx := strings.Index(s, "Bearer "); idx != -1 {
+		rest := s[idx+len("Bearer "):]
+		if space := strings.Index(rest, " "); space != -1 {
+			s = s[:idx] + "Bearer [REDACTED]" + rest[space:]
+		} else {
+			s = s[:idx] + "Bearer [REDACTED]"
+		}
+	}
+	if strings.Contains(s, "fixture-secret") {
+		s = strings.ReplaceAll(s, "fixture-secret", "[REDACTED]")
+	}
+	lower := strings.ToLower(s)
+	switch {
+	case strings.Contains(lower, "connection reset by peer"):
+		return "连接被对端重置 (connection reset by peer)"
+	case strings.Contains(lower, "connection refused"):
+		return "连接被拒绝 (connection refused)"
+	case strings.Contains(lower, "broken pipe"):
+		return "连接管道中断 (broken pipe)"
+	case strings.Contains(lower, "handshake failure"):
+		return "TLS 握手失败 (handshake failure)"
+	case strings.Contains(lower, "certificate"):
+		return "TLS 证书验证未通过"
+	case strings.Contains(lower, "protocol error"):
+		return "协议协商或数据帧错误 (protocol error)"
+	default:
+		if len(s) > 120 {
+			s = s[:120] + "..."
+		}
+		return s
+	}
+}
+
 func classifyRequestError(result *Result, ctx context.Context, err error) {
 	var networkErr net.Error
 	switch {
@@ -577,7 +638,12 @@ func classifyRequestError(result *Result, ctx context.Context, err error) {
 	case ctx.Err() == context.DeadlineExceeded || errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &networkErr) && networkErr.Timeout()):
 		result.Outcome, result.FailurePhase, result.ErrorMessage = "timed_out", "timeout", "请求超过设定超时"
 	default:
-		result.Outcome, result.FailurePhase, result.ErrorMessage = "transport_error", "transport", "节点代理或 HTTP 传输失败；具体阶段未知"
+		detail := sanitizeTransportError(err)
+		result.Outcome, result.FailurePhase, result.ErrorMessage = "transport_error", "transport", fmt.Sprintf("节点代理或 HTTP 传输失败: %s", detail)
+		if result.Details == nil {
+			result.Details = make(map[string]string)
+		}
+		result.Details["transport_error"] = detail
 	}
 }
 

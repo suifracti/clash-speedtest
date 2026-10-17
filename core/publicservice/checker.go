@@ -628,7 +628,11 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 	if err != nil {
 		return finish(Result{Outcome: "transport_error", FailurePhase: "request_setup", ErrorMessage: "无法创建固定服务请求"}, startedAt)
 	}
-	request.Header.Set("User-Agent", "clash-speedtest")
+	ua := "clash-speedtest"
+	if rule.ResultKind == "web_access" || rule.ResultKind == "regional_reachability" || strings.HasSuffix(rule.ServiceID, "_web") {
+		ua = browserUserAgent
+	}
+	request.Header.Set("User-Agent", ua)
 	if rule.Accept != "" {
 		request.Header.Set("Accept", rule.Accept)
 	}
@@ -652,7 +656,13 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 		if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &networkErr) && networkErr.Timeout()) {
 			return finish(Result{Outcome: "timed_out", FailurePhase: "timeout", ErrorMessage: "网络连接或响应超时；检查总时限尚未到达，服务结论未确认", Details: map[string]string{"timeout_origin": "transport"}}, startedAt)
 		}
-		return finish(Result{Outcome: "transport_error", FailurePhase: "transport", ErrorMessage: "节点代理或 HTTP 传输失败；具体阶段未知"}, startedAt)
+		detail := sanitizeTransportError(err)
+		return finish(Result{
+			Outcome:      "transport_error",
+			FailurePhase: "transport",
+			ErrorMessage: fmt.Sprintf("节点代理或 HTTP 传输失败: %s", detail),
+			Details:      map[string]string{"transport_error": detail},
+		}, startedAt)
 	}
 	defer response.Body.Close()
 

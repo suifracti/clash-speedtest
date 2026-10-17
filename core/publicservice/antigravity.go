@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -197,7 +198,12 @@ func antigravityReadError(r *Result, ctx context.Context, err error) {
 	case ctx.Err() == context.DeadlineExceeded || errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()):
 		r.Outcome, r.ErrorMessage = "timed_out", "检测超过总时长上限"
 	default:
-		r.Outcome, r.ErrorMessage = "transport_error", "所选节点的服务连接或响应读取失败"
+		detail := sanitizeTransportError(err)
+		r.Outcome, r.ErrorMessage = "transport_error", fmt.Sprintf("所选节点的服务连接或响应读取失败: %s", detail)
+		if r.Details == nil {
+			r.Details = make(map[string]string)
+		}
+		r.Details["transport_error"] = detail
 	}
 }
 

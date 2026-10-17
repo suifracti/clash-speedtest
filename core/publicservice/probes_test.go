@@ -2,9 +2,13 @@ package publicservice
 
 import (
 	"context"
-	"github.com/faceair/clash-speedtest/core/monitor"
+	"errors"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
+
+	"github.com/faceair/clash-speedtest/core/monitor"
 )
 
 func TestServiceEvidenceDoesNotConfuseAccessWithAvailability(t *testing.T) {
@@ -152,6 +156,61 @@ func TestRuleForWhitespaceResilience(t *testing.T) {
 	rule, ok := RuleFor("  cloudflare_204  ")
 	if !ok || rule.ServiceID != "cloudflare_204" {
 		t.Fatalf("expected to find cloudflare_204 with surrounding whitespace, got: %+v, ok=%v", rule, ok)
+	}
+}
+
+func TestSanitizeTransportError(t *testing.T) {
+	cases := []struct {
+		err  error
+		want string
+	}{
+		{io.EOF, "对端或节点代理过早关闭连接 (EOF)"},
+		{io.ErrUnexpectedEOF, "数据流意外中断 (unexpected EOF)"},
+		{errors.New("read tcp 127.0.0.1: connection reset by peer"), "连接被对端重置 (connection reset by peer)"},
+		{errors.New("dial tcp 127.0.0.1: connection refused"), "连接被拒绝 (connection refused)"},
+		{errors.New("write: broken pipe"), "连接管道中断 (broken pipe)"},
+		{errors.New("tls: handshake failure"), "TLS 握手失败 (handshake failure)"},
+		{errors.New("x509: certificate has expired"), "TLS 证书验证未通过"},
+		{errors.New("http2: protocol error"), "协议协商或数据帧错误 (protocol error)"},
+		{errors.New("Bearer secret-token-12345 error"), "Bearer [REDACTED] error"},
+		{errors.New("contains fixture-secret in text"), "contains [REDACTED] in text"},
+	}
+	for _, tc := range cases {
+		got := sanitizeTransportError(tc.err)
+		if got != tc.want {
+			t.Errorf("sanitizeTransportError(%v) = %q, want %q", tc.err, got, tc.want)
+		}
+	}
+}
+
+func TestModernNetflixTitleDetection(t *testing.T) {
+	netflix, ok := RuleFor("netflix_unlock")
+	if !ok {
+		t.Fatal("missing netflix_unlock rule")
+	}
+
+	checker := Checker{ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+		if strings.Contains(req.URL.Path, "81280792") {
+			body := `<!doctype html><html><head><meta property="al:ios:url" content="nflx://www.netflix.com/title/81280792?locale=en-SG"/></head><body><h1>LEGO Ninjago</h1></body></html>`
+			resp := fixtureResponse(req, http.StatusOK, "text/html", body)
+			resp.Request.URL, _ = req.URL.Parse("https://www.netflix.com/sg/title/81280792")
+			return resp, nil
+		}
+		if strings.Contains(req.URL.Path, "70143836") {
+			body := `<!doctype html><html><head><meta property="al:ios:url" content="nflx://www.netflix.com/title/70143836?locale=en-SG"/></head><body><h1>Breaking Bad</h1></body></html>`
+			resp := fixtureResponse(req, http.StatusOK, "text/html", body)
+			resp.Request.URL, _ = req.URL.Parse("https://www.netflix.com/sg/title/70143836")
+			return resp, nil
+		}
+		return fixtureResponse(req, http.StatusNotFound, "text/html", "Not found"), nil
+	})}
+
+	result := checker.Check(context.Background(), monitor.MonitoredNode{}, netflix, DefaultTimeout)
+	if result.Outcome != "unlocked" {
+		t.Fatalf("expected unlocked tier, got %+v", result)
+	}
+	if result.Details["service_region"] != "SG" {
+		t.Fatalf("expected region SG, got %q", result.Details["service_region"])
 	}
 }
 
