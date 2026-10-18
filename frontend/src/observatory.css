@@ -1,0 +1,37 @@
+/* CST instrument surface: measured activity only. */
+:root{--canvas:#eef2f8;--surface:#fbfcff;--surface-soft:#f3f6fc;--ink:#23334e;--muted:#667993;--line:#dce4f1;--blue:#555fe2;--blue-hover:#444dc9;--blue-soft:#eceeff;--signal:#14949c;--shadow:0 16px 48px #182c4b18}
+:root[data-theme=dark]{--canvas:#0e1725;--surface:#152235;--surface-soft:#1a2a40;--ink:#e1eaf8;--muted:#9aadc7;--line:#2a3e57;--blue:#a0a8ff;--blue-hover:#b7bdff;--blue-soft:#2b3356;--signal:#64d4d8;--shadow:0 16px 48px #0005}
+.observatory-app .brand strong{letter-spacing:-1px;font-size:23px}.brand-period{color:var(--blue)}
+.observatory-app h1{letter-spacing:-.5px}.home-theme-caption{color:var(--muted);font-size:12px}
+.observatory-app .panel,.observatory-app .settings-section{box-shadow:none;border-radius:8px}
+.observatory-app .home-top{padding-bottom:10px;border-bottom:2px solid var(--blue)}
+.observatory-app .node-row{border-radius:0;border-bottom:1px solid var(--line);background:transparent}
+.observatory-app .node-row.selected{background:var(--blue-soft);box-shadow:inset 2px 0 var(--blue)}
+.node-identity-block{min-width:0}.node-identity-block .node-name-button{width:100%}
+.node-exit-summary{display:block;width:100%;border:0;background:none;color:var(--muted);text-align:left;padding:4px 0 0 44px;font-size:11px;line-height:1.5}
+.node-exit-summary:hover{color:var(--blue)}.node-exit-summary-records{display:grid;gap:2px}.node-exit-summary-record{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.node-exit-evidence{padding:14px 0;border-top:1px solid var(--line)}.node-exit-evidence header{display:flex;justify-content:space-between;gap:12px}.node-exit-evidence pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto;font-size:12px}
+.observatory-selection{position:sticky;bottom:8px;z-index:8;border:1px solid var(--line);border-top:2px solid var(--blue);background:var(--surface);box-shadow:var(--shadow);padding:10px 14px;border-radius:6px;order:20}
+.observatory-selection .selection-info{flex-wrap:wrap}.observatory-selection small{color:var(--muted)}
+.observatory-app .quality-metrics small{font-size:11px}.observatory-app .quality-metrics strong{font-variant-numeric:tabular-nums}
+.observatory-matrix{overflow-x:auto;isolation:isolate}
+.observatory-matrix .quality-heading,.quality-view .observatory-matrix .node-row,.observatory-matrix .node-heading,.observatory-matrix .node-row.multi-target{min-width:calc(310px + var(--service-columns) * 180px);grid-template-columns:20px 240px minmax(0,1fr) 42px;gap:8px}
+.observatory-matrix .quality-heading-cols,.observatory-service-cells{display:grid;grid-template-columns:repeat(var(--service-columns),minmax(0,1fr));gap:8px;min-width:0}
+.observatory-matrix .node-identity-block,.observatory-matrix .quality-heading>span:nth-child(2){position:sticky;left:0;z-index:2;background:var(--canvas);padding-right:8px}
+.observatory-matrix .selected .node-identity-block{background:var(--blue-soft)}
+.observatory-service-cell{border:1px solid var(--line);border-radius:5px;background:var(--surface);padding:9px;text-align:left;display:grid;gap:3px;min-width:0;align-content:start}
+.observatory-service-cell strong{font-size:13px}.observatory-service-cell small,.observatory-service-cell time{font-size:11px;color:var(--muted);overflow-wrap:anywhere}.observatory-service-cell.good{background:color-mix(in srgb,var(--green) 7%,var(--surface))}.observatory-service-cell.warn{background:color-mix(in srgb,var(--amber) 7%,var(--surface))}.observatory-service-cell.bad{background:color-mix(in srgb,var(--red) 7%,var(--surface))}
+.observatory-matrix .node-health,.observatory-matrix .node-inline-results{grid-column:2/-1}
+.node-activity{position:relative;overflow:hidden;margin:5px 0 0 44px;border-top:1px solid var(--line);color:var(--muted)}.node-activity small{font-size:11px}.node-activity>span{position:absolute;top:0;left:0;width:28%;height:1px;background:var(--signal);opacity:0}.node-activity.active>span{opacity:1;animation:cst-sample-flow 1.8s linear infinite}.node-activity.arrived{animation:cst-result-arrived .65s ease-out}.node-activity[data-state=save_failed]{color:var(--red)}
+@keyframes cst-sample-flow{from{transform:translateX(-110%)}to{transform:translateX(460%)}}
+@keyframes cst-result-arrived{from{background:color-mix(in srgb,var(--signal) 18%,transparent)}to{background:transparent}}
+.window-hidden *{animation-play-state:paused!important}
+@media(max-width:800px){.observatory-app .home-top h1{font-size:19px}.observatory-selection{bottom:4px;padding:8px}.observatory-selection .selection-actions{flex-wrap:wrap}.node-exit-summary{padding-left:0}.observatory-matrix .node-identity-block{max-width:240px}}
+@media(max-width:740px){.observatory-matrix .quality-heading,.quality-view .observatory-matrix .node-row,.observatory-matrix .node-heading,.observatory-matrix .node-row.multi-target{grid-template-columns:18px 150px minmax(0,1fr) 36px;min-width:calc(230px + var(--service-columns) * 145px)}.observatory-matrix .observatory-service-cells{grid-column:3;grid-row:1}.quality-view .observatory-matrix .row-run{grid-column:4!important}.observatory-matrix .node-identity-block{max-width:150px}.observatory-app .project-tabs button{font-size:12px}.node-activity{margin-left:0}.observatory-selection{position:static}.observatory-matrix::before{content:'左右滚动查看服务，点击结论查看证据';display:block;font-size:11px;color:var(--muted);padding:6px}}
+@media(prefers-reduced-motion:reduce){.observatory-app *, .observatory-app *::before,.observatory-app *::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+@media(min-width:741px){.observatory-selection{position:fixed;left:28px;right:28px;bottom:12px}.home-view:has(.observatory-selection){padding-bottom:110px}}
+.observatory-service-cells>.secondary-http{grid-column:1/-1}.observatory-app .node-target-metrics.observatory-service-cells{align-items:stretch}
+.observatory-app .service-pill-item[role=button]{cursor:pointer}.observatory-app .service-pill-item[role=button]:hover{background:var(--blue-soft)}
+.orbit-view-hint{color:var(--muted);font-size:11px}.observatory-app .orbit-ring{animation:cst-orbit-change .28s ease-out}
+@keyframes cst-orbit-change{from{opacity:.4;transform:rotate(-12deg)}to{opacity:1;transform:rotate(0)}}
+@media(prefers-reduced-motion:reduce){.observatory-app .orbit-ring{animation:none}}

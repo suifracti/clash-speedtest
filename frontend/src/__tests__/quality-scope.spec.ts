@@ -146,7 +146,7 @@ it('replaces a previous service success with the newly saved failure and rejects
  const old=emptyEvidence(fresh[0]);old.services=[service]
  const pending=new Promise<QualityEvidence>(resolve=>resolveOld=resolve)
  readQualityMock.mockImplementation(async()=>latest?{...emptyEvidence(fresh[0]),services:[{...service,attempt_id:'new-service',requested_at:'2026-10-10T00:01:00Z',execution_state:'failed',result:{outcome:'failed',bytes_read:0,finished_at:'2026-10-10T00:01:01Z'}}]}:pending)
- attachSavedSnapshot();w!.project.value='service';await flushPromises()
+ attachSavedSnapshot();w!.catalog.value=[{service_id:'cloudflare_204',name:'Cloudflare 204',category:'基础网络',description:'',result_kind:'connectivity',success_criterion:'exact 204',timeout_seconds:10}];w!.displayServiceIds.value=['cloudflare_204'];w!.project.value='service';await flushPromises()
  latest=true;vi.setSystemTime(new Date('2026-10-10T00:01:02Z'))
  w!.mergeAttempt('service',{...service,attempt_id:'new-service',requested_at:'2026-10-10T00:01:00Z',execution_state:'failed',result:{outcome:'failed',bytes_read:0,finished_at:'2026-10-10T00:01:01Z'}});await flushPromises()
  expect(wrapper!.get('.quality-services').text()).toContain('失败')
@@ -167,7 +167,7 @@ it('automatically reads both saved S5 nodes through the real projection with a n
   attempts:async(kind,n,q)=>({attempts:inWindow(kind==='download'?downloads:services,n,q),has_more:false,complete:true})
  }))
  vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-10-12T14:54:00Z'))
- w=createWorkspace();w.project.value='combined';w.airports.value=nodes.map(n=>({id:n.profile_id,name:n.profile_name,url_display:'',node_count:1,has_cache:true,subscriptions:[{id:n.profile_id,airport_id:n.profile_id,name:'S5',url_display:'',url_configured:false,node_count:1,has_cache:true}]}));w.nodes.value=nodes;w.setAirports(nodes.map(n=>n.profile_id))
+ w=createWorkspace();w.project.value='combined';w.catalog.value=[...new Set(services.map(a=>a.service_id!))].map(id=>({service_id:id,name:id,category:'fixture',description:'',result_kind:'connectivity',success_criterion:'fixture',timeout_seconds:10}));w.displayServiceIds.value=w.catalog.value.map(s=>s.service_id);w.airports.value=nodes.map(n=>({id:n.profile_id,name:n.profile_name,url_display:'',node_count:1,has_cache:true,subscriptions:[{id:n.profile_id,airport_id:n.profile_id,name:'S5',url_display:'',url_configured:false,node_count:1,has_cache:true}]}));w.nodes.value=nodes;w.setAirports(nodes.map(n=>n.profile_id))
  wrapper=mount(HomeView,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
  expect(wrapper.findAll('.quality-latency').every(row=>row.text().includes('未测'))).toBe(true)
  w.running.value=true;available=true

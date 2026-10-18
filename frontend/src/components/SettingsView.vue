@@ -6,15 +6,15 @@ import {useWorkspace} from '../workspace'
 import {type Settings} from '../domain'
 import Modal from './Modal.vue'
 import Icon from './Icon.vue'
-import {applyTheme,type Theme} from '../theme'
-const w=useWorkspace(),settings=ref<Settings|null>(null),busy=ref(false),loading=ref(true),error=ref(''),feedback=ref(''),operation=ref(''),tokenInput=ref(''),tokenForm=ref(false),theme=ref(document.documentElement.dataset.theme||'light'),warningGiB=ref<number|null>(null),hardGiB=ref<number|null>(null),responseKiB=ref<number|null>(null),preview=ref<Record<string,any>|null>(null),previewDays=ref(0)
+import {applyTheme,savedThemePreference,type ThemePreference} from '../theme'
+const w=useWorkspace(),settings=ref<Settings|null>(null),busy=ref(false),loading=ref(true),error=ref(''),feedback=ref(''),operation=ref(''),tokenInput=ref(''),tokenForm=ref(false),theme=ref(savedThemePreference()),warningGiB=ref<number|null>(null),hardGiB=ref<number|null>(null),responseKiB=ref<number|null>(null),preview=ref<Record<string,any>|null>(null),previewDays=ref(0)
 let dialogTrigger:HTMLElement|null=null
 function rememberFocus(){dialogTrigger=document.activeElement instanceof HTMLElement?document.activeElement:null}
 function restoreFocus(){void nextTick(()=>dialogTrigger?.isConnected&&dialogTrigger.focus())}
 function openToken(){if(busy.value)return;rememberFocus();error.value='';feedback.value='';tokenForm.value=true}
 async function perform(label:string,fn:()=>Promise<void>){if(busy.value)return;busy.value=true;error.value='';feedback.value='';operation.value=label;try{await fn()}catch(e){error.value=e instanceof Error?e.message:String(e)}finally{busy.value=false;operation.value=''}}
 async function load(){loading.value=true;await perform('加载设置',async()=>{settings.value=await api.settings();warningGiB.value=settings.value.monitor_storage_warning_bytes==null?null:settings.value.monitor_storage_warning_bytes/1073741824;hardGiB.value=settings.value.monitor_storage_hard_bytes==null?null:settings.value.monitor_storage_hard_bytes/1073741824;responseKiB.value=settings.value.monitor_budget_response_bytes==null?null:settings.value.monitor_budget_response_bytes/1024});loading.value=false}
-async function setTheme(value:Theme){await perform('切换外观',async()=>{try{await applyTheme(value);feedback.value='外观已更新，无需另行保存'}finally{theme.value=document.documentElement.dataset.theme||value}})}
+async function setTheme(value:ThemePreference){await perform('切换外观',async()=>{try{await applyTheme(value);feedback.value='外观已更新，无需另行保存'}finally{theme.value=savedThemePreference()}})}
 function validSettings(){
   if(!settings.value)return false
   if(typeof warningGiB.value!=='number'||!Number.isFinite(warningGiB.value)||typeof hardGiB.value!=='number'||!Number.isFinite(hardGiB.value)||warningGiB.value<=0||warningGiB.value>=hardGiB.value){error.value='容量告警阈值须小于保护阈值，且都大于 0';return false}
@@ -42,12 +42,23 @@ onMounted(load)
     <div v-if="!settings&&!loading" class="load-retry"><button class="button" :disabled="busy" @click="load">重试加载</button></div>
     <fieldset :disabled="busy" class="settings-fields">
       <div class="preference-grid">
-        <section class="settings-section"><h2>外观</h2><p class="section-note">立即应用到当前界面。</p><div class="theme-choices"><button class="button" :class="{active:theme==='light'}" :aria-pressed="theme==='light'" @click="setTheme('light')"><Icon name="sun"/>浅色</button><button class="button" :class="{active:theme==='dark'}" :aria-pressed="theme==='dark'" @click="setTheme('dark')"><Icon name="moon"/>深色</button></div></section>
+        <section class="settings-section"><h2>外观</h2><p class="section-note">立即应用到当前界面。</p><div class="theme-choices"><button class="button" :class="{active:theme==='light'}" :aria-pressed="theme==='light'" @click="setTheme('light')"><Icon name="sun"/>浅色</button><button class="button" :class="{active:theme==='dark'}" :aria-pressed="theme==='dark'" @click="setTheme('dark')"><Icon name="moon"/>深色</button><button class="button" :class="{active:theme==='system'}" :aria-pressed="theme==='system'" @click="setTheme('system')">跟随系统</button></div><div class="theme-samples" role="group" aria-label="主题外观预览">
+          <button type="button" class="theme-sample theme-sample-light" :class="{active:theme==='light'}" :aria-pressed="theme==='light'" @click="setTheme('light')">
+            <span class="theme-sample-window" aria-hidden="true"><span class="theme-sample-toolbar"><i/><i/><i/></span><span class="theme-sample-orbit"/><span class="theme-sample-lines"><i/><i/><i/></span></span>
+            <strong>浅色 · 冷瓷</strong><small>清晰分层，适合长时间比较</small>
+          </button>
+          <button type="button" class="theme-sample theme-sample-dark" :class="{active:theme==='dark'}" :aria-pressed="theme==='dark'" @click="setTheme('dark')">
+            <span class="theme-sample-window" aria-hidden="true"><span class="theme-sample-toolbar"><i/><i/><i/></span><span class="theme-sample-orbit"/><span class="theme-sample-lines"><i/><i/><i/></span></span>
+            <strong>深色 · 深海</strong><small>保留对比与状态层级</small>
+          </button>
+        </div></section>
         <section v-if="settings" class="settings-section"><h2>打开链接</h2><label class="form-stack">首选浏览器<UiSelect v-model="settings.preferred_browser"><option value="auto">自动</option><option value="default">系统默认</option><option value="chrome">Chrome</option><option value="edge">Edge</option></UiSelect></label><p class="section-note">{{desktop()?'由桌面端按可用浏览器打开链接。':'Web 模式由当前浏览器处理链接；此偏好供桌面端使用。'}}</p></section>
       </div>
       <template v-if="settings">
+        <div class="settings-control-grid">
         <section class="settings-section"><div class="section-heading"><h2>监测请求</h2><span>配置请求预算</span></div><div class="form-grid"><label>最大并发请求<input v-model.number="settings.monitor_budget_max_concurrent" type="number" min="1" max="64" step="1"></label><label>单次响应读取上限 · KiB<input v-model.number="responseKiB" type="number" min="1" placeholder="尚未读取"></label></div><p class="section-note">保存仅更新请求预算；监测任务的启动与恢复由监测页操作。</p></section>
         <section class="settings-section"><div class="section-heading"><h2>历史容量与保留</h2><span>清理前先预览</span></div><div class="form-grid"><label>告警阈值 · GiB<input v-model.number="warningGiB" type="number" min="0.01" step="0.1" placeholder="尚未读取"></label><label>保护阈值 · GiB<input v-model.number="hardGiB" type="number" min="0.01" step="0.1" placeholder="尚未读取"></label><label>监测原始样本保存<UiSelect v-model="settings.monitor_retention_policy"><option value="keep_all">全部保留</option><option value="30d">最近 30 天</option><option value="90d">最近 90 天</option><option value="180d">最近 180 天</option><option value="custom">自定义天数</option></UiSelect></label><label v-if="settings.monitor_retention_policy==='custom'">保存天数<input v-model.number="settings.monitor_retention_custom_days" type="number" min="1" max="36500" step="1"></label></div><div class="retention-actions"><p class="section-note">告警阈值须小于保护阈值。清理旧采样是独立操作，删除后无法从应用恢复，建议先导出备份。</p><button v-if="settings.monitor_retention_policy!=='keep_all'" class="button" @click="retentionPreview">预览旧采样清理</button></div></section>
+        </div>
       </template>
       <section class="settings-section"><div class="section-heading"><h2>账号凭据</h2><span>{{!w.token.value?'状态尚未读取':w.token.value.has_token?`已绑定 · ${w.token.value.source||'来源未确认'}`:'尚未绑定 Antigravity 凭据'}}</span></div><div class="button-group"><button class="button" @click="login"><Icon name="key"/>浏览器登录</button><button class="button" @click="discoverToken"><Icon name="search"/>检测查找凭据</button><button class="button ghost" @click="openToken">手动输入 Token</button><button class="button ghost" @click="refreshToken">刷新状态</button></div></section>
     </fieldset>
@@ -60,3 +71,4 @@ onMounted(load)
 @media(max-width:800px){.preferences-view .settings-section{padding:14px}.preference-grid{grid-template-columns:1fr}.preferences-view .page-header h1{font-size:23px}.preferences-view .form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:560px){.preferences-view .form-grid{grid-template-columns:1fr}.section-heading{align-items:flex-start;flex-direction:column}}
 </style>
+<style src="./secondary-observatory.css" scoped></style>

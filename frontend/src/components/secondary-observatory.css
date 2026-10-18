@@ -1,0 +1,718 @@
+.airports-view,
+.history-view,
+.monitor-view,
+.preferences-view,
+.data-view {
+  --secondary-signal: var(--signal, #148c98);
+  --secondary-signal-soft: var(--signal-soft, color-mix(in srgb, var(--secondary-signal) 10%, var(--surface)));
+}
+
+/* Airport subscriptions read as a small account ledger grouped by provider. */
+.airports-view .subscription-view-tabs {
+  display: flex;
+  gap: 7px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 15px;
+}
+
+.airports-view .airport-cards {
+  gap: 15px;
+}
+
+.airports-view .airport-ledger-card {
+  border-top: 2px solid var(--secondary-signal);
+  box-shadow: 0 8px 28px color-mix(in srgb, var(--ink) 4%, transparent);
+}
+
+.airports-view .airport-ledger-card > header {
+  padding-bottom: 15px;
+  border-bottom: 1px solid var(--line);
+}
+
+.airports-view .airport-title .airport-logo {
+  background: var(--secondary-signal-soft);
+  color: var(--secondary-signal);
+}
+
+.airports-view .subscription-ledger-heading {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 13px;
+  margin-top: 13px;
+  padding: 0 0 7px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.airports-view .subscription-ledger-heading span:last-child {
+  text-align: right;
+}
+
+.airports-view .subscription-row {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 13px;
+  margin: 0;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+
+.airports-view .subscription-index {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--secondary-signal) 24%, var(--line));
+  border-radius: 50%;
+  color: var(--secondary-signal);
+  background: var(--secondary-signal-soft);
+  font: 11px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.airports-view .subscription-info {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.airports-view .subscription-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.airports-view .subscription-title-row > strong {
+  font-size: 13px;
+}
+
+.airports-view .subscription-title-row > small {
+  margin-left: auto;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.airports-view .subscription-info code {
+  display: block;
+  max-width: 100%;
+  padding: 5px 8px;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--muted);
+  background: var(--surface-soft);
+  font-size: 11px;
+}
+
+.airports-view .usage-info {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 12px;
+  max-width: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.airports-view .usage-info .usage-track {
+  grid-column: 1 / -1;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 5px;
+  background: var(--gray);
+}
+
+.airports-view .usage-info .usage-track i {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--secondary-signal);
+}
+
+.airports-view .subscription-actions {
+  justify-content: flex-end;
+}
+
+.airports-view .airport-ledger-card > footer {
+  padding-top: 13px;
+}
+
+/* History samples are individual records with their source and result together. */
+.history-view .history-record-list {
+  display: grid;
+  gap: 7px;
+}
+
+.history-view .history-record-list .history-batch-row {
+  margin: 0;
+  padding: 13px 15px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--secondary-signal);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.history-view .history-record-list .history-batch-row:hover {
+  background: var(--surface-soft);
+}
+
+.history-view .history-sample-records {
+  display: grid;
+  gap: 9px;
+  margin: 13px 0 17px;
+}
+
+.history-view .history-sample-record {
+  min-width: 0;
+  padding: 13px 15px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--secondary-signal);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 5px 18px color-mix(in srgb, var(--ink) 3%, transparent);
+}
+
+.history-view .history-sample-head {
+  display: grid;
+  grid-template-columns: minmax(130px, .7fr) minmax(180px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.history-view .history-sample-time {
+  color: var(--muted);
+  font: 11px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-view .history-sample-node,
+.history-view .history-sample-fields > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.history-view .history-sample-node strong {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.history-view .history-sample-node small,
+.history-view .history-sample-fields small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.history-view .history-sample-outcome {
+  justify-self: end;
+  padding: 4px 8px;
+  border-radius: 5px;
+  background: var(--surface-soft);
+  font-size: 11px;
+}
+
+.history-view .history-sample-outcome.good {
+  color: var(--green);
+  background: var(--green-soft);
+}
+
+.history-view .history-sample-outcome.warn {
+  color: var(--amber);
+  background: var(--amber-soft);
+}
+
+.history-view .history-sample-outcome.bad {
+  color: var(--red);
+  background: var(--red-soft);
+}
+
+.history-view .history-sample-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(145px, 1fr) minmax(100px, .55fr);
+  gap: 15px;
+  padding-top: 10px;
+}
+
+.history-view .history-sample-fields > div > small:first-child {
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+
+.history-view .history-sample-fields strong {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.history-view .history-sample-fields .history-sample-latency {
+  color: var(--secondary-signal);
+  font: 15px/1.3 ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-view .history-sample-detail {
+  margin-top: 9px;
+  padding: 7px 9px;
+  border-radius: 5px;
+  color: var(--amber);
+  background: var(--amber-soft);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+/* Monitor state, sampling configuration, and stored resource readings form one panel. */
+.monitor-view .monitor-sampling-panel :deep(.periodic-panel) {
+  margin-bottom: 15px;
+  border-top: 2px solid var(--secondary-signal);
+  box-shadow: 0 8px 28px color-mix(in srgb, var(--ink) 4%, transparent);
+}
+
+.monitor-view .monitor-sampling-panel :deep(.periodic-panel > header) {
+  padding-bottom: 13px;
+  border-bottom: 1px solid var(--line);
+}
+
+.monitor-view .monitor-sampling-panel :deep(.periodic-panel > header .badge.good) {
+  background: var(--secondary-signal-soft);
+  color: var(--secondary-signal);
+}
+
+.monitor-view .monitor-sampling-panel :deep(.periodic-fields) {
+  grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr));
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-soft);
+}
+
+.monitor-view .monitor-sampling-panel :deep(.periodic-fields label) {
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.monitor-view .monitor-sampling-panel :deep(.periodic-progress) {
+  gap: 5px;
+  margin: 7px 0;
+  padding: 10px 12px;
+  border-left: 2px solid var(--secondary-signal);
+  border-radius: 0 6px 6px 0;
+  background: var(--surface-soft);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.monitor-view .monitor-sampling-panel :deep(.periodic-progress strong) {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.monitor-view .monitor-sampling-panel :deep(details > summary) {
+  padding: 9px 0;
+  color: var(--secondary-signal);
+  cursor: pointer;
+}
+
+.monitor-view .monitor-resource-ledger {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px 20px;
+  margin-bottom: 22px;
+  padding: 13px 16px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--secondary-signal);
+  border-radius: 8px;
+  background: linear-gradient(105deg, var(--surface), var(--surface-soft));
+}
+
+.monitor-view .monitor-resource-values {
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+  gap: 10px 20px;
+}
+
+.monitor-view .monitor-resource-item {
+  display: grid;
+  gap: 3px;
+}
+
+.monitor-view .monitor-resource-item > span:first-child {
+  color: var(--ink);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.monitor-view .monitor-resource-item small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.monitor-view .monitor-cards {
+  gap: 13px;
+}
+
+.monitor-view .monitor-cards-heading {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 2px 0 1px;
+}
+
+.monitor-view .monitor-cards-heading h2 {
+  margin-top: 3px;
+  font-size: 17px;
+}
+
+.monitor-view .monitor-kicker {
+  color: var(--muted);
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: .08em;
+}
+
+.monitor-view .monitor-task-count {
+  padding: 4px 8px;
+  border-radius: 5px;
+  color: var(--secondary-signal);
+  background: var(--secondary-signal-soft);
+  font: 11px ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.monitor-view .monitor-card:not(.periodic-panel) {
+  border-top: 2px solid var(--secondary-signal);
+}
+
+.monitor-view .monitor-spec span {
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface-soft);
+  font-size: 11px;
+}
+
+.monitor-view .monitor-nodes {
+  padding: 8px 10px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.monitor-view .monitor-nodes > summary {
+  color: var(--secondary-signal);
+  cursor: pointer;
+}
+
+.monitor-view .monitor-card > footer {
+  padding-top: 13px;
+}
+
+/* Theme previews use fixed swatches so both appearances stay visible at once. */
+.preferences-view .theme-samples {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  margin: 13px 0 0;
+}
+
+.preferences-view .theme-sample {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--sample-ink);
+  background: var(--sample-paper);
+  text-align: left;
+  transition: border-color .15s, box-shadow .15s;
+}
+
+.preferences-view .theme-sample-light {
+  --sample-bg: #eef2f8;
+  --sample-paper: #fbfcff;
+  --sample-ink: #263750;
+  --sample-line: #d3dce9;
+  --sample-accent: #586bd6;
+  --sample-signal: #148c98;
+}
+
+.preferences-view .theme-sample-dark {
+  --sample-bg: #101824;
+  --sample-paper: #182231;
+  --sample-ink: #e0e8f4;
+  --sample-line: #36465d;
+  --sample-accent: #a7b0ff;
+  --sample-signal: #67d5da;
+}
+
+.preferences-view .theme-sample.active {
+  border-color: var(--secondary-signal);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--secondary-signal) 18%, transparent);
+}
+
+.preferences-view .theme-sample-window {
+  position: relative;
+  display: block;
+  height: 82px;
+  overflow: hidden;
+  border: 1px solid var(--sample-line);
+  border-radius: 5px;
+  background: var(--sample-bg);
+}
+
+.preferences-view .theme-sample-toolbar {
+  position: absolute;
+  inset: 0 0 auto;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  height: 17px;
+  padding: 0 6px;
+  border-bottom: 1px solid var(--sample-line);
+  background: var(--sample-paper);
+}
+
+.preferences-view .theme-sample-toolbar i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--sample-accent);
+  opacity: .65;
+}
+
+.preferences-view .theme-sample-orbit {
+  position: absolute;
+  top: 27px;
+  left: 11px;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--sample-signal);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--sample-signal) 8%, var(--sample-paper));
+}
+
+.preferences-view .theme-sample-orbit::before,
+.preferences-view .theme-sample-orbit::after {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border: 1px solid var(--sample-paper);
+  border-radius: 50%;
+  background: var(--sample-signal);
+  content: '';
+}
+
+.preferences-view .theme-sample-orbit::before {
+  top: 3px;
+  left: 5px;
+}
+
+.preferences-view .theme-sample-orbit::after {
+  right: 4px;
+  bottom: 3px;
+  background: var(--sample-accent);
+}
+
+.preferences-view .theme-sample-lines {
+  position: absolute;
+  top: 28px;
+  right: 8px;
+  left: 55px;
+  display: grid;
+  gap: 6px;
+}
+
+.preferences-view .theme-sample-lines i {
+  display: block;
+  height: 4px;
+  border-radius: 3px;
+  background: var(--sample-line);
+}
+
+.preferences-view .theme-sample-lines i:first-child {
+  width: 85%;
+  background: var(--sample-accent);
+}
+
+.preferences-view .theme-sample-lines i:last-child {
+  width: 62%;
+  background: var(--sample-signal);
+}
+
+.preferences-view .theme-sample strong {
+  font-size: 11px;
+}
+
+.preferences-view .theme-sample small {
+  color: color-mix(in srgb, var(--sample-ink) 72%, var(--sample-paper));
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.preferences-view .settings-control-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.preferences-view .settings-control-grid > .settings-section {
+  margin-bottom: 12px;
+}
+
+/* Data custody keeps live locations, backup, and import steps easy to scan. */
+.data-view .data-storage-panel {
+  border-top: 2px solid var(--secondary-signal);
+}
+
+.data-view .data-storage-panel .path-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
+  margin: 14px 0;
+}
+
+.data-view .data-storage-panel .path-list > div {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-soft);
+}
+
+.data-view .data-storage-panel .path-list dt {
+  font-size: 11px;
+}
+
+.data-view .data-storage-panel .path-list dd {
+  font: 11px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.data-view .data-backup-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+  flex-wrap: wrap;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.data-view .data-backup-actions .section-note {
+  flex: 1 1 350px;
+  margin: 0;
+}
+
+.data-view .data-workflow-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(270px, .85fr);
+  align-items: start;
+  gap: 14px;
+}
+
+.data-view .data-workflow-grid > .settings-section {
+  min-width: 0;
+  margin-bottom: 12px;
+}
+
+.data-view .data-workflow-grid:not(:has(.data-migration-panel)) .data-import-panel {
+  grid-column: 1 / -1;
+}
+
+.data-view .data-import-panel {
+  border-top: 2px solid var(--secondary-signal);
+}
+
+.data-view .data-migration-panel {
+  border-top: 2px solid var(--amber);
+  background: linear-gradient(145deg, var(--surface), color-mix(in srgb, var(--amber-soft) 42%, var(--surface)));
+}
+
+.data-view .data-start-panel {
+  border-top: 2px solid var(--secondary-signal);
+}
+
+@media (max-width: 800px) {
+  .airports-view .subscription-title-row > small {
+    margin-left: 0;
+  }
+
+  .monitor-view .monitor-resource-ledger {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .data-view .data-workflow-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .data-view .data-workflow-grid:not(:has(.data-migration-panel)) .data-import-panel {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 600px) {
+  .airports-view .subscription-ledger-heading {
+    display: none;
+  }
+
+  .airports-view .subscription-row {
+    grid-template-columns: 30px minmax(0, 1fr);
+    align-items: start;
+    gap: 8px;
+  }
+
+  .airports-view .subscription-index {
+    width: 25px;
+    height: 25px;
+  }
+
+  .airports-view .subscription-actions {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+
+  .history-view .history-sample-head {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 7px 10px;
+  }
+
+  .history-view .history-sample-time {
+    grid-column: 1 / -1;
+  }
+
+  .history-view .history-sample-fields {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+  }
+
+  .history-view .history-sample-target {
+    grid-column: 1 / -1;
+  }
+
+  .monitor-view .monitor-resource-values {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .preferences-view .theme-samples,
+  .preferences-view .settings-control-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .data-view .data-storage-panel .path-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .data-view .data-storage-panel .path-list > div {
+    grid-template-columns: 82px minmax(0, 1fr);
+  }
+}

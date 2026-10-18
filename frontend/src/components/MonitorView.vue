@@ -156,7 +156,7 @@ onBeforeUnmount(()=>{mounted=false;reloadGeneration++;runsGeneration++;clearInte
 </script>
 
 <template>
-  <section class="page-view">
+  <section class="page-view monitor-view">
     <div class="page-header">
       <div>
         <h1>持续监测</h1>
@@ -170,8 +170,8 @@ onBeforeUnmount(()=>{mounted=false;reloadGeneration++;runsGeneration++;clearInte
     <p v-if="jobsError" class="inline-warning monitor-read-error" role="alert">
       任务列表刷新失败{{jobsReadAt?`；显示上次成功读取于 ${jobsReadAt}`:'；尚未确认是否存在任务'}}：{{jobsError}}
     </p>
-    <PeriodicSamplingPanel/>
-    <div class="monitor-resource" :aria-busy="refreshing" aria-live="polite">
+    <div class="monitor-sampling-panel"><PeriodicSamplingPanel/></div>
+    <div class="monitor-resource monitor-resource-ledger" :aria-busy="refreshing" aria-live="polite">
       <div class="monitor-resource-values">
         <div class="monitor-resource-item">
           <span v-if="budgetState.value">今日请求 {{budgetState.value.usage?.requests_used??'未知'}} · 已读取 {{formatBackendBytes(budgetState.value.usage?.bytes_used)}}</span>
@@ -201,6 +201,7 @@ onBeforeUnmount(()=>{mounted=false;reloadGeneration++;runsGeneration++;clearInte
       <button class="button primary" @click="w.page.value='home';w.multiSelect.value=true">选择节点</button>
     </div>
     <div v-else class="monitor-cards">
+      <div class="monitor-cards-heading"><div><span class="monitor-kicker">TASK REGISTER</span><h2>监测任务</h2></div><span class="monitor-task-count">{{w.jobs.value.length}} 项</span></div>
       <article v-for="job in w.jobs.value" :key="job.id" class="monitor-card" :aria-busy="isBusy(job.id)">
         <header>
           <div><h2>{{job.name}}</h2><small>{{job.profile_name}} · {{job.scope_kind==='current_patrol'?'当前全量巡检 · 延迟任务':'冻结范围任务 · 不随订阅自动改范围'}}</small></div>
@@ -299,3 +300,4 @@ onBeforeUnmount(()=>{mounted=false;reloadGeneration++;runsGeneration++;clearInte
   .monitor-card footer .check-field{width:100%}
 }
 </style>
+<style src="./secondary-observatory.css" scoped></style>

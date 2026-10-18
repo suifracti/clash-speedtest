@@ -15,6 +15,27 @@ it('keeps legacy latency statistics visible and labels missing route evidence as
 })
 
 import {oldService,newService,oldDownload,newDownload} from '../__tests__/fixtures/quality-evidence'
+it('filters visible services and emits the selected service id',async()=>{
+ const other={...oldService,attempt_id:'youtube',service_id:'youtube_unlock',rule:{...oldService.rule,service_id:'youtube_unlock',name:'YouTube'},result:{...oldService.result!,outcome:'unlocked'}}
+ const wrapper=mount(QualityMetrics,{props:{evidence:{tests:[],monitor:[],downloads:[],services:[oldService,other],reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true,since:'',until:''},target:'cloudflare',catalog:[],visibleServiceIds:['netflix_unlock']}})
+ expect(wrapper.get('.quality-services-list').text()).toContain('netflix_unlock');expect(wrapper.get('.quality-services-list').text()).not.toContain('youtube_unlock')
+ await wrapper.get('.service-pill-item').trigger('click');expect(wrapper.emitted('select-service')).toEqual([['netflix_unlock']])
+ await wrapper.setProps({visibleServiceIds:[]});expect(wrapper.get('.quality-services-list').text()).not.toContain('netflix_unlock');wrapper.unmount()
+})
+it('keeps the home service summary compact and leaves comparison details available',async()=>{
+ const services=Array.from({length:6},(_,i)=>({...oldService,attempt_id:'service-'+i,service_id:'service-'+i,rule:{...oldService.rule,service_id:'service-'+i,name:'Service '+i},result:{...oldService.result!,finished_at:`2026-10-09T10:0${i}:00Z`}}))
+ const evidence:QualityEvidence={tests:[],monitor:[],downloads:[],services,reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true,since:'',until:''}
+ const wrapper=mount(QualityMetrics,{props:{evidence,target:'cloudflare',catalog:[],project:'service'}});expect(wrapper.findAll('.service-pill-item')).toHaveLength(3)
+ await wrapper.setProps({comparisonField:'service'});expect(wrapper.findAll('.service-pill-item')).toHaveLength(6);wrapper.unmount()
+})
+it('uses response and tail labels without claiming timeout or packet loss',()=>{
+ const test:LatencyTest={profile_id:'p',node_key:'n',node_identity_key:'i',config_revision_key:'r',attempt_id:'no-response',display_name:'n',node_type:'vless',target:'https://speed.cloudflare.com/__down?bytes=1',requested_at:'2026-10-09T00:00:00Z',finished_at:'2026-10-09T00:01:00Z',status:'completed',latency_ms:0,total_samples:2,success_samples:0,failure_samples:2,persistence_state:'saved',method:'http_get_via_proxy_first_byte',method_version:1,samples:[{seq:1,target:'https://speed.cloudflare.com/__down?bytes=1',timestamp:'2026-10-09T00:01:00Z',latency_ms:0,success:false,error:'connection refused'},{seq:2,target:'https://speed.cloudflare.com/__down?bytes=1',timestamp:'2026-10-09T00:01:01Z',latency_ms:0,success:false,error:'connection refused'}]}
+ const evidence:QualityEvidence={tests:[test],monitor:[],downloads:[],services:[],reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true,since:'2026-10-09T00:00:00Z',until:'2026-10-09T01:00:00Z'}
+ const wrapper=mount(QualityMetrics,{props:{evidence,target:'cloudflare',catalog:[]}}),text=wrapper.get('.quality-latency').text()
+ expect(text).toContain('未获得响应');expect(text).toContain('尾部');expect(text).not.toContain('全数超时');expect(text).not.toContain('高丢包');expect(text).not.toContain('最慢')
+ test.samples[0]={...test.samples[0],success:true,latency_ms:10};test.samples.push({...test.samples[1],seq:3,timestamp:'2026-10-09T00:01:02Z'},{...test.samples[1],seq:4,timestamp:'2026-10-09T00:01:03Z'});test.total_samples=4;test.success_samples=1;test.failure_samples=3
+ const partial=mount(QualityMetrics,{props:{evidence:{...evidence,tests:[test]},target:'cloudflare',catalog:[]}});expect(partial.get('.quality-latency').text()).toContain('低响应率');partial.unmount();wrapper.unmount()
+})
 it('shows the latest same-rule failure by observation time, not the first old success or later save time',()=>{
  const wrapper=mount(QualityMetrics,{props:{evidence:{tests:[],monitor:[],downloads:[],services:[oldService,newService],reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true,since:'',until:''},target:'cloudflare',catalog:[]}})
  expect(wrapper.get('.quality-services').text()).toContain('HTTP 拒绝');expect(wrapper.get('.quality-services').text()).not.toContain('已解锁')

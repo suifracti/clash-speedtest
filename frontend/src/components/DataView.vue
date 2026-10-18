@@ -34,20 +34,22 @@ async function apply(){const kind=confirmation.value;if(!kind||locked.value)retu
     <div class="page-header"><div><h1>数据与备份</h1><p>存储位置、订阅来源与完整备份。</p></div><button ref="refreshButton" class="button" :disabled="locked" @click="refresh"><Icon name="refresh"/>刷新状态</button></div>
     <p v-if="pageError&&!confirmation" class="inline-error" role="alert">{{pageError}}</p>
     <p class="operation-status" role="status" aria-live="polite">{{operation?`正在${operation}…`:w.loading.value?'正在加载数据状态…':feedback||'操作前请核对来源与目标位置。'}}</p>
-    <section class="settings-section"><div class="section-heading"><h2>当前存储</h2><span class="badge" :class="{good:w.setup.value?.state==='ready'&&!pageError&&!w.loading.value}">{{setupLabel}}</span></div>
+    <section class="settings-section data-storage-panel"><div class="section-heading"><h2>当前存储</h2><span class="badge" :class="{good:w.setup.value?.state==='ready'&&!pageError&&!w.loading.value}">{{setupLabel}}</span></div>
       <dl class="path-list"><div><dt>数据根目录</dt><dd>{{w.setup.value?.data_root||'尚未读取'}}</dd></div><div><dt>订阅目录</dt><dd>{{w.setup.value?.profile_dir||'尚未读取'}}</dd></div><div><dt>历史目录</dt><dd>{{w.setup.value?.history_dir||'尚未读取'}}</dd></div><div><dt>设置文件</dt><dd>{{w.setup.value?.settings_file||'尚未读取'}}</dd></div></dl>
-      <div class="button-group"><button class="button" :disabled="locked||!w.setup.value?.data_root" @click="openFolder">打开数据目录</button><button class="button primary" :disabled="locked||!w.setup.value?.data_root" @click="exportBackup"><Icon name="download"/>导出备份</button></div>
-      <p class="section-note">完整备份包含订阅、历史与设置；导出文件格式与保存方式沿用现有功能。下方订阅导入不等于完整备份恢复。</p>
+      <div class="data-backup-actions"><div class="button-group"><button class="button" :disabled="locked||!w.setup.value?.data_root" @click="openFolder">打开数据目录</button><button class="button primary" :disabled="locked||!w.setup.value?.data_root" @click="exportBackup"><Icon name="download"/>导出备份</button></div>
+      <p class="section-note">完整备份包含订阅、历史与设置；导出文件格式与保存方式沿用现有功能。下方订阅导入不等于完整备份恢复。</p></div>
     </section>
-    <section v-if="w.setup.value&&w.setup.value.state!=='ready'&&!w.loading.value" class="settings-section"><h2>选择开始方式</h2><p class="section-note">可以检查已有订阅来源，或创建空白存储后添加机场。</p><button class="button primary" :disabled="locked||!!pageError" @click="initialize">创建空白存储</button></section>
-    <section class="settings-section"><h2>导入现有订阅</h2><p class="section-note">选择目录 → 检查来源 → 确认导入。仅导入订阅来源，历史与设置迁移在下方单独确认。</p>
+    <section v-if="w.setup.value&&w.setup.value.state!=='ready'&&!w.loading.value" class="settings-section data-start-panel"><h2>选择开始方式</h2><p class="section-note">可以检查已有订阅来源，或创建空白存储后添加机场。</p><button class="button primary" :disabled="locked||!!pageError" @click="initialize">创建空白存储</button></section>
+    <div class="data-workflow-grid">
+    <section class="settings-section data-import-panel"><h2>导入现有订阅</h2><p class="section-note">选择目录 → 检查来源 → 确认导入。仅导入订阅来源，历史与设置迁移在下方单独确认。</p>
       <label class="source-label" for="profile-source">现有订阅数据目录</label><div class="source-controls"><input id="profile-source" v-model="source" :disabled="locked" placeholder="现有数据目录的绝对路径"><button v-if="desktop()" class="button" :disabled="locked" @click="browse"><Icon name="data"/>浏览目录</button><button class="button" :disabled="locked||!source.trim()" @click="inspect">检查来源</button></div>
       <p v-if="!desktop()" class="section-note">Web 模式不支持原生目录选择器，请输入服务器可访问的绝对路径。</p>
       <div v-if="inspected" class="source-inspection"><strong>{{inspected.label||inspected.path||inspectedPath}}</strong><p>{{count(inspected.profile_count)}} 个机场 · {{count(inspected.cache_count)}} 份缓存</p><p v-if="inspected.error" class="inline-error" role="alert">{{inspected.error}}</p><button class="button primary" :disabled="locked||!inspected.available" @click="confirm('import')">导入这个来源</button></div>
       <div v-for="s in w.setup.value?.sources" :key="s.path" class="compact-row"><span>{{s.label}}<small>{{s.path}}</small><small v-if="!s.available">{{s.error||'来源不可用'}}</small></span><button class="button" :disabled="!s.available||locked" @click="source=s.path;inspect()">检查</button></div>
       <p v-if="w.setup.value&&!w.setup.value.sources?.length" class="section-note">未发现候选来源，可手动选择或输入目录。</p>
     </section>
-    <section v-if="migration&&migration.state!=='ready'&&migration.state!=='isolated'" class="settings-section"><div class="section-heading"><h2>旧版历史与设置迁移</h2><span class="badge">{{migrationLabel}}</span></div><p v-if="migration.error" class="inline-error" role="alert">{{migration.error}}</p><p class="section-note">迁移前建议导出备份。存在冲突时先解决冲突，再刷新状态。</p><button class="button" :disabled="locked||migration.state==='conflict'" @click="confirm('migration')">迁移旧版历史与设置</button></section>
+    <section v-if="migration&&migration.state!=='ready'&&migration.state!=='isolated'" class="settings-section data-migration-panel"><div class="section-heading"><h2>旧版历史与设置迁移</h2><span class="badge">{{migrationLabel}}</span></div><p v-if="migration.error" class="inline-error" role="alert">{{migration.error}}</p><p class="section-note">迁移前建议导出备份。存在冲突时先解决冲突，再刷新状态。</p><button class="button" :disabled="locked||migration.state==='conflict'" @click="confirm('migration')">迁移旧版历史与设置</button></section>
+    </div>
     <Modal v-if="confirmation" :title="confirmation==='import'?'确认订阅来源导入':'确认旧版数据迁移'" :closable="!locked" @close="cancel">
       <div class="confirmation-content"><p>{{confirmation==='import'?'将使用已检查的订阅来源导入当前存储。请核对目录；此操作不会恢复完整备份中的历史与设置。':'将按现有迁移流程处理旧版历史与设置。请先确认已备份，并核对来源和目标。'}}</p><dl class="path-list"><div><dt>来源</dt><dd>{{confirmation==='import'?inspectedPath:migration?.source_history_dir||'由现有迁移流程检查'}}</dd></div><div><dt>目标</dt><dd>{{confirmation==='import'?w.setup.value?.profile_dir||'尚未读取':migration?.target_history_dir||'尚未读取'}}</dd></div></dl><p v-if="error" class="inline-error" role="alert">{{error}}</p><p v-if="busy" role="status">正在{{operation}}…</p></div>
       <template #footer><button class="button" :disabled="locked" @click="cancel">取消</button><button class="button primary" :disabled="locked" @click="apply">{{confirmation==='import'?'确认导入':'确认迁移'}}</button></template>
@@ -59,3 +61,4 @@ async function apply(){const kind=confirmation.value;if(!kind||locked.value)retu
 @media(max-width:800px){.data-view .settings-section{padding:14px}.path-list>div{grid-template-columns:82px minmax(0,1fr);gap:8px}.source-controls input{flex-basis:100%}.data-view .page-header h1{font-size:23px}}
 @media(max-width:440px){.path-list>div{grid-template-columns:1fr;gap:3px}.source-controls .button{flex:1}}
 </style>
+<style src="./secondary-observatory.css" scoped></style>

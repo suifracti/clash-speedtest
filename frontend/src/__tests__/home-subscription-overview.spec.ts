@@ -1,6 +1,7 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
 import {flushPromises,mount,type VueWrapper} from '@vue/test-utils'
 import HomeView from '../components/HomeView.vue'
+import SubscriptionOverview from '../components/SubscriptionOverview.vue'
 import {createWorkspace,workspaceKey} from '../workspace'
 import type {Airport,NodeOption} from '../domain'
 
@@ -18,6 +19,10 @@ const airport:Airport={
     {id:'account-a1',airport_id:'airport-a',name:'Account A1',url_display:'',url_configured:true,node_count:1,has_cache:true,usage:{upload:1024,download:0,total:4096,expire:2000000000}},
     {id:'account-a2',airport_id:'airport-a',name:'Account A2',url_display:'',url_configured:true,node_count:1,has_cache:true,usage:{upload:2048,download:1024,total:8192,expire:1}},
   ],
+}
+const airportB:Airport={
+  id:'airport-b',name:'Airport B',url_display:'',node_count:1,has_cache:true,website_url:'',
+  subscriptions:[{id:'account-b1',airport_id:'airport-b',name:'Account B1',url_display:'',url_configured:true,node_count:1,has_cache:true}],
 }
 const notice=(subscriptionId:string,id:string,text:string):NodeOption=>({profile_id:subscriptionId,node_key:id,node_identity_key:id,config_revision_key:'rev-'+id,profile_name:'Airport A',display_name:`公告：${text}`,type:'',country_code:'',country_flag:''})
 
@@ -76,5 +81,44 @@ describe('HomeView subscription account integration',()=>{
     const dialog=document.body.querySelector('dialog.modal')
     expect(dialog?.textContent).toContain('A2 only')
     expect(dialog?.textContent).not.toContain('A1 only')
+  })
+
+  it('cycles viewed airports, remembers each airport account, and leaves the measurement scope untouched',async()=>{
+    const workspace=createWorkspace()
+    const airportNoticeB={...notice('account-b1','notice-b1','B1 only'),profile_name:'Airport B'}
+    const fixtureNotices=[notice('account-a1','notice-a1','A1 only'),notice('account-a2','notice-a2','A2 only'),airportNoticeB]
+    workspace.airports.value=[airport,airportB]
+    workspace.nodes.value=fixtureNotices
+    workspace.selectedAirportIds.value=['airport-a','airport-b']
+    workspace.subscription.value='all'
+    wrapper=mount(SubscriptionOverview,{props:{airports:[airport,airportB],notices:fixtureNotices},global:{provide:{[workspaceKey as symbol]:workspace}}})
+    await flushPromises()
+
+    const accountSelect=wrapper.get('select[aria-label="首页用量订阅"]')
+    const optionValues=()=>Array.from((accountSelect.element as HTMLSelectElement).options).map(option=>option.value)
+    expect((wrapper.vm as unknown as {viewedAirportName:string}).viewedAirportName).toBe('Airport A')
+    expect(optionValues()).toEqual([JSON.stringify(['airport-a','account-a1']),JSON.stringify(['airport-a','account-a2'])])
+
+    await accountSelect.setValue(JSON.stringify(['airport-a','account-a2']))
+    expect(wrapper.text()).toContain('Airport A · Account A2')
+    ;(wrapper.vm as unknown as {cycleAirport:()=>void}).cycleAirport()
+    await flushPromises()
+    expect((wrapper.vm as unknown as {viewedAirportName:string}).viewedAirportName).toBe('Airport B')
+    expect(optionValues()).toEqual([JSON.stringify(['airport-b','account-b1'])])
+    expect(wrapper.text()).toContain('Airport B · Account B1')
+
+    ;(wrapper.vm as unknown as {cycleAirport:()=>void}).cycleAirport()
+    await flushPromises()
+    expect((wrapper.vm as unknown as {viewedAirportName:string}).viewedAirportName).toBe('Airport A')
+    expect(optionValues()).toEqual([JSON.stringify(['airport-a','account-a1']),JSON.stringify(['airport-a','account-a2'])])
+    expect((accountSelect.element as HTMLSelectElement).value).toBe(JSON.stringify(['airport-a','account-a2']))
+    expect(wrapper.text()).toContain('Airport A · Account A2')
+
+    ;(wrapper.vm as unknown as {cycleAirport:()=>void}).cycleAirport()
+    await flushPromises()
+    expect((wrapper.vm as unknown as {viewedAirportName:string}).viewedAirportName).toBe('Airport B')
+    expect(workspace.selectedAirportIds.value).toEqual(['airport-a','airport-b'])
+    expect(workspace.subscription.value).toBe('all')
+    expect(workspace.nodes.value).toEqual(fixtureNotices)
   })
 })

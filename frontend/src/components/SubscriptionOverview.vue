@@ -10,7 +10,7 @@ import Modal from './Modal.vue'
 const props=defineProps<{airports:Airport[];notices:NodeOption[]}>()
 type SubscriptionDisclosureSummary={refreshState:'loading'|'ready'|'error';noticeCount:number;expiredAccountCount:number;unknownExpiryAccountCount:number;failedItemCount:number;interruptedItemCount:number;runningItemCount:number;latestRefreshIssueAccount?:string;latestRefreshIssueState?:'failed'|'interrupted'}
 const emit=defineEmits<{summary:[value:SubscriptionDisclosureSummary]}>()
-const workspace=useWorkspace(),accounts=computed(()=>airportAccounts(props.airports)),selectedKey=ref(''),jobs=ref<SubscriptionRefreshJob[]>([]),activeJob=ref<SubscriptionRefreshJob|null>(null),loading=ref(false),jobsReadState=ref<'loading'|'ready'|'error'>('loading'),noticeOpen=ref(false),error=ref('')
+const workspace=useWorkspace(),viewedAirportId=ref(''),viewedAirport=computed(()=>props.airports.find(airport=>airport.id===viewedAirportId.value)||props.airports[0]),viewedAirportName=computed(()=>viewedAirport.value?.name||''),accounts=computed(()=>viewedAirport.value?airportAccounts([viewedAirport.value]):[]),selectedKey=ref(''),rememberedAccountByAirport=ref<Record<string,string>>({}),jobs=ref<SubscriptionRefreshJob[]>([]),activeJob=ref<SubscriptionRefreshJob|null>(null),loading=ref(false),jobsReadState=ref<'loading'|'ready'|'error'>('loading'),noticeOpen=ref(false),error=ref('')
 
 
 const selected=computed(()=>accounts.value.find(account=>account.key===selectedKey.value)),accountNotices=computed(()=>noticesForAccount(props.notices,selected.value)),usage=computed(()=>selected.value?.subscription.usage)
@@ -46,7 +46,7 @@ const visibleItem=computed(()=>{
   const account=selected.value,job=visibleJob.value
   return account&&job?job.items.find(item=>item.airport_id===account.airport.id&&item.subscription_id===account.subscription.id)||null:null
 })
-const latestRefreshByAccount=computed(()=>accounts.value.map(account=>{
+const latestRefreshByAccount=computed(()=>airportAccounts(props.airports).map(account=>{
   let latest:{job:SubscriptionRefreshJob;item:SubscriptionRefreshJob['items'][number]}|undefined
   for(const job of jobs.value){
     const item=job.items.find(candidate=>candidate.airport_id===account.airport.id&&candidate.subscription_id===account.subscription.id)
@@ -61,7 +61,7 @@ const disclosureSummary=computed<SubscriptionDisclosureSummary>(()=>{
     const parsed=parseNoticeUsage(noticesForAccount(props.notices,account))
     return !!parsed.expireText
   }
-  const expiry=accounts.value.map(account=>account.subscription.usage?.expire).filter((value):value is number=>typeof value==='number'&&Number.isFinite(value)&&value>0)
+  const expiry=airportAccounts(props.airports).map(account=>account.subscription.usage?.expire).filter((value):value is number=>typeof value==='number'&&Number.isFinite(value)&&value>0)
   const latest=latestRefreshByAccount.value
   const failed=latest.filter(entry=>entry.item?.state==='failed')
   const interrupted=latest.filter(entry=>entry.item?.state==='interrupted')
@@ -72,7 +72,7 @@ const disclosureSummary=computed<SubscriptionDisclosureSummary>(()=>{
     refreshState:error.value||jobsReadState.value==='error'?'error':jobsReadState.value,
     noticeCount:props.notices.length,
     expiredAccountCount:expiry.filter(value=>value*1000<=Date.now()).length,
-    unknownExpiryAccountCount:accounts.value.filter(a=>!hasExpiry(a)).length,
+    unknownExpiryAccountCount:airportAccounts(props.airports).filter(a=>!hasExpiry(a)).length,
     failedItemCount:failed.length,
     interruptedItemCount:interrupted.length,
     runningItemCount:running.length,
@@ -93,6 +93,16 @@ const expireLabel=computed(()=>{
   return ''
 })
 const jobRunning=(job:SubscriptionRefreshJob|null)=>job?.state==='running'
+function cycleAirport(){
+  const airportList=props.airports
+  if(!airportList.length){viewedAirportId.value='';selectedKey.value='';return}
+  const currentIndex=airportList.findIndex(airport=>airport.id===viewedAirport.value?.id)
+  const nextAirport=airportList[(currentIndex+1)%airportList.length]
+  if(viewedAirport.value&&accounts.value.some(account=>account.key===selectedKey.value))rememberedAccountByAirport.value[viewedAirport.value.id]=selectedKey.value
+  viewedAirportId.value=nextAirport.id
+  const nextAccounts=airportAccounts([nextAirport]),remembered=rememberedAccountByAirport.value[nextAirport.id]
+  selectedKey.value=nextAccounts.some(account=>account.key===remembered)?remembered:nextAccounts[0]?.key||''
+}
 watch(disclosureSummary,value=>emit('summary',value),{immediate:true})
 let pollTimer:ReturnType<typeof setTimeout>|undefined,disposed=false
 function mergeJob(job:SubscriptionRefreshJob){jobs.value=[job,...jobs.value.filter(existing=>existing.id!==job.id)];if(activeJob.value?.id===job.id||job.state==='running')activeJob.value=job}
@@ -103,9 +113,19 @@ function requestID(){return globalThis.crypto?.randomUUID?.()||`refresh-${Date.n
 async function startCurrent(){const account=selected.value;if(!account||loading.value||jobRunning(activeJob.value))return;loading.value=true;error.value='';try{const body:SubscriptionRefreshRequest={request_id:requestID(),selections:[{airport_id:account.airport.id,subscription_id:account.subscription.id}]};const job=await api.startRefresh(body);mergeJob(job);if(jobRunning(job))schedulePoll(job.id);else if(job.success)await workspace.refreshNodes()}catch(e){error.value=e instanceof Error?e.message:String(e)}finally{loading.value=false}}
 async function cancelCurrent(){const job=visibleJob.value;if(!job||!jobRunning(job))return;try{mergeJob(await api.cancelRefresh(job.id))}catch(e){error.value=e instanceof Error?e.message:String(e)}}
 async function retryFailed(){const job=visibleJob.value;if(!job||!visibleItem.value||visibleItem.value.state!=='failed'||loading.value)return;loading.value=true;error.value='';try{const next=await api.startRefresh({request_id:requestID(),retry_of:job.id});mergeJob(next);if(jobRunning(next))schedulePoll(next.id)}catch(e){error.value=e instanceof Error?e.message:String(e)}finally{loading.value=false}}
-watch(accounts,value=>{if(!value.some(account=>account.key===selectedKey.value))selectedKey.value=value[0]?.key||''},{immediate:true})
+watch(accounts,value=>{
+  const airport=viewedAirport.value
+  if(!airport){selectedKey.value='';return}
+  const remembered=rememberedAccountByAirport.value[airport.id]
+  if(!value.some(account=>account.key===selectedKey.value))selectedKey.value=value.some(account=>account.key===remembered)?remembered:value[0]?.key||''
+},{immediate:true})
+watch(selectedKey,value=>{
+  const airport=viewedAirport.value
+  if(airport&&accounts.value.some(account=>account.key===value))rememberedAccountByAirport.value[airport.id]=value
+})
 onMounted(()=>void loadJobs())
 onBeforeUnmount(()=>{disposed=true;clearTimeout(pollTimer)})
+defineExpose({cycleAirport,viewedAirportName})
 </script>
 
 <template>

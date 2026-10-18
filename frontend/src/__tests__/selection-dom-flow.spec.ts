@@ -79,9 +79,9 @@ describe('node selection through DOM controls',()=>{
   })
   it('uses the airport picker, subscription filter and node checkboxes as one scope for every project and monitor entry',async()=>{
     const {w,wrapper}=attach();await flushPromises()
-    await wrapper.get('.orbit-button').trigger('click')
+    await wrapper.get('.scope-airports').trigger('click')
     await airportInput('Airport A').setValue(true);await airportInput('Airport B').setValue(true)
-    expect(wrapper.get('.orbit-button strong').text()).toContain('2 个机场')
+    expect(w.selectedAirportIds.value).toHaveLength(2)
     await button(dialog(),'.modal-footer button','完成')
     expect(document.querySelector('dialog')).toBeNull()
     await button(wrapper,'.toolbar-filters button','多选节点')
@@ -107,7 +107,7 @@ describe('node selection through DOM controls',()=>{
       w.monitorNodes.value=null
     }
 
-    await wrapper.get('.orbit-button').trigger('click');await airportInput('Airport A').setValue(false)
+    await wrapper.get('.scope-airports').trigger('click');await airportInput('Airport A').setValue(false)
     await button(dialog(),'.modal-footer button','完成')
     expect(w.subscription.value).toBe('all')
     expect(wrapper.find('select[aria-label="订阅筛选"]').exists()).toBe(false)

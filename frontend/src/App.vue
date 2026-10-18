@@ -16,23 +16,25 @@ import MonitorCreateModal from './components/MonitorCreateModal.vue'
 import NodeDetailModal from './components/NodeDetailModal.vue'
 import QueueModal from './components/QueueModal.vue'
 const w=createWorkspace();provide(workspaceKey,w)
+const windowHidden=ref(document.hidden)
+function visibilityChanged(){windowHidden.value=document.hidden}
 const password=ref(''),loginError=ref(''),loggingIn=ref(false)
-const pages:{id:Page;label:string;icon:string}[]=[{id:'home',label:'节点首页',icon:'home'},{id:'airports',label:'机场订阅',icon:'layers'},{id:'history',label:'检测历史',icon:'history'},{id:'monitor',label:'持续监测',icon:'monitor'}]
+const pages:{id:Page;label:string;icon:string}[]=[{id:'home',label:'线路工作台',icon:'home'},{id:'airports',label:'机场与账户',icon:'layers'},{id:'history',label:'检测记录',icon:'history'},{id:'monitor',label:'持续监测',icon:'monitor'}]
 let timer:ReturnType<typeof setInterval>|undefined
 function navigate(page:Page){w.page.value=page;window.scrollTo({top:0,behavior:'instant'})}
 function authExpired(){w.authRequired.value=true;w.dispose()}
 async function login(){loggingIn.value=true;loginError.value='';try{await api.login(password.value);password.value='';w.authRequired.value=false;await w.boot()}catch(e){loginError.value=e instanceof Error?e.message:String(e)}finally{loggingIn.value=false}}
-onMounted(()=>{void w.boot();window.addEventListener('speedtest:auth-required',authExpired);timer=setInterval(()=>{if(w.busy.value&&!w.running.value&&document.visibilityState==='visible')void w.syncActive()},2500)})
-onBeforeUnmount(()=>{w.dispose();clearInterval(timer);window.removeEventListener('speedtest:auth-required',authExpired)})
+onMounted(()=>{document.addEventListener('visibilitychange',visibilityChanged);void w.boot();window.addEventListener('speedtest:auth-required',authExpired);timer=setInterval(()=>{if(w.busy.value&&!w.running.value&&document.visibilityState==='visible')void w.syncActive()},2500)})
+onBeforeUnmount(()=>{document.removeEventListener('visibilitychange',visibilityChanged);w.dispose();clearInterval(timer);window.removeEventListener('speedtest:auth-required',authExpired)})
 </script>
 <template>
-  <div class="app-shell">
+  <div class="app-shell observatory-app" :class="{'window-hidden':windowHidden}">
     <div class="app-content">
       <header class="workspace-header">
         <div class="workspace-header-inner">
           <a class="brand" href="#" @click.prevent="navigate('home')">
             <span class="brand-mark"><Icon name="pulse"/></span>
-            <div class="brand-copy"><strong>SpeedTest</strong><span>网络检测工作台</span></div>
+            <div class="brand-copy"><strong>CST<span class="brand-period">.</span></strong><span>Clash SpeedTest Pro · 线路观测台</span></div>
           </a>
           <nav class="workspace-nav" aria-label="主导航">
             <button v-for="p in pages" :key="p.id" type="button" :aria-current="w.page.value===p.id?'page':undefined" @click="navigate(p.id)">

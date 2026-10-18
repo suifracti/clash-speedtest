@@ -6,15 +6,15 @@ import {api,backup,selectProfileSourceDirectory,request} from '../api'
 import {createWorkspace,workspaceKey,type Workspace} from '../workspace'
 import {applyTheme} from '../theme'
 import type {Settings} from '../domain'
-vi.hoisted(()=>Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:()=>null,setItem:()=>{}}}))
+vi.hoisted(()=>{const values=new Map<string,string>();Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:(key:string)=>values.get(key)||null,setItem:(key:string,value:string)=>values.set(key,value),clear:()=>values.clear()}})})
 vi.mock('../api',async original=>{const actual=await original<typeof import('../api')>();return {...actual,desktop:()=>true,backup:vi.fn(),selectProfileSourceDirectory:vi.fn(),request:vi.fn(),api:{...actual.api,settings:vi.fn(),discoverToken:vi.fn(),saveSettings:vi.fn(),setToken:vi.fn(),token:vi.fn(),oauth:vi.fn(),inspect:vi.fn(),importSource:vi.fn(),migrate:vi.fn(),initialize:vi.fn()}}})
-vi.mock('../theme',()=>({applyTheme:vi.fn().mockResolvedValue(undefined)}))
+vi.mock('../theme',async importOriginal=>({...await importOriginal<typeof import('../theme')>(),applyTheme:vi.fn().mockResolvedValue(undefined)}))
 const settings={preferred_browser:'auto',monitor_retention_policy:'30d',monitor_retention_custom_days:30,monitor_storage_warning_bytes:1073741824,monitor_storage_hard_bytes:2147483648,monitor_budget_max_concurrent:4,monitor_budget_response_bytes:65536} as Settings
 let w:Workspace,wrapper:VueWrapper|undefined
 function attach(component:any){wrapper=mount(component,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});return wrapper}
 function button(label:string){const el=Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(b=>b.textContent?.trim()===label);expect(el,`button ${label}`).toBeDefined();return el!}
 async function click(label:string){button(label).click();await flushPromises()}
-beforeEach(()=>{vi.resetAllMocks();HTMLDialogElement.prototype.showModal=vi.fn();HTMLDialogElement.prototype.close=vi.fn();w=createWorkspace();vi.spyOn(w,'boot').mockResolvedValue(undefined);vi.mocked(api.settings).mockResolvedValue({...settings});w.setup.value={state:'ready',initialized:true,data_root:'/synthetic/data',profile_dir:'/synthetic/data/profiles',history_dir:'/synthetic/data/history',settings_file:'/synthetic/data/settings.json',sources:[],migration:{state:'pending',target_history_dir:'/synthetic/data/history',source_history_dir:'/synthetic/legacy/history'}}})
+beforeEach(()=>{localStorage.clear();vi.resetAllMocks();HTMLDialogElement.prototype.showModal=vi.fn();HTMLDialogElement.prototype.close=vi.fn();w=createWorkspace();vi.spyOn(w,'boot').mockResolvedValue(undefined);vi.mocked(api.settings).mockResolvedValue({...settings});w.setup.value={state:'ready',initialized:true,data_root:'/synthetic/data',profile_dir:'/synthetic/data/profiles',history_dir:'/synthetic/data/history',settings_file:'/synthetic/data/settings.json',sources:[],migration:{state:'pending',target_history_dir:'/synthetic/data/history',source_history_dir:'/synthetic/legacy/history'}}})
 afterEach(()=>{wrapper?.unmount();wrapper=undefined;w.dispose();document.body.innerHTML=''})
 it('invalidates edited source and imports only after confirmation',async()=>{
   const view=attach(DataView);vi.mocked(api.inspect).mockResolvedValue({path:'/synthetic/a',label:'Source A',available:true,profile_count:2,cache_count:1});await view.get('input').setValue('/synthetic/a');await click('检查来源');await view.get('input').setValue('/synthetic/b');expect(document.body.textContent).not.toContain('Source A');expect(document.body.textContent).not.toContain('导入这个来源');vi.mocked(api.inspect).mockResolvedValue({path:'/synthetic/b',available:true,profile_count:3,cache_count:0});await click('检查来源');await click('导入这个来源');expect(api.importSource).not.toHaveBeenCalled();await click('取消');expect(api.importSource).not.toHaveBeenCalled();expect(document.querySelector('[role=status]')?.textContent).toContain('取消');await click('导入这个来源');await click('确认导入');expect(api.importSource).toHaveBeenCalledWith('/synthetic/b');expect(w.boot).toHaveBeenCalledOnce()
@@ -60,7 +60,7 @@ it('invalidates a committed import even if the subsequent workspace refresh has 
 })
 
 it('keeps theme selection aligned with the document after a native theme failure',async()=>{
-  document.documentElement.dataset.theme='light';attach(SettingsView);await flushPromises();vi.mocked(applyTheme).mockImplementationOnce(async value=>{document.documentElement.dataset.theme=value;throw new Error('native theme denied')});await click('深色');expect(button('深色').getAttribute('aria-pressed')).toBe('true');expect(document.querySelector('[role=alert]')?.textContent).toContain('native theme denied')
+  document.documentElement.dataset.theme='light';attach(SettingsView);await flushPromises();vi.mocked(applyTheme).mockImplementationOnce(async value=>{localStorage.setItem('theme',value);document.documentElement.dataset.theme=value;throw new Error('native theme denied')});await click('深色');expect(button('深色').getAttribute('aria-pressed')).toBe('true');expect(document.querySelector('[role=alert]')?.textContent).toContain('native theme denied')
 })
 it.each(['import','migration'])('restores focus to a stable control when %s removes its trigger',async kind=>{
   const view=attach(DataView)

@@ -90,7 +90,8 @@ describe('synthetic 256-node home first screen',()=>{
     expect(wrapper.get('.subscription-overview-notices').text()).toContain('公告 1')
     expect(wrapper.get('.subscription-overview-refresh').text()).toContain('synthetic refresh failure')
     const accountSelect=wrapper.get('select[aria-label="首页用量订阅"]')
-    await accountSelect.setValue((accountSelect.element as HTMLSelectElement).options[5]!.value)
+    await wrapper.get('.orbit-button').trigger('click');await wrapper.get('.orbit-button').trigger('click');await flushPromises()
+    await accountSelect.setValue((accountSelect.element as HTMLSelectElement).options[1]!.value)
     await flushPromises()
     expect(wrapper.get('.subscription-overview-account').text()).toContain('合成账户 6')
     expect(summary.text()).toContain('公告 1')
@@ -154,7 +155,7 @@ describe('synthetic 256-node home first screen',()=>{
     const disclosureElement=disclosure.element as HTMLDetailsElement
     expect(disclosureElement.open).toBe(false)
     expect(disclosure.get('summary').text()).toContain('订阅账户')
-    expect(wrapper.get('.orbit-button').text()).toContain('4 个机场')
+    expect(wrapper.get('.orbit-button').text()).toContain('合成机场 1')
     expect(wrapper.get('.node-list-context').text()).toContain('256 个节点')
 
     const selectedAirports=[...workspace.selectedAirportIds.value!]
@@ -162,8 +163,9 @@ describe('synthetic 256-node home first screen',()=>{
     expect(disclosureElement.open).toBe(true)
     const accountPicker=wrapper.get('select[aria-label="首页用量订阅"]')
     const accountSelect=accountPicker.element as HTMLSelectElement
-    expect(accountSelect.options).toHaveLength(8)
-    await accountPicker.setValue(accountSelect.options[5].value)
+    expect(accountSelect.options).toHaveLength(2)
+    await wrapper.get('.orbit-button').trigger('click');await wrapper.get('.orbit-button').trigger('click');await flushPromises()
+    await accountPicker.setValue(accountSelect.options[1].value)
     await flushPromises()
 
     expect(wrapper.get('.subscription-overview-account').text()).toContain('合成账户 6')
