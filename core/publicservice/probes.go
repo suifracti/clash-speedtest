@@ -449,11 +449,14 @@ type netflixPage struct {
 	challenge bool
 }
 
-func checkNetflix(ctx context.Context, client *http.Client, _ Rule, started time.Time) Result {
+func checkNetflix(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
 	result := Result{RequestCount: 0, Details: map[string]string{}}
 	clone := *client
 	clone.CheckRedirect = func(request *http.Request, via []*http.Request) error {
 		host := strings.ToLower(request.URL.Hostname())
+		if rule.ServiceID == netflixIPv4Service && (host != "www.netflix.com" || request.URL.User != nil || (request.URL.Port() != "" && request.URL.Port() != "443")) {
+			return http.ErrUseLastResponse
+		}
 		if len(via) >= 5 || request.URL.Scheme != "https" || (host != "netflix.com" && !strings.HasSuffix(host, ".netflix.com")) {
 			return http.ErrUseLastResponse
 		}

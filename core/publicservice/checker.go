@@ -154,6 +154,14 @@ var catalog = []Rule{
 		RedirectPolicy:   "follow_same_service", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
 	},
 	{
+		ServiceID: netflixIPv4Service, Name: "Netflix 片目检查（经节点 DNS · IPv4）", RuleVersion: 1,
+		Category: "流媒体解锁", Region: "全球", ResultKind: "streaming_unlock",
+		Description: "可选：经同一被测节点向Cloudflare查询一次IPv4，再检查片目；额外DNS响应最多16KiB，原域名和证书校验保留，不代表播放。",
+		TargetURL:   "https://www.netflix.com/title/81280792 + /title/70143836", Method: http.MethodGet,
+		SuccessCriterion: "单次经节点DoH A查询，本轮固定同一IPv4并记录TTL，不跨轮缓存；原Host/SNI校验两部片目，仅同主机HTTPS跳转；不同于节点默认解析，不混为同一方法，不验证播放",
+		RedirectPolicy:   "follow_same_host", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
+	},
+	{
 		ServiceID: "tver_jp", Name: "TVer 日本网页可达性", RuleVersion: 2,
 		Category: "日本服务", Region: "日本", ResultKind: "regional_reachability", Description: "检测 TVer 网页响应；不把首页可达等同于可播放。",
 		TargetURL: "https://tver.jp/", Method: http.MethodGet, SuccessCriterion: "最多跟随3次同服务HTTPS跳转，最终2xx且无挑战标记才记网页可达；不证明播放解锁",
@@ -473,6 +481,15 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	phases := &requestPhases{}
 	client.Transport = phases.wrap(client.Transport, c.ClientFactory == nil)
 	defer phases.attach(&final)
+	if rule.ServiceID == netflixIPv4Service {
+		resolved, evidence, failure := prepareNetflixIPv4(ctx, client, phases)
+		defer func() { evidence.attach(&final) }()
+		if failure != nil {
+			return finish(*failure, startedAt)
+		}
+		client = resolved
+		defer client.CloseIdleConnections()
+	}
 
 	res1 := c.checkOnce(ctx, client, node, rule, startedAt)
 	driftTarget := c.DriftSamples
@@ -714,7 +731,7 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 		return checkPing0(ctx, client, rule, startedAt)
 	case "ippure_ip_quality":
 		return checkIPPure(ctx, client, rule, startedAt)
-	case "netflix_unlock":
+	case "netflix_unlock", netflixIPv4Service:
 		return checkNetflix(ctx, client, rule, startedAt)
 	case "abema_unlock":
 		return checkAbema(ctx, client, rule, startedAt)
