@@ -398,6 +398,9 @@ func readPage(ctx context.Context, client *http.Client, target string, allowedHo
 	defer response.Body.Close()
 	status := response.StatusCode
 	result.HTTPStatus = &status
+	if serviceRateLimit(&result, response, false) {
+		return result, fetchedPage{}, false
+	}
 	if strings.EqualFold(strings.TrimSpace(response.Header.Get("cf-mitigated")), "challenge") {
 		result.Outcome, result.Summary, result.ErrorMessage = "challenge", "Cloudflare 要求浏览器验证", "网络已连通，但无头请求未通过网页验证"
 		return result, fetchedPage{}, false
@@ -513,6 +516,9 @@ func netflixGET(ctx context.Context, client *http.Client, target string, result 
 		return netflixPage{}, false
 	}
 	defer response.Body.Close()
+	if serviceRateLimit(result, response, false) {
+		return netflixPage{}, false
+	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, MaximumResponseBytes+1))
 	result.BytesRead += int64(min(len(body), MaximumResponseBytes))
 	if err != nil {
@@ -602,6 +608,9 @@ func boundedGET(ctx context.Context, client *http.Client, target string, maximum
 	defer response.Body.Close()
 	status := response.StatusCode
 	result.HTTPStatus = &status
+	if serviceRateLimit(&result, response, false) {
+		return result, nil, false
+	}
 	if strings.EqualFold(strings.TrimSpace(response.Header.Get("cf-mitigated")), "challenge") {
 		result.Outcome = "challenge"
 		result.Summary = "Cloudflare 要求浏览器验证"

@@ -489,6 +489,9 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	}
 
 	for i := 2; i <= driftTarget; i++ {
+		if samples[len(samples)-1].outcome == "rate_limited" {
+			break
+		}
 		if ctx.Err() != nil {
 			break
 		}
@@ -530,8 +533,13 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	seenIPs, seenColos, seenOutcomes := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	keepaliveCount, reconnectCount := 0, 0
 	var firstUnknown *Result
+	var limitedSample *Result
 
 	for _, sample := range samples {
+		if sample.outcome == "rate_limited" && limitedSample == nil {
+			r := sample.res
+			limitedSample = &r
+		}
 		if sample.mode == "keepalive" {
 			keepaliveCount++
 		} else if sample.mode == "reconnect" {
@@ -580,6 +588,14 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 		res1.Details = map[string]string{}
 	}
 	details := res1.Details
+	if limitedSample != nil {
+		details["sampling_stop_reason"] = "rate_limited"
+		for _, key := range []string{"rate_limit_source", "retry_after_seconds", "retry_after_at", "rate_limit_reset_at"} {
+			if value := limitedSample.Details[key]; value != "" {
+				details[key] = value
+			}
+		}
+	}
 	details["sample_semantics_version"] = "2"
 	details["sample_planned"] = fmt.Sprint(driftTarget)
 	details["sample_total"] = fmt.Sprint(totalSamples)
@@ -634,6 +650,11 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 		res1.Outcome, res1.FailurePhase = "flapping", "drift_validation"
 		res1.Summary = "检测结论不一致；同时取得通过与判据未通过的证据"
 		res1.ErrorMessage = "多次检测结论有差异；不能仅凭结论差异判定出口 IP 漂移"
+	case limitedSample != nil:
+		res1.Outcome, res1.FailurePhase = "rate_limited", limitedSample.FailurePhase
+		res1.HTTPStatus = limitedSample.HTTPStatus
+		res1.Summary = "目标限流，已停止本次后续采样；不判为节点故障"
+		res1.ErrorMessage = limitedSample.ErrorMessage
 	case incomplete:
 		res1.Outcome, res1.FailurePhase = "unknown", "sampling_incomplete"
 		res1.Summary = "多次检测尚未确认；部分样本未知或未完成"
@@ -745,10 +766,9 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 			result.Details["cf_colo"] = strings.TrimSpace(parts[1])
 		}
 	}
-	if rule.ServiceID == "grok_web" && status == http.StatusTooManyRequests {
-		result.Outcome, result.FailurePhase, result.ErrorMessage = "rate_limited", "http_status", "目标返回 HTTP 429；不判为节点或业务能力故障"
+	if serviceRateLimit(&result, response, rule.ServiceID == "github_api_root") {
 		if strings.EqualFold(strings.TrimSpace(response.Header.Get("cf-mitigated")), "challenge") {
-			result.Details = map[string]string{"challenge_evidence": "cf-mitigated header on HTTP 429"}
+			result.Details["challenge_evidence"] = "cf-mitigated header on quota response"
 		}
 		return finish(result, startedAt)
 	}
@@ -769,12 +789,6 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 		result.Outcome = "redirect"
 		result.FailurePhase = "http_status"
 		result.ErrorMessage = "服务返回重定向；本规则不跟随重定向"
-		return finish(result, startedAt)
-	}
-	if status == http.StatusTooManyRequests || (rule.ServiceID == "github_api_root" && status == http.StatusForbidden && strings.TrimSpace(response.Header.Get("X-RateLimit-Remaining")) == "0") {
-		result.Outcome = "rate_limited"
-		result.FailurePhase = "http_status"
-		result.ErrorMessage = "响应状态或限流头表明目标限制了请求"
 		return finish(result, startedAt)
 	}
 	if (rule.ServiceID == "docker_registry" || rule.ServiceID == "xai_api") && status == http.StatusUnauthorized {

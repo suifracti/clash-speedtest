@@ -20,7 +20,6 @@ func TestMultiSampleSeparatesUnconfirmedFromFailure(t *testing.T) {
 	}{
 		{"pass then server error", []int{204, 500, 500}, "unknown", "1", "0", "2"},
 		{"all server errors", []int{500, 500, 500}, "unknown", "0", "0", "3"},
-		{"pass then quota", []int{204, 429, 429}, "unknown", "1", "0", "2"},
 		{"confirmed rejection remains failure", []int{403, 403, 403}, "http_rejected", "0", "3", "0"},
 		{"pass and confirmed rejection", []int{204, 403, 403}, "flapping", "1", "2", "0"},
 		{"rejection with unconfirmed samples", []int{403, 500, 500}, "unknown", "0", "1", "2"},
