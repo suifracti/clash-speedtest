@@ -236,7 +236,13 @@ var catalog = []Rule{
 	webRule("appletv_web", "Apple TV+ 网页入口", "流媒体入口", "全球", "https://tv.apple.com/", "仅检测网页入口；不声称播放解锁。"),
 	webRule("hulu_us_web", "Hulu US 网页入口", "美国服务", "美国", "https://www.hulu.com/welcome", "仅检测网页入口；不使用账号。"),
 	webRule("max_web", "Max 网页入口", "美国服务", "美国", "https://www.max.com/", "仅检测网页入口；不声称播放解锁。"),
-	webRule("peacock_web", "Peacock 网页入口", "美国服务", "美国", "https://www.peacocktv.com/", "仅检测网页入口；不声称播放解锁。"),
+	{
+		ServiceID: "peacock_web", Name: "Peacock 网页入口", Category: "美国服务", Region: "美国", ResultKind: "regional_reachability", RuleVersion: 4,
+		TargetURL: "https://www.peacocktv.com/", Method: http.MethodGet,
+		Description:      "检测网页入口及明确的地区不提供服务提示；不声称播放解锁。",
+		SuccessCriterion: "最多跟随3次同服务HTTPS跳转；地区提示页须有明确正文才记受限，普通2xx无挑战只记网页可达，不验证播放",
+		RedirectPolicy:   "follow_same_service", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
+	},
 	webRule("paramount_web", "Paramount+ 网页入口", "美国服务", "美国", "https://www.paramountplus.com/", "仅检测网页入口；不声称播放解锁。"),
 
 	webRule("amazon_jp", "Amazon.co.jp", "日本服务", "日本", "https://www.amazon.co.jp/", "检测日本 Amazon 网页入口；不代表可下单。"),
@@ -797,7 +803,11 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 		return finish(result, startedAt)
 	}
 	if isReachabilityRule(rule) && (status >= 200 && status < 300 || rule.ServiceID == "grok_web") {
-		body, readErr := io.ReadAll(io.LimitReader(response.Body, 8192))
+		bodyLimit := int64(8192)
+		if rule.ServiceID == "peacock_web" {
+			bodyLimit = MaximumResponseBytes
+		}
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, bodyLimit))
 		result.BytesRead = int64(len(body))
 		if readErr != nil {
 			classifyRequestError(&result, ctx, readErr)
@@ -823,6 +833,18 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 			}
 		} else if pageHasChallenge(body) {
 			result.Outcome, result.Summary = "challenge", "网页要求浏览器验证，未验证功能可用"
+			return finish(result, startedAt)
+		}
+		if rule.ServiceID == "peacock_web" && response.Request != nil && response.Request.URL != nil && strings.EqualFold(strings.TrimSuffix(response.Request.URL.Path, "/"), "/unavailable") {
+			result.Details["playback_verified"] = "false"
+			if strings.Contains(strings.ToLower(string(body)), "not yet available in your territory") {
+				result.Outcome = "region_blocked"
+				result.Summary = "Peacock 页面明确提示当前地区尚未提供服务；未验证播放"
+				result.Details["restriction_evidence"] = "unavailable_path_and_explicit_territory_notice"
+			} else {
+				result.Outcome, result.FailurePhase = "unknown", "page_document"
+				result.ErrorMessage = "Peacock 进入 unavailable 页面，但读取范围内没有明确地区说明，不能确认服务可用"
+			}
 			return finish(result, startedAt)
 		}
 		result.Outcome = "reachable"
