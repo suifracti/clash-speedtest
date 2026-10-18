@@ -1,8 +1,8 @@
 import {expect,it,vi} from 'vitest'
 import {ref,nextTick} from 'vue'
 import {points,serviceHealthPoints,serviceSummary} from '../presentation'
-import {durableRoundPoints} from '../measurementRounds'
-import {serviceComparisonGroup} from '../sharedResults'
+import {durableRoundPoints,serviceConclusion} from '../measurementRounds'
+import {serviceComparisonGroup,serviceAvailability,servicePassed} from '../sharedResults'
 import {createWorkspace} from '../workspace'
 import {key,type Attempt,type NodeOption,type MeasurementRound} from '../domain'
 vi.mock('../api',async original=>{const actual=await original<typeof import('../api')>();return {...actual,api:{...actual.api,attemptHistory:vi.fn(async()=>({attempts:[],has_more:false,complete:true}))}}})
@@ -12,6 +12,32 @@ const attempt=(id:string,outcome:string):Attempt=>({...n,attempt_id:id,request_i
 const unknown=()=>({...attempt('ipok_ipv4','unknown'),result:{...attempt('ipok_ipv4','unknown').result!,failure_phase:'timeout'}})
 const workspace=(list:Attempt[],ids=list.map(a=>a.service_id!))=>({displayTarget:ref('cloudflare'),serviceIds:ref(ids),latency:ref({}),downloads:ref({}),services:ref({[key(n)]:list}),latestService:(_node:NodeOption,id:string)=>list.find(a=>a.service_id===id)})
 const round=(list:Attempt[]):MeasurementRound=>({round_id:'fixture',started_at:at,trigger_type:'manual',state:'finished',items:list.map(a=>({...n,request_id:a.request_id,project:'service',service_id:a.service_id,execution_state:a.execution_state,persistence_state:a.persistence_state,service:a}))})
+it('does not turn legacy mixed unknown samples into evidenced business failure',()=>{
+ for(const outcomes of ['matched, transport_error','matched, unknown','matched, timed_out','matched, http_rejected','matched, criteria_mismatch','']){
+  const a=attempt('netflix_unlock','flapping');a.result!.details={sample_total:'2',sample_success:'1',sample_failure:'1',observed_outcomes:outcomes};const raw=JSON.stringify(a)
+  expect(serviceAvailability(a)).toBeNull();expect(serviceComparisonGroup([a],['netflix_unlock']).complete).toBe(false)
+  expect(durableRoundPoints([round([a])],'service')[0].value).toBeNull();expect(serviceConclusion(a)).not.toMatch(/漂移/);expect(JSON.stringify(a)).toBe(raw)
+ }
+})
+it('retains observed business rejection in legacy and versioned mixed results',()=>{
+ for(const details of [{observed_outcomes:'matched, region_blocked'}, {observed_outcomes:'challenge, service_rejected'}, {sample_semantics_version:'2',sample_total:'2',sample_success:'1',sample_failure:'1',sample_confirmed:'2',sample_completion:'complete'}]){
+  const a=attempt('netflix_unlock','flapping');a.result!.details=details
+  expect(serviceAvailability(a)).toBe(0);expect(serviceConclusion(a)).toContain('检测结论不一致');expect(serviceConclusion(a)).not.toContain('IP漂移')
+ }
+ const a=attempt('netflix_unlock','flapping');a.result!.details={sample_semantics_version:'2',sample_failure:'0',sample_unknown:'2'};expect(serviceAvailability(a)).toBeNull()
+})
+it('does not present partial unknown or unfinished samples as a full pass',()=>{
+ for(const details of [{sample_unknown:'1'},{sample_cancelled:'1'},{sample_not_executed:'1'},{sample_unstarted:'1'},{sample_completion:'partial'}])for(const outcome of ['matched','unlocked']){
+  const a=attempt('netflix_unlock',outcome);a.result!.details={sample_total:'4',sample_success:'3',...details}
+  expect(servicePassed(a)).toBe(false);expect(serviceAvailability(a)).toBeNull();expect(serviceConclusion(a)).toContain('未确认');expect(serviceComparisonGroup([a],['netflix_unlock']).complete).toBe(false)
+ }
+})
+it('keeps fully unknown and cancelled sampling histories unrankable',()=>{
+ for(const outcome of ['unknown','cancelled','not_executed']){
+  const a=attempt('netflix_unlock',outcome);a.result!.details={sample_semantics_version:'2',sample_total:'4',sample_unknown:'4',sample_success:'0',sample_failure:'0'}
+  expect(serviceAvailability(a)).toBeNull();expect(durableRoundPoints([round([a])],'service')[0].value).toBeNull()
+ }
+})
 it('repairs unlinked IPOK unknown without mutating the attempt',()=>{const a=unknown(),raw=JSON.stringify(a);expect(points(workspace([a]),n,'service','cloudflare','ipok_ipv4')[0].value).toBeNull();expect(JSON.stringify(a)).toBe(raw)})
 it('repairs linked IPOK unknown and preserves its child evidence',()=>{const a=unknown(),r=round([a]),raw=JSON.stringify(r),p=durableRoundPoints([r],'service','cloudflare','ipok_ipv4')[0];expect(p.value).toBeNull();expect(p.samples![0].value).toBeNull();expect(p.attempts![0]).toBe(a);expect(JSON.stringify(r)).toBe(raw)})
 it('excludes successful profiles from business passes and comparison conditions',()=>{
@@ -43,4 +69,9 @@ it('recognizes profile snapshot metadata beyond legacy IDs and leaves HTTP-only 
  expect(serviceComparisonGroup([pass,a],['netflix_unlock','fixture_new_profile'])).toEqual(serviceComparisonGroup([pass],['netflix_unlock']))
  const rejected=attempt('chatgpt_web','http_rejected');rejected.result!.http_status=403;expect(points(workspace([rejected]),n,'service')[0].value).toBe(0)
  rejected.result!.http_status=429;expect(points(workspace([rejected]),n,'service')[0].value).toBeNull()
+})
+
+it('retains evidenced v2 flapping even with additional unknown samples',()=>{
+ const a=attempt('netflix_unlock','flapping');a.result!.details={sample_semantics_version:'2',sample_total:'3',sample_success:'1',sample_failure:'1',sample_unknown:'1',sample_completion:'partial'}
+ expect(serviceAvailability(a)).toBe(0);expect(servicePassed(a)).toBe(false);expect(durableRoundPoints([round([a])],'service')[0].value).toBe(0)
 })

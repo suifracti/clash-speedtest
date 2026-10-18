@@ -100,3 +100,10 @@ it('scopes visible metrics to project tabs, keeping latency in latency, download
  expect(ui.classes()).toContain('project-combined')
  ui.unmount()
 })
+it('shows old ambiguous flapping and incomplete passes as unconfirmed in the quality list',()=>{
+ for(const [outcome,details] of [['flapping',{sample_total:'2',sample_success:'1',sample_failure:'1',observed_outcomes:'matched, transport_error'}],['unlocked',{sample_total:'4',sample_success:'3',sample_unknown:'1'}]] as const){
+  const a={...oldService,result:{...oldService.result!,outcome,details}},raw=JSON.stringify(a)
+  const ui=mount(QualityMetrics,{props:{evidence:{tests:[],monitor:[],downloads:[],services:[a],reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true,since:'',until:''},target:'cloudflare',catalog:[]}})
+  expect(ui.get('.quality-services-list').text()).toContain('未确认');expect(ui.get('.quality-services-list').find('.good').exists()).toBe(false);expect(JSON.stringify(a)).toBe(raw);ui.unmount()
+ }
+})

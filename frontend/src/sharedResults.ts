@@ -7,13 +7,26 @@ export function serviceIsProfile(a?:Attempt,id=a?.service_id||a?.rule.service_id
  const kind=(a?.rule as (Attempt['rule']&{result_kind?:string})|undefined)?.result_kind
  return ['exit_profile','ip_quality'].includes(kind||'')||['cloudflare_trace','exit_ipv4','exit_ipv6','ping0_ip_quality','ippure_ip_quality','ipok_ipv4','ipok_ipv6'].includes(id||'')||a?.result?.outcome==='profiled'
 }
-export function servicePassed(a?:Attempt){return serviceExecuted(a)&&!serviceIsProfile(a)&&['matched','unlocked'].includes(a!.result!.outcome)}
+function incompleteServiceSamples(a?:Attempt){
+ const d=a?.result?.details
+ return !!d&&(d.sample_completion==='partial'||['sample_unknown','sample_cancelled','sample_not_executed','sample_unstarted'].some(k=>Number(d[k])>0))
+}
+const evidencedServiceFailures=['region_blocked','region_limited','originals_only','service_rejected','challenge']
+export function servicePassed(a?:Attempt){return serviceExecuted(a)&&!serviceIsProfile(a)&&!incompleteServiceSamples(a)&&['matched','unlocked'].includes(a!.result!.outcome)}
 // 0 requires observed rejection/criterion evidence; unknown/transport/quota is not 0.
 export function serviceAvailability(a?:Attempt):0|1|null {
  if(!serviceExecuted(a)||serviceIsProfile(a))return null
  const r=a!.result!
+ if(r.outcome==='flapping'){
+  const d=r.details
+  if(d?.sample_semantics_version==='2')return Number(d.sample_failure)>0?0:null
+  // Old aggregations counted transport errors as failures; only retain explicit rule rejection.
+  const outcomes=String(d?.observed_outcomes||'').split(',').map(s=>s.trim()).filter(Boolean)
+  return outcomes.some(v=>evidencedServiceFailures.includes(v))&&outcomes.every(v=>['matched','unlocked',...evidencedServiceFailures].includes(v))?0:null
+ }
+ if(incompleteServiceSamples(a))return null
  if(servicePassed(a))return 1
- if(['region_blocked','region_limited','originals_only','service_rejected','challenge','flapping'].includes(r.outcome))return 0
+ if(evidencedServiceFailures.includes(r.outcome))return 0
  if(r.outcome==='http_rejected'&&r.http_status!==undefined&&r.http_status>=400&&r.http_status<500&&![401,429].includes(r.http_status))return 0
  if(r.outcome==='criteria_mismatch'&&!['response_limit','response_evidence_limit','json_document','response_body'].includes(r.failure_phase||'')&&r.http_status!==undefined)return 0
  return null

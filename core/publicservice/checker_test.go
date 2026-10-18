@@ -425,8 +425,8 @@ func TestCheckerMultiSampleDriftAndFlappingDetection(t *testing.T) {
 					// First probe succeeds
 					return fixtureResponse(req, http.StatusNoContent, "", ""), nil
 				}
-				// Subsequent probes fail with HTTP 500 or timeout
-				return fixtureResponse(req, http.StatusInternalServerError, "", "server error"), nil
+				// A real HTTP rejection, rather than a transport error or server outage.
+				return fixtureResponse(req, http.StatusForbidden, "", "forbidden"), nil
 			}),
 		}
 		result := checker.Check(context.Background(), monitor.MonitoredNode{NodeKey: "node-a"}, rule, DefaultTimeout)
@@ -490,4 +490,3 @@ func TestCheckerMultiSampleDriftAndFlappingDetection(t *testing.T) {
 		}
 	})
 }
-

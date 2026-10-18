@@ -67,6 +67,13 @@ type phaseTransport struct {
 	phases *requestPhases
 }
 
+// Preserve the HTTP client's explicit reconnect/cleanup operation through telemetry.
+func (t phaseTransport) CloseIdleConnections() {
+	if closer, ok := t.base.(interface{ CloseIdleConnections() }); ok {
+		closer.CloseIdleConnections()
+	}
+}
+
 func (t phaseTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	if request == nil {
 		return nil, errors.New("request is nil")

@@ -508,85 +508,144 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 		})
 		res1.RequestCount += subRes.RequestCount
 		res1.BytesRead += subRes.BytesRead
+		if subRes.Outcome == "cancelled" || subRes.Outcome == "not_executed" || subRes.Outcome == "credentials_required" {
+			break
+		}
 	}
 
 	totalSamples := len(samples)
-	successSamples := 0
-	failureSamples := 0
-	var observedIPs []string
-	var observedColos []string
-	var observedOutcomes []string
-	seenIPs := make(map[string]bool)
-	seenColos := make(map[string]bool)
-	seenOutcomes := make(map[string]bool)
-	keepaliveCount := 0
-	reconnectCount := 0
+	successSamples, failureSamples, unknownSamples, cancelledSamples, notExecutedSamples := 0, 0, 0, 0, 0
+	ipSamples := 0
+	var observedIPs, observedColos, observedOutcomes []string
+	seenIPs, seenColos, seenOutcomes := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	keepaliveCount, reconnectCount := 0, 0
+	var firstUnknown *Result
 
-	for _, s := range samples {
-		if s.mode == "keepalive" {
+	for _, sample := range samples {
+		if sample.mode == "keepalive" {
 			keepaliveCount++
-		} else if s.mode == "reconnect" {
+		} else if sample.mode == "reconnect" {
 			reconnectCount++
 		}
-		if s.ip != "" && !seenIPs[s.ip] {
-			seenIPs[s.ip] = true
-			observedIPs = append(observedIPs, s.ip)
+		if ip := net.ParseIP(sample.ip); ip != nil {
+			ipSamples++
+			canonical := ip.String()
+			if !seenIPs[canonical] {
+				seenIPs[canonical] = true
+				observedIPs = append(observedIPs, canonical)
+			}
 		}
-		if s.colo != "" && !seenColos[s.colo] {
-			seenColos[s.colo] = true
-			observedColos = append(observedColos, s.colo)
+		if sample.colo != "" && !seenColos[sample.colo] {
+			seenColos[sample.colo] = true
+			observedColos = append(observedColos, sample.colo)
 		}
-		if s.outcome != "" && !seenOutcomes[s.outcome] {
-			seenOutcomes[s.outcome] = true
-			observedOutcomes = append(observedOutcomes, s.outcome)
+		if sample.outcome != "" && !seenOutcomes[sample.outcome] {
+			seenOutcomes[sample.outcome] = true
+			observedOutcomes = append(observedOutcomes, sample.outcome)
 		}
-		if isSuccessOutcome(s.outcome) {
+		switch {
+		case isSuccessOutcome(sample.outcome):
 			successSamples++
-		} else {
+		case isFailureOutcome(sample.res):
 			failureSamples++
+		case sample.outcome == "cancelled" || sample.outcome == "user_cancelled" || sample.outcome == "interrupted":
+			cancelledSamples++
+		case sample.outcome == "not_executed" || sample.outcome == "credentials_required":
+			notExecutedSamples++
+		default:
+			unknownSamples++
+			if firstUnknown == nil {
+				r := sample.res
+				firstUnknown = &r
+			}
 		}
 	}
 
-	ipDrift := len(observedIPs) > 1 || len(observedColos) > 1
+	unstartedSamples := max(0, driftTarget-totalSamples)
+	confirmedSamples := successSamples + failureSamples
+	incomplete := unknownSamples+cancelledSamples+notExecutedSamples+unstartedSamples > 0
+	ipDrift := len(observedIPs) > 1
 	flapping := successSamples > 0 && failureSamples > 0
-
 	if res1.Details == nil {
-		res1.Details = make(map[string]string)
+		res1.Details = map[string]string{}
 	}
-	res1.Details["sample_total"] = fmt.Sprint(totalSamples)
-	res1.Details["sample_success"] = fmt.Sprint(successSamples)
-	res1.Details["sample_failure"] = fmt.Sprint(failureSamples)
-	res1.Details["sample_success_rate"] = fmt.Sprintf("%d%%", successSamples*100/totalSamples)
-	res1.Details["keepalive_probes"] = fmt.Sprint(keepaliveCount)
-	res1.Details["reconnect_probes"] = fmt.Sprint(reconnectCount)
-	res1.Details["ip_drift_detected"] = fmt.Sprint(ipDrift)
-	res1.Details["flapping_detected"] = fmt.Sprint(flapping)
+	details := res1.Details
+	details["sample_semantics_version"] = "2"
+	details["sample_planned"] = fmt.Sprint(driftTarget)
+	details["sample_total"] = fmt.Sprint(totalSamples)
+	details["sample_success"] = fmt.Sprint(successSamples)
+	details["sample_failure"] = fmt.Sprint(failureSamples)
+	details["sample_unknown"] = fmt.Sprint(unknownSamples)
+	details["sample_cancelled"] = fmt.Sprint(cancelledSamples)
+	details["sample_not_executed"] = fmt.Sprint(notExecutedSamples)
+	details["sample_unstarted"] = fmt.Sprint(unstartedSamples)
+	details["sample_confirmed"] = fmt.Sprint(confirmedSamples)
+	details["sample_completion"] = "complete"
+	if incomplete {
+		details["sample_completion"] = "partial"
+	}
+	details["sample_success_rate"] = "未知"
+	if confirmedSamples > 0 {
+		details["sample_success_rate"] = fmt.Sprintf("%d%%", successSamples*100/confirmedSamples)
+	}
+	details["sample_success_rate_scope"] = "confirmed_samples_only"
+	details["keepalive_probes"] = fmt.Sprint(keepaliveCount)
+	details["reconnect_probes"] = fmt.Sprint(reconnectCount)
+	details["ip_drift_detected"] = "unknown"
+	details["exit_observation_status"] = "unobserved"
+	switch {
+	case ipDrift:
+		details["ip_drift_detected"] = "true"
+		details["exit_observation_status"] = "ip_drift_observed"
+	case ipSamples >= 2:
+		details["ip_drift_detected"] = "false"
+		details["exit_observation_status"] = "same_ip_observed"
+	case ipSamples == 1:
+		details["exit_observation_status"] = "single_ip_observation"
+	}
+	details["ip_observation_samples"] = fmt.Sprint(ipSamples)
+	details["colo_variation_detected"] = fmt.Sprint(len(observedColos) > 1)
+	details["flapping_detected"] = fmt.Sprint(flapping)
 	if len(observedIPs) > 0 {
-		res1.Details["observed_ips"] = strings.Join(observedIPs, ", ")
+		details["observed_ips"] = strings.Join(observedIPs, ", ")
 	}
 	if len(observedColos) > 0 {
-		res1.Details["observed_colos"] = strings.Join(observedColos, ", ")
+		details["observed_colos"] = strings.Join(observedColos, ", ")
 	}
-	res1.Details["observed_outcomes"] = strings.Join(observedOutcomes, ", ")
+	details["observed_outcomes"] = strings.Join(observedOutcomes, ", ")
 
-	if flapping {
-		res1.Outcome = "flapping"
-		res1.FailurePhase = "drift_validation"
-		res1.Summary = fmt.Sprintf("%d/%d 次测试通过 · 存在漂移或抖动（非稳定可用）", successSamples, totalSamples)
-		res1.ErrorMessage = fmt.Sprintf("多轮测试发现结果抖动：%d次成功 / %d次失败（含%d次断开重连+%d次保持连接），已排除偶发通过假阳性", successSamples, failureSamples, reconnectCount, keepaliveCount)
-		res1.Details["drift_summary"] = fmt.Sprintf("%d次测试(%d重连+%d保持): %d通过/%d未通过 · 存在漂移抖动", totalSamples, reconnectCount, keepaliveCount, successSamples, failureSamples)
-	} else if successSamples == totalSamples {
-		if ipDrift {
-			res1.Summary = fmt.Sprintf("%d/%d 次探测一致通过（出口观察到漂移：%s）", totalSamples, totalSamples, strings.Join(observedIPs, " -> "))
-			res1.Details["drift_summary"] = fmt.Sprintf("%d次测试全通过 · 观察到出口IP漂移", totalSamples)
-		} else {
-			res1.Summary = fmt.Sprintf("%d/%d 次探测一致通过（重连与保持连接均稳定）", totalSamples, totalSamples)
-			res1.Details["drift_summary"] = fmt.Sprintf("%d次测试全通过 · 连接与出口稳定", totalSamples)
+	counts := fmt.Sprintf("%d通过 / %d判据未通过 / %d未确认 / %d取消 / %d未执行 / %d未启动", successSamples, failureSamples, unknownSamples, cancelledSamples, notExecutedSamples, unstartedSamples)
+	switch {
+	case ctx.Err() == context.Canceled || cancelledSamples > 0:
+		res1.Outcome, res1.FailurePhase = "cancelled", "cancelled"
+		res1.Summary = "多次检测已取消；已取得的样本保留"
+		res1.ErrorMessage = "检测已取消；取消和未启动样本不算服务失败"
+	case flapping:
+		res1.Outcome, res1.FailurePhase = "flapping", "drift_validation"
+		res1.Summary = "检测结论不一致；同时取得通过与判据未通过的证据"
+		res1.ErrorMessage = "多次检测结论有差异；不能仅凭结论差异判定出口 IP 漂移"
+	case incomplete:
+		res1.Outcome, res1.FailurePhase = "unknown", "sampling_incomplete"
+		res1.Summary = "多次检测尚未确认；部分样本未知或未完成"
+		res1.ErrorMessage = "未确认、取消和未执行样本不计为服务失败"
+		if firstUnknown != nil {
+			res1.ErrorMessage = firstUnknown.ErrorMessage
+			details["first_unconfirmed_outcome"] = firstUnknown.Outcome
+			details["first_unconfirmed_phase"] = firstUnknown.FailurePhase
 		}
-	} else {
-		res1.Summary = fmt.Sprintf("%d/%d 次探测全部失败（%s）", totalSamples, totalSamples, res1.ErrorMessage)
-		res1.Details["drift_summary"] = fmt.Sprintf("%d次测试全失败 · %s", totalSamples, res1.Outcome)
+	case successSamples == totalSamples:
+		res1.Summary = fmt.Sprintf("%d/%d 次探针规则一致通过", totalSamples, driftTarget)
+	default:
+		res1.Summary = fmt.Sprintf("%d/%d 次探针判据未通过", failureSamples, driftTarget)
 	}
+	exitNote := "未观察出口 IP，不能判断是否变化"
+	if ipDrift {
+		exitNote = "观察到多个出口 IP；不代表物理流向已验证"
+	} else if ipSamples > 0 {
+		exitNote = "已观察出口 IP；仅代表已取得的样本，不保证出口稳定"
+	}
+	details["drift_summary"] = counts + " · " + exitNote
+	res1 = finish(res1, startedAt)
 	final = res1
 	return final
 }
@@ -646,7 +705,7 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 		if errors.As(err, &pathErr) {
 			return finish(Result{Outcome: "not_executed", FailurePhase: "physical_binding", ErrorMessage: "物理出口约束未核实；未取得服务结论"}, startedAt)
 		}
-		if ctx.Err() == context.Canceled || err == context.Canceled {
+		if ctx.Err() == context.Canceled || errors.Is(err, context.Canceled) {
 			return finish(Result{Outcome: "cancelled", FailurePhase: "cancelled", ErrorMessage: "检测已取消"}, startedAt)
 		}
 		if ctx.Err() == context.DeadlineExceeded {
@@ -869,6 +928,26 @@ func isSuccessOutcome(outcome string) bool {
 	switch outcome {
 	case "matched", "unlocked", "reachable", "profiled":
 		return true
+	default:
+		return false
+	}
+}
+
+// Only observed business/criterion rejection counts as a failed sample.
+// Transport errors, quotas, authentication needs and probe limits stay unknown.
+// Keep this evidence boundary aligned with frontend serviceAvailability.
+func isFailureOutcome(r Result) bool {
+	switch r.Outcome {
+	case "region_blocked", "region_limited", "originals_only", "service_rejected", "challenge":
+		return true
+	case "http_rejected":
+		return r.HTTPStatus != nil && *r.HTTPStatus >= 400 && *r.HTTPStatus < 500 && *r.HTTPStatus != 401 && *r.HTTPStatus != 429
+	case "criteria_mismatch":
+		switch r.FailurePhase {
+		case "response_limit", "response_evidence_limit", "json_document", "response_body":
+			return false
+		}
+		return r.HTTPStatus != nil
 	default:
 		return false
 	}
