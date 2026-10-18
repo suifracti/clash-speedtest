@@ -86,6 +86,20 @@ func TestIPQualityRequiresValidAddress(t *testing.T) {
 	}
 }
 
+func TestCloudflareDoHUsesDNSJSONAccept(t *testing.T) {
+	rule, _ := RuleFor("cloudflare_doh")
+	checker := Checker{ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+		if req.Header.Get("Accept") != "application/dns-json" {
+			return fixtureResponse(req, http.StatusBadRequest, "text/plain", "expected DNS JSON negotiation"), nil
+		}
+		return fixtureResponse(req, http.StatusOK, "application/dns-json", `{"Status":0,"Answer":[{"data":"203.0.113.7"}]}`), nil
+	})}
+	result := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
+	if result.Outcome != "matched" || result.HTTPStatus == nil || *result.HTTPStatus != http.StatusOK || result.RequestCount != 1 {
+		t.Fatalf("DoH JSON request was not accepted: %+v", result)
+	}
+}
+
 func TestIPFamilyObservationNeedsAnAddressOfTheRequestedFamily(t *testing.T) {
 	for _, tc := range []struct{ service, body, outcome string }{
 		{"exit_ipv4", `{"ip":"203.0.113.7"}`, "profiled"},

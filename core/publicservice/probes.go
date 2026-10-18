@@ -172,7 +172,7 @@ func checkIPPure(ctx context.Context, client *http.Client, rule Rule, started ti
 }
 
 func checkCloudflareDoH(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
-	result, body, ok := boundedGET(ctx, client, rule.TargetURL, rule.MaximumBodyBytes)
+	result, body, ok := boundedGET(ctx, client, rule.TargetURL, rule.MaximumBodyBytes, rule.Accept)
 	if !ok {
 		return finish(result, started)
 	}
@@ -534,7 +534,7 @@ func netflixRegion(value string) string {
 	return ""
 }
 
-func boundedGET(ctx context.Context, client *http.Client, target string, maximum int) (Result, []byte, bool) {
+func boundedGET(ctx context.Context, client *http.Client, target string, maximum int, accept ...string) (Result, []byte, bool) {
 	result := Result{RequestCount: 1}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
@@ -543,6 +543,9 @@ func boundedGET(ctx context.Context, client *http.Client, target string, maximum
 	}
 	request.Header.Set("User-Agent", browserUserAgent)
 	request.Header.Set("Accept", "application/dns-json,application/json,text/plain;q=0.9,*/*;q=0.8")
+	if len(accept) > 0 && accept[0] != "" {
+		request.Header.Set("Accept", accept[0])
+	}
 	response, err := client.Do(request)
 	if err != nil {
 		classifyRequestError(&result, ctx, err)

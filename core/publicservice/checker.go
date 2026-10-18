@@ -195,10 +195,10 @@ var catalog = []Rule{
 	streamingRule("prime_video", "Prime Video 地区判定", "全球", "https://www.primevideo.com/", "读取 Prime Video 首页公开的 territory 与限制标记。", "currentTerritory 存在且 isServiceRestricted 明确为 false 才通过地区判据，不代表播放"),
 	{
 		ServiceID: "cloudflare_doh", Name: "Cloudflare DNS over HTTPS", Category: "基础网络", Region: "全球",
-		ResultKind: "connectivity", Description: "验证 DNS 响应成功且包含解析结果。", RuleVersion: 2,
+		ResultKind: "connectivity", Description: "验证 DNS 响应成功且包含解析结果。", RuleVersion: 3,
 		TargetURL: "https://cloudflare-dns.com/dns-query?name=cloudflare.com&type=A", Method: http.MethodGet,
 		SuccessCriterion: "HTTP 200、DNS Status=0 且 Answer 非空", RedirectPolicy: "do_not_follow",
-		TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
+		TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes, Accept: "application/dns-json",
 	},
 
 	webRule("fastly_web", "Fastly 边缘网络", "基础网络", "全球", "https://www.fastly.com/", "确认节点能否到达 Fastly 官网入口。"),
