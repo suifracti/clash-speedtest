@@ -15,7 +15,7 @@
 .observatory-selection .selection-info{flex-wrap:wrap}.observatory-selection small{color:var(--muted)}
 .observatory-app .quality-metrics small{font-size:11px}.observatory-app .quality-metrics strong{font-variant-numeric:tabular-nums}
 .observatory-matrix{overflow-x:auto;isolation:isolate}
-.observatory-matrix .quality-heading,.quality-view .observatory-matrix .node-row,.observatory-matrix .node-heading,.observatory-matrix .node-row.multi-target{min-width:calc(310px + var(--service-columns) * 180px);grid-template-columns:20px 240px minmax(0,1fr) 42px;gap:8px}
+.observatory-matrix .quality-heading,.quality-view .observatory-matrix .node-row,.observatory-matrix .node-heading,.observatory-matrix .node-row.multi-target{min-width:calc(340px + var(--service-columns) * 180px);grid-template-columns:20px 240px minmax(0,1fr) 72px;gap:8px}
 .observatory-matrix .quality-heading-cols,.observatory-service-cells{display:grid;grid-template-columns:repeat(var(--service-columns),minmax(0,1fr));gap:8px;min-width:0}
 .observatory-matrix .node-identity-block,.observatory-matrix .quality-heading>span:nth-child(2){position:sticky;left:0;z-index:2;background:var(--canvas);padding-right:8px}
 .observatory-matrix .selected .node-identity-block{background:var(--blue-soft)}
@@ -36,6 +36,6 @@
 @keyframes cst-orbit-change{from{opacity:.4;transform:rotate(-12deg)}to{opacity:1;transform:rotate(0)}}
 @media(prefers-reduced-motion:reduce){.observatory-app .orbit-ring{animation:none}}
 .observatory-matrix .quality-heading.project-service .quality-heading-cols{grid-template-columns:repeat(var(--service-columns),minmax(0,1fr));gap:8px}
-.observatory-app .observatory-service-cells .observatory-service-cell small{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:normal}
+.observatory-app .node-row .node-target-metrics.observatory-service-cells .observatory-service-cell small{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:normal}
 .observatory-app .observatory-matrix .row-run{min-width:0;padding:6px;font-size:11px;overflow:hidden}
 .observatory-app .observatory-service-cell{min-height:78px}
