@@ -164,3 +164,23 @@ func TestMultiSampleConnectionReuseIsObservedNotAssumed(t *testing.T) {
 		}
 	}
 }
+
+func TestExplicitSingleSampleRetainsOutcomeAndRecordsCount(t *testing.T) {
+	for _, tc := range []struct {
+		status                             int
+		outcome, success, failure, unknown string
+	}{
+		{204, "matched", "1", "0", "0"}, {403, "http_rejected", "0", "1", "0"}, {500, "http_rejected", "0", "0", "1"},
+	} {
+		rule, _ := RuleFor("cloudflare_204")
+		calls := 0
+		c := Checker{DriftSamples: 1, ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+			calls++
+			return fixtureResponse(req, tc.status, "", ""), nil
+		})}
+		r := c.Check(context.Background(), monitor.MonitoredNode{}, rule, time.Second)
+		if calls != 1 || r.Outcome != tc.outcome || r.Details["sample_planned"] != "1" || r.Details["sample_total"] != "1" || r.Details["sample_success"] != tc.success || r.Details["sample_failure"] != tc.failure || r.Details["sample_unknown"] != tc.unknown || r.Details["ip_drift_detected"] != "unknown" {
+			t.Fatalf("calls=%d result=%+v", calls, r)
+		}
+	}
+}

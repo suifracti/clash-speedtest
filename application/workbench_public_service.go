@@ -99,9 +99,10 @@ func (s *AppService) startWorkbenchPublicServiceTest(ctx context.Context, req Wo
 	}
 	rule.TimeoutSeconds = int(timeoutSeconds)
 	ruleSnapshot := publicServiceRuleSnapshot(rule, timeoutSeconds)
+	ruleSnapshot.DriftSamples = max(1, req.DriftSamples)
 	prior, priorErr := s.historyStore.GetPublicServiceAttemptByRequestID(context.Background(), requestID)
 	if priorErr == nil {
-		if err := validateWorkbenchPublicServiceRequest(prior, profileID, nodeKey, identityKey, revisionKey, serviceID, timeoutSeconds); err != nil {
+		if err := validateWorkbenchPublicServiceRequest(prior, profileID, nodeKey, identityKey, revisionKey, serviceID, timeoutSeconds, req.DriftSamples); err != nil {
 			return nil, err
 		}
 		return prior, nil
@@ -129,7 +130,7 @@ func (s *AppService) startWorkbenchPublicServiceTest(ctx context.Context, req Wo
 	prior, priorErr = s.historyStore.GetPublicServiceAttemptByRequestID(context.Background(), requestID)
 	if priorErr == nil {
 		s.publicServiceMu.Unlock()
-		if err := validateWorkbenchPublicServiceRequest(prior, profileID, nodeKey, identityKey, revisionKey, serviceID, timeoutSeconds); err != nil {
+		if err := validateWorkbenchPublicServiceRequest(prior, profileID, nodeKey, identityKey, revisionKey, serviceID, timeoutSeconds, req.DriftSamples); err != nil {
 			return nil, err
 		}
 		return prior, nil
@@ -507,13 +508,17 @@ func (s *AppService) beginPublicServiceStorageTransition() error {
 	return nil
 }
 
-func validateWorkbenchPublicServiceRequest(prior *history.PublicServiceAttempt, profileID, nodeKey, identityKey, revisionKey, serviceID string, timeoutSeconds int64) error {
+func validateWorkbenchPublicServiceRequest(prior *history.PublicServiceAttempt, profileID, nodeKey, identityKey, revisionKey, serviceID string, timeoutSeconds int64, driftSamples ...int) error {
 	if prior == nil {
 		return monitor.NewValidationError("prior public service attempt is nil")
 	}
 	if prior.ProfileID != profileID || prior.NodeKey != nodeKey || prior.NodeIdentityKey != identityKey ||
 		prior.ConfigRevisionKey != revisionKey || prior.ServiceID != serviceID || prior.Rule.TimeoutSeconds != timeoutSeconds {
 		return monitor.NewValidationError("request_id 已用于另一组检测参数")
+	}
+	// Old snapshots lack the count: replay them without guessing or remeasurement.
+	if len(driftSamples) > 0 && prior.Rule.DriftSamples > 0 && prior.Rule.DriftSamples != max(1, driftSamples[0]) {
+		return monitor.NewValidationError("request_id 已用于另一组服务采样次数")
 	}
 	return nil
 }

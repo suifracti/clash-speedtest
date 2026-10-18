@@ -179,3 +179,18 @@ it('shows exact download outcomes and speeds instead of green task completion',(
  expect(rows[4].find('.badge').classes()).toContain('bad')
  expect(rows[4].text()).toContain('重试保存')
 })
+
+it('defaults to one explicit service observation and retains optional repeated sampling',async()=>{
+ w.project.value='service';w.serviceIds.value=['cloudflare_204'];w.openPlan([node]);attach(TestPlanModal);await flushPromises()
+ const field=Array.from(document.querySelectorAll('dialog label')).map(el=>new DOMWrapper(el)).find(l=>l.text().includes('每服务采样次数'))
+ expect(field).toBeDefined();expect(field!.find('select').element.value).toBe('1')
+ await field!.find('select').setValue('4');await flushPromises()
+ expect(document.querySelector('.plan-budget')?.textContent).toContain('服务采样 4 次')
+ await field!.find('select').setValue('1');await flushPromises()
+ expect(document.querySelector('.plan-budget')?.textContent).toContain('服务采样 1 次')
+ vi.mocked(api.startAttempt).mockImplementation(async(_kind,body:any)=>({...node,attempt_id:'single-service',request_id:body.request_id,service_id:body.service_id,requested_at:'2026-10-18T05:00:00Z',execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://cp.cloudflare.com/generate_204'},result:{outcome:'matched',http_status:204,bytes_read:0,finished_at:'2026-10-18T05:00:01Z'}}))
+ button('开始检测').click();await flushPromises()
+ expect(api.startAttempt).toHaveBeenCalledTimes(1)
+ expect(api.startAttempt).toHaveBeenCalledWith('service',expect.objectContaining({profile_id:'sub-a',node_key:'node-a',node_identity_key:'identity-a',config_revision_key:'revision-a',service_id:'cloudflare_204',timeout_seconds:15,drift_samples:1}))
+ expect(w.queue.value[0].attempt?.persistence_state).toBe('saved')
+})

@@ -495,6 +495,9 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	driftTarget := c.DriftSamples
 	if driftTarget <= 1 || rule.ServiceID == "ipok_ipv4" || rule.ServiceID == "ipok_ipv6" ||
 		res1.Outcome == "credentials_required" || res1.Outcome == "not_executed" || res1.Outcome == "cancelled" {
+		if driftTarget == 1 {
+			recordSingleServiceSample(&res1)
+		}
 		final = res1
 		return final
 	}
@@ -713,6 +716,42 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	res1 = finish(res1, startedAt)
 	final = res1
 	return final
+}
+
+// An explicitly selected single observation keeps its original outcome/phase;
+// it does not claim repeated stability or turn an unknown into a zero score.
+func recordSingleServiceSample(r *Result) {
+	if r.Details == nil {
+		r.Details = map[string]string{}
+	}
+	d := r.Details
+	for _, key := range []string{"sample_success", "sample_failure", "sample_unknown", "sample_cancelled", "sample_not_executed", "sample_unstarted", "sample_confirmed"} {
+		d[key] = "0"
+	}
+	switch {
+	case isSuccessOutcome(r.Outcome):
+		d["sample_success"], d["sample_confirmed"] = "1", "1"
+	case isFailureOutcome(*r):
+		d["sample_failure"], d["sample_confirmed"] = "1", "1"
+	case r.Outcome == "cancelled" || r.Outcome == "user_cancelled" || r.Outcome == "interrupted":
+		d["sample_cancelled"] = "1"
+	case r.Outcome == "not_executed" || r.Outcome == "credentials_required":
+		d["sample_not_executed"] = "1"
+	default:
+		d["sample_unknown"] = "1"
+	}
+	d["sample_semantics_version"], d["sample_planned"], d["sample_total"] = "2", "1", "1"
+	d["sample_completion"], d["sample_success_rate"] = "partial", "未知"
+	if d["sample_confirmed"] == "1" {
+		d["sample_completion"] = "complete"
+		if d["sample_success"] == "1" {
+			d["sample_success_rate"] = "100%"
+		} else {
+			d["sample_success_rate"] = "0%"
+		}
+	}
+	d["sample_success_rate_scope"] = "confirmed_samples_only"
+	d["ip_drift_detected"] = "unknown"
 }
 
 func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monitor.MonitoredNode, rule Rule, startedAt time.Time) (final Result) {

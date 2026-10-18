@@ -29,6 +29,7 @@ type PublicServiceRuleSnapshot struct {
 	SuccessCriterion string `json:"success_criterion"`
 	RedirectPolicy   string `json:"redirect_policy"`
 	TimeoutSeconds   int64  `json:"timeout_seconds"`
+	DriftSamples     int    `json:"drift_samples,omitempty"`
 	MaximumBodyBytes int64  `json:"maximum_body_bytes"`
 	Accept           string `json:"accept,omitempty"`
 	APIVersionHeader string `json:"api_version_header,omitempty"`

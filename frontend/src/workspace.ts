@@ -173,7 +173,7 @@ export function createWorkspace(){
   async function ensureHistory(list:NodeOption[],projects:Project[]=[project.value]){await readHistory(list,projects,false)}
   async function loadMoreHistory(list:NodeOption[],projects:Project[]=[project.value]){await readHistory(list,projects,true)}
   function historyMoreCount(list:NodeOption[],p:Project=project.value){const nodesWithMore=new Set<string>();for(const kind of historyKinds([p]))for(const n of list)if(historyHasMore.value[historyID(kind,n)])nodesWithMore.add(key(n));return nodesWithMore.size}
-  function openPlan(list=selectedNodes.value){if(!list.length){notify('先选择要检测的节点');return}plan.value={nodes:list.map(n=>({...n})),projects:project.value==='combined'?['latency','download','service']:[project.value],target:'all',samples:6,timeout:5,concurrency:8,downloadMiB:10,downloadSeconds:10,serviceIds:[...serviceIds.value],repeats:1}}
+  function openPlan(list=selectedNodes.value){if(!list.length){notify('先选择要检测的节点');return}plan.value={nodes:list.map(n=>({...n})),projects:project.value==='combined'?['latency','download','service']:[project.value],target:'all',samples:6,timeout:5,concurrency:8,downloadMiB:10,downloadSeconds:10,serviceIds:[...serviceIds.value],serviceSamples:1,repeats:1}}
   async function pollBatch(batch:LatencyBatch){const version=lifetime;if(!alive(version))return batch;activeBatch.value=batch;absorbBatch(batch);polling++;let readError='';try{while(alive(version)){
     batch=activeBatch.value?.batch_id===batch.batch_id?activeBatch.value:batch;if(terminal(batch.state))break
     try{if(cancelRequested.value&&['queued','running'].includes(batch.state)){const updated=await api.cancelBatch(batch.batch_id);if(!alive(version))break;absorbBatch(updated)}
@@ -213,7 +213,7 @@ export function createWorkspace(){
         for(const q of entries){
           if(cancelRequested.value||!alive(version))break
           starting=[q];q.state='running'
-          const body={...scope(q.node),request_id:q.id,...(p==='download'?{maximum_bytes:frozen.downloadMiB*1048576,timeout_seconds:frozen.downloadSeconds}:{service_id:q.serviceId,timeout_seconds:15,drift_samples:4})}
+          const body={...scope(q.node),request_id:q.id,...(p==='download'?{maximum_bytes:frozen.downloadMiB*1048576,timeout_seconds:frozen.downloadSeconds}:{service_id:q.serviceId,timeout_seconds:15,drift_samples:frozen.serviceSamples??4})}
           pendingStart.value={kind:p,requestId:q.id,node:q.node,body,serviceId:q.serviceId};remember(pendingStart.value)
           try{const a=await api.startAttempt(p,body);if(!alive(version))return;q.attempt=a;starting=[];await pollAttempt(p,q.node,a)}catch(e){if(!alive(version))return;if(!startRejected(e))throw e;q.state='not_executed';q.error=e instanceof Error?e.message:String(e);pendingStart.value=null;forget(q.id);starting=[]}
         }

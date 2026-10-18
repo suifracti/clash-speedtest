@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -285,3 +286,39 @@ func TestValidateWorkbenchPublicServiceRequestNilDefense(t *testing.T) {
 	}
 }
 
+func TestWorkbenchServiceSampleCountSavedAndIdempotent(t *testing.T) {
+	var calls atomic.Int32
+	app, _ := newPublicServiceApplication(t, func(profile, node string) (monitor.MonitoredNode, error) {
+		return monitor.MonitoredNode{NodeKey: node, NodeIdentityKey: "identity-a", ConfigRevisionKey: "revision-a"}, nil
+	}, func(req *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return publicServiceHTTPResponse(req, 204, "", ""), nil
+	})
+	req := publicServiceRequest("sample-count-frozen", "profile-a", "identity-a", "revision-a", "cloudflare_204")
+	req.DriftSamples = 1
+	started, err := app.StartWorkbenchPublicServiceTest(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.publicServiceWG.Wait()
+	saved, err := app.GetWorkbenchPublicServiceAttempt(context.Background(), started.AttemptID, publicServiceQueryForTest(started))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(saved.Rule)
+	var snapshot map[string]any
+	json.Unmarshal(raw, &snapshot)
+	if snapshot["drift_samples"] != float64(1) || saved.PersistenceState != "saved" {
+		t.Fatalf("sample count was not saved: %s", raw)
+	}
+	if _, err = app.StartWorkbenchPublicServiceTest(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	req.DriftSamples = 4
+	if _, err = app.StartWorkbenchPublicServiceTest(context.Background(), req); err == nil {
+		t.Fatal("same request ID accepted a different sample count")
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("replayed request made additional HTTP calls: %d", calls.Load())
+	}
+}
