@@ -75,9 +75,25 @@ func TestScheduler_Lifecycle(t *testing.T) {
 		t.Fatalf("Expected state %s after Start, got %s", JobStateRunning, scheduler.State())
 	}
 
-	// Wait for at least 1 completed run
-	time.Sleep(80 * time.Millisecond)
-	completed1 := scheduler.CompletedRuns()
+	t.Cleanup(func() { _ = scheduler.Stop() })
+	waitForRun := func(after int64) int64 {
+		t.Helper()
+		deadline := time.NewTimer(2 * time.Second)
+		defer deadline.Stop()
+		tick := time.NewTicker(5 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			if completed := scheduler.CompletedRuns(); completed > after {
+				return completed
+			}
+			select {
+			case <-deadline.C:
+				t.Fatalf("no completed run after %d before fixture deadline", after)
+			case <-tick.C:
+			}
+		}
+	}
+	completed1 := waitForRun(0)
 	if completed1 < 1 {
 		t.Fatalf("Expected at least 1 completed run after Start, got %d", completed1)
 	}
@@ -90,7 +106,10 @@ func TestScheduler_Lifecycle(t *testing.T) {
 		t.Fatalf("Expected state %s after Pause, got %s", JobStatePaused, scheduler.State())
 	}
 
-	// Sleep across multiple intervals to ensure no new runs execute while paused
+	// Pause prevents new admission; an already admitted run may finish.
+	scheduler.runWg.Wait()
+	completed1 = scheduler.CompletedRuns()
+	// Observe multiple intervals while paused.
 	time.Sleep(120 * time.Millisecond)
 	completedAfterPause := scheduler.CompletedRuns()
 	if completedAfterPause != completed1 {
@@ -105,9 +124,7 @@ func TestScheduler_Lifecycle(t *testing.T) {
 		t.Fatalf("Expected state %s after Resume, got %s", JobStateRunning, scheduler.State())
 	}
 
-	// Sleep to allow a new tick to execute
-	time.Sleep(100 * time.Millisecond)
-	completedAfterResume := scheduler.CompletedRuns()
+	completedAfterResume := waitForRun(completedAfterPause)
 	if completedAfterResume <= completedAfterPause {
 		t.Fatalf("Expected runs to increase after Resume (was %d, now %d)", completedAfterPause, completedAfterResume)
 	}
