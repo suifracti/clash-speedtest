@@ -442,6 +442,9 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	if ctx.Err() != nil {
 		return finish(unexecutedPreparation(ctx.Err()), startedAt)
 	}
+	if c.DriftSamples < 0 || c.DriftSamples > 10 {
+		return finish(Result{Outcome: "not_executed", FailurePhase: "request_setup", ErrorMessage: "服务观察次数必须在 1–10 次范围内；未发出请求"}, startedAt)
+	}
 	if rule.ServiceID == "kktv_tw" {
 		return finish(Result{Outcome: "not_executed", FailurePhase: "service_retired", Summary: "KKTV 已结束营运", ErrorMessage: "官方已结束营运；保留历史，不发起节点检测请求", Details: map[string]string{"not_executed_reason": "service_retired", "reference_url": "https://events.kktv.me/tw/faq-card-177"}}, startedAt)
 	}
@@ -469,7 +472,7 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 		client, err = c.ClientFactory(node, timeout)
 	} else {
 		autoFamily := rule.ServiceID != "ipok_ipv4" && rule.ServiceID != "ipok_ipv6" && rule.ServiceID != "antigravity"
-		client, pathSnapshot, cleanup, err = defaultClientFactory(ctx, node, timeout, autoFamily)
+		client, pathSnapshot, cleanup, err = defaultClientFactory(ctx, node, timeout, autoFamily, serviceSocketBudget(rule, c.DriftSamples))
 		if cleanup != nil {
 			defer cleanup()
 		}
@@ -486,6 +489,9 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	if client == nil {
 		return finish(Result{Outcome: "transport_error", FailurePhase: "proxy_setup", ErrorMessage: "无法建立节点隔离代理连接"}, startedAt)
 	}
+	// A supplied factory can share a client; never install attempt state on it.
+	localClient := *client
+	client = &localClient
 	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
 	phases := &requestPhases{}
 	client.Transport = phases.wrap(client.Transport, c.ClientFactory == nil)
@@ -772,7 +778,7 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 	case "ipok_ipv4", "ipok_ipv6":
 		return c.checkIPOK(ctx, client, rule, startedAt)
 	case "exit_ipv4", "exit_ipv6":
-		return checkIPify(ctx, client, rule, startedAt)
+		return checkExitAddress(ctx, client, rule, startedAt)
 	case "cloudflare_trace":
 		return checkCloudflareTrace(ctx, client, rule, startedAt)
 	case "ping0_ip_quality":

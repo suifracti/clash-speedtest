@@ -71,12 +71,12 @@ describe('one health column per round',()=>{
     expect(details.text()).toContain('解锁规则通过（播放未验证）');expect(details.text()).toContain('部分地区受限');expect(details.text()).toContain('connection refused')
     details.unmount()
     const w=createWorkspace();w.serviceIds.value=['chatgpt'];w.catalog.value=['netflix','youtube','chatgpt','apple'].map(service_id=>({service_id,name:service_id,category:'服务',description:'',result_kind:'availability',success_criterion:'',timeout_seconds:15}))
-    expect(w.displayServiceIds.value).toEqual(['chatgpt','netflix','youtube'])
+    expect(w.displayServiceIds).toBe(w.serviceIds);expect(w.displayServiceIds.value).toEqual(['chatgpt'])
     w.project.value='service';w.openPlan([node]);w.queue.value=[{id:'queued-chatgpt',node,project:'service',serviceId:'chatgpt',state:'queued'}]
     w.displayServiceIds.value=['youtube','netflix']
-    expect(w.serviceIds.value).toEqual(['chatgpt']);expect(w.plan.value?.serviceIds).toEqual(['chatgpt']);expect(w.queue.value[0].serviceId).toBe('chatgpt')
+    expect(w.serviceIds.value).toEqual(w.displayServiceIds.value);expect(w.plan.value?.serviceIds).toEqual(['chatgpt']);expect(w.queue.value[0].serviceId).toBe('chatgpt')
     w.displayServiceIds.value=['netflix','youtube','chatgpt','apple'];expect(w.displayServiceIds.value).toHaveLength(4)
-    w.displayServiceIds.value=[];expect(w.displayServiceIds.value).toEqual(['netflix'])
+    w.displayServiceIds.value=[];expect(w.displayServiceIds.value).toEqual([])
     w.displayServiceIds.value=['youtube','netflix','youtube','unknown'];expect(w.displayServiceIds.value).toEqual(['youtube','netflix'])
     w.services.value[key(node)]=items
     expect(points(w,node,'service',undefined,'youtube').map(p=>p.id)).toEqual(['y'])
@@ -92,8 +92,9 @@ describe('one health column per round',()=>{
     expect(points(w,node,'service',undefined,'youtube').map(p=>p.id)).toEqual(['y','youtube-pending'])
     w.catalog.value=w.catalog.value.filter(rule=>rule.service_id!=='youtube')
     expect(w.displayServiceIds.value).toEqual(['netflix'])
-    expect(w.serviceIds.value).toEqual(['chatgpt']);expect(w.plan.value?.serviceIds).toEqual(['chatgpt']);expect(w.queue.value[0].serviceId).toBe('chatgpt')
-    w.catalog.value=[];expect(w.displayServiceIds.value).toEqual([])
+    expect(w.serviceIds.value).toEqual(w.displayServiceIds.value);expect(w.plan.value?.serviceIds).toEqual(['chatgpt']);expect(w.queue.value[0].serviceId).toBe('chatgpt')
+    // An unloaded catalog must not erase the remembered next-test selection.
+    w.catalog.value=[];expect(w.displayServiceIds.value).toEqual(['netflix'])
     w.dispose()
   })
 })

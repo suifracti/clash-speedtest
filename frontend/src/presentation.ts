@@ -84,7 +84,10 @@ export function monitorRoundPoints(samples:MonitorSample[]):TrendPoint[]{
   }).sort((a,b)=>Date.parse(a.time)-Date.parse(b.time))
 }
 export function monitorLatencyPoints(samples:MonitorSample[],target='all'):TrendPoint[]{
- const rounds=monitorRoundPoints(samples)
+ return monitorLatencyRoundPoints(monitorRoundPoints(samples),target)
+}
+// Reproject saved monitor rounds without merging values from distinct targets.
+export function monitorLatencyRoundPoints(rounds:TrendPoint[],target='all'):TrendPoint[]{
  if(target==='all')return rounds
  const match=targets.find(t=>t.id===target)
  return rounds.flatMap(point=>{

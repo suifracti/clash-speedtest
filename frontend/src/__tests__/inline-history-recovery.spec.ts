@@ -1,8 +1,10 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
 import {flushPromises,mount,type VueWrapper} from '@vue/test-utils'
 import InlineHistory from '../components/InlineHistory.vue'
+import MultiNodeChart from '../components/MultiNodeChart.vue'
 import {createWorkspace,workspaceKey} from '../workspace'
 import {api} from '../api'
+import {monitorRoundPoints} from '../presentation'
 import {key,type Attempt,type HistoryPage,type LatencyTest,type MonitorSample,type NodeOption} from '../domain'
 
 vi.hoisted(()=>{Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:()=>null,setItem:()=>{}}})})
@@ -167,4 +169,23 @@ describe('inline history read recovery',()=>{
     w.dispose()
   })
 
+})
+
+
+it('projects saved monitoring targets independently on single and multi-site history',async()=>{
+ const w=createWorkspace()
+ const base:MonitorSample={...node,sample_id:'cf',run_id:'same-round',display_name_snapshot:'Node',timestamp:'2026-10-18T08:00:00Z',target:'https://cp.cloudflare.com/generate_204',probe_type:'rtt',success:true,latency:80000000,ttfb:0,sampling_tier:'regular'}
+ const anchorPoints=monitorRoundPoints([base,{...base,sample_id:'google',target:'https://www.gstatic.com/generate_204',latency:240000000}])
+ wrapper=mount(InlineHistory,{props:{node,nodes:[node],project:'latency',source:'monitor',targetIds:['cloudflare','google','apple'],anchorPoints},global:{provide:{[workspaceKey as symbol]:w}}})
+ await flushPromises()
+ const legends=wrapper.findAll('.overview-legend label')
+ expect(legends.find(l=>l.text().includes('Cloudflare'))?.text()).toContain('80 ms')
+ expect(legends.find(l=>l.text().includes('Google'))?.text()).toContain('240 ms')
+ expect(legends.find(l=>l.text().includes('Apple'))?.text()).toContain('未测')
+ expect(wrapper.findAll('.overview-series circle')).toHaveLength(2)
+ await wrapper.setProps({targetIds:['google']})
+ expect(wrapper.findAll('.overview-series circle')).toHaveLength(1)
+ expect(wrapper.getComponent(MultiNodeChart).props('series')[0].points.map(p=>p.value)).toEqual([240])
+ expect(api.monitorSamples).not.toHaveBeenCalled();expect(api.latencySummaries).not.toHaveBeenCalled()
+ expect(w.selectedKeys.value).toEqual([]);w.dispose()
 })

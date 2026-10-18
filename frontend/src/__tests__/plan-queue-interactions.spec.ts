@@ -25,7 +25,7 @@ beforeEach(()=>{
 afterEach(()=>{wrapper?.unmount();wrapper=undefined;w.dispose();document.body.innerHTML=''})
 
 it('keeps the configuration dialog open when a node changed after selecting the test scope',async()=>{
-  w.openPlan([node]);attach(TestPlanModal)
+  w.project.value='latency';w.openPlan([node]);attach(TestPlanModal)
   vi.mocked(api.airports).mockResolvedValue([airport]);vi.mocked(api.nodes).mockResolvedValue([{...node,config_revision_key:'revision-new'}])
   await w.refreshNodes();await flushPromises()
   button('开始检测').click();await flushPromises()
@@ -170,7 +170,7 @@ it('shows exact download outcomes and speeds instead of green task completion',(
  expect(rows[1].find('.badge').text()).toBe('连接或读取失败 · 未确认')
  expect(rows[1].find('.badge').classes()).not.toContain('good')
  expect(rows[1].find('.badge').classes()).toContain('warn')
- expect(rows[2].find('.badge').text()).toBe('超时 · 未确认')
+ expect(rows[2].find('.badge').text()).toBe('超时 · 未读到下载数据')
  expect(rows[2].find('.badge').classes()).not.toContain('good')
  expect(rows[2].find('.badge').classes()).toContain('warn')
  expect(rows[3].find('.badge').text()).toBe('下载源限流')

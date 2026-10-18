@@ -222,6 +222,7 @@ describe('shared node selection',()=>{
     ]
     w.catalog.value.push({service_id:'youtube',name:'YouTube',category:'影音',description:'',result_kind:'unlock',success_criterion:'',timeout_seconds:15})
     w.displayServiceIds.value=['netflix_unlock','youtube']
+    const selectedServicesBeforeHover=[...w.serviceIds.value]
     w.services.value[key(a)]=[{...a,attempt_id:'netflix-a',request_id:'netflix-round',service_id:'netflix_unlock',requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',rule:{name:'Netflix',target_url:''},result:{outcome:'matched',bytes_read:0,finished_at:at}},{...a,attempt_id:'youtube-a',request_id:'youtube-round',service_id:'youtube',requested_at:at,finished_at:at,execution_state:'failed',persistence_state:'saved',rule:{name:'YouTube',target_url:''},result:{outcome:'connection_failed',bytes_read:0,finished_at:at}}]
     w.project.value='combined';const wrapper=attach(HomeView,w);await flushPromises()
     expect(wrapper.find('.node-row .combined-values').text()).toContain('下载速度10.0 MiB/s')
@@ -258,7 +259,7 @@ describe('shared node selection',()=>{
     expect(wrapper.findComponent(TrendChart).props('points')).toEqual([expect.objectContaining({id:'youtube-a',value:null,tone:'bad'})])
     expect(wrapper.find('.measurement-results').text()).toContain('YouTube')
     expect(wrapper.find('.measurement-results').text()).not.toContain('Netflix')
-    expect(w.serviceIds.value).toEqual(['netflix_unlock'])
+    expect(w.serviceIds.value).toEqual(selectedServicesBeforeHover)
     await bars[1].trigger('mouseleave');await vi.advanceTimersByTimeAsync(150)
     expect(wrapper.find('.node-inline-results').exists()).toBe(false)
     vi.mocked(api.monitorSamples).mockResolvedValue({items:[],has_more:false,next_cursor:''})

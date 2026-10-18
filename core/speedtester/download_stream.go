@@ -185,7 +185,8 @@ func (st *SpeedTester) measureDownloadStream(ctx context.Context, client *http.C
 	result.TargetURL = target
 	runCtx, cancel := context.WithTimeout(ctx, options.MaximumDuration)
 	defer cancel()
-	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+	localClient := *client
+	localClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
 	request, err := http.NewRequestWithContext(runCtx, http.MethodGet, target, nil)
 	if err != nil {
 		result.Outcome = "connection_failed"
@@ -200,7 +201,6 @@ func (st *SpeedTester) measureDownloadStream(ctx context.Context, client *http.C
 	setPhase("proxy_connect_and_handshake")
 	runCtx = context.WithValue(runCtx, downloadPhaseKey{}, setPhase)
 	request = request.WithContext(runCtx)
-	localClient := *client
 	if transport, ok := client.Transport.(*http.Transport); ok && transport.DialContext != nil {
 		clone := transport.Clone()
 		dial := clone.DialContext
@@ -220,8 +220,12 @@ func (st *SpeedTester) measureDownloadStream(ctx context.Context, client *http.C
 		},
 		ConnectStart:      func(string, string) { setPhase("connection") },
 		TLSHandshakeStart: func() { setPhase("tls") },
-		TLSHandshakeDone:  func(_ tls.ConnectionState, _ error) { setPhase("response_headers") },
-		GotConn:           func(httptrace.GotConnInfo) { setPhase("response_headers") },
+		TLSHandshakeDone: func(_ tls.ConnectionState, err error) {
+			if err == nil {
+				setPhase("response_headers")
+			}
+		},
+		GotConn: func(httptrace.GotConnInfo) { setPhase("response_headers") },
 	}))
 	response, err := localClient.Do(request)
 	if err != nil {

@@ -25,10 +25,11 @@ type physicalFamilyProxy struct {
 	primary, alternate            *CProxy
 	primaryPath, alternatePath    *PhysicalDownloadEgress
 	timeout                       time.Duration
-	dialMu                        sync.Mutex
+	selectionGate                 chan struct{}
 	mu                            sync.Mutex
 	settled, selectedIPv6, closed bool
-	cancel                        context.CancelFunc
+	active                        map[uint64]context.CancelFunc
+	nextDial                      uint64
 	attempts                      []PhysicalFamilyAttempt
 	close4, close6                sync.Once
 }
@@ -37,7 +38,7 @@ func wrapPhysicalFamilies(primary *CProxy, path *PhysicalDownloadEgress, alterna
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-	p := &physicalFamilyProxy{Proxy: primary.Proxy, primary: primary, primaryPath: path, alternate: alternate, alternatePath: alternatePath, timeout: timeout}
+	p := &physicalFamilyProxy{Proxy: primary.Proxy, primary: primary, primaryPath: path, alternate: alternate, alternatePath: alternatePath, timeout: timeout, selectionGate: make(chan struct{}, 1), active: make(map[uint64]context.CancelFunc)}
 	path.mu.Lock()
 	path.autoSnapshot = p.snapshot
 	path.mu.Unlock()
@@ -104,26 +105,39 @@ func (p *physicalFamilyProxy) attempt(ctx context.Context, proxy *CProxy, family
 func (p *physicalFamilyProxy) DialContext(ctx context.Context, metadata *C.Metadata) (C.Conn, error) {
 	run, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
-	p.dialMu.Lock()
-	defer p.dialMu.Unlock()
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
 		return nil, context.Canceled
 	}
-	p.cancel = cancel
+	p.nextDial++
+	id := p.nextDial
+	p.active[id] = cancel
 	settled, selected := p.settled, p.selectedIPv6
 	p.mu.Unlock()
-	defer func() { p.mu.Lock(); p.cancel = nil; p.mu.Unlock() }()
+	defer func() { p.mu.Lock(); delete(p.active, id); p.mu.Unlock() }()
+	if settled {
+		return p.dialSelected(run, metadata, selected)
+	}
+	select {
+	case p.selectionGate <- struct{}{}:
+	case <-run.Done():
+		return nil, run.Err()
+	}
+	p.mu.Lock()
+	settled, selected = p.settled, p.selectedIPv6
+	p.mu.Unlock()
+	if settled {
+		<-p.selectionGate
+		return p.dialSelected(run, metadata, selected)
+	}
+	defer func() { <-p.selectionGate }()
 	if run.Err() != nil {
 		return nil, run.Err()
 	}
-	if settled {
-		if selected {
-			return p.alternate.DialContext(run, metadata)
-		}
-		return p.primary.DialContext(run, metadata)
-	}
+	// Publish the selection only after the complete IPv4/IPv6 decision, so no
+	// concurrent request uses a primary adapter while fallback closes it.
+	defer func() { p.mu.Lock(); p.settled = true; p.mu.Unlock() }()
 	deadline, _ := run.Deadline()
 	first := run
 	stop := func() {}
@@ -140,9 +154,6 @@ func (p *physicalFamilyProxy) DialContext(ctx context.Context, metadata *C.Metad
 		conn.Close()
 		conn = nil
 	}
-	p.mu.Lock()
-	p.settled = true
-	p.mu.Unlock()
 	if conn != nil || p.alternate == nil || !familyConnectFailed(run, err) {
 		return conn, err
 	}
@@ -156,12 +167,37 @@ func (p *physicalFamilyProxy) DialContext(ctx context.Context, metadata *C.Metad
 	return p.attempt(run, p.alternate, "ipv6", metadata)
 }
 
+func (p *physicalFamilyProxy) dialSelected(ctx context.Context, metadata *C.Metadata, selectedIPv6 bool) (C.Conn, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	proxy := p.primary
+	if selectedIPv6 {
+		proxy = p.alternate
+	}
+	conn, err := proxy.DialContext(ctx, metadata)
+	if ctx.Err() != nil {
+		if conn != nil {
+			conn.Close()
+		}
+		return nil, ctx.Err()
+	}
+	if err != nil && conn != nil {
+		conn.Close()
+		conn = nil
+	}
+	return conn, err
+}
+
 func (p *physicalFamilyProxy) Close() error {
 	p.mu.Lock()
 	p.closed = true
-	cancel := p.cancel
+	cancels := make([]context.CancelFunc, 0, len(p.active))
+	for _, cancel := range p.active {
+		cancels = append(cancels, cancel)
+	}
 	p.mu.Unlock()
-	if cancel != nil {
+	for _, cancel := range cancels {
 		cancel()
 	}
 	p.close4.Do(func() { _ = p.primary.Close() })

@@ -6,7 +6,7 @@ import {computed,onBeforeUnmount,ref,watch} from 'vue'
 import {useWorkspace} from '../workspace'
 import {api} from '../api'
 import {key,outcomeLabel,targets,type NodeOption,type Project} from '../domain'
-import {monitorLatencyPoints,monitorRoundPoints,monitorHTTPPoints,monitorHTTPServices,points,recentService,type NodeSeries,type TrendPoint} from '../presentation'
+import {monitorLatencyRoundPoints,monitorRoundPoints,monitorHTTPPoints,monitorHTTPServices,points,recentService,type NodeSeries,type TrendPoint} from '../presentation'
 import MultiNodeChart from './MultiNodeChart.vue'
 import HealthBars from './HealthBars.vue'
 import MeasurementResults from './MeasurementResults.vue'
@@ -21,11 +21,19 @@ const services=computed(()=>displayServices.value.filter(s=>s.name.toLowerCase()
 function airportLabel(n:NodeOption){return [...new Set([w.nodeAirportName(n),w.nodeSubscriptionName(n)].filter(Boolean))].join(' · ')||n.profile_name}
 const displayTargets=computed(()=>{const ids=props.targetIds?.length?props.targetIds:[w.displayTarget.value],chosen=[...new Set(ids)].flatMap(id=>{const target=targets.find(t=>t.id===id);return target?[target]:[]});return chosen.length?chosen:[targets[0]]})
 const series=computed(()=>comparisonNodes.value.flatMap((n):NodeSeries[]=>{
+  if(props.project==='latency'&&props.source==='monitor'&&displayTargets.value.length>1){
+    const rounds=key(n)===key(props.node)?props.anchorPoints||[]:monitorHistory.value[key(n)]||[]
+    return displayTargets.value.map(target=>({id:key(n)+':monitor:'+target.id,nodeId:key(n),targetId:target.id,targetName:target.name,name:nodeDisplayName(n),airport:airportLabel(n),points:monitorLatencyRoundPoints(rounds,target.id)}))
+  }
   if(props.project==='latency'&&props.source!=='monitor'&&displayTargets.value.length>1)return displayTargets.value.map(target=>({id:key(n)+':'+target.id,nodeId:key(n),targetId:target.id,targetName:target.name,name:nodeDisplayName(n),airport:airportLabel(n),points:points(w,n,props.project,target.id)}))
   if(props.project==='service'&&props.source!=='monitor')return chosenServices.value.map(rule=>({id:key(n)+':service:'+rule.service_id,nodeId:key(n),targetId:rule.service_id,targetName:rule.name,name:nodeDisplayName(n),airport:airportLabel(n),points:points(w,n,'service',displayTargets.value[0].id,rule.service_id)}))
-  return [{id:key(n),name:nodeDisplayName(n),airport:airportLabel(n),points:props.source==='monitor'?(key(n)===key(props.node)?props.anchorPoints||[]:monitorHistory.value[key(n)]||[]):points(w,n,props.project,displayTargets.value[0].id,chosenService.value)}]
+  return [{id:key(n),name:nodeDisplayName(n),airport:airportLabel(n),points:props.source==='monitor'?monitorNodePoints(n):points(w,n,props.project,displayTargets.value[0].id,chosenService.value)}]
 }))
-const context=computed(()=>props.source==='monitor'?(props.project==='service'?'持续监测 · '+(monitorHTTPServices.find(s=>s.id===props.monitorServiceId)?.name||'基础 HTTP'):'持续监测 · '+(props.targetIds?.includes('all')?'延迟轮次汇总':displayTargets.value[0].name)):props.project==='latency'?displayTargets.value.map(target=>target.name).join('、'):props.project==='download'?'下载速度':chosenServices.value.map(rule=>rule.name).join('、')||'服务可用性')
+function monitorNodePoints(n:NodeOption){
+  const rounds=key(n)===key(props.node)?props.anchorPoints||[]:monitorHistory.value[key(n)]||[]
+  return props.project==='latency'&&props.targetIds?.length&&!props.targetIds.includes('all')?monitorLatencyRoundPoints(rounds,displayTargets.value[0].id):rounds
+}
+const context=computed(()=>props.source==='monitor'?(props.project==='service'?'持续监测 · '+(monitorHTTPServices.find(s=>s.id===props.monitorServiceId)?.name||'基础 HTTP'):'持续监测 · '+(props.targetIds?.includes('all')?'延迟轮次汇总':displayTargets.value.map(target=>target.name).join('、'))):props.project==='latency'?displayTargets.value.map(target=>target.name).join('、'):props.project==='download'?'下载速度':chosenServices.value.map(rule=>rule.name).join('、')||'服务可用性')
 const historyError=computed(()=>[error.value,...(props.source==='monitor'?[]:comparisonNodes.value.flatMap(n=>{const message=w.historyReadError(n,props.project);return message?[`${nodeDisplayName(n)} · ${airportLabel(n)}：${message}`]:[]}))].filter(Boolean).join('；'))
 const hasRecords=computed(()=>series.value.some(s=>s.points.some(p=>p.tone!=='empty')))
 let generation=0
@@ -39,7 +47,7 @@ async function load(){
         const probes=props.project==='service'?monitorHTTPServices.filter(s=>!props.monitorServiceId||s.id===props.monitorServiceId):[{probeType:'rtt',target:undefined}]
         const samples=[]
         for(const probe of probes){const result=await api.monitorSamples({profile_id:n.profile_id,node_identity_key:n.node_identity_key,config_revision_key:n.config_revision_key,probe_type:probe.probeType,target:probe.target,since:new Date(Date.now()-w.hours.value*3600000).toISOString(),until:new Date().toISOString(),limit:probe.probeType==='rtt'?480:80,order_desc:true});if(version!==generation)return;samples.push(...(result.items||[]))}
-        if(version===generation)monitorHistory.value[key(n)]=props.project==='service'?monitorHTTPPoints(samples,props.monitorServiceId):monitorLatencyPoints(samples,props.targetIds?.includes('all')?'all':displayTargets.value[0].id)
+        if(version===generation)monitorHistory.value[key(n)]=props.project==='service'?monitorHTTPPoints(samples,props.monitorServiceId):monitorRoundPoints(samples)
       }
     }else for(let i=0;i<list.length;i+=100){if(version!==generation)return;await w.ensureHistory(list.slice(i,i+100),[props.project])}
   }catch(e){if(version===generation)error.value=e instanceof Error?e.message:'历史读取失败'}finally{if(version===generation)loading.value=false}

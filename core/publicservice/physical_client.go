@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func defaultClientFactory(ctx context.Context, node monitor.MonitoredNode, timeout time.Duration, autoFamily ...bool) (*http.Client, func() speedtester.DownloadNetworkPath, func(), error) {
+func defaultClientFactory(ctx context.Context, node monitor.MonitoredNode, timeout time.Duration, autoFamily bool, socketLimit int) (*http.Client, func() speedtester.DownloadNetworkPath, func(), error) {
 	if runtime.GOOS != "darwin" {
 		client, err := monitor.NewDefaultNodeDialer().CreateClient(node, timeout)
 		return client, nil, func() {
@@ -19,8 +19,8 @@ func defaultClientFactory(ctx context.Context, node monitor.MonitoredNode, timeo
 		}, err
 	}
 	// The frozen raw config supplies the node, not the current VPN selection.
-	if len(autoFamily) > 0 && autoFamily[0] {
-		return speedtester.OpenPhysicalAutoProbeClient(ctx, &speedtester.CProxy{Config: node.RawConfig}, timeout, 4)
+	if autoFamily {
+		return speedtester.OpenPhysicalAutoProbeClient(ctx, &speedtester.CProxy{Config: node.RawConfig}, timeout, socketLimit)
 	}
-	return speedtester.OpenPhysicalProbeClient(ctx, &speedtester.CProxy{Config: node.RawConfig}, timeout, 4)
+	return speedtester.OpenPhysicalProbeClient(ctx, &speedtester.CProxy{Config: node.RawConfig}, timeout, socketLimit)
 }
