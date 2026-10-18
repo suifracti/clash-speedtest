@@ -582,6 +582,10 @@ func boundedGET(ctx context.Context, client *http.Client, target string, maximum
 	return result, body, true
 }
 
+var transportURLPattern = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^\s"'<>]+`)
+var transportAuthPattern = regexp.MustCompile(`(?i)\b(Bearer|Basic)[\t ]+(?:"[^"]*"|'[^']*'|[^\s,;]+)`)
+var transportCredentialPattern = regexp.MustCompile(`(?i)\b(access_token|refresh_token|client_secret|token|password|passwd|secret|authorization|api[-_]?key|uuid)["']?[\t ]*[:=][\t ]*(?:"[^"]*"|'[^']*'|[^\s,;]+)`)
+
 func sanitizeTransportError(err error) string {
 	if err == nil {
 		return "未知网络错误"
@@ -596,15 +600,9 @@ func sanitizeTransportError(err error) string {
 	if errors.Is(err, io.ErrUnexpectedEOF) {
 		return "数据流意外中断 (unexpected EOF)"
 	}
-	s := err.Error()
-	if idx := strings.Index(s, "Bearer "); idx != -1 {
-		rest := s[idx+len("Bearer "):]
-		if space := strings.Index(rest, " "); space != -1 {
-			s = s[:idx] + "Bearer [REDACTED]" + rest[space:]
-		} else {
-			s = s[:idx] + "Bearer [REDACTED]"
-		}
-	}
+	s := transportURLPattern.ReplaceAllString(err.Error(), "[URL REDACTED]")
+	s = transportAuthPattern.ReplaceAllString(s, "$1 [REDACTED]")
+	s = transportCredentialPattern.ReplaceAllString(s, "$1=[REDACTED]")
 	if strings.Contains(s, "fixture-secret") {
 		s = strings.ReplaceAll(s, "fixture-secret", "[REDACTED]")
 	}
@@ -623,8 +621,9 @@ func sanitizeTransportError(err error) string {
 	case strings.Contains(lower, "protocol error"):
 		return "协议协商或数据帧错误 (protocol error)"
 	default:
-		if len(s) > 120 {
-			s = s[:120] + "..."
+		runes := []rune(s)
+		if len(runes) > 120 {
+			s = string(runes[:120]) + "..."
 		}
 		return s
 	}
