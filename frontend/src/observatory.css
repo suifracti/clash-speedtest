@@ -331,3 +331,16 @@
 .observatory-app .home-view .node-list.observatory-matrix .observatory-service-cells{grid-column:3;grid-row:1}.observatory-app .home-view .node-list.observatory-matrix .row-run{grid-column:4!important;grid-row:1}
 @media(max-width:740px){.observatory-app .home-view .node-list.observatory-matrix .quality-heading,.observatory-app .home-view .node-list.observatory-matrix .node-row{grid-template-columns:18px 190px calc(var(--service-columns) * 120px) 58px;min-width:calc(300px + var(--service-columns) * 120px)}.observatory-app .home-view .node-list.observatory-matrix .quality-heading-cols,.observatory-app .home-view .observatory-service-cells{grid-template-columns:repeat(var(--service-columns),120px)}.observatory-app .home-view .node-list.observatory-matrix .node-identity-block{max-width:190px}.observatory-app .service-matrix-toolbar input{max-width:130px}}
 .observatory-app .observatory-service-cell.reachable,.observatory-app .overview-services .reachable,.observatory-app .overview-six button.good{color:var(--blue)}
+
+/* A single service choice drives both the result columns and the test plan. */
+.observatory-app .service-selection-bar{display:flex;align-items:flex-start;flex-wrap:wrap;gap:8px 14px;padding:7px 0;font-size:12px}
+.observatory-app .service-selection-bar>.service-picker-disclosure{display:block!important;flex:1 1 420px;margin:0;min-width:0;border:0;background:transparent;padding:0}
+.observatory-app .service-selection-bar summary{display:flex;align-items:center;gap:9px;padding:5px 0;cursor:pointer;font-size:12px;list-style:none}
+.observatory-app .service-selection-bar summary:before{content:'›';color:var(--accent);font-size:16px;line-height:1}
+.observatory-app .service-selection-bar details[open]>summary:before{transform:rotate(90deg)}
+.observatory-app .service-selection-count{color:var(--accent);white-space:nowrap}
+.observatory-app .service-selection-names{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.observatory-app .service-selection-bar>small{font-size:12px;color:var(--muted);padding-top:5px}
+.observatory-app .service-selection-bar .service-picker{padding:8px 10px;border:1px solid var(--line);background:var(--paper);border-radius:6px}
+.observatory-app .service-selection-bar .service-picker-list{max-height:300px;overflow:auto}
+@media(max-width:740px){.observatory-app .service-selection-bar>.service-picker-disclosure{flex-basis:100%}.observatory-app .service-selection-bar>small{display:none}}
