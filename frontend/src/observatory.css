@@ -180,3 +180,13 @@
   .observatory-app .node-list .quality-distribution { gap:8px; }
 }
 .observatory-app .scope-overview .orbit-meta { justify-content:flex-start; justify-self:stretch; }
+@media(max-width:740px) {
+  .observatory-app .home-view:not(.quality-view) .node-list .node-metric,
+  .observatory-app .home-view:not(.quality-view) .node-list .combined-values { grid-column:2/-1; grid-row:3; }
+  .observatory-app .home-view:not(.quality-view) .node-list .node-health { grid-column:2/-1; grid-row:4; }
+}
+@media(min-width:741px) and (max-width:1279px) {
+  .observatory-app .home-view:not(.quality-view) .node-list .combined-values { grid-column:3; grid-row:1; }
+  .observatory-app .home-view:not(.quality-view) .node-list .node-health { grid-column:2/-1; grid-row:3; }
+  .observatory-app .home-view:not(.quality-view) .node-list .node-inline-results { grid-row:4; }
+}
