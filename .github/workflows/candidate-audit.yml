@@ -15,6 +15,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Snapshot tracked source for exact-revision reproduction
+        run: git archive --format=tar.gz --output=candidate-source.tar.gz HEAD
       - name: Offline audit regression fixtures
         run: python3 -m unittest discover -s scripts/tests -v
       - name: Verify GitHub revision, main ancestry and accepted capabilities
@@ -23,7 +25,10 @@ jobs:
         if: always()
         with:
           name: candidate-audit-${{ github.sha }}
-          path: candidate-audit.json
+          retention-days: 7
+          path: |
+            candidate-audit.json
+            candidate-source.tar.gz
 
   offline-regression-linux:
     name: Offline Go race and frontend regression
@@ -37,17 +42,36 @@ jobs:
           go-version-file: go.mod
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: node scripts/prepare-legacy-assets.mjs
-      - name: Frontend regression and build
+      - name: Frontend dependencies
+        id: frontend_deps
         working-directory: frontend
+        run: npm ci
+      - name: Frontend regression
+        id: frontend_tests
+        working-directory: frontend
+        run: npm test -- --maxWorkers=2 --minWorkers=2
+      - name: Frontend build
+        if: ${{ !cancelled() && steps.frontend_deps.outcome == 'success' }}
+        working-directory: frontend
+        run: npm run build
+      - name: Package installed dependencies only after frontend failure
+        if: ${{ !cancelled() && steps.frontend_deps.outcome == 'success' && steps.frontend_tests.outcome == 'failure' }}
         run: |
-          npm ci
-          npm test -- --maxWorkers=2 --minWorkers=2
-          npm run build
+          # Deliberately exclude .git, npm credentials, home, and all runtime data.
+          tar -czf frontend-dependencies.tar.gz -C frontend node_modules
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && steps.frontend_tests.outcome == 'failure' && steps.frontend_deps.outcome == 'success' }}
+        with:
+          name: frontend-repro-${{ github.sha }}
+          path: frontend-dependencies.tar.gz
+          retention-days: 3
+          compression-level: 0
       - name: Synthetic Go regression
+        if: ${{ !cancelled() }}
         run: go test -race -p 2 ./... -count=1 -timeout=180s
 
   macos-contracts-build:
@@ -62,7 +86,7 @@ jobs:
           go-version-file: go.mod
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: node scripts/prepare-legacy-assets.mjs
