@@ -318,3 +318,16 @@
 .observatory-app .node-identity-block>.node-exit-summary.compact{width:auto;max-width:calc(100% - 44px)}
 .observatory-app .node-exit-compact{white-space:normal;max-width:100%}
 @media(max-width:740px){.observatory-app .node-identity-block>.node-exit-summary.compact{max-width:100%}}
+/* Service results are a bounded register, never three stretched dashboard cards. */
+.observatory-app .service-matrix-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:8px 0;font-size:12px}
+.observatory-app .service-matrix-toolbar .view-switch{margin:0}.observatory-app .service-matrix-toolbar .view-switch button{font-size:12px;padding:5px 8px}.observatory-app .service-matrix-toolbar input{max-width:170px;padding:6px 8px;font-size:12px}.observatory-app .service-matrix-toolbar small{font-size:12px;color:var(--muted)}
+.observatory-app .home-view .node-list.observatory-matrix .quality-heading,.observatory-app .home-view .node-list.observatory-matrix .node-row{grid-template-columns:20px 260px calc(var(--service-columns) * 132px) 64px;min-width:calc(370px + var(--service-columns) * 132px);gap:8px;padding:7px 6px;min-height:66px}
+.observatory-app .home-view .node-list.observatory-matrix .quality-heading{min-height:34px}
+.observatory-app .home-view .node-list.observatory-matrix .quality-heading-cols,.observatory-app .home-view .observatory-service-cells{grid-template-columns:repeat(var(--service-columns),132px);gap:0}
+.observatory-app .home-view .node-list.observatory-matrix .quality-heading-cols>span{padding:0 8px;line-height:1.4;font-size:12px}
+.observatory-app .home-view .node-list.observatory-matrix .observatory-service-cell{border:0;border-left:1px solid var(--line);border-radius:0;background:transparent;padding:7px 8px;min-height:44px;gap:3px;align-content:center}
+.observatory-app .home-view .node-list.observatory-matrix .observatory-service-cell strong{font-size:13px;font-weight:550}.observatory-app .home-view .node-list.observatory-matrix .observatory-service-cell time{font-size:12px}
+.observatory-app .home-view .node-list.observatory-matrix .node-identity-block{grid-column:2;grid-row:1;max-width:260px}
+.observatory-app .home-view .node-list.observatory-matrix .observatory-service-cells{grid-column:3;grid-row:1}.observatory-app .home-view .node-list.observatory-matrix .row-run{grid-column:4!important;grid-row:1}
+@media(max-width:740px){.observatory-app .home-view .node-list.observatory-matrix .quality-heading,.observatory-app .home-view .node-list.observatory-matrix .node-row{grid-template-columns:18px 190px calc(var(--service-columns) * 120px) 58px;min-width:calc(300px + var(--service-columns) * 120px)}.observatory-app .home-view .node-list.observatory-matrix .quality-heading-cols,.observatory-app .home-view .observatory-service-cells{grid-template-columns:repeat(var(--service-columns),120px)}.observatory-app .home-view .node-list.observatory-matrix .node-identity-block{max-width:190px}.observatory-app .service-matrix-toolbar input{max-width:130px}}
+.observatory-app .observatory-service-cell.reachable,.observatory-app .overview-services .reachable,.observatory-app .overview-six button.good{color:var(--blue)}

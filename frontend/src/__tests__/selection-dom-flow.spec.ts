@@ -54,7 +54,7 @@ describe('node selection through DOM controls',()=>{
     const {w,wrapper}=attach([a],['airport-a']);w.catalog.value=[{service_id:'google_204',name:'Google 204 连通性',category:'基础网络',description:'',result_kind:'connectivity',success_criterion:'exact 204',timeout_seconds:10}];w.displayServiceIds.value=['google_204'];w.project.value='service';await flushPromises()
     expect(w.jobs.value).toEqual([])
     expect(wrapper.findAll('.monitor-http-metrics strong').map(m=>m.text())).toEqual(['失败','HTTP 可达'])
-    expect(wrapper.findAll('.node-target-metrics strong').map(m=>m.text())).toEqual(['未测','失败','HTTP 可达'])
+    expect(wrapper.findAll('.node-target-metrics strong').map(m=>m.text())).toEqual(['失败','HTTP 可达'])
     expect(wrapper.findAll('.health-cell.has-record')).toHaveLength(3)
     const googleBars=wrapper.get('.health-bars[aria-label="Google 基础 HTTP历史状态，悬停查看本轮数据"]')
     await googleBars.findAll('.has-record').at(-1)!.trigger('click');await flushPromises()
