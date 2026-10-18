@@ -283,3 +283,33 @@ func TestABEMABoundedAnonymousIPAndOtherFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestABEMAErrorPageIsNotNormalHomepage(t *testing.T) {
+	for _, tc := range []struct{ name, body, want string }{
+		{"real error page", `<html><head><title>エラー | ABEMA</title></head><body></body></html>`, "unknown"},
+		{"normal page", `<html><head><title>ABEMA</title></head><body></body></html>`, "reachable"},
+		{"script-only text", `<html><head><script>var example='<title>エラー | ABEMA</title>';</script><title>ABEMA</title></head><body></body></html>`, "reachable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rule, _ := RuleFor("abema_jp")
+			client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				return fixtureResponse(req, 200, "text/html", tc.body), nil
+			})}
+			r := (Checker{}).checkOnce(context.Background(), client, monitor.MonitoredNode{}, rule, time.Now())
+			if r.Outcome != tc.want {
+				t.Fatalf("unexpected page classification: %+v", r)
+			}
+		})
+	}
+}
+
+func TestPrimeTerritoryIsPreservedWithoutClaimingRestrictionKnown(t *testing.T) {
+	rule, _ := RuleFor("prime_video")
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return fixtureResponse(req, 200, "text/html", `<html><script>{"currentTerritory":"SG"}</script></html>`), nil
+	})}
+	r := checkPrimeVideo(context.Background(), client, rule, time.Now())
+	if r.Outcome != "unknown" || r.Details["service_region"] != "SG" || r.Details["restriction_status"] != "unknown" || r.Details["missing_evidence"] != "isServiceRestricted" || !strings.Contains(r.ErrorMessage, "没有说明服务是否受限") {
+		t.Fatalf("known region was hidden by a generic missing-region message: %+v", r)
+	}
+}

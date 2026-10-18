@@ -21,6 +21,9 @@ func selectedNodeIPv4Host(rule Rule) string {
 	if rule.ServiceID == "abema_unlock" && rule.RuleVersion >= 3 {
 		return "api.abema.io"
 	}
+	if rule.ServiceID == "abema_jp" && rule.RuleVersion >= 3 {
+		return "abema.tv"
+	}
 	return ""
 }
 

@@ -236,6 +236,32 @@ func checkAbema(ctx context.Context, client *http.Client, rule Rule, started tim
 	return finish(result, started)
 }
 
+func abemaErrorDocument(body []byte) bool {
+	z := html.NewTokenizer(strings.NewReader(string(body)))
+	inTitle := false
+	var title strings.Builder
+	for {
+		switch z.Next() {
+		case html.ErrorToken:
+			return false
+		case html.StartTagToken:
+			name, _ := z.TagName()
+			if string(name) == "title" {
+				inTitle = true
+			}
+		case html.EndTagToken:
+			name, _ := z.TagName()
+			if inTitle && string(name) == "title" {
+				return strings.TrimSpace(title.String()) == "エラー | ABEMA"
+			}
+		case html.TextToken:
+			if inTitle {
+				title.Write(z.Text())
+			}
+		}
+	}
+}
+
 var fodFlagPattern = regexp.MustCompile(`(?i)<FLAG\s+TYPE=["'](true|false)["']`)
 
 func checkFOD(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
@@ -339,7 +365,18 @@ func checkPrimeVideo(ctx context.Context, client *http.Client, rule Rule, starte
 	} else if region != "" && strings.EqualFold(restricted, "false") {
 		result.Outcome, result.Summary = "unlocked", "Prime Video 地区检查通过；未验证播放"
 	} else {
-		result.Outcome, result.FailurePhase, result.ErrorMessage = "unknown", "page_document", "Prime Video 页面未包含稳定的地区标记"
+		result.Outcome, result.FailurePhase = "unknown", "page_document"
+		result.Summary = "网页已响应，地区限制未确认"
+		result.ErrorMessage = "读取范围未提供足够的地区/限制判据；HTTP 200不代表播放可用"
+		if result.Details == nil {
+			result.Details = map[string]string{}
+		}
+		result.Details["restriction_status"] = "unknown"
+		result.Details["missing_evidence"] = "isServiceRestricted"
+		result.Details["page_body_truncated"] = strconv.FormatBool(page.truncated)
+		if region != "" {
+			result.ErrorMessage = "已识别地区 " + strings.ToUpper(region) + "，但页面没有说明服务是否受限；未验证播放"
+		}
 	}
 	return finish(result, started)
 }

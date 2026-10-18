@@ -161,9 +161,9 @@ var catalog = []Rule{
 		RedirectPolicy: "follow_same_service", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
 	},
 	{
-		ServiceID: "abema_jp", Name: "ABEMA 日本网页可达性", RuleVersion: 2,
-		Category: "日本服务", Region: "日本", ResultKind: "regional_reachability", Description: "检测 ABEMA 网页响应；不把首页可达等同于可播放。",
-		TargetURL: "https://abema.tv/", Method: http.MethodGet, SuccessCriterion: "最多跟随3次同服务HTTPS跳转，最终2xx且无挑战标记才记网页可达；不证明播放解锁",
+		ServiceID: "abema_jp", Name: "ABEMA 日本网页可达性", RuleVersion: 3,
+		Category: "日本服务", Region: "日本", ResultKind: "regional_reachability", Description: "自动经被测节点解析IPv4并核对网页；明确错误页单列，不代表播放。",
+		TargetURL: "https://abema.tv/", Method: http.MethodGet, SuccessCriterion: "经同一节点查询一次IPv4并固定本轮；原Host/SNI校验，最多跟随3次同服务HTTPS跳转；2xx无挑战及明确错误页才记网页可达，不证明播放",
 		RedirectPolicy: "follow_same_service", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
 	},
 	{
@@ -911,6 +911,16 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 			}
 		} else if pageHasChallenge(body) {
 			result.Outcome, result.Summary = "challenge", "网页要求浏览器验证，未验证功能可用"
+			return finish(result, startedAt)
+		}
+
+		if rule.ServiceID == "abema_jp" && abemaErrorDocument(body) {
+			result.Outcome, result.FailurePhase = "unknown", "page_error"
+			result.Summary = "ABEMA 已响应，但返回错误页"
+			result.ErrorMessage = "HTTP 200页面标题明确为ABEMA错误页；未确认正常入口或播放，不能推断节点断线或地区封锁"
+			result.Details["page_error_evidence"] = "abema_error_title"
+			result.Details["body_prefix_sha256"] = fmt.Sprintf("%x", sha256.Sum256(body))
+			result.Details["http_reachable"] = "true"
 			return finish(result, startedAt)
 		}
 		if rule.ServiceID == "peacock_web" && response.Request != nil && response.Request.URL != nil && strings.EqualFold(strings.TrimSuffix(response.Request.URL.Path, "/"), "/unavailable") {
