@@ -18,10 +18,11 @@ import (
 )
 
 const (
-	DefaultTimeout       = 10 * time.Second
-	MaximumTimeout       = 30 * time.Second
-	MaximumResponseBytes = 64 * 1024
-	RuleVersion          = 1
+	DefaultTimeout          = 10 * time.Second
+	MaximumTimeout          = 30 * time.Second
+	MaximumResponseBytes    = 64 * 1024
+	MaximumWebDocumentBytes = 2 * 1024 * 1024
+	RuleVersion             = 1
 )
 
 // Rule is an immutable entry in the public-service catalog. The catalog is
@@ -191,7 +192,13 @@ var catalog = []Rule{
 	streamingRule("abema_unlock", "ABEMA 日本地区判定", "日本", "https://api.abema.io/v1/ip/check?device=android", "读取 ABEMA 官方 IP 检查响应中的地区代码。", "isoCountryCode=JP 判定日本完整入口；其他地区显示海外档位"),
 	streamingRule("fod_unlock", "FOD 日本地区判定", "日本", "https://geocontrol1.stream.ne.jp/fod-geo/check.xml?time=1624504256", "读取 FOD 地区控制端点，不下载视频。", "XML FLAG TYPE=true 判定地区允许"),
 	streamingRule("hulu_jp_unlock", "Hulu Japan 入口限制检查", "日本", "https://id.hulu.jp/", "识别明确的 restrict 跳转；首页可达不代表地区或播放解锁。", "明确 restrict 跳转记为受限；200 仅记网页可达；403 不推断为地区封锁"),
-	streamingRule("youtube_premium", "YouTube Premium 地区判定", "全球", "https://www.youtube.com/premium", "读取 Premium 页面公开地区与可用性标记。", "区分 Premium 可用、所在地区不可用及页面结构未知"),
+	{
+		ServiceID: "youtube_premium", Name: "YouTube Premium 地区判定", Category: "流媒体解锁", Region: "全球", ResultKind: "streaming_unlock", RuleVersion: 3,
+		TargetURL: "https://www.youtube.com/premium", Method: http.MethodGet,
+		Description:      "读取公开地区及订阅方案；仅此规则每请求最多读取2MiB网页，不验证账号或播放。",
+		SuccessCriterion: "可识别地区且页面实际订阅方案及按钮存在，才记公开方案判据通过；广告文案不算；不验证购买或播放",
+		RedirectPolicy:   "probe_specific", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumWebDocumentBytes,
+	},
 	streamingRule("prime_video", "Prime Video 地区判定", "全球", "https://www.primevideo.com/", "读取 Prime Video 首页公开的 territory 与限制标记。", "currentTerritory 存在且 isServiceRestricted 明确为 false 才通过地区判据，不代表播放"),
 	{
 		ServiceID: "cloudflare_doh", Name: "Cloudflare DNS over HTTPS", Category: "基础网络", Region: "全球",

@@ -239,28 +239,70 @@ func checkFOD(ctx context.Context, client *http.Client, rule Rule, started time.
 }
 
 func checkYouTubePremium(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
-	result, page, ok := readPage(ctx, client, rule.TargetURL, []string{"youtube.com", "google.com"}, map[string]string{"Accept-Language": "en-US,en;q=0.9"})
+	result, page, ok := readPage(ctx, client, rule.TargetURL, []string{"youtube.com", "google.com"}, map[string]string{"Accept-Language": "en-US,en;q=0.9"}, rule.MaximumBodyBytes)
 	if !ok {
 		return finish(result, started)
 	}
 	text := string(page.body)
 	lower := strings.ToLower(text)
-	region := firstRegexGroup(regexp.MustCompile(`(?i)"INNERTUBE_CONTEXT_GL"\s*:\s*"([^"]+)"`), text)
-	if strings.Contains(lower, "www.google.cn") {
-		region = "CN"
-	}
+	region := strings.ToUpper(firstRegexGroup(regexp.MustCompile(`(?i)"INNERTUBE_CONTEXT_GL"\s*:\s*"([a-z]{2})"`), text))
+	result.Details = map[string]string{"document_read_limit": strconv.Itoa(rule.MaximumBodyBytes), "document_truncated": strconv.FormatBool(page.truncated), "account_verified": "false", "playback_verified": "false"}
 	if region != "" {
-		result.Details = map[string]string{"service_region": strings.ToUpper(region)}
+		result.Details["service_region"] = region
 	}
+	if page.truncated {
+		result.Outcome, result.FailurePhase, result.ErrorMessage = "unknown", "response_evidence_limit", "网页超过本规则读取上限；已取得的地区保留，Premium方案未确认"
+		return finish(result, started)
+	}
+	offers := youtubePublicOfferCount(page.body)
 	switch {
 	case strings.Contains(lower, "premium is not available in your country") || region == "CN":
 		result.Outcome, result.Summary = "region_blocked", "YouTube Premium 在该地区不可用"
-	case region != "" && strings.Contains(lower, "ad-free"):
-		result.Outcome, result.Summary = "unlocked", "Premium 页面有地区与订阅信息；未验证购买或播放"
+	case region != "" && offers > 0:
+		result.Outcome, result.Summary = "matched", region+" 公开Premium订阅方案可见；未验证账号、购买或播放"
+		result.Details["public_offer_count"] = strconv.Itoa(offers)
+		result.Details["premium_evidence"] = "public_offer_page_only"
 	default:
 		result.Outcome, result.FailurePhase, result.ErrorMessage = "unknown", "page_document", "YouTube Premium 页面未包含稳定的可用性标记"
 	}
 	return finish(result, started)
+}
+
+func youtubePublicOfferCount(body []byte) int {
+	start := regexp.MustCompile(`\bytInitialData\s*=\s*`).FindIndex(body)
+	if start == nil {
+		return 0
+	}
+	var data any
+	if json.NewDecoder(strings.NewReader(string(body[start[1]:]))).Decode(&data) != nil {
+		return 0
+	}
+	var count func(any) int
+	count = func(value any) int {
+		total := 0
+		switch v := value.(type) {
+		case map[string]any:
+			if offer, ok := v["lpOfferCardOptionViewModel"].(map[string]any); ok {
+				title, _ := offer["title"].(map[string]any)
+				label, _ := title["content"].(string)
+				button, _ := offer["purchaseButtonOverride"].(map[string]any)
+				view, _ := button["buttonViewModel"].(map[string]any)
+				action, _ := view["onTap"].(map[string]any)
+				if label != "" && len(action) > 0 && view["disabled"] != true {
+					total++
+				}
+			}
+			for _, child := range v {
+				total += count(child)
+			}
+		case []any:
+			for _, child := range v {
+				total += count(child)
+			}
+		}
+		return total
+	}
+	return count(data)
 }
 
 func checkPrimeVideo(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
@@ -316,12 +358,13 @@ func checkGoogleSearch(ctx context.Context, client *http.Client, rule Rule, star
 }
 
 type fetchedPage struct {
-	status   int
-	body     []byte
-	finalURL string
+	status    int
+	body      []byte
+	finalURL  string
+	truncated bool
 }
 
-func readPage(ctx context.Context, client *http.Client, target string, allowedHosts []string, headers map[string]string) (Result, fetchedPage, bool) {
+func readPage(ctx context.Context, client *http.Client, target string, allowedHosts []string, headers map[string]string, bodyLimit ...int) (Result, fetchedPage, bool) {
 	result := Result{RequestCount: 1}
 	clone := *client
 	clone.CheckRedirect = func(request *http.Request, via []*http.Request) error {
@@ -359,14 +402,19 @@ func readPage(ctx context.Context, client *http.Client, target string, allowedHo
 		result.Outcome, result.Summary, result.ErrorMessage = "challenge", "Cloudflare 要求浏览器验证", "网络已连通，但无头请求未通过网页验证"
 		return result, fetchedPage{}, false
 	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, MaximumResponseBytes+1))
-	result.BytesRead = int64(min(len(body), MaximumResponseBytes))
+	maximum := MaximumResponseBytes
+	if len(bodyLimit) > 0 && bodyLimit[0] > 0 {
+		maximum = min(bodyLimit[0], MaximumWebDocumentBytes)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, int64(maximum)+1))
+	result.BytesRead = int64(min(len(body), maximum))
 	if err != nil {
 		classifyRequestError(&result, ctx, err)
 		return result, fetchedPage{}, false
 	}
-	if len(body) > MaximumResponseBytes {
-		body = body[:MaximumResponseBytes]
+	truncated := len(body) > maximum
+	if truncated {
+		body = body[:maximum]
 	}
 	if pageHasChallenge(body) {
 		result.Outcome, result.Summary = "challenge", "网页要求浏览器验证，不能确认功能可用"
@@ -380,7 +428,7 @@ func readPage(ctx context.Context, client *http.Client, target string, allowedHo
 	if response.Request != nil && response.Request.URL != nil {
 		finalURL = response.Request.URL.String()
 	}
-	return result, fetchedPage{status: status, body: body, finalURL: finalURL}, true
+	return result, fetchedPage{status: status, body: body, finalURL: finalURL, truncated: truncated}, true
 }
 
 func firstRegexGroup(pattern *regexp.Regexp, value string) string {
