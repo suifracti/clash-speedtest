@@ -881,9 +881,9 @@ func (s *Server) handleAntigravityToken(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	s.app.SetAntigravityToken(parsed, "手动输入")
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		_ = os.WriteFile(filepath.Join(home, ".antigravity_token"), []byte(parsed+"\n"), 0600)
+	if err := s.app.SetAntigravityToken(parsed, "手动输入"); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
@@ -901,7 +901,9 @@ func (s *Server) handleAntigravityLogin(w http.ResponseWriter, r *http.Request) 
 			})
 			return
 		}
-		s.app.SetAntigravityToken(token, "Google OAuth 登录")
+		if err := s.app.SetAntigravityToken(token, "Google OAuth 登录"); err != nil {
+			s.emitter.Emit(application.Event{Type: "antigravity_login_failed", Payload: map[string]any{"error": err.Error()}})
+		}
 	}()
 	writeJSON(w, http.StatusOK, map[string]bool{"started": true})
 }

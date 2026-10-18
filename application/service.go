@@ -202,19 +202,11 @@ func newAppService(hStore *history.Store, appPaths appdata.AppPaths, profilePath
 		svc.controller = client
 	}
 
-	// Explicit isolation bypasses shared credential reads, refreshes and writes.
-	if !svc.noAutoCredentials {
+	// A credential explicitly saved in this data root belongs to this instance.
+	// Only discover shared credentials when it has no local binding and discovery is enabled.
+	if !svc.loadPersistedTokenLocked() && !svc.noAutoCredentials {
 		if token, src, err := svc.discoverCredentials(); err == nil && token != "" {
-			svc.antigravityToken = token
-			svc.antigravitySource = src
-		}
-	} else if svc.appPaths.DataRoot != "" {
-		dataPath := filepath.Join(svc.appPaths.DataRoot, ".antigravity_token")
-		if data, err := os.ReadFile(dataPath); err == nil {
-			if parsed := auth.ParseAntigravityToken(string(data)); parsed != "" && !strings.Contains(parsed, "mock") && !strings.Contains(parsed, "test-") {
-				svc.antigravityToken = parsed
-				svc.antigravitySource = "隔离目录凭据"
-			}
+			svc.antigravityToken, svc.antigravitySource = token, src
 		}
 	}
 
@@ -1701,26 +1693,47 @@ func (s *AppService) GetAntigravitySource() string {
 	return s.antigravitySource
 }
 
-func (s *AppService) SetAntigravityToken(token, source string) {
+func (s *AppService) SetAntigravityToken(token, source string) error {
 	if s == nil {
-		return
+		return fmt.Errorf("app service is not initialized")
 	}
 	s.antigravityMu.Lock()
-	s.antigravityToken = token
-	s.antigravitySource = source
-	if s.appPaths.DataRoot != "" {
-		_ = os.WriteFile(filepath.Join(s.appPaths.DataRoot, ".antigravity_token"), []byte(token+"\n"), 0600)
-	}
+	err := s.saveTokenLocked(token, source)
 	s.antigravityMu.Unlock()
-
-	if s.emitter != nil {
-		s.emitter.Emit(Event{
-			Type: "antigravity_token_updated",
-			Payload: map[string]any{
-				"source": source,
-			},
-		})
+	if err != nil {
+		return err
 	}
+	if s.emitter != nil {
+		s.emitter.Emit(Event{Type: "antigravity_token_updated", Payload: map[string]any{"source": source}})
+	}
+	return nil
+}
+
+// Persist before changing the live binding; a failed write must not look saved.
+func (s *AppService) saveTokenLocked(token, source string) error {
+	if s.appPaths.DataRoot != "" {
+		if err := writeAtomicFile(filepath.Join(s.appPaths.DataRoot, ".antigravity_token"), []byte(token+"\n"), 0600); err != nil {
+			return fmt.Errorf("凭据未保存，原绑定保留: %w", err)
+		}
+	}
+	s.antigravityToken, s.antigravitySource = token, source
+	return nil
+}
+
+func (s *AppService) loadPersistedTokenLocked() bool {
+	if s.appPaths.DataRoot == "" {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(s.appPaths.DataRoot, ".antigravity_token"))
+	if err != nil {
+		return false
+	}
+	parsed := auth.ParseAntigravityToken(string(data))
+	if parsed == "" {
+		return false
+	}
+	s.antigravityToken, s.antigravitySource = parsed, "本数据目录凭据"
+	return true
 }
 
 func (s *AppService) tokenStatusLocked() TokenStatusDTO {
@@ -1747,33 +1760,13 @@ func (s *AppService) DiscoverAntigravityToken() (TokenStatusDTO, error) {
 	}
 	s.antigravityMu.Lock()
 	defer s.antigravityMu.Unlock()
-
-	// 1. Check isolated DataRoot first if present
-	if s.appPaths.DataRoot != "" {
-		dataPath := filepath.Join(s.appPaths.DataRoot, ".antigravity_token")
-		if data, err := os.ReadFile(dataPath); err == nil {
-			if parsed := auth.ParseAntigravityToken(string(data)); parsed != "" && !strings.Contains(parsed, "mock") && !strings.Contains(parsed, "test-") {
-				s.antigravityToken = parsed
-				s.antigravitySource = "隔离目录凭据"
-				if s.emitter != nil {
-					s.emitter.Emit(Event{
-						Type: "antigravity_token_updated",
-						Payload: map[string]any{
-							"source": s.antigravitySource,
-						},
-					})
-				}
-				return s.tokenStatusLocked(), nil
-			}
-		}
+	if s.loadPersistedTokenLocked() {
+		return s.tokenStatusLocked(), nil
 	}
-
-	// 2. Invoke discoverCredentials (or auth.TryAutoDetectAntigravityToken)
 	discover := s.discoverCredentials
 	if discover == nil {
 		discover = auth.TryAutoDetectAntigravityToken
 	}
-
 	tok, src, err := discover()
 	if err != nil || tok == "" {
 		if err == nil {
@@ -1781,30 +1774,12 @@ func (s *AppService) DiscoverAntigravityToken() (TokenStatusDTO, error) {
 		}
 		return s.tokenStatusLocked(), fmt.Errorf("检测本地凭据失败: %w", err)
 	}
-
-	s.antigravityToken = tok
-	s.antigravitySource = src
-
-	// Persist to isolated DataRoot for future persistence across runs
-	if s.appPaths.DataRoot != "" {
-		_ = os.WriteFile(filepath.Join(s.appPaths.DataRoot, ".antigravity_token"), []byte(tok+"\n"), 0600)
+	if err := s.saveTokenLocked(tok, src); err != nil {
+		return s.tokenStatusLocked(), err
 	}
-	// Also ensure ~/.antigravity_token is saved if it is a real token
-	if !strings.Contains(tok, "mock") && !strings.Contains(tok, "test") && !strings.Contains(tok, "synthetic") && !strings.Contains(tok, "discovered-user-action") {
-		if home, hErr := os.UserHomeDir(); hErr == nil && home != "" {
-			_ = os.WriteFile(filepath.Join(home, ".antigravity_token"), []byte(tok+"\n"), 0600)
-		}
-	}
-
 	if s.emitter != nil {
-		s.emitter.Emit(Event{
-			Type: "antigravity_token_updated",
-			Payload: map[string]any{
-				"source": src,
-			},
-		})
+		s.emitter.Emit(Event{Type: "antigravity_token_updated", Payload: map[string]any{"source": src}})
 	}
-
 	return s.tokenStatusLocked(), nil
 }
 
@@ -1814,22 +1789,11 @@ func (s *AppService) GetTokenStatus() TokenStatusDTO {
 	}
 	s.antigravityMu.Lock()
 	defer s.antigravityMu.Unlock()
-
-	if s.antigravityToken == "" && !s.noAutoCredentials {
+	if s.antigravityToken == "" && !s.loadPersistedTokenLocked() && !s.noAutoCredentials {
 		if tok, src, err := s.discoverCredentials(); err == nil && tok != "" {
-			s.antigravityToken = tok
-			s.antigravitySource = src
-		}
-	} else if s.antigravityToken == "" && s.appPaths.DataRoot != "" {
-		dataPath := filepath.Join(s.appPaths.DataRoot, ".antigravity_token")
-		if data, err := os.ReadFile(dataPath); err == nil {
-			if parsed := auth.ParseAntigravityToken(string(data)); parsed != "" && !strings.Contains(parsed, "mock") && !strings.Contains(parsed, "test-") {
-				s.antigravityToken = parsed
-				s.antigravitySource = "隔离目录凭据"
-			}
+			s.antigravityToken, s.antigravitySource = tok, src
 		}
 	}
-
 	return s.tokenStatusLocked()
 }
 

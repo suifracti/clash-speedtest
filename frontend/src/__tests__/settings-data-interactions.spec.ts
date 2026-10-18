@@ -7,7 +7,7 @@ import {createWorkspace,workspaceKey,type Workspace} from '../workspace'
 import {applyTheme} from '../theme'
 import type {Settings} from '../domain'
 vi.hoisted(()=>Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:()=>null,setItem:()=>{}}}))
-vi.mock('../api',async original=>{const actual=await original<typeof import('../api')>();return {...actual,desktop:()=>true,backup:vi.fn(),selectProfileSourceDirectory:vi.fn(),request:vi.fn(),api:{...actual.api,settings:vi.fn(),saveSettings:vi.fn(),setToken:vi.fn(),token:vi.fn(),oauth:vi.fn(),inspect:vi.fn(),importSource:vi.fn(),migrate:vi.fn(),initialize:vi.fn()}}})
+vi.mock('../api',async original=>{const actual=await original<typeof import('../api')>();return {...actual,desktop:()=>true,backup:vi.fn(),selectProfileSourceDirectory:vi.fn(),request:vi.fn(),api:{...actual.api,settings:vi.fn(),discoverToken:vi.fn(),saveSettings:vi.fn(),setToken:vi.fn(),token:vi.fn(),oauth:vi.fn(),inspect:vi.fn(),importSource:vi.fn(),migrate:vi.fn(),initialize:vi.fn()}}})
 vi.mock('../theme',()=>({applyTheme:vi.fn().mockResolvedValue(undefined)}))
 const settings={preferred_browser:'auto',monitor_retention_policy:'30d',monitor_retention_custom_days:30,monitor_storage_warning_bytes:1073741824,monitor_storage_hard_bytes:2147483648,monitor_budget_max_concurrent:4,monitor_budget_response_bytes:65536} as Settings
 let w:Workspace,wrapper:VueWrapper|undefined
@@ -68,4 +68,12 @@ it.each(['import','migration'])('restores focus to a stable control when %s remo
   const opener=kind==='import'?'导入这个来源':'迁移旧版历史与设置';button(opener).focus();await click(opener)
   vi.mocked(w.boot).mockImplementationOnce(async()=>{w.setup.value!.migration.state='ready'})
   await click(kind==='import'?'确认导入':'确认迁移');expect(button('刷新状态')).toBe(document.activeElement)
+})
+
+it('opening settings and refreshing status do not silently discover external credentials',async()=>{
+ vi.mocked(api.token).mockResolvedValue({has_token:false,source:'none',preview:''})
+ vi.mocked(api.discoverToken).mockResolvedValue({has_token:true,source:'external fixture',preview:'***'})
+ attach(SettingsView);await flushPromises();expect(api.discoverToken).not.toHaveBeenCalled()
+ await click('刷新状态');expect(api.discoverToken).not.toHaveBeenCalled();expect(api.token).toHaveBeenCalled()
+ await click('检测查找凭据');expect(api.discoverToken).toHaveBeenCalledOnce();expect(document.body.textContent).toContain('已绑定')
 })

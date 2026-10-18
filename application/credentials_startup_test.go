@@ -118,3 +118,87 @@ func TestDiscoverAntigravityTokenExplicitUserAction(t *testing.T) {
 	}
 }
 
+func TestPersistedCredentialPreferredBeforeSharedDiscovery(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	paths, _ := appdata.Resolve(t.TempDir())
+	if err := os.WriteFile(filepath.Join(paths.DataRoot, ".antigravity_token"), []byte("ya29.local-mock-compatible-value\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	app := NewAppServiceWithOptions(nil, paths, nil, Options{CredentialDiscovery: func() (string, string, error) { calls++; return "ya29.other-account-value", "shared", nil }})
+	defer app.Close()
+	if calls != 0 || app.GetAntigravityToken() != "ya29.local-mock-compatible-value" {
+		t.Fatalf("local credential replaced: discovery=%d source=%s", calls, app.GetAntigravitySource())
+	}
+}
+
+func TestCredentialSaveFailureRetainsPreviousBinding(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	paths, _ := appdata.Resolve(t.TempDir())
+	app := NewAppServiceWithOptions(nil, paths, nil, Options{NoAutoCredentials: true})
+	defer app.Close()
+	app.SetAntigravityToken("ya29.previous-local-value", "previous")
+	target := filepath.Join(paths.DataRoot, ".antigravity_token")
+	if err := os.Remove(target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(target, 0700); err != nil {
+		t.Fatal(err)
+	}
+	app.SetAntigravityToken("ya29.next-local-value", "next")
+	if app.GetAntigravityToken() != "ya29.previous-local-value" || app.GetAntigravitySource() != "previous" {
+		t.Fatal("failed save replaced the active binding")
+	}
+}
+
+func TestExplicitCredentialDiscoveryDoesNotMirrorDailyHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	daily := filepath.Join(home, ".antigravity_token")
+	if err := os.WriteFile(daily, []byte("existing-daily-value\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	paths, _ := appdata.Resolve(t.TempDir())
+	app := NewAppServiceWithOptions(nil, paths, nil, Options{NoAutoCredentials: true, CredentialDiscovery: func() (string, string, error) { return "ya29.local-discovery-value", "fixture provider", nil }})
+	defer app.Close()
+	if _, err := app.DiscoverAntigravityToken(); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(daily)
+	if err != nil || string(body) != "existing-daily-value\n" {
+		t.Fatal("discovery overwrote the unrelated daily credential file")
+	}
+}
+
+func TestDiscoverySaveFailureDoesNotClaimBound(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	paths, _ := appdata.Resolve(t.TempDir())
+	if err := os.Mkdir(filepath.Join(paths.DataRoot, ".antigravity_token"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	app := NewAppServiceWithOptions(nil, paths, nil, Options{NoAutoCredentials: true, CredentialDiscovery: func() (string, string, error) { return "ya29.discovered-value", "fixture provider", nil }})
+	defer app.Close()
+	status, err := app.DiscoverAntigravityToken()
+	if err == nil || status.HasToken || app.GetAntigravityToken() != "" {
+		t.Fatal("failed persistence reported a successful binding")
+	}
+}
+
+func TestManualCredentialReadbackUsesSameDataRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	paths, _ := appdata.Resolve(t.TempDir())
+	app := NewAppServiceWithOptions(nil, paths, nil, Options{NoAutoCredentials: true})
+	if err := app.SetAntigravityToken("ya29.local-mock-compatible-value", "manual"); err != nil {
+		t.Fatal(err)
+	}
+	app.Close()
+	reopened := NewAppServiceWithOptions(nil, paths, nil, Options{NoAutoCredentials: true})
+	defer reopened.Close()
+	if !reopened.GetTokenStatus().HasToken || reopened.GetAntigravityToken() != "ya29.local-mock-compatible-value" {
+		t.Fatal("saved local binding was lost on reopen")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".antigravity_token")); !os.IsNotExist(err) {
+		t.Fatal("local binding wrote the daily HOME")
+	}
+}

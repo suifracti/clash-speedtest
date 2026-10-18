@@ -407,11 +407,7 @@ func (a *App) SetToken(token string) error {
 	if parsed == "" {
 		return fmt.Errorf("Token 格式无效，请检查")
 	}
-	a.app.SetAntigravityToken(parsed, "手动输入")
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		_ = os.WriteFile(home+"/.antigravity_token", []byte(parsed+"\n"), 0600)
-	}
-	return nil
+	return a.app.SetAntigravityToken(parsed, "手动输入")
 }
 
 func (a *App) StartOAuthLogin() error {
@@ -432,7 +428,9 @@ func (a *App) StartOAuthLogin() error {
 			return
 		}
 		if a != nil && a.app != nil {
-			a.app.SetAntigravityToken(token, "Google OAuth 登录")
+			if err := a.app.SetAntigravityToken(token, "Google OAuth 登录"); err != nil && a.emitter != nil {
+				a.emitter.Emit(application.Event{Type: "antigravity_login_failed", Payload: map[string]any{"error": err.Error()}})
+			}
 		}
 	}()
 	return nil
