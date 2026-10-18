@@ -4,8 +4,9 @@ import {computed,ref} from 'vue'
 import type {ServiceRule} from '../domain'
 import Icon from './Icon.vue'
 const props=defineProps<{modelValue:string[];catalog:ServiceRule[]}>(),emit=defineEmits<{ 'update:modelValue':[value:string[]] }>(),search=ref(''),category=ref('')
-const categories=computed(()=>[...new Set(props.catalog.map(s=>s.category).filter(Boolean))])
-const visible=computed(()=>props.catalog.filter(s=>(!category.value||s.category===category.value)&&(!search.value||(s.name+' '+s.description).toLowerCase().includes(search.value.trim().toLowerCase()))))
+const selectable=computed(()=>props.catalog.filter(s=>!s.superseded_by))
+const categories=computed(()=>[...new Set(selectable.value.map(s=>s.category).filter(Boolean))])
+const visible=computed(()=>selectable.value.filter(s=>(!category.value||s.category===category.value)&&(!search.value||(s.name+' '+s.description).toLowerCase().includes(search.value.trim().toLowerCase()))))
 function toggle(id:string){emit('update:modelValue',props.modelValue.includes(id)?props.modelValue.filter(s=>s!==id):[...props.modelValue,id])}
 function selectVisible(){emit('update:modelValue',[...new Set([...props.modelValue,...visible.value.map(s=>s.service_id)])])}
 function clearVisible(){const ids=new Set(visible.value.map(s=>s.service_id));emit('update:modelValue',props.modelValue.filter(id=>!ids.has(id)))}

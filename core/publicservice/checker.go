@@ -29,6 +29,7 @@ const (
 // deliberately code-owned; callers cannot supply an arbitrary target URL.
 type Rule struct {
 	ServiceID        string `json:"service_id"`
+	SupersededBy     string `json:"superseded_by,omitempty"`
 	Name             string `json:"name"`
 	Category         string `json:"category"`
 	Region           string `json:"region,omitempty"`
@@ -147,14 +148,14 @@ var catalog = []Rule{
 		RedirectPolicy:   "do_not_follow", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
 	},
 	{
-		ServiceID: "netflix_unlock", Name: "Netflix 片目与地区检查", RuleVersion: 2,
-		Category: "流媒体解锁", Region: "全球", ResultKind: "streaming_unlock", Description: "比较版权片与宽松片页面，不把登录页算通过；不代表实际播放解锁。",
+		ServiceID: "netflix_unlock", Name: "Netflix 片目与地区检查", RuleVersion: 3,
+		Category: "流媒体解锁", Region: "全球", ResultKind: "streaming_unlock", Description: "自动经被测节点查询目标IPv4，保留原Host与证书校验；比较两部片目及明确国家限制，不代表播放。",
 		TargetURL: "https://www.netflix.com/title/81280792 + /title/70143836", Method: http.MethodGet,
-		SuccessCriterion: "按两部测试片目的页面响应分档；规则会随 Netflix 片库变化，结果不读取播放分片",
-		RedirectPolicy:   "follow_same_service", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
+		SuccessCriterion: "经同一节点DoH查询一次并固定本轮IPv4；每片目最多1MiB，保留TTL、原域名与证书校验；片目可访问/地区提示分开，不读取播放分片",
+		RedirectPolicy:   "follow_same_host", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: 1024 * 1024,
 	},
 	{
-		ServiceID: netflixIPv4Service, Name: "Netflix 片目检查（经节点 DNS · IPv4）", RuleVersion: 2,
+		ServiceID: netflixIPv4Service, SupersededBy: "netflix_unlock", Name: "Netflix 片目检查（经节点 DNS · IPv4）", RuleVersion: 2,
 		Category: "流媒体解锁", Region: "全球", ResultKind: "streaming_unlock",
 		Description: "可选：经同一被测节点向Cloudflare查询一次IPv4，再检查片目；额外DNS响应最多16KiB，原域名和证书校验保留，不代表播放。",
 		TargetURL:   "https://www.netflix.com/title/81280792 + /title/70143836", Method: http.MethodGet,
@@ -481,7 +482,7 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	phases := &requestPhases{}
 	client.Transport = phases.wrap(client.Transport, c.ClientFactory == nil)
 	defer phases.attach(&final)
-	if rule.ServiceID == netflixIPv4Service {
+	if netflixUsesResolvedIPv4(rule) {
 		resolved, evidence, failure := prepareNetflixIPv4(ctx, client, phases)
 		defer func() { evidence.attach(&final) }()
 		if failure != nil {

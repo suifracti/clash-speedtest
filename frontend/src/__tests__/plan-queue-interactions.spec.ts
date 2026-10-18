@@ -194,3 +194,12 @@ it('defaults to one explicit service observation and retains optional repeated s
  expect(api.startAttempt).toHaveBeenCalledWith('service',expect.objectContaining({profile_id:'sub-a',node_key:'node-a',node_identity_key:'identity-a',config_revision_key:'revision-a',service_id:'cloudflare_204',timeout_seconds:15,drift_samples:1}))
  expect(w.queue.value[0].attempt?.persistence_state).toBe('saved')
 })
+
+it('offers one Netflix choice and retains the temporary alias for history only',async()=>{
+ w.project.value='service';w.serviceIds.value=['netflix_unlock'];
+ const rule={service_id:'netflix_unlock',name:'Netflix',category:'Streaming',description:'Automatic selected-node DNS',result_kind:'streaming_unlock',success_criterion:'',timeout_seconds:15}
+ w.catalog.value=[rule,{...rule,service_id:'netflix_unlock_ipv4',name:'Netflix temporary alias',superseded_by:'netflix_unlock'}];w.openPlan([node]);attach(TestPlanModal);await flushPromises()
+ const labels=Array.from(document.querySelectorAll('.service-picker-list label'))
+ expect(labels).toHaveLength(1);expect(labels[0].textContent).toContain('Netflix');expect(labels[0].textContent).not.toContain('temporary alias')
+ expect(w.catalog.value).toHaveLength(2);expect(w.plan.value?.serviceIds).toEqual(['netflix_unlock'])
+})

@@ -75,3 +75,10 @@ it('retains evidenced v2 flapping even with additional unknown samples',()=>{
  const a=attempt('netflix_unlock','flapping');a.result!.details={sample_semantics_version:'2',sample_total:'3',sample_success:'1',sample_failure:'1',sample_unknown:'1',sample_completion:'partial'}
  expect(serviceAvailability(a)).toBe(0);expect(servicePassed(a)).toBe(false);expect(durableRoundPoints([round([a])],'service')[0].value).toBe(0)
 })
+
+it('keeps different service sampling conditions in separate comparison groups',()=>{
+ const one=attempt('netflix_unlock','unlocked'),four=attempt('netflix_unlock','unlocked')
+ one.rule.drift_samples=1;four.rule.drift_samples=4
+ expect(serviceComparisonGroup([one],['netflix_unlock']).complete).toBe(true)
+ expect(serviceComparisonGroup([one],['netflix_unlock']).key).not.toBe(serviceComparisonGroup([four],['netflix_unlock']).key)
+})

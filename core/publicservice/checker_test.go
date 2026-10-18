@@ -128,7 +128,8 @@ func TestCheckerSeparatesCloudflareChallengeAndNetflixUnlockTier(t *testing.T) {
 		}
 		return fixtureResponse(request, http.StatusNotFound, "text/html", "Oh no!"), nil
 	})}
-	result := netflixChecker.Check(context.Background(), monitor.MonitoredNode{}, netflix, DefaultTimeout)
+	client, _ := netflixChecker.ClientFactory(monitor.MonitoredNode{}, DefaultTimeout)
+	result := netflixChecker.checkOnce(context.Background(), client, monitor.MonitoredNode{}, netflix, time.Now())
 	if result.Outcome != "originals_only" || result.RequestCount != 2 {
 		t.Fatalf("expected originals-only tier from independent fixtures, got %+v", result)
 	}

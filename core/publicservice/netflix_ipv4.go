@@ -14,6 +14,10 @@ import (
 const netflixIPv4Service = "netflix_unlock_ipv4"
 const netflixIPv4DNS = "https://cloudflare-dns.com/dns-query?name=www.netflix.com&type=A"
 
+func netflixUsesResolvedIPv4(rule Rule) bool {
+	return rule.ServiceID == netflixIPv4Service || (rule.ServiceID == "netflix_unlock" && rule.RuleVersion >= 3)
+}
+
 var errNetflixDNSHost = errors.New("当前解析结果仅适用于 www.netflix.com:443；不回退到其它解析方式")
 
 // One lookup belongs to one checker/selected node. It is never a global DNS

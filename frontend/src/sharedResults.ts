@@ -46,7 +46,7 @@ export function serviceComparisonGroup(attempts:(Attempt|undefined)[],ids:string
  const byId=new Map(attempts.filter((a):a is Attempt=>!!a).map(a=>[a.service_id,a]))
  const businessIDs=ids.filter(id=>!serviceIsProfile(byId.get(id),id))
  const complete=businessIDs.length>0&&businessIDs.every(id=>serviceAvailability(byId.get(id))!==null)
- const key=JSON.stringify(businessIDs.map(id=>{const r=byId.get(id)?.rule;return [id,r?[r.rule_version??'unknown',r.method??'unknown',r.target_url,r.success_criterion??'unknown',r.maximum_bytes??'unknown',r.maximum_duration_ns??'unknown',r.network_path_method??'unknown',r.physical_interface??'unknown',r.dns_mode??'unknown',servicePath(byId.get(id))]:null]}))
+ const key=JSON.stringify(businessIDs.map(id=>{const r=byId.get(id)?.rule;return [id,r?[r.rule_version??'unknown',r.method??'unknown',r.target_url,r.success_criterion??'unknown',String(r.drift_samples??byId.get(id)?.result?.details?.sample_planned??'unknown'),r.maximum_bytes??'unknown',r.maximum_duration_ns??'unknown',r.network_path_method??'unknown',r.physical_interface??'unknown',r.dns_mode??'unknown',servicePath(byId.get(id))]:null]}))
  return {complete,key}
 }
 

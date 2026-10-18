@@ -44,6 +44,9 @@ func TestRateLimitStopsRemainingSamples(t *testing.T) {
 				return r, nil
 			})}
 			rule, _ := RuleFor(tc.service)
+			if tc.service == "netflix_unlock" {
+				rule.RuleVersion = 2
+			} // Retain legacy post-DNS rate-limit coverage; current default DNS path has a separate fixture.
 			r := c.Check(context.Background(), monitor.MonitoredNode{}, rule, time.Second)
 			wantCalls := 1
 			wantSuccess := "0"

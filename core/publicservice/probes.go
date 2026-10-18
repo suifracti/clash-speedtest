@@ -457,7 +457,7 @@ func checkNetflix(ctx context.Context, client *http.Client, rule Rule, started t
 	clone := *client
 	clone.CheckRedirect = func(request *http.Request, via []*http.Request) error {
 		host := strings.ToLower(request.URL.Hostname())
-		if rule.ServiceID == netflixIPv4Service && (host != "www.netflix.com" || request.URL.User != nil || (request.URL.Port() != "" && request.URL.Port() != "443")) {
+		if netflixUsesResolvedIPv4(rule) && (host != "www.netflix.com" || request.URL.User != nil || (request.URL.Port() != "" && request.URL.Port() != "443")) {
 			return http.ErrUseLastResponse
 		}
 		if len(via) >= 5 || request.URL.Scheme != "https" || (host != "netflix.com" && !strings.HasSuffix(host, ".netflix.com")) {
@@ -555,7 +555,7 @@ func netflixGET(ctx context.Context, client *http.Client, target string, result 
 // discard the evidence already obtained. The original rule keeps its old method.
 func netflixPageEvidence(result *Result, key string, page netflixPage, rule Rule) (available, blocked bool) {
 	available = netflixTitleAvailable(page)
-	if rule.ServiceID == netflixIPv4Service {
+	if netflixUsesResolvedIPv4(rule) {
 		blocked = netflixTitleRegionBlocked(page)
 		available = available && !page.truncated && !blocked
 		result.Details[key+"_http_status"] = strconv.Itoa(page.status)

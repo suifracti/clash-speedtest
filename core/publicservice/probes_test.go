@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/faceair/clash-speedtest/core/monitor"
 )
@@ -37,7 +38,13 @@ func TestServiceEvidenceDoesNotConfuseAccessWithAvailability(t *testing.T) {
 			checker := Checker{ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
 				return fixtureResponse(req, tc.status, "text/html", tc.body), nil
 			})}
-			r := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
+			var r Result
+			if tc.service == "netflix_unlock" {
+				client, _ := checker.ClientFactory(monitor.MonitoredNode{}, DefaultTimeout)
+				r = checker.checkOnce(context.Background(), client, monitor.MonitoredNode{}, rule, time.Now())
+			} else {
+				r = checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
+			}
 			if r.Outcome != tc.outcome {
 				t.Fatalf("got %s: %s", r.Outcome, r.Summary)
 			}
@@ -242,7 +249,8 @@ func TestModernNetflixTitleDetection(t *testing.T) {
 		return fixtureResponse(req, http.StatusNotFound, "text/html", "Not found"), nil
 	})}
 
-	result := checker.Check(context.Background(), monitor.MonitoredNode{}, netflix, DefaultTimeout)
+	client, _ := checker.ClientFactory(monitor.MonitoredNode{}, DefaultTimeout)
+	result := checker.checkOnce(context.Background(), client, monitor.MonitoredNode{}, netflix, time.Now())
 	if result.Outcome != "unlocked" {
 		t.Fatalf("expected unlocked tier, got %+v", result)
 	}
