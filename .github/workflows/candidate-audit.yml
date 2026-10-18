@@ -77,6 +77,12 @@ jobs:
   macos-contracts-build:
     name: Mac offline contracts and native build
     runs-on: macos-latest
+    env:
+      # Match Go 1.25's supported floor; do not inherit CI's current macOS.
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+      CGO_CFLAGS: '-O2 -g -mmacosx-version-min=12.0'
+      CGO_CXXFLAGS: '-O2 -g -mmacosx-version-min=12.0'
+      CGO_LDFLAGS: '-O2 -g -mmacosx-version-min=12.0'
     steps:
       - uses: actions/checkout@v4
         with:
