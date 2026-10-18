@@ -114,7 +114,7 @@ func checkPing0(ctx context.Context, client *http.Client, rule Rule, started tim
 		IsIDC    *bool           `json:"isidc"`
 		IPRisk   *int            `json:"iprisk"`
 	}
-	if json.Unmarshal(body, &payload) != nil || strings.TrimSpace(payload.IP) == "" {
+	if json.Unmarshal(body, &payload) != nil || net.ParseIP(strings.TrimSpace(payload.IP)) == nil {
 		result.Outcome = "criteria_mismatch"
 		result.FailurePhase = "json_document"
 		result.ErrorMessage = "Ping0 响应未包含可识别的出口 IP"
@@ -151,7 +151,7 @@ func checkIPPure(ctx context.Context, client *http.Client, rule Rule, started ti
 		IsResidential *bool           `json:"isResidential"`
 		IsBroadcast   *bool           `json:"isBroadcast"`
 	}
-	if json.Unmarshal(body, &payload) != nil || strings.TrimSpace(payload.IP) == "" {
+	if json.Unmarshal(body, &payload) != nil || net.ParseIP(strings.TrimSpace(payload.IP)) == nil {
 		result.Outcome = "criteria_mismatch"
 		result.FailurePhase = "json_document"
 		result.ErrorMessage = "IPPure 响应未包含可识别的出口 IP"
@@ -495,8 +495,7 @@ func netflixTitleAvailable(page netflixPage) bool {
 		strings.Contains(text, "nflx://www.netflix.com/title/") ||
 		strings.Contains(text, `property="al:ios:url"`) ||
 		strings.Contains(text, `property="al:android:url"`) ||
-		strings.Contains(text, `data-uia="title-info"`) ||
-		strings.Contains(text, `<h1>`)
+		strings.Contains(text, `data-uia="title-info"`)
 	hasNotFoundMarker := strings.Contains(text, "oh no!") ||
 		strings.Contains(text, "page not found") ||
 		strings.Contains(text, "not available") ||

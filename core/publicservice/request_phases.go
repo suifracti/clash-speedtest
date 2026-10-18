@@ -24,7 +24,11 @@ type requestPhases struct {
 	dns                time.Duration
 	firstByte          time.Duration
 	dialCount          int
+	dialFailures       int
+	dialError          string
 	tlsCount           int
+	tlsFailures        int
+	tlsError           string
 	dnsCount           int
 	byteCount          int
 	requests           int
@@ -53,6 +57,10 @@ func (p *requestPhases) wrap(original http.RoundTripper, proxyDial bool) http.Ro
 				p.mu.Lock()
 				p.proxyDial += time.Since(started)
 				p.dialCount++
+				if err != nil {
+					p.dialFailures++
+					p.dialError = sanitizeTransportError(err)
+				}
 				p.mu.Unlock()
 				return conn, err
 			}
@@ -106,7 +114,7 @@ func (t phaseTransport) RoundTrip(request *http.Request) (*http.Response, error)
 			t.phases.mu.Unlock()
 		},
 		TLSHandshakeStart: func() { startMu.Lock(); tlsStart = time.Now(); startMu.Unlock() },
-		TLSHandshakeDone: func(_ tls.ConnectionState, _ error) {
+		TLSHandshakeDone: func(_ tls.ConnectionState, err error) {
 			startMu.Lock()
 			start := tlsStart
 			startMu.Unlock()
@@ -116,6 +124,10 @@ func (t phaseTransport) RoundTrip(request *http.Request) (*http.Response, error)
 			t.phases.mu.Lock()
 			t.phases.tls += time.Since(start)
 			t.phases.tlsCount++
+			if err != nil {
+				t.phases.tlsFailures++
+				t.phases.tlsError = sanitizeTransportError(err)
+			}
 			t.phases.mu.Unlock()
 		},
 		WroteRequest: func(info httptrace.WroteRequestInfo) {
@@ -173,9 +185,19 @@ func (p *requestPhases) attach(result *Result) {
 	result.Details["response_body_read_ms"] = format(p.body)
 	if p.dialCount > 0 {
 		result.Details["proxy_connect_ms"] = format(p.proxyDial)
+		result.Details["proxy_connect_attempts"] = strconv.Itoa(p.dialCount)
+		result.Details["proxy_connect_failures"] = strconv.Itoa(p.dialFailures)
+		if p.dialError != "" {
+			result.Details["proxy_connect_error"] = p.dialError
+		}
 	}
 	if p.tlsCount > 0 {
 		result.Details["tls_handshake_ms"] = format(p.tls)
+		result.Details["tls_handshake_attempts"] = strconv.Itoa(p.tlsCount)
+		result.Details["tls_handshake_failures"] = strconv.Itoa(p.tlsFailures)
+		if p.tlsError != "" {
+			result.Details["tls_handshake_error"] = p.tlsError
+		}
 	}
 	if p.byteCount > 0 {
 		result.Details["first_response_byte_ms"] = format(p.firstByte)

@@ -24,6 +24,8 @@ func TestServiceEvidenceDoesNotConfuseAccessWithAvailability(t *testing.T) {
 		{"hulu forbidden is not proven geoblocking", "hulu_jp_unlock", 403, `forbidden`, "http_rejected"},
 		{"hulu homepage is not playback", "hulu_jp_unlock", 200, `<html>Welcome</html>`, "reachable"},
 		{"netflix login is not a title", "netflix_unlock", 200, `<html>Sign in</html>`, "unknown"},
+		{"netflix login heading is not a title", "netflix_unlock", 200, `<html><h1>Sign in</h1></html>`, "unknown"},
+		{"netflix maintenance heading is not a title", "netflix_unlock", 200, `<html><h1>Service temporarily unavailable</h1></html>`, "unknown"},
 		{"empty DNS document", "cloudflare_doh", 200, `{}`, "criteria_mismatch"},
 		{"soft challenge is not access", "grok_web", 200, `<title>Just a moment...</title><script src="/cdn-cgi/challenge-platform/x"></script>`, "challenge"},
 	} {
@@ -59,6 +61,27 @@ func TestMissingIPQualityFieldsStayUnknown(t *testing.T) {
 		}
 		if result.Details[score] != "未提供" {
 			t.Fatalf("missing score became low risk: %+v", result)
+		}
+	}
+}
+
+func TestIPQualityRequiresValidAddress(t *testing.T) {
+	for _, id := range []string{"ping0_ip_quality", "ippure_ip_quality"} {
+		for _, address := range []string{"not-an-ip", "error", "203.0.113.999", "203.0.113.7", "2001:db8::7"} {
+			t.Run(id+"/"+address, func(t *testing.T) {
+				rule, _ := RuleFor(id)
+				checker := Checker{ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+					return fixtureResponse(req, 200, "application/json", `{"ip":"`+address+`"}`), nil
+				})}
+				result := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
+				valid := address == "203.0.113.7" || address == "2001:db8::7"
+				if valid && (result.Outcome != "profiled" || result.Details["ip"] != address) {
+					t.Fatalf("valid address lost: %+v", result)
+				}
+				if !valid && (result.Outcome != "criteria_mismatch" || result.Details["ip"] != "") {
+					t.Fatalf("invalid address became a profile: %+v", result)
+				}
+			})
 		}
 	}
 }
@@ -213,6 +236,3 @@ func TestModernNetflixTitleDetection(t *testing.T) {
 		t.Fatalf("expected region SG, got %q", result.Details["service_region"])
 	}
 }
-
-
-
