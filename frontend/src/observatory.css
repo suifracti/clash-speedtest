@@ -164,3 +164,19 @@
   .observatory-app .node-list.observatory-matrix .node-exit-summary { position:static; }
   .observatory-app .node-list.observatory-matrix .observatory-service-cells { grid-row:1; }
 }
+/* Header labels should not inherit data-row height. */
+.observatory-app .quality-view .node-list .quality-heading,
+.observatory-app .node-list .node-heading { min-height:36px; padding-top:7px; padding-bottom:7px; }
+.observatory-app .scope-overview { display:grid; }
+@media(min-width:741px) and (max-width:1279px) {
+  .observatory-app .node-list .quality-heading.project-latency .quality-heading-cols,
+  .observatory-app .node-list .quality-metrics.single-project.project-latency .quality-latency {
+    grid-template-columns:minmax(110px,1fr) minmax(175px,1.6fr); gap:8px 12px;
+  }
+  .observatory-app .node-list .quality-heading.project-latency .quality-heading-cols > span:last-child { display:none; }
+  .observatory-app .node-list .quality-metrics.single-project .quality-col-meta { grid-column:1/-1; }
+  .observatory-app .node-list .quality-col-p50 > strong,
+  .observatory-app .node-list .quality-pill-row > strong { font-size:20px; }
+  .observatory-app .node-list .quality-distribution { gap:8px; }
+}
+.observatory-app .scope-overview .orbit-meta { justify-content:flex-start; justify-self:stretch; }
