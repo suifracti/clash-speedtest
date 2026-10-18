@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"strings"
 	"testing"
 	"time"
@@ -137,5 +138,29 @@ func TestMultiSampleReconnectReachesTransport(t *testing.T) {
 	r := c.Check(context.Background(), monitor.MonitoredNode{}, rule, time.Second)
 	if r.Outcome != "matched" || transport.closed != 1 {
 		t.Fatalf("close calls=%d outcome=%s", transport.closed, r.Outcome)
+	}
+}
+
+func TestMultiSampleConnectionReuseIsObservedNotAssumed(t *testing.T) {
+	for _, reused := range []bool{false, true} {
+		calls := 0
+		c := Checker{DriftSamples: 4, ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+			calls++
+			trace := httptrace.ContextClientTrace(req.Context())
+			if trace.GotConn != nil {
+				trace.GotConn(httptrace.GotConnInfo{Reused: reused && calls%2 == 0})
+			}
+			return fixtureResponse(req, 204, "", ""), nil
+		})}
+		rule, _ := RuleFor("cloudflare_204")
+		r := c.Check(context.Background(), monitor.MonitoredNode{}, rule, time.Second)
+		wantReused := "0"
+		if reused {
+			wantReused = "2"
+		}
+		d := r.Details
+		if d["http_connections_observed"] != "4" || d["http_connections_reused"] != wantReused || d["keepalive_requested_probes"] != "2" || d["idle_close_requested_probes"] != "1" || d["connection_observation_scope"] != "http_connections_not_node_sessions" || d["keepalive_probes"] != "" || d["reconnect_probes"] != "" {
+			t.Fatalf("requested operations were presented as observed connection behavior: %v", d)
+		}
 	}
 }

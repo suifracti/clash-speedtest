@@ -517,9 +517,9 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 		}
 		var mode string
 		if i%2 == 0 {
-			mode = "keepalive"
+			mode = "keepalive_requested"
 		} else {
-			mode = "reconnect"
+			mode = "close_http_idle_requested"
 			if client != nil {
 				client.CloseIdleConnections()
 			}
@@ -548,7 +548,7 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	ipSamples := 0
 	var observedIPs, observedColos, observedOutcomes []string
 	seenIPs, seenColos, seenOutcomes := map[string]bool{}, map[string]bool{}, map[string]bool{}
-	keepaliveCount, reconnectCount := 0, 0
+	keepaliveCount, idleCloseCount := 0, 0
 	var firstUnknown *Result
 	var limitedSample *Result
 
@@ -557,10 +557,10 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 			r := sample.res
 			limitedSample = &r
 		}
-		if sample.mode == "keepalive" {
+		if sample.mode == "keepalive_requested" {
 			keepaliveCount++
-		} else if sample.mode == "reconnect" {
-			reconnectCount++
+		} else if sample.mode == "close_http_idle_requested" {
+			idleCloseCount++
 		}
 		if ip := net.ParseIP(sample.ip); ip != nil {
 			ipSamples++
@@ -632,8 +632,8 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 		details["sample_success_rate"] = fmt.Sprintf("%d%%", successSamples*100/confirmedSamples)
 	}
 	details["sample_success_rate_scope"] = "confirmed_samples_only"
-	details["keepalive_probes"] = fmt.Sprint(keepaliveCount)
-	details["reconnect_probes"] = fmt.Sprint(reconnectCount)
+	details["keepalive_requested_probes"] = fmt.Sprint(keepaliveCount)
+	details["idle_close_requested_probes"] = fmt.Sprint(idleCloseCount)
 	details["ip_drift_detected"] = "unknown"
 	details["exit_observation_status"] = "unobserved"
 	switch {

@@ -33,6 +33,8 @@ type requestPhases struct {
 	tlsError           string
 	dnsCount           int
 	byteCount          int
+	connections        int
+	reusedConnections  int
 	requests           int
 	written            int
 	network            time.Duration
@@ -108,6 +110,14 @@ func (t phaseTransport) RoundTrip(request *http.Request) (*http.Response, error)
 	var dnsStart, tlsStart time.Time
 	var startMu sync.Mutex
 	trace := &httptrace.ClientTrace{
+		GotConn: func(info httptrace.GotConnInfo) {
+			t.phases.mu.Lock()
+			t.phases.connections++
+			if info.Reused {
+				t.phases.reusedConnections++
+			}
+			t.phases.mu.Unlock()
+		},
 		DNSStart: func(httptrace.DNSStartInfo) { startMu.Lock(); dnsStart = time.Now(); startMu.Unlock() },
 		DNSDone: func(httptrace.DNSDoneInfo) {
 			startMu.Lock()
@@ -190,6 +200,10 @@ func (p *requestPhases) attach(result *Result) {
 	result.RequestCount = p.requests
 	result.Details["request_count_kind"] = "http_transport_attempts_including_pre_header_failure"
 	result.Details["http_requests_written"] = strconv.Itoa(p.written)
+	result.Details["http_connections_observed"] = strconv.Itoa(p.connections)
+	result.Details["http_connections_reused"] = strconv.Itoa(p.reusedConnections)
+	result.Details["connection_observation_scope"] = "http_connections_not_node_sessions"
+	result.Details["connection_observation_note"] = "按 HTTP 请求获取连接的事件计数，不是独立连接数；不证明节点底层会话重连"
 	if p.physicalConstraint {
 		result.Details["physical_constraint_failure"] = "true"
 	}
