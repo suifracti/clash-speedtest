@@ -333,8 +333,13 @@ func streamingRule(id, name, region, target, description, criterion string) Rule
 }
 
 func Catalog() []Rule {
-	result := make([]Rule, len(catalog))
-	copy(result, catalog)
+	result := make([]Rule, 0, len(catalog))
+	for _, rule := range catalog {
+		// Keep old result/rule decoding, but withdraw the challenged provider from new plans.
+		if rule.ServiceID != "ippure_ip_quality" {
+			result = append(result, rule)
+		}
+	}
 	return result
 }
 

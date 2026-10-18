@@ -65,7 +65,7 @@ it('refreshes the completed saved round without a manual click, but not while th
  expect(wrapper!.get('.site-metrics').text()).toContain('未测')
  w!.running.value=false;await flushPromises()
  expect(wrapper!.get('.site-metrics').text()).toContain('982 ms')
- expect(wrapper!.get('.site-metrics').text()).toContain('P95 样本不足')
+ expect(wrapper!.get('.site-metrics').text()).not.toContain('P95 982')
  expect(w!.sortSnapshots.value).toEqual(snapshot)
  expect(api.startLatency).not.toHaveBeenCalled();expect(api.startAttempt).not.toHaveBeenCalled()
 })
@@ -89,7 +89,7 @@ it('refreshes after real runPlan polling and raw measurement-round readback befo
  const {persistence_state:_,...rawResult}=saved
  vi.mocked(api.measurementRounds).mockImplementation(async()=>available?[{round_id:'native-round',trigger_type:'manual',started_at:at,state:'finished',items:[{...node,request_id:requestId,project:'latency',execution_state:'completed',persistence_state:'saved',latency:rawResult as LatencyTest}]}]:[])
  attachSavedSnapshot();await flushPromises()
- expect(wrapper!.get('.site-metrics').text()).toContain('0/7')
+ expect(wrapper!.get('.site-metrics').text()).toContain('0 / 7 次响应')
  const previousReads=readQualityMock.mock.calls.length
  vi.useFakeTimers({toFake:['Date','setTimeout','clearTimeout']})
  w!.plan.value={nodes:[node],projects:['latency'],target:'all',samples:1,timeout:10,concurrency:1,downloadMiB:1,downloadSeconds:1,serviceIds:[],repeats:1}
@@ -97,9 +97,9 @@ it('refreshes after real runPlan polling and raw measurement-round readback befo
  vi.setSystemTime(new Date(finished));await vi.advanceTimersByTimeAsync(1200);await run;await flushPromises()
  expect(w!.busy.value).toBe(false)
  expect(api.batch).toHaveBeenCalledTimes(1);expect(api.measurementRounds).toHaveBeenCalled()
- expect(wrapper!.get('.site-metrics').text()).toContain('1/1')
+ expect(wrapper!.get('.site-metrics').text()).toContain('1 / 1 次响应')
  expect(wrapper!.get('.site-metrics').text()).toContain('5118 ms')
- expect(wrapper!.get('.site-metrics').text()).toContain('P95 样本不足')
+ expect(wrapper!.get('.site-metrics').text()).not.toContain('P95 982')
  expect(readQualityMock.mock.calls.length).toBeGreaterThan(previousReads)
  expect(Date.parse(readQualityMock.mock.calls.at(-1)![2])).toBeGreaterThanOrEqual(Date.parse(finished))
  expect(w!.latest(node)?.persistence_state).toBe('saved')
@@ -116,7 +116,7 @@ it('refreshes a later successful save without treating a failed save as saved ev
  vi.setSystemTime(new Date('2026-10-10T00:01:02Z'));saved=true
  w!.mergeAttempt('download',{...attempt,persistence_state:'saved'});await flushPromises()
  expect(wrapper!.get('.quality-download').text()).toContain('最近检测：失败')
- expect(wrapper!.get('.quality-download').text()).toContain('无有效速度')
+ expect(wrapper!.get('.quality-download').text()).toContain('本次未取得有效速度')
  expect(api.startAttempt).not.toHaveBeenCalled()
 })
 

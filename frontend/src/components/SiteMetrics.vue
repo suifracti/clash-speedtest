@@ -1,64 +1,66 @@
 <script setup lang="ts">
-import {computed} from 'vue'
+import {computed,ref,watch} from 'vue'
 import {date,type LatencyTest} from '../domain'
-import {qualityGroups,type SiteQualitySummary} from '../nodeQuality'
+import {type SiteQualitySummary} from '../nodeQuality'
 import {latencyTargets,latencyTargetId} from '../latencyTargets'
+import {siteRoundHistory} from '../siteRoundPresentation'
+import TrendChart from './TrendChart.vue'
+import HealthBars from './HealthBars.vue'
+import RoundResults from './RoundResults.vue'
 const props=defineProps<{summaries?:SiteQualitySummary[];targetIds:string[];tests?:LatencyTest[];error?:string}>()
-defineEmits<{history:[target:string]}>()
+const emit=defineEmits<{history:[target:string]}>(),active=ref(''),fixedRound=ref('')
 const states:Record<string,string>={unmeasured:'未测',responded:'已响应',partial:'部分响应',failed:'无响应',cancelled:'已取消',not_executed:'未执行',source_limited:'源限流'}
-const sites=computed(()=>props.targetIds.map(id=>({site:latencyTargets.find(t=>t.id===id)!,summary:props.summaries?.find(s=>s.targetId===id)})).filter(s=>s.site))
+const sites=computed(()=>props.targetIds.flatMap(id=>{
+ const site=latencyTargets.find(t=>t.id===id),aggregate=props.summaries?.find(s=>s.targetId===id)
+ if(!site)return []
+ const rounds=siteRoundHistory(aggregate,props.tests),summary=rounds[0]?.summary||aggregate
+ return [{site,aggregate,summary,rounds,points:rounds.map(r=>r.point).reverse()}]
+}))
 const ms=(value:number|null|undefined)=>value==null?'—':Math.round(value)+' ms'
 const tone=(s?:SiteQualitySummary)=>!s?.total?'muted':s.successRate===100?'good':s.success?'warn':'bad'
 const state=(s?:SiteQualitySummary)=>props.error||s?.readError?'读取失败':!s?'读取中…':!s.readComplete&&!s.total?'读取不完整':states[s.state]
-const hasP95=computed(()=>sites.value.some(({summary:s})=>s&&s.success>=20))
-const commonTime=computed(()=>{const times=sites.value.map(({summary:s})=>s?.lastAt).filter(Boolean);return times.length&&new Set(times.map(t=>date(t))).size===1?times[0]:''})
-const notes=computed(()=>Object.fromEntries(sites.value.map(({site,summary:s})=>{
- const notes=new Set<string>()
- if(s?.observations.sourceLimited)notes.add('429 限流')
- if(s?.group)for(const test of props.tests||[]){
-  if(!qualityGroups([test],[],site.id).some(g=>g.key===s.group!.key))continue
-  for(const sample of test.samples||[]){
-   const at=Date.parse(sample.timestamp)
-   if(!Number.isFinite(at)||latencyTargetId(sample.target||test.target||'')!==site.id||at<Date.parse(s.since)||at>Date.parse(s.until))continue
-   const status=sample.error?.match(/\bHTTP\s*(\d{3})\b/i)?.[1]
-   if(status&&Number(status)>=400&&status!=='429')notes.add(status+' 拒绝')
-  }
- }
- if(s&&!s.readComplete)notes.add('读取不完整')
- else if(s?.reasons.includes('ambiguous_latest_group'))notes.add('条件不唯一')
- else if(s?.group&&!s.group.comparable)notes.add('条件未确认')
- if(s?.success&&s.success<5)notes.add('样本少')
- return [site.id,[...notes].join(' · ')]
-})))
+const current=computed(()=>sites.value.find(s=>s.site.id===active.value))
+const selectedPoint=computed(()=>current.value?.points.find(p=>p.id===fixedRound.value))
+function choose(id:string,round=''){active.value=id;fixedRound.value=round}
+watch(()=>props.targetIds,ids=>{if(active.value&&!ids.includes(active.value)){active.value='';fixedRound.value=''}},{deep:true})
+function note(id:string){const data=sites.value.find(s=>s.site.id===id),test=data?.rounds[0]?.test
+ if(!test)return ''
+ const errors=(test.samples||[]).filter(s=>latencyTargetId(s.target||test.target||'')===id).map(s=>s.error||'')
+ if(errors.some(s=>/HTTP\s*429/.test(s)))return '429 限流'
+ const code=errors.map(e=>e.match(/HTTP\s*(\d{3})/)?.[1]).find(c=>c&&+c>=400)
+ if(code)return code+' 拒绝'
+ if(errors.some(e=>/deadline|timeout|超时/i.test(e)))return '请求超时'
+ return ''
+}
 </script>
-
 <template>
  <section class="site-metrics" aria-label="逐站响应率、样本和延迟分布">
-  <div class="site-metrics-scroll" tabindex="0" aria-label="逐站指标，可横向滚动">
-   <table class="site-metrics-table">
-    <thead><tr><th scope="col">站点</th><th v-for="{site} in sites" :key="site.id" scope="col"><button type="button" :aria-label="'查看 '+site.name+' 原始历史'" @click="$emit('history',site.id)">{{site.name}} <span aria-hidden="true">↗</span></button></th></tr></thead>
-    <tbody>
-     <tr><th scope="row">中位 P50</th><td v-for="{site,summary:s} in sites" :key="site.id" :data-site="site.id"><strong v-if="s?.total&&!error&&!s.readError">{{ms(s.p50)}}</strong><span v-else :class="error||s?.readError?'bad':'muted'">{{state(s)}}</span></td></tr>
-     <tr><th scope="row" title="成功响应次数 / 总样本数；HTTP 响应不等于业务验证通过">响应 / 样本</th><td v-for="{site,summary:s} in sites" :key="site.id"><template v-if="s?.total&&!error&&!s.readError"><span :class="tone(s)">{{s.successRate==null?'—':s.successRate.toFixed(0)+'%'}}</span><span class="site-samples"> · {{s.success}}/{{s.total}}</span></template><span v-else class="muted">—</span></td></tr>
-     <tr v-if="hasP95"><th scope="row">尾部 P95</th><td v-for="{site,summary:s} in sites" :key="site.id"><span v-if="s&&s.success>=20">{{ms(s.p95)}}</span><span v-else class="muted">样本不足</span></td></tr>
-     <tr v-if="sites.some(s=>notes[s.site.id])"><th scope="row">提示</th><td v-for="{site} in sites" :key="site.id" class="site-note warn">{{notes[site.id]}}</td></tr>
-     <tr v-if="!commonTime&&sites.some(s=>s.summary?.lastAt)"><th scope="row">测量时间</th><td v-for="{site,summary:s} in sites" :key="site.id"><time>{{date(s?.lastAt)}}</time></td></tr>
-    </tbody>
-   </table>
+  <div class="site-results-scroll" tabindex="0" aria-label="逐站指标，可横向滚动">
+   <div class="site-results-grid" :style="{'--sites':Math.max(1,sites.length)}">
+    <article v-for="{site,summary:s,rounds,points,aggregate} in sites" :key="site.id" class="site-metric" :data-site="site.id">
+     <button class="site-name" type="button" :aria-label="'查看 '+site.name+' 原始历史'" :aria-expanded="active===site.id" @click="choose(site.id)">{{site.name}} <span aria-hidden="true">⌁</span></button>
+     <button type="button" class="site-latest" :class="error||s?.readError?'bad':tone(s)" :aria-label="site.name+' 本次结果与历史对比'" @click="choose(site.id)">{{s?.p50!=null&&!error&&!s.readError?ms(s.p50):state(s)}}</button>
+     <span class="site-response" v-if="s?.total&&!error&&!s.readError">{{rounds.length?'本次':'窗口统计'}} {{s.success}} / {{s.total}} 次响应</span><span v-else class="site-response">{{s?.excluded?'未执行或取消 '+s.excluded+' 次':'尚无有效样本'}}</span>
+     <small v-if="rounds[1]">上次 {{rounds[1].summary.p50!=null?ms(rounds[1].summary.p50):states[rounds[1].summary.state]}}<template v-if="rounds[0]?.summary.group?.key!==rounds[1].summary.group?.key"> · 条件不同</template></small>
+     <small v-if="note(site.id)" class="warn">{{note(site.id)}}</small>
+     <small v-if="s?.success&&s.success>=20">P95 {{ms(s.p95)}}</small>
+     <HealthBars v-if="points.length" :points="points" :label="site.name+' 历史'" @open="choose(site.id,$event.id)" @inspect="()=>{}" @leave="()=>{}"/>
+     <time>{{date(rounds[0]?.test.finished_at||s?.lastAt)}}</time>
+     <small v-if="aggregate&&!aggregate.readComplete" class="warn">历史读取不完整</small>
+    </article>
+   </div>
   </div>
-  <div class="site-metrics-mobile"><small class="site-mobile-label">中位 P50 · 响应率 / 成功与总样本</small>
-   <article v-for="{site,summary:s} in sites" :key="site.id" class="site-metric" :data-site="site.id">
-    <button type="button" :aria-label="'查看 '+site.name+' 原始历史'" @click="$emit('history',site.id)">{{site.name}} ↗</button>
-    <p v-if="s?.total&&!error&&!s.readError"><strong>{{ms(s.p50)}}</strong><span :class="tone(s)">{{s.successRate?.toFixed(0)}}% · {{s.success}}/{{s.total}}</span></p><p v-else class="muted">{{state(s)}}</p>
-    <small v-if="hasP95">P95 {{s&&s.success>=20?ms(s.p95):'样本不足'}}</small>
-    <small v-if="notes[site.id]" class="warn">{{notes[site.id]}}</small><time v-if="!commonTime">{{date(s?.lastAt)}}</time>
-   </article>
-  </div>
-  <div class="site-measurement-method"><span>{{summaries?.some(s=>s.group?.source==='monitor')?'含旧监测 RTT':'HTTP 首字节（非业务验证）'}}<template v-if="commonTime"> · {{date(commonTime)}}</template></span><span v-if="!hasP95">P95 样本不足，需20个成功样本</span></div>
+  <div class="site-measurement-method">本次单轮 · 响应次数 / 本轮采样数 · 小条左旧右新，点数值对比历史<span>HTTP 响应不等于业务通过</span></div>
+  <section v-if="current" class="site-history-panel" :aria-label="current.site.name+' 延迟历史对比'">
+   <header><strong>{{current.site.name}} · 本次与历史</strong><button type="button" @click="active='';fixedRound=''">收起</button></header>
+   <TrendChart :points="current.points" unit="ms" :label="current.site.name+' 延迟走势'"/>
+   <div class="site-round-list"><button v-for="(round,i) in current.rounds.slice(0,8)" :key="round.test.attempt_id" type="button" :aria-pressed="fixedRound===round.point.id" @click="fixedRound=round.point.id"><span>{{i===0?'本次':i===1?'上次':'历史'}} · {{date(round.test.finished_at)}}</span><strong :class="tone(round.summary)">{{round.summary.p50!=null?ms(round.summary.p50):states[round.summary.state]}}</strong><span>{{round.summary.success}} / {{round.summary.total}} 次响应</span></button></div>
+   <RoundResults v-if="selectedPoint" :point="selectedPoint"/>
+   <button class="text-button" type="button" @click="emit('history',current.site.id)">完整历史与多节点对比</button>
+  </section>
  </section>
 </template>
-
 <style scoped>
-.site-metrics{min-width:0;color:var(--ink)}.site-metrics-scroll{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}.site-metrics-table{width:100%;min-width:540px;border-collapse:collapse;table-layout:fixed;font-size:12px;line-height:1.5}.site-metrics-table th,.site-metrics-table td{text-align:left;padding:4px 6px;vertical-align:top;border:0}.site-metrics-table th:first-child{width:78px;padding-left:0;font-size:12px;font-weight:400;color:var(--muted);white-space:nowrap}.site-metrics-table thead th{padding-bottom:7px}.site-metrics-table button,.site-metric>button{border:0;background:none;padding:0;font-size:12px;font-weight:550;text-align:left;white-space:nowrap;color:var(--ink)}.site-metrics-table button span{color:var(--blue);font-size:11px}.site-metrics-table button:hover,.site-metric>button:hover{color:var(--blue)}.site-metrics-table td>strong{font-size:15px;font-weight:600;white-space:nowrap}.site-samples,.site-metrics-table time{color:var(--muted)}.site-note{font-size:12px;overflow-wrap:anywhere}.site-measurement-method{display:flex;flex-wrap:wrap;gap:3px 12px;color:var(--muted);font-size:12px;line-height:1.5;margin-top:7px}.site-metrics-mobile{display:none}
-@media(max-width:740px){.site-metrics-scroll{display:none}.site-metrics-mobile{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 12px}.site-mobile-label{grid-column:1/-1;color:var(--muted);font-size:12px}.site-metric{min-width:0;border-bottom:1px solid var(--line);padding-bottom:7px;font-size:12px}.site-metric p{display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px;margin:4px 0 0}.site-metric strong{font-size:15px}.site-metric small,.site-metric time{display:block;font-size:12px;line-height:1.5;color:var(--muted)}}
+.site-metrics{min-width:0;color:var(--ink)}.site-results-scroll{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}.site-results-grid{display:grid;grid-template-columns:repeat(var(--sites),minmax(120px,1fr));min-width:calc(var(--sites) * 120px);gap:0}.site-metric{min-width:0;padding:3px 10px 4px;border-left:1px solid var(--line);font-size:12px;line-height:1.5}.site-metric:first-child{border-left:0;padding-left:0}.site-name,.site-latest{display:block;border:0;background:transparent;padding:0;text-align:left;color:var(--ink);cursor:pointer}.site-name{font-size:12px;font-weight:550;margin-bottom:7px}.site-name span{color:var(--blue)}.site-latest{font-size:15px;font-weight:600;line-height:1.5;margin-bottom:3px;min-height:23px}.site-latest:hover,.site-name:hover{text-decoration:underline}.site-response,.site-metric small,.site-metric time{display:block;font-size:12px;line-height:1.6;color:var(--muted)}.site-metric .warn{color:var(--warning,#986700)}.site-metric .health-bars{height:24px;max-width:140px;margin:5px 0}.site-metric time{font-variant-numeric:tabular-nums}.site-measurement-method{display:flex;flex-wrap:wrap;gap:3px 12px;color:var(--muted);font-size:12px;line-height:1.6;margin-top:8px}.site-history-panel{margin-top:12px;padding-top:12px;border-top:1px solid var(--line);min-width:0}.site-history-panel>header{display:flex;justify-content:space-between;gap:10px;font-size:13px}.site-history-panel button{cursor:pointer}.site-history-panel>header button{border:0;background:none;color:var(--muted);font-size:12px}.site-round-list{display:grid;gap:3px;margin-bottom:9px}.site-round-list>button{display:flex;align-items:center;flex-wrap:wrap;gap:7px 15px;border:0;border-radius:4px;padding:6px 8px;background:var(--surface-soft);text-align:left;font-size:12px;color:var(--ink)}.site-round-list>button[aria-pressed=true]{outline:1px solid var(--blue)}.site-round-list>button>span:last-child{margin-left:auto;color:var(--muted)}
+@media(max-width:740px){.site-results-grid{grid-template-columns:repeat(2,minmax(0,1fr));min-width:0;gap:12px 0}.site-metric:nth-child(odd){border-left:0;padding-left:0}.site-measurement-method{font-size:12px}.site-round-list>button>span:last-child{margin-left:0}}
 </style>

@@ -19,6 +19,7 @@ type ExitRecord={
  asn:string
  organization:string
  risk:string
+ tier:string
  confirmed:boolean
  exitSource:boolean
  reputationSource:boolean
@@ -90,7 +91,8 @@ const makeRecord=(attempt:Attempt):ExitRecord=>{
  return {
   attempt,serviceId,family:familyOf(attempt,serviceId,ip),provider,ip,region,ipType,
   asn:field(attempt,'asn'),organization:field(attempt,'organization','org','isp'),
-  risk:field(attempt,'risk_score','fraud_score').replace(/^(未提供|未知|null|undefined)$/i,''),confirmed,exitSource,reputationSource,
+  risk:field(attempt,'risk_score','fraud_score').replace(/^(未提供|未知|null|undefined)$/i,''),
+  tier:field(attempt,'risk_tier','risk_level','tier'),confirmed,exitSource,reputationSource,
   observedAt:attemptObservedAt(attempt),status
  }
 }
@@ -126,8 +128,26 @@ const records=computed(()=>{
  }
  return projections.sort((a,b)=>Number(b.records.some(r=>r.reputationSource&&r.confirmed))-Number(a.records.some(r=>r.reputationSource&&r.confirmed))||Number(!!b.ip)-Number(!!a.ip)||(Date.parse(b.observedAt)||0)-(Date.parse(a.observedAt)||0))
 })
-const primaryRecord=computed(()=>records.value.find(r=>r.records.some(s=>s.reputationSource&&s.confirmed))||records.value.find(r=>r.ip))
-const primaryRisk=computed(()=>primaryRecord.value?.records.find(r=>r.reputationSource&&r.confirmed&&r.risk))
+const compactRecords=computed(()=>{
+ const latestByFamily=new Map<string,ExitProjection>()
+ for(const record of records.value){
+  if(!record.ip||!record.records.some(source=>source.confirmed&&source.ip))continue
+  const current=latestByFamily.get(record.family)
+  if(!current||(Date.parse(record.observedAt)||0)>(Date.parse(current.observedAt)||0))latestByFamily.set(record.family,record)
+ }
+ return [...latestByFamily.values()].sort((a,b)=>{
+  const order=(family:string)=>family==='IPv4'?0:family==='IPv6'?1:2
+  return order(a.family)-order(b.family)
+ })
+})
+const compactReputations=(record:ExitProjection)=>record.records.filter(source=>source.reputationSource&&source.confirmed)
+const compactHasAddressOnlyResult=(record:ExitProjection)=>record.records.some(source=>source.exitSource&&source.confirmed)&&!record.records.some(source=>source.reputationSource)
+const ping0Score=(record:ExitRecord):number|undefined=>{
+ if(record.serviceId!=='ping0_ip_quality'||!/^\d+(?:\.\d+)?$/.test(record.risk))return undefined
+ const score=Number(record.risk)
+ return Number.isFinite(score)&&score>=0&&score<=100?score:undefined
+}
+const formattedRisk=(record:ExitRecord)=>ping0Score(record)===undefined?record.risk:`${record.risk}/100（越低越好）`
 const historicalRecords=computed(()=>{
  const latestByService=new Map(latestServices(props.attempts).map(attempt=>[attempt.service_id||attempt.rule.service_id||'',attempt]))
  const seen=new Set<string>(),historical:Attempt[]=[]
@@ -153,7 +173,8 @@ const detailFields=(record:ExitRecord,historical=false):DetailField[]=>{
   {label:'ASN',value:record.asn},
   {label:'运营商',value:record.organization},
   {label:'类型',value:record.ipType},
-  {label:'风险',value:record.risk},
+  {label:'风险',value:formattedRisk(record)},
+  {label:'风险等级',value:record.tier},
   {label:'状态',value:historical?'历史有效画像，不代表当前':record.status},
   {label:'观测时间',value:record.observedAt},
   {label:'查询时间',value:queryAt},
@@ -167,7 +188,20 @@ const detailFields=(record:ExitRecord,historical=false):DetailField[]=>{
 
 <template>
  <div class="node-exit-summary" :class="{compact}" aria-label="已保存的出口画像摘要">
-  <button v-if="compact" type="button" class="node-exit-compact" @click="open=true"><template v-if="primaryRecord">出口 {{primaryRecord.family}}<template v-if="primaryRecord.region"> · {{primaryRecord.region}}</template><template v-if="primaryRecord.ipType"> · {{primaryRecord.ipType}}</template><template v-if="primaryRisk"> · <strong>{{primaryRisk.provider}} 风险 {{primaryRisk.risk}}</strong></template><template v-else> · 信誉未查</template></template><template v-else>出口 / 信誉{{records.length?'未取得结果':'未查询'}}</template><span aria-hidden="true"> ↗</span></button>
+  <button v-if="compact" type="button" class="node-exit-compact" @click="open=true">
+   <template v-if="compactRecords.length">
+    <span v-for="record in compactRecords" :key="record.key" class="node-exit-compact-record">
+     <span class="node-exit-address-line"><span>{{record.family}}</span><code :title="record.ip">{{record.ip}}</code></span><span v-if="record.region||record.ipType" class="node-exit-location">{{[record.region,record.ipType].filter(Boolean).join(' · ')}}</span>
+     <template v-for="source in compactReputations(record)" :key="source.attempt.attempt_id">
+      <span class="node-exit-compact-risk"><strong>{{source.provider}}<template v-if="source.risk"> 风险分 {{formattedRisk(source)}}</template><template v-else> · {{source.status}}</template><template v-if="source.tier"> · 等级 {{source.tier}}</template></strong></span>
+      <span v-if="ping0Score(source)!==undefined" class="node-exit-risk-scale" role="img" :aria-label="`Ping0 分数 ${source.risk}/100，0 到 100，越低越好`" :style="{'--risk-position':`${ping0Score(source)}%`}"><span>0</span><span class="node-exit-risk-track"><span class="node-exit-risk-marker"></span></span><span>100</span></span>
+     </template>
+     <span v-if="compactHasAddressOnlyResult(record)" class="node-exit-compact-unchecked">信誉未查</span>
+    </span>
+   </template>
+   <template v-else>出口 / 信誉{{records.length?'未取得结果':'未查询'}}</template>
+   <span class="node-exit-compact-arrow" aria-hidden="true"> ↗</span>
+  </button>
   <template v-else>
   <div v-if="records.length" class="node-exit-summary-records">
    <article v-for="record in records" :key="record.key" class="node-exit-summary-record">
@@ -176,7 +210,7 @@ const detailFields=(record:ExitRecord,historical=false):DetailField[]=>{
     </span>
     <code v-if="record.ip&&records.filter(r=>r.ip&&r.family===record.family).length>1" class="node-exit-address" :title="record.ip">{{record.ip}}</code>
     <div v-for="source in record.records.filter(s=>s.reputationSource)" :key="source.attempt.attempt_id" class="node-exit-summary-source">
-     <strong v-if="source.confirmed&&source.risk" class="node-exit-risk">{{source.provider}} 风险分 {{source.risk}}</strong><span v-else :title="source.status">{{source.provider}} · {{source.status==='验证页拦截，未取得风险结果'?'验证页拦截':source.status}}</span>
+     <strong v-if="source.confirmed&&source.risk" class="node-exit-risk">{{source.provider}} 风险分 {{formattedRisk(source)}}<template v-if="source.tier"> · 等级 {{source.tier}}</template></strong><span v-else :title="source.status">{{source.provider}} · {{source.status==='验证页拦截，未取得风险结果'?'验证页拦截':source.status}}</span>
     </div>
     <small v-if="record.records.some(source=>source.exitSource&&source.confirmed)&&!record.records.some(other=>other.reputationSource&&other.confirmed)" class="node-exit-summary-address-only">已取得地址，尚无信誉结果</small>
    </article>
@@ -208,7 +242,7 @@ const detailFields=(record:ExitRecord,historical=false):DetailField[]=>{
 </template>
 
 <style scoped>
-.node-exit-compact{display:block;width:100%;border:0;background:none;padding:0;text-align:left;font-size:12px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere}.node-exit-compact strong{font-weight:550;color:var(--ink)}.node-exit-compact:hover{color:var(--blue)}.node-exit-compact>span{color:var(--blue)}.node-exit-summary-records{display:grid;gap:7px}.node-exit-footer{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center;font-size:12px;color:var(--muted);margin-top:5px}.node-exit-footer .node-exit-open{margin:0;padding:0}.node-exit-summary-records .node-exit-summary-source{color:var(--muted)}
+.node-exit-compact{display:block;width:100%;border:0;background:none;padding:0;text-align:left;font-size:12px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere}.node-exit-compact strong{font-weight:550;color:var(--ink)}.node-exit-compact:hover{color:var(--blue)}.node-exit-compact-arrow{color:var(--blue)}.node-exit-compact-record{display:block;margin:0 0 4px}.node-exit-address-line{display:flex;gap:5px;align-items:baseline;min-width:0}.node-exit-address-line>span{flex:none}.node-exit-address-line code{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px/1.5 ui-monospace,monospace}.node-exit-location{display:block}.node-exit-compact-risk{display:block}.node-exit-compact-unchecked{display:inline;margin-left:4px}.node-exit-risk-scale{display:inline-flex;align-items:center;gap:3px;margin-left:5px;vertical-align:middle;font-size:9px;line-height:1;color:var(--muted)}.node-exit-risk-track{position:relative;display:inline-block;width:64px;height:4px;border-radius:4px;background:linear-gradient(90deg,#75a983 0%,#c5bb72 50%,#c97470 100%)}.node-exit-risk-marker{position:absolute;top:50%;left:var(--risk-position);width:7px;height:7px;transform:translate(-50%,-50%);border:1px solid var(--surface,#fff);border-radius:50%;background:var(--ink,#333);box-shadow:0 0 0 1px rgb(0 0 0 / 18%)}.node-exit-summary-records{display:grid;gap:7px}.node-exit-footer{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center;font-size:12px;color:var(--muted);margin-top:5px}.node-exit-footer .node-exit-open{margin:0;padding:0}.node-exit-summary-records .node-exit-summary-source{color:var(--muted)}
 .node-exit-summary-record{font-size:14px;line-height:1.4}
 .node-exit-summary-main{display:block;font-size:13px}.node-exit-address{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px/1.5 ui-monospace,monospace;color:var(--muted)}.node-exit-risk{font-size:13px;font-weight:600;color:var(--ink)}.node-exit-summary-source small{font-size:12px;display:block}
 .node-exit-summary-source,.node-exit-summary-address-only{display:block;font-size:12px;line-height:1.35}

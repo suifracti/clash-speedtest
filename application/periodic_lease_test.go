@@ -278,11 +278,11 @@ func TestPeriodicFullCatalogSurvivesMixedOfflineOutcomes(t *testing.T) {
 	}
 	p.runCycle(context.Background(), "service", time.Now(), p.cfg)
 	c := p.cycles["service"]
-	if calls.Load() != 164 || len(seen) != 82 || c.Concurrency != 16 || c.Outcomes["timed_out"] == 0 || c.NotExecuted == 0 || c.FullCoverage {
+	if calls.Load() != 162 || len(seen) != 81 || c.Concurrency != 16 || c.Outcomes["timed_out"] == 0 || c.NotExecuted == 0 || c.FullCoverage {
 		t.Fatalf("plan/concurrency/outcome lost: %+v", c)
 	}
-	if len(publicservice.Catalog()) != 85 || len(periodicServices(PeriodicSamplingConfig{IncludeAntigravity: true})) != 82 {
-		t.Fatal("original automatic catalog must remain 82; IPOK and the compatibility alias must remain on-demand")
+	if len(publicservice.Catalog()) != 84 || len(periodicServices(PeriodicSamplingConfig{IncludeAntigravity: true})) != 81 {
+		t.Fatal("automatic catalog excludes withdrawn IPPure; IPOK and the compatibility alias remain on-demand")
 	}
 }
 

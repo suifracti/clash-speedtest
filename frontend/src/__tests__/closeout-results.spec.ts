@@ -3,7 +3,7 @@ import {mount} from '@vue/test-utils'
 import {createWorkspace,workspaceKey} from '../workspace'
 import QueueModal from '../components/QueueModal.vue'
 import {downloadGroup,servicePassed,serviceExecuted,serviceComparisonGroup} from '../sharedResults'
-import {durableRoundPoints,serviceConclusion,attemptTone} from '../measurementRounds'
+import {durableRoundPoints,serviceConclusion,attemptTone,attemptStatus,downloadNoDataReason,downloadConditionLabel} from '../measurementRounds'
 import {downloadSpeed,type Attempt,type NodeOption} from '../domain'
 const n:NodeOption={profile_id:'p',node_key:'n',node_identity_key:'i',config_revision_key:'r',profile_name:'p',display_name:'n',type:'ss',country_code:'',country_flag:''}
 const a:Attempt={...n,attempt_id:'a',request_id:'q',requested_at:'2026-10-09T00:00:00Z',execution_state:'completed',persistence_state:'failed',rule:{target_url:'https://example.test/data',method:'GET',maximum_bytes:10485760},result:{outcome:'time_limit',bytes_read:5242880,duration_ns:1e9,finished_at:'2026-10-09T00:00:01Z'}}
@@ -52,4 +52,18 @@ it('separates service comparisons when rule conditions or execution coverage dif
  expect(serviceComparisonGroup([one],['one']).complete).toBe(true)
  expect(serviceComparisonGroup([one],['one','two']).complete).toBe(false)
  expect(serviceComparisonGroup([one],['one']).key).not.toBe(serviceComparisonGroup([{...one,rule:{...one.rule,rule_version:2}}],['one']).key)
+})
+
+it('identifies a zero-byte TLS timeout as no download rather than a completed timed transfer',()=>{
+ const zero={...a,persistence_state:'saved',result:{...a.result!,bytes_read:0,phase:'tls',failure_phase:'tls',duration_ns:9809000000}}
+ expect(downloadNoDataReason(zero)).toBe('TLS 握手超时 · 未开始下载');expect(attemptStatus(zero,true)).toContain('TLS 握手超时');expect(downloadSpeed(zero)).toBe(null)
+ expect(downloadNoDataReason(a)).toBe('');expect(attemptStatus(a,true)).toContain('部分测量')
+ HTMLDialogElement.prototype.showModal=vi.fn();HTMLDialogElement.prototype.close=vi.fn()
+ const w=createWorkspace();w.queue.value=[{id:'q',node:n,project:'download',state:'completed',error:'达到下载时长上限',attempt:zero}]
+ const ui=mount(QueueModal,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});expect(document.body.textContent).toContain('TLS 握手超时 · 未开始下载');expect(document.body.textContent).not.toContain('达到下载时长上限');ui.unmount();w.dispose()
+})
+
+it('recognizes the current physical-family method without claiming packet route verification',()=>{
+ const current={...a,rule:{...a.rule,network_path_method:'physical_socket_auto_family_v1',physical_interface:'en1'},result:{...a.result!,network_path:{method:'physical_socket_auto_family_v1',interface:'en1',socket_bind_verified:true,dns_bind_verified:true,tcp_bindings:1,udp_bindings:0,address_family:'ipv4'}}}
+ const label=downloadConditionLabel(current);expect(label).toContain('en1 · 绑定已核验');expect(label).toContain('实际流向未验证');expect(label).not.toContain('旧出口未验证')
 })

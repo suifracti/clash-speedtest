@@ -492,3 +492,14 @@ func TestCheckerMultiSampleDriftAndFlappingDetection(t *testing.T) {
 		}
 	})
 }
+
+func TestWithdrawIPPureFromNewCatalogButKeepHistoricalRule(t *testing.T) {
+	for _, rule := range Catalog() {
+		if rule.ServiceID == "ippure_ip_quality" {
+			t.Fatal("challenged provider must not appear in new plans")
+		}
+	}
+	if _, ok := RuleFor("ippure_ip_quality"); !ok {
+		t.Fatal("saved rule compatibility must remain")
+	}
+}

@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import {computed} from 'vue'
+import {siteRoundHistory} from '../siteRoundPresentation'
 import {downloadEvidence,latestServices,attemptObservedAt,type QualityEvidence,type SiteQualitySummary} from '../nodeQuality'
 import {targets,date,downloadSpeed,outcomeLabel,type Attempt,type ServiceRule} from '../domain'
 import {attemptStatus,attemptTone} from '../measurementRounds'
 import {servicePassed,serviceAvailability,downloadGroup} from '../sharedResults'
 const props=defineProps<{evidence?:QualityEvidence;summaries?:SiteQualitySummary[];error?:string;target:string;targetIds:string[];serviceIds:string[];catalog:ServiceRule[]}>()
 defineEmits<{service:[id:string];history:[id:string]}>()
-const primary=computed(()=>props.summaries?.find(s=>s.targetId===props.target))
-const sites=computed(()=>targets.filter(t=>props.targetIds.includes(t.id)).map(site=>({site,summary:props.summaries?.find(s=>s.targetId===site.id)})))
+const latest=(s:SiteQualitySummary|undefined)=>siteRoundHistory(s,props.evidence?.tests)[0]?.summary||s
+const primary=computed(()=>latest(props.summaries?.find(s=>s.targetId===props.target)))
+const sites=computed(()=>targets.filter(t=>props.targetIds.includes(t.id)).map(site=>({site,summary:latest(props.summaries?.find(s=>s.targetId===site.id))})))
 const short:Record<string,string>={cloudflare:'CF',google:'GO',github:'GH',apple:'AP',microsoft:'MS',firefox:'FF'}
 const download=computed(()=>downloadEvidence(props.evidence?.downloads||[])),speed=computed(()=>downloadSpeed(download.value.valid))
 const services=computed(()=>props.serviceIds.map(id=>({id,rule:props.catalog.find(r=>r.service_id===id),attempt:latestServices(props.evidence?.services||[]).find(a=>(a.service_id||a.rule.service_id)===id)})))
@@ -28,8 +30,8 @@ const ms=(n:number|null|undefined)=>n==null?'—':Math.round(n)
 </script>
 <template>
  <section class="overview-latency" aria-label="主要延迟与六站概况">
-  <div class="overview-main"><strong v-if="primary?.total&&!error">{{ms(primary.p50)}} <small>ms</small></strong><strong v-else class="muted">{{error?'读取失败':!evidence?'读取中…':'未测'}}</strong><span>{{targets.find(t=>t.id===target)?.name}} · 中位</span></div>
-  <small v-if="primary?.total" class="overview-response">响应 {{primary.successRate?.toFixed(0)}}% · {{primary.success}}/{{primary.total}} 样本<template v-if="primary.success<5"> · 样本少</template></small>
+  <div class="overview-main"><strong v-if="primary?.p50!=null&&!error">{{ms(primary.p50)}} <small>ms</small></strong><strong v-else :class="error||primary?.total?'bad':'muted'">{{error?'读取失败':!evidence?'读取中…':primary?.total?'本次无响应':'未测'}}</strong><span>{{targets.find(t=>t.id===target)?.name}} · 本次</span></div>
+  <small v-if="primary?.total" class="overview-response">本次 {{primary.success}} / {{primary.total}} 次响应<template v-if="primary.success<5"> · 样本少</template></small>
   <div class="overview-six" aria-label="六站已保存响应概况"><button v-for="{site,summary:s} in sites" :key="site.id" type="button" :class="tone(s)" :title="site.name+' · '+(s?.total?'P50 '+ms(s.p50)+' ms · 响应 '+s.success+'/'+s.total:!evidence?'读取中':'未测')" :aria-label="'查看 '+site.name+' 原始历史'" @click="$emit('history',site.id)">{{short[site.id]}}<i/></button></div>
   <small v-if="primary&&!primary.readComplete" class="warn">读取不完整</small><small v-else-if="primary?.group&&!primary.group.comparable" class="warn">条件未确认</small>
  </section>

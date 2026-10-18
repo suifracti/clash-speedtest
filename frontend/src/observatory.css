@@ -344,3 +344,17 @@
 .observatory-app .service-selection-bar .service-picker{padding:8px 10px;border:1px solid var(--line);background:var(--paper);border-radius:6px}
 .observatory-app .service-selection-bar .service-picker-list{max-height:300px;overflow:auto}
 @media(max-width:740px){.observatory-app .service-selection-bar>.service-picker-disclosure{flex-basis:100%}.observatory-app .service-selection-bar>small{display:none}}
+
+/* Keep row actions readable, including the empty service selection. */
+.observatory-app .home-view .node-list .row-run.button{min-width:94px;min-height:36px;padding:8px 12px!important;font-size:12px!important;white-space:nowrap;justify-self:end}
+.observatory-app .home-view .node-list.observatory-matrix .node-row,.observatory-app .home-view .node-list.observatory-matrix .quality-heading{grid-template-columns:20px 260px minmax(132px,calc(var(--service-columns) * 132px)) 104px;min-width:calc(410px + var(--service-columns) * 132px)}
+.observatory-app .site-metrics .health-bars .health-cell{height:22px;min-width:7px;max-width:12px;flex:0 1 12px}
+.observatory-app .quality-view .node-quality-results.results-latency{display:block;min-width:0;padding:4px 0}
+@media(min-width:1280px){.observatory-app .quality-view:not(.overview-layout) .node-list:not(.observatory-matrix) .node-row,.observatory-app .quality-view:not(.overview-layout) .node-list:not(.observatory-matrix) .quality-heading{grid-template-columns:20px minmax(230px,.9fr) minmax(720px,3fr) 104px;gap:12px}.observatory-app .overview-layout .node-list:not(.observatory-matrix) .node-row,.observatory-app .overview-layout .node-list:not(.observatory-matrix) .quality-heading{grid-template-columns:20px minmax(230px,1.4fr) minmax(155px,1fr) minmax(140px,.85fr) minmax(175px,1.15fr) 90px 104px}}
+@media(min-width:741px) and (max-width:1279px){.observatory-app .quality-view:not(.overview-layout) .node-list:not(.observatory-matrix) .node-row,.observatory-app .quality-view:not(.overview-layout) .node-list:not(.observatory-matrix) .quality-heading{grid-template-columns:20px minmax(185px,1fr) minmax(300px,2fr) 104px}.observatory-app .overview-layout .node-list:not(.observatory-matrix) .node-row{grid-template-columns:20px minmax(200px,1.3fr) minmax(125px,1fr) minmax(110px,.8fr) 104px}}
+@media(max-width:740px){.observatory-app .home-view .node-list.observatory-matrix .node-row,.observatory-app .home-view .node-list.observatory-matrix .quality-heading{grid-template-columns:18px 190px calc(var(--service-columns) * 120px) 104px;min-width:calc(346px + var(--service-columns) * 120px)}.observatory-app .home-view:not(.overview-layout) .node-row .row-run{grid-column:2/-1!important;grid-row:2;justify-self:end}.observatory-app .home-view .node-list.observatory-matrix .node-row .row-run{grid-column:4!important;grid-row:1}}
+
+.observatory-app .site-metrics .health-bars{justify-content:flex-start;gap:3px;overflow:hidden}
+.observatory-app .site-metrics .health-bars .health-cell:not(.has-record){display:none}
+.observatory-app .site-metrics .health-bars .health-cell.has-record{flex:0 1 9px;max-width:9px;min-width:0}
+.observatory-app .site-latest.bad{color:#bd3b4a}.observatory-app .site-latest.good{color:#168343}.observatory-app .site-latest.warn{color:#996600}
