@@ -281,8 +281,8 @@ func TestPeriodicFullCatalogSurvivesMixedOfflineOutcomes(t *testing.T) {
 	if calls.Load() != 164 || len(seen) != 82 || c.Concurrency != 16 || c.Outcomes["timed_out"] == 0 || c.NotExecuted == 0 || c.FullCoverage {
 		t.Fatalf("plan/concurrency/outcome lost: %+v", c)
 	}
-	if len(publicservice.Catalog()) != 84 || len(periodicServices(PeriodicSamplingConfig{IncludeAntigravity: true})) != 82 {
-		t.Fatal("original automatic catalog or on-demand rules unexpectedly changed")
+	if len(publicservice.Catalog()) != 85 || len(periodicServices(PeriodicSamplingConfig{IncludeAntigravity: true})) != 82 {
+		t.Fatal("original automatic catalog must remain 82; IPOK and the compatibility alias must remain on-demand")
 	}
 }
 

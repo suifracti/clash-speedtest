@@ -239,8 +239,8 @@ func clonePeriodicOutcomes(source map[string]int) map[string]int {
 func periodicServices(cfg PeriodicSamplingConfig) []publicservice.Rule {
 	result := []publicservice.Rule{}
 	for _, r := range publicservice.Catalog() {
-		// Reputation lookups are explicitly on demand, never periodic.
-		if r.ServiceID == "ipok_ipv4" || r.ServiceID == "ipok_ipv6" {
+		// Reputation queries and superseded compatibility aliases are never periodic.
+		if r.SupersededBy != "" || r.ServiceID == "ipok_ipv4" || r.ServiceID == "ipok_ipv6" {
 			continue
 		}
 		if cfg.IncludeAntigravity || r.ServiceID != "antigravity" {
