@@ -35,3 +35,7 @@
 .orbit-view-hint{color:var(--muted);font-size:11px}.observatory-app .orbit-ring{animation:cst-orbit-change .28s ease-out}
 @keyframes cst-orbit-change{from{opacity:.4;transform:rotate(-12deg)}to{opacity:1;transform:rotate(0)}}
 @media(prefers-reduced-motion:reduce){.observatory-app .orbit-ring{animation:none}}
+.observatory-matrix .quality-heading.project-service .quality-heading-cols{grid-template-columns:repeat(var(--service-columns),minmax(0,1fr));gap:8px}
+.observatory-app .observatory-service-cells .observatory-service-cell small{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:normal}
+.observatory-app .observatory-matrix .row-run{min-width:0;padding:6px;font-size:11px;overflow:hidden}
+.observatory-app .observatory-service-cell{min-height:78px}
