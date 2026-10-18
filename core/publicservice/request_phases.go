@@ -28,6 +28,7 @@ type requestPhases struct {
 	dialFailures       int
 	dialError          string
 	tlsCount           int
+	tlsPending         int
 	tlsFailures        int
 	tlsError           string
 	dnsCount           int
@@ -120,17 +121,26 @@ func (t phaseTransport) RoundTrip(request *http.Request) (*http.Response, error)
 			t.phases.dnsCount++
 			t.phases.mu.Unlock()
 		},
-		TLSHandshakeStart: func() { startMu.Lock(); tlsStart = time.Now(); startMu.Unlock() },
+		TLSHandshakeStart: func() {
+			startMu.Lock()
+			tlsStart = time.Now()
+			startMu.Unlock()
+			t.phases.mu.Lock()
+			t.phases.tlsCount++
+			t.phases.tlsPending++
+			t.phases.mu.Unlock()
+		},
 		TLSHandshakeDone: func(_ tls.ConnectionState, err error) {
 			startMu.Lock()
 			start := tlsStart
+			tlsStart = time.Time{}
 			startMu.Unlock()
 			if start.IsZero() {
 				return
 			}
 			t.phases.mu.Lock()
 			t.phases.tls += time.Since(start)
-			t.phases.tlsCount++
+			t.phases.tlsPending--
 			if err != nil {
 				t.phases.tlsFailures++
 				t.phases.tlsError = sanitizeTransportError(err)
@@ -202,8 +212,11 @@ func (p *requestPhases) attach(result *Result) {
 		}
 	}
 	if p.tlsCount > 0 {
-		result.Details["tls_handshake_ms"] = format(p.tls)
+		if p.tlsCount > p.tlsPending {
+			result.Details["tls_handshake_ms"] = format(p.tls)
+		}
 		result.Details["tls_handshake_attempts"] = strconv.Itoa(p.tlsCount)
+		result.Details["tls_handshake_pending"] = strconv.Itoa(p.tlsPending)
 		result.Details["tls_handshake_failures"] = strconv.Itoa(p.tlsFailures)
 		if p.tlsError != "" {
 			result.Details["tls_handshake_error"] = p.tlsError
@@ -220,6 +233,9 @@ func (p *requestPhases) attach(result *Result) {
 	result.Details["phase_timing_note"] = "多请求时为阶段累计；首字节时间包含建连与 TLS，不能与其它阶段相加"
 	if p.dialPending > 0 {
 		result.Details["phase_timing_note"] += "；快照时仍有拨号未结束，其耗时和结果尚未计入"
+	}
+	if p.tlsPending > 0 {
+		result.Details["phase_timing_note"] += "；快照时仍有 TLS 握手未结束，其耗时和结果尚未计入"
 	}
 }
 
