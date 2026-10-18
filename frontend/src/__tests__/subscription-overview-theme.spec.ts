@@ -14,15 +14,12 @@ function declaration(selector:string,property:string){
 }
 
 describe('SubscriptionOverview theme tokens',()=>{
-  it('uses the shared surface and foreground tokens for account cards and quota status',()=>{
-    expect(declaration('.subscription-overview-grid>div','background')).toBe('var(--surface-soft)')
-    expect(declaration('.subscription-overview-grid>div','color')).toBe('var(--ink)')
-    expect(declaration('.subscription-overview-header p','color')).toBe('var(--ink)')
+  it('uses the shared surface and foreground tokens for the compact status strip',()=>{
+    expect(declaration('.subscription-overview','background')).toBe('var(--surface)')
+    expect(declaration('.subscription-overview','color')).toBe('var(--ink)')
+    expect(declaration('.subscription-account>small','color')).toBe('var(--muted)')
     expect(declaration('.usage-track','background')).toBe('var(--line)')
     expect(declaration('.usage-track i','background')).toBe('var(--blue)')
-    expect(declaration('.subscription-overview-refresh .muted','color')).toBe('var(--ink)')
-    expect(declaration('.subscription-overview-refresh .badge','color')).toBe('var(--ink)')
-    expect(declaration('.subscription-overview-refresh .inline-error','color')).toBe('var(--ink)')
     expect(style).not.toContain('--surface-muted')
     expect(style).not.toContain('--accent')
   })

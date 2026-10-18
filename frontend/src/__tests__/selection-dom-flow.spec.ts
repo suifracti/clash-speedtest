@@ -14,7 +14,7 @@ const b:NodeOption={...a,profile_id:'sub-b',node_identity_key:'identity-b',confi
 let wrapper:VueWrapper|undefined,w:ReturnType<typeof createWorkspace>|undefined
 
 function attach(nodes:NodeOption[]=[a,aTwo,b],selected:string[]=[]){
-  w=createWorkspace();w.airports.value=[{id:'airport-a',name:'Airport A',node_count:2,has_cache:true,url_display:'',subscriptions:['sub-a-one','sub-a-two'].map((id,i)=>({id,airport_id:'airport-a',name:i?'Two':'One',url_display:'',url_configured:true,node_count:1,has_cache:true}))},{id:'airport-b',name:'Airport B',node_count:1,has_cache:true,url_display:'',subscriptions:[{id:'sub-b',airport_id:'airport-b',name:'Default',url_display:'',url_configured:true,node_count:1,has_cache:true}]}]
+  w=createWorkspace();w.project.value='latency';w.airports.value=[{id:'airport-a',name:'Airport A',node_count:2,has_cache:true,url_display:'',subscriptions:['sub-a-one','sub-a-two'].map((id,i)=>({id,airport_id:'airport-a',name:i?'Two':'One',url_display:'',url_configured:true,node_count:1,has_cache:true}))},{id:'airport-b',name:'Airport B',node_count:1,has_cache:true,url_display:'',subscriptions:[{id:'sub-b',airport_id:'airport-b',name:'Default',url_display:'',url_configured:true,node_count:1,has_cache:true}]}]
   w.nodes.value=nodes;w.selectedAirportIds.value=selected;w.catalog.value=[{service_id:'netflix_unlock',name:'Netflix',category:'Video',description:'',result_kind:'unlock',success_criterion:'',timeout_seconds:15}];w.serviceIds.value=['netflix_unlock']
   wrapper=mount(HomeView,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});return {w,wrapper}
 }

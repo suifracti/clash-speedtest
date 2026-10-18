@@ -129,14 +129,14 @@ describe('shared node selection',()=>{
     expect(w.airportFilter.value).toBe('all');expect(w.priorityAirportId.value).toBe('all');expect(w.selectedNodes.value).toEqual([b])
     w.dispose()
   })
-  it('shows all six saved latency sites by default and keeps the primary site synchronized',()=>{
+  it('shows all six saved latency sites by default without changing the independent ranking site',()=>{
     const w=workspace();expect(w.displayTargets.value).toEqual(targets.map(site=>site.id))
     w.displayTargets.value=['github','google','github','invalid']
-    expect(w.displayTargets.value).toEqual(['github','google']);expect(w.displayTarget.value).toBe('github')
+    expect(w.displayTargets.value).toEqual(['github','google']);expect(w.displayTarget.value).toBe('cloudflare')
     w.displayTarget.value='google'
-    expect(w.displayTargets.value).toEqual(['google','github'])
-    w.displayTargets.value=[];expect(w.displayTargets.value).toEqual(['cloudflare']);expect(w.displayTarget.value).toBe('cloudflare')
-    w.displayTarget.value='apple';expect(w.displayTargets.value).toEqual(['apple'])
+    expect(w.displayTargets.value).toEqual(['github','google'])
+    w.displayTargets.value=[];expect(w.displayTargets.value).toEqual(['cloudflare']);expect(w.displayTarget.value).toBe('google')
+    w.displayTarget.value='apple';expect(w.displayTargets.value).toEqual(['cloudflare'])
     const test=(node:NodeOption,id:string,second:number,target:string,latency:number,success=true):LatencyTest=>{
       const time=`2026-10-01T00:00:0${second}Z`
       return {...node,attempt_id:id,node_type:node.type,requested_at:time,finished_at:time,status:success?'completed':'failed',latency_ms:latency,total_samples:1,success_samples:success?1:0,failure_samples:success?0:1,samples:[{seq:1,target,timestamp:time,latency_ms:latency,success,error:success?undefined:'timeout'}],persistence_state:'saved',source:'workbench',method:'http_get_via_proxy_first_byte',method_version:1,network_path:{method:'physical_socket_v1',interface:'en1',dns_mode:'physical_interface_dns_v1',dns_bind_verified:true,socket_bind_verified:true,tcp_bindings:1,udp_bindings:0,address_family:'IPv4',address_source:'A'}}
@@ -225,8 +225,8 @@ describe('shared node selection',()=>{
     w.services.value[key(a)]=[{...a,attempt_id:'netflix-a',request_id:'netflix-round',service_id:'netflix_unlock',requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',rule:{name:'Netflix',target_url:''},result:{outcome:'matched',bytes_read:0,finished_at:at}},{...a,attempt_id:'youtube-a',request_id:'youtube-round',service_id:'youtube',requested_at:at,finished_at:at,execution_state:'failed',persistence_state:'saved',rule:{name:'YouTube',target_url:''},result:{outcome:'connection_failed',bytes_read:0,finished_at:at}}]
     w.project.value='combined';const wrapper=attach(HomeView,w);await flushPromises()
     expect(wrapper.find('.node-row .combined-values').text()).toContain('下载速度10.0 MiB/s')
-    expect(wrapper.find('.node-row .combined-values').text()).toContain('Netflix探针规则通过')
-    expect(wrapper.find('.node-row .combined-values').text()).toContain('YouTube未确认 · 连接失败')
+    expect(wrapper.find('.node-row .combined-values').text()).toContain('Netflix通过')
+    expect(wrapper.find('.node-row .combined-values').text()).toContain('YouTube连接失败')
     await wrapper.find('.node-row').trigger('mouseenter')
     expect(wrapper.find('.node-inline-results').exists()).toBe(false)
     const bars=wrapper.find('.node-row').findAll('.health-bars')
@@ -266,7 +266,7 @@ describe('shared node selection',()=>{
   it('makes both individual and filtered-range test entry points use the displayed project',async()=>{
     const w=workspace(),wrapper=attach(HomeView,w);await flushPromises()
     await wrapper.findAll('.row-run')[1].trigger('click')
-    expect(w.plan.value?.projects).toEqual(['latency']);expect(w.plan.value?.nodes.map(n=>n.node_key)).toEqual(['node-b'])
+    expect(w.plan.value?.projects).toEqual(['latency','download','service']);expect(w.plan.value?.nodes.map(n=>n.node_key)).toEqual(['node-b'])
     w.plan.value=null;await wrapper.findAll('.project-tabs button').find(b=>b.text()==='下载测速')!.trigger('click')
     expect(wrapper.find('.scope-run').text()).toContain('测速')
     await wrapper.find('.scope-run').trigger('click')
@@ -338,7 +338,7 @@ it('quality download filter survives unrelated incomplete latency history and id
  const w=workspace(),wrapper=attach(HomeView,w);await flushPromises()
  await wrapper.get('select[aria-label="质量证据筛选"]').setValue('download');await flushPromises()
  expect(wrapper.findAll('.node-name strong').map(e=>e.text())).toEqual(['香港 · 01'])
- expect(wrapper.get('.quality-download').text()).toContain('历史有效速度：2.00 MiB/s');expect(wrapper.get('.quality-download').text()).toContain('最近检测：超时')
+ expect(wrapper.get('.quality-download').text()).toContain('历史有效 2.00 MiB/s');expect(wrapper.get('.quality-download').text()).toContain('超时')
  w.dispose();vi.mocked(api.latencyHistory).mockResolvedValue({tests:[],has_more:false,complete:true});vi.mocked(api.attemptHistory).mockResolvedValue({attempts:[],has_more:false,complete:true})
 })
 it('preserves low-frequency filters and cross-airport node selection when collapsed/reopened, with Escape focus recovery',async()=>{

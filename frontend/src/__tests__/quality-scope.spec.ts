@@ -22,7 +22,7 @@ function evidence(node:NodeOption,value:number,complete=true):QualityEvidence{
  const path:NetworkPath={method:'physical_socket_v1',interface:'en1',dns_mode:'physical_interface_dns_v1',dns_bind_verified:true,socket_bind_verified:true,tcp_bindings:1,udp_bindings:0,address_family:'IPv4',address_source:'A'}
  const test:LatencyTest={...node,attempt_id:`latency-${node.node_key}`,display_name:node.display_name,node_type:node.type,source:'workbench',method:'http_get_via_proxy_first_byte',method_version:1,network_path:path,target,requested_at:at,finished_at:at,status:'completed',latency_ms:value,total_samples:5,success_samples:5,failure_samples:0,persistence_state:'saved',samples:Array.from({length:5},(_,i)=>({seq:i+1,target,timestamp:at,latency_ms:value+i,success:true}))}
  const reads={latency:{complete},monitor:{complete:true},download:{complete:true},service:{complete:true}}
- return {tests:[test],monitor:[],downloads:[],services:[],reads,complete:Object.values(reads).every(read=>read.complete),since:'',until:at}
+ return {tests:[test],monitor:[],downloads:[],services:[],reads,complete:Object.values(reads).every(read=>read.complete),since:'2026-10-09T00:00:00Z',until:at}
 }
 
 beforeEach(()=>{localStorageItems.clear();localStorageItems.set('speedtest-home-view','quick');window.sessionStorage.clear();vi.clearAllMocks();HTMLDialogElement.prototype.showModal=vi.fn();HTMLDialogElement.prototype.close=vi.fn();vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}})})
@@ -31,7 +31,7 @@ afterEach(()=>{wrapper?.unmount();w?.dispose();wrapper=undefined;w=undefined;doc
 it('wires six-site controls to saved evidence, preserves original history and refuses mixed-family ranking',async()=>{
  localStorageItems.set('speedtest-home-view','detailed')
  readQualityMock.mockImplementation(async(node:NodeOption)=>{const e=evidence(node,node.node_key==='b-1'?40:20);e.since='2026-10-09T00:00:00Z';e.until=at;return e})
- w=createWorkspace();w.airports.value=[{id:'airport-b',name:'机场 B',url_display:'',node_count:2,has_cache:true,subscriptions:[{id:'sub-b',airport_id:'airport-b',name:'默认',url_display:'',url_configured:true,node_count:2,has_cache:true}]}];w.nodes.value=fresh.slice(0,2);w.setAirports(['airport-b'])
+ w=createWorkspace();w.project.value='latency';w.airports.value=[{id:'airport-b',name:'机场 B',url_display:'',node_count:2,has_cache:true,subscriptions:[{id:'sub-b',airport_id:'airport-b',name:'默认',url_display:'',url_configured:true,node_count:2,has_cache:true}]}];w.nodes.value=fresh.slice(0,2);w.setAirports(['airport-b'])
  wrapper=mount(HomeView,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
  await wrapper.get('select[aria-label="六站质量排序"]').setValue('p50');await flushPromises()
  expect(wrapper.findAll('.node-name strong').map(n=>n.text())).toEqual(['香港 · 02','香港 · 01'])
@@ -49,7 +49,7 @@ it('wires six-site controls to saved evidence, preserves original history and re
 
 function attachSavedSnapshot(){
  vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-10-10T00:00:00Z'))
- w=createWorkspace();w.airports.value=[{id:'airport-b',name:'机场 B',url_display:'',node_count:1,has_cache:true,subscriptions:[{id:'sub-b',airport_id:'airport-b',name:'默认',url_display:'',url_configured:true,node_count:1,has_cache:true}]}];w.nodes.value=[fresh[0]];w.setAirports(['airport-b'])
+ w=createWorkspace();w.project.value='latency';w.airports.value=[{id:'airport-b',name:'机场 B',url_display:'',node_count:1,has_cache:true,subscriptions:[{id:'sub-b',airport_id:'airport-b',name:'默认',url_display:'',url_configured:true,node_count:1,has_cache:true}]}];w.nodes.value=[fresh[0]];w.setAirports(['airport-b'])
  wrapper=mount(HomeView,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}})
 }
 function emptyEvidence(node:NodeOption){const e=evidence(node,40);e.tests=[];return e}
@@ -57,15 +57,15 @@ function emptyEvidence(node:NodeOption){const e=evidence(node,40);e.tests=[];ret
 it('refreshes the completed saved round without a manual click, but not while the frozen plan is running',async()=>{
  let saved=false
  readQualityMock.mockImplementation(async(node:NodeOption,_since:string,until:string)=>saved&&Date.parse(until)>=Date.parse('2026-10-10T00:01:00Z')?evidence(node,980):emptyEvidence(node))
- attachSavedSnapshot();await flushPromises();expect(wrapper!.get('.quality-latency').text()).toContain('未测')
+ attachSavedSnapshot();await flushPromises();expect(wrapper!.get('.site-metrics').text()).toContain('未测')
  const snapshot={fixture:{services:[]}};w!.sortSnapshots.value=snapshot
  w!.running.value=true;vi.setSystemTime(new Date('2026-10-10T00:01:00Z'));saved=true
  const test={...evidence(fresh[0],980).tests[0],finished_at:'2026-10-10T00:01:00Z'}
  w!.mergeLatency(test);await flushPromises()
- expect(wrapper!.get('.quality-latency').text()).toContain('未测')
+ expect(wrapper!.get('.site-metrics').text()).toContain('未测')
  w!.running.value=false;await flushPromises()
- expect(wrapper!.get('.quality-latency').text()).toContain('P50 982 ms')
- expect(wrapper!.get('.quality-latency').text()).toContain('P95 样本不足')
+ expect(wrapper!.get('.site-metrics').text()).toContain('982 ms')
+ expect(wrapper!.get('.site-metrics').text()).toContain('P95 样本不足')
  expect(w!.sortSnapshots.value).toEqual(snapshot)
  expect(api.startLatency).not.toHaveBeenCalled();expect(api.startAttempt).not.toHaveBeenCalled()
 })
@@ -89,7 +89,7 @@ it('refreshes after real runPlan polling and raw measurement-round readback befo
  const {persistence_state:_,...rawResult}=saved
  vi.mocked(api.measurementRounds).mockImplementation(async()=>available?[{round_id:'native-round',trigger_type:'manual',started_at:at,state:'finished',items:[{...node,request_id:requestId,project:'latency',execution_state:'completed',persistence_state:'saved',latency:rawResult as LatencyTest}]}]:[])
  attachSavedSnapshot();await flushPromises()
- expect(wrapper!.get('.quality-latency').text()).toContain('0 / 7 样本')
+ expect(wrapper!.get('.site-metrics').text()).toContain('0/7')
  const previousReads=readQualityMock.mock.calls.length
  vi.useFakeTimers({toFake:['Date','setTimeout','clearTimeout']})
  w!.plan.value={nodes:[node],projects:['latency'],target:'all',samples:1,timeout:10,concurrency:1,downloadMiB:1,downloadSeconds:1,serviceIds:[],repeats:1}
@@ -97,9 +97,9 @@ it('refreshes after real runPlan polling and raw measurement-round readback befo
  vi.setSystemTime(new Date(finished));await vi.advanceTimersByTimeAsync(1200);await run;await flushPromises()
  expect(w!.busy.value).toBe(false)
  expect(api.batch).toHaveBeenCalledTimes(1);expect(api.measurementRounds).toHaveBeenCalled()
- expect(wrapper!.get('.quality-latency').text()).toContain('1 / 1 样本')
- expect(wrapper!.get('.quality-latency').text()).toContain('P50 5118 ms')
- expect(wrapper!.get('.quality-latency').text()).toContain('P95 样本不足')
+ expect(wrapper!.get('.site-metrics').text()).toContain('1/1')
+ expect(wrapper!.get('.site-metrics').text()).toContain('5118 ms')
+ expect(wrapper!.get('.site-metrics').text()).toContain('P95 样本不足')
  expect(readQualityMock.mock.calls.length).toBeGreaterThan(previousReads)
  expect(Date.parse(readQualityMock.mock.calls.at(-1)![2])).toBeGreaterThanOrEqual(Date.parse(finished))
  expect(w!.latest(node)?.persistence_state).toBe('saved')
@@ -126,17 +126,17 @@ it('reads the invalidated snapshot on returning home after a background save, wi
  attachSavedSnapshot();await flushPromises();w!.page.value='history';await flushPromises()
  vi.setSystemTime(new Date('2026-10-10T00:01:00Z'));saved=true;w!.mergeLatency(evidence(fresh[0],50).tests[0]);await flushPromises()
  w!.page.value='home';await flushPromises()
- expect(wrapper!.get('.quality-latency').text()).toContain('P50 52 ms')
+ expect(wrapper!.get('.site-metrics').text()).toContain('52 ms')
  expect(api.startLatency).not.toHaveBeenCalled();expect(api.startAttempt).not.toHaveBeenCalled()
 })
 
 it('shows a refresh read error instead of reusing an old successful value after a new saved result',async()=>{
  readQualityMock.mockImplementation(async(node:NodeOption)=>evidence(node,40))
- attachSavedSnapshot();await flushPromises();expect(wrapper!.get('.quality-latency').text()).toContain('P50 42 ms')
+ attachSavedSnapshot();await flushPromises();expect(wrapper!.get('.site-metrics').text()).toContain('42 ms')
  readQualityMock.mockRejectedValue(new Error('history unavailable'))
  vi.setSystemTime(new Date('2026-10-10T00:01:00Z'));w!.mergeLatency(evidence(fresh[0],100).tests[0]);await flushPromises()
- expect(wrapper!.get('.quality-latency').text()).toContain('读取失败')
- expect(wrapper!.get('.quality-latency').text()).not.toContain('P50 42 ms')
+ expect(wrapper!.get('.site-metrics').text()).toContain('读取失败')
+ expect(wrapper!.get('.site-metrics').text()).not.toContain('42 ms')
  expect(api.startLatency).not.toHaveBeenCalled()
 })
 
@@ -169,19 +169,19 @@ it('automatically reads both saved S5 nodes through the real projection with a n
  vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-10-12T14:54:00Z'))
  w=createWorkspace();w.project.value='combined';w.catalog.value=[...new Set(services.map(a=>a.service_id!))].map(id=>({service_id:id,name:id,category:'fixture',description:'',result_kind:'connectivity',success_criterion:'fixture',timeout_seconds:10}));w.displayServiceIds.value=w.catalog.value.map(s=>s.service_id);w.airports.value=nodes.map(n=>({id:n.profile_id,name:n.profile_name,url_display:'',node_count:1,has_cache:true,subscriptions:[{id:n.profile_id,airport_id:n.profile_id,name:'S5',url_display:'',url_configured:false,node_count:1,has_cache:true}]}));w.nodes.value=nodes;w.setAirports(nodes.map(n=>n.profile_id))
  wrapper=mount(HomeView,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
- expect(wrapper.findAll('.quality-latency').every(row=>row.text().includes('未测'))).toBe(true)
+ expect(wrapper.findAll('.overview-latency').every(row=>row.text().includes('未测'))).toBe(true)
  w.running.value=true;available=true
  for(const t of tests)w.mergeLatency(t)
  for(const a of downloads)w.mergeAttempt('download',a)
  for(const a of services)w.mergeAttempt('service',a)
- await flushPromises();expect(wrapper.findAll('.quality-latency').every(row=>row.text().includes('未测'))).toBe(true)
+ await flushPromises();expect(wrapper.findAll('.overview-latency').every(row=>row.text().includes('未测'))).toBe(true)
  vi.setSystemTime(new Date('2026-10-12T14:55:11Z'));w.running.value=false;await flushPromises()
- expect(wrapper.findAll('.quality-latency').map(row=>row.text()).join(' ')).toContain('P50 979 ms')
- expect(wrapper.findAll('.quality-latency').map(row=>row.text()).join(' ')).toContain('P50 992 ms')
- expect(wrapper.findAll('.quality-latency').every(row=>row.text().includes('P95 样本不足'))).toBe(true)
+ expect(wrapper.findAll('.overview-latency').map(row=>row.text()).join(' ')).toContain('979 ms')
+ expect(wrapper.findAll('.overview-latency').map(row=>row.text()).join(' ')).toContain('992 ms')
+ expect(wrapper.findAll('.overview-latency').every(row=>!row.text().includes('P95'))).toBe(true)
  expect(wrapper.findAll('.quality-download').map(row=>row.text()).join(' ')).toContain('1.55 MiB/s')
  expect(wrapper.findAll('.quality-download').map(row=>row.text()).join(' ')).toContain('1.91 MiB/s')
- expect(wrapper.findAll('.quality-services').every(row=>row.text().includes('最近有记录 2 项'))).toBe(true)
+ expect(wrapper.findAll('.overview-services')).toHaveLength(2)
  expect(new Set(readQualityMock.mock.calls.slice(-2).map(c=>c[2]))).toEqual(new Set(['2026-10-12T14:55:11.000Z']))
  expect(api.startLatency).not.toHaveBeenCalled();expect(api.startAttempt).not.toHaveBeenCalled()
 })
@@ -190,7 +190,7 @@ it('loads and sorts the full new node scope, then ignores a late result from the
  let resolveStale!:(value:QualityEvidence)=>void
  const staleResult=new Promise<QualityEvidence>(resolve=>resolveStale=resolve)
  readQualityMock.mockImplementation((node:NodeOption)=>node.node_identity_key==='stale-identity'?staleResult:Promise.resolve(evidence(node,Number(node.node_key.slice(2))*10)))
- w=createWorkspace();w.airports.value=[{id:'airport-a',name:'机场 A',url_display:'',node_count:1,has_cache:true,subscriptions:[{id:'sub-a',airport_id:'airport-a',name:'默认',url_display:'',url_configured:true,node_count:1,has_cache:true}]},{id:'airport-b',name:'机场 B',url_display:'',node_count:fresh.length,has_cache:true,subscriptions:[{id:'sub-b',airport_id:'airport-b',name:'默认',url_display:'',url_configured:true,node_count:fresh.length,has_cache:true}]}];w.nodes.value=[stale,...fresh];w.setAirports(['airport-a'])
+ w=createWorkspace();w.project.value='latency';w.airports.value=[{id:'airport-a',name:'机场 A',url_display:'',node_count:1,has_cache:true,subscriptions:[{id:'sub-a',airport_id:'airport-a',name:'默认',url_display:'',url_configured:true,node_count:1,has_cache:true}]},{id:'airport-b',name:'机场 B',url_display:'',node_count:fresh.length,has_cache:true,subscriptions:[{id:'sub-b',airport_id:'airport-b',name:'默认',url_display:'',url_configured:true,node_count:fresh.length,has_cache:true}]}];w.nodes.value=[stale,...fresh];w.setAirports(['airport-a'])
  wrapper=mount(HomeView,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}})
  await wrapper.get('select[aria-label="质量证据筛选"]').setValue('samples')
  await wrapper.get('select[aria-label="质量分组排序"]').setValue('p50')

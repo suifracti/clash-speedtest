@@ -4,7 +4,7 @@ import {qualityGroups,latestServices,downloadEvidence,attemptObservedAt,latencyR
 import {date,downloadSpeed,downloadTone,outcomeLabel,type ServiceRule} from '../domain'
 import {downloadGroup,servicePassed,serviceAvailability} from '../sharedResults'
 import {attemptStatus,attemptTone,downloadConditionLabel} from '../measurementRounds'
-const props=defineProps<{evidence?:QualityEvidence;target:string;error?:string;catalog:ServiceRule[];expanded?:boolean;comparisonField?:'distribution'|'response'|'download'|'service'|'time'|'details';project?:'latency'|'download'|'service'|'combined';visibleServiceIds?:string[]}>()
+const props=defineProps<{hideLatency?:boolean;evidence?:QualityEvidence;target:string;error?:string;catalog:ServiceRule[];expanded?:boolean;comparisonField?:'distribution'|'response'|'download'|'service'|'time'|'details';project?:'latency'|'download'|'service'|'combined';visibleServiceIds?:string[]}>()
 const emit=defineEmits<{ 'select-service':[serviceId:string] }>()
 const groups=computed(()=>props.evidence?qualityGroups(props.evidence.tests,props.evidence.monitor,props.target):[])
 const current=computed(()=>groups.value[0]),downloads=computed(()=>downloadEvidence(props.evidence?.downloads||[]))
@@ -17,7 +17,7 @@ const readNames:Record<string,string>={latency:'延迟',monitor:'旧监测',down
 const ms=(v:number|null|undefined)=>v===null||v===undefined?'—':Math.round(v)+' ms'
 const title=computed(()=>current.value?`${current.value.source} · ${current.value.method} · ${current.value.target}\n条件：${current.value.condition}`:'无已保存样本')
 const isSingle=computed(()=>!!props.project&&props.project!=='combined'&&!props.comparisonField)
-const showLatency=computed(()=>(!props.project||props.project==='latency'||props.project==='combined')&&(!props.comparisonField||props.comparisonField==='distribution'||props.comparisonField==='response'))
+const showLatency=computed(()=>!props.hideLatency&&(!props.project||props.project==='latency'||props.project==='combined')&&(!props.comparisonField||props.comparisonField==='distribution'||props.comparisonField==='response'))
 const showDownload=computed(()=>(!props.project||props.project==='download'||props.project==='combined')&&(!props.comparisonField||props.comparisonField==='download'))
 const showServices=computed(()=>(!props.project||props.project==='service'||props.project==='combined')&&(!props.comparisonField||props.comparisonField==='service'))
 const rateTone=(rate:number|null|undefined,success:number)=>{if(rate===null||rate===undefined)return 'muted';if(success===0||rate===0)return 'bad';if(rate>=90)return 'good';if(rate>=50)return 'warn';return 'bad'}

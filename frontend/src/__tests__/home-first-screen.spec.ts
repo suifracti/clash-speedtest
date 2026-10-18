@@ -49,6 +49,12 @@ function refreshJob(itemState:'failed'|'interrupted'|'succeeded'='failed',create
     airport_id:'airport-1',subscription_id:profileIds[0],airport_name:'合成机场 1',subscription_name:'合成账户 1',source_fingerprint:'synthetic-source',source_version:1,state:itemState,error_code:failed?'synthetic_failure':undefined,error_message:failed?'synthetic refresh failure':undefined,duration_ms:100,node_count:0,stages:[{state:itemState,at:'2026-10-11T10:00:01Z'}]
   }]}
 }
+function runningRefreshJob():SubscriptionRefreshJob{
+  const job=refreshJob('succeeded')
+  job.state='running';job.completed=1;job.success=1
+  job.items.push({...job.items[0]!,subscription_id:profileIds[1]!,subscription_name:'合成账户 2',state:'running',error_code:undefined,error_message:undefined})
+  return job
+}
 
 const wrappers:VueWrapper[]=[]
 const workspaces:ReturnType<typeof createWorkspace>[]=[]
@@ -70,71 +76,59 @@ afterEach(()=>{
 })
 
 describe('synthetic 256-node home first screen',()=>{
-  it('shows notices, expired accounts, and the latest failed refresh while collapsed',async()=>{
+  it('keeps current account notices, expiry, and refresh status visible beside the airport orbit',async()=>{
     const syntheticAirports=airports()
     syntheticAirports[0]!.subscriptions![0]!.usage!.expire=Math.floor(Date.now()/1000)-60
     vi.mocked(api.refreshJobs).mockResolvedValueOnce([refreshJob()])
     const {wrapper}=attachHome({airports:syntheticAirports,nodes:[...nodes(),noticeNode()]});await flushPromises()
-    const disclosure=wrapper.get('details.home-subscription-disclosure')
-    const summary=disclosure.get('summary')
-    expect((disclosure.element as HTMLDetailsElement).open).toBe(false)
-    expect(summary.element.tagName).toBe('SUMMARY')
-    expect(summary.text()).toContain('公告 1')
-    expect(summary.text()).toContain('已过期账户 1')
-    expect(summary.text()).toContain('刷新失败 1 项')
-    expect(summary.text()).toContain('合成账户 1')
-
-    await summary.trigger('click')
-    await flushPromises()
-    expect(wrapper.get('.subscription-overview-account').text()).toContain('已过期')
-    expect(wrapper.get('.subscription-overview-notices').text()).toContain('公告 1')
-    expect(wrapper.get('.subscription-overview-refresh').text()).toContain('synthetic refresh failure')
-    const accountSelect=wrapper.get('select[aria-label="首页用量订阅"]')
+    const overview=wrapper.get('.subscription-overview')
+    expect(wrapper.find('details.home-subscription-disclosure').exists()).toBe(false)
+    expect(overview.text()).toContain('公告 1')
+    expect(overview.text()).toContain('已过期')
+    expect(overview.text()).toContain('刷新失败')
+    expect(overview.text()).toContain('synthetic refresh failure')
     await wrapper.get('.orbit-button').trigger('click');await wrapper.get('.orbit-button').trigger('click');await flushPromises()
+    const accountSelect=wrapper.get('select[aria-label="首页用量订阅"]')
     await accountSelect.setValue((accountSelect.element as HTMLSelectElement).options[1]!.value)
     await flushPromises()
-    expect(wrapper.get('.subscription-overview-account').text()).toContain('合成账户 6')
-    expect(summary.text()).toContain('公告 1')
-    expect(summary.text()).toContain('已过期账户 1')
-    expect(summary.text()).toContain('最近失败：合成机场 1 · 合成账户 1')
+    expect(wrapper.get('.subscription-account').text()).toContain('合成账户 6')
+    expect(overview.text()).toContain('刷新异常 1 项')
+    expect(wrapper.get('.subscription-issues').text()).toContain('合成机场 1 · 合成账户 1')
     expect(api.startRefresh).not.toHaveBeenCalled()
-    await summary.trigger('click')
-    expect((disclosure.element as HTMLDetailsElement).open).toBe(false)
   })
 
   it('keeps refresh status unknown while the job read is pending or fails',async()=>{
     let resolveJobs!:(jobs:SubscriptionRefreshJob[])=>void
     vi.mocked(api.refreshJobs).mockImplementationOnce(()=>new Promise(resolve=>{resolveJobs=resolve}))
     const pending=attachHome().wrapper
-    const pendingSummary=pending.get('details.home-subscription-disclosure summary').text()
-    expect(pendingSummary).toContain('刷新状态读取中')
-    expect(pendingSummary).not.toContain('当前无公告、过期或刷新失败')
+    expect(pending.get('.status-read').text()).toContain('刷新状态读取中')
     resolveJobs([]);await flushPromises()
-    expect(pending.get('details.home-subscription-disclosure summary').text()).toContain('当前无公告、过期或刷新失败')
+    expect(pending.find('.status-read').exists()).toBe(false)
 
     vi.mocked(api.refreshJobs).mockRejectedValueOnce(new Error('synthetic job read failed'))
     const failed=attachHome().wrapper;await flushPromises()
-    const failedSummary=failed.get('details.home-subscription-disclosure summary').text()
-    expect(failedSummary).toContain('刷新状态未知')
-    expect(failedSummary).not.toContain('当前无公告、过期或刷新失败')
+    expect(failed.get('.status-read').text()).toContain('刷新状态未知')
+    expect(failed.get('.subscription-message').text()).toContain('synthetic job read failed')
   })
 
-  it('surfaces interrupted refreshes and lets a newer success replace an older interruption',async()=>{
+  it('shows interrupted refreshes and replaces them with a newer success',async()=>{
     vi.mocked(api.refreshJobs).mockResolvedValueOnce([refreshJob('interrupted')])
     const interrupted=attachHome().wrapper;await flushPromises()
-    const interruptedSummary=interrupted.get('details.home-subscription-disclosure summary').text()
-    expect(interruptedSummary).toContain('刷新中断 1 项')
-    expect(interruptedSummary).toContain('合成机场 1 · 合成账户 1')
-    expect(interruptedSummary).not.toContain('当前无公告、过期或刷新失败')
-    await interrupted.get('details.home-subscription-disclosure summary').trigger('click')
-    await flushPromises()
-    expect(interrupted.get('.subscription-overview-refresh .badge').text()).toBe('刷新中断')
+    expect(interrupted.get('.subscription-actions .badge').text()).toBe('刷新中断')
+    expect(interrupted.get('.subscription-issues summary').text()).toBe('刷新异常 1 项')
 
     vi.mocked(api.refreshJobs).mockResolvedValueOnce([refreshJob('succeeded','2026-10-11T12:00:00Z'),refreshJob('interrupted')])
     const recovered=attachHome().wrapper;await flushPromises()
-    const recoveredSummary=recovered.get('details.home-subscription-disclosure summary').text()
-    expect(recoveredSummary).toContain('当前无公告、过期或刷新失败')
-    expect(recoveredSummary).not.toContain('刷新中断')
+    expect(recovered.get('.subscription-actions .badge').text()).toBe('刷新成功')
+    expect(recovered.find('.subscription-issues').exists()).toBe(false)
+  })
+
+  it('shows current account success and whole job progress together',async()=>{
+    vi.mocked(api.refreshJobs).mockResolvedValueOnce([runningRefreshJob()])
+    const {wrapper}=attachHome();await flushPromises()
+
+    expect(wrapper.get('.subscription-actions .badge').text()).toBe('刷新成功 · 其他订阅刷新中 1/2')
+    expect(api.startRefresh).not.toHaveBeenCalled()
   })
 
   it('uses subscription read state instead of unrelated workspace loading or errors',async()=>{
@@ -143,40 +137,52 @@ describe('synthetic 256-node home first screen',()=>{
     workspace.loading.value=true
     workspace.error.value='synthetic unrelated settings failure'
     await flushPromises()
-    const summary=wrapper.get('details.home-subscription-disclosure summary').text()
-    expect(summary).toContain('当前无公告、过期或刷新失败')
-    expect(summary).not.toContain('刷新状态未知')
-    expect(summary).not.toContain('订阅状态读取中')
+    expect(wrapper.find('.status-read').exists()).toBe(false)
+    expect(wrapper.find('.subscription-message').exists()).toBe(false)
   })
 
-  it('keeps account details discoverable without changing the airport and node scope',async()=>{
+  it('keeps the status strip visible without changing airport and node measurement scope',async()=>{
     const {workspace,wrapper}=attachHome();await flushPromises()
-    const disclosure=wrapper.get('details.home-subscription-disclosure')
-    const disclosureElement=disclosure.element as HTMLDetailsElement
-    expect(disclosureElement.open).toBe(false)
-    expect(disclosure.get('summary').text()).toContain('订阅账户')
+    expect(wrapper.find('details.home-subscription-disclosure').exists()).toBe(false)
+    expect(wrapper.find('.subscription-overview').exists()).toBe(true)
     expect(wrapper.get('.orbit-button').text()).toContain('合成机场 1')
     expect(wrapper.get('.node-list-context').text()).toContain('256 个节点')
 
     const selectedAirports=[...workspace.selectedAirportIds.value!]
-    await disclosure.get('summary').trigger('click')
-    expect(disclosureElement.open).toBe(true)
     const accountPicker=wrapper.get('select[aria-label="首页用量订阅"]')
     const accountSelect=accountPicker.element as HTMLSelectElement
     expect(accountSelect.options).toHaveLength(2)
     await wrapper.get('.orbit-button').trigger('click');await wrapper.get('.orbit-button').trigger('click');await flushPromises()
-    await accountPicker.setValue(accountSelect.options[1].value)
+    const nextAccountPicker=wrapper.get('select[aria-label="首页用量订阅"]')
+    const nextAccountSelect=nextAccountPicker.element as HTMLSelectElement
+    await nextAccountPicker.setValue(nextAccountSelect.options[1]!.value)
     await flushPromises()
 
-    expect(wrapper.get('.subscription-overview-account').text()).toContain('合成账户 6')
+    expect(wrapper.get('.subscription-account').text()).toContain('合成账户 6')
     expect(workspace.selectedAirportIds.value).toEqual(selectedAirports)
     expect(workspace.filteredNodes.value).toHaveLength(256)
     expect(workspace.subscription.value).toBe('all')
     expect(api.startRefresh).not.toHaveBeenCalled()
     expect(api.startLatency).not.toHaveBeenCalled()
     expect(api.startAttempt).not.toHaveBeenCalled()
+  })
 
-    await disclosure.get('summary').trigger('click')
-    expect(disclosureElement.open).toBe(false)
+  it('shows failures from other workspace airports in the visible status strip',async()=>{
+    const otherAirportFailure=refreshJob()
+    otherAirportFailure.items[0]={...otherAirportFailure.items[0]!,airport_id:'airport-4',subscription_id:profileIds[6]!,airport_name:'合成机场 4',subscription_name:'合成账户 7'}
+    vi.mocked(api.refreshJobs).mockResolvedValueOnce([otherAirportFailure])
+    vi.mocked(api.startRefresh).mockResolvedValueOnce({...refreshJob('succeeded'),id:'retry-job',state:'finished'})
+    const {wrapper}=attachHome();await flushPromises()
+
+    const issue=wrapper.get('.subscription-issues')
+    expect(issue.text()).toContain('刷新异常 1 项')
+    await issue.get('summary').trigger('click')
+    expect(issue.text()).toContain('合成机场 4 · 合成账户 7')
+    expect(issue.text()).toContain('synthetic refresh failure')
+    const retry=issue.findAll('button').find(button=>button.text().includes('重试此任务失败项'))
+    expect(retry).toBeTruthy()
+    await retry!.trigger('click')
+    await flushPromises()
+    expect(api.startRefresh).toHaveBeenCalledWith(expect.objectContaining({retry_of:otherAirportFailure.id}))
   })
 })
