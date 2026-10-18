@@ -210,7 +210,12 @@ var catalog = []Rule{
 
 	webRule("fastly_web", "Fastly 边缘网络", "基础网络", "全球", "https://www.fastly.com/", "确认节点能否到达 Fastly 官网入口。"),
 	webRule("aws_web", "AWS / CloudFront 入口", "基础网络", "全球", "https://aws.amazon.com/", "确认节点能否到达 AWS 全球入口。"),
-	webRule("xiaomi_204", "小米国内网络对照", "基础网络", "中国", "https://connect.rom.miui.com/generate_204", "国内连通性对照，用于区分全球目标异常与整网异常。"),
+	{
+		ServiceID: "xiaomi_204", Name: "小米国内网络对照", Category: "基础网络", Region: "中国", ResultKind: "connectivity", RuleVersion: 4,
+		TargetURL: "https://connect.rom.miui.com/generate_204", Method: http.MethodGet,
+		Description:      "国内204端点对照；必须实际返回204，普通网页或跳转不算固定响应通过。",
+		SuccessCriterion: "HTTP 204，且不跟随重定向", RedirectPolicy: "do_not_follow", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
+	},
 
 	webRule("github_web", "GitHub 网页", "开发服务", "全球", "https://github.com/", "检测 GitHub 网页入口。"),
 	webRule("github_codeload", "GitHub Codeload", "开发服务", "全球", "https://codeload.github.com/octocat/Hello-World/zip/refs/heads/master", "只确认归档下载入口响应，不读取归档正文。"),
@@ -852,7 +857,7 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 		return finish(result, startedAt)
 	}
 
-	if rule.ServiceID == "cloudflare_204" || rule.ServiceID == "google_204" {
+	if rule.ServiceID == "cloudflare_204" || rule.ServiceID == "google_204" || rule.ServiceID == "xiaomi_204" {
 		if status == http.StatusNoContent {
 			result.Outcome = "matched"
 			return finish(result, startedAt)
