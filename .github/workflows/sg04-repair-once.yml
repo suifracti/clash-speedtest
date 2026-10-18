@@ -1,0 +1,90 @@
+name: Apply exact reviewed SG04 repair once
+on:
+  push:
+    branches: ['codex/cst-w12i-integration-20261011-6aa2079']
+    paths: ['.github/sg04-repair.json', '.github/workflows/sg04-repair-once.yml']
+permissions:
+  contents: read
+jobs:
+  repair:
+    if: github.repository == 'suifracti/clash-speedtest'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Apply reviewed edits only when every preimage matches
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, pathlib, subprocess
+          recipe = json.loads(pathlib.Path('.github/sg04-repair.json').read_text())
+          assert recipe['base'] == '7aeb4ff4c729ae8bb6d25e4cccbf278e29bcc714'
+          subprocess.run(['git', 'merge-base', '--is-ancestor', recipe['base'], 'HEAD'], check=True)
+          def checked_path(name):
+              p = pathlib.Path(name)
+              assert not p.is_absolute() and '..' not in p.parts and p.parts[0] in ('core', 'frontend') and not p.is_symlink()
+              return p
+          digest = lambda data: hashlib.sha256(data).hexdigest()
+          changed = []
+          assert len(recipe['files']) == 11 and len(recipe['added']) == 5
+          for entry in recipe['added']:
+              p = checked_path(entry['path'])
+              assert digest(p.read_bytes()) == entry['sha256'], 'added-file checksum: ' + str(p)
+          for entry in recipe['files']:
+              p = checked_path(entry['path']); data = p.read_bytes()
+              assert digest(data) == entry['before'], 'preimage checksum: ' + str(p)
+              previous = -1
+              for start, end, content in entry['edits']:
+                  assert 0 <= start <= end <= len(data) and start >= previous
+                  previous = end
+              for start, end, content in reversed(entry['edits']):
+                  data = data[:start] + content.encode('utf-8') + data[end:]
+              assert digest(data) == entry['after'], 'postimage checksum: ' + str(p)
+              changed.append((p, data))
+          for p, data in changed:
+              p.write_bytes(data)
+          print('Applied 11 exact source/test edits; 5 new fixtures/helpers verified. No runtime data accessed.')
+          PY
+      - run: node scripts/prepare-legacy-assets.mjs
+      - name: Full frontend regression and build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm test -- --maxWorkers=2 --minWorkers=2
+          npm run build
+      - name: Full offline Go race regression
+        run: go test -race -p 2 ./... -count=1 -timeout=180s
+      - name: Commit only verified source edits without overwriting concurrent work
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          REPAIR_BRANCH: codex/cst-w12i-integration-20261011-6aa2079
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          recipe = json.loads(pathlib.Path('.github/sg04-repair.json').read_text())
+          paths = [entry['path'] for entry in recipe['files']]
+          for entry in recipe['files'] + recipe['added']:
+              expected = entry.get('after', entry.get('sha256'))
+              assert hashlib.sha256(pathlib.Path(entry['path']).read_bytes()).hexdigest() == expected
+          assert git('rev-parse', 'HEAD') == os.environ['EXPECTED_HEAD']
+          subprocess.run(['git', 'fetch', 'origin', os.environ['REPAIR_BRANCH']], check=True)
+          assert git('rev-parse', 'FETCH_HEAD') == os.environ['EXPECTED_HEAD'], 'Concurrent branch update; refusing to push'
+          subprocess.run(['git', 'add', '--', *paths], check=True)
+          assert set(git('diff', '--cached', '--name-only').splitlines()) == set(paths)
+          subprocess.run(['git', '-c', 'user.name=github-actions[bot]', '-c', 'user.email=41898282+github-actions[bot]@users.noreply.github.com', 'commit', '-m', 'fix: isolate target dials, budget composite probes and preserve monitor history', '-m', 'Apply preimage/postimage-verified repair reviewed against 7aeb4ff4. Full frontend and offline Go race regressions passed before commit. Mac/native/live acceptance remains a separate gate.'], check=True)
+          subprocess.run(['git', 'push', 'origin', 'HEAD:refs/heads/' + os.environ['REPAIR_BRANCH']], check=True)
+          print('Verified source commit:', git('rev-parse', 'HEAD'))
+          PY

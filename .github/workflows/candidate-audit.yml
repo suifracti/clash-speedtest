@@ -16,7 +16,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Snapshot tracked source for exact-revision reproduction
-        run: git archive --format=tar.gz --output=candidate-source.tar.gz HEAD
+        run: git archive --format=tar.gz --output="$RUNNER_TEMP/candidate-source.tar.gz" HEAD
       - name: Offline audit regression fixtures
         run: python3 -m unittest discover -s scripts/tests -v
       - name: Verify GitHub revision, main ancestry and accepted capabilities
@@ -28,7 +28,7 @@ jobs:
           retention-days: 7
           path: |
             candidate-audit.json
-            candidate-source.tar.gz
+            ${{ runner.temp }}/candidate-source.tar.gz
 
   offline-regression-linux:
     name: Offline Go race and frontend regression
@@ -101,3 +101,13 @@ jobs:
         run: |
           mkdir -p build/bin
           go build -tags production -buildvcs=true -trimpath -ldflags '-X main.commit=${{ github.sha }} -X main.version=mac-ci-${{ github.run_number }}' -o build/bin/cst-core .
+      - name: Package isolated Mac candidate with exact build manifest
+        env:
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: python3 scripts/package-mac-candidate.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CST-Mac-${{ github.sha }}
+          path: build/bin/CST-Mac-candidate.zip
+          retention-days: 7
+          compression-level: 0
