@@ -5,6 +5,7 @@ package speedtester
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -143,7 +144,7 @@ func TestPhysicalFamilyClosesLateSuccessfulStreamAfterCancellation(t *testing.T)
 	}
 	defer server.Close()
 	server.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-	if _, err := server.Read(make([]byte, 1)); err == nil {
-		t.Fatal("late stream remained open")
+	if _, err := server.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("late stream did not close: %v", err)
 	}
 }

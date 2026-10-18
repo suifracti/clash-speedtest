@@ -26,6 +26,8 @@ def main() -> None:
     app = root / ("CST Mac " + sha[:8] + ".app")
     executables = app / "Contents/MacOS"
     executables.mkdir(parents=True, exist_ok=False)
+    resources = app / "Contents/Resources"
+    resources.mkdir()
     core = executables / "cst-core"
     core.write_bytes((root / "cst-core").read_bytes())
     core.chmod(0o755)
@@ -68,19 +70,31 @@ int main(int argc, char **argv) {
     with tempfile.TemporaryDirectory(prefix="cst-launcher-") as temporary:
         source = Path(temporary) / "launcher.c"
         source.write_text(launcher)
-        run("cc", "-Os", str(source), "-o", str(executables / "CST-Candidate"))
+        run("cc", "-Os", "-mmacosx-version-min=12.0", str(source), "-o", str(executables / "CST-Candidate"))
+    # Record the actual deployment floor instead of assuming the CI host's OS.
+    minimum = (12, 0, 0)
+    for binary in (core, executables / "CST-Candidate"):
+        load = subprocess.check_output(["otool", "-l", str(binary)], text=True)
+        match = re.search(r"cmd LC_BUILD_VERSION\s+cmdsize \d+\s+platform \S+\s+minos ([\d.]+)", load)
+        if match is None:
+            match = re.search(r"cmd LC_VERSION_MIN_MACOSX\s+cmdsize \d+\s+version ([\d.]+)", load)
+        if match is None:
+            raise SystemExit("cannot determine macOS deployment target")
+        parts = tuple(int(part) for part in match.group(1).split("."))
+        minimum = max(minimum, (parts + (0, 0, 0))[:3])
+    minimum_os = ".".join(map(str, minimum))
     with (app / "Contents/Info.plist").open("wb") as output:
         plistlib.dump({"CFBundleName": "CST Mac Candidate", "CFBundleDisplayName": "CST Mac " + sha[:8],
                       "CFBundleIdentifier": "com.clashspeedtest.candidate", "CFBundleExecutable": "CST-Candidate",
                       "CFBundlePackageType": "APPL", "CFBundleVersion": "1", "CFBundleShortVersionString": "1.0",
-                      "NSHighResolutionCapable": True}, output)
+                      "NSHighResolutionCapable": True, "LSMinimumSystemVersion": minimum_os}, output)
     run("codesign", "--force", "--sign", "-", str(core))
     core_hash = hashlib.sha256(core.read_bytes()).hexdigest()
     manifest = {"source_commit": sha, "os": "darwin", "architecture": platform.machine(),
-                "core_sha256": core_hash, "signature": "ad-hoc; not Developer ID notarization",
+                "core_sha256": core_hash, "minimum_macos": minimum_os, "signature": "ad-hoc; not Developer ID notarization",
                 "native_runtime_acceptance": "NOT_PERFORMED", "live_node_probes": 0,
                 "default_data_root": "new isolated candidate directory; no automatic credentials"}
-    (app / "Contents/build-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    (resources / "build-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     run("codesign", "--force", "--sign", "-", str(app))
     run("codesign", "--verify", "--deep", "--strict", str(app))
     if hashlib.sha256(core.read_bytes()).hexdigest() != core_hash:
