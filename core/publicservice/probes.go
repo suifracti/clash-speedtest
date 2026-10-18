@@ -199,8 +199,24 @@ func checkCloudflareDoH(ctx context.Context, client *http.Client, rule Rule, sta
 }
 
 func checkAbema(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
-	result, body, ok := boundedGET(ctx, client, rule.TargetURL, rule.MaximumBodyBytes)
+	result, body, ok := boundedGETStatuses(ctx, client, rule.TargetURL, rule.MaximumBodyBytes, []int{http.StatusOK, http.StatusForbidden}, "application/json")
 	if !ok {
+		return finish(result, started)
+	}
+
+	if result.HTTPStatus != nil && *result.HTTPStatus == http.StatusForbidden {
+		var rejection struct {
+			Message string `json:"message"`
+		}
+		result.Outcome, result.FailurePhase = "http_rejected", "http_status"
+		result.Summary = "ABEMA 拒绝测试请求"
+		result.ErrorMessage = "HTTP 403不能单独判断地区或节点故障"
+		if json.Unmarshal(body, &rejection) == nil && rejection.Message == "anonymous_ip" {
+			result.Outcome, result.FailurePhase = "service_rejected", "service_policy"
+			result.Summary = "ABEMA 拒绝匿名/代理IP"
+			result.ErrorMessage = "服务明确返回anonymous_ip；不代表节点断线，也不能判为日本地区封锁"
+			result.Details = map[string]string{"rejection_evidence": "anonymous_ip", "node_fault": "not_established", "playback_verified": "false"}
+		}
 		return finish(result, started)
 	}
 	var payload struct {
@@ -664,6 +680,10 @@ func netflixRegion(value string) string {
 }
 
 func boundedGET(ctx context.Context, client *http.Client, target string, maximum int, accept ...string) (Result, []byte, bool) {
+	return boundedGETStatuses(ctx, client, target, maximum, []int{http.StatusOK}, accept...)
+}
+
+func boundedGETStatuses(ctx context.Context, client *http.Client, target string, maximum int, statuses []int, accept ...string) (Result, []byte, bool) {
 	result := Result{RequestCount: 1}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
@@ -692,7 +712,11 @@ func boundedGET(ctx context.Context, client *http.Client, target string, maximum
 		result.ErrorMessage = "网络已连通，但无头请求未通过网页验证"
 		return result, nil, false
 	}
-	if status != http.StatusOK {
+	accepted := false
+	for _, allowed := range statuses {
+		accepted = accepted || status == allowed
+	}
+	if !accepted {
 		result.Outcome = "http_rejected"
 		result.FailurePhase = "http_status"
 		result.ErrorMessage = fmt.Sprintf("服务返回 HTTP %d；判据要求 HTTP 200", status)

@@ -149,7 +149,8 @@ func TestCheckerClassifiesRegionalStreamingEvidence(t *testing.T) {
 			return nil, nil
 		}
 	})}
-	if result := checker.Check(context.Background(), monitor.MonitoredNode{}, abema, DefaultTimeout); result.Outcome != "unlocked" || result.Details["service_region"] != "JP" {
+	abemaClient, _ := checker.ClientFactory(monitor.MonitoredNode{}, DefaultTimeout)
+	if result := checker.checkOnce(context.Background(), abemaClient, monitor.MonitoredNode{}, abema, time.Now()); result.Outcome != "unlocked" || result.Details["service_region"] != "JP" {
 		t.Fatalf("unexpected ABEMA result: %+v", result)
 	}
 	if result := checker.Check(context.Background(), monitor.MonitoredNode{}, fod, DefaultTimeout); result.Outcome != "region_blocked" {

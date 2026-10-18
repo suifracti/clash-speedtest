@@ -12,17 +12,28 @@ import (
 )
 
 const netflixIPv4Service = "netflix_unlock_ipv4"
-const netflixIPv4DNS = "https://cloudflare-dns.com/dns-query?name=www.netflix.com&type=A"
+const selectedNodeDNS = "https://cloudflare-dns.com/dns-query?name="
+
+func selectedNodeIPv4Host(rule Rule) string {
+	if netflixUsesResolvedIPv4(rule) {
+		return "www.netflix.com"
+	}
+	if rule.ServiceID == "abema_unlock" && rule.RuleVersion >= 3 {
+		return "api.abema.io"
+	}
+	return ""
+}
 
 func netflixUsesResolvedIPv4(rule Rule) bool {
 	return rule.ServiceID == netflixIPv4Service || (rule.ServiceID == "netflix_unlock" && rule.RuleVersion >= 3)
 }
 
-var errNetflixDNSHost = errors.New("当前解析结果仅适用于 www.netflix.com:443；不回退到其它解析方式")
+var errTargetDNSHost = errors.New("当前解析结果只适用于本次固定服务主机443端口；不回退到其它解析方式")
 
 // One lookup belongs to one checker/selected node. It is never a global DNS
 // override, an exit IP, or a cache shared across nodes and historical attempts.
-type netflixIPv4Evidence struct {
+type targetIPv4Evidence struct {
+	host                               string
 	phases                             *requestPhases
 	ip                                 string
 	ttl                                uint32
@@ -31,23 +42,23 @@ type netflixIPv4Evidence struct {
 	dnsAttempts, dnsWritten, dnsStatus int
 }
 
-func (e *netflixIPv4Evidence) address(address string) (string, error) {
+func (e *targetIPv4Evidence) address(address string) (string, error) {
 	host, port, err := net.SplitHostPort(address)
-	if err != nil || !strings.EqualFold(host, "www.netflix.com") || port != "443" {
-		return "", errNetflixDNSHost
+	if err != nil || !strings.EqualFold(host, e.host) || port != "443" {
+		return "", errTargetDNSHost
 	}
 	return net.JoinHostPort(e.ip, port), nil
 }
 
-func (e *netflixIPv4Evidence) attach(result *Result) {
+func (e *targetIPv4Evidence) attach(result *Result) {
 	if result.Details == nil {
 		result.Details = map[string]string{}
 	}
 	d := result.Details
 	d["target_dns_mode"] = "selected_node_doh_ipv4_v1"
-	d["target_dns_source"] = netflixIPv4DNS
+	d["target_dns_source"] = selectedNodeDNS + e.host + "&type=A"
 	d["target_dns_http_attempts"] = strconv.Itoa(e.dnsAttempts)
-	d["target_dns_scope"] = "仅本次 Netflix 的目标解析；约束为同一被测节点代理，无系统 DNS 或直连回退"
+	d["target_dns_scope"] = "仅本次固定服务主机的目标解析；约束为同一被测节点代理，无系统 DNS 或直连回退"
 	d["playback_verified"] = "false"
 	d["account_verified"] = "false"
 	if e.dnsStatus > 0 {
@@ -75,7 +86,7 @@ func (e *netflixIPv4Evidence) attach(result *Result) {
 
 // Clone only the selected proxy's existing transport. Rewriting DialContext
 // leaves the URL, HTTP Host, SNI and normal certificate verification intact.
-func (e *netflixIPv4Evidence) transport(original http.RoundTripper) (http.RoundTripper, bool) {
+func (e *targetIPv4Evidence) transport(original http.RoundTripper) (http.RoundTripper, bool) {
 	switch t := original.(type) {
 	case phaseTransport:
 		base, ok := e.transport(t.base)
@@ -105,8 +116,8 @@ func (e *netflixIPv4Evidence) transport(original http.RoundTripper) (http.RoundT
 	}
 }
 
-func prepareNetflixIPv4(ctx context.Context, client *http.Client, phases *requestPhases) (*http.Client, *netflixIPv4Evidence, *Result) {
-	evidence := &netflixIPv4Evidence{phases: phases}
+func prepareTargetIPv4(ctx context.Context, client *http.Client, phases *requestPhases, host string) (*http.Client, *targetIPv4Evidence, *Result) {
+	evidence := &targetIPv4Evidence{phases: phases, host: host}
 	transport, ok := evidence.transport(client.Transport)
 	if !ok {
 		r := Result{Outcome: "not_executed", FailurePhase: "target_dns_setup", ErrorMessage: "当前客户端无法保持所选节点及 TLS 语义；未发起 IPv4 解析或片目请求"}
@@ -118,7 +129,7 @@ func prepareNetflixIPv4(ctx context.Context, client *http.Client, phases *reques
 	dnsClient := *client
 	dnsClient.Jar = nil
 	dnsClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	r, body, valid := boundedGET(dnsCtx, &dnsClient, netflixIPv4DNS, 16*1024, "application/dns-json")
+	r, body, valid := boundedGET(dnsCtx, &dnsClient, selectedNodeDNS+host+"&type=A", 16*1024, "application/dns-json")
 	cancel()
 	evidence.dnsBytes = r.BytesRead
 	phases.mu.Lock()
@@ -127,14 +138,14 @@ func prepareNetflixIPv4(ctx context.Context, client *http.Client, phases *reques
 	if r.HTTPStatus != nil {
 		evidence.dnsStatus = *r.HTTPStatus
 	}
-	fail := func(message string) (*http.Client, *netflixIPv4Evidence, *Result) {
+	fail := func(message string) (*http.Client, *targetIPv4Evidence, *Result) {
 		r.BytesRead = 0 // attach adds the actual DNS body exactly once.
 		if r.Outcome != "cancelled" && r.Outcome != "rate_limited" {
 			r.Outcome = "unknown"
 			r.HTTPStatus = nil
 		}
 		r.FailurePhase = "target_dns"
-		r.Summary = "经节点的 DNS 查询未完成；Netflix 片目请求未发起"
+		r.Summary = "经节点的 DNS 查询未完成；目标服务请求未发起"
 		r.ErrorMessage = message
 		return nil, evidence, &r
 	}
@@ -150,7 +161,7 @@ func prepareNetflixIPv4(ctx context.Context, client *http.Client, phases *reques
 		}
 	}
 	if json.Unmarshal(body, &payload) != nil || payload.Status == nil || *payload.Status != 0 {
-		return fail("DNS 响应格式或状态不符合规则；未发起 Netflix 片目请求")
+		return fail("DNS 响应格式或状态不符合规则；未发起目标服务请求")
 	}
 	for _, answer := range payload.Answer {
 		ip, public := publicAddress(answer.Data)

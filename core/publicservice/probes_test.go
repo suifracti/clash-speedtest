@@ -258,3 +258,28 @@ func TestModernNetflixTitleDetection(t *testing.T) {
 		t.Fatalf("expected region SG, got %q", result.Details["service_region"])
 	}
 }
+
+func TestABEMABoundedAnonymousIPAndOtherFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, want, evidence string
+		status                     int
+	}{
+		{"anonymous IP", `{"message":"anonymous_ip"}`, "service_rejected", "anonymous_ip", 403},
+		{"generic forbidden", `{"message":"forbidden"}`, "http_rejected", "", 403},
+		{"huge error prefix is not evidence", `{"message":"anonymous_ip","pad":"` + strings.Repeat("a", MaximumResponseBytes) + `"}`, "criteria_mismatch", "", 403},
+		{"successful non-JP region", `{"isoCountryCode":"SG"}`, "region_limited", "", 200},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rule, _ := RuleFor("abema_unlock")
+			calls := 0
+			client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				calls++
+				return fixtureResponse(req, tc.status, "application/json", tc.body), nil
+			})}
+			r := checkAbema(context.Background(), client, rule, time.Now())
+			if calls != 1 || r.Outcome != tc.want || r.Details["rejection_evidence"] != tc.evidence {
+				t.Fatalf("calls=%d result=%+v", calls, r)
+			}
+		})
+	}
+}

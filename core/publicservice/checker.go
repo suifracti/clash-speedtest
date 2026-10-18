@@ -190,7 +190,13 @@ var catalog = []Rule{
 		TargetURL: "https://www.naver.com/", Method: http.MethodGet, SuccessCriterion: "收到 2xx/3xx 网页响应；仅表示网页可达",
 		RedirectPolicy: "follow_same_service", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
 	},
-	streamingRule("abema_unlock", "ABEMA 日本地区判定", "日本", "https://api.abema.io/v1/ip/check?device=android", "读取 ABEMA 官方 IP 检查响应中的地区代码。", "isoCountryCode=JP 判定日本完整入口；其他地区显示海外档位"),
+	{
+		ServiceID: "abema_unlock", Name: "ABEMA 日本地区判定", Category: "日本解锁", Region: "日本", ResultKind: "streaming_unlock", RuleVersion: 3,
+		TargetURL: "https://api.abema.io/v1/ip/check?device=android", Method: http.MethodGet,
+		Description:      "自动经被测节点解析IPv4，保留域名与证书校验；地区结论与anonymous_ip拒绝分开，不代表播放。",
+		SuccessCriterion: "经同一节点DoH一次并固定本轮IPv4；isoCountryCode=JP判定日本入口，其他地区为海外档位；403且JSON message=anonymous_ip仅判服务拒绝匿名/代理IP，不推断节点故障或地区封锁",
+		RedirectPolicy:   "do_not_follow", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
+	},
 	streamingRule("fod_unlock", "FOD 日本地区判定", "日本", "https://geocontrol1.stream.ne.jp/fod-geo/check.xml?time=1624504256", "读取 FOD 地区控制端点，不下载视频。", "XML FLAG TYPE=true 判定地区允许"),
 	streamingRule("hulu_jp_unlock", "Hulu Japan 入口限制检查", "日本", "https://id.hulu.jp/", "识别明确的 restrict 跳转；首页可达不代表地区或播放解锁。", "明确 restrict 跳转记为受限；200 仅记网页可达；403 不推断为地区封锁"),
 	{
@@ -482,8 +488,8 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	phases := &requestPhases{}
 	client.Transport = phases.wrap(client.Transport, c.ClientFactory == nil)
 	defer phases.attach(&final)
-	if netflixUsesResolvedIPv4(rule) {
-		resolved, evidence, failure := prepareNetflixIPv4(ctx, client, phases)
+	if host := selectedNodeIPv4Host(rule); host != "" {
+		resolved, evidence, failure := prepareTargetIPv4(ctx, client, phases, host)
 		defer func() { evidence.attach(&final) }()
 		if failure != nil {
 			return finish(*failure, startedAt)

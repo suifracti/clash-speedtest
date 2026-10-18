@@ -30,6 +30,7 @@ type netflixDNSFixture struct {
 	dnsCalls, titleCalls int
 	dnsStatus            int
 	titleStatus          int
+	abema                bool
 	badAddress           bool
 }
 
@@ -40,7 +41,7 @@ func newNetflixDNSFixture(t *testing.T) *netflixDNSFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), DNSNames: []string{"www.netflix.com", "cloudflare-dns.com"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), DNSNames: []string{"www.netflix.com", "cloudflare-dns.com", "api.abema.io"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +62,12 @@ func newNetflixDNSFixture(t *testing.T) *netflixDNSFixture {
 			status := f.dnsStatus
 			bad := f.badAddress
 			f.mu.Unlock()
-			if r.URL.Query().Get("name") != "www.netflix.com" || r.URL.Query().Get("type") != "A" || r.Header.Get("Accept") != "application/dns-json" {
+			if r.URL.Query().Get("name") != func() string {
+				if f.abema {
+					return "api.abema.io"
+				}
+				return "www.netflix.com"
+			}() || r.URL.Query().Get("type") != "A" || r.Header.Get("Accept") != "application/dns-json" {
 				t.Error("wrong fixed DNS query")
 			}
 			if status != 200 {
@@ -80,15 +86,25 @@ func newNetflixDNSFixture(t *testing.T) *netflixDNSFixture {
 		f.titleCalls++
 		titleStatus := f.titleStatus
 		f.mu.Unlock()
-		if r.Host != "www.netflix.com" {
+		if r.Host != "www.netflix.com" && !(f.abema && r.Host == "api.abema.io") {
 			t.Errorf("unexpected target Host %s", r.Host)
 		}
 		if r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" {
 			t.Error("credentials leaked")
 		}
+		if f.abema && titleStatus == 403 {
+			w.WriteHeader(403)
+			io.WriteString(w, `{"message":"anonymous_ip"}`)
+			return
+		}
 		if titleStatus != 0 {
 			w.Header().Set("Retry-After", "60")
 			w.WriteHeader(titleStatus)
+			return
+		}
+		if f.abema {
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"isoCountryCode":"SG"}`)
 			return
 		}
 		w.Header().Set("Content-Type", "text/html")
@@ -175,12 +191,12 @@ func TestNetflixIPv4DNSFailureStopsBeforeTitleRequests(t *testing.T) {
 }
 
 func TestNetflixIPv4PinIsFixedForThisAttemptAndReportsFreshness(t *testing.T) {
-	e := &netflixIPv4Evidence{ip: "8.8.8.8", ttl: 1, expires: time.Now().Add(-time.Second), phases: &requestPhases{}}
+	e := &targetIPv4Evidence{host: "www.netflix.com", ip: "8.8.8.8", ttl: 1, expires: time.Now().Add(-time.Second), phases: &requestPhases{}}
 	if address, err := e.address("www.netflix.com:443"); err != nil || address != "8.8.8.8:443" {
 		t.Fatalf("address=%s err=%v", address, err)
 	}
 	for _, address := range []string{"other.netflix.com:443", "www.netflix.com:444", "127.0.0.1:443"} {
-		if _, err := e.address(address); !errors.Is(err, errNetflixDNSHost) {
+		if _, err := e.address(address); !errors.Is(err, errTargetDNSHost) {
 			t.Fatalf("changed target %s was accepted: %v", address, err)
 		}
 	}
@@ -280,5 +296,35 @@ func TestDefaultNetflixTitleRateLimitStopsWithoutRetry(t *testing.T) {
 	defer f.mu.Unlock()
 	if r.Outcome != "rate_limited" || f.dnsCalls != 1 || f.titleCalls != 1 || r.RequestCount != 2 {
 		t.Fatalf("rate limit was retried: dns=%d title=%d result=%+v", f.dnsCalls, f.titleCalls, r)
+	}
+}
+
+func TestABEMAAutomaticIPv4KeepsAnonymousIPRejection(t *testing.T) {
+	rule, _ := RuleFor("abema_unlock")
+	f := newNetflixDNSFixture(t)
+	f.abema = true
+	f.titleStatus = 403
+	c := Checker{DriftSamples: 1, ClientFactory: func(monitor.MonitoredNode, time.Duration) (*http.Client, error) { return f.client, nil }}
+	r := c.Check(context.Background(), monitor.MonitoredNode{}, rule, 2*time.Second)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.dnsCalls != 1 || f.titleCalls != 1 || r.RequestCount != 2 || r.Outcome != "service_rejected" || r.Details["rejection_evidence"] != "anonymous_ip" || rule.RuleVersion != 3 {
+		t.Fatalf("ABEMA rejection evidence missing: dns=%d target=%d rule=%d result=%+v", f.dnsCalls, f.titleCalls, rule.RuleVersion, r)
+	}
+	if r.Details["target_dns_mode"] != "selected_node_doh_ipv4_v1" || r.Details["node_fault"] != "not_established" {
+		t.Fatalf("DNS path or fault classification lost: %v", r.Details)
+	}
+}
+
+func TestABEMASuccessAfterAutomaticSelectedNodeDNS(t *testing.T) {
+	rule, _ := RuleFor("abema_unlock")
+	f := newNetflixDNSFixture(t)
+	f.abema = true
+	c := Checker{DriftSamples: 1, ClientFactory: func(monitor.MonitoredNode, time.Duration) (*http.Client, error) { return f.client, nil }}
+	r := c.Check(context.Background(), monitor.MonitoredNode{}, rule, 2*time.Second)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.dnsCalls != 1 || f.titleCalls != 1 || r.RequestCount != 2 || r.Outcome != "region_limited" || r.Details["service_region"] != "SG" {
+		t.Fatalf("successful API evidence lost: dns=%d target=%d result=%+v", f.dnsCalls, f.titleCalls, r)
 	}
 }
