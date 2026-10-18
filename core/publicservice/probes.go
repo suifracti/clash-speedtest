@@ -474,8 +474,7 @@ func readPage(ctx context.Context, client *http.Client, target string, allowedHo
 	if truncated {
 		body = body[:maximum]
 	}
-	if pageHasChallenge(body) {
-		result.Outcome, result.Summary = "challenge", "网页要求浏览器验证，不能确认功能可用"
+	if classifyPageChallenge(&result, body) {
 		return result, fetchedPage{}, false
 	}
 	if status < 200 || status >= 300 {
@@ -498,11 +497,12 @@ func firstRegexGroup(pattern *regexp.Regexp, value string) string {
 }
 
 type netflixPage struct {
-	status    int
-	body      []byte
-	finalURL  string
-	challenge bool
-	truncated bool
+	status             int
+	body               []byte
+	finalURL           string
+	challenge          bool
+	suspectedChallenge bool
+	truncated          bool
 }
 
 func checkNetflix(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
@@ -534,6 +534,14 @@ func checkNetflix(ctx context.Context, client *http.Client, rule Rule, started t
 		result.Outcome = "challenge"
 		result.Summary = "Netflix 要求网页验证"
 		result.ErrorMessage = "已连通 Netflix，但测试请求遇到挑战页"
+		return finish(result, started)
+	}
+	if global.suspectedChallenge || licensed.suspectedChallenge {
+		body := licensed.body
+		if global.suspectedChallenge {
+			body = global.body
+		}
+		classifyPageChallenge(&result, body)
 		return finish(result, started)
 	}
 	if region := netflixRegion(licensed.finalURL + "\n" + string(licensed.body)); region != "" {
@@ -598,9 +606,10 @@ func netflixGET(ctx context.Context, client *http.Client, target string, result 
 	if response.Request != nil && response.Request.URL != nil {
 		finalURL = response.Request.URL.String()
 	}
+	explicitChallenge := strings.EqualFold(strings.TrimSpace(response.Header.Get("cf-mitigated")), "challenge") || pageHasExplicitChallenge(body)
 	return netflixPage{
 		status: response.StatusCode, body: body, finalURL: finalURL, truncated: truncated,
-		challenge: strings.EqualFold(strings.TrimSpace(response.Header.Get("cf-mitigated")), "challenge") || pageHasChallenge(body),
+		challenge: explicitChallenge, suspectedChallenge: !explicitChallenge && pageHasChallenge(body),
 	}, true
 }
 
@@ -627,7 +636,7 @@ func netflixPageEvidence(result *Result, key string, page netflixPage, rule Rule
 // Only the visible, explicit country notice is a region restriction. Script
 // strings and HTTP 200 alone are not evidence of either availability or blocking.
 func netflixTitleRegionBlocked(page netflixPage) bool {
-	if page.status != http.StatusOK || page.challenge {
+	if page.status != http.StatusOK || page.challenge || page.suspectedChallenge {
 		return false
 	}
 	z := html.NewTokenizer(strings.NewReader(string(page.body)))
@@ -667,7 +676,7 @@ func netflixTitleRegionBlocked(page netflixPage) bool {
 }
 
 func netflixTitleAvailable(page netflixPage) bool {
-	if page.status != http.StatusOK || page.challenge || !strings.Contains(page.finalURL, "/title/") {
+	if page.status != http.StatusOK || page.challenge || page.suspectedChallenge || !strings.Contains(page.finalURL, "/title/") {
 		return false
 	}
 	text := strings.ToLower(string(page.body))
@@ -687,7 +696,30 @@ func netflixTitleAvailable(page netflixPage) bool {
 
 func pageHasChallenge(body []byte) bool {
 	text := strings.ToLower(string(body))
-	return strings.Contains(text, "/cdn-cgi/challenge-platform/") || strings.Contains(text, "cf-chl-") || strings.Contains(text, "<title>just a moment") || strings.Contains(text, "unusual traffic from your computer network")
+	return pageHasExplicitChallenge(body) || strings.Contains(text, "<title>just a moment") || strings.Contains(text, "unusual traffic from your computer network")
+}
+
+func pageHasExplicitChallenge(body []byte) bool {
+	text := strings.ToLower(string(body))
+	return strings.Contains(text, "/cdn-cgi/challenge-platform/") || strings.Contains(text, "cf-chl-")
+}
+
+// Titles and traffic-warning text can suggest verification, but do not prove
+// that a challenge platform rejected this request. Keep those samples unknown.
+func classifyPageChallenge(result *Result, body []byte) bool {
+	if !pageHasChallenge(body) {
+		return false
+	}
+	if result.Details == nil {
+		result.Details = map[string]string{}
+	}
+	result.Outcome, result.Summary = "suspected_challenge", "页面疑似要求验证；未确认挑战或业务能力"
+	result.Details["challenge_evidence"] = "page title or traffic warning only"
+	if pageHasExplicitChallenge(body) {
+		result.Outcome, result.Summary = "challenge", "页面含明确挑战平台标记；未验证业务能力"
+		result.Details["challenge_evidence"] = "challenge platform marker"
+	}
+	return true
 }
 
 func optionalFlag(value *bool, yes, no string) string {

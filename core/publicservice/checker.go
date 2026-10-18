@@ -894,23 +894,14 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 		if rule.ServiceID == "grok_web" {
 			// This is a bounded prefix of the one response, never a new probe.
 			result.Details = map[string]string{"body_prefix_sha256": fmt.Sprintf("%x", sha256.Sum256(body)), "body_evidence_limit": "8192 bytes; prefix only"}
-			text := strings.ToLower(string(body))
-			if strings.Contains(text, "/cdn-cgi/challenge-platform/") || strings.Contains(text, "cf-chl-") {
-				result.Outcome, result.Summary = "challenge", "明确挑战标记；未验证聊天能力"
-				result.Details["challenge_evidence"] = "challenge platform marker"
-				return finish(result, startedAt)
-			}
-			if pageHasChallenge(body) {
-				result.Outcome, result.Summary = "suspected_challenge", "疑似验证页面；未确认挑战或业务能力"
-				result.Details["challenge_evidence"] = "page title or traffic warning only"
+			if classifyPageChallenge(&result, body) {
 				return finish(result, startedAt)
 			}
 			if status < 200 || status >= 300 {
 				result.Outcome, result.FailurePhase, result.ErrorMessage = "http_rejected", "http_status", fmt.Sprintf("入口返回 HTTP %d；未发现明确挑战标记", status)
 				return finish(result, startedAt)
 			}
-		} else if pageHasChallenge(body) {
-			result.Outcome, result.Summary = "challenge", "网页要求浏览器验证，未验证功能可用"
+		} else if classifyPageChallenge(&result, body) {
 			return finish(result, startedAt)
 		}
 
