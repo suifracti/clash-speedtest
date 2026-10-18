@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/net/html"
 )
 
 const browserUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -447,6 +449,7 @@ type netflixPage struct {
 	body      []byte
 	finalURL  string
 	challenge bool
+	truncated bool
 }
 
 func checkNetflix(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
@@ -463,14 +466,16 @@ func checkNetflix(ctx context.Context, client *http.Client, rule Rule, started t
 		result.RequestCount++
 		return nil
 	}
-	global, ok := netflixGET(ctx, &clone, "https://www.netflix.com/title/81280792", &result)
+	global, ok := netflixGET(ctx, &clone, "https://www.netflix.com/title/81280792", &result, rule.MaximumBodyBytes)
 	if !ok {
 		return finish(result, started)
 	}
-	licensed, ok := netflixGET(ctx, &clone, "https://www.netflix.com/title/70143836", &result)
+	globalAvailable, globalBlocked := netflixPageEvidence(&result, "global_title", global, rule)
+	licensed, ok := netflixGET(ctx, &clone, "https://www.netflix.com/title/70143836", &result, rule.MaximumBodyBytes)
 	if !ok {
 		return finish(result, started)
 	}
+	licensedAvailable, licensedBlocked := netflixPageEvidence(&result, "licensed_title", licensed, rule)
 	result.HTTPStatus = intPointer(licensed.status)
 	if global.challenge || licensed.challenge {
 		result.Outcome = "challenge"
@@ -478,14 +483,14 @@ func checkNetflix(ctx context.Context, client *http.Client, rule Rule, started t
 		result.ErrorMessage = "已连通 Netflix，但测试请求遇到挑战页"
 		return finish(result, started)
 	}
-	globalAvailable := netflixTitleAvailable(global)
-	licensedAvailable := netflixTitleAvailable(licensed)
-	result.Details["global_title"] = availabilityLabel(globalAvailable)
-	result.Details["licensed_title"] = availabilityLabel(licensedAvailable)
 	if region := netflixRegion(licensed.finalURL + "\n" + string(licensed.body)); region != "" {
 		result.Details["service_region"] = strings.ToUpper(region)
 	}
 	switch {
+	case globalBlocked || licensedBlocked:
+		result.Outcome, result.FailurePhase = "region_blocked", "title_country_restriction"
+		result.Summary = "Netflix 测试片目明确提示当前国家不可观看；不代表全部片库或账号播放状态"
+		result.ErrorMessage = "网页已响应，片目页面含明确国家限制提示；不是节点连接故障"
 	case licensedAvailable && globalAvailable:
 		result.Outcome = "unlocked"
 		result.Summary = "测试片目页面可访问；不代表账号播放已解锁"
@@ -504,7 +509,7 @@ func checkNetflix(ctx context.Context, client *http.Client, rule Rule, started t
 	return finish(result, started)
 }
 
-func netflixGET(ctx context.Context, client *http.Client, target string, result *Result) (netflixPage, bool) {
+func netflixGET(ctx context.Context, client *http.Client, target string, result *Result, maximum int) (netflixPage, bool) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		result.Outcome, result.FailurePhase, result.ErrorMessage = "transport_error", "request_setup", "无法创建 Netflix 测试请求"
@@ -522,23 +527,90 @@ func netflixGET(ctx context.Context, client *http.Client, target string, result 
 	if serviceRateLimit(result, response, false) {
 		return netflixPage{}, false
 	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, MaximumResponseBytes+1))
-	result.BytesRead += int64(min(len(body), MaximumResponseBytes))
+	result.HTTPStatus = intPointer(response.StatusCode)
+	if maximum <= 0 || maximum > MaximumWebDocumentBytes {
+		maximum = MaximumResponseBytes
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, int64(maximum)+1))
+	result.BytesRead += int64(min(len(body), maximum))
 	if err != nil {
 		classifyRequestError(result, ctx, err)
 		return netflixPage{}, false
 	}
-	if len(body) > MaximumResponseBytes {
-		body = body[:MaximumResponseBytes]
+	truncated := len(body) > maximum
+	if truncated {
+		body = body[:maximum]
 	}
 	finalURL := target
 	if response.Request != nil && response.Request.URL != nil {
 		finalURL = response.Request.URL.String()
 	}
 	return netflixPage{
-		status: response.StatusCode, body: body, finalURL: finalURL,
+		status: response.StatusCode, body: body, finalURL: finalURL, truncated: truncated,
 		challenge: strings.EqualFold(strings.TrimSpace(response.Header.Get("cf-mitigated")), "challenge") || pageHasChallenge(body),
 	}, true
+}
+
+// Store each completed page before the next request so partial failures do not
+// discard the evidence already obtained. The original rule keeps its old method.
+func netflixPageEvidence(result *Result, key string, page netflixPage, rule Rule) (available, blocked bool) {
+	available = netflixTitleAvailable(page)
+	if rule.ServiceID == netflixIPv4Service {
+		blocked = netflixTitleRegionBlocked(page)
+		available = available && !page.truncated && !blocked
+		result.Details[key+"_http_status"] = strconv.Itoa(page.status)
+		result.Details[key+"_body_truncated"] = strconv.FormatBool(page.truncated)
+	}
+	result.Details[key] = availabilityLabel(available)
+	if blocked {
+		result.Details[key] = "地区不可用"
+	}
+	if region := netflixRegion(page.finalURL); region != "" {
+		result.Details["service_region"] = strings.ToUpper(region)
+	}
+	return available, blocked
+}
+
+// Only the visible, explicit country notice is a region restriction. Script
+// strings and HTTP 200 alone are not evidence of either availability or blocking.
+func netflixTitleRegionBlocked(page netflixPage) bool {
+	if page.status != http.StatusOK || page.challenge {
+		return false
+	}
+	z := html.NewTokenizer(strings.NewReader(string(page.body)))
+	inBody, hidden := false, ""
+	for {
+		switch z.Next() {
+		case html.ErrorToken:
+			return false
+		case html.StartTagToken:
+			name, _ := z.TagName()
+			tag := string(name)
+			if tag == "body" {
+				inBody = true
+			}
+			if tag == "script" || tag == "style" {
+				hidden = tag
+			}
+		case html.EndTagToken:
+			name, _ := z.TagName()
+			tag := string(name)
+			if tag == hidden {
+				hidden = ""
+			}
+			if tag == "body" {
+				inBody = false
+			}
+		case html.TextToken:
+			if !inBody || hidden != "" {
+				continue
+			}
+			text := strings.ToLower(strings.ReplaceAll(string(z.Text()), "’", "'"))
+			if strings.Contains(strings.Join(strings.Fields(text), " "), "this title isn't currently available to watch in your country") {
+				return true
+			}
+		}
+	}
 }
 
 func netflixTitleAvailable(page netflixPage) bool {

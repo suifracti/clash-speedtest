@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -193,5 +194,59 @@ func TestNetflixIPv4UnsupportedClientStopsBeforeDNS(t *testing.T) {
 	r := c.Check(context.Background(), monitor.MonitoredNode{}, rule, time.Second)
 	if r.Outcome != "not_executed" || calls != 0 || r.RequestCount != 0 {
 		t.Fatalf("unsupported transport used an uncontrolled path: calls=%d outcome=%s", calls, r.Outcome)
+	}
+}
+
+// Shape from the saved public SG title page: large head, then the real title
+// metadata and a visible country restriction. No captured page/tracking data.
+func TestNetflixIPv4LargeTitlePageDoesNotHideCountryRestriction(t *testing.T) {
+	rule, _ := RuleFor(netflixIPv4Service)
+	body := `<html><head>` + strings.Repeat(" ", 360000) + `<meta property="al:ios:url" content="nflx://www.netflix.com/title/fixture"/></head><body><div>Oh no! This title isn’t currently available to watch in your country.</div></body></html>`
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		resp := fixtureResponse(req, 200, "text/html", body)
+		resp.Request.URL, _ = req.URL.Parse("https://www.netflix.com/sg" + req.URL.Path)
+		return resp, nil
+	})}
+	r := checkNetflix(context.Background(), client, rule, time.Now())
+	if r.Outcome != "region_blocked" || r.BytesRead != int64(2*len(body)) || r.Details["global_title"] != "地区不可用" || r.Details["service_region"] != "SG" {
+		t.Fatalf("outcome=%s bytes=%d details=%v", r.Outcome, r.BytesRead, r.Details)
+	}
+}
+
+func TestNetflixIPv4BoundedPageCannotClaimAvailabilityFromPrefix(t *testing.T) {
+	rule, _ := RuleFor(netflixIPv4Service)
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `<html><meta property="al:ios:url" content="nflx://www.netflix.com/title/fixture"/>` + strings.Repeat(" ", 1048576)
+		return fixtureResponse(req, 200, "text/html", body), nil
+	})}
+	r := checkNetflix(context.Background(), client, rule, time.Now())
+	if r.Outcome != "unknown" || r.Details["global_title_body_truncated"] != "true" || r.BytesRead != 2*1048576 {
+		t.Fatalf("outcome=%s bytes=%d details=%v", r.Outcome, r.BytesRead, r.Details)
+	}
+}
+
+func TestNetflixIPv4RetainsFirstPageWhenSecondRequestFails(t *testing.T) {
+	rule, _ := RuleFor(netflixIPv4Service)
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if strings.Contains(req.URL.Path, "70143836") {
+			return nil, context.DeadlineExceeded
+		}
+		return fixtureResponse(req, 200, "text/html", `<html><body>Oh no! This title isn’t currently available to watch in your country.</body></html>`), nil
+	})}
+	r := checkNetflix(context.Background(), client, rule, time.Now())
+	if r.Details["global_title"] != "地区不可用" || r.Details["global_title_http_status"] != "200" || r.Outcome == "unlocked" || r.Outcome == "region_blocked" {
+		t.Fatalf("first page evidence was lost or partial evidence became a full conclusion: %+v", r)
+	}
+}
+
+func TestNetflixCountryRestrictionRequiresVisibleNotice(t *testing.T) {
+	page := netflixPage{status: 200, finalURL: "https://www.netflix.com/sg/title/fixture", body: []byte(`<html><head><script>var text="Oh no! This title isn’t currently available to watch in your country."</script></head><body><h1>Fixture</h1></body></html>`)}
+	// A hidden script string must not become a visible region block.
+	rule, _ := RuleFor(netflixIPv4Service)
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return fixtureResponse(req, 200, "text/html", string(page.body)), nil
+	})}
+	if checkNetflix(context.Background(), client, rule, time.Now()).Outcome == "region_blocked" {
+		t.Fatal("script-only text became a country restriction")
 	}
 }
