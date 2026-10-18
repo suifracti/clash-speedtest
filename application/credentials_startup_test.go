@@ -202,3 +202,21 @@ func TestManualCredentialReadbackUsesSameDataRoot(t *testing.T) {
 		t.Fatal("local binding wrote the daily HOME")
 	}
 }
+
+func TestExplicitDiscoveryCanReplaceAnExistingLocalBinding(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	paths, _ := appdata.Resolve(t.TempDir())
+	calls := 0
+	app := NewAppServiceWithOptions(nil, paths, nil, Options{NoAutoCredentials: true, CredentialDiscovery: func() (string, string, error) {
+		calls++
+		return "ya29.refreshed-local-value", "explicit discovery", nil
+	}})
+	defer app.Close()
+	if err := app.SetAntigravityToken("ya29.previous-local-value", "previous"); err != nil {
+		t.Fatal(err)
+	}
+	status, err := app.DiscoverAntigravityToken()
+	if err != nil || calls != 1 || !status.HasToken || app.GetAntigravityToken() != "ya29.refreshed-local-value" {
+		t.Fatalf("explicit refresh did not run: calls=%d source=%s err=%v", calls, status.Source, err)
+	}
+}

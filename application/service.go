@@ -1760,8 +1760,10 @@ func (s *AppService) DiscoverAntigravityToken() (TokenStatusDTO, error) {
 	}
 	s.antigravityMu.Lock()
 	defer s.antigravityMu.Unlock()
-	if s.loadPersistedTokenLocked() {
-		return s.tokenStatusLocked(), nil
+	// This operation is an explicit user request: allow finding a refreshed
+	// credential even when a previous local binding already exists.
+	if s.antigravityToken == "" {
+		s.loadPersistedTokenLocked()
 	}
 	discover := s.discoverCredentials
 	if discover == nil {
