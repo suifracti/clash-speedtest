@@ -24,6 +24,7 @@ type requestPhases struct {
 	dns                time.Duration
 	firstByte          time.Duration
 	dialCount          int
+	dialPending        int
 	dialFailures       int
 	dialError          string
 	tlsCount           int
@@ -53,10 +54,16 @@ func (p *requestPhases) wrap(original http.RoundTripper, proxyDial bool) http.Ro
 		if dial := clone.DialContext; dial != nil {
 			clone.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 				started := time.Now()
+				// net/http may return on request cancellation before this dial ends.
+				// Count admission now so the saved snapshot can show pending work.
+				p.mu.Lock()
+				p.dialCount++
+				p.dialPending++
+				p.mu.Unlock()
 				conn, err := dial(ctx, network, addr)
 				p.mu.Lock()
 				p.proxyDial += time.Since(started)
-				p.dialCount++
+				p.dialPending--
 				if err != nil {
 					p.dialFailures++
 					p.dialError = sanitizeTransportError(err)
@@ -184,8 +191,11 @@ func (p *requestPhases) attach(result *Result) {
 	result.Details["request_headers_network_ms"] = format(p.network)
 	result.Details["response_body_read_ms"] = format(p.body)
 	if p.dialCount > 0 {
-		result.Details["proxy_connect_ms"] = format(p.proxyDial)
+		if p.dialCount > p.dialPending {
+			result.Details["proxy_connect_ms"] = format(p.proxyDial)
+		}
 		result.Details["proxy_connect_attempts"] = strconv.Itoa(p.dialCount)
+		result.Details["proxy_connect_pending"] = strconv.Itoa(p.dialPending)
 		result.Details["proxy_connect_failures"] = strconv.Itoa(p.dialFailures)
 		if p.dialError != "" {
 			result.Details["proxy_connect_error"] = p.dialError
@@ -208,6 +218,9 @@ func (p *requestPhases) attach(result *Result) {
 		result.Details["dns_timing_note"] = "由节点代理内部处理，无法单独计时"
 	}
 	result.Details["phase_timing_note"] = "多请求时为阶段累计；首字节时间包含建连与 TLS，不能与其它阶段相加"
+	if p.dialPending > 0 {
+		result.Details["phase_timing_note"] += "；快照时仍有拨号未结束，其耗时和结果尚未计入"
+	}
 }
 
 type timedServiceBody struct {

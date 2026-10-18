@@ -10,6 +10,7 @@ import (
 	"net/http/httptrace"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPhaseEvidenceSeparatesTLSFailureFromSuccess(t *testing.T) {
@@ -61,5 +62,49 @@ func TestPhaseEvidenceRecordsProxyDialFailureWithoutNetwork(t *testing.T) {
 	d := result.Details
 	if d["proxy_connect_attempts"] != "1" || d["proxy_connect_failures"] != "1" || d["proxy_connect_error"] == "" || strings.Contains(d["proxy_connect_error"], "private-value") || d["tls_handshake_attempts"] != "" || d["http_requests_written"] != "0" {
 		t.Fatalf("dial failure evidence missing, unsafe or invented: %+v", d)
+	}
+}
+
+func TestCancelledRequestRetainsPendingDialEvidence(t *testing.T) {
+	started, stopped := make(chan struct{}), make(chan struct{})
+	phases := &requestPhases{}
+	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		close(started)
+		<-ctx.Done()
+		close(stopped)
+		return nil, ctx.Err()
+	}}
+	client := &http.Client{Transport: phases.wrap(transport, true)}
+	defer client.CloseIdleConnections()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://fixture.invalid/", nil)
+	done := make(chan error, 1)
+	go func() { _, err := client.Do(request); done <- err }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("fixture dial did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("request error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("request cancellation waited for detached dial")
+	}
+	result := Result{}
+	phases.attach(&result)
+	d := result.Details
+	if d["proxy_connect_attempts"] != "1" || d["proxy_connect_pending"] != "1" || d["proxy_connect_failures"] != "0" || d["proxy_connect_ms"] != "" {
+		t.Errorf("cancelled request lost or completed a pending dial: %+v", d)
+	}
+	client.CloseIdleConnections()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("CloseIdleConnections did not cancel fixture dial")
 	}
 }
