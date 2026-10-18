@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import {computed,ref} from 'vue'
-import {date,type Attempt,outcomeLabel} from '../domain'
+import {date,type Attempt} from '../domain'
 import {attemptObservedAt,latestServices} from '../nodeQuality'
 import {serviceIsProfile} from '../sharedResults'
 import Modal from './Modal.vue'
 
 const props=withDefaults(defineProps<{attempts?:Attempt[]}>(),{attempts:()=>[]})
 const open=ref(false)
-type ExitRecord={attempt:Attempt;serviceId:string;family:string;region:string;ipType:string;provider:string;ip:string;conclusion:string;observedAt:string}
+type ExitRecord={attempt:Attempt;serviceId:string;family:string;region:string;ipType:string;provider:string;ip:string;confirmed:boolean;observedAt:string}
 const field=(attempt:Attempt,...keys:string[])=>{
  const details=attempt.result?.details
  for(const key of keys){const value=details?.[key];if(typeof value==='string'&&value.trim())return value.trim();if(typeof value==='number'&&Number.isFinite(value))return String(value)}
@@ -39,8 +39,8 @@ const records=computed<ExitRecord[]>(()=>latestServices(props.attempts).filter(a
  if(!ipType&&isResidential!==undefined)ipType=isResidential?'住宅':'非住宅'
  if(!ipType&&isIDC!==undefined)ipType=isIDC?'机房 IDC':'非 IDC（不等于家宽）'
  const provider=field(attempt,'provider')||providerNames[serviceId]||serviceId
- const conclusion=attempt.result?.summary?.trim()||outcomeLabel(attempt.result?.outcome)||'未确认'
- return {attempt,serviceId,family,region,ipType:ipType||'类型未知',provider,ip,conclusion,observedAt:attemptObservedAt(attempt)}
+ const confirmed=attempt.result?.outcome==='profiled'
+ return {attempt,serviceId,family,region,ipType:ipType||'类型未知',provider,ip,confirmed,observedAt:attemptObservedAt(attempt)}
 }))
 const compactRecords=computed(()=>{
  const selected:ExitRecord[]=[]
@@ -48,29 +48,31 @@ const compactRecords=computed(()=>{
  for(const record of records.value)if(selected.length<2&&!selected.includes(record))selected.push(record)
  return selected.sort((a,b)=>(Date.parse(b.observedAt)||0)-(Date.parse(a.observedAt)||0))
 })
-const compactLine=(record:ExitRecord)=>`${record.family} · ${record.region} · ${record.ipType} · ${record.provider}：${record.conclusion}`
 const detailValue=(attempt:Attempt,key:string)=>field(attempt,key)
 const shownDetail=(attempt:Attempt,key:string)=>detailValue(attempt,key)||'未提供'
 const exitObservedAt=(attempt:Attempt)=>detailValue(attempt,'exit_observed_at')||detailValue(attempt,'query_at')||'未提供'
 </script>
 
 <template>
- <button class="node-exit-summary" type="button" aria-label="查看已保存的出口画像" @click="open=true">
-  <span v-if="compactRecords.length" class="node-exit-summary-records"><span v-for="record in compactRecords" :key="record.attempt.attempt_id" class="node-exit-summary-record">{{compactLine(record)}}</span><span v-if="records.length>compactRecords.length" class="node-exit-summary-more">+{{records.length-compactRecords.length}} 项</span></span>
-  <span v-else class="node-exit-summary-empty">出口画像：暂无保存记录</span>
- </button>
+ <div class="node-exit-summary" aria-label="已保存的出口画像摘要">
+  <div v-if="compactRecords.length" class="node-exit-summary-records"><article v-for="record in compactRecords" :key="record.attempt.attempt_id" class="node-exit-summary-record"><span class="node-exit-summary-main">{{record.family}} · {{record.region}} · {{record.ipType}}</span><small class="node-exit-summary-source">{{record.provider}} · {{date(record.observedAt)}}<template v-if="!record.confirmed"> · 未确认</template></small></article></div>
+  <span v-else class="node-exit-summary-empty">出口画像：未查询</span>
+  <button class="node-exit-open" type="button" @click="open=true">查看全部来源（{{records.length}}）</button>
+ </div>
  <Modal v-if="open" title="已保存的出口画像" wide @close="open=false">
   <p class="small muted">只显示当前节点范围传入的最近保存服务记录。每项服务按观测时间取最新一条；不同服务可能看到不同出口。</p>
-  <p v-if="!records.length" class="muted">暂无已保存的出口画像记录。</p>
+  <p v-if="!records.length" class="muted">出口画像：未查询。</p>
   <article v-for="record in records" :key="record.attempt.attempt_id" class="node-exit-evidence">
-   <header><strong>{{record.provider}} · {{record.family}}</strong><span :class="record.attempt.result?.outcome==='profiled'?'good':'warn'">{{record.conclusion}}</span></header>
+   <header><strong>{{record.provider}} · {{record.family}}</strong><span :class="record.confirmed?'good':'warn'">{{record.confirmed?'已获取画像':'未确认'}}</span></header>
    <p>{{record.region}} · {{record.ipType}} · {{date(record.observedAt)}} · {{record.serviceId}}</p>
    <p v-if="record.ip">出口 IP：<code>{{record.ip}}</code></p>
-   <p v-if="record.attempt.result?.error_message" class="warn">{{record.attempt.result.error_message}}</p>
+   <p v-if="record.attempt.result?.summary">服务摘要：{{record.attempt.result.summary}}</p>
+   <p v-if="record.attempt.result?.error_message" class="warn">失败原因：{{record.attempt.result.error_message}}</p>
+   <p>观测时间：{{record.observedAt||'未提供'}} · 保存时间：{{record.attempt.finished_at||'未提供'}}</p>
    <p v-if="record.attempt.result?.details?.exit_scope||record.attempt.result?.details?.data_freshness||record.attempt.result?.details?.query_at">
    {{shownDetail(record.attempt,'data_freshness')}} · {{shownDetail(record.attempt,'exit_scope')}} · 查询 {{shownDetail(record.attempt,'query_at')}} · 出口观察 {{exitObservedAt(record.attempt)}} · {{detailValue(record.attempt,'cache_status')==='hit'?'复用本地结果缓存':'查询结果'}}
    </p>
-   <details v-if="record.attempt.result?.details"><summary>服务返回字段</summary><pre>{{JSON.stringify(record.attempt.result.details,null,2)}}</pre></details>
+   <details><summary>原始服务记录</summary><pre>{{JSON.stringify(record.attempt,null,2)}}</pre></details>
   </article>
  </Modal>
 </template>

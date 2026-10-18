@@ -11,6 +11,8 @@ it('starts only for visible active work and stops at terminal state',async()=>{
  await w.setProps({state:'running',label:'检测中'});expect(w.classes()).toContain('active')
  visibility(false);await w.vm.$nextTick();expect(w.classes()).not.toContain('active')
  visibility(true);await w.setProps({state:'completed',label:'检测已结束'});expect(w.classes()).not.toContain('active');expect(w.classes()).toContain('arrived')
- await vi.advanceTimersByTimeAsync(700);expect(w.classes()).not.toContain('arrived')
+ await vi.advanceTimersByTimeAsync(700);expect(w.classes()).not.toContain('arrived');expect(w.get('.node-activity').isVisible()).toBe(false)
  w.unmount();vi.useRealTimers()
 })
+
+it('does not show a permanent completed label when opening saved results',()=>{const w=mount(NodeActivity,{props:{state:'completed',label:'检测已结束'}});expect(w.get('.node-activity').isVisible()).toBe(false);w.unmount()})
