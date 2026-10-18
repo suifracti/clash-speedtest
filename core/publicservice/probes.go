@@ -354,7 +354,7 @@ func checkPrimeVideo(ctx context.Context, client *http.Client, rule Rule, starte
 	if !ok {
 		return finish(result, started)
 	}
-	text := string(page.body)
+	text := primeMetadataText(page.body)
 	region := firstRegexGroup(regexp.MustCompile(`(?i)"currentTerritory"\s*:\s*"([^"]+)"`), text)
 	if region != "" {
 		result.Details = map[string]string{"service_region": strings.ToUpper(region)}
@@ -379,6 +379,44 @@ func checkPrimeVideo(ctx context.Context, client *http.Client, rule Rule, starte
 		}
 	}
 	return finish(result, started)
+}
+
+// Prime also embeds HTML-escaped JSON in text/template script blocks. Decode
+// complete data documents only, not arbitrary visible text or executable JS.
+func primeMetadataText(body []byte) string {
+	var text strings.Builder
+	text.Write(body)
+	z := html.NewTokenizer(strings.NewReader(string(body)))
+	template := false
+	for {
+		switch z.Next() {
+		case html.ErrorToken:
+			return text.String()
+		case html.StartTagToken:
+			token := z.Token()
+			if token.Data == "script" {
+				template = false
+				for _, attr := range token.Attr {
+					if attr.Key == "type" {
+						kind := strings.ToLower(strings.TrimSpace(attr.Val))
+						template = kind == "text/template" || kind == "application/json"
+					}
+				}
+			}
+		case html.EndTagToken:
+			if token := z.Token(); token.Data == "script" {
+				template = false
+			}
+		case html.TextToken:
+			if template {
+				data := html.UnescapeString(string(z.Text()))
+				if json.Valid([]byte(data)) {
+					text.WriteByte('\n')
+					text.WriteString(data)
+				}
+			}
+		}
+	}
 }
 
 func checkHuluJapan(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {

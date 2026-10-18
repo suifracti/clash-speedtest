@@ -313,3 +313,31 @@ func TestPrimeTerritoryIsPreservedWithoutClaimingRestrictionKnown(t *testing.T) 
 		t.Fatalf("known region was hidden by a generic missing-region message: %+v", r)
 	}
 }
+
+func TestPrimeEncodedTemplateMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, outcome, region string
+	}{
+		{"saved page shape", `<script type="text/template">{&#34;currentTerritory&#34;:&#34;SG&#34;}</script>`, "unknown", "SG"},
+		{"explicit unrestricted", `<script type="text/template">{&quot;currentTerritory&quot;:&quot;JP&quot;,&quot;isServiceRestricted&quot;:false}</script>`, "unlocked", "JP"},
+		{"explicit restriction", `<script type="application/json">{&#34;currentTerritory&#34;:&#34;JP&#34;,&#34;isServiceRestricted&#34;:true}</script>`, "region_blocked", "JP"},
+		{"encoded visible text is not metadata", `<p>{&#34;currentTerritory&#34;:&#34;JP&#34;,&#34;isServiceRestricted&#34;:false}</p>`, "unknown", ""},
+		{"incomplete template is not metadata", `<script type="text/template">{&#34;currentTerritory&#34;:&#34;SG&#34;`, "unknown", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rule, _ := RuleFor("prime_video")
+			calls := 0
+			checker := Checker{ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+				calls++
+				return fixtureResponse(req, http.StatusOK, "text/html", tc.body), nil
+			})}
+			result := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
+			if calls != 1 || result.Outcome != tc.outcome || result.Details["service_region"] != tc.region {
+				t.Fatalf("template metadata: calls=%d outcome=%s region=%q", calls, result.Outcome, result.Details["service_region"])
+			}
+			if tc.region == "SG" && (result.Details["restriction_status"] != "unknown" || result.Details["missing_evidence"] != "isServiceRestricted") {
+				t.Fatal("region alone became a confirmed restriction conclusion")
+			}
+		})
+	}
+}
