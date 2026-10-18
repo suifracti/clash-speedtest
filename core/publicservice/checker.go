@@ -218,7 +218,13 @@ var catalog = []Rule{
 	},
 
 	webRule("github_web", "GitHub 网页", "开发服务", "全球", "https://github.com/", "检测 GitHub 网页入口。"),
-	webRule("github_codeload", "GitHub Codeload", "开发服务", "全球", "https://codeload.github.com/octocat/Hello-World/zip/refs/heads/master", "只确认归档下载入口响应，不读取归档正文。"),
+	{
+		ServiceID: "github_codeload", Name: "GitHub Codeload", Category: "开发服务", Region: "全球", ResultKind: "endpoint_reachability", RuleVersion: 4,
+		TargetURL: "https://codeload.github.com/octocat/Hello-World/zip/refs/heads/master", Method: http.MethodHead,
+		Description:      "只用HEAD确认归档下载入口响应，不读取归档正文。",
+		SuccessCriterion: "最多跟随3次同服务HTTPS跳转；HEAD最终2xx且无明确挑战响应头，只记入口可达，不下载正文",
+		RedirectPolicy:   "follow_same_service", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: 0,
+	},
 	webRule("gitlab_web", "GitLab 网页", "开发服务", "全球", "https://gitlab.com/", "检测 GitLab 网页入口。"),
 	webRule("npm_registry", "npm Registry", "开发服务", "全球", "https://registry.npmjs.org/-/ping", "检测 npm 官方 Registry 轻量 ping 端点。"),
 	webRule("pypi_json", "PyPI JSON API", "开发服务", "全球", "https://pypi.org/pypi/pip/json", "检测 PyPI 包索引 JSON 入口。"),
@@ -811,6 +817,10 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 		bodyLimit := int64(8192)
 		if rule.ServiceID == "peacock_web" {
 			bodyLimit = MaximumResponseBytes
+		}
+		if rule.Method == http.MethodHead {
+			bodyLimit = 0
+			result.Details["response_body_policy"] = "not_read_HEAD"
 		}
 		body, readErr := io.ReadAll(io.LimitReader(response.Body, bodyLimit))
 		result.BytesRead = int64(len(body))

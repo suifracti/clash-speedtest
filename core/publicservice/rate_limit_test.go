@@ -21,6 +21,8 @@ func TestRateLimitStopsRemainingSamples(t *testing.T) {
 		{name: "GitHub quota zero", service: "github_api_root", status: 403, githubRemaining: "0"},
 		{name: "specialized page", service: "prime_video", status: 429},
 		{name: "bounded JSON", service: "cloudflare_doh", status: 429},
+		{name: "IPv4 observation quota", service: "exit_ipv4", status: 429},
+		{name: "IPv6 observation quota", service: "exit_ipv6", status: 429},
 		{name: "Netflix first response", service: "netflix_unlock", status: 429},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -59,7 +59,7 @@ func checkIPify(ctx context.Context, client *http.Client, rule Rule, started tim
 		family = "IPv6"
 	}
 	if !ok {
-		if result.Outcome != "cancelled" {
+		if result.Outcome != "cancelled" && result.Outcome != "rate_limited" {
 			result.Outcome = "unknown"
 			result.Summary = family + " 出口未确认；可能是节点不支持、服务暂时不可达或请求超时"
 		}
