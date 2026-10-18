@@ -37,13 +37,17 @@ export function qualityGroups(tests:LatencyTest[],monitor:MonitorSample[],target
   const g=entry.g;g.total++;if(!g.lastAt||observationTime(timestamp)>observationTime(g.lastAt))g.lastAt=timestamp
   if(success&&Number.isFinite(value)&&value>=0){g.success++;entry.values.push(value)}
  }
- for(const t of tests){const p=t.network_path;const condition=latencyConditions(t);const comparable=!!t.method&&t.method_version!==undefined&&!!p?.method&&!!p.interface&&!!p.dns_mode&&p.socket_bind_verified===true&&p.dns_bind_verified===true&&!!p.address_family&&p.address_family!=='unknown'&&!!p.address_source&&p.address_source!=='unknown'
+ for(const t of tests){const p=t.network_path;const condition=latencyConditions(t);const nodeType=t.node_type?.toLowerCase();const comparable=!!t.method&&t.method_version!==undefined&&!!nodeType&&nodeType!=='unknown'&&nodeType!=='unverified'&&!!p?.method&&!!p.interface&&!!p.dns_mode&&p.socket_bind_verified===true&&p.dns_bind_verified===true&&!!p.address_family&&p.address_family!=='unknown'&&!!p.address_source&&p.address_source!=='unknown'
   for(const s of t.samples||[])add(t.attempt_id+':'+s.seq,t.source||'workbench',t.method||'旧方法未记录',s.target||t.target||'',condition,comparable,s.timestamp,s.success,s.latency_ms,s.error)
  }
  for(const s of monitor)if(s.probe_type==='rtt')add('monitor:'+s.sample_id,'monitor','旧监测 RTT（条件未记录）',s.target,['legacy-unverified'],false,s.timestamp,s.success,s.latency/1e6,s.error_class+' '+(s.error_detail||''))
- for(const {g,values} of groups.values()){values.sort((a,b)=>a-b);g.p50=median(values);g.p95=values.length?values[Math.ceil(values.length*.95)-1]:null;const mean=values.length?values.reduce((a,b)=>a+b,0)/values.length:0;g.jitter=values.length>1?Math.sqrt(values.reduce((sum,v)=>sum+(v-mean)**2,0)/values.length):null;g.successRate=g.total?g.success/g.total*100:null;g.insufficient=g.total<5||g.success<5}
+ for(const {g,values} of groups.values()){g.comparable=g.comparable&&knownQualityConditions(g);values.sort((a,b)=>a-b);g.p50=median(values);g.p95=values.length?values[Math.ceil(values.length*.95)-1]:null;const mean=values.length?values.reduce((a,b)=>a+b,0)/values.length:0;g.jitter=values.length>1?Math.sqrt(values.reduce((sum,v)=>sum+(v-mean)**2,0)/values.length):null;g.successRate=g.total?g.success/g.total*100:null;g.insufficient=g.total<5||g.success<5}
+ // Current measurements take precedence over legacy Monitor RTT, as in the six-site projection.
+ const available=[...groups.values()].filter(e=>e.g.total||e.g.excluded),current=available.filter(e=>e.g.source!=='monitor'),candidates=current.length?current:available
+ const latestAt=candidates.reduce((latest,e)=>Math.max(latest,e.lastSeenAt),Number.NEGATIVE_INFINITY),latest=candidates.filter(e=>e.lastSeenAt===latestAt)
+ if(Number.isFinite(latestAt)&&latest.length>1)for(const e of latest)e.g.comparable=false
  // A newer unexecuted condition must stay current without refreshing older valid statistics.
- return [...groups.values()].filter(e=>e.g.total||e.g.excluded).sort((a,b)=>b.lastSeenAt-a.lastSeenAt||a.g.key.localeCompare(b.g.key)).map(e=>e.g)
+ return available.sort((a,b)=>(a.g.source==='monitor'?1:0)-(b.g.source==='monitor'?1:0)||b.lastSeenAt-a.lastSeenAt||a.g.key.localeCompare(b.g.key)).map(e=>e.g)
 }
 interface Readers {latency:typeof api.latencyHistory;monitor:typeof api.monitorSamples;attempts:typeof api.attemptHistory}
 // Bounded local database reads only. Never dispatches a measurement. A cap or
@@ -93,9 +97,9 @@ const cancelledError=(error='')=>/cancel(?:led|ed)|context canceled|取消/i.tes
 const sourceLimitedError=(error='')=>/\bHTTP\s*429\b|\brate[ _-]?limit(?:ed|ing)?\b|too many requests|限流/i.test(error)
 function knownQualityConditions(g:QualityGroup){
  const c=JSON.parse(g.condition) as unknown[]
- const known=(v:unknown)=>typeof v==='string'&&!!v&&!['unknown','unverified'].includes(v.toLowerCase())
+ const known=(v:unknown)=>typeof v==='string'&&!!v.trim()&&!['unknown','unverified'].includes(v.trim().toLowerCase())
  // Reuse the group key; never substitute a route/method/family to make it rankable.
- return g.comparable&&known(g.source)&&known(g.method)&&latencyTargetId(g.target)!==undefined&&/^https?:\/\//.test(g.target)&&
+ return known(g.source)&&known(g.method)&&g.method!=='旧方法未记录'&&latencyTargetId(g.target)!==undefined&&/^https?:\/\//.test(g.target)&&
   Number.isInteger(c[0])&&(c[0] as number)>0&&[c[1],c[2],c[3],c[4],c[7],c[8]].every(known)&&c[5]===true&&c[6]===true
 }
 

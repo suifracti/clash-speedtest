@@ -1,5 +1,5 @@
 import {describe,expect,it,vi} from 'vitest'
-import {multiSiteQuality,compareSiteQuality,type QualityEvidence} from '../nodeQuality'
+import {multiSiteQuality,compareSiteQuality,qualityGroups,type QualityEvidence} from '../nodeQuality'
 import {latencyTargets} from '../latencyTargets'
 import type {LatencyTest,MonitorSample,NetworkPath,NodeScope} from '../domain'
 
@@ -99,13 +99,33 @@ describe('six-site evidence without aggregate scoring',()=>{
   const only=site(evidence([],[legacy]));expect(only.p50).toBe(1);expect(only.reasons).toContain('unknown_conditions');expect(only.rankable.p50).toBe(false)
  })
  it('blocks known paths with unknown node type/method/family, without inventing conditions',()=>{
-  for(const override of [{source:'unknown'},{node_type:''},{method:'unknown'},{network_path:{...path,address_family:'unknown'}},{network_path:{...path,socket_bind_verified:false}}]){
+  for(const override of [{source:'unknown'},{node_type:''},{method:'unknown'},{method:''},{network_path:{...path,address_family:'unknown'}},{network_path:{...path,socket_bind_verified:false}}]){
    const s=site(evidence([test('unknown',0,20,override)]));expect(s.rankable.p95).toBe(false);expect(s.reasons).toContain('unknown_conditions')
+  }
+ })
+ it('keeps missing node types visible but out of comparable quality groups',()=>{
+  const groups=qualityGroups([test('missing-type',0,20,{node_type:''})],[],'cloudflare')
+  expect(groups).toHaveLength(1)
+  expect(groups[0]).toMatchObject({comparable:false,total:20,success:20,p50:105,p95:190})
+ })
+ it('applies the same known-condition requirements to quick comparison',()=>{
+  for(const override of [{source:'unknown'},{method:'unknown'},{method_version:0},{network_path:{...path,interface:'unknown'}}]){
+   const groups=qualityGroups([test('quick-unknown',0,20,override)],[],'cloudflare')
+   expect(groups[0].comparable).toBe(false)
   }
  })
  it('rejects simultaneous different conditions instead of choosing a hidden lexical winner',()=>{
   const s=site(evidence([test('a'),test('b',0,20,{network_path:{...path,address_family:'IPv6',address_source:'AAAA'}})]))
-  expect(s.groups).toHaveLength(2);expect(s.reasons).toContain('ambiguous_latest_group');expect(s.rankable.p50).toBe(false)
+  expect(s.groups).toHaveLength(2);expect(s.reasons).toContain('ambiguous_latest_group');expect(s.reasons).not.toContain('unknown_conditions');expect(s.rankable.p50).toBe(false)
+ })
+ it('keeps the P50/P95 values but blocks tied latest condition groups from comparison',()=>{
+  const groups=qualityGroups([
+   test('same-time-ipv4',0,20),
+   test('same-time-ipv6',0,20,{network_path:{...path,address_family:'IPv6',address_source:'AAAA'}}),
+  ],[],'cloudflare')
+  expect(groups).toHaveLength(2)
+  expect(groups.map(group=>group.comparable)).toEqual([false,false])
+  expect(groups.map(group=>[group.total,group.success,group.p50,group.p95])).toEqual([[20,20,105,190],[20,20,105,190]])
  })
  it('retains successful samples from a cancelled attempt while marking partial execution',()=>{
   const s=site(evidence([test('partial-cancel',0,5,{status:'cancelled'})]))

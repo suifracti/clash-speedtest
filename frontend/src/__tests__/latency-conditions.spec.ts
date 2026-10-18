@@ -28,7 +28,9 @@ it('separates latency and quality conditions by recorded address family and sour
  expect(new Set(groups.map(group=>group.key)).size).toBe(3)
  const quality=qualityGroups(observations,[],'cloudflare')
  expect(quality).toHaveLength(3)
- expect(quality.every(group=>group.comparable)).toBe(true)
+ // Each condition is known, but their latest timestamps tie: none is a unique current comparison.
+ expect(quality.every(group=>group.comparable)).toBe(false)
+ expect(quality.map(group=>group.p50)).toEqual([25,25,25])
  expect(new Set(quality.map(group=>group.key)).size).toBe(3)
  const unknown=latency('unknown-address-fields',route())
  expect(latencyComparisonGroup(manualLatencyPoint(unknown)).valid).toBe(false)
