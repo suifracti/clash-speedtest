@@ -37,6 +37,12 @@ func (s *AppService) beginWorkbenchSingle() error {
 	if s.workbenchClosed {
 		return fmt.Errorf("应用正在关闭，不能启动延迟测试")
 	}
+	s.publicServiceMu.Lock()
+	storageUnavailable := s.publicServiceClosed || s.publicServiceTransition
+	s.publicServiceMu.Unlock()
+	if storageUnavailable {
+		return fmt.Errorf("应用正在关闭或切换存储，不能启动延迟测试")
+	}
 	if s.workbenchActiveBatch != nil {
 		return fmt.Errorf("批量延迟操作正在运行，单节点延迟操作暂不可启动")
 	}
@@ -61,7 +67,7 @@ func (s *AppService) StartWorkbenchLatencyBatch(ctx context.Context, req Workben
 	if _, err := speedtester.LatencyTargetURL(req.TargetID); err != nil {
 		return nil, monitor.NewValidationError(err.Error())
 	}
-	if s == nil || s.historyStore == nil {
+	if s == nil {
 		return nil, fmt.Errorf("history store is not initialized")
 	}
 	requestID := strings.TrimSpace(req.RequestID)
@@ -101,11 +107,6 @@ func (s *AppService) StartWorkbenchLatencyBatch(ctx context.Context, req Workben
 	if len(selections) == 0 {
 		return nil, monitor.NewValidationError("没有可执行的去重节点")
 	}
-	for _, n := range selections {
-		if err := s.validateMeasurementRequest(ctx, requestID, n.ProfileID, n.NodeKey, n.NodeIdentityKey, n.ConfigRevisionKey, "latency", ""); err != nil {
-			return nil, err
-		}
-	}
 	requestedAt := time.Now().UTC()
 	sampleCount := req.SampleCount
 	if sampleCount <= 0 {
@@ -128,6 +129,23 @@ func (s *AppService) StartWorkbenchLatencyBatch(ctx context.Context, req Workben
 	if s.workbenchClosed {
 		s.workbenchMu.Unlock()
 		return nil, fmt.Errorf("应用正在关闭")
+	}
+	s.publicServiceMu.Lock()
+	storageUnavailable := s.publicServiceClosed || s.publicServiceTransition
+	s.publicServiceMu.Unlock()
+	if storageUnavailable {
+		s.workbenchMu.Unlock()
+		return nil, fmt.Errorf("应用正在关闭或切换存储，不能启动批量延迟测试")
+	}
+	if s.historyStore == nil {
+		s.workbenchMu.Unlock()
+		return nil, fmt.Errorf("history store is not initialized")
+	}
+	for _, n := range selections {
+		if err := s.validateMeasurementRequest(ctx, requestID, n.ProfileID, n.NodeKey, n.NodeIdentityKey, n.ConfigRevisionKey, "latency", ""); err != nil {
+			s.workbenchMu.Unlock()
+			return nil, err
+		}
 	}
 	if prior, err := s.historyStore.FindLatencyBatchByRequestID(context.Background(), requestID); err != nil {
 		s.workbenchMu.Unlock()

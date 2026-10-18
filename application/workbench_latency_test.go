@@ -469,6 +469,87 @@ func TestWorkbenchLatencyTestReturnsBeforeSlowPersistence(t *testing.T) {
 	}
 }
 
+func TestWorkbenchLatencyMeasurementRejectsStorageTransition(t *testing.T) {
+	profileDir := t.TempDir()
+	paths := profiles.Paths{Dir: profileDir}
+	if err := profiles.SaveStore(paths.StoreFile(), &profiles.Store{Airports: []*profiles.Airport{{ID: "profile-a", Name: "订阅 A"}}}); err != nil {
+		t.Fatalf("SaveStore: %v", err)
+	}
+	writeLatencyProxyCache(t, paths, "profile-a", "节点 A", "127.0.0.1:1")
+	store, err := history.NewStore(filepath.Join(t.TempDir(), "history"))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	defer store.Close()
+	service := &AppService{historyStore: store, profilePaths: paths, emitter: NewMemoryEventEmitter()}
+	options, err := service.ListMonitorNodeOptions()
+	if err != nil || len(options) != 1 {
+		t.Fatalf("ListMonitorNodeOptions: options=%+v err=%v", options, err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	service.latencyMeasureHook = func(context.Context, monitor.MonitoredNode, time.Duration) (*speedtester.Result, string, error) {
+		close(entered)
+		<-release
+		return knownWorkbenchLatencyResult(true), "https://probe.example/__down?bytes=1", nil
+	}
+	resultCh := make(chan error, 1)
+	go func() {
+		_, runErr := service.RunWorkbenchLatencyTest(context.Background(), WorkbenchLatencyTestRequest{
+			ProfileID: options[0].ProfileID, NodeKey: options[0].NodeKey, ConfigRevisionKey: options[0].ConfigRevisionKey,
+			TestProject: WorkbenchLatencyProject, TimeoutSeconds: 1,
+		})
+		resultCh <- runErr
+	}()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("synthetic latency measurement did not reach its hook")
+	}
+	transitionErr := service.beginPublicServiceStorageTransition()
+	if transitionErr == nil {
+		service.endPublicServiceStorageTransition()
+	}
+	close(release)
+	if runErr := <-resultCh; runErr != nil {
+		t.Fatalf("synthetic latency measurement: %v", runErr)
+	}
+	if transitionErr == nil {
+		t.Fatal("storage transition must be rejected while a latency measurement is active")
+	}
+	service.latencyPersistenceWG.Wait()
+	page, err := service.ListWorkbenchLatencyTests(context.Background(), WorkbenchLatencyHistoryQuery{
+		ProfileID: options[0].ProfileID, NodeKey: options[0].NodeKey,
+		NodeIdentityKey: options[0].NodeIdentityKey, ConfigRevisionKey: options[0].ConfigRevisionKey,
+	})
+	if err != nil || len(page.Tests) != 1 {
+		t.Fatalf("active latency result was not retained: count=%d err=%v", len(page.Tests), err)
+	}
+}
+
+func TestWorkbenchLatencyAdmissionsRejectStorageTransition(t *testing.T) {
+	store, err := history.NewStore(filepath.Join(t.TempDir(), "history"))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	defer store.Close()
+	service := &AppService{historyStore: store, profilePaths: profiles.Paths{Dir: t.TempDir()}, publicServiceTransition: true, emitter: NewMemoryEventEmitter()}
+	singleErr := service.beginWorkbenchSingle()
+	if singleErr == nil {
+		service.endWorkbenchSingle()
+	}
+	_, batchErr := service.StartWorkbenchLatencyBatch(context.Background(), WorkbenchLatencyBatchRequest{
+		RequestID: "transition-batch", TestProject: WorkbenchLatencyProject, TimeoutSeconds: 1,
+		Selections: []WorkbenchLatencyBatchSelection{{ProfileID: "profile-a", NodeKey: "node-a", NodeIdentityKey: "identity-a", ConfigRevisionKey: "revision-a"}},
+	})
+	if batchErr == nil {
+		service.workbenchWG.Wait()
+	}
+	if singleErr == nil || batchErr == nil {
+		t.Fatalf("storage transition admission was not enforced: single=%v batch=%v", singleErr, batchErr)
+	}
+}
+
 func subscribeLatencyPersistence(emitter *MemoryEventEmitter) <-chan WorkbenchLatencyTestDTO {
 	events := make(chan WorkbenchLatencyTestDTO, 8)
 	emitter.Subscribe(func(event Event) {
@@ -578,4 +659,3 @@ func TestBuildWorkbenchLatencyRecordNilResultDefense(t *testing.T) {
 		t.Fatalf("unexpected record contents: %+v", record)
 	}
 }
-

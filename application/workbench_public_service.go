@@ -487,9 +487,9 @@ func (s *AppService) reconcileWorkbenchPublicServiceAttempts() error {
 
 func (s *AppService) beginPublicServiceStorageTransition() error {
 	s.workbenchMu.Lock()
-	if s.workbenchActiveDownload != nil || s.workbenchPublicServiceStarting > 0 {
+	if s.workbenchActiveDownload != nil || s.workbenchActiveBatch != nil || s.workbenchActiveSingles > 0 || s.workbenchPublicServiceStarting > 0 {
 		s.workbenchMu.Unlock()
-		return fmt.Errorf("请先完成正在启动或运行的 Workbench 下载/公共服务检测")
+		return fmt.Errorf("请先完成正在启动或运行的 Workbench 测量")
 	}
 	s.publicServiceMu.Lock()
 	defer s.workbenchMu.Unlock()
