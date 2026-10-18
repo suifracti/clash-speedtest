@@ -106,11 +106,11 @@ var catalog = []Rule{
 		RedirectPolicy:   "do_not_follow", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: 8 * 1024, Accept: "application/json",
 	},
 	{
-		ServiceID: "ippure_ip_quality", Name: "IPPure 纯净度画像", RuleVersion: 2,
-		Category: "出口与 IP", Region: "全球", ResultKind: "ip_quality", Description: "读取 IPPure 的欺诈分、住宅属性与原生/广播判断。", BatchDefault: true,
-		TargetURL: "https://my.ippure.com/v1/info", Method: http.MethodGet,
-		SuccessCriterion: "HTTP 200 且 JSON 包含出口 IP；欺诈分按 IPPure 原值独立展示",
-		RedirectPolicy:   "do_not_follow", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: 8 * 1024, Accept: "application/json",
+		ServiceID: "ippure_ip_quality", Name: "IPPure IPv4风险画像", RuleVersion: 3,
+		Category: "出口与 IP", Region: "全球", ResultKind: "ip_quality", Description: "通过所选节点的 IPv4 出口读取 IPPure 网页端基础资料与风险分。",
+		TargetURL: "https://api.123169.xyz/api/info/ip-basic/", Method: http.MethodGet,
+		SuccessCriterion: "同一节点先确认公开 IPv4，再读取 IPPure basic 与 risk；风险分须为 0–100 整数，越低越好",
+		RedirectPolicy:   "do_not_follow", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: 16 * 1024, Accept: "application/json",
 	},
 	{
 		ServiceID: "apple_captive", Name: "Apple 网络连通性", RuleVersion: 1,
@@ -335,10 +335,7 @@ func streamingRule(id, name, region, target, description, criterion string) Rule
 func Catalog() []Rule {
 	result := make([]Rule, 0, len(catalog))
 	for _, rule := range catalog {
-		// Keep old result/rule decoding, but withdraw the challenged provider from new plans.
-		if rule.ServiceID != "ippure_ip_quality" {
-			result = append(result, rule)
-		}
+		result = append(result, rule)
 	}
 	return result
 }

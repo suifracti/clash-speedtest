@@ -138,6 +138,9 @@ func checkPing0(ctx context.Context, client *http.Client, rule Rule, started tim
 }
 
 func checkIPPure(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
+	if rule.RuleVersion >= 3 {
+		return checkIPPureWeb(ctx, client, rule, started)
+	}
 	result, body, ok := boundedGET(ctx, client, rule.TargetURL, rule.MaximumBodyBytes)
 	if !ok {
 		return finish(result, started)

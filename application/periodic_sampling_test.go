@@ -84,7 +84,7 @@ func TestPeriodicCoversEveryServiceAndRetainsFailures(t *testing.T) {
 	}
 	p.runCycle(context.Background(), "service", time.Now(), p.cfg)
 	c := p.cycles["service"]
-	if c.Total != 164 || c.Processed != 164 || c.Saved != 164 || c.Outcomes["auth_failed"] != 164 {
+	if c.Total != 162 || c.Processed != 162 || c.Saved != 162 || c.Outcomes["auth_failed"] != 162 {
 		t.Fatalf("coverage: %+v", c)
 	}
 	if _, ok := seen.Load("0antigravity"); !ok {

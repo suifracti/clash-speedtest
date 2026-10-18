@@ -27,7 +27,7 @@ func TestPeriodicFairQueueBalancesProfilesNodesAndServices(t *testing.T) {
 		}
 	}
 	tasks := periodicFairServiceTasks(nodes, periodicServices(PeriodicSamplingConfig{IncludeAntigravity: true}))
-	if len(tasks) != 6*82 {
+	if len(tasks) != 6*81 {
 		t.Fatalf("missing combinations: %d", len(tasks))
 	}
 	seen := map[string]bool{}
@@ -138,7 +138,7 @@ func TestPeriodicRuntimeHonorsConfiguredConcurrency(t *testing.T) {
 		t.Fatalf("configured bound bypassed: %d", peak.Load())
 	}
 	c := p.cycles["service"]
-	if c.CompletedNodes != 2 || c.CoveredServices != 82 || c.CoveredNodes != 2 {
+	if c.CompletedNodes != 2 || c.CoveredServices != 81 || c.CoveredNodes != 2 {
 		t.Fatalf("coverage incomplete: %+v", c)
 	}
 }
@@ -239,7 +239,7 @@ func TestUnexecutedPlanItemsNeverCompleteServiceCoverage(t *testing.T) {
 	}
 	p.runCycle(context.Background(), "service", time.Now(), p.cfg)
 	c := p.cycles["service"]
-	if c.Processed != 164 || c.NotExecuted != 164 || c.CompletedNodes != 0 || c.CoveredNodes != 0 || c.CoveredServices != 0 || c.FullCoverage {
+	if c.Processed != 162 || c.NotExecuted != 162 || c.CompletedNodes != 0 || c.CoveredNodes != 0 || c.CoveredServices != 0 || c.FullCoverage {
 		t.Fatalf("planned-only items counted as coverage: %+v", c)
 	}
 }

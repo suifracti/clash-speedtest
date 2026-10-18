@@ -55,6 +55,9 @@ func TestServiceEvidenceDoesNotConfuseAccessWithAvailability(t *testing.T) {
 func TestMissingIPQualityFieldsStayUnknown(t *testing.T) {
 	for _, id := range []string{"ping0_ip_quality", "ippure_ip_quality"} {
 		rule, _ := RuleFor(id)
+		if id == "ippure_ip_quality" {
+			rule = historicalIPPureFixtureRule()
+		}
 		checker := Checker{ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
 			return fixtureResponse(req, 200, "application/json", `{"ip":"203.0.113.7"}`), nil
 		})}
@@ -77,6 +80,9 @@ func TestIPQualityRequiresValidAddress(t *testing.T) {
 		for _, address := range []string{"not-an-ip", "error", "203.0.113.999", "203.0.113.7", "2001:db8::7"} {
 			t.Run(id+"/"+address, func(t *testing.T) {
 				rule, _ := RuleFor(id)
+				if id == "ippure_ip_quality" {
+					rule = historicalIPPureFixtureRule()
+				}
 				checker := Checker{ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
 					return fixtureResponse(req, 200, "application/json", `{"ip":"`+address+`"}`), nil
 				})}
@@ -138,6 +144,9 @@ func TestIPQualityASNFormatResilience(t *testing.T) {
 		{"ippure_ip_quality", `{"ip":"203.0.113.7","asn":null}`, ""},
 	} {
 		rule, ok := RuleFor(tc.service)
+		if tc.service == "ippure_ip_quality" {
+			rule = historicalIPPureFixtureRule()
+		}
 		if !ok {
 			t.Fatalf("missing rule %s", tc.service)
 		}

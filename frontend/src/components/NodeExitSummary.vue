@@ -142,12 +142,13 @@ const compactRecords=computed(()=>{
 })
 const compactReputations=(record:ExitProjection)=>record.records.filter(source=>source.reputationSource&&source.confirmed)
 const compactHasAddressOnlyResult=(record:ExitProjection)=>record.records.some(source=>source.exitSource&&source.confirmed)&&!record.records.some(source=>source.reputationSource)
-const ping0Score=(record:ExitRecord):number|undefined=>{
- if(record.serviceId!=='ping0_ip_quality'||!/^\d+(?:\.\d+)?$/.test(record.risk))return undefined
+const riskScore=(record:ExitRecord):number|undefined=>{
+ const hasScale=record.serviceId==='ping0_ip_quality'||record.serviceId==='ippure_ip_quality'&&field(record.attempt,'risk_scale_max')==='100'&&field(record.attempt,'risk_direction')==='lower_is_better'
+ if(!hasScale||!/^\d+(?:\.\d+)?$/.test(record.risk))return undefined
  const score=Number(record.risk)
  return Number.isFinite(score)&&score>=0&&score<=100?score:undefined
 }
-const formattedRisk=(record:ExitRecord)=>ping0Score(record)===undefined?record.risk:`${record.risk}/100（越低越好）`
+const formattedRisk=(record:ExitRecord)=>riskScore(record)===undefined?record.risk:`${record.risk}/100（越低越好）`
 const historicalRecords=computed(()=>{
  const latestByService=new Map(latestServices(props.attempts).map(attempt=>[attempt.service_id||attempt.rule.service_id||'',attempt]))
  const seen=new Set<string>(),historical:Attempt[]=[]
@@ -191,10 +192,10 @@ const detailFields=(record:ExitRecord,historical=false):DetailField[]=>{
   <button v-if="compact" type="button" class="node-exit-compact" @click="open=true">
    <template v-if="compactRecords.length">
     <span v-for="record in compactRecords" :key="record.key" class="node-exit-compact-record">
-     <span class="node-exit-address-line"><span>{{record.family}}</span><code :title="record.ip">{{record.ip}}</code></span><span v-if="record.region||record.ipType" class="node-exit-location">{{[record.region,record.ipType].filter(Boolean).join(' · ')}}</span>
+     <span class="node-exit-address-line" :title="record.ip"><span>{{record.family}}</span><span>{{[record.region,record.ipType].filter(Boolean).join(' · ')||'已取得地址'}}</span></span>
      <template v-for="source in compactReputations(record)" :key="source.attempt.attempt_id">
       <span class="node-exit-compact-risk"><strong>{{source.provider}}<template v-if="source.risk"> 风险分 {{formattedRisk(source)}}</template><template v-else> · {{source.status}}</template><template v-if="source.tier"> · 等级 {{source.tier}}</template></strong></span>
-      <span v-if="ping0Score(source)!==undefined" class="node-exit-risk-scale" role="img" :aria-label="`Ping0 分数 ${source.risk}/100，0 到 100，越低越好`" :style="{'--risk-position':`${ping0Score(source)}%`}"><span>0</span><span class="node-exit-risk-track"><span class="node-exit-risk-marker"></span></span><span>100</span></span>
+      <span v-if="riskScore(source)!==undefined" class="node-exit-risk-scale" role="img" :aria-label="`${source.provider} 分数 ${source.risk}/100，0 到 100，越低越好`" :style="{'--risk-position':`${riskScore(source)}%`}"><span>0</span><span class="node-exit-risk-track"><span class="node-exit-risk-marker"></span></span><span>100</span></span>
      </template>
      <span v-if="compactHasAddressOnlyResult(record)" class="node-exit-compact-unchecked">信誉未查</span>
     </span>

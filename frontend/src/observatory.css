@@ -358,3 +358,9 @@
 .observatory-app .site-metrics .health-bars .health-cell:not(.has-record){display:none}
 .observatory-app .site-metrics .health-bars .health-cell.has-record{flex:0 1 9px;max-width:9px;min-width:0}
 .observatory-app .site-latest.bad{color:#bd3b4a}.observatory-app .site-latest.good{color:#168343}.observatory-app .site-latest.warn{color:#996600}
+
+/* Put the six named measurements first; history is an explicit action. */
+.observatory-app .latency-display-bar{display:flex;align-items:center;flex-wrap:wrap;gap:8px 13px;padding:7px 0;font-size:12px;color:var(--muted)}.observatory-app .latency-display-bar .view-switch{margin:0}.observatory-app .latency-display-bar button{font-size:12px;padding:5px 9px}.observatory-app .latency-display-bar label{display:flex;gap:6px;align-items:center}.observatory-app .latency-display-bar .ui-select-trigger{padding:5px 8px;font-size:12px}
+.observatory-app .overview-layout .node-list .node-health{display:none!important}
+@media(min-width:1280px){.observatory-app .overview-layout .node-list:not(.observatory-matrix) .node-row,.observatory-app .overview-layout .node-list:not(.observatory-matrix) .quality-heading{grid-template-columns:20px minmax(220px,1fr) minmax(320px,1.8fr) minmax(135px,.75fr) minmax(150px,1fr) 104px;gap:12px}.observatory-app .overview-layout .node-list .row-run{grid-column:6!important}.observatory-app .overview-layout .node-list .node-inline-results{grid-column:2/-1}}
+@media(min-width:741px) and (max-width:1279px){.observatory-app .overview-layout .node-list:not(.observatory-matrix) .node-row{grid-template-columns:20px minmax(180px,1fr) minmax(220px,1.5fr) 104px}.observatory-app .overview-layout .node-list .row-run{grid-column:4!important}.observatory-app .overview-layout .overview-latency{grid-column:3;grid-row:1}.observatory-app .overview-layout .overview-download{grid-column:3;grid-row:2}.observatory-app .overview-layout .overview-services{grid-column:2/4;grid-row:3}}

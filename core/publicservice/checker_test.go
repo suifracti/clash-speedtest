@@ -88,7 +88,7 @@ func TestCheckerUsesFixedRulesAndNeverSendsBrowserCredentials(t *testing.T) {
 
 func TestCheckerRestoresIndependentIPQualityProfiles(t *testing.T) {
 	ping0, _ := RuleFor("ping0_ip_quality")
-	ippure, _ := RuleFor("ippure_ip_quality")
+	ippure := historicalIPPureFixtureRule()
 	checker := Checker{ClientFactory: fixtureClient(func(request *http.Request) (*http.Response, error) {
 		switch request.URL.Host {
 		case "ping0.cc":
@@ -493,13 +493,15 @@ func TestCheckerMultiSampleDriftAndFlappingDetection(t *testing.T) {
 	})
 }
 
-func TestWithdrawIPPureFromNewCatalogButKeepHistoricalRule(t *testing.T) {
+func TestRestoreIPPureAsOnDemandIPv4Rule(t *testing.T) {
+	rule, ok := RuleFor("ippure_ip_quality")
+	if !ok || rule.RuleVersion != 3 || rule.BatchDefault || rule.Name != "IPPure IPv4风险画像" {
+		t.Fatalf("IPPure rule = %+v, want restored v3 on-demand IPv4 rule", rule)
+	}
 	for _, rule := range Catalog() {
-		if rule.ServiceID == "ippure_ip_quality" {
-			t.Fatal("challenged provider must not appear in new plans")
+		if rule.ServiceID == "ippure_ip_quality" && rule.RuleVersion == 3 {
+			return
 		}
 	}
-	if _, ok := RuleFor("ippure_ip_quality"); !ok {
-		t.Fatal("saved rule compatibility must remain")
-	}
+	t.Fatal("restored IPPure rule not found in new catalog")
 }

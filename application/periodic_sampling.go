@@ -240,7 +240,7 @@ func periodicServices(cfg PeriodicSamplingConfig) []publicservice.Rule {
 	result := []publicservice.Rule{}
 	for _, r := range publicservice.Catalog() {
 		// Reputation queries and superseded compatibility aliases are never periodic.
-		if r.SupersededBy != "" || r.ServiceID == "ipok_ipv4" || r.ServiceID == "ipok_ipv6" {
+		if r.SupersededBy != "" || r.ServiceID == "ipok_ipv4" || r.ServiceID == "ipok_ipv6" || r.ServiceID == "ippure_ip_quality" {
 			continue
 		}
 		if cfg.IncludeAntigravity || r.ServiceID != "antigravity" {
