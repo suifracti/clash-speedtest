@@ -153,40 +153,40 @@ var catalog = []Rule{
 		RedirectPolicy:   "follow_same_service", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
 	},
 	{
-		ServiceID: "tver_jp", Name: "TVer 日本网页可达性", RuleVersion: 1,
+		ServiceID: "tver_jp", Name: "TVer 日本网页可达性", RuleVersion: 2,
 		Category: "日本服务", Region: "日本", ResultKind: "regional_reachability", Description: "检测 TVer 网页响应；不把首页可达等同于可播放。",
-		TargetURL: "https://tver.jp/", Method: http.MethodGet, SuccessCriterion: "收到 2xx/3xx 网页响应；仅表示网页可达，不证明播放解锁",
-		RedirectPolicy: "do_not_follow", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
+		TargetURL: "https://tver.jp/", Method: http.MethodGet, SuccessCriterion: "最多跟随3次同服务HTTPS跳转，最终2xx且无挑战标记才记网页可达；不证明播放解锁",
+		RedirectPolicy: "follow_same_service", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
 	},
 	{
-		ServiceID: "abema_jp", Name: "ABEMA 日本网页可达性", RuleVersion: 1,
+		ServiceID: "abema_jp", Name: "ABEMA 日本网页可达性", RuleVersion: 2,
 		Category: "日本服务", Region: "日本", ResultKind: "regional_reachability", Description: "检测 ABEMA 网页响应；不把首页可达等同于可播放。",
-		TargetURL: "https://abema.tv/", Method: http.MethodGet, SuccessCriterion: "收到 2xx/3xx 网页响应；仅表示网页可达，不证明播放解锁",
-		RedirectPolicy: "do_not_follow", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
+		TargetURL: "https://abema.tv/", Method: http.MethodGet, SuccessCriterion: "最多跟随3次同服务HTTPS跳转，最终2xx且无挑战标记才记网页可达；不证明播放解锁",
+		RedirectPolicy: "follow_same_service", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
 	},
 	{
-		ServiceID: "nhk_plus_jp", Name: "NHK Plus 日本网页可达性", RuleVersion: 1,
-		Category: "日本服务", Region: "日本", ResultKind: "regional_reachability", Description: "检测 NHK Plus 网页响应；不使用账号。",
-		TargetURL: "https://plus.nhk.jp/", Method: http.MethodGet, SuccessCriterion: "收到 2xx/3xx 网页响应；仅表示网页可达，不证明播放解锁",
-		RedirectPolicy: "do_not_follow", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
+		ServiceID: "nhk_plus_jp", Name: "NHK ONE（原 NHK Plus）网页入口", RuleVersion: 2,
+		Category: "日本服务", Region: "日本", ResultKind: "regional_reachability", Description: "跟随原 NHK Plus 的官方新入口；不使用账号，不代表播放解锁。",
+		TargetURL: "https://plus.nhk.jp/", Method: http.MethodGet, SuccessCriterion: "最多跟随3次同服务HTTPS跳转，最终2xx且无挑战标记才记网页可达；不证明播放解锁",
+		RedirectPolicy: "follow_same_service", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
 	},
 	{
-		ServiceID: "unext_jp", Name: "U-NEXT 日本网页可达性", RuleVersion: 1,
+		ServiceID: "unext_jp", Name: "U-NEXT 日本网页可达性", RuleVersion: 2,
 		Category: "日本服务", Region: "日本", ResultKind: "regional_reachability", Description: "检测 U-NEXT 网页响应；不使用账号。",
-		TargetURL: "https://www.video.unext.jp/", Method: http.MethodGet, SuccessCriterion: "收到 2xx/3xx 网页响应；仅表示网页可达，不证明播放解锁",
-		RedirectPolicy: "do_not_follow", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
+		TargetURL: "https://www.video.unext.jp/", Method: http.MethodGet, SuccessCriterion: "最多跟随3次同服务HTTPS跳转，最终2xx且无挑战标记才记网页可达；不证明播放解锁",
+		RedirectPolicy: "follow_same_service", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
 	},
 	{
-		ServiceID: "bbc_iplayer_uk", Name: "BBC iPlayer 英国网页可达性", RuleVersion: 1,
+		ServiceID: "bbc_iplayer_uk", Name: "BBC iPlayer 英国网页可达性", RuleVersion: 2,
 		Category: "其他地区", Region: "英国", ResultKind: "regional_reachability", Description: "检测 BBC iPlayer 网页响应；不把首页可达等同于播放解锁。",
-		TargetURL: "https://www.bbc.co.uk/iplayer", Method: http.MethodGet, SuccessCriterion: "收到 2xx/3xx 网页响应；仅表示网页可达，不证明播放解锁",
-		RedirectPolicy: "do_not_follow", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
+		TargetURL: "https://www.bbc.co.uk/iplayer", Method: http.MethodGet, SuccessCriterion: "最多跟随3次同服务HTTPS跳转，最终2xx且无挑战标记才记网页可达；不证明播放解锁",
+		RedirectPolicy: "follow_same_service", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
 	},
 	{
-		ServiceID: "naver_kr", Name: "Naver 韩国网页可达性", RuleVersion: 1,
+		ServiceID: "naver_kr", Name: "Naver 韩国网页可达性", RuleVersion: 2,
 		Category: "其他地区", Region: "韩国", ResultKind: "regional_reachability", Description: "检测韩国 Naver 门户网页响应。",
 		TargetURL: "https://www.naver.com/", Method: http.MethodGet, SuccessCriterion: "收到 2xx/3xx 网页响应；仅表示网页可达",
-		RedirectPolicy: "do_not_follow", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
+		RedirectPolicy: "follow_same_service", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
 	},
 	streamingRule("abema_unlock", "ABEMA 日本地区判定", "日本", "https://api.abema.io/v1/ip/check?device=android", "读取 ABEMA 官方 IP 检查响应中的地区代码。", "isoCountryCode=JP 判定日本完整入口；其他地区显示海外档位"),
 	streamingRule("fod_unlock", "FOD 日本地区判定", "日本", "https://geocontrol1.stream.ne.jp/fod-geo/check.xml?time=1624504256", "读取 FOD 地区控制端点，不下载视频。", "XML FLAG TYPE=true 判定地区允许"),
@@ -260,7 +260,7 @@ var catalog = []Rule{
 	webRule("mytv_hk", "myTV SUPER 香港", "其他地区", "香港", "https://www.mytvsuper.com/", "检测网页入口；不声称播放解锁。"),
 	webRule("viu_web", "Viu", "其他地区", "香港/亚洲", "https://www.viu.com/", "检测网页入口；不声称播放解锁。"),
 	webRule("nowe_hk", "Now E 香港", "其他地区", "香港", "https://www.nowe.com/", "检测网页入口；不声称播放解锁。"),
-	webRule("kktv_tw", "KKTV 台湾", "其他地区", "台湾", "https://www.kktv.me/", "检测网页入口；不声称播放解锁。"),
+	webRule("kktv_tw", "KKTV 台湾（已结束营运）", "其他地区", "台湾", "https://www.kktv.me/sunset", "官方已结束营运，保留目录和旧历史，不再将停运页作为节点可用性检测。"),
 	ipokRule("ipok_ipv4", "IPv4"),
 	ipokRule("ipok_ipv6", "IPv6"),
 }
@@ -275,9 +275,9 @@ func webRule(id, name, category, region, target, description string) Rule {
 	}
 	return Rule{
 		ServiceID: id, Name: name, Category: category, Region: region, ResultKind: resultKind, Description: description,
-		RuleVersion: 2, TargetURL: target, Method: http.MethodGet,
-		SuccessCriterion: "2xx 且未识别到挑战页记为入口可达；3xx 单独记为跳转；不等同于账号、支付或播放解锁",
-		RedirectPolicy:   "do_not_follow", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
+		RuleVersion: 3, TargetURL: target, Method: http.MethodGet,
+		SuccessCriterion: "最多跟随3次同服务HTTPS跳转，最终2xx且无挑战标记才记入口可达；跨服务跳转单列；不等同于账号、支付或播放解锁",
+		RedirectPolicy:   "follow_same_service", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
 	}
 }
 
@@ -400,6 +400,9 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	defer cancel()
 	if ctx.Err() != nil {
 		return finish(unexecutedPreparation(ctx.Err()), startedAt)
+	}
+	if rule.ServiceID == "kktv_tw" {
+		return finish(Result{Outcome: "not_executed", FailurePhase: "service_retired", Summary: "KKTV 已结束营运", ErrorMessage: "官方已结束营运；保留历史，不发起节点检测请求", Details: map[string]string{"not_executed_reason": "service_retired", "reference_url": "https://events.kktv.me/tw/faq-card-177"}}, startedAt)
 	}
 
 	if rule.ServiceID == "antigravity" && strings.TrimSpace(c.AntigravityToken) == "" {
@@ -650,7 +653,7 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	return final
 }
 
-func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monitor.MonitoredNode, rule Rule, startedAt time.Time) Result {
+func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monitor.MonitoredNode, rule Rule, startedAt time.Time) (final Result) {
 
 	if rule.ServiceID == "antigravity" {
 		return checkAntigravityObserved(ctx, client, c.AntigravityToken, startedAt)
@@ -683,6 +686,8 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 	case "google_search":
 		return checkGoogleSearch(ctx, client, rule, startedAt)
 	}
+	client, redirectEvidence := serviceRedirectClient(client, rule)
+	defer func() { redirectEvidence.attach(&final) }()
 	request, err := http.NewRequestWithContext(ctx, rule.Method, rule.TargetURL, nil)
 	if err != nil {
 		return finish(Result{Outcome: "transport_error", FailurePhase: "request_setup", ErrorMessage: "无法创建固定服务请求"}, startedAt)
@@ -751,7 +756,7 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 		if isReachabilityRule(rule) {
 			result.Outcome = "redirect"
 			result.Summary = "入口返回跳转，未验证最终页面"
-			result.Details = map[string]string{"redirect_to": response.Header.Get("Location")}
+			result.Details = map[string]string{"redirect_to": serviceEvidenceURL(response.Header.Get("Location"))}
 			return finish(result, startedAt)
 		}
 		result.Outcome = "redirect"
