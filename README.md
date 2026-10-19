@@ -2,16 +2,24 @@
 
 基于 Go / Mihomo / Wails / Vue 3 / SQLite 的多机场代理节点测速与筛选工具。支持管理独立订阅、选节点、六站 HTTP 延迟、限量下载、服务入口检查、比较导出与历史回看；**网页可达不代表登录、播放或模型业务可用**。
 
+## 当前开发基线（2026-10-19）
+
+用户已确认：**以当前打开的 Mac App 为后续开发基线**。该 App 的源码提交为 [`068cc64f`](https://github.com/suifracti/clash-speedtest/commit/068cc64f20032974f16a10cc42cae5b3df4f04b0)，对应 [原开发分支](https://github.com/suifracti/clash-speedtest/tree/codex/cst-w12i-integration-20261011-6aa2079)。App 内嵌来源与实际核心哈希已核对，原生窗口已启动；启动成功不等于所有节点实网检测通过。
+
+此基线包含网页最终版 `1f7099a4` 的完整历史和底层修复，并保留融合后的紧凑 UI、用户自选服务、独立 IP 检测与六站历史交互。后续代码从同一开发分支继续；旧工作树、旧 App 和历史未提交改动仅供查证，不整包覆盖当前基线。`main` 尚未合入这轮开发，不能将默认主页当作当前 App 版本。
+
+本次基线说明属于文档更新，不改变运行 App 的业务源码。新的附件按用户要求留在本地，不默认上传云盘；当前任务仍见 Obsidian Handoff。
+
 > [!IMPORTANT]
 > **现行 Agent 接手与工程任务只看 Obsidian（2026-10-12 起）：**
 >
 > `03-项目与工程/机场/Clash SpeedTest Pro/README.md` → `03-项目与工程/机场/Clash SpeedTest Pro/Handoff.md`
 >
-> 决定：同目录 `Decisions.md`；真实证据：`状态与证据.md`；文件（ZIP、截图、构建和长日志）：既有 Google Drive 项目目录。
+> 决定：同目录 `Decisions.md`；真实证据：`状态与证据.md`；文件（ZIP、截图、构建和长日志）：本地保留；既有 Google Drive 项目目录仅作历史附件。
 >
 > **不要用本仓库的历史迁移说明、已关闭 [Issue #32](https://github.com/suifracti/clash-speedtest/issues/32)、旧 README、旧 PR 评论或截图作为现在的执行授权。** GitHub 管源码、提交与历史证据；Obsidian 管 CST 的当前任务和交接。本仓库的其他说明若与 Obsidian Handoff 冲突，以后者及本机真实工作树为准。
 
-## 当前 Mac 开发代码（2026-10-13）
+## 2026-10-13 功能迁回记录（历史）
 
 **版本核对发现的三项旧本地遗漏现已最小迁回并同步原开发分支：IPOK 后端/缓存预算、VLESS pcs/vcn 特殊 TLS、Mac 订阅系统代理识别。** 原 82 项服务规则内容与顺序保留；新增 IPOK 两项按需执行。迁回经过离线回归，不升级为上游实网已通过。详见 [版本与功能保留检查](docs/version-consistency.md)。
 
