@@ -49,8 +49,8 @@ func TestIPPureBundleGroupsThreeIndependentMetrics(t *testing.T) {
 		case "/api/cf-summary":
 			return fixtureResponse(req, 200, "application/octet-stream", string(payload)), nil
 		case "/api/gateway/cf":
-			if counts[path] == 1 {
-				return nonce(), nil
+			if req.Header.Get("x-k") == "" {
+				t.Fatal("CF POST did not reuse the API session established by GET")
 			}
 			body, _ := io.ReadAll(req.Body)
 			xt := req.Header.Get("x-t")
@@ -74,7 +74,7 @@ func TestIPPureBundleGroupsThreeIndependentMetrics(t *testing.T) {
 			}
 			return ippureJSONResponse(req, 200, `{"ip":"2001:4860::8888","risk_score":61,"asn":15169}`), nil
 		case "/api/info/asn/botclass/15169":
-			if counts[path] == 1 {
+			if req.Header.Get("x-k") == "" {
 				return nonce(), nil
 			}
 			ippureSignedTimestamp(t, req, key, req.URL.String())
@@ -87,7 +87,7 @@ func TestIPPureBundleGroupsThreeIndependentMetrics(t *testing.T) {
 	rule, _ := RuleFor("ippure_ip_quality")
 	rule.RuleVersion = 6
 	r := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
-	if r.Outcome != "profiled" || r.Details["fraud_score"] != "0" || r.Details["cf_risk_score"] != "61" || r.Details["cf_ip_family"] != "IPv6" || r.Details["asn_human_percent"] != "5.78" || r.Details["asn_bot_percent"] != "94.22" || r.RequestCount != 9 {
+	if r.Outcome != "profiled" || r.Details["fraud_score"] != "0" || r.Details["cf_risk_score"] != "61" || r.Details["cf_ip_family"] != "IPv6" || r.Details["asn_human_percent"] != "5.78" || r.Details["asn_bot_percent"] != "94.22" || r.RequestCount != 7 {
 		t.Fatalf("incomplete bundle: %+v", r)
 	}
 	b, _ := json.Marshal(r)

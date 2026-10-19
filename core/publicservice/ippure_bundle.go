@@ -83,8 +83,12 @@ func ippureEncryptedBody(request *http.Request, raw []byte, xt string) error {
 }
 
 // At most one replay for the site's initial nonce response; other failures stop.
-func ippureExtraExchange(ctx context.Context, client *http.Client, method, target string, payload []byte) (Result, []byte, bool) {
+func ippureExtraExchange(ctx context.Context, client *http.Client, method, target string, payload []byte, session ...*ippureNonceState) (Result, []byte, bool) {
 	state := newIPPureNonceState()
+	if len(session) > 0 && session[0] != nil {
+		state = session[0]
+	}
+	hadKey, _, _ := state.status()
 	local := ippureWebClient(client, state, true)
 	total := Result{}
 	for pass := 0; pass < 2; pass++ {
@@ -136,7 +140,7 @@ func ippureExtraExchange(ctx context.Context, client *http.Client, method, targe
 			ippureChallenge(&total)
 			return total, nil, false
 		}
-		if pass == 0 && hasNonce {
+		if pass == 0 && hasNonce && !hadKey {
 			if !state.firstNonceResponseAllowsReplay(body, true) {
 				ippureUnknown(&total, "nonce_protocol", "签名响应格式无法识别")
 				return total, nil, false
@@ -176,11 +180,15 @@ func checkIPPureBundle(ctx context.Context, client *http.Client, rule Rule, star
 	}
 	local.Transport = ippureOriginTransport{ippureSessionTransport(base)}
 	defer local.CloseIdleConnections()
-	result := checkIPPureWeb(ctx, &local, rule, started)
+	state := newIPPureNonceState()
+	result := checkIPPureWeb(ctx, &local, rule, started, state)
 	// Preserve the working public self-IP path if the web nonce API refuses
 	// this client. A failed extra query must not regress the primary score.
 	if result.Outcome == "challenge" && ctx.Err() == nil && result.Details["ip"] != "" {
 		result = ippureOfficialFallback(ctx, &local, rule, result, result, result.Details["ip"], started)
+	}
+	if _, protocolError, rechallenged := state.status(); protocolError != "" || rechallenged {
+		state = newIPPureNonceState()
 	}
 	if result.Details == nil {
 		result.Details = map[string]string{}
@@ -203,7 +211,7 @@ func checkIPPureBundle(ctx context.Context, client *http.Client, rule Rule, star
 	add(part)
 	asn := strings.TrimPrefix(strings.ToUpper(d["asn"]), "AS")
 	if ok {
-		part, body, valid := ippureExtraExchange(ctx, &local, http.MethodPost, ippureCFGateway, payload)
+		part, body, valid := ippureExtraExchange(ctx, &local, http.MethodPost, ippureCFGateway, payload, state)
 		add(part)
 		if valid {
 			var doc struct {
@@ -244,7 +252,7 @@ func checkIPPureBundle(ctx context.Context, client *http.Client, rule Rule, star
 		d["asn_traffic_status"] = "本次时限已到"
 		return finish(result, started)
 	}
-	part, body, ok := ippureExtraExchange(ctx, &local, http.MethodGet, ippureWebAPIBase+"/api/info/asn/botclass/"+asn, nil)
+	part, body, ok := ippureExtraExchange(ctx, &local, http.MethodGet, ippureWebAPIBase+"/api/info/asn/botclass/"+asn, nil, state)
 	add(part)
 	if !ok {
 		d["asn_traffic_status"] = ippureExtraStatus(part)

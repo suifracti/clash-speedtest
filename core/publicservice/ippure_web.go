@@ -217,7 +217,7 @@ func ippureWebClient(client *http.Client, state *ippureNonceState, signing bool)
 	return &clone
 }
 
-func checkIPPureWeb(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
+func checkIPPureWeb(ctx context.Context, client *http.Client, rule Rule, started time.Time, session ...*ippureNonceState) Result {
 	result := Result{Details: map[string]string{
 		"provider": "IPPure", "api_method": "ippure_web_basic_risk_v1", "api_version": "web_v1",
 	}}
@@ -250,6 +250,9 @@ func checkIPPureWeb(ctx context.Context, client *http.Client, rule Rule, started
 	result.Details["ip_family"] = "IPv4"
 
 	state := newIPPureNonceState()
+	if len(session) > 0 && session[0] != nil {
+		state = session[0]
+	}
 	signedClient := ippureWebClient(client, state, true)
 	basicURL := ippureWebAPIBase + ippureWebBasicPath + freshIP
 	basicResult, basicBody, basicOK := boundedGETStatuses(ctx, signedClient, basicURL, ippureWebBodyLimit,
