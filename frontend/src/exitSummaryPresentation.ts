@@ -4,7 +4,7 @@ import type {Attempt} from './domain'
 export type ExitRecord={attempt:Attempt;serviceId:string;family:string;provider:string;ip:string;region:string;ipType:string;asn:string;organization:string;risk:string;tier:string;confirmed:boolean;exitSource:boolean;reputationSource:boolean;observedAt:string;status:string}
 export type ExitAddress={family:string;record?:ExitRecord;region:string;ipType:string;status:string}
 export type ReputationRow={serviceId:string;provider:string;record?:ExitRecord;status:string}
-const providerNames:Record<string,string>={cloudflare_trace:'Cloudflare',exit_ipv4:'出口查询',exit_ipv6:'出口查询',ping0_ip_quality:'Ping0',ippure_ip_quality:'IPPure',ipok_ipv4:'IPOK',ipok_ipv6:'IPOK'}
+const providerNames:Record<string,string>={cloudflare_trace:'Cloudflare',exit_ipv4:'出口查询',exit_ipv6:'出口查询',ping0_ip_quality:'Ping0',ping0_ipv4:'Ping0',ping0_ipv6:'Ping0',ippure_ip_quality:'IPPure',ipok_ipv4:'IPOK',ipok_ipv6:'IPOK'}
 export function exitField(a:Attempt,...keys:string[]):string {
  for(const key of keys){const value=a.result?.details?.[key];if(typeof value==='string'&&value.trim())return value.trim();if(typeof value==='number'&&Number.isFinite(value))return String(value)}
  return ''
@@ -45,7 +45,7 @@ export function compactExitStatus(r?:ExitRecord):string {
 }
 export function toExitRecord(a:Attempt,observedAt:string):ExitRecord {
  const id=a.service_id||a.rule.service_id||'未知服务',ip=exitField(a,'ip'),kind=(a.rule as Attempt['rule']&{result_kind?:string}).result_kind
- const reputationSource=['ping0_ip_quality','ippure_ip_quality','ipok_ipv4','ipok_ipv6'].includes(id)||kind==='ip_quality'
+ const reputationSource=['ping0_ip_quality','ping0_ipv4','ping0_ipv6','ippure_ip_quality','ipok_ipv4','ipok_ipv6'].includes(id)||kind==='ip_quality'
  const exitSource=['cloudflare_trace','exit_ipv4','exit_ipv6'].includes(id)||kind==='exit_profile'
  const confirmed=a.result?.outcome==='profiled'&&a.persistence_state!=='failed'&&!['queued','running','cancelling','saving','cancelled','interrupted','not_executed'].includes(a.execution_state)
  let ipType=exitField(a,'ip_type','origin_type');const residential=flag(a,'is_residential'),idc=flag(a,'is_idc')
@@ -74,12 +74,13 @@ export function exitAddressRows(records:ExitRecord[]):ExitAddress[] {
  })
 }
 export function reputationRows(records:ExitRecord[]):ReputationRow[] {
- const ids=['ping0_ip_quality','ippure_ip_quality',...new Set(records.filter(r=>r.reputationSource&&!['ping0_ip_quality','ippure_ip_quality'].includes(r.serviceId)).map(r=>r.serviceId))]
- return ids.map(serviceId=>{const record=records.find(r=>r.serviceId===serviceId);return {serviceId,provider:providerNames[serviceId]||record?.provider||serviceId,record,status:record?.status||'未查询'}})
+ const visible=records.filter(r=>r.reputationSource&&!r.serviceId.startsWith('ipok_')).filter(r=>r.serviceId!=='ping0_ip_quality'||!records.some(other=>['ping0_ipv4','ping0_ipv6'].includes(other.serviceId)&&other.family===r.family))
+ const order=['ping0_ipv4','ping0_ipv6','ping0_ip_quality','ippure_ip_quality']
+ return visible.sort((a,b)=>order.indexOf(a.serviceId)-order.indexOf(b.serviceId)).map(record=>({serviceId:record.serviceId,provider:record.provider,record,status:record.status}))
 }
 export function riskScore(r?:ExitRecord):number|undefined {
  if(!r?.confirmed)return undefined
- const scale=['ping0_ip_quality','ipok_ipv4','ipok_ipv6'].includes(r.serviceId)||r.serviceId==='ippure_ip_quality'&&exitField(r.attempt,'risk_scale_max')==='100'&&exitField(r.attempt,'risk_direction')==='lower_is_better'
+ const scale=['ping0_ip_quality','ping0_ipv4','ping0_ipv6','ipok_ipv4','ipok_ipv6'].includes(r.serviceId)||r.serviceId==='ippure_ip_quality'&&exitField(r.attempt,'risk_scale_max')==='100'&&exitField(r.attempt,'risk_direction')==='lower_is_better'
  if(!scale||!/^\d+(?:\.\d+)?$/.test(r.risk))return undefined
  const n=Number(r.risk);return Number.isFinite(n)&&n>=0&&n<=100?n:undefined
 }

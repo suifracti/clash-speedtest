@@ -10,7 +10,7 @@ import ServicePicker from './ServicePicker.vue'
 const w=useWorkspace(),submitting=ref(false),validation=ref('')
 const isReputationId=(id:string)=>isReputationRule(w.catalog.value.find(rule=>rule.service_id===id)||{service_id:id})
 const standardCatalog=computed(()=>w.catalog.value.filter(rule=>!isReputationRule(rule)))
-const reputationCatalog=computed(()=>w.catalog.value.filter(isReputationRule))
+const reputationCatalog=computed(()=>w.catalog.value.filter(rule=>isReputationRule(rule)&&!rule.service_id.startsWith('ipok_')))
 const standardServiceIds=computed({
   get:()=>w.plan.value?.serviceIds.filter(id=>!isReputationId(id))||[],
   set:(ids:string[])=>{if(w.plan.value)w.plan.value.serviceIds=[...new Set(ids.filter(id=>!isReputationId(id)))]}
@@ -81,6 +81,7 @@ async function submit(){
     <div v-if="w.plan.value.includeReputation" class="plan-section reputation-section">
       <h3>IP信誉/纯净度</h3>
       <ServicePicker v-model="reputationServiceIds" :catalog="reputationCatalog"/>
+      <p class="muted small">IPPure 官方暂不提供 IPv6 风险分，不发起 IPv6 评分请求。</p>
     </div>
 
     <label class="inline-field">重复检测<UiSelect v-model.number="w.plan.value.repeats"><option v-for="n in [1,2,3,5]" :key="n" :value="n">{{n}} 轮</option></UiSelect></label>

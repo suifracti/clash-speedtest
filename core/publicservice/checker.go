@@ -332,16 +332,34 @@ func streamingRule(id, name, region, target, description, criterion string) Rule
 	}
 }
 
+func ping0FamilyRule(family string) Rule {
+	id, host := "ping0_ipv4", "ipv4.ping0.cc"
+	if family == "IPv6" {
+		id, host = "ping0_ipv6", "ipv6.ping0.cc"
+	}
+	return Rule{ServiceID: id, Name: "Ping0 " + family + " 风险画像", RuleVersion: 1, Category: "出口与 IP", Region: "全球", ResultKind: "ip_quality", Description: "独立查询所选节点的 " + family + " 出口与 Ping0 风险分，不借用另一地址族的结果。", TargetURL: "https://" + host + "/geo/json", Method: http.MethodGet, SuccessCriterion: "HTTP 200，JSON出口必须属于指定地址族；风险分按源站原值展示，缺失不记0", RedirectPolicy: "do_not_follow", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: 8 * 1024, Accept: "application/json"}
+}
+
 func Catalog() []Rule {
 	result := make([]Rule, 0, len(catalog))
 	for _, rule := range catalog {
+		// Keep old snapshots resolvable through RuleFor, outside new plans.
+		if strings.HasPrefix(rule.ServiceID, "ipok_") || rule.ServiceID == "ping0_ip_quality" {
+			continue
+		}
 		result = append(result, rule)
 	}
-	return result
+	return append(result, ping0FamilyRule("IPv4"), ping0FamilyRule("IPv6"))
 }
 
 func RuleFor(serviceID string) (Rule, bool) {
 	serviceID = strings.TrimSpace(serviceID)
+	if serviceID == "ping0_ipv4" {
+		return ping0FamilyRule("IPv4"), true
+	}
+	if serviceID == "ping0_ipv6" {
+		return ping0FamilyRule("IPv6"), true
+	}
 	for _, rule := range catalog {
 		if rule.ServiceID == serviceID {
 			return rule, true
@@ -781,7 +799,7 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 		return checkExitAddress(ctx, client, rule, startedAt)
 	case "cloudflare_trace":
 		return checkCloudflareTrace(ctx, client, rule, startedAt)
-	case "ping0_ip_quality":
+	case "ping0_ip_quality", "ping0_ipv4", "ping0_ipv6":
 		return checkPing0(ctx, client, rule, startedAt)
 	case "ippure_ip_quality":
 		return checkIPPure(ctx, client, rule, startedAt)

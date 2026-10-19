@@ -19,7 +19,8 @@ const rules=[
  rule('antigravity','model','Antigravity'),
  rule('exit_ipv4','exit_profile','IPv4 出口'),
  rule('exit_ipv6','exit_profile','IPv6 出口'),
- rule('ping0_ip_quality','ip_quality','Ping0'),
+ rule('ping0_ipv4','ip_quality','Ping0 IPv4'),
+ rule('ping0_ipv6','ip_quality','Ping0 IPv6'),
  rule('ippure_ip_quality','ip_quality','IPPure'),
  rule('ipok_optional','connectivity','IPOK optional'),
  rule('quality_optional','ip_quality','Quality optional')
@@ -49,11 +50,11 @@ it('defaults to every available IP reputation rule without changing normal servi
  expect(w.plan.value?.projects).toEqual(['service'])
  expect(w.plan.value?.serviceIds).toEqual(['cloudflare_204'])
  expect(w.plan.value?.includeReputation).toBe(true)
- expect(w.plan.value?.reputationServiceIds).toEqual(['exit_ipv4','ping0_ip_quality','ippure_ip_quality','ipok_optional','quality_optional'])
+ expect(w.plan.value?.reputationServiceIds).toEqual(['exit_ipv4','ping0_ipv4','ping0_ipv6','ippure_ip_quality','quality_optional'])
  w.openReputationPlan([node])
  expect(w.plan.value?.projects).toEqual([])
  expect(w.plan.value?.includeReputation).toBe(true)
- expect(w.plan.value?.reputationServiceIds).toEqual(['exit_ipv4','ping0_ip_quality','ippure_ip_quality','ipok_optional','quality_optional'])
+ expect(w.plan.value?.reputationServiceIds).toEqual(['exit_ipv4','ping0_ipv4','ping0_ipv6','ippure_ip_quality','quality_optional'])
  expect(w.plan.value?.serviceIds).toEqual(['cloudflare_204'])
  expect(w.serviceIds.value).toEqual(['cloudflare_204'])
 })
@@ -72,17 +73,17 @@ it('keeps the IP reputation checkbox and its filtered picker independent from no
  const regularNames=pickers[0].findAll('.service-picker-list strong').map(item=>item.text())
  const reputationNames=pickers[1].findAll('.service-picker-list strong').map(item=>item.text())
  expect(regularNames).toEqual(['Cloudflare 204','Netflix','Antigravity'])
- expect(reputationNames).toEqual(['IPv4 出口','IPv6 出口','Ping0','IPPure','IPOK optional','Quality optional'])
+ expect(reputationNames).toEqual(['IPv4 出口','IPv6 出口','Ping0 IPv4','Ping0 IPv6','IPPure','Quality optional'])
  expect(pickers[1].findAll('.service-picker-list input').every(input=>(input.element as HTMLInputElement).checked)).toBe(true)
  for(const input of pickers[1].findAll('.service-picker-list input'))await input.setValue(false)
  const ping0=pickers[1].findAll('.service-picker-list label').find(label=>label.text().includes('Ping0'))!
  await ping0.find('input').setValue(true)
- expect(w.plan.value?.reputationServiceIds).toEqual(['ping0_ip_quality'])
+ expect(w.plan.value?.reputationServiceIds).toEqual(['ping0_ipv4'])
  expect(w.plan.value?.serviceIds).toEqual(['cloudflare_204'])
  const netflix=pickers[0].findAll('.service-picker-list label').find(label=>label.text().includes('Netflix'))!
  await netflix.find('input').setValue(true)
  expect(w.plan.value?.serviceIds).toEqual(['cloudflare_204','netflix_unlock'])
- expect(w.plan.value?.reputationServiceIds).toEqual(['ping0_ip_quality'])
+ expect(w.plan.value?.reputationServiceIds).toEqual(['ping0_ipv4'])
  expect(wrapper.get('.plan-budget').text()).toContain('3 次计划采样')
  expect(w.plan.value?.reputationServiceIds).not.toContain('antigravity')
 })

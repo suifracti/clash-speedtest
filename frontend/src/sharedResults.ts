@@ -5,7 +5,7 @@ export function serviceExecuted(a?:Attempt){return !!a?.result&&!['not_executed'
 // Profiles describe an exit, never business availability. Exact IDs cover old snapshots.
 export function serviceIsProfile(a?:Attempt,id=a?.service_id||a?.rule.service_id){
  const kind=(a?.rule as (Attempt['rule']&{result_kind?:string})|undefined)?.result_kind
- return ['exit_profile','ip_quality'].includes(kind||'')||['cloudflare_trace','exit_ipv4','exit_ipv6','ping0_ip_quality','ippure_ip_quality','ipok_ipv4','ipok_ipv6'].includes(id||'')||a?.result?.outcome==='profiled'
+ return ['exit_profile','ip_quality'].includes(kind||'')||['cloudflare_trace','exit_ipv4','exit_ipv6','ping0_ip_quality','ping0_ipv4','ping0_ipv6','ippure_ip_quality','ipok_ipv4','ipok_ipv6'].includes(id||'')||a?.result?.outcome==='profiled'
 }
 function incompleteServiceSamples(a?:Attempt){
  const d=a?.result?.details

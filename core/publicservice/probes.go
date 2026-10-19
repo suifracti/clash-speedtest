@@ -122,6 +122,13 @@ func checkPing0(ctx context.Context, client *http.Client, rule Rule, started tim
 		result.ErrorMessage = "Ping0 响应未包含可识别的出口 IP"
 		return finish(result, started)
 	}
+	if rule.ServiceID == "ping0_ipv4" || rule.ServiceID == "ping0_ipv6" {
+		want4 := rule.ServiceID == "ping0_ipv4"
+		if (net.ParseIP(strings.TrimSpace(payload.IP)).To4() != nil) != want4 {
+			result.Outcome, result.FailurePhase, result.ErrorMessage = "criteria_mismatch", "ip_family", "Ping0 返回地址族与本次选择不符，未借用其它地址族的评分"
+			return finish(result, started)
+		}
+	}
 	location := strings.TrimSpace(payload.Location)
 	if location == "" {
 		location = strings.TrimSpace(payload.Country + " " + payload.City)
@@ -133,6 +140,15 @@ func checkPing0(ctx context.Context, client *http.Client, rule Rule, started tim
 	result.Details = map[string]string{
 		"ip": payload.IP, "location": location, "country": payload.Country, "asn": formatRawASN(payload.ASN),
 		"organization": payload.Org, "ip_type": ipType, "risk_score": risk,
+		"provider": "Ping0", "source_url": rule.TargetURL, "query_at": started.UTC().Format(time.RFC3339Nano),
+		"risk_scale_max": "100", "risk_direction": "lower_is_better",
+	}
+	result.Details["ip_family"] = "IPv6"
+	if net.ParseIP(strings.TrimSpace(payload.IP)).To4() != nil {
+		result.Details["ip_family"] = "IPv4"
+	}
+	if payload.IPRisk != nil && (*payload.IPRisk < 0 || *payload.IPRisk > 100) {
+		result.Outcome, result.FailurePhase, result.ErrorMessage = "criteria_mismatch", "risk_score", "Ping0 风险分不在0–100范围，未作为有效分数"
 	}
 	return finish(result, started)
 }

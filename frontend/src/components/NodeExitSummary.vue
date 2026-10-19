@@ -8,7 +8,7 @@ import Modal from './Modal.vue'
 
 const props=withDefaults(defineProps<{attempts?:Attempt[];compact?:boolean}>(),{attempts:()=>[]})
 const open=ref(false)
-const currentRecords=computed(()=>completeExitFamilies(latestServices(props.attempts).filter(a=>serviceIsProfile(a)).map(a=>toExitRecord(a,attemptObservedAt(a)))))
+const currentRecords=computed(()=>completeExitFamilies(latestServices(props.attempts).filter(a=>serviceIsProfile(a)&&!String(a.service_id||a.rule.service_id).startsWith('ipok_')).map(a=>toExitRecord(a,attemptObservedAt(a)))))
 const records=computed(()=>{
  const groups=new Map<string,typeof currentRecords.value>()
  for(const record of currentRecords.value){
@@ -25,7 +25,7 @@ const historicalRecords=computed(()=>{
  const seen=new Set<string>(),history:Attempt[]=[]
  for(const a of [...props.attempts].sort((a,b)=>(Date.parse(attemptObservedAt(b))||0)-(Date.parse(attemptObservedAt(a))||0))){
   const id=a.service_id||a.rule.service_id||'',latest=latestByService.get(id)
-  if(!seen.has(id)&&latest&&latest.attempt_id!==a.attempt_id&&latest.result?.outcome!=='profiled'&&a.result?.outcome==='profiled'&&serviceIsProfile(a)){seen.add(id);history.push(a)}
+  if(!seen.has(id)&&latest&&latest.attempt_id!==a.attempt_id&&latest.result?.outcome!=='profiled'&&a.result?.outcome==='profiled'&&serviceIsProfile(a)&&!id.startsWith('ipok_')){seen.add(id);history.push(a)}
  }
  return completeExitFamilies(history.map(a=>toExitRecord(a,attemptObservedAt(a))))
 })
@@ -46,6 +46,7 @@ const providerCaption=(r?:ExitRecord)=>!r?'没有保存记录':!r.confirmed?[r.a
      <span class="node-exit-provider-head"><span class="node-exit-provider-title">{{provider.provider}}</span><span class="node-exit-provider-family">{{reputationAddressHint(provider.record,addresses)}}</span><strong v-if="provider.record?.confirmed&&provider.record.risk" class="node-exit-compact-risk">{{provider.record.risk}}</strong><strong v-else class="node-exit-provider-status">{{compactExitStatus(provider.record)}}</strong></span>
      <span v-if="provider.record&&riskScore(provider.record)!==undefined" class="node-exit-risk-scale" role="img" :aria-label="`${provider.provider} 分数 ${provider.record.risk}/100，0 到 100，越低越好`" :style="{'--risk-position':`${riskScore(provider.record)}%`}"><span>0</span><span class="node-exit-risk-track"><span class="node-exit-risk-marker"></span></span><span>100</span></span>
     </button>
+    <span v-if="reputations.some(r=>r.serviceId==='ippure_ip_quality')" class="node-exit-provider no-score" data-provider="ippure_ipv6"><span class="node-exit-provider-head"><span class="node-exit-provider-title">IPPure</span><span class="node-exit-provider-family">IPv6</span></span><span class="node-exit-provider-status" title="IPPure官方暂不计算IPv6风险系数，不会发起评分请求">不支持评分</span></span>
    </div>
    </template>
   </template>
