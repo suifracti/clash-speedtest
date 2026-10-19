@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/faceair/clash-speedtest/core/profiles"
@@ -36,11 +37,25 @@ func TestWebPublicServiceCatalogUsesSharedApplicationDirectory(t *testing.T) {
 	if len(rules) < 16 || rules[0].ServiceID != "cloudflare_204" || rules[1].ServiceID != "google_204" || rules[2].ServiceID != "github_api_root" || rules[3].ServiceID != "antigravity" {
 		t.Fatalf("unexpected public-service directory: %+v", rules)
 	}
-	if len(rules) != 85 || rules[82].ServiceID != "ipok_ipv4" || rules[83].ServiceID != "ipok_ipv6" || rules[82].BatchDefault || rules[83].BatchDefault {
-		t.Fatal("new on-demand rules must be appended without moving the original catalog")
+	if !reflect.DeepEqual(rules, publicservice.Catalog()) {
+		t.Fatal("Web catalog differs from the shared application directory")
 	}
-
-	if rules[84].ServiceID != "netflix_unlock_ipv4" || rules[84].SupersededBy != "netflix_unlock" || rules[84].BatchDefault {
+	byID := make(map[string]publicservice.Rule, len(rules))
+	for _, rule := range rules {
+		byID[rule.ServiceID] = rule
+	}
+	for _, retired := range []string{"ipok_ipv4", "ipok_ipv6", "ping0_ip_quality", "microsoft_connect", "firefox_portal"} {
+		if _, exists := byID[retired]; exists {
+			t.Errorf("retired service %s reappeared in new plans", retired)
+		}
+	}
+	for _, id := range []string{"ping0_ipv4", "ping0_ipv6", "resource_wechat", "resource_chatgpt"} {
+		if _, exists := byID[id]; !exists {
+			t.Errorf("current service %s is missing from the Web catalog", id)
+		}
+	}
+	alias := byID["netflix_unlock_ipv4"]
+	if alias.ServiceID == "" || alias.SupersededBy != "netflix_unlock" || alias.BatchDefault {
 		t.Fatal("temporary Netflix alias must be appended and marked history-only")
 	}
 	if rules[4].Category == "" || rules[4].ResultKind == "" {

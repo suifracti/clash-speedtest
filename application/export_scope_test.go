@@ -190,6 +190,8 @@ func TestExportClashConfigGroupNameValidation(t *testing.T) {
 		"REJECT",
 		"GLOBAL",
 		"COMPATIBLE",
+		"PASS",
+		"REJECT-DROP",
 	} {
 		_, err := a.ExportNodesClashConfig(context.Background(), ExportClashConfigRequest{
 			Selections: []WorkbenchLatencyBatchSelection{selected},
@@ -236,5 +238,3 @@ func TestExportNodesClashConfigNilServiceDefense(t *testing.T) {
 		t.Fatal("expected error on nil AppService")
 	}
 }
-
-

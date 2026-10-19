@@ -88,56 +88,14 @@ func (s *AppService) ExportNodesClashConfig(_ context.Context, req ExportClashCo
 	if strings.ContainsAny(groupName, ",\r\n") {
 		return nil, monitor.NewValidationError("策略组名称不能包含逗号或换行符")
 	}
-	if strings.EqualFold(groupName, "AUTO") || strings.EqualFold(groupName, "FALLBACK") || strings.EqualFold(groupName, "DIRECT") || strings.EqualFold(groupName, "REJECT") || strings.EqualFold(groupName, "GLOBAL") || strings.EqualFold(groupName, "COMPATIBLE") {
+	if reservedExportName(groupName, "") {
 		return nil, monitor.NewValidationError("策略组名称不能使用保留名称: " + groupName)
 	}
 
 	// Preserve order of the exact frozen selections
-	proxies := make([]map[string]any, 0, len(selected))
-	nodeNames := make([]string, 0, len(selected))
-	nameSeen := make(map[string]int)
-
-	for _, node := range selected {
-		if len(node.RawConfig) == 0 {
-			return nil, monitor.NewValidationError("所选节点缺少有效原始配置，未导出任何文件")
-		}
-
-		if monitor.HasSourceTLSConstraints(node.RawConfig) {
-			return nil, monitor.NewValidationError("普通 Clash/Mihomo 导出无法保留 pcs/vcn 证书约束；未导出任何文件")
-		}
-
-		// Deep copy raw config, omitting internal CST runtime markers
-		cfg := make(map[string]any, len(node.RawConfig)+1)
-		for k, v := range node.RawConfig {
-			if strings.HasPrefix(k, "_cst_") {
-				continue
-			}
-			cfg[k] = v
-		}
-
-		displayName := strings.TrimSpace(node.DisplayName)
-		displayName = strings.ReplaceAll(strings.ReplaceAll(displayName, "\r", " "), "\n", " ")
-		displayName = strings.TrimSpace(displayName)
-		if displayName == "" {
-			displayName = "Node"
-		}
-		if strings.EqualFold(displayName, "AUTO") || strings.EqualFold(displayName, "FALLBACK") || strings.EqualFold(displayName, groupName) {
-			displayName = displayName + " (Proxy)"
-		}
-
-		// Ensure unique name in clash config
-		nameSeen[displayName]++
-		if count := nameSeen[displayName]; count > 1 {
-			displayName = fmt.Sprintf("%s (%d)", displayName, count)
-		}
-		cfg["name"] = displayName
-
-		proxies = append(proxies, cfg)
-		nodeNames = append(nodeNames, displayName)
-	}
-
-	if len(proxies) == 0 {
-		return nil, monitor.NewValidationError("未能匹配到有效节点配置，请确保所选节点的缓存文件存在")
+	proxies, nodeNames, err := prepareExportProxies(selected, groupName)
+	if err != nil {
+		return nil, err
 	}
 
 	clashConfig := map[string]any{
@@ -185,6 +143,113 @@ func (s *AppService) ExportNodesClashConfig(_ context.Context, req ExportClashCo
 		NodeCount:   len(proxies),
 		NodeNames:   nodeNames,
 	}, nil
+}
+
+func reservedExportName(name, groupName string) bool {
+	for _, reserved := range []string{"AUTO", "FALLBACK", "DIRECT", "REJECT", "REJECT-DROP", "PASS", "GLOBAL", "COMPATIBLE"} {
+		if strings.EqualFold(name, reserved) {
+			return true
+		}
+	}
+	return groupName != "" && strings.EqualFold(name, groupName)
+}
+
+// All export entry points preserve the actual raw configuration and apply the
+// same naming and source-TLS rules. The cached configuration is never changed.
+func prepareExportProxies(selected []monitor.MonitoredNode, groupName string) ([]map[string]any, []string, error) {
+	proxies := make([]map[string]any, 0, len(selected))
+	nodeNames := make([]string, 0, len(selected))
+	usedNames := make(map[string]bool)
+
+	for _, node := range selected {
+		if len(node.RawConfig) == 0 {
+			return nil, nil, monitor.NewValidationError("所选节点缺少有效原始配置，未导出任何文件")
+		}
+
+		if monitor.HasSourceTLSConstraints(node.RawConfig) {
+			return nil, nil, monitor.NewValidationError("普通 Clash/Mihomo 导出无法保留 pcs/vcn 证书约束；未导出任何文件")
+		}
+
+		// Copy top-level fields without changing nested transport settings.
+		cfg := make(map[string]any, len(node.RawConfig)+1)
+		for k, v := range node.RawConfig {
+			if strings.HasPrefix(k, "_cst_") {
+				continue
+			}
+			cfg[k] = v
+		}
+
+		displayName := strings.TrimSpace(node.DisplayName)
+		displayName = strings.ReplaceAll(strings.ReplaceAll(displayName, "\r", " "), "\n", " ")
+		displayName = strings.TrimSpace(displayName)
+		if displayName == "" {
+			displayName = "Node"
+		}
+		if reservedExportName(displayName, groupName) {
+			displayName = displayName + " (Proxy)"
+		}
+
+		// Check the final name, including suffixes already present in the source.
+		baseName := displayName
+		for suffix := 2; usedNames[displayName] || reservedExportName(displayName, groupName); suffix++ {
+			displayName = fmt.Sprintf("%s (%d)", baseName, suffix)
+		}
+		usedNames[displayName] = true
+		cfg["name"] = displayName
+
+		proxies = append(proxies, cfg)
+		nodeNames = append(nodeNames, displayName)
+	}
+
+	if len(proxies) == 0 {
+		return nil, nil, monitor.NewValidationError("未能匹配到有效节点配置，请确保所选节点的缓存文件存在")
+	}
+	return proxies, nodeNames, nil
+}
+
+// Name-only clients cannot freeze a revision. Resolve every requested name in
+// the requested profile's current cache, and reject a partial export.
+func (s *AppService) exportNamedClashConfig(profileID string, names []string) ([]byte, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is not initialized")
+	}
+	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
+	if err != nil {
+		return nil, fmt.Errorf("load airport store: %w", err)
+	}
+	if store.Get(profileID) == nil {
+		if _, sub := store.FindSubscription(profileID); sub == nil {
+			return nil, monitor.NewValidationError("机场或订阅不存在")
+		}
+	}
+	nodes, err := s.loadMonitorNodes(profileID)
+	if err != nil {
+		return nil, err
+	}
+	selected := nodes
+	if len(names) > 0 {
+		byName := make(map[string]monitor.MonitoredNode, len(nodes))
+		for _, node := range nodes {
+			byName[node.DisplayName] = node
+		}
+		selected = make([]monitor.MonitoredNode, 0, len(names))
+		seen := make(map[string]bool)
+		for _, name := range names {
+			node, ok := byName[name]
+			if !ok {
+				return nil, monitor.NewValidationError("所选节点已不在当前缓存中；未导出任何文件")
+			}
+			if !seen[name] {
+				selected = append(selected, node)
+				seen[name] = true
+			}
+		}
+	}
+	proxies, _, err := prepareExportProxies(selected, "")
+	if err != nil {
+		return nil, err
+	}
+	return ExportClashYAML(proxies)
 }
 
 func (s *AppService) collectAllCachedNodes() ([]monitor.MonitoredNode, error) {

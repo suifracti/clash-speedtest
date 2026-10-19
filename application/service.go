@@ -1802,51 +1802,7 @@ func (s *AppService) GetTokenStatus() TokenStatusDTO {
 // Config Export operations
 
 func (s *AppService) ExportClashConfig(airportID string, nodeNames []string) ([]byte, error) {
-	if s == nil {
-		return nil, fmt.Errorf("app service is not initialized")
-	}
-	airportStore, err := profiles.LoadStore(s.profilePaths.StoreFile())
-	if err != nil {
-		return nil, fmt.Errorf("load airport store: %w", err)
-	}
-	airport := airportStore.Get(airportID)
-	if airport == nil {
-		return nil, fmt.Errorf("airport not found: %s", airportID)
-	}
-
-	cacheFile := s.profilePaths.CacheFile(airport.ID)
-	if !s.profilePaths.HasCache(airport.ID) {
-		return nil, fmt.Errorf("airport cache not found")
-	}
-
-	st, err := speedtester.New(&speedtester.Config{
-		ConfigPaths: cacheFile,
-		Mode:        speedtester.SpeedModeFast,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	proxies, err := st.LoadProxies()
-	if err != nil {
-		return nil, err
-	}
-
-	nameSet := make(map[string]struct{}, len(nodeNames))
-	for _, name := range nodeNames {
-		nameSet[name] = struct{}{}
-	}
-
-	var matched []map[string]any
-	for name, p := range proxies {
-		if len(nodeNames) == 0 {
-			matched = append(matched, map[string]any{"name": name, "type": p.Type().String()})
-		} else if _, ok := nameSet[name]; ok {
-			matched = append(matched, map[string]any{"name": name, "type": p.Type().String()})
-		}
-	}
-
-	return ExportClashYAML(matched)
+	return s.exportNamedClashConfig(airportID, nodeNames)
 }
 
 // ExportClashConfigFromResults creates Clash YAML from node results of a test run.
@@ -1862,38 +1818,28 @@ func (s *AppService) ExportClashConfigFromResults(runID string, nodeNames []stri
 		return nil, fmt.Errorf("get run %s: %w", runID, err)
 	}
 
-	cacheFile := s.profilePaths.CacheFile(run.AirportID)
-
-	st, err := speedtester.New(&speedtester.Config{
-		ConfigPaths: cacheFile,
-		Mode:        speedtester.SpeedModeFast,
-	})
-	if err != nil {
-		return nil, err
-	}
-	proxies, err := st.LoadProxies()
-	if err != nil {
-		return nil, err
-	}
-
-	nameSet := make(map[string]struct{}, len(nodeNames))
-	for _, n := range nodeNames {
-		nameSet[n] = struct{}{}
-	}
-
-	var matched []map[string]any
+	available := make(map[string]bool)
+	var runNames []string
 	for _, r := range run.Results {
-		if len(nodeNames) > 0 {
-			if _, ok := nameSet[r.ProxyName]; !ok {
-				continue
-			}
-		}
-		if p, ok := proxies[r.ProxyName]; ok {
-			matched = append(matched, map[string]any{"name": r.ProxyName, "type": p.Type().String()})
+		if r != nil && !available[r.ProxyName] {
+			available[r.ProxyName] = true
+			runNames = append(runNames, r.ProxyName)
 		}
 	}
-
-	return ExportClashYAML(matched)
+	for _, name := range nodeNames {
+		if !available[name] {
+			return nil, monitor.NewValidationError("所选节点不在该次历史记录中；未导出任何文件")
+		}
+	}
+	if len(nodeNames) == 0 {
+		nodeNames = runNames
+	}
+	if len(nodeNames) == 0 {
+		return nil, monitor.NewValidationError("该次历史记录没有可导出的节点")
+	}
+	// Historical runs store measurements, not subscription credentials. Export
+	// only matching names from the current cache; never invent old configuration.
+	return s.exportNamedClashConfig(run.AirportID, nodeNames)
 }
 
 // ExportClashYAML formats proxy configurations into a Clash YAML structure.
