@@ -116,3 +116,41 @@ func TestIPPureBundleDoesNotLoseRiskWhenExtraSourcesReject(t *testing.T) {
 		t.Fatalf("extras overwrote main result or invented scores: %+v", r)
 	}
 }
+
+func TestIPPureBundleKeepsOfficialFallbackWhenWebNonceIsRejected(t *testing.T) {
+	checker := ippureChecker(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Host == "api.ipify.org" {
+			return ippureJSONResponse(req, 200, `{"ip":"8.8.8.8"}`), nil
+		}
+		if req.URL.Host == "my.ippure.com" {
+			return ippureJSONResponse(req, 200, `{"ip":"8.8.8.8","fraudScore":61,"asn":15169}`), nil
+		}
+		if strings.Contains(req.URL.Path, "/ip-basic/") {
+			r := fixtureResponse(req, 200, "text/plain", `{"ok":false}`)
+			r.Header.Set("x-k", "fixture-refused-nonce")
+			r.Header.Set("x-t", strconv.FormatInt(time.Now().UnixMilli(), 10))
+			return r, nil
+		}
+		return fixtureResponse(req, 403, "text/plain", "403"), nil
+	})
+	rule, _ := RuleFor("ippure_ip_quality")
+	rule.RuleVersion = 6
+	r := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
+	if r.Outcome != "profiled" || r.Details["fraud_score"] != "61" || r.Details["api_method"] != "ippure_official_self_api_fallback_v1" {
+		t.Fatalf("new extras lost the working fallback: %+v", r)
+	}
+}
+
+func TestIPPureNonceSessionEnablesReuseOnlyOnItsTransportClone(t *testing.T) {
+	original := &http.Transport{DisableKeepAlives: true, MaxIdleConnsPerHost: 1}
+	phases := &requestPhases{}
+	got := ippureSessionTransport(phaseTransport{base: original, phases: phases})
+	wrapped, ok := got.(phaseTransport)
+	if !ok || wrapped.phases != phases {
+		t.Fatal("lost phase observations")
+	}
+	cloned, ok := wrapped.base.(*http.Transport)
+	if !ok || cloned == original || cloned.DisableKeepAlives || !original.DisableKeepAlives || cloned.MaxIdleConnsPerHost != 1 {
+		t.Fatal("nonce session leaked to original transport or cannot reuse connection")
+	}
+}

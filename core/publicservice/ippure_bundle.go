@@ -22,6 +22,21 @@ import (
 const ippureCFURL = "https://cf.999831.xyz/api/cf-summary"
 const ippureCFGateway = ippureWebAPIBase + "/api/gateway/cf"
 
+// This API binds its ephemeral nonce to the connection. Keep that connection
+// only inside this attempt, without changing latency/download/client defaults.
+func ippureSessionTransport(base http.RoundTripper) http.RoundTripper {
+	switch t := base.(type) {
+	case phaseTransport:
+		return phaseTransport{base: ippureSessionTransport(t.base), phases: t.phases}
+	case *http.Transport:
+		clone := t.Clone()
+		clone.DisableKeepAlives = false
+		return clone
+	default:
+		return base
+	}
+}
+
 type ippureOriginTransport struct{ base http.RoundTripper }
 
 func (t ippureOriginTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -134,6 +149,9 @@ func ippureExtraExchange(ctx context.Context, client *http.Client, method, targe
 	return total, nil, false
 }
 func ippureExtraStatus(r Result) string {
+	if r.FailurePhase == "nonce_challenge" {
+		return "接口签名未通过"
+	}
 	if r.HTTPStatus != nil && *r.HTTPStatus != 200 {
 		return fmt.Sprintf("HTTP %d", *r.HTTPStatus)
 	}
@@ -156,8 +174,14 @@ func checkIPPureBundle(ctx context.Context, client *http.Client, rule Rule, star
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	local.Transport = ippureOriginTransport{base}
+	local.Transport = ippureOriginTransport{ippureSessionTransport(base)}
+	defer local.CloseIdleConnections()
 	result := checkIPPureWeb(ctx, &local, rule, started)
+	// Preserve the working public self-IP path if the web nonce API refuses
+	// this client. A failed extra query must not regress the primary score.
+	if result.Outcome == "challenge" && ctx.Err() == nil && result.Details["ip"] != "" {
+		result = ippureOfficialFallback(ctx, &local, rule, result, result, result.Details["ip"], started)
+	}
 	if result.Details == nil {
 		result.Details = map[string]string{}
 	}
