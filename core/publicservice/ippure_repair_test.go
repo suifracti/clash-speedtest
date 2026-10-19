@@ -10,13 +10,17 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 func TestIPPureV7UsesOfficialRiskAndAcceptsNormalNonceRefresh(t *testing.T) {
 	counts := map[string]int{}
+	var mu sync.Mutex
 	checker := ippureChecker(func(req *http.Request) (*http.Response, error) {
+		mu.Lock()
+		defer mu.Unlock()
 		counts[req.URL.Path]++
 		switch req.URL.Host + req.URL.Path {
 		case "my.ippure.com/v1/info":
@@ -97,5 +101,26 @@ func TestIPPureBrowserTransportKeepsNodeDialAndCertificateValidation(t *testing.
 	var certErr x509.UnknownAuthorityError
 	if !called || err == nil || !errors.As(err, &certErr) || !tr.DisableKeepAlives {
 		t.Fatalf("dial/certificate/original transport changed: called=%v err=%v", called, err)
+	}
+}
+
+func TestIPPureV7KeepsCFWhenPrimaryUsesWholeDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	checker := ippureChecker(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Host {
+		case "my.ippure.com":
+			<-req.Context().Done()
+			return nil, req.Context().Err()
+		case "cf.999831.xyz":
+			return fixtureResponse(req, 200, "application/octet-stream", "opaque"), nil
+		default:
+			return ippureJSONResponse(req, 200, `{"ip":"8.8.8.8","risk_score":98,"asn":15169}`), nil
+		}
+	})
+	rule, _ := RuleFor("ippure_ip_quality")
+	r := checker.Check(ctx, monitor.MonitoredNode{}, rule, DefaultTimeout)
+	if r.Details["cf_risk_score"] != "98" || r.Details["cf_status"] != "已取得" || r.Details["fraud_score"] != "" {
+		t.Fatalf("completed CF result lost: %+v", r)
 	}
 }

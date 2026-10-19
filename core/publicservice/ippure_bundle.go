@@ -192,15 +192,22 @@ func checkIPPureBundle(ctx context.Context, client *http.Client, rule Rule, star
 	defer local.CloseIdleConnections()
 	state := newIPPureNonceState()
 	var result Result
+	var cfPending chan Result
 	if rule.RuleVersion >= 7 {
 		state.normalRefreshLimit = 3
-		primaryCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		cfPending = make(chan Result, 1)
+		go func() {
+			cfCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
+			defer cancel()
+			cfPending <- checkIPPureCF(cfCtx, &local, state)
+		}()
+	}
+	if rule.RuleVersion >= 7 {
 		official := rule
 		official.RuleVersion = 2
 		official.TargetURL = "https://my.ippure.com/v1/info"
 		official.MaximumBodyBytes = 8 * 1024
-		result = checkIPPure(primaryCtx, &local, official, started)
-		cancel()
+		result = checkIPPure(ctx, &local, official, started)
 		if result.Details == nil {
 			result.Details = map[string]string{}
 		}
@@ -231,10 +238,9 @@ func checkIPPureBundle(ctx context.Context, client *http.Client, rule Rule, star
 	if result.Outcome == "challenge" && ctx.Err() == nil && result.Details["ip"] != "" {
 		result = ippureOfficialFallback(ctx, &local, rule, result, result, result.Details["ip"], started)
 	}
-	if _, protocolError, rechallenged := state.status(); protocolError != "" || rechallenged {
-		state = newIPPureNonceState()
-		if rule.RuleVersion >= 7 {
-			state.normalRefreshLimit = 3
+	if rule.RuleVersion < 7 {
+		if _, protocolError, rechallenged := state.status(); protocolError != "" || rechallenged {
+			state = newIPPureNonceState()
 		}
 	}
 	if result.Details == nil {
@@ -254,53 +260,26 @@ func checkIPPureBundle(ctx context.Context, client *http.Client, rule Rule, star
 	// Each sub-result keeps its own scope/time. Its failure cannot overwrite the
 	// IPPure score, HTTP status, or outcome of the primary lookup.
 	add := func(part Result) { result.RequestCount += part.RequestCount; result.BytesRead += part.BytesRead }
-	if ctx.Err() != nil {
+	if ctx.Err() != nil && cfPending == nil {
 		d["cf_status"] = "本次时限已到"
 		d["asn_traffic_status"] = "本次时限已到"
 		return finish(result, started)
 	}
-	cfAt := time.Now().UTC()
-	d["cf_query_at"] = cfAt.Format(time.RFC3339Nano)
-	d["cf_source_url"] = "https://ippure.com/cloudflare"
-	d["cf_scope"] = "本次App请求环境，受出口与客户端特征影响，不等于浏览器结果"
-	cfCtx := ctx
-	cancelCF := func() {}
-	if rule.RuleVersion >= 7 {
-		cfCtx, cancelCF = context.WithTimeout(ctx, 4*time.Second)
-	}
-	part, payload, ok := boundedGET(cfCtx, &local, ippureCFURL, ippureWebBodyLimit, "application/octet-stream")
-	add(part)
-	asn := strings.TrimPrefix(strings.ToUpper(d["asn"]), "AS")
-	if ok {
-		part, body, valid := ippureExtraExchange(cfCtx, &local, http.MethodPost, ippureCFGateway, payload, state)
-		add(part)
-		if valid {
-			var doc struct {
-				IP   string          `json:"ip"`
-				Risk *int            `json:"risk_score"`
-				ASN  json.RawMessage `json:"asn"`
-			}
-			if json.Unmarshal(body, &doc) == nil && net.ParseIP(doc.IP) != nil && doc.Risk != nil && *doc.Risk >= 0 && *doc.Risk <= 100 {
-				d["cf_risk_score"] = strconv.Itoa(*doc.Risk)
-				d["cf_status"] = "已取得"
-				d["cf_ip"] = doc.IP
-				d["cf_ip_family"] = "IPv6"
-				if net.ParseIP(doc.IP).To4() != nil {
-					d["cf_ip_family"] = "IPv4"
-				}
-				if asn == "" {
-					asn = strings.TrimPrefix(cleanASN(doc.ASN), "AS")
-				}
-			} else {
-				d["cf_status"] = "未返回有效系数"
-			}
-		} else {
-			d["cf_status"] = ippureExtraStatus(part)
-		}
+	var cfResult Result
+	if cfPending != nil {
+		cfResult = <-cfPending
 	} else {
-		d["cf_status"] = ippureExtraStatus(part)
+		cfResult = checkIPPureCF(ctx, &local, state)
 	}
-	cancelCF()
+	add(cfResult)
+	for k, v := range cfResult.Details {
+		d[k] = v
+	}
+	asn := strings.TrimPrefix(strings.ToUpper(d["asn"]), "AS")
+	if asn == "" {
+		asn = d["cf_asn"]
+	}
+
 	asnNumber, err := strconv.ParseUint(asn, 10, 32)
 	if err != nil || asnNumber == 0 {
 		d["asn_traffic_status"] = "未取得ASN"
@@ -341,4 +320,49 @@ func checkIPPureBundle(ctx context.Context, client *http.Client, rule Rule, star
 	d["asn_bot_percent"] = strconv.FormatFloat(*doc.Data.Bot, 'f', 2, 64)
 	d["asn_traffic_status"] = "已取得"
 	return finish(result, started)
+}
+
+func checkIPPureCF(ctx context.Context, local *http.Client, state *ippureNonceState) Result {
+	result := Result{Details: map[string]string{"cf_status": "未取得结果"}}
+	d := result.Details
+	add := func(part Result) { result.RequestCount += part.RequestCount; result.BytesRead += part.BytesRead }
+	cfAt := time.Now().UTC()
+	d["cf_query_at"] = cfAt.Format(time.RFC3339Nano)
+	d["cf_source_url"] = "https://ippure.com/cloudflare"
+	d["cf_scope"] = "本次App请求环境，受出口与客户端特征影响，不等于浏览器结果"
+	cfCtx := ctx
+	part, payload, ok := boundedGET(cfCtx, local, ippureCFURL, ippureWebBodyLimit, "application/octet-stream")
+	add(part)
+	asn := ""
+	if ok {
+		part, body, valid := ippureExtraExchange(cfCtx, local, http.MethodPost, ippureCFGateway, payload, state)
+		add(part)
+		if valid {
+			var doc struct {
+				IP   string          `json:"ip"`
+				Risk *int            `json:"risk_score"`
+				ASN  json.RawMessage `json:"asn"`
+			}
+			if json.Unmarshal(body, &doc) == nil && net.ParseIP(doc.IP) != nil && doc.Risk != nil && *doc.Risk >= 0 && *doc.Risk <= 100 {
+				d["cf_risk_score"] = strconv.Itoa(*doc.Risk)
+				d["cf_status"] = "已取得"
+				d["cf_ip"] = doc.IP
+				d["cf_ip_family"] = "IPv6"
+				if net.ParseIP(doc.IP).To4() != nil {
+					d["cf_ip_family"] = "IPv4"
+				}
+				if asn == "" {
+					asn = strings.TrimPrefix(cleanASN(doc.ASN), "AS")
+				}
+			} else {
+				d["cf_status"] = "未返回有效系数"
+			}
+		} else {
+			d["cf_status"] = ippureExtraStatus(part)
+		}
+	} else {
+		d["cf_status"] = ippureExtraStatus(part)
+	}
+	d["cf_asn"] = asn
+	return result
 }
