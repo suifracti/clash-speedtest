@@ -1,13 +1,37 @@
 import type {ComputedRef,InjectionKey,Ref} from 'vue'
-import type {Attempt,NodeOption,Project} from '../../domain'
-import type {QualityEvidence} from '../../nodeQuality'
+import type {Attempt,MonitorSample,NodeOption,Project} from '../../domain'
+import type {QualityEvidence,SiteQualitySummary} from '../../nodeQuality'
+import type {Airport} from '../../domain'
 import type {HealthTone,TrendPoint} from '../../presentation'
-
-export type HomeDesign='current'|'a'|'b'|'c'
 
 // HomeView keeps all state, loading and history logic; the redesigned layers
 // only read it through this model so behaviour stays identical across designs.
 export interface HomeModel {
+ hiddenSelectedCount:ComputedRef<number>
+ qualityFiltersPending:ComputedRef<boolean>
+ monitorData:Ref<Record<string,MonitorSample[]>>
+ monitorErrors:Ref<Record<string,string>>
+ monitorHTTPErrors:Ref<Record<string,string>>
+ httpPoints:(n:NodeOption,id?:string)=>TrendPoint[]
+ servicePoints:(n:NodeOption,id:string)=>TrendPoint[]
+ visibleServices:ComputedRef<{service_id:string;name:string}[]>
+ servicePage:Ref<number>
+ servicePages:ComputedRef<number>
+ servicesPerPage:ComputedRef<number>
+ chosen:ComputedRef<Airport[]>
+ filterProfiles:ComputedRef<[string,string][]>
+ protocolChoices:ComputedRef<string[]>
+ protocolFilter:Ref<string>
+ qualityGate:Ref<string>
+ qualitySort:Ref<string>
+ qualityLoading:Ref<boolean>
+ qualityErrors:Ref<Record<string,string>>
+ qualityCutoff:Ref<string>
+ allQualityReady:ComputedRef<boolean>
+ readQualityNodes:(nodes:NodeOption[],refresh?:boolean)=>Promise<void>
+ siteSummaries:ComputedRef<Record<string,SiteQualitySummary[]>>
+ pageSize:Ref<number>
+ setPageSize:(size:number)=>void
  pageNodes:ComputedRef<NodeOption[]>
  visibleNodes:ComputedRef<NodeOption[]>
  runNodes:ComputedRef<NodeOption[]>

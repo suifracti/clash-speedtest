@@ -28,44 +28,27 @@ function evidence(node:NodeOption,value:number,complete=true):QualityEvidence{
 beforeEach(()=>{localStorageItems.clear();localStorageItems.set('speedtest-home-view','quick');window.sessionStorage.clear();vi.clearAllMocks();HTMLDialogElement.prototype.showModal=vi.fn();HTMLDialogElement.prototype.close=vi.fn();vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}})})
 afterEach(()=>{wrapper?.unmount();w?.dispose();wrapper=undefined;w=undefined;document.body.innerHTML='';vi.unstubAllGlobals();vi.useRealTimers()})
 
-it('wires six-site controls to saved evidence, preserves original history and refuses mixed-family ranking',async()=>{
- localStorageItems.set('speedtest-home-view','detailed')
- readQualityMock.mockImplementation(async(node:NodeOption)=>{const e=evidence(node,node.node_key==='b-1'?40:20);e.since='2026-10-09T00:00:00Z';e.until=at;return e})
- w=createWorkspace();w.project.value='latency';w.airports.value=[{id:'airport-b',name:'机场 B',url_display:'',node_count:2,has_cache:true,subscriptions:[{id:'sub-b',airport_id:'airport-b',name:'默认',url_display:'',url_configured:true,node_count:2,has_cache:true}]}];w.nodes.value=fresh.slice(0,2);w.setAirports(['airport-b'])
- wrapper=mount(HomeView,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
- await wrapper.get('select[aria-label="四站质量排序"]').setValue('p50');await flushPromises()
- expect(wrapper.findAll('.node-name strong').map(n=>n.text())).toEqual(['香港 · 02','香港 · 01'])
- expect(wrapper.text()).toContain('当前集合同站 / 同条件 / 同窗口，可比较')
- expect(wrapper.findAll('.site-quality')).toHaveLength(2)
- await wrapper.findAll('button[aria-label="查看 Cloudflare 原始历史"]')[0].trigger('click');await flushPromises()
- expect(wrapper.get('.inline-panel-header').text()).toContain('已固定')
- const changed=evidence(fresh[1],20);changed.since='2026-10-09T00:00:00Z';changed.until=at;changed.tests[0].network_path={...changed.tests[0].network_path!,address_family:'IPv6',address_source:'AAAA'}
- readQualityMock.mockImplementation(async(node:NodeOption)=>node.node_key==='b-2'?changed:Object.assign(evidence(node,40),{since:'2026-10-09T00:00:00Z',until:at}))
- await wrapper.findAll('button').find(b=>b.text()==='更新已保存证据')!.trigger('click');await flushPromises()
- expect(wrapper.findAll('.node-name strong').map(n=>n.text())).toEqual(['香港 · 01','香港 · 02'])
- expect(wrapper.text()).toContain('不可比较：保留原序')
- expect(api.startLatency).not.toHaveBeenCalled();expect(api.startAttempt).not.toHaveBeenCalled()
-})
-
 function attachSavedSnapshot(){
  vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-10-10T00:00:00Z'))
  w=createWorkspace();w.project.value='latency';w.airports.value=[{id:'airport-b',name:'机场 B',url_display:'',node_count:1,has_cache:true,subscriptions:[{id:'sub-b',airport_id:'airport-b',name:'默认',url_display:'',url_configured:true,node_count:1,has_cache:true}]}];w.nodes.value=[fresh[0]];w.setAirports(['airport-b'])
  wrapper=mount(HomeView,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}})
 }
+function latency(){return wrapper!.get('.hd-latency').text()}
+function windowStats(){return wrapper!.findAll('.hd-latency .hd-site-window').map(e=>e.text()).join(' ')}
 function emptyEvidence(node:NodeOption){const e=evidence(node,40);e.tests=[];return e}
 
 it('refreshes the completed saved round without a manual click, but not while the frozen plan is running',async()=>{
  let saved=false
  readQualityMock.mockImplementation(async(node:NodeOption,_since:string,until:string)=>saved&&Date.parse(until)>=Date.parse('2026-10-10T00:01:00Z')?evidence(node,980):emptyEvidence(node))
- attachSavedSnapshot();await flushPromises();expect(wrapper!.get('.site-metrics').text()).toContain('未测')
+ attachSavedSnapshot();await flushPromises();expect(latency()).toContain('未测');expect(windowStats()).toBe('')
  const snapshot={fixture:{services:[]}};w!.sortSnapshots.value=snapshot
  w!.running.value=true;vi.setSystemTime(new Date('2026-10-10T00:01:00Z'));saved=true
  const test={...evidence(fresh[0],980).tests[0],finished_at:'2026-10-10T00:01:00Z'}
  w!.mergeLatency(test);await flushPromises()
- expect(wrapper!.get('.site-metrics').text()).toContain('未测')
+ expect(windowStats()).not.toContain('982 ms')
  w!.running.value=false;await flushPromises()
- expect(wrapper!.get('.site-metrics').text()).toContain('982 ms')
- expect(wrapper!.get('.site-metrics').text()).not.toContain('P95 982')
+ expect(windowStats()).toContain('982 ms')
+ expect(windowStats()).not.toContain('P95')
  expect(w!.sortSnapshots.value).toEqual(snapshot)
  expect(api.startLatency).not.toHaveBeenCalled();expect(api.startAttempt).not.toHaveBeenCalled()
 })
@@ -89,7 +72,7 @@ it('refreshes after real runPlan polling and raw measurement-round readback befo
  const {persistence_state:_,...rawResult}=saved
  vi.mocked(api.measurementRounds).mockImplementation(async()=>available?[{round_id:'native-round',trigger_type:'manual',started_at:at,state:'finished',items:[{...node,request_id:requestId,project:'latency',execution_state:'completed',persistence_state:'saved',latency:rawResult as LatencyTest}]}]:[])
  attachSavedSnapshot();await flushPromises()
- expect(wrapper!.get('.site-metrics').text()).toContain('0 / 7 次响应')
+ expect(windowStats()).toContain('0/7 次响应')
  const previousReads=readQualityMock.mock.calls.length
  vi.useFakeTimers({toFake:['Date','setTimeout','clearTimeout']})
  w!.plan.value={nodes:[node],projects:['latency'],target:'all',samples:1,timeout:10,concurrency:1,downloadMiB:1,downloadSeconds:1,serviceIds:[],repeats:1}
@@ -97,9 +80,9 @@ it('refreshes after real runPlan polling and raw measurement-round readback befo
  vi.setSystemTime(new Date(finished));await vi.advanceTimersByTimeAsync(1200);await run;await flushPromises()
  expect(w!.busy.value).toBe(false)
  expect(api.batch).toHaveBeenCalledTimes(1);expect(api.measurementRounds).toHaveBeenCalled()
- expect(wrapper!.get('.site-metrics').text()).toContain('1 / 1 次响应')
- expect(wrapper!.get('.site-metrics').text()).toContain('5118 ms')
- expect(wrapper!.get('.site-metrics').text()).not.toContain('P95 982')
+ expect(windowStats()).toContain('1/1 次响应')
+ expect(windowStats()).toContain('5118 ms')
+ expect(windowStats()).not.toContain('P95')
  expect(readQualityMock.mock.calls.length).toBeGreaterThan(previousReads)
  expect(Date.parse(readQualityMock.mock.calls.at(-1)![2])).toBeGreaterThanOrEqual(Date.parse(finished))
  expect(w!.latest(node)?.persistence_state).toBe('saved')
@@ -112,11 +95,11 @@ it('refreshes a later successful save without treating a failed save as saved ev
  const attempt:Attempt={...fresh[0],attempt_id:'new-download',request_id:'new-download',requested_at:'2026-10-10T00:01:00Z',finished_at:'2026-10-10T00:01:01Z',execution_state:'failed',persistence_state:'failed',rule:{method:'GET',target_url:'https://example.test/'},result:{outcome:'failed',bytes_read:0,error_message:'EOF',finished_at:'2026-10-10T00:01:01Z'}}
  attachSavedSnapshot();w!.project.value='download';await flushPromises()
  w!.mergeAttempt('download',attempt);await flushPromises()
- expect(wrapper!.get('.quality-download').text()).toContain('最近检测：未测')
+ expect(wrapper!.get('.hd-saved-download').text()).toContain('最近检测：未测')
  vi.setSystemTime(new Date('2026-10-10T00:01:02Z'));saved=true
  w!.mergeAttempt('download',{...attempt,persistence_state:'saved'});await flushPromises()
- expect(wrapper!.get('.quality-download').text()).toContain('最近检测：失败')
- expect(wrapper!.get('.quality-download').text()).toContain('本次未取得有效速度')
+ expect(wrapper!.get('.hd-saved-download').text()).toContain('最近检测：失败')
+ expect(wrapper!.get('.hd-saved-download').text()).toContain('本次未取得有效速度')
  expect(api.startAttempt).not.toHaveBeenCalled()
 })
 
@@ -126,17 +109,17 @@ it('reads the invalidated snapshot on returning home after a background save, wi
  attachSavedSnapshot();await flushPromises();w!.page.value='history';await flushPromises()
  vi.setSystemTime(new Date('2026-10-10T00:01:00Z'));saved=true;w!.mergeLatency(evidence(fresh[0],50).tests[0]);await flushPromises()
  w!.page.value='home';await flushPromises()
- expect(wrapper!.get('.site-metrics').text()).toContain('52 ms')
+ expect(windowStats()).toContain('52 ms')
  expect(api.startLatency).not.toHaveBeenCalled();expect(api.startAttempt).not.toHaveBeenCalled()
 })
 
 it('shows a refresh read error instead of reusing an old successful value after a new saved result',async()=>{
  readQualityMock.mockImplementation(async(node:NodeOption)=>evidence(node,40))
- attachSavedSnapshot();await flushPromises();expect(wrapper!.get('.site-metrics').text()).toContain('42 ms')
+ attachSavedSnapshot();await flushPromises();expect(windowStats()).toContain('42 ms')
  readQualityMock.mockRejectedValue(new Error('history unavailable'))
  vi.setSystemTime(new Date('2026-10-10T00:01:00Z'));w!.mergeLatency(evidence(fresh[0],100).tests[0]);await flushPromises()
- expect(wrapper!.get('.site-metrics').text()).toContain('读取失败')
- expect(wrapper!.get('.site-metrics').text()).not.toContain('42 ms')
+ expect(windowStats()).toContain('读取失败')
+ expect(windowStats()).not.toContain('42 ms')
  expect(api.startLatency).not.toHaveBeenCalled()
 })
 
@@ -149,10 +132,10 @@ it('replaces a previous service success with the newly saved failure and rejects
  attachSavedSnapshot();w!.catalog.value=[{service_id:'cloudflare_204',name:'Cloudflare 204',category:'基础网络',description:'',result_kind:'connectivity',success_criterion:'exact 204',timeout_seconds:10}];w!.displayServiceIds.value=['cloudflare_204'];w!.project.value='service';await flushPromises()
  latest=true;vi.setSystemTime(new Date('2026-10-10T00:01:02Z'))
  w!.mergeAttempt('service',{...service,attempt_id:'new-service',requested_at:'2026-10-10T00:01:00Z',execution_state:'failed',result:{outcome:'failed',bytes_read:0,finished_at:'2026-10-10T00:01:01Z'}});await flushPromises()
- expect(wrapper!.get('.quality-services').text()).toContain('失败')
+ expect(wrapper!.get('.hd-svc-cell').text()).toContain('失败')
  resolveOld(old);await flushPromises()
- expect(wrapper!.get('.quality-services').text()).toContain('失败')
- expect(wrapper!.get('.quality-services').text()).not.toContain('命中')
+ expect(wrapper!.get('.hd-svc-cell').text()).toContain('失败')
+ expect(wrapper!.get('.hd-svc-cell').text()).not.toContain('命中')
  expect(api.startAttempt).not.toHaveBeenCalled()
 })
 
@@ -169,19 +152,21 @@ it('automatically reads both saved S5 nodes through the real projection with a n
  vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-10-12T14:54:00Z'))
  w=createWorkspace();w.project.value='combined';w.catalog.value=[...new Set(services.map(a=>a.service_id!))].map(id=>({service_id:id,name:id,category:'fixture',description:'',result_kind:'connectivity',success_criterion:'fixture',timeout_seconds:10}));w.displayServiceIds.value=w.catalog.value.map(s=>s.service_id);w.airports.value=nodes.map(n=>({id:n.profile_id,name:n.profile_name,url_display:'',node_count:1,has_cache:true,subscriptions:[{id:n.profile_id,airport_id:n.profile_id,name:'S5',url_display:'',url_configured:false,node_count:1,has_cache:true}]}));w.nodes.value=nodes;w.setAirports(nodes.map(n=>n.profile_id))
  wrapper=mount(HomeView,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
- expect(wrapper.findAll('.overview-latency').every(row=>row.text().includes('未测'))).toBe(true)
+ const perNode=async()=>{const out:string[]=[];for(const row of wrapper!.findAll('.hd-tr:not(.hd-th)')){await row.trigger('click');await flushPromises();out.push(windowStats()+' '+(wrapper!.find('.hd-saved-download').exists()?wrapper!.get('.hd-saved-download').text():''))}return out.join(' ')}
+ expect(windowStats()).toBe('')
  w.running.value=true;available=true
  for(const t of tests)w.mergeLatency(t)
  for(const a of downloads)w.mergeAttempt('download',a)
  for(const a of services)w.mergeAttempt('service',a)
- await flushPromises();expect(wrapper.findAll('.overview-latency').every(row=>row.text().includes('未测'))).toBe(true)
+ await flushPromises();expect(windowStats()).not.toContain('ms')
  vi.setSystemTime(new Date('2026-10-12T14:55:11Z'));w.running.value=false;await flushPromises()
- expect(wrapper.findAll('.overview-latency').map(row=>row.text()).join(' ')).toContain('979 ms')
- expect(wrapper.findAll('.overview-latency').map(row=>row.text()).join(' ')).toContain('992 ms')
- expect(wrapper.findAll('.overview-latency').every(row=>!row.text().includes('P95'))).toBe(true)
- expect(wrapper.findAll('.quality-download').map(row=>row.text()).join(' ')).toContain('1.55 MiB/s')
- expect(wrapper.findAll('.quality-download').map(row=>row.text()).join(' ')).toContain('1.91 MiB/s')
- expect(wrapper.findAll('.overview-services')).toHaveLength(2)
+ const saved=await perNode()
+ expect(saved).toContain('979 ms')
+ expect(saved).toContain('992 ms')
+ expect(saved).not.toContain('P95')
+ expect(saved).toContain('1.55 MiB/s')
+ expect(saved).toContain('1.91 MiB/s')
+ expect(wrapper.findAll('.hd-tr:not(.hd-th)')).toHaveLength(2)
  expect(new Set(readQualityMock.mock.calls.slice(-2).map(c=>c[2]))).toEqual(new Set(['2026-10-12T14:55:11.000Z']))
  expect(api.startLatency).not.toHaveBeenCalled();expect(api.startAttempt).not.toHaveBeenCalled()
 })
@@ -200,10 +185,10 @@ it('loads and sorts the full new node scope, then ignores a late result from the
  expect(readQualityMock.mock.calls.filter(call=>call[0].profile_id==='sub-b').every(call=>call[2]===readQualityMock.mock.calls.find(old=>old[0].node_identity_key==='stale-identity')?.[2])).toBe(true)
  expect(wrapper.get('[role="status"]').text()).toContain(`已读固定范围 ${fresh.length} 个节点`)
  expect(wrapper.get('[role="status"]').text()).toContain(`当前符合 ${fresh.length} 个`)
- expect(wrapper.findAll('.node-name strong').map(node=>node.text()).slice(0,3)).toEqual(['香港 · 01','香港 · 02','香港 · 03'])
+ expect(wrapper.findAll('.hd-node strong').map(node=>node.text()).slice(0,3)).toEqual(['香港 · 01','香港 · 02','香港 · 03'])
  resolveStale(evidence(stale,1,false));await flushPromises()
  expect(wrapper.get('[role="status"]').text()).toContain('存在缺页/读取错误 0 个')
  expect(wrapper.get('[role="status"]').text()).toContain(`已读固定范围 ${fresh.length} 个节点`)
- expect(wrapper.findAll('.node-name strong').map(node=>node.text()).slice(0,3)).toEqual(['香港 · 01','香港 · 02','香港 · 03'])
+ expect(wrapper.findAll('.hd-node strong').map(node=>node.text()).slice(0,3)).toEqual(['香港 · 01','香港 · 02','香港 · 03'])
  expect(api.startLatency).not.toHaveBeenCalled();expect(api.startAttempt).not.toHaveBeenCalled()
 })

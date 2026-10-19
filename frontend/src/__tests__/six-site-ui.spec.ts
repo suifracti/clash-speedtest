@@ -1,6 +1,4 @@
 import {describe,expect,it} from 'vitest'
-import {mount} from '@vue/test-utils'
-import SiteQuality from '../components/SiteQuality.vue'
 import {sortSiteRows} from '../siteQualityView'
 import {multiSiteQuality,type QualityEvidence} from '../nodeQuality'
 import type {LatencyTest,NodeOption} from '../domain'
@@ -24,15 +22,5 @@ describe('six-site UI conservative comparison',()=>{
   rows[2].summary=summary(2,10,'IPv4',5)[0]
   expect(sortSiteRows(rows,'p95')).toMatchObject({rows,comparable:false})
   expect(sortSiteRows(rows,'p50').comparable).toBe(true)
- })
- it('shows six independent sites, sample gates, conditions and original-history action',async()=>{
-  const wrapper=mount(SiteQuality,{props:{summaries:summary(0,40,'IPv4',5)}})
-  expect(wrapper.findAll('tbody tr')).toHaveLength(6)
-  expect(wrapper.text()).toContain('P95 样本不足')
-  expect(wrapper.text()).toContain('未测')
-  expect(wrapper.text()).toContain('http_get_via_proxy_first_byte')
-  await wrapper.get('button[aria-label="查看 Cloudflare 原始历史"]').trigger('click')
-  expect(wrapper.emitted('history')?.[0]).toEqual(['cloudflare'])
-  wrapper.unmount()
  })
 })

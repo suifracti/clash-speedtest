@@ -87,7 +87,7 @@ describe('synthetic 256-node home first screen',()=>{
     expect(overview.text()).toContain('已过期')
     expect(overview.text()).toContain('刷新失败')
     expect(overview.text()).toContain('synthetic refresh failure')
-    await wrapper.get('.orbit-button').trigger('click');await wrapper.get('.orbit-button').trigger('click');await flushPromises()
+    await wrapper.get('.hd-orbit').trigger('click');await wrapper.get('.hd-orbit').trigger('click');await flushPromises()
     const accountSelect=wrapper.get('select[aria-label="首页用量订阅"]')
     await accountSelect.setValue((accountSelect.element as HTMLSelectElement).options[1]!.value)
     await flushPromises()
@@ -145,14 +145,14 @@ describe('synthetic 256-node home first screen',()=>{
     const {workspace,wrapper}=attachHome();await flushPromises()
     expect(wrapper.find('details.home-subscription-disclosure').exists()).toBe(false)
     expect(wrapper.find('.subscription-overview').exists()).toBe(true)
-    expect(wrapper.get('.orbit-button').text()).toContain('合成机场 1')
-    expect(wrapper.get('.node-list-context').text()).toContain('256 个节点')
+    expect(wrapper.get('.hd-orbit').text()).toContain('合成机场 1')
+    expect(wrapper.get('.hd-foot').text()).toContain('256 个节点')
 
     const selectedAirports=[...workspace.selectedAirportIds.value!]
     const accountPicker=wrapper.get('select[aria-label="首页用量订阅"]')
     const accountSelect=accountPicker.element as HTMLSelectElement
     expect(accountSelect.options).toHaveLength(2)
-    await wrapper.get('.orbit-button').trigger('click');await wrapper.get('.orbit-button').trigger('click');await flushPromises()
+    await wrapper.get('.hd-orbit').trigger('click');await wrapper.get('.hd-orbit').trigger('click');await flushPromises()
     const nextAccountPicker=wrapper.get('select[aria-label="首页用量订阅"]')
     const nextAccountSelect=nextAccountPicker.element as HTMLSelectElement
     await nextAccountPicker.setValue(nextAccountSelect.options[1]!.value)
