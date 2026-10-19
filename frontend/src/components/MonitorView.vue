@@ -5,6 +5,7 @@ import {api,request} from '../api'
 import {useWorkspace} from '../workspace'
 import {bytes,date,stateLabel,type MonitorJob,type NodeOption} from '../domain'
 import Icon from './Icon.vue'
+import MonitorTimeBand from './MonitorTimeBand.vue'
 import PeriodicSamplingPanel from './PeriodicSamplingPanel.vue'
 import Modal from './Modal.vue'
 
@@ -174,7 +175,7 @@ onBeforeUnmount(()=>{mounted=false;reloadGeneration++;runsGeneration++;clearInte
     <div class="monitor-resource monitor-resource-ledger" :aria-busy="refreshing" aria-live="polite">
       <div class="monitor-resource-values">
         <div class="monitor-resource-item">
-          <span v-if="budgetState.value">今日请求 {{budgetState.value.usage?.requests_used??'未知'}} · 已读取 {{formatBackendBytes(budgetState.value.usage?.bytes_used)}}</span>
+          <span v-if="budgetState.value">本工具探测消耗 · 今日请求 {{budgetState.value.usage?.requests_used??'未知'}} · 已读取 {{formatBackendBytes(budgetState.value.usage?.bytes_used)}}</span>
           <span v-else-if="budgetState.readAt">请求预算读取成功，但接口未提供可用读数</span>
           <span v-else>请求预算尚未读取</span>
           <small :class="{'inline-error':!!budgetState.error}" :role="budgetState.error?'alert':undefined">{{resourceMessage(budgetState,'预算')}}</small>
@@ -201,11 +202,11 @@ onBeforeUnmount(()=>{mounted=false;reloadGeneration++;runsGeneration++;clearInte
       <button class="button primary" @click="w.page.value='home';w.multiSelect.value=true">选择节点</button>
     </div>
     <div v-else class="monitor-cards">
-      <div class="monitor-cards-heading"><div><span class="monitor-kicker">TASK REGISTER</span><h2>监测任务</h2></div><span class="monitor-task-count">{{w.jobs.value.length}} 项</span></div>
+      <div class="monitor-cards-heading"><div><h2>监测任务</h2></div><span class="monitor-task-count">{{w.jobs.value.length}} 项</span></div>
       <article v-for="job in w.jobs.value" :key="job.id" class="monitor-card" :aria-busy="isBusy(job.id)">
         <header>
           <div><h2>{{job.name}}</h2><small>{{job.profile_name}} · {{job.scope_kind==='current_patrol'?'当前全量巡检 · 延迟任务':'冻结范围任务 · 不随订阅自动改范围'}}</small></div>
-          <span class="badge" :class="job.state==='running'?'good':job.state==='blocked'?'warn':''">{{job.state==='running'?'监测中':stateLabel(job.state)}}</span>
+          <span class="badge" :class="job.state==='running'&&!jobsError?'good':job.state==='blocked'?'warn':''" :title="jobsError?'任务列表刷新失败，这是上次成功读取时的状态':''">{{job.state==='running'?(jobsError?'上次读取时运行中':'监测中'):stateLabel(job.state)}}</span>
         </header>
         <div class="monitor-spec">
           <span>{{job.node_keys?.length||0}} 个节点</span>
@@ -213,6 +214,7 @@ onBeforeUnmount(()=>{mounted=false;reloadGeneration++;runsGeneration++;clearInte
           <span>{{job.probe_set==='latency_four_v1'?'四站延迟':job.probe_set==='latency_six_v1'?'旧六站延迟':job.probe_set==='light'?'旧单站延迟':job.probe_set==='service'?'基础服务':'深度诊断'}}</span>
           <span>{{job.sampling_tier==='focus'?'重点':job.sampling_tier==='sparse'?'稀疏':'常规'}}采样</span>
         </div>
+        <MonitorTimeBand :job="job"/>
         <p v-if="job.blocked_reason||job.recovery_reason||job.persistence_error||job.storage_reason||job.budget_reason" class="inline-warning">
           {{job.blocked_reason||job.persistence_error||job.storage_reason||job.budget_reason||job.recovery_reason}}
         </p>
