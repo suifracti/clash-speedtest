@@ -74,3 +74,35 @@ h2{font-size:16px;font-weight:600;letter-spacing:-.2px}
 .cst-budget dd strong{font-size:16px;font-variant-numeric:tabular-nums}
 .cst-budget dd small{display:block;color:var(--cst-muted);font-size:11px;line-height:1.5;margin-top:2px}
 .plan-budget.cst-plan-step{font-size:13px;color:var(--cst-text);margin:0}
+/* 检测进度：每项一行，执行 / 结果 / 保存是三列属性 */
+.cst-queue-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:4px}
+.cst-queue-head>div:first-child{display:flex;flex-direction:column;gap:2px}
+.cst-queue-head strong{font-size:20px;font-variant-numeric:tabular-nums}
+.cst-queue-head span{color:var(--cst-muted);font-size:13px}
+.cst-queue-head span.warn{color:var(--cst-warn);font-weight:500}
+.cst-queue-actions{display:flex;gap:6px;flex-wrap:wrap}
+.modal.cst-queue .progress-track{height:4px;border-radius:2px;background:var(--cst-line);overflow:hidden;margin:4px 0 12px}
+.modal.cst-queue .progress-track i{display:block;height:100%;background:var(--cst-accent)}
+.cst-queue-cols,.cst-queue-row{display:grid;grid-template-columns:minmax(0,1fr) 110px 150px 120px;gap:12px;align-items:start}
+.cst-queue-cols{padding:6px 0;border-bottom:1px solid var(--cst-line);font-size:11px;font-weight:600;color:var(--cst-muted)}
+.modal.cst-queue .cst-queue-row{padding:9px 0;border-bottom:1px solid var(--cst-line);margin:0;background:none;border-radius:0}
+.cst-queue-node{min-width:0}
+.cst-queue-node strong{display:block;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cst-queue-node small{color:var(--cst-muted)}
+.cst-queue-node p{margin:3px 0 0}
+.cst-queue-exec{display:flex;align-items:center;gap:6px;font-size:12px}
+.cst-queue-exec.warn{color:var(--cst-warn)}
+.cst-queue-dot{width:7px;height:7px;border-radius:50%;background:var(--cst-text);flex:none}
+.cst-queue-dot.empty{background:transparent;border:1px solid var(--cst-muted)}
+.cst-queue-dot.running{background:var(--cst-accent);animation:cst-pulse 1.2s ease-in-out infinite}
+.cst-queue-dot.warn{background:var(--cst-warn)}
+.cst-queue-dot.done{background:var(--cst-muted)}
+@keyframes cst-pulse{50%{opacity:.35}}
+.modal.cst-queue .queue-state{display:block}
+.cst-queue-pending{font-size:12px;color:var(--cst-muted)}
+.cst-queue-save{display:flex;flex-direction:column;gap:2px;font-size:12px}
+.cst-queue-save.bad span{color:var(--cst-bad);font-weight:500}
+.cst-queue-save.warn span{color:var(--cst-warn)}
+.cst-queue-save.empty span{color:var(--cst-muted)}
+.cst-queue-save .text-button{justify-content:flex-start}
+@media(max-width:640px){.cst-queue-cols{display:none}.cst-queue-row{grid-template-columns:1fr 1fr;row-gap:4px}.cst-queue-node{grid-column:1/-1}}

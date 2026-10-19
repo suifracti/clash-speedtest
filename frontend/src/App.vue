@@ -35,7 +35,7 @@ const task=computed(()=>{
  const attention=[unsaved?`${unsaved} 项未保存`:'',errors?`${errors} 项出错`:''].filter(Boolean).join(' · ')
  if(w.pendingStart.value&&!w.activeBatch.value&&!w.activeAttempt.value)return {state:'pending',title:'正在确认启动状态',detail:'等待后台回应，不会重复启动',progress:null,attention}
  if(w.busy.value)return {state:'running',title:kinds?`正在${kinds}`:'检测进行中',detail:total?`已处理 ${done}/${total}`:'',progress:total?done/total:null,attention}
- if(total)return {state:attention?'attention':'idle',title:attention?'检测已结束，部分结果需注意':'上一轮检测已结束',detail:`已处理 ${done}/${total}`,progress:null,attention}
+ if(total)return {state:attention||done<total?'attention':'idle',title:done<total?'检测已停止，部分项目没有运行完':attention?'检测已结束，部分结果需注意':'上一轮检测已结束',detail:`已处理 ${done}/${total}`,progress:null,attention}
  return {state:'empty',title:'没有进行中的检测',detail:'',progress:null,attention:''}
 })
 const connection=computed(()=>w.connected.value?{tone:'good',label:'本地服务已连接'}:w.loading.value?{tone:'warn',label:'正在连接本地服务'}:{tone:'bad',label:'本地服务未连接'})

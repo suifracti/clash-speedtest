@@ -122,7 +122,7 @@ it('shows response coverage for each exact latency batch item instead of green c
  expect(rows[2].find('.badge').text()).toBe('已响应 · 6/6')
  expect(rows[2].find('.badge').classes()).toContain('good')
  expect(w.done.value).toBe(3)
- expect(document.querySelector('.queue-counts')?.textContent).toContain('终态 3 / 3')
+ expect(document.querySelector('.queue-counts')?.textContent).toContain('已处理 3 / 3')
 })
 
 
