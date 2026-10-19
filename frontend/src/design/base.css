@@ -4,8 +4,7 @@ h1{font-size:22px;font-weight:650;letter-spacing:-.4px}
 h2{font-size:16px;font-weight:600;letter-spacing:-.2px}
 :focus-visible{outline:2px solid var(--cst-accent);outline-offset:2px}
 ::selection{background:var(--cst-accent-soft)}
-input:not([type=checkbox]):not([type=radio]):not([type=range]),select,textarea{background:var(--cst-panel);border:1px solid var(--cst-line-strong);border-radius:var(--cst-radius-sm);color:var(--cst-text)}
-input:not([type=checkbox]):focus,select:focus,textarea:focus{border-color:var(--cst-accent);box-shadow:0 0 0 3px var(--cst-accent-soft)}
+/* 输入框沿用 app.css 的规则（颜色已映射到 token），这里不再提高优先级，避免压过各组件自己的输入框样式 */
 /* 按钮：主要=实心，次要=描边，ghost/文字=无框 */
 .button{border:1px solid var(--cst-line-strong);border-radius:8px;background:var(--cst-panel);color:var(--cst-text);min-height:32px;padding:6px 12px;font-size:13px;font-weight:500;box-shadow:none}
 .button:hover:not(:disabled){background:var(--cst-hover);border-color:var(--cst-line-strong)}

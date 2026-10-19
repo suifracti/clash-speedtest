@@ -73,6 +73,11 @@ export interface HomeModel {
  closeHover:()=>void
  expandHistory:()=>void
  openComparison:()=>Promise<void>
+ compareOpen:Ref<boolean>
+ compareNodes:ComputedRef<NodeOption[]>
+ compareCompatible:ComputedRef<boolean>
+ comparisonDownloadStatus:ComputedRef<string>
+ closeComparison:()=>void
  openCombinedPlan:()=>void
  runLabel:(p:Project)=>string
 }

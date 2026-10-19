@@ -11,6 +11,8 @@ import SubscriptionOverview from '../SubscriptionOverview.vue'
 import NodeActivity from '../NodeActivity.vue'
 import SiteDisplayPicker from '../SiteDisplayPicker.vue'
 import NodeInspector from './NodeInspector.vue'
+import NodeCompare from './NodeCompare.vue'
+import UsageDays from '../UsageDays.vue'
 import {homeModelKey,latencyVerdict,type Verdict} from './homeModel'
 const w=useWorkspace(),m=inject(homeModelKey)!
 const chosen=m.chosen,overview=ref<InstanceType<typeof SubscriptionOverview>>()
@@ -39,6 +41,18 @@ const qualityFiltering=computed(()=>m.qualityGate.value!=='all'||m.qualitySort.v
 const focusKey=ref<string|null>(null)
 const focusNode=computed(()=>m.pageNodes.value.find(n=>key(n)===focusKey.value)||m.pageNodes.value[0])
 function focus(n:NodeOption){if(focusNode.value&&key(focusNode.value)===key(n))return;m.closeHover();focusKey.value=key(n)}
+// 检查器宽度可拖动（或用 ←→），记在本机。
+const SIDE_MIN=340,SIDE_MAX=680
+function savedSide(){try{const v=Number(window.localStorage.getItem('cst.inspector-width'));return v>=SIDE_MIN&&v<=SIDE_MAX?v:420}catch{return 420}}
+const sideWidth=ref(savedSide())
+function setSide(v:number){sideWidth.value=Math.round(Math.min(SIDE_MAX,Math.max(SIDE_MIN,v)));try{window.localStorage.setItem('cst.inspector-width',String(sideWidth.value))}catch{/* 只影响记忆 */}}
+function startResize(e:PointerEvent){
+ const start=e.clientX,width=sideWidth.value,el=e.currentTarget as HTMLElement
+ el.setPointerCapture?.(e.pointerId)
+ const move=(ev:PointerEvent)=>setSide(width+start-ev.clientX)
+ const up=()=>{el.removeEventListener('pointermove',move);el.removeEventListener('pointerup',up);document.body.classList.remove('cst-resizing')}
+ document.body.classList.add('cst-resizing');el.addEventListener('pointermove',move);el.addEventListener('pointerup',up)
+}
 // ⌘K「查看节点」：只改查看中的节点和页码，不勾选、不动筛选；被筛掉的节点改用详情弹窗查看。
 const table=ref<HTMLElement>()
 watch(()=>w.viewRequest.value,n=>{
@@ -87,6 +101,7 @@ function keyNav(e:KeyboardEvent){
         <span class="hd-orbit-text"><strong>{{overview?.viewedAirportName||'选择机场'}}</strong><small>{{chosen.length>1?'点击切换 · 共 '+chosen.length+' 个机场':'可同时选择多个机场'}}</small></span>
       </button>
       <SubscriptionOverview ref="overview" :airports="chosen" :notices="w.notices.value"/>
+      <div v-if="overview?.viewedAccount" class="hd-usage"><h3>账户用量</h3><UsageDays :airport-id="overview.viewedAccount.airport.id" :subscription-id="overview.viewedAccount.subscription.id" :days="3"/></div>
     </section>
 
     <div class="hd-toolbar">
@@ -130,7 +145,7 @@ function keyNav(e:KeyboardEvent){
     </div>
     <div v-if="w.busy.value" class="hd-live"><span class="spinner"/>检测进行中{{w.queue.value.length?` · ${w.done.value}/${w.queue.value.length}`:''}}<button class="hd-link" @click="w.queueOpen.value=true">查看进度</button><button class="hd-link bad" @click="w.cancelTests()">{{w.cancelRequested.value?'正在取消…':'取消'}}</button></div>
 
-    <div class="hd-body">
+    <div class="hd-body" :class="{comparing:m.compareOpen.value,'compare-wide':m.compareOpen.value&&m.compareNodes.value.length>2}" :style="{'--hd-side-w':sideWidth+'px'}">
       <div ref="table" class="hd-table" role="table" aria-label="节点列表" tabindex="0" :style="{'--hd-cols':columns}" @keydown="keyNav">
         <div class="hd-tr hd-th" role="row">
           <span role="columnheader"><input type="checkbox" :checked="allOnPage" aria-label="选择本页全部节点" @change="w.toggleAll(m.pageNodes.value)"></span>
@@ -160,7 +175,9 @@ function keyNav(e:KeyboardEvent){
         </div>
         <div v-if="!m.pageNodes.value.length" class="hd-empty"><Icon name="layers"/><strong>{{!chosen.length?'先选择一个机场':'没有符合条件的节点'}}</strong><button class="hd-btn" @click="!chosen.length?m.picker.value=true:w.search.value=''">{{!chosen.length?'选择机场':'清空搜索'}}</button></div>
       </div>
-      <NodeInspector v-if="focusNode" :key="key(focusNode)" class="hd-side" :node="focusNode"/>
+      <div class="hd-resize" role="separator" aria-orientation="vertical" aria-label="调整检查器宽度" :aria-valuenow="sideWidth" :aria-valuemin="SIDE_MIN" :aria-valuemax="SIDE_MAX" tabindex="0" @pointerdown="startResize" @keydown.left.prevent="setSide(sideWidth+24)" @keydown.right.prevent="setSide(sideWidth-24)" @dblclick="setSide(420)"/>
+      <NodeCompare v-if="m.compareOpen.value" class="hd-side"/>
+      <NodeInspector v-else-if="focusNode" :key="key(focusNode)" class="hd-side" :node="focusNode"/>
     </div>
 
     <footer class="hd-foot">

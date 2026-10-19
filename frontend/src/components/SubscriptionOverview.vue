@@ -250,7 +250,7 @@ watch(()=>workspace.airports.value,syncDefaultScope,{deep:true})
 watch(disclosureSummary,value=>emit('summary',value),{immediate:true})
 onMounted(()=>void loadJobs())
 onBeforeUnmount(()=>{disposed=true;clearTimeout(pollTimer)})
-defineExpose({cycleAirport,viewedAirportName,usageRatio})
+defineExpose({cycleAirport,viewedAirportName,usageRatio,viewedAccount:selected})
 </script>
 
 <template>

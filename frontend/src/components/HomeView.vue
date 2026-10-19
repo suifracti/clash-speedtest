@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import QualityMetrics from './QualityMetrics.vue'
 import {sortSiteRows} from '../siteQualityView'
 import {latestServices,readQuality,multiSiteQuality,qualityGroups,downloadEvidence,latencyReadComplete,qualityMatchesGate,type QualityEvidence,type SiteQualityMetric} from '../nodeQuality'
 import {mapLimited} from '../api'
@@ -63,7 +62,11 @@ const comparisonDownloadStatus=computed(()=>{
  if(attempts.some(a=>!a!.rule.method||a!.rule.rule_version===undefined||a!.rule.maximum_bytes===undefined||a!.rule.maximum_duration_ns===undefined||!a!.rule.network_path_method||!a!.rule.physical_interface||!a!.rule.dns_mode||!a!.node_type||a!.result?.network_path?.method!==a!.rule.network_path_method||a!.result?.network_path?.interface!==a!.rule.physical_interface||a!.result?.network_path?.dns_mode!==a!.rule.dns_mode||!a!.result?.network_path?.socket_bind_verified||!a!.result?.network_path?.dns_bind_verified||!a!.result?.network_path?.address_family||!a!.result?.network_path?.address_source))return '下载不可比较：方法、上限或出口证据不足。'
  return '历史有效速度条件一致；最近检测状态仍单独核对。'
 })
-async function openComparison(){compareOpen.value=true;await readQualityNodes(qualityCompareNodes.value)}
+// 比较就地展开在检查器位置；退出时恢复原来的滚动位置，查看中的节点不受影响。
+let compareScroll=0
+async function openComparison(){compareScroll=window.scrollY;compareOpen.value=true;await readQualityNodes(qualityCompareNodes.value)}
+function closeComparison(){if(!compareOpen.value)return;compareOpen.value=false;void nextTick(()=>window.scrollTo({top:compareScroll}))}
+watch(()=>qualityCompareNodes.value.length,n=>{if(n<2)closeComparison()})
 const presentation=createPresentationCache(w,monitorData,monitorHTTPData)
 function savedFollowControls(){try{return window.localStorage.getItem('speedtest-follow-controls')==='true'}catch{return false}}
 const followControls=ref(savedFollowControls())
@@ -165,7 +168,7 @@ watch(servicePage,closeHover)
 watch(servicePages,count=>servicePage.value=Math.min(servicePage.value,count))
 watch([()=>w.project.value,()=>w.hours.value,currentPage],closeHover)
 watch(()=>w.displayTarget.value,()=>{if(keepOpen.value&&hoverNode.value){activeRound.value=null;inlineTab.value='history'}else closeHover()})
-provide(homeModelKey,{servicePoints:(n:NodeOption,id:string)=>presentation.points(n,'service',w.displayTarget.value,id),hiddenSelectedCount,qualityFiltersPending,monitorData,monitorErrors,monitorHTTPErrors,httpPoints,visibleServices,servicePage,servicePages,servicesPerPage,chosen,filterProfiles,protocolChoices,protocolFilter,qualityGate,qualitySort,qualityLoading,qualityErrors,qualityCutoff,allQualityReady,readQualityNodes,siteSummaries,pageSize,setPageSize,pageNodes,visibleNodes,runNodes,currentPage,totalPages,chosenNames,picker,filterRegions,qualityData,nodeActivities,displayServices,sourceLabel,metricPoint,siteMetric,siteContext,siteReason,sitePoints,rowPoints,downloadMetric,downloadMetricTone,downloadMetricContext,serviceMetric,serviceTone,shownService,showService,hoverNode,hoverMode,hoverTarget,hoverService,hoverPoints,activeRound,inlineTab,inlineHistorySource,keepOpen,inspectRound,openRound,leaveRound,keepRound,closeHover,expandHistory,openComparison,openCombinedPlan,runLabel})
+provide(homeModelKey,{compareOpen,compareNodes:qualityCompareNodes,compareCompatible,comparisonDownloadStatus,closeComparison,servicePoints:(n:NodeOption,id:string)=>presentation.points(n,'service',w.displayTarget.value,id),hiddenSelectedCount,qualityFiltersPending,monitorData,monitorErrors,monitorHTTPErrors,httpPoints,visibleServices,servicePage,servicePages,servicesPerPage,chosen,filterProfiles,protocolChoices,protocolFilter,qualityGate,qualitySort,qualityLoading,qualityErrors,qualityCutoff,allQualityReady,readQualityNodes,siteSummaries,pageSize,setPageSize,pageNodes,visibleNodes,runNodes,currentPage,totalPages,chosenNames,picker,filterRegions,qualityData,nodeActivities,displayServices,sourceLabel,metricPoint,siteMetric,siteContext,siteReason,sitePoints,rowPoints,downloadMetric,downloadMetricTone,downloadMetricContext,serviceMetric,serviceTone,shownService,showService,hoverNode,hoverMode,hoverTarget,hoverService,hoverPoints,activeRound,inlineTab,inlineHistorySource,keepOpen,inspectRound,openRound,leaveRound,keepRound,closeHover,expandHistory,openComparison,openCombinedPlan,runLabel})
 onMounted(()=>monitorTimer=setInterval(()=>{if(w.page.value==='home'&&document.visibilityState==='visible')void readMonitor()},30000));onBeforeUnmount(()=>{qualityGeneration++;presentation.clear();monitorGeneration++;clearTimeout(hoverTimer);clearInterval(monitorTimer)})
 </script>
 <template>
@@ -173,20 +176,6 @@ onMounted(()=>monitorTimer=setInterval(()=>{if(w.page.value==='home'&&document.v
     <HomeWorkbench/>
     <Modal v-if="serviceDetailPoint" title="服务结果与依据" wide @close="serviceDetail=null"><MeasurementResults :point="serviceDetailPoint" project="service"/></Modal>
     <Modal v-if="picker" title="选择机场" @close="picker=false"><p class="muted">选择会同步更新节点范围，已选节点保留在这个范围内。</p><div class="airport-pick-list"><label v-for="airport in w.airports.value" :key="airport.id" :class="{selected:w.selectedAirportIds.value?.includes(airport.id)}"><input type="checkbox" :checked="w.selectedAirportIds.value?.includes(airport.id)" @change="toggleAirport(airport.id)"><span class="airport-logo">{{airport.name.slice(0,1)}}</span><span><strong>{{airport.name}}</strong><small>{{airport.subscriptions?.length||1}} 个订阅</small></span><span class="muted">{{airportNodeCount(airport.id)}} 个节点</span></label></div><div v-if="!w.airports.value.length" class="empty-state">还没有机场订阅<button class="button" @click="picker=false;w.page.value='airports'">添加机场</button></div><template #footer><button class="button ghost" @click="w.setAirports([])">取消全部</button><button class="button" @click="w.setAirports(w.airports.value.map(a=>a.id))">全选机场</button><button class="button primary" @click="picker=false">完成</button></template></Modal>
-    <Modal v-if="compareOpen" title="节点质量横向比较" wide @close="compareOpen=false">
-      <p class="quality-compare-meta">{{qualityCompareNodes.length}} 个已选节点 · 截止 {{date(qualityCutoff)}} · 查看不改变测速范围。</p>
-      <p class="quality-compare-status" :class="compareCompatible?'muted':'warn'">{{compareCompatible?'延迟最新组条件一致，可比较描述统计。':'延迟不可比较：条件不同、样本不足、未测或读取不完整。'}}</p>
-      <p class="comparison-download-status">{{comparisonDownloadStatus}}</p>
-      <details class="quality-compare-boundaries"><summary>比较口径与边界</summary><p>延迟按所选站点的最新条件组展示；P95 至少 20 个成功样本，少于 5 个成功样本不排名，缺少出口或地址族/来源证据时只展示原值。下载仅同源、方法、上限、结束类型及已记录的出口地址条件相同时可比较，缺少必要出口证据时不做数值排序；历史有效速度不代表最近检测成功。服务逐项核对同一规则、方法、地址条件和时间，HTTP响应不等于业务可用。完整依据可在各节点的证据行展开。</p></details>
-      <p v-if="qualityCompareNodes.length>2" id="comparison-scroll-hint" class="comparison-scroll-hint">← 超出视野时横向滚动；左侧指标固定。聚焦表格可用左右方向键。 →</p>
-      <div class="quality-compare" role="region" aria-label="节点逐项比较表" tabindex="0" :aria-describedby="qualityCompareNodes.length>2?'comparison-scroll-hint':undefined" :style="{'--compare-count':qualityCompareNodes.length}">
-        <table><colgroup><col class="comparison-label-column"><col v-for="n in qualityCompareNodes" :key="key(n)"></colgroup>
-          <thead><tr><th scope="col">指标</th><th v-for="n in qualityCompareNodes" :key="key(n)" scope="col"><strong>{{nodeDisplayName(n)}}</strong><small>{{sourceLabel(n)}}</small><small>{{n.type}}</small></th></tr></thead>
-          <tbody><tr v-for="row in ([{id:'distribution',label:'延迟分布'},{id:'response',label:'成功率 / 样本'},{id:'download',label:'下载'},{id:'service',label:'服务结论'},{id:'time',label:'测量时间'},{id:'details',label:'完整证据'}] as const)" :key="row.id"><th scope="row">{{row.label}}</th><td v-for="n in qualityCompareNodes" :key="key(n)"><QualityMetrics :comparison-field="row.id" :evidence="qualityData[key(n)]" :error="qualityErrors[key(n)]" :target="w.displayTarget.value" :catalog="w.catalog.value"/></td></tr>
-          <tr><th scope="row">原始历史</th><td v-for="n in qualityCompareNodes" :key="key(n)"><button class="button" @click="compareOpen=false;w.inspectNode.value=n">查看原始历史</button></td></tr></tbody>
-        </table>
-      </div>
-    </Modal>
   </section>
 </template>
 
