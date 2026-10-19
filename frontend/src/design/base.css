@@ -43,3 +43,34 @@ h2{font-size:16px;font-weight:600;letter-spacing:-.2px}
 .modal-footer{padding:12px 20px}
 .toast-message{background:var(--cst-text);color:var(--cst-bg);border:0;border-radius:10px;box-shadow:var(--cst-shadow-pop)}
 @media(max-width:740px){.page-view{padding:16px 16px 32px}}
+/* 检测配置：范围 → 项目 → 参数 → 预算确认 */
+.modal.cst-plan .modal-body{display:flex;flex-direction:column;gap:4px}
+.cst-plan-step{padding:14px 0;border-top:1px solid var(--cst-line)}
+.cst-plan-step:first-child{border-top:0;padding-top:0}
+.cst-plan-step>h3{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:13px;font-weight:600}
+.cst-plan-step>h3 span{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;background:var(--cst-accent-soft);color:var(--cst-accent);font-size:11px}
+.cst-plan-step .plan-scope{margin-bottom:6px;gap:10px}
+.cst-plan-step .plan-scope strong{font-size:16px}
+.cst-plan-step .plan-projects{margin-bottom:0}
+.cst-plan-step .plan-projects label{padding:7px 12px;border-radius:8px;border-color:var(--cst-line-strong)}
+.cst-plan-step .plan-projects label.checked{background:var(--cst-accent-soft);color:var(--cst-accent);border-color:var(--cst-accent)}
+.cst-plan-step .plan-section{padding:10px 0;border-top:0}
+.cst-plan-step .plan-section h4{margin:0 0 8px;font-size:12px;font-weight:600;color:var(--cst-muted)}
+.cst-plan-step .plan-section p{margin-top:8px}
+.cst-presets{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin-bottom:10px}
+.cst-preset{display:flex;flex-direction:column;align-items:flex-start;gap:1px;padding:8px 12px;border:1px solid var(--cst-line-strong);border-radius:9px;background:var(--cst-panel);color:var(--cst-text);text-align:left;min-width:120px}
+.cst-preset small{color:var(--cst-muted);font-size:11px}
+.cst-preset:hover{border-color:var(--cst-accent)}
+.cst-preset[aria-pressed=true]{border-color:var(--cst-accent);box-shadow:0 0 0 1px var(--cst-accent);background:var(--cst-accent-soft)}
+.cst-preset-state{flex-basis:100%;margin:2px 0 0;font-size:12px;color:var(--cst-muted)}
+.cst-preset-state strong{color:var(--cst-text)}
+.cst-preset-state .warn{color:var(--cst-warn)}
+.cst-budget{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin:0 0 8px}
+.cst-budget>div{padding:9px 12px;border:1px solid var(--cst-line);border-radius:9px;background:var(--cst-panel-2)}
+.cst-budget>div.warn{border-color:var(--cst-warn);background:var(--cst-warn-bg)}
+.cst-budget dt{font-size:11px;font-weight:600;color:var(--cst-muted)}
+.cst-budget>div.warn dt{color:var(--cst-warn)}
+.cst-budget dd{margin:2px 0 0;font-size:13px;color:var(--cst-text)}
+.cst-budget dd strong{font-size:16px;font-variant-numeric:tabular-nums}
+.cst-budget dd small{display:block;color:var(--cst-muted);font-size:11px;line-height:1.5;margin-top:2px}
+.plan-budget.cst-plan-step{font-size:13px;color:var(--cst-text);margin:0}

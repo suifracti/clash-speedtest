@@ -105,3 +105,18 @@ it('runs an IP-only plan with deduplicated reputation services and ignores unche
   expect.objectContaining({project:'service',service_id:'ping0_ip_quality'})
  ])}))
 })
+
+it('applies presets visibly, marks later edits as custom and keeps extra checked projects named (synthetic data)',async()=>{
+ w.project.value='combined';w.openPlan([node])
+ wrapper=mount(TestPlanModal,{global:{provide:{[workspaceKey as symbol]:w},stubs:{Modal:modalStub}}})
+ const preset=(label:string)=>wrapper!.findAll('.cst-preset').find(b=>b.text().includes(label))!
+ await preset('小范围复测').trigger('click')
+ expect(w.plan.value).toMatchObject({target:'all',samples:6,repeats:3})
+ expect(w.plan.value?.projects).toContain('latency')
+ expect(preset('小范围复测').attributes('aria-pressed')).toBe('true')
+ expect(wrapper.get('.cst-preset-state').text()).toContain('小范围复测')
+ if(w.plan.value!.projects.includes('download'))expect(wrapper.get('.cst-preset-state').text()).toContain('另含 下载测速')
+ w.plan.value!.samples=20;await wrapper.vm.$nextTick()
+ expect(wrapper.get('.cst-preset-state').text()).toContain('自定义')
+ expect(wrapper.get('.cst-budget').text()).toContain('次计划采样')
+})
