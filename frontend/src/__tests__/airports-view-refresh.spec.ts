@@ -5,11 +5,12 @@ import type {Airport} from '../domain'
 
 const mocks=vi.hoisted(()=>({
   api:{refreshJobs:vi.fn(async()=>[]),startRefresh:vi.fn(),refreshJob:vi.fn(),cancelRefresh:vi.fn()},
-  workspace:{airports:{value:[] as Airport[]},maintenanceAirportId:{value:''},page:{value:'airports'},subscription:{value:'all'},setAirports:vi.fn(),refreshNodes:vi.fn(async()=>{}),refreshJobs:vi.fn(async()=>{}),notify:vi.fn(),fail:vi.fn()},
+  workspace:{airports:{value:[] as Airport[]},notices:{value:[]},maintenanceAirportId:{value:''},page:{value:'airports'},subscription:{value:'all'},setAirports:vi.fn(),refreshNodes:vi.fn(async()=>{}),refreshJobs:vi.fn(async()=>{}),notify:vi.fn(),fail:vi.fn()},
   request:vi.fn(async()=>undefined),
 }))
 vi.mock('../api',async importOriginal=>{const actual=await importOriginal<typeof import('../api')>();return {...actual,request:mocks.request,desktop:()=>false,api:{...actual.api,...mocks.api}}})
 vi.mock('../workspace',()=>({useWorkspace:()=>mocks.workspace}))
+vi.mock('../usageDaily',async importOriginal=>({...await importOriginal<typeof import('../usageDaily')>(),accountDailyUsage:vi.fn(async(airportId:string)=>airportId==='airport-a'?{account:{account_key:'k',airport_name:'A',subscription_name:'A1',captured_at:'2026-10-19T02:00:00Z',status:'ok',upload:0,download:0,source:'subscription_update'},report:undefined,days:[{date:'2026-10-20',label:'今天',bytes:null,estimated:false,recorded:false},{date:'2026-10-19',label:'昨天',bytes:2*1024**3,estimated:false,recorded:true},{date:'2026-10-18',label:'前天',bytes:null,estimated:false,recorded:true}]}:{account:undefined,report:undefined,days:[]})}))
 
 let wrapper:VueWrapper|undefined
 const airports:Airport[]=[{id:'airport-a',name:'A',node_count:2,has_cache:true,url_display:'',subscriptions:[
@@ -97,5 +98,25 @@ describe('AirportsView manual refresh jobs',()=>{
     await reopen?.trigger('click')
     await flushPromises()
     expect(document.body.querySelector('dialog.modal')?.textContent).toContain('解析中')
+  })
+})
+
+describe('AirportsView account ledger (synthetic data)',()=>{
+  it('shows quota, expiry and three-day usage per account without turning unknown into zero',async()=>{
+    const soon=Math.floor(Date.now()/1000)+3*86400
+    mocks.workspace.airports.value=[{...airports[0],subscriptions:[
+      {...airports[0].subscriptions![0],usage:{upload:1024**3,download:8*1024**3,total:10*1024**3,expire:soon}},
+      {...airports[0].subscriptions![1]},
+    ]}]
+    wrapper=mount(AirportsView,{attachTo:document.body});await flushPromises()
+    const rows=wrapper.findAll('.cst-ledger-row')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].text()).toContain('9.00 GiB / 10.00 GiB')
+    expect(rows[0].get('[role=meter]').attributes('aria-valuenow')).toBe('90')
+    expect(rows[0].get('.cst-ledger-expire strong').classes()).toContain('warn')
+    expect(rows[0].text()).toContain('还剩 3 天')
+    expect(rows[0].get('.cst-usage-days').text()).toMatch(/今天\s*未记录\s*昨天\s*2.00 GiB\s*前天\s*未知/)
+    expect(rows[1].text()).toContain('机场未返回套餐用量')
+    expect(rows[1].text()).not.toMatch(/0 B/)
   })
 })
