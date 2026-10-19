@@ -7,7 +7,7 @@ import {siteRoundHistory} from '../siteRoundPresentation'
 import TrendChart from './TrendChart.vue'
 import HealthBars from './HealthBars.vue'
 import RoundResults from './RoundResults.vue'
-const props=defineProps<{summaries?:SiteQualitySummary[];targetIds:string[];tests?:LatencyTest[];viewMode?:'latest'|'window';error?:string}>()
+const props=defineProps<{summaries?:SiteQualitySummary[];targetIds:string[];tests?:LatencyTest[];viewMode?:'latest'|'window';error?:string;compact?:boolean}>()
 const emit=defineEmits<{history:[target:string]}>(),active=ref(''),fixedRound=ref(''),preview=ref<Record<string,string>>({})
 const states:Record<string,string>={unmeasured:'未测',responded:'已响应',partial:'部分响应',failed:'无响应',cancelled:'已取消',not_executed:'未执行',source_limited:'源限流'}
 const sites=computed(()=>props.targetIds.flatMap(id=>{
@@ -39,24 +39,24 @@ function note(id:string){
 }
 </script>
 <template>
- <section class="site-metrics" aria-label="逐站响应率、样本和延迟分布">
-  <div class="site-view-caption"><strong>{{viewMode==='window'?'时间范围汇总':'最近一次检测'}}</strong><span>每个站点独立显示，不用旧成功填补本次失败</span></div>
+ <section class="site-metrics" :class="{compact}" aria-label="逐站响应率、样本和延迟分布">
+  <div v-if="!compact" class="site-view-caption"><strong>{{viewMode==='window'?'时间范围汇总':'最近一次检测'}}</strong><span>每个站点独立显示，不用旧成功填补本次失败</span></div>
   <div class="site-results-scroll" tabindex="0" aria-label="逐站指标，可横向滚动">
-   <div class="site-results-grid" :style="{'--sites':Math.max(1,sites.length)}">
+   <div class="site-results-grid" :class="{'overview-sites':compact}" :style="{'--sites':Math.max(1,sites.length)}">
     <article v-for="{site,summary:s,rounds,points,aggregate,selected} in sites" :key="site.id" class="site-metric" :data-site="site.id" :class="{'round-pinned':active===site.id&&!!fixedRound}">
      <button class="site-name" type="button" :aria-label="'查看 '+site.name+' 原始历史'" :aria-expanded="active===site.id" @click="choose(site.id)">{{site.name}} <span aria-hidden="true">↗</span></button>
      <button type="button" class="site-latest" :class="error||s?.readError?'bad':tone(s)" :aria-label="site.name+' 本次结果与历史对比'" @click="choose(site.id)">{{s?.p50!=null&&!error&&!s.readError?ms(s.p50):state(s)}}</button>
      <span class="site-response" v-if="s?.total&&!error&&!s.readError">{{s.success}} / {{s.total}} 次响应</span><span v-else class="site-response">{{s?.excluded?'未执行或取消 '+s.excluded+' 次':'尚无有效样本'}}</span>
      <small class="site-metric-note warn">{{selected&&selected.summary.group?.key!==rounds[0]?.summary.group?.key?'与最近一次条件不同':note(site.id)}}</small>
-     <div v-if="points.length" class="site-history-choice"><span>{{caption(!!selected)}}</span><HealthBars :points="points" :selected-id="active===site.id?fixedRound:''" :label="site.name+' 历史轮次'" @open="choose(site.id,$event.id)" @inspect="preview[site.id]=$event.id" @leave="delete preview[site.id]"/></div>
-     <time>{{selected?(active===site.id&&fixedRound===selected.point.id?'已固定 · ':'预览 · '):''}}{{date(selected?.test.finished_at||(viewMode==='window'?undefined:rounds[0])?.test.finished_at||s?.lastAt)}}</time>
+     <div v-if="points.length" class="site-history-choice"><span v-if="!compact">{{caption(!!selected)}}</span><HealthBars :points="points" :selected-id="active===site.id?fixedRound:''" :label="site.name+' 历史轮次'" @open="choose(site.id,$event.id)" @inspect="preview[site.id]=$event.id" @leave="delete preview[site.id]"/></div>
+     <time v-if="!compact||points.length">{{selected?(active===site.id&&fixedRound===selected.point.id?'已固定 · ':'预览 · '):''}}{{date(selected?.test.finished_at||(viewMode==='window'?undefined:rounds[0])?.test.finished_at||s?.lastAt)}}</time>
      <small v-if="s?.success&&s.success>=20">尾部延迟 P95 {{ms(s.p95)}}</small>
      <button v-if="active===site.id&&fixedRound" type="button" class="text-button site-return-latest" @click="fixedRound='';delete preview[site.id]">返回{{viewMode==='window'?'汇总':'最近一次'}}</button>
      <small v-if="aggregate&&!aggregate.readComplete" class="warn">历史读取不完整</small>
     </article>
    </div>
   </div>
-  <div class="site-measurement-method"><span>历史条：每格一轮，左旧右新 · 悬停预览，点击固定并看曲线</span><span>这里测的是 HTTP 首字节响应，不代表服务解锁</span></div>
+  <div class="site-measurement-method"><span>{{compact?'每格一轮 · 左旧右新 · 悬停预览，点击固定':'历史条：每格一轮，左旧右新 · 悬停预览，点击固定并看曲线'}}</span><span v-if="!compact">这里测的是 HTTP 首字节响应，不代表服务解锁</span></div>
   <section v-if="current" class="site-history-panel" :aria-label="current.site.name+' 延迟历史对比'">
    <header><div><strong>{{current.site.name}} · 逐轮历史</strong><small>{{fixedRound?'正在查看固定轮次':'选择一轮查看数值、曲线和采样明细'}}</small></div><button type="button" @click="active='';fixedRound=''">收起 ×</button></header>
    <TrendChart :points="current.points" unit="ms" :label="current.site.name+' 延迟走势'"/>
@@ -75,4 +75,15 @@ function note(id:string){
 .site-metric :deep(.health-cell:not(.has-record)){display:none}
 .site-metric :deep(.health-cell.has-record){min-width:4px;max-width:20px}
 .site-metric :deep(.health-bars){justify-content:flex-start}
+.site-metrics.compact .site-results-grid{grid-template-columns:repeat(3,minmax(0,1fr));min-width:0;gap:10px 0}
+.site-metrics.compact .site-metric{padding:2px 9px 3px}
+.site-metrics.compact .site-metric:nth-child(3n+1){border-left:0;padding-left:0}
+.site-metrics.compact .site-latest{font-size:15px;min-height:22px;letter-spacing:0}
+.site-metrics.compact .site-name{font-size:12px;margin-bottom:3px}
+.site-metrics.compact .site-metric-note{min-height:0;margin:2px 0}
+.site-metrics.compact .site-metric-note:empty{display:none}
+.site-metrics.compact .site-history-choice{padding-top:0}
+.site-metrics.compact .site-history-choice>.health-bars{height:28px;margin:5px 0 3px}
+.site-metrics.compact .site-measurement-method{margin-top:5px;font-size:12px}
+@media(max-width:740px){.site-metrics.compact .site-results-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.site-metrics.compact .site-metric:nth-child(n){border-left:1px solid var(--line);padding-left:9px}.site-metrics.compact .site-metric:nth-child(odd){border-left:0;padding-left:0}}
 </style>

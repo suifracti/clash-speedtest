@@ -1,5 +1,6 @@
 import {mount} from '@vue/test-utils'
-import {expect,it} from 'vitest'
+import {expect,it,vi} from 'vitest'
+vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}})
 import NodeOverview from './NodeOverview.vue'
 import {multiSiteQuality,type QualityEvidence} from '../nodeQuality'
 import type {Attempt,NodeOption,LatencyTest} from '../domain'
@@ -21,5 +22,19 @@ it('shows all six full site names and values instead of a single Cloudflare metr
  const evidence:QualityEvidence={tests,monitor:[],services:[],downloads:[],reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true,since:'2026-10-18T00:00:00Z',until:at}
  const w=mount(NodeOverview,{props:{evidence,summaries:multiSiteQuality(node,evidence),target:'all',targetIds:['cloudflare','google','github','apple','microsoft','firefox'],serviceIds:[],catalog:[]}})
  const sites=w.get('.overview-sites').text();for(const name of ['Cloudflare','Google','GitHub','Apple','Microsoft','Firefox'])expect(sites).toContain(name)
- expect(w.findAll('.overview-sites button')).toHaveLength(6);expect(w.find('.overview-six').exists()).toBe(false);expect(w.get('.overview-history-link').text()).toContain('历史曲线');w.unmount()
+ expect(w.findAll('.overview-sites .site-name')).toHaveLength(6);expect(w.find('.overview-six').exists()).toBe(false);expect(w.get('.overview-history-link').text()).toContain('历史曲线');w.unmount()
+})
+
+it('restores per-site vertical history bars with preview, pinning and the selected round curve',async()=>{
+ const oldAt='2026-10-18T07:00:00Z'
+ const saved=(id:string,time:string,success:boolean):LatencyTest=>({...node,attempt_id:id,display_name:'fixture',node_type:'ss',requested_at:time,finished_at:time,status:success?'completed':'failed',target:'https://speed.cloudflare.com/__down?bytes=1',latency_ms:success?90:0,total_samples:1,success_samples:success?1:0,failure_samples:success?0:1,persistence_state:'saved',samples:[{seq:1,target:'https://speed.cloudflare.com/__down?bytes=1',timestamp:time,success,latency_ms:success?90:0,error:success?undefined:'timeout'}]})
+ const evidence:QualityEvidence={tests:[saved('latest',at,false),saved('previous',oldAt,true)],monitor:[],services:[],downloads:[],reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true,since:'2026-10-18T00:00:00Z',until:at}
+ const w=mount(NodeOverview,{props:{evidence,summaries:multiSiteQuality(node,evidence),target:'all',targetIds:['cloudflare','google'],serviceIds:[],catalog:[]}})
+ const cf=w.get('[data-site="cloudflare"]'),bars=cf.findAll('.health-cell.has-record')
+ expect(bars).toHaveLength(2);expect(cf.get('.site-latest').text()).toBe('无响应')
+ await bars[0].trigger('mouseenter');expect(cf.get('.site-latest').text()).toBe('90 ms')
+ await cf.get('.health-bars').trigger('mouseleave');expect(cf.get('.site-latest').text()).toBe('无响应')
+ await bars[0].trigger('click');await cf.get('.health-bars').trigger('mouseleave')
+ expect(cf.get('.site-latest').text()).toBe('90 ms');expect(bars[0].classes()).toContain('selected-round');expect(w.find('.trend-svg').exists()).toBe(true)
+ expect(w.get('[data-site="google"]').text()).toContain('未测');w.unmount()
 })

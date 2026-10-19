@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {computed} from 'vue'
+import SiteMetrics from './SiteMetrics.vue'
 import {siteRoundHistory} from '../siteRoundPresentation'
 import {downloadEvidence,latestServices,attemptObservedAt,type QualityEvidence,type SiteQualitySummary} from '../nodeQuality'
 import {targets,date,bytes,downloadSpeed,outcomeLabel,type Attempt,type ServiceRule} from '../domain'
@@ -13,7 +14,6 @@ const sites=computed(()=>targets.filter(t=>props.targetIds.includes(t.id)).map(s
 const successfulSites=computed(()=>sites.value.filter(s=>(s.summary?.success||0)>0).length)
 const measuredSites=computed(()=>sites.value.filter(s=>(s.summary?.total||0)>0).length)
 const roundCount=computed(()=>Math.max(0,...sites.value.map(s=>s.rounds.length)))
-const value=(s?:SiteQualitySummary)=>props.error||s?.readError?'读取失败':s?.p50!=null?Math.round(s.p50)+' ms':s?.total?'未测通':s?.state==='cancelled'?'已取消':s?.state==='not_executed'?'未执行':!props.evidence?'读取中…':'未测'
 const download=computed(()=>downloadEvidence(props.evidence?.downloads||[])),speed=computed(()=>downloadSpeed(download.value.valid))
 const services=computed(()=>props.serviceIds.map(id=>({id,rule:props.catalog.find(r=>r.service_id===id),attempt:latestServices(props.evidence?.services||[]).find(a=>(a.service_id||a.rule.service_id)===id)})))
 const name=(rule?:ServiceRule)=>rule?.name.replace(/\s*(网页与(?:\s*Cloudflare\s*)?挑战|片目与地区检查|地区判定|连通性|网页入口|入口 GET).*$/,'')||'服务'
@@ -28,7 +28,6 @@ const serviceLabel=(a?:Attempt)=>{
  if(['matched','unlocked','flapping'].includes(a.result.outcome)&&serviceAvailability(a)===null)return '未确认'
  return outcomeLabel(a.result.outcome)
 }
-const tone=(s?:SiteQualitySummary)=>s?.success?s.success===s.total?'good':'warn':s?.total?'bad':'muted'
 const observedAt=computed(()=>sites.value.map(s=>props.viewMode==='window'?s.summary?.lastAt:s.rounds[0]?.test.finished_at).filter((s):s is string=>!!s).sort().at(-1))
 const downloadRead=computed(()=>download.value.latest?.result?.bytes_read)
 const downloadPhase=computed(()=>download.value.latest?.result?.failure_phase||download.value.latest?.result?.phase||'')
@@ -38,13 +37,7 @@ const zeroBytesTLS=computed(()=>downloadRead.value===0&&downloadPhase.value==='t
  <section class="overview-latency" aria-label="六站延迟与历史比较">
   <header class="overview-section-head"><strong>{{sites.length===6?'六站响应':'所选站点响应'}}</strong><span>{{caption}}</span></header>
   <div class="overview-latency-title"><span>{{!measuredSites?'尚无对应测量':successfulSites===0?(viewMode==='window'?'窗口内未取得有效延迟':'本次未取得有效延迟'):successfulSites+' / '+sites.length+' 站测得延迟'}}</span><time v-if="observedAt">{{date(observedAt)}}</time></div>
-  <div class="overview-sites" aria-label="各站延迟">
-   <button v-for="{site,summary:s} in sites" :key="site.id" type="button" :class="tone(s)" :title="site.name+' · '+caption+' · '+(s?.total?'共测'+s.total+'次，'+s.success+'次收到HTTP响应':'没有对应记录')" :aria-label="'查看 '+site.name+' 原始历史'" @click="$emit('history',site.id)">
-    <span class="overview-site-name">{{site.name}}<span aria-hidden="true">↗</span></span>
-    <strong>{{value(s)}}</strong>
-    <small v-if="s?.total&&!error&&!s.readError">{{s.success}} / {{s.total}} 次响应</small><small v-else-if="s?.state==='cancelled'">不计作节点故障</small>
-   </button>
-  </div>
+  <SiteMetrics compact :summaries="summaries" :target-ids="targetIds" :tests="evidence?.tests" :view-mode="viewMode" :error="error" @history="$emit('history',$event)"/>
   <button type="button" class="overview-history-link" @click="$emit('history',target)">查看历史曲线与逐轮对比{{roundCount?' · '+roundCount+'轮':''}} <span aria-hidden="true">→</span></button>
   <small v-if="sites.some(s=>s.summary&&!s.summary.readComplete)" class="warn">部分站点的历史读取不完整</small>
  </section>
@@ -70,8 +63,7 @@ const zeroBytesTLS=computed(()=>downloadRead.value===0&&downloadPhase.value==='t
 </template>
 <style scoped>
 .overview-latency,.overview-download,.overview-services{min-width:0;align-self:start;font-size:12px;line-height:1.5;color:var(--ink)}.overview-section-head{display:flex;align-items:baseline;gap:8px;margin-bottom:5px}.overview-section-head>strong{font-size:13px;font-weight:550}.overview-section-head>span{font-size:12px;color:var(--muted)}.overview-latency-title{display:flex;align-items:baseline;flex-wrap:wrap;gap:3px 8px;font-size:12px;color:var(--muted);margin-bottom:5px}.overview-latency-title time{font-variant-numeric:tabular-nums}
-.overview-sites{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px 12px}.overview-sites>button{min-width:0;display:flex;flex-direction:column;align-items:stretch;gap:1px;padding:2px 0;border:0;background:none;text-align:left;color:var(--ink);cursor:pointer}.overview-site-name{display:flex;justify-content:space-between;gap:3px;font-size:12px;color:var(--muted);white-space:nowrap}.overview-site-name>span{font-size:11px}.overview-sites>button>strong{font-size:15px;font-weight:550;white-space:nowrap;font-variant-numeric:tabular-nums}.overview-sites>button.bad>strong{color:var(--bad,#b5475e)}.overview-sites>button>small{font-size:12px;color:var(--muted)}.overview-sites>button:hover{text-decoration:underline}.overview-history-link{display:block;margin-top:6px;padding:0;border:0;background:none;font-size:12px;color:var(--blue);text-align:left;cursor:pointer}
+.overview-history-link{display:block;margin-top:6px;padding:0;border:0;background:none;font-size:12px;color:var(--blue);text-align:left;cursor:pointer}
 .overview-main>strong{font-size:16px;font-weight:600;font-variant-numeric:tabular-nums}.overview-main small{font-size:12px;font-weight:400;color:var(--muted)}.overview-download-status{font-size:13px;font-weight:550;overflow-wrap:anywhere}.overview-download-explanation{font-size:12px;color:var(--muted);margin:4px 0}.overview-download-read{display:flex;gap:7px;flex-wrap:wrap;margin-top:5px;font-size:12px}.overview-download-read>span{color:var(--muted)}.overview-download-read>strong{font-weight:500}.overview-download>small,.overview-download>time{display:block;color:var(--muted);font-size:12px;margin-top:4px}
 .overview-services{display:flex;flex-direction:column;gap:3px}.overview-service-result{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 7px;min-width:0;padding:2px 0;border:0;background:none;text-align:left;font-size:12px;color:inherit;cursor:pointer}.overview-service-name{font-size:12px;overflow-wrap:anywhere}.overview-service-result>strong{display:flex;align-items:center;gap:4px;font-size:12px;font-weight:500}.overview-service-result i{width:4px;height:4px;background:currentColor}.overview-service-result:hover>.overview-service-name{text-decoration:underline}.overview-service-help{font-size:12px;color:var(--muted);line-height:1.5;margin-top:3px}.warn{color:var(--warning,#946315)}
-@media(max-width:740px){.overview-sites{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
