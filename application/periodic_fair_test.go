@@ -234,12 +234,16 @@ func TestDownloadSlowSaveReleasesNetworkProtectionBeforePersistence(t *testing.T
 
 func TestUnexecutedPlanItemsNeverCompleteServiceCoverage(t *testing.T) {
 	p := periodicFixture(2)
+	// Catalog entries can be added or retired without changing the invariant:
+	// finishing every planned item without a probe must never count as coverage.
+	services := len(periodicServices(p.cfg))
+	expected := 2 * services
 	p.measureHook = func(context.Context, string, MonitorNodeOptionDTO, string) (string, bool, int64, error) {
 		return "not_executed", true, 0, nil
 	}
 	p.runCycle(context.Background(), "service", time.Now(), p.cfg)
 	c := p.cycles["service"]
-	if c.Processed != 162 || c.NotExecuted != 162 || c.CompletedNodes != 0 || c.CoveredNodes != 0 || c.CoveredServices != 0 || c.FullCoverage {
+	if c.NodeCount != 2 || c.ServiceCount != services || c.Total != expected || c.Processed != expected || c.NotExecuted != expected || c.CompletedNodes != 0 || c.CoveredNodes != 0 || c.CoveredServices != 0 || c.FullCoverage {
 		t.Fatalf("planned-only items counted as coverage: %+v", c)
 	}
 }
