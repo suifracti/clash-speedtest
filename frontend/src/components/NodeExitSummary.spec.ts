@@ -60,7 +60,7 @@ it('keeps IPPure challenge visible beside Ping0 without borrowing the IPv6 score
  const ipv6=attempt('ping0_ip_quality','2026-10-18T10:01:00Z','profiled',{ip:'2001:db8::60',ip_family:'IPv6',country:'新加坡',ip_type:'机房 IDC',risk_score:25})
  const challenge=attempt('ippure_ip_quality','2026-10-18T10:02:00Z','challenge',undefined,undefined,'challenge page blocked')
  const wrapper=mount(NodeExitSummary,{props:{attempts:[ipv4,ipv6,challenge],compact:true},global:{stubs:{Modal:modalStub}}})
- const addresses=wrapper.findAll('.exit-ledger-address');expect(addresses).toHaveLength(2);expect(addresses[0].text()).toContain('IPv4');expect(addresses[0].text()).toContain('地区未返回');expect(addresses[0].text()).not.toContain('25');expect(addresses[0].text()).not.toContain('新加坡')
+ const addresses=wrapper.findAll('.exit-ledger-address');expect(addresses).toHaveLength(2);expect(addresses[0].text()).toContain('IPv4');expect(addresses[0].text()).toContain('已取得地址');expect(addresses[0].text()).not.toContain('25');expect(addresses[0].text()).not.toContain('新加坡')
  const ping=wrapper.get('[data-provider="ping0_ip_quality"]'),pure=wrapper.get('[data-provider="ippure_ip_quality"]');expect(ping.text().replace(/\s/g,'')).toContain('25/100');expect(ping.text()).toContain('IPv6');expect(pure.text()).toContain('验证页拦截');expect(pure.text()).toContain('未取得风险分');expect(pure.text()).not.toContain('25');expect(pure.find('.node-exit-risk-scale').exists()).toBe(false);expect(wrapper.text()).not.toContain('198.51.100.60');wrapper.unmount()
 })
 it('preserves both zero scores with source-specific scales and keeps raw details',async()=>{
@@ -76,8 +76,16 @@ it('does not hide an explicit failed IPv4 lookup behind a successful reputation 
  const failed=attempt('exit_ipv4','2026-10-18T11:00:00Z','timed_out',undefined,undefined,'timeout'),ping=attempt('ping0_ip_quality','2026-10-18T10:00:00Z','profiled',{ip:'198.51.100.70',risk_score:25,country:'SG'})
  const wrapper=mount(NodeExitSummary,{props:{compact:true,attempts:[failed,ping]}});expect(wrapper.get('[data-family="IPv4"]').text()).toContain('查询超时');expect(wrapper.get('[data-family="IPv4"]').text()).not.toContain('SG');wrapper.unmount()
 })
-it('opens saved details without issuing IP queries and retains both unqueried providers',async()=>{
+it('opens unqueried saved details without issuing IP queries',async()=>{
  const fetch=vi.fn();vi.stubGlobal('fetch',fetch)
  const wrapper=mount(NodeExitSummary,{props:{compact:true},global:{stubs:{Modal:modalStub}}})
- try{expect(wrapper.get('[data-provider="ping0_ip_quality"]').text()).toContain('未查询');expect(wrapper.get('[data-provider="ippure_ip_quality"]').text()).toContain('未查询');await wrapper.get('.node-exit-open').trigger('click');expect(fetch).not.toHaveBeenCalled()}finally{wrapper.unmount();vi.unstubAllGlobals()}
+ try{expect(wrapper.text()).toContain('出口 / 信誉未查询');await wrapper.get('.node-exit-compact').trigger('click');expect(wrapper.get('.modal-stub').text()).toContain('未查询');expect(fetch).not.toHaveBeenCalled()}finally{wrapper.unmount();vi.unstubAllGlobals()}
+})
+
+it('keeps unqueried compact nodes to one entry instead of empty family and provider cards',()=>{
+ const wrapper=mount(NodeExitSummary,{props:{compact:true}})
+ expect(wrapper.text()).toContain('出口 / 信誉未查询')
+ expect(wrapper.findAll('.exit-ledger-address')).toHaveLength(0)
+ expect(wrapper.findAll('.node-exit-provider')).toHaveLength(0)
+ wrapper.unmount()
 })
