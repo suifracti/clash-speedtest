@@ -20,7 +20,7 @@ func TestServiceSocketBudgetFollowsExistingCompositeAndSamplePlan(t *testing.T) 
 	}{
 		{"exit_ipv4", 1, 4}, {"exit_ipv6", 4, 5},
 		{"netflix_unlock", 1, 12}, {"netflix_unlock", 4, 42}, {"netflix_unlock", 10, 102},
-		{"ippure_ip_quality", 4, 41}, {"youtube_premium", 4, 21},
+		{"ippure_ip_quality", 4, 49}, {"youtube_premium", 4, 21},
 		{"paramount_web", 4, 17}, {"abema_unlock", 4, 6}, {"ipok_ipv4", 10, 4},
 	}
 	for _, tc := range cases {
@@ -36,7 +36,7 @@ func TestServiceSocketBudgetFollowsExistingCompositeAndSamplePlan(t *testing.T) 
 	}
 	for _, rule := range Catalog() {
 		for _, samples := range []int{0, 1, 2, 4, 10} {
-			if got := serviceSocketBudget(rule, samples); got < 1 || got > 120 {
+			if got := serviceSocketBudget(rule, samples); got < 1 || got > 121 {
 				t.Fatalf("invalid physical budget %s/%d=%d", rule.ServiceID, samples, got)
 			}
 		}

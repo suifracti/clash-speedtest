@@ -82,7 +82,7 @@ func ippureEncryptedBody(request *http.Request, raw []byte, xt string) error {
 	return nil
 }
 
-// At most one replay for the site's initial nonce response; other failures stop.
+// Normal API nonce refreshes are bounded by the website's replay limit; HTTP/CAPTCHA failures stop.
 func ippureExtraExchange(ctx context.Context, client *http.Client, method, target string, payload []byte, session ...*ippureNonceState) (Result, []byte, bool) {
 	state := newIPPureNonceState()
 	if len(session) > 0 && session[0] != nil {
@@ -90,12 +90,14 @@ func ippureExtraExchange(ctx context.Context, client *http.Client, method, targe
 	}
 	// A refusal in the CF gateway must not poison the independent ASN GET.
 	if _, protocolError, rechallenged := state.status(); protocolError != "" || rechallenged {
+		limit := state.replayLimit()
 		state = newIPPureNonceState()
+		state.normalRefreshLimit = limit
 	}
-	hadKey, _, _ := state.status()
 	local := ippureWebClient(client, state, true)
 	total := Result{}
-	for pass := 0; pass < 2; pass++ {
+	for pass := 0; pass < 2+state.replayLimit(); pass++ {
+		before := state.revision()
 		part := Result{RequestCount: 1}
 		req, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(payload))
 		if err != nil {
@@ -139,12 +141,12 @@ func ippureExtraExchange(ctx context.Context, client *http.Client, method, targe
 			ippureCarryFailure(&total, part)
 			return total, nil, false
 		}
-		hasNonce, protocolError, rechallenged := state.status()
+		_, protocolError, rechallenged := state.status()
 		if protocolError != "" || rechallenged {
 			ippureChallenge(&total)
 			return total, nil, false
 		}
-		if pass == 0 && hasNonce && !hadKey {
+		if state.revision() > before {
 			if !state.firstNonceResponseAllowsReplay(body, true) {
 				ippureUnknown(&total, "nonce_protocol", "签名响应格式无法识别")
 				return total, nil, false
@@ -182,10 +184,48 @@ func checkIPPureBundle(ctx context.Context, client *http.Client, rule Rule, star
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	local.Transport = ippureOriginTransport{ippureSessionTransport(base)}
+	sessionTransport := ippureSessionTransport(base)
+	if rule.RuleVersion >= 7 {
+		sessionTransport = ippureBrowserSession(base)
+	}
+	local.Transport = ippureOriginTransport{sessionTransport}
 	defer local.CloseIdleConnections()
 	state := newIPPureNonceState()
-	result := checkIPPureWeb(ctx, &local, rule, started, state)
+	var result Result
+	if rule.RuleVersion >= 7 {
+		state.normalRefreshLimit = 3
+		primaryCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		official := rule
+		official.RuleVersion = 2
+		official.TargetURL = "https://my.ippure.com/v1/info"
+		official.MaximumBodyBytes = 8 * 1024
+		result = checkIPPure(primaryCtx, &local, official, started)
+		cancel()
+		if result.Details == nil {
+			result.Details = map[string]string{}
+		}
+		result.Details["provider"] = "IPPure"
+		result.Details["api_method"] = "ippure_official_self_api_v2"
+		result.Details["official_endpoint"] = official.TargetURL
+		result.Details["query_at"] = started.UTC().Format(time.RFC3339Nano)
+		if result.Outcome == "profiled" {
+			ip, valid := ippurePublicIPv4(result.Details["ip"])
+			score, err := strconv.Atoi(result.Details["fraud_score"])
+			if !valid || err != nil || score < 0 || score > 100 {
+				ippureUnknown(&result, "official_profile", "官方接口未返回有效IPv4风险资料")
+			} else {
+				result.Details["ip"] = ip
+				result.Details["ip_family"] = "IPv4"
+				result.Details["risk_scale_max"] = "100"
+				result.Details["risk_direction"] = "lower_is_better"
+				result.Details["api_method"] = "ippure_official_self_api_v2"
+				result.Details["official_endpoint"] = official.TargetURL
+				result.Details["query_at"] = started.UTC().Format(time.RFC3339Nano)
+			}
+		}
+	} else {
+		result = checkIPPureWeb(ctx, &local, rule, started, state)
+	}
 	// Preserve the working public self-IP path if the web nonce API refuses
 	// this client. A failed extra query must not regress the primary score.
 	if result.Outcome == "challenge" && ctx.Err() == nil && result.Details["ip"] != "" {
@@ -193,6 +233,9 @@ func checkIPPureBundle(ctx context.Context, client *http.Client, rule Rule, star
 	}
 	if _, protocolError, rechallenged := state.status(); protocolError != "" || rechallenged {
 		state = newIPPureNonceState()
+		if rule.RuleVersion >= 7 {
+			state.normalRefreshLimit = 3
+		}
 	}
 	if result.Details == nil {
 		result.Details = map[string]string{}
@@ -201,21 +244,35 @@ func checkIPPureBundle(ctx context.Context, client *http.Client, rule Rule, star
 	d["profile_bundle_version"] = "1"
 	d["cf_status"] = "未查询"
 	d["asn_traffic_status"] = "未查询"
+	if rule.RuleVersion >= 7 {
+		d["profile_bundle_version"] = "2"
+		d["api_client_profile"] = "standard_transport"
+		if ippureUsesBrowserSession(sessionTransport) {
+			d["api_client_profile"] = "chrome133_h2_v1"
+		}
+	}
 	// Each sub-result keeps its own scope/time. Its failure cannot overwrite the
 	// IPPure score, HTTP status, or outcome of the primary lookup.
 	add := func(part Result) { result.RequestCount += part.RequestCount; result.BytesRead += part.BytesRead }
 	if ctx.Err() != nil {
+		d["cf_status"] = "本次时限已到"
+		d["asn_traffic_status"] = "本次时限已到"
 		return finish(result, started)
 	}
 	cfAt := time.Now().UTC()
 	d["cf_query_at"] = cfAt.Format(time.RFC3339Nano)
 	d["cf_source_url"] = "https://ippure.com/cloudflare"
 	d["cf_scope"] = "本次App请求环境，受出口与客户端特征影响，不等于浏览器结果"
-	part, payload, ok := boundedGET(ctx, &local, ippureCFURL, ippureWebBodyLimit, "application/octet-stream")
+	cfCtx := ctx
+	cancelCF := func() {}
+	if rule.RuleVersion >= 7 {
+		cfCtx, cancelCF = context.WithTimeout(ctx, 4*time.Second)
+	}
+	part, payload, ok := boundedGET(cfCtx, &local, ippureCFURL, ippureWebBodyLimit, "application/octet-stream")
 	add(part)
 	asn := strings.TrimPrefix(strings.ToUpper(d["asn"]), "AS")
 	if ok {
-		part, body, valid := ippureExtraExchange(ctx, &local, http.MethodPost, ippureCFGateway, payload, state)
+		part, body, valid := ippureExtraExchange(cfCtx, &local, http.MethodPost, ippureCFGateway, payload, state)
 		add(part)
 		if valid {
 			var doc struct {
@@ -243,6 +300,7 @@ func checkIPPureBundle(ctx context.Context, client *http.Client, rule Rule, star
 	} else {
 		d["cf_status"] = ippureExtraStatus(part)
 	}
+	cancelCF()
 	asnNumber, err := strconv.ParseUint(asn, 10, 32)
 	if err != nil || asnNumber == 0 {
 		d["asn_traffic_status"] = "未取得ASN"
@@ -256,7 +314,13 @@ func checkIPPureBundle(ctx context.Context, client *http.Client, rule Rule, star
 		d["asn_traffic_status"] = "本次时限已到"
 		return finish(result, started)
 	}
-	part, body, ok := ippureExtraExchange(ctx, &local, http.MethodGet, ippureWebAPIBase+"/api/info/asn/botclass/"+asn, nil, state)
+	asnCtx := ctx
+	cancelASN := func() {}
+	if rule.RuleVersion >= 7 {
+		asnCtx, cancelASN = context.WithTimeout(ctx, 3*time.Second)
+	}
+	defer cancelASN()
+	part, body, ok := ippureExtraExchange(asnCtx, &local, http.MethodGet, ippureWebAPIBase+"/api/info/asn/botclass/"+asn, nil, state)
 	add(part)
 	if !ok {
 		d["asn_traffic_status"] = ippureExtraStatus(part)

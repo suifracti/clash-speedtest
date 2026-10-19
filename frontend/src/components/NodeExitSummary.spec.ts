@@ -115,14 +115,14 @@ it('shows the saved TLS failure stage without turning it into a missing IP score
  expect(wrapper.get('.modal-stub').text()).toContain('TLS 握手失败：对端或节点代理过早关闭连接 (EOF)');wrapper.unmount()
 })
 
-it('shows separate Ping0 families, hides IPOK and marks IPPure IPv6 as unsupported without a fake score',()=>{
+it('shows separate Ping0 families, hides IPOK and removes the unused IPPure IPv6 note',()=>{
  const v4=attempt('ping0_ipv4','2026-10-19T07:00:00Z','profiled',{ip:'198.51.100.1',risk_score:28}),v6=attempt('ping0_ipv6','2026-10-19T07:00:00Z','profiled',{ip:'2001:db8::1',risk_score:21}),pure=attempt('ippure_ip_quality','2026-10-19T07:00:00Z','profiled',{ip:'198.51.100.1',fraud_score:61,risk_scale_max:100,risk_direction:'lower_is_better'}),retired=attempt('ipok_ipv4','2026-10-19T07:00:00Z','profiled',{ip:'198.51.100.1',risk_score:65})
  const legacy=attempt('ping0_ip_quality','2026-10-18T07:00:00Z','profiled',{ip:'2001:db8::1',risk_score:80})
  const wrapper=mount(NodeExitSummary,{props:{compact:true,attempts:[v4,v6,pure,retired,legacy]}})
  expect(wrapper.get('[data-provider="ping0_ipv4"]').text()).toContain('28')
  expect(wrapper.get('[data-provider="ping0_ipv6"]').text()).toContain('21')
  expect(wrapper.text()).not.toContain('IPOK');expect(wrapper.find('[data-provider="ping0_ip_quality"]').exists()).toBe(false)
- const unsupported=wrapper.get('[data-provider="ippure_ipv6"]');expect(unsupported.text()).toContain('不支持评分');expect(unsupported.find('.node-exit-risk-scale').exists()).toBe(false)
+ expect(wrapper.find('[data-provider="ippure_ipv6"]').exists()).toBe(false)
  wrapper.unmount()
 })
 

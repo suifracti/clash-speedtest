@@ -50,6 +50,9 @@ type ippureNonceState struct {
 	serverTimeCaptured time.Time
 	localTimeBase      time.Time
 	requestCount       int
+	normalRefreshLimit int
+	normalRefreshCount int
+	generation         int
 	firstStatus        int
 	firstContentType   string
 	firstCFChallenge   bool
@@ -91,8 +94,11 @@ func (s *ippureNonceState) observeResponse(headers http.Header, status int, requ
 		return
 	}
 	if requestIndex != 0 || signed {
-		s.rechallenged = true
-		return
+		if s.normalRefreshCount >= s.normalRefreshLimit {
+			s.rechallenged = true
+			return
+		}
+		s.normalRefreshCount++
 	}
 	if len([]byte(key)) > ippureNonceKeyLimit {
 		s.protocolError = "IPPure server nonce exceeds the 256 byte limit"
@@ -113,8 +119,16 @@ func (s *ippureNonceState) observeResponse(headers http.Header, status int, requ
 		return
 	}
 	s.key = []byte(key)
+	s.generation++
 	s.serverTimeMillis = serverTime
 	s.serverTimeCaptured = capturedAt
+}
+
+func (s *ippureNonceState) revision() int { s.mu.Lock(); defer s.mu.Unlock(); return s.generation }
+func (s *ippureNonceState) replayLimit() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.normalRefreshLimit
 }
 
 func (s *ippureNonceState) status() (hasKey bool, protocolError string, rechallenged bool) {
