@@ -174,3 +174,15 @@ body.cst-resizing{cursor:col-resize;user-select:none}
   .hd-tr>[role="cell"]:nth-child(n+4),.hd-tr>[role="columnheader"]:nth-child(n+4){display:none}
   .hd-site{grid-template-columns:72px 80px minmax(0,1fr)}
 }
+/* 检查器按项目标签重排：当前项目在结论下面，出口信息和其他项目摘要放到后面 */
+.hd-inspector:not([data-project=combined]) .hd-ins-detail{order:4}
+.hd-inspector:not([data-project=combined]) .hd-exit{order:5}
+.hd-inspector .hd-ins-others{order:6}
+.hd-inspector:not([data-project=combined]) .hd-legend{order:9}
+.hd-ins-others{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding-top:10px;border-top:1px solid var(--hd-line)}
+.hd-ins-others>span{font-size:11px;font-weight:600;color:var(--hd-muted);margin-right:2px}
+.hd-ins-others button{display:inline-flex;align-items:baseline;gap:6px;padding:5px 10px;border:1px solid var(--hd-line);border-radius:8px;background:var(--hd-panel-2);max-width:100%}
+.hd-ins-others button:hover{border-color:var(--hd-accent)}
+.hd-ins-others small{color:var(--hd-muted);font-size:11px}
+.hd-ins-others strong{font-size:12px;font-weight:600;color:var(--tone,var(--hd-text));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hd-ins-others strong.empty{color:var(--hd-muted);font-weight:500}

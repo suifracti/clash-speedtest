@@ -18,7 +18,25 @@ import {downloadSpeed} from '../../domain'
 const props=defineProps<{node:NodeOption}>()
 const w=useWorkspace(),m=inject(homeModelKey)!
 const sites=computed(()=>targets.filter(t=>w.displayTargets.value.includes(t.id)))
-const verdict=computed(()=>latencyVerdict(sites.value.map(s=>m.metricPoint(props.node,s.id))))
+// 检查器跟着项目标签变化：只展开当前项目，其余项目收成底部一行摘要，点一下就切过去。
+const project=computed(()=>w.project.value)
+const shows=(p:Project)=>project.value==='combined'||project.value===p
+const latencyVerdictValue=computed(()=>latencyVerdict(sites.value.map(s=>m.metricPoint(props.node,s.id))))
+const serviceVerdict=computed(()=>{
+ const list=m.displayServices.value
+ if(!list.length)return {tone:'empty',label:'未选服务',detail:'在上方「选择服务」里挑想测的服务'}
+ const tones=list.map(s=>m.serviceTone(props.node,s.service_id)),measured=tones.filter(t=>t!=='empty').length,pass=tones.filter(t=>t==='good').length
+ if(!measured)return {tone:'empty',label:'还没测',detail:`已选 ${list.length} 项服务，这个节点都没有记录`}
+ return {tone:pass===list.length?'good':pass||tones.some(t=>t==='reachable'||t==='warn')?'warn':'bad',label:`${pass}/${list.length} 通过`,detail:measured<list.length?`${list.length-measured} 项还没测`:'已选服务都有记录'}
+})
+const downloadVerdict=computed(()=>({tone:m.downloadMetricTone(props.node)||'empty',label:m.downloadMetric(props.node),detail:m.downloadMetricContext(props.node)}))
+const verdict=computed(()=>project.value==='download'?downloadVerdict.value:project.value==='service'?serviceVerdict.value:latencyVerdictValue.value)
+const others=computed(()=>project.value==='combined'?[]:([
+ {id:'latency' as const,name:'延迟',v:latencyVerdictValue.value},
+ {id:'download' as const,name:'下载',v:downloadVerdict.value},
+ {id:'service' as const,name:'服务',v:serviceVerdict.value},
+]).filter(o=>o.id!==project.value))
+const runText=computed(()=>project.value==='combined'?'检测这个节点':m.runLabel(project.value))
 const attempts=computed(()=>m.qualityData.value[key(props.node)]?.services||w.services.value[key(props.node)]||[])
 const readError=computed(()=>m.qualityErrors.value[key(props.node)])
 // Saved-history snapshot for download: latest check and the last valid speed stay separate.
@@ -54,24 +72,24 @@ function httpMetric(id:string){const p=m.httpPoints(props.node,id).at(-1);return
 function run(){m.closeHover();w.openPlan([props.node])}
 </script>
 <template>
-  <section class="hd-inspector" :aria-label="nodeDisplayName(node)+' 详情'">
+  <section class="hd-inspector" :data-project="project" :aria-label="nodeDisplayName(node)+' 详情'">
     <header class="hd-ins-head">
       <div class="hd-ins-name">
         <span class="hd-flag">{{node.country_code||'—'}}</span>
         <div><h2>{{nodeDisplayName(node)}}</h2><p>{{m.sourceLabel(node)}} · {{node.type}}</p></div>
       </div>
       <div class="hd-ins-actions">
-        <button class="hd-btn primary" :disabled="w.busy.value" @click="run"><Icon name="play"/>检测这个节点</button>
+        <button class="hd-btn primary" :disabled="w.busy.value" :title="project==='combined'?'按组合检测配置这个节点':'只'+m.runLabel(project)+'，范围是这个节点'" @click="run"><Icon name="play"/>{{runText}}</button>
       </div>
     </header>
     <div class="hd-ins-verdict" :class="verdict.tone"><strong>{{verdict.label}}</strong><span>{{verdict.detail}}</span></div>
 
-    <div class="hd-ins-block">
+    <div class="hd-ins-block hd-exit">
       <h3>出口与 IP 信誉</h3>
       <NodeExitSummary compact :attempts="attempts"/>
     </div>
 
-    <div class="hd-ins-block hd-latency">
+    <div v-if="shows('latency')" class="hd-ins-block hd-latency">
       <h3>延迟 <button class="hd-link" @click="openHistory('latency','all')">完整走势</button> <small>每格一轮 · 左旧右新 · 悬停看这一轮 · 点击固定</small><small v-if="m.monitorErrors.value[key(node)]" class="bad">监测记录读取失败</small><small v-else-if="m.monitorData.value[key(node)]?.length">含持续监测 · 各站独立记录</small></h3>
       <div v-for="s in sites" :key="s.id" class="hd-site">
         <button class="hd-site-name" :title="'查看 '+s.name+' 的历史'" @click="openHistory('latency',s.id)">{{s.name}}</button>
@@ -81,7 +99,7 @@ function run(){m.closeHover();w.openPlan([props.node])}
       </div>
     </div>
 
-    <div class="hd-ins-block hd-download">
+    <div v-if="shows('download')" class="hd-ins-block hd-download">
       <h3>下载</h3>
       <div class="hd-site">
         <button class="hd-site-name" @click="openHistory('download',w.displayTarget.value)">最近一次</button>
@@ -92,7 +110,7 @@ function run(){m.closeHover();w.openPlan([props.node])}
       </div>
     </div>
 
-    <div v-if="hasHTTP" class="hd-ins-block hd-http">
+    <div v-if="hasHTTP&&shows('service')" class="hd-ins-block hd-http">
       <h3>基础 HTTP 监测 <small>持续监测保存的端点结果，不代表服务目录检测通过</small></h3>
       <p v-if="httpError" class="hd-muted bad" role="alert">监测 HTTP 记录读取失败</p>
       <div v-for="s in monitorHTTPServices" :key="s.id" class="hd-site">
@@ -102,9 +120,9 @@ function run(){m.closeHover();w.openPlan([props.node])}
       </div>
     </div>
 
-    <div class="hd-ins-block">
+    <div v-if="shows('service')" class="hd-ins-block hd-services-block">
       <h3>服务 <small v-if="m.displayServices.value.length">点名称或结论看判断依据</small></h3>
-      <p v-if="!m.displayServices.value.length" class="hd-muted">还没选服务。在上方「选择服务」里挑想测的服务。</p>
+      <p v-if="!m.displayServices.value.length&&project==='combined'" class="hd-muted">还没选服务。在上方「选择服务」里挑想测的服务。</p>
       <div v-for="s in m.displayServices.value" :key="s.service_id" class="hd-site hd-service-row">
         <button class="hd-site-name" :title="s.name" @click="m.showService(node,s.service_id)">{{s.name}}</button>
         <button class="hd-site-value" :class="m.serviceTone(node,s.service_id)" @click="m.showService(node,s.service_id)">{{m.serviceMetric(node,s.service_id)}}</button>
@@ -128,6 +146,7 @@ function run(){m.closeHover();w.openPlan([props.node])}
       </template>
       <InlineHistory v-else :node="node" :nodes="m.visibleNodes.value" :project="m.hoverMode.value" :source="m.inlineHistorySource.value" :monitor-service-id="m.hoverService.value" :anchor-points="m.hoverPoints.value" :target-ids="m.hoverMode.value==='latency'&&m.hoverTarget.value!=='all'?[m.hoverTarget.value]:w.displayTargets.value" :service-ids="m.displayServices.value.map(s=>s.service_id)"/>
     </div>
+    <nav v-if="others.length" class="hd-ins-others" aria-label="其他项目摘要"><span>其他项目</span><button v-for="o in others" :key="o.id" type="button" :title="'切到'+o.name+'：'+o.v.detail" @click="w.project.value=o.id"><small>{{o.name}}</small><strong :class="o.v.tone">{{o.v.label}}</strong></button></nav>
     <p class="hd-legend"><span class="good">{{toneLabel('good')}}</span><span class="warn">{{toneLabel('warn')}}</span><span class="bad">{{toneLabel('bad')}}</span><span class="empty">{{toneLabel('empty')}}</span></p>
   </section>
 </template>

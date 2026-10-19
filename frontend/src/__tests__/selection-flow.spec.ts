@@ -385,3 +385,22 @@ it('permits like-for-like historical download comparison only when condition and
  }
  vi.mocked(api.attemptHistory).mockResolvedValue({attempts:[],has_more:false,complete:true})
 })
+
+it('adapts the inspector to the project tab and keeps other projects as a one-line summary (synthetic data)',async()=>{
+ window.sessionStorage.clear()
+ const w=workspace();w.project.value='service';const ui=attach(HomeView,w);await flushPromises()
+ expect(ui.find('.hd-inspector .hd-latency').exists()).toBe(false)
+ expect(ui.find('.hd-inspector .hd-download').exists()).toBe(false)
+ expect(ui.find('.hd-inspector .hd-services-block').exists()).toBe(true)
+ expect(ui.get('.hd-ins-actions .primary').text()).toContain('检测服务')
+ const others=ui.findAll('.hd-ins-others button')
+ expect(others.map(b=>b.find('small').text())).toEqual(['延迟','下载'])
+ await others[0].trigger('click');await flushPromises()
+ expect(w.project.value).toBe('latency')
+ expect(ui.find('.hd-inspector .hd-latency').exists()).toBe(true)
+ expect(ui.find('.hd-inspector .hd-services-block').exists()).toBe(false)
+ w.project.value='combined';await flushPromises()
+ expect(ui.find('.hd-ins-others').exists()).toBe(false)
+ expect(['.hd-latency','.hd-download','.hd-services-block'].every(s=>ui.find('.hd-inspector '+s).exists())).toBe(true)
+ expect(api.startLatency).not.toHaveBeenCalled();w.dispose()
+})
