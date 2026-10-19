@@ -61,16 +61,16 @@ it('keeps IPPure challenge visible beside Ping0 without borrowing the IPv6 score
  const challenge=attempt('ippure_ip_quality','2026-10-18T10:02:00Z','challenge',undefined,undefined,'challenge page blocked')
  const wrapper=mount(NodeExitSummary,{props:{attempts:[ipv4,ipv6,challenge],compact:true},global:{stubs:{Modal:modalStub}}})
  const addresses=wrapper.findAll('.exit-ledger-address');expect(addresses).toHaveLength(2);expect(addresses[0].text()).toContain('IPv4');expect(addresses[0].text()).toContain('已取得地址');expect(addresses[0].text()).not.toContain('25');expect(addresses[0].text()).not.toContain('新加坡')
- const ping=wrapper.get('[data-provider="ping0_ip_quality"]'),pure=wrapper.get('[data-provider="ippure_ip_quality"]');expect(ping.text().replace(/\s/g,'')).toContain('25/100');expect(ping.text()).toContain('IPv6');expect(pure.text()).toContain('验证页拦截');expect(pure.text()).toContain('未取得风险分');expect(pure.text()).not.toContain('25');expect(pure.find('.node-exit-risk-scale').exists()).toBe(false);expect(wrapper.text()).not.toContain('198.51.100.60');wrapper.unmount()
+ const ping=wrapper.get('[data-provider="ping0_ip_quality"]'),pure=wrapper.get('[data-provider="ippure_ip_quality"]');expect(ping.text().replace(/\s/g,'')).toContain('25/100');expect(ping.text()).toContain('IPv6');expect(pure.text()).toContain('验证页拦截');expect(pure.attributes('title')).toContain('未取得风险分');expect(pure.text()).not.toContain('25');expect(pure.find('.node-exit-risk-scale').exists()).toBe(false);expect(wrapper.text()).not.toContain('198.51.100.60');wrapper.unmount()
 })
 it('preserves both zero scores with source-specific scales and keeps raw details',async()=>{
  const ping=attempt('ping0_ip_quality','2026-10-18T10:00:00Z','profiled',{ip:'2001:db8::61',risk_score:0,risk_tier:'vendor-low'}),pure=attempt('ippure_ip_quality','2026-10-18T10:01:00Z','profiled',{ip:'198.51.100.61',fraud_score:0,risk_scale_max:'100',risk_direction:'lower_is_better'})
  const wrapper=mount(NodeExitSummary,{props:{attempts:[ping,pure],compact:true},global:{stubs:{Modal:modalStub}}})
- for(const id of ['ping0_ip_quality','ippure_ip_quality']){const row=wrapper.get(`[data-provider="${id}"]`);expect(row.text().replace(/\s/g,'')).toContain('0/100');expect(row.get('.node-exit-risk-scale').attributes('style')).toContain('0%');expect(row.text()).toContain('越低越好')}
- await wrapper.get('.node-exit-open').trigger('click');expect(wrapper.get('.modal-stub').text()).toContain('风险等级vendor-low');expect(wrapper.get('.modal-stub').text()).toContain('风险0/100');wrapper.unmount()
+ for(const id of ['ping0_ip_quality','ippure_ip_quality']){const row=wrapper.get(`[data-provider="${id}"]`);expect(row.text().replace(/\s/g,'')).toContain('0/100');expect(row.get('.node-exit-risk-scale').attributes('style')).toContain('0%');expect(row.get('.node-exit-risk-scale').attributes('aria-label')).toContain('越低越好')}
+ await wrapper.get('[data-provider="ping0_ip_quality"]').trigger('click');expect(wrapper.get('.modal-stub').text()).toContain('风险等级vendor-low');expect(wrapper.get('.modal-stub').text()).toContain('风险0/100');wrapper.unmount()
 })
 it('does not invent an IPPure scale without the provider metadata',()=>{
- const pure=attempt('ippure_ip_quality','2026-10-18T10:00:00Z','profiled',{ip:'198.51.100.70',fraud_score:0});const wrapper=mount(NodeExitSummary,{props:{compact:true,attempts:[pure]}}),row=wrapper.get('[data-provider="ippure_ip_quality"]');expect(row.text()).toContain('风险分 0');expect(row.text()).toContain('刻度未声明');expect(row.text()).not.toContain('/100');expect(row.find('.node-exit-risk-scale').exists()).toBe(false);wrapper.unmount()
+ const pure=attempt('ippure_ip_quality','2026-10-18T10:00:00Z','profiled',{ip:'198.51.100.70',fraud_score:0});const wrapper=mount(NodeExitSummary,{props:{compact:true,attempts:[pure]}}),row=wrapper.get('[data-provider="ippure_ip_quality"]');expect(row.text()).toContain('0');expect(row.attributes('title')).toContain('刻度未声明');expect(row.text()).not.toContain('/100');expect(row.find('.node-exit-risk-scale').exists()).toBe(false);wrapper.unmount()
 })
 it('does not hide an explicit failed IPv4 lookup behind a successful reputation query',()=>{
  const failed=attempt('exit_ipv4','2026-10-18T11:00:00Z','timed_out',undefined,undefined,'timeout'),ping=attempt('ping0_ip_quality','2026-10-18T10:00:00Z','profiled',{ip:'198.51.100.70',risk_score:25,country:'SG'})
@@ -88,4 +88,13 @@ it('keeps unqueried compact nodes to one entry instead of empty family and provi
  expect(wrapper.findAll('.exit-ledger-address')).toHaveLength(0)
  expect(wrapper.findAll('.node-exit-provider')).toHaveLength(0)
  wrapper.unmount()
+})
+
+it('shows compact IPOK gauges independently for both families, including zero from saved v1 records',()=>{
+ const v4=attempt('ipok_ipv4','2026-10-18T10:00:00Z','profiled',{ip:'198.51.100.80',risk_score:0,country:'Singapore'}),v6=attempt('ipok_ipv6','2026-10-18T10:00:00Z','profiled',{ip:'2001:db8::80',risk_score:65,country:'Japan'})
+ const w=mount(NodeExitSummary,{props:{compact:true,attempts:[v4,v6]}})
+ expect(w.get('[data-provider="ipok_ipv4"]').text().replace(/\s/g,'')).toContain('0/100')
+ expect(w.get('[data-provider="ipok_ipv6"] .node-exit-risk-scale').attributes('style')).toContain('65%')
+ expect(w.get('[data-family="IPv4"]').text()).toContain('Singapore');expect(w.get('[data-family="IPv4"]').text()).not.toContain('Japan')
+ expect(w.text()).not.toContain('↗');expect(w.find('.node-exit-provider time').exists()).toBe(false);expect(w.find('.node-exit-provider-caption').exists()).toBe(false);w.unmount()
 })

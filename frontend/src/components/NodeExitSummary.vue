@@ -38,27 +38,20 @@ const providerCaption=(r?:ExitRecord)=>!r?'没有保存记录':!r.confirmed?[r.a
 <template>
  <div class="node-exit-summary" :class="{compact}" aria-label="已保存的出口画像摘要">
   <template v-if="compact">
-   <button v-if="!currentRecords.length" type="button" class="node-exit-compact" @click="open=true">出口 / 信誉未查询 ↗</button>
+   <button v-if="!currentRecords.length" type="button" class="node-exit-compact" @click="open=true">出口 / 信誉未查询</button>
    <template v-else>
    <div class="node-exit-addresses" aria-label="IPv4 与 IPv6 分开记录">
     <button v-for="address in addresses" :key="address.family" type="button" class="node-exit-address-row exit-ledger-address" :data-family="address.family" @click="open=true">
      <span class="node-exit-family">{{address.family}}</span>
      <span class="node-exit-address-copy"><strong>{{address.record?.confirmed?[address.region,address.ipType].filter(Boolean).join(' · ')||address.status:address.status}}</strong></span>
-     <span class="node-exit-compact-arrow" aria-hidden="true">↗</span>
     </button>
    </div>
    <div v-if="reputations.length" class="node-exit-provider-grid" aria-label="各来源信誉结果，分数独立">
-    <button v-for="provider in reputations" :key="provider.serviceId" type="button" class="node-exit-provider" :data-provider="provider.serviceId" :class="{'has-score':provider.record?.confirmed&&!!provider.record.risk,'no-score':!provider.record?.confirmed||!provider.record.risk}" @click="open=true">
-     <span class="node-exit-provider-title">{{provider.provider}}<span aria-hidden="true">↗</span></span><span class="node-exit-provider-family">{{reputationAddressHint(provider.record,addresses)}}</span>
-     <strong v-if="provider.record?.confirmed&&provider.record.risk" class="node-exit-compact-risk">{{provider.record.risk}}<small v-if="riskScore(provider.record)!==undefined"> / 100</small></strong>
-     <strong v-else class="node-exit-provider-status">{{compactExitStatus(provider.record)}}</strong>
-     <span class="node-exit-provider-caption">{{providerCaption(provider.record)}}</span>
+    <button v-for="provider in reputations" :key="provider.serviceId" type="button" class="node-exit-provider" :data-provider="provider.serviceId" :class="{'has-score':provider.record?.confirmed&&!!provider.record.risk,'no-score':!provider.record?.confirmed||!provider.record.risk}" :title="provider.provider+' · '+reputationAddressHint(provider.record,addresses)+' · '+providerCaption(provider.record)+' · '+date(provider.record?.observedAt)" @click="open=true">
+     <span class="node-exit-provider-head"><span class="node-exit-provider-title">{{provider.provider}}</span><span class="node-exit-provider-family">{{reputationAddressHint(provider.record,addresses)}}</span><strong v-if="provider.record?.confirmed&&provider.record.risk" class="node-exit-compact-risk">{{provider.record.risk}}<small v-if="riskScore(provider.record)!==undefined"> / 100</small></strong><strong v-else class="node-exit-provider-status">{{compactExitStatus(provider.record)}}</strong></span>
      <span v-if="provider.record&&riskScore(provider.record)!==undefined" class="node-exit-risk-scale" role="img" :aria-label="`${provider.provider} 分数 ${provider.record.risk}/100，0 到 100，越低越好`" :style="{'--risk-position':`${riskScore(provider.record)}%`}"><span>0</span><span class="node-exit-risk-track"><span class="node-exit-risk-marker"></span></span><span>100</span></span>
-     <span v-if="provider.record?.confirmed&&provider.record.tier" class="node-exit-provider-tier">来源等级 {{provider.record.tier}}</span>
-     <time v-if="provider.record?.observedAt">{{date(provider.record.observedAt)}}</time>
     </button>
    </div>
-   <button class="node-exit-open node-exit-compact" type="button" @click="open=true">{{reputations.length?'全部来源与时间':'信誉未查询 · 来源详情'}} · {{detailCount}}</button>
    </template>
   </template>
   <template v-else>
@@ -95,7 +88,7 @@ const providerCaption=(r?:ExitRecord)=>!r?'没有保存记录':!r.confirmed?[r.a
 .node-exit-summary{min-width:0;font-size:12px;line-height:1.5;color:var(--muted)}
 .node-exit-compact,.node-exit-address-row,.node-exit-provider{border:0;background:none;padding:0;text-align:left;color:inherit;font:inherit;cursor:pointer}
 .node-exit-addresses{display:grid;gap:3px}.node-exit-address-row{display:flex;align-items:baseline;gap:6px;min-width:0}.node-exit-family{flex:none}.node-exit-address-copy{min-width:0}.node-exit-address-copy strong{font-weight:500;color:var(--ink)}.node-exit-compact-arrow{color:var(--blue);margin-left:auto}
-.node-exit-provider-grid{display:grid;gap:5px;margin-top:5px}.node-exit-provider{display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 6px;min-width:0}.node-exit-provider-title{font-weight:550;color:var(--ink)}.node-exit-provider-title>span{display:none}.node-exit-provider-family{font-size:12px}.node-exit-compact-risk,.node-exit-provider-status{font-size:13px;font-weight:550;color:var(--ink)}.node-exit-compact-risk small{font-size:12px;font-weight:400}.node-exit-provider-caption,.node-exit-provider-tier,.node-exit-provider time{font-size:12px;color:var(--muted)}.node-exit-provider.no-score .node-exit-provider-status{color:var(--warning,#986700)}.node-exit-provider:hover,.node-exit-address-row:hover,.node-exit-compact:hover{color:var(--blue)}
-.node-exit-risk-scale{display:inline-flex;align-items:center;gap:3px;vertical-align:middle;font-size:10px;color:var(--muted)}.node-exit-risk-track{position:relative;display:inline-block;width:60px;height:4px;border-radius:4px;background:linear-gradient(90deg,#75a983,#c5bb72 50%,#c97470)}.node-exit-risk-marker{position:absolute;top:50%;left:var(--risk-position);width:6px;height:6px;transform:translate(-50%,-50%);border:1px solid var(--surface,#fff);border-radius:50%;background:var(--ink)}.node-exit-open{margin-top:4px;color:var(--blue);font-size:12px;border:0;background:none;padding:0;text-align:left;cursor:pointer}
+.node-exit-provider-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px 10px;margin-top:5px}.node-exit-provider{display:flex;flex-direction:column;gap:2px;min-width:0}.node-exit-provider-head{display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 4px;width:100%}.node-exit-provider-title{font-weight:550;color:var(--ink)}.node-exit-provider-title>span{display:none}.node-exit-provider-family{font-size:12px}.node-exit-compact-risk,.node-exit-provider-status{font-size:12px;font-weight:550;color:var(--ink)}.node-exit-compact-risk small{font-size:12px;font-weight:400}.node-exit-provider-caption,.node-exit-provider-tier,.node-exit-provider time{font-size:12px;color:var(--muted)}.node-exit-provider.no-score .node-exit-provider-status{color:var(--warning,#986700)}.node-exit-provider:hover,.node-exit-address-row:hover,.node-exit-compact:hover{color:var(--blue)}
+.node-exit-risk-scale{width:100%;display:inline-flex;align-items:center;gap:3px;vertical-align:middle;font-size:10px;color:var(--muted)}.node-exit-risk-track{position:relative;display:inline-block;width:auto;flex:1;min-width:25px;height:4px;border-radius:4px;background:linear-gradient(90deg,#75a983,#c5bb72 50%,#c97470)}.node-exit-risk-marker{position:absolute;top:50%;left:var(--risk-position);width:6px;height:6px;transform:translate(-50%,-50%);border:1px solid var(--surface,#fff);border-radius:50%;background:var(--ink)}.node-exit-open{margin-top:4px;color:var(--blue);font-size:12px;border:0;background:none;padding:0;text-align:left;cursor:pointer}
 .node-exit-summary-records{display:grid;gap:7px}.node-exit-summary-main,.node-exit-summary-source,.node-exit-summary-address-only{display:block}.node-exit-address{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px/1.5 ui-monospace,monospace}.node-exit-footer{display:flex;gap:4px 10px;align-items:center;margin-top:5px}.node-exit-fields{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 10px;margin:8px 0}.node-exit-fields>div{display:contents}.node-exit-fields dt{font-size:12px;color:var(--muted)}.node-exit-fields dd{margin:0;overflow-wrap:anywhere}.node-exit-history{border-top:1px solid var(--line);padding-top:8px}
 </style>

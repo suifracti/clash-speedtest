@@ -202,7 +202,7 @@ func ippureWebClient(client *http.Client, state *ippureNonceState, signing bool)
 	return &clone
 }
 
-func checkIPPureWeb(ctx context.Context, client *http.Client, _ Rule, started time.Time) Result {
+func checkIPPureWeb(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
 	result := Result{Details: map[string]string{
 		"provider": "IPPure", "api_method": "ippure_web_basic_risk_v1", "api_version": "web_v1",
 	}}
@@ -245,6 +245,9 @@ func checkIPPureWeb(ctx context.Context, client *http.Client, _ Rule, started ti
 		return finish(result, started)
 	}
 	if !basicOK {
+		if rule.RuleVersion >= 4 && basicResult.Outcome == "challenge" && ippureStatusCode(basicResult) == http.StatusForbidden {
+			return ippureOfficialFallback(ctx, client, rule, result, basicResult, freshIP, started)
+		}
 		ippureCarryFailure(&result, basicResult)
 		return finish(result, started)
 	}
@@ -610,4 +613,65 @@ func ippureStatusCode(result Result) int {
 		return 0
 	}
 	return *result.HTTPStatus
+}
+
+// The documented self-IP API is a separate provider endpoint, not a replay of
+// the browser challenge. It gets one request within the same attempt deadline.
+type ippureOfficialTransport struct{ base http.RoundTripper }
+
+func (t *ippureOfficialTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	clone.Header = req.Header.Clone()
+	clone.Header.Set("User-Agent", "Clash-SpeedTest-Pro/1.0 (IPPure public API client)")
+	return t.base.RoundTrip(clone)
+}
+func (t *ippureOfficialTransport) CloseIdleConnections() {
+	if c, ok := t.base.(interface{ CloseIdleConnections() }); ok {
+		c.CloseIdleConnections()
+	}
+}
+func ippureOfficialFallback(ctx context.Context, client *http.Client, rule Rule, result Result, failed Result, freshIP string, started time.Time) Result {
+	result.Details["web_basic_outcome"] = failed.Outcome
+	result.Details["web_basic_http_status"] = strconv.Itoa(ippureStatusCode(failed))
+	result.Details["api_method"] = "ippure_official_self_api_fallback_v1"
+	result.Details["api_version"] = "public_v1"
+	result.Details["official_endpoint"] = "https://my.ippure.com/v1/info"
+	result.Details["query_at"] = started.UTC().Format(time.RFC3339Nano)
+	officialClient := ippureWebClient(client, nil, false)
+	base := officialClient.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	officialClient.Transport = &ippureOfficialTransport{base: base}
+	rule.RuleVersion = 2
+	rule.TargetURL = "https://my.ippure.com/v1/info"
+	rule.MaximumBodyBytes = 8 * 1024
+	part := checkIPPure(ctx, officialClient, rule, started)
+	details := part.Details
+	part.Details = nil
+	ippureAccumulate(&result, part)
+	if part.Outcome != "profiled" {
+		ippureCarryFailure(&result, part)
+		return finish(result, started)
+	}
+	if !ippureSameIPv4(details["ip"], freshIP) {
+		ippureUnknown(&result, "official_ip_mismatch", "IPPure 官方接口未返回本次相同的 IPv4 出口，未借用其它地址的评分")
+		return finish(result, started)
+	}
+	score, err := strconv.Atoi(details["fraud_score"])
+	if err != nil || score < 0 || score > 100 {
+		ippureUnknown(&result, "official_risk_score", "IPPure 官方接口未返回有效的 0–100 风险分")
+		return finish(result, started)
+	}
+	for key, value := range details {
+		result.Details[key] = value
+	}
+	result.Details["ip_family"] = "IPv4"
+	result.Details["risk_scale_max"] = "100"
+	result.Details["risk_direction"] = "lower_is_better"
+	result.Outcome = "profiled"
+	result.Summary = fmt.Sprintf("IPPure风险 %d/100，越低越好", score)
+	result.ErrorMessage = ""
+	result.FailurePhase = ""
+	return finish(result, started)
 }

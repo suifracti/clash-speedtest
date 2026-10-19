@@ -495,11 +495,11 @@ func TestCheckerMultiSampleDriftAndFlappingDetection(t *testing.T) {
 
 func TestRestoreIPPureAsOnDemandIPv4Rule(t *testing.T) {
 	rule, ok := RuleFor("ippure_ip_quality")
-	if !ok || rule.RuleVersion != 3 || rule.BatchDefault || rule.Name != "IPPure IPv4风险画像" {
-		t.Fatalf("IPPure rule = %+v, want restored v3 on-demand IPv4 rule", rule)
+	if !ok || rule.RuleVersion != 4 || rule.BatchDefault || rule.Name != "IPPure IPv4风险画像" {
+		t.Fatalf("IPPure rule = %+v, want restored v4 on-demand IPv4 rule", rule)
 	}
 	for _, rule := range Catalog() {
-		if rule.ServiceID == "ippure_ip_quality" && rule.RuleVersion == 3 {
+		if rule.ServiceID == "ippure_ip_quality" && rule.RuleVersion == 4 {
 			return
 		}
 	}

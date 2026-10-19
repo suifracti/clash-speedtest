@@ -3,6 +3,7 @@ import {expect,it,vi} from 'vitest'
 import SiteMetrics from './SiteMetrics.vue'
 import {multiSiteQuality,type QualityEvidence} from '../nodeQuality'
 import {targets,type NodeScope,type LatencyTest} from '../domain'
+vi.mock('./Modal.vue',()=>({default:{template:'<div class="modal-stub"><slot/></div>'}}))
 vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}})
 const node:NodeScope={profile_id:'p',node_key:'n',node_identity_key:'identity',config_revision_key:'rev'}
 const at='2026-10-18T08:00:00Z',url=targets[0].urls[0]

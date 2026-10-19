@@ -28,7 +28,7 @@ func ippureChecker(run roundTripFunc) Checker {
 }
 
 func historicalIPPureFixtureRule() Rule {
-	rule, _ := RuleFor("ippure_ip_quality")
+	rule, _ := historicalIPPureWebRule()
 	rule.RuleVersion = 2
 	rule.TargetURL = "https://my.ippure.com/v1/info"
 	rule.MaximumBodyBytes = 8 * 1024
@@ -61,7 +61,7 @@ func ippureSignedTimestamp(t *testing.T, request *http.Request, key, target stri
 }
 
 func TestIPPureWebUsesBoundedNonceHandshakeAndKeepsZeroRisk(t *testing.T) {
-	rule, ok := RuleFor("ippure_ip_quality")
+	rule, ok := historicalIPPureWebRule()
 	if !ok {
 		t.Fatal("missing IPPure rule")
 	}
@@ -162,7 +162,7 @@ func TestIPPureWebRequiresMatchingIPv4AndExplicitRiskScore(t *testing.T) {
 		{name: "out of range risk score", ipify: ippureFixtureIP, basicData: `{"ip":"8.8.8.8"}`, riskBody: `{"ok":true,"data":{"risk_score":101}}`, wantCalls: 3},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			rule, _ := RuleFor("ippure_ip_quality")
+			rule, _ := historicalIPPureWebRule()
 			var calls int
 			checker := ippureChecker(func(request *http.Request) (*http.Response, error) {
 				calls++
@@ -199,7 +199,7 @@ func TestIPPureWebRequiresMatchingIPv4AndExplicitRiskScore(t *testing.T) {
 }
 
 func TestIPPureWebStopsOnHTTPRejectionAndRepeatedNonce(t *testing.T) {
-	rule, _ := RuleFor("ippure_ip_quality")
+	rule, _ := historicalIPPureWebRule()
 	t.Run("403 without nonce", func(t *testing.T) {
 		var calls int
 		checker := ippureChecker(func(request *http.Request) (*http.Response, error) {
@@ -299,7 +299,7 @@ func TestIPPureWebStopsOnHTTPRejectionAndRepeatedNonce(t *testing.T) {
 }
 
 func TestIPPureWebStopsAfterIPifyFailure(t *testing.T) {
-	rule, _ := RuleFor("ippure_ip_quality")
+	rule, _ := historicalIPPureWebRule()
 	var calls int
 	checker := ippureChecker(func(request *http.Request) (*http.Response, error) {
 		calls++
@@ -318,7 +318,7 @@ func TestIPPureWebStopsAfterIPifyFailure(t *testing.T) {
 }
 
 func TestIPPureWebInvalidNonceClockDoesNotReplay(t *testing.T) {
-	rule, _ := RuleFor("ippure_ip_quality")
+	rule, _ := historicalIPPureWebRule()
 	var calls int
 	checker := ippureChecker(func(request *http.Request) (*http.Response, error) {
 		calls++
@@ -341,7 +341,7 @@ func TestIPPureWebInvalidNonceClockDoesNotReplay(t *testing.T) {
 }
 
 func TestIPPureWebHonorsCancellation(t *testing.T) {
-	rule, _ := RuleFor("ippure_ip_quality")
+	rule, _ := historicalIPPureWebRule()
 	started := make(chan struct{})
 	var calls int
 	checker := ippureChecker(func(request *http.Request) (*http.Response, error) {
@@ -361,10 +361,16 @@ func TestIPPureWebHonorsCancellation(t *testing.T) {
 	}
 }
 
+func historicalIPPureWebRule() (Rule, bool) {
+	rule, ok := RuleFor("ippure_ip_quality")
+	rule.RuleVersion = 3
+	return rule, ok
+}
+
 func TestIPPureRuleIsRestoredForManualUseOnly(t *testing.T) {
 	rule, ok := RuleFor("ippure_ip_quality")
-	if !ok || rule.RuleVersion != 3 || rule.BatchDefault || rule.Name != "IPPure IPv4风险画像" {
-		t.Fatalf("IPPure rule metadata = %+v, want v3, on-demand, and IPv4 risk profile", rule)
+	if !ok || rule.RuleVersion != 4 || rule.BatchDefault || rule.Name != "IPPure IPv4风险画像" {
+		t.Fatalf("IPPure rule metadata = %+v, want v4, on-demand, and IPv4 risk profile", rule)
 	}
 	for _, listed := range Catalog() {
 		if listed.ServiceID == rule.ServiceID {
@@ -372,4 +378,47 @@ func TestIPPureRuleIsRestoredForManualUseOnly(t *testing.T) {
 		}
 	}
 	t.Fatal("IPPure rule is missing from the restored catalog")
+}
+
+func TestIPPureOfficialFallbackAfterBasicChallenge(t *testing.T) {
+	for _, tc := range []struct{ name, body, outcome string }{
+		{"matching IPv4 and zero", `{"ip":"8.8.8.8","fraudScore":0,"country":"United States","asn":15169}`, "profiled"},
+		{"different IPv4", `{"ip":"1.1.1.1","fraudScore":20}`, "unknown"},
+		{"IPv6 cannot supply IPv4 risk", `{"ip":"2606:4700::1111","fraudScore":20}`, "unknown"},
+		{"missing score", `{"ip":"8.8.8.8"}`, "unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			checker := ippureChecker(func(req *http.Request) (*http.Response, error) {
+				calls++
+				if calls == 1 {
+					return ippureJSONResponse(req, 200, `{"ip":"8.8.8.8"}`), nil
+				}
+				if calls == 2 {
+					r := ippureJSONResponse(req, 403, `{"ok":false}`)
+					r.Header.Set("cf-mitigated", "challenge")
+					return r, nil
+				}
+				if calls != 3 || req.URL.String() != "https://my.ippure.com/v1/info" {
+					t.Fatalf("unexpected request %d: %s", calls, req.URL)
+				}
+				if !strings.HasPrefix(req.Header.Get("User-Agent"), "Clash-SpeedTest-Pro/") {
+					t.Fatal("official fallback must identify the app")
+				}
+				return ippureJSONResponse(req, 200, tc.body), nil
+			})
+			rule, _ := RuleFor("ippure_ip_quality")
+			rule.RuleVersion = 4
+			r := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
+			if r.Outcome != tc.outcome || calls != 3 || r.RequestCount != 3 {
+				t.Fatalf("outcome=%s calls=%d result=%+v", r.Outcome, calls, r)
+			}
+			if r.Details["web_basic_outcome"] != "challenge" {
+				t.Fatal("lost original challenge evidence")
+			}
+			if tc.outcome == "profiled" && (r.Details["fraud_score"] != "0" || r.Details["risk_scale_max"] != "100") {
+				t.Fatalf("zero score lost: %+v", r.Details)
+			}
+		})
+	}
 }

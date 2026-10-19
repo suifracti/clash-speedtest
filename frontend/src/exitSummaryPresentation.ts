@@ -76,7 +76,7 @@ export function reputationRows(records:ExitRecord[]):ReputationRow[] {
 }
 export function riskScore(r?:ExitRecord):number|undefined {
  if(!r?.confirmed)return undefined
- const scale=r.serviceId==='ping0_ip_quality'||r.serviceId==='ippure_ip_quality'&&exitField(r.attempt,'risk_scale_max')==='100'&&exitField(r.attempt,'risk_direction')==='lower_is_better'
+ const scale=['ping0_ip_quality','ipok_ipv4','ipok_ipv6'].includes(r.serviceId)||r.serviceId==='ippure_ip_quality'&&exitField(r.attempt,'risk_scale_max')==='100'&&exitField(r.attempt,'risk_direction')==='lower_is_better'
  if(!scale||!/^\d+(?:\.\d+)?$/.test(r.risk))return undefined
  const n=Number(r.risk);return Number.isFinite(n)&&n>=0&&n<=100?n:undefined
 }
