@@ -16,129 +16,8 @@
   margin-bottom: 15px;
 }
 
-.airports-view .airport-cards {
-  gap: 15px;
-}
-
-.airports-view .airport-ledger-card {
-  border-top: 2px solid var(--secondary-signal);
-  box-shadow: 0 8px 28px color-mix(in srgb, var(--ink) 4%, transparent);
-}
-
-.airports-view .airport-ledger-card > header {
-  padding-bottom: 15px;
-  border-bottom: 1px solid var(--line);
-}
-
-.airports-view .airport-title .airport-logo {
-  background: var(--secondary-signal-soft);
-  color: var(--secondary-signal);
-}
-
-.airports-view .subscription-ledger-heading {
-  display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 13px;
-  margin-top: 13px;
-  padding: 0 0 7px;
-  color: var(--muted);
-  font-size: 11px;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
-
-.airports-view .subscription-ledger-heading span:last-child {
-  text-align: right;
-}
-
-.airports-view .subscription-row {
-  display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 13px;
-  margin: 0;
-  padding: 14px 0;
-  border-top: 1px solid var(--line);
-}
-
-.airports-view .subscription-index {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  border: 1px solid color-mix(in srgb, var(--secondary-signal) 24%, var(--line));
-  border-radius: 50%;
-  color: var(--secondary-signal);
-  background: var(--secondary-signal-soft);
-  font: 11px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-variant-numeric: tabular-nums;
-}
-
-.airports-view .subscription-info {
-  display: grid;
-  gap: 7px;
-  min-width: 0;
-}
-
-.airports-view .subscription-title-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  flex-wrap: wrap;
-}
-
-.airports-view .subscription-title-row > strong {
-  font-size: 13px;
-}
-
-.airports-view .subscription-title-row > small {
-  margin-left: auto;
-  color: var(--muted);
-  white-space: nowrap;
-}
-
-.airports-view .subscription-info code {
-  display: block;
-  max-width: 100%;
-  padding: 5px 8px;
-  overflow-wrap: anywhere;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  color: var(--muted);
-  background: var(--surface-soft);
-  font-size: 11px;
-}
-
-.airports-view .usage-info {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 6px 12px;
-  max-width: none;
-  font-variant-numeric: tabular-nums;
-}
-
-.airports-view .usage-info .usage-track {
-  grid-column: 1 / -1;
-  height: 4px;
-  overflow: hidden;
-  border-radius: 5px;
-  background: var(--gray);
-}
-
-.airports-view .usage-info .usage-track i {
-  height: 100%;
-  border-radius: inherit;
-  background: var(--secondary-signal);
-}
-
 .airports-view .subscription-actions {
   justify-content: flex-end;
-}
-
-.airports-view .airport-ledger-card > footer {
-  padding-top: 13px;
 }
 
 /* History samples are individual records with their source and result together. */
@@ -370,12 +249,6 @@
 .monitor-view .monitor-cards-heading h2 {
   margin-top: 3px;
   font-size: 17px;
-}
-
-.monitor-view .monitor-kicker {
-  color: var(--muted);
-  font: 11px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
-  letter-spacing: .08em;
 }
 
 .monitor-view .monitor-task-count {
@@ -643,9 +516,6 @@
 }
 
 @media (max-width: 800px) {
-  .airports-view .subscription-title-row > small {
-    margin-left: 0;
-  }
 
   .monitor-view .monitor-resource-ledger {
     grid-template-columns: minmax(0, 1fr);
@@ -661,20 +531,6 @@
 }
 
 @media (max-width: 600px) {
-  .airports-view .subscription-ledger-heading {
-    display: none;
-  }
-
-  .airports-view .subscription-row {
-    grid-template-columns: 30px minmax(0, 1fr);
-    align-items: start;
-    gap: 8px;
-  }
-
-  .airports-view .subscription-index {
-    width: 25px;
-    height: 25px;
-  }
 
   .airports-view .subscription-actions {
     grid-column: 2;

@@ -1,7 +1,6 @@
 /* CST instrument surface: measured activity only. */
 :root{--canvas:#eef2f8;--surface:#fbfcff;--surface-soft:#f3f6fc;--ink:#23334e;--muted:#667993;--line:#dce4f1;--blue:#555fe2;--blue-hover:#444dc9;--blue-soft:#eceeff;--signal:#14949c;--shadow:0 16px 48px #182c4b18}
-:root[data-theme=dark]{--canvas:#0e1725;--surface:#152235;--surface-soft:#1a2a40;--ink:#e1eaf8;--muted:#9aadc7;--line:#2a3e57;--blue:#a0a8ff;--blue-hover:#b7bdff;--blue-soft:#2b3356;--signal:#64d4d8;--shadow:0 16px 48px #0005}
-.observatory-app .brand strong{letter-spacing:-1px;font-size:23px}.brand-period{color:var(--blue)}
+:root[data-theme=dark]{--canvas:#0e1725;--surface:#152235;--surface-soft:#1a2a40;--ink:#e1eaf8;--muted:#9aadc7;--line:#2a3e57;--blue:#a0a8ff;--blue-hover:#b7bdff;--blue-soft:#2b3356;--signal:#64d4d8;--shadow:0 16px 48px #0005}.brand-period{color:var(--blue)}
 .observatory-app h1{letter-spacing:-.5px}
 .observatory-app .settings-section{box-shadow:none;border-radius:8px}
 .node-exit-summary{display:block;width:100%;border:0;background:none;color:var(--muted);text-align:left;padding:4px 0 0 44px;font-size:11px;line-height:1.5}
