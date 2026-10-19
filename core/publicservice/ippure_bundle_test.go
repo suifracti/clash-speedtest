@@ -20,7 +20,7 @@ import (
 
 func TestIPPureBundleGroupsThreeIndependentMetrics(t *testing.T) {
 	counts := map[string]int{}
-	payload := []byte{0xff, 0xfe, 0, 1, 2}
+	payload := []byte{0xff, 0xfe, 0, 0xe2, 0x82, 0, 1}
 	key := "ephemeral-bundle-key"
 	checker := ippureChecker(func(req *http.Request) (*http.Response, error) {
 		path := req.URL.Path
@@ -68,7 +68,7 @@ func TestIPPureBundleGroupsThreeIndependentMetrics(t *testing.T) {
 			}
 			ts := strings.SplitN(xt, "-", 2)[0]
 			mac := hmac.New(sha256.New, []byte(key))
-			mac.Write([]byte("POST-" + req.URL.String() + "-" + string([]rune(string(payload))) + "-" + ts))
+			mac.Write([]byte("POST-" + req.URL.String() + "-" + "\ufffd\ufffd\x00\ufffd\x00\x01" + "-" + ts))
 			if xt != ts+"-"+hex.EncodeToString(mac.Sum(nil)) {
 				t.Fatal("gateway signature not using original browser UTF-8 payload")
 			}

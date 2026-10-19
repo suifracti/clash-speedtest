@@ -175,7 +175,7 @@ func (t *ippureNonceTransport) RoundTrip(request *http.Request) (*http.Response,
 				return nil, fmt.Errorf("IPPure API request body unavailable or too large")
 			}
 		}
-		_, _ = io.WriteString(mac, request.Method+"-"+request.URL.String()+"-"+string([]rune(string(payload)))+"-"+timestamp)
+		_, _ = io.WriteString(mac, request.Method+"-"+request.URL.String()+"-"+ippureBodyText(payload)+"-"+timestamp)
 		transportRequest.Header.Set("x-k", string(key))
 		xT := timestamp + "-" + hex.EncodeToString(mac.Sum(nil))
 		transportRequest.Header.Set("x-t", xT)

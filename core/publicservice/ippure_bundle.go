@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/text/encoding/unicode"
 	"io"
 	"math"
 	"net"
@@ -40,6 +41,13 @@ func (t ippureOriginTransport) CloseIdleConnections() {
 
 // Match the site's normal signed API request: SHA256(x-t) AES-CBC key,
 // random IV followed by PKCS7-padded ciphertext. No browser cookies are copied.
+// Request.text() uses the web UTF-8 decoder: malformed sequences collapse by
+// maximal subpart, and a leading BOM is removed. Go rune conversion differs.
+func ippureBodyText(raw []byte) string {
+	text, _ := unicode.UTF8BOM.NewDecoder().String(string(raw))
+	return text
+}
+
 func ippureEncryptedBody(request *http.Request, raw []byte, xt string) error {
 	key := sha256.Sum256([]byte(xt))
 	block, err := aes.NewCipher(key[:])
