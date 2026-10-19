@@ -106,3 +106,11 @@ it('keeps address-only records accessible without the two compact address lines'
  await wrapper.get('.node-exit-compact').trigger('click')
  expect(wrapper.get('.modal-stub').text()).toContain('198.51.100.90');wrapper.unmount()
 })
+
+it('shows the saved TLS failure stage without turning it into a missing IP score',async()=>{
+ const ping=attempt('ping0_ip_quality','2026-10-19T06:59:52Z','transport_error',{tls_handshake_failures:'1',http_requests_written:'0',tls_handshake_error:'对端或节点代理过早关闭连接 (EOF)'},undefined,'节点代理或 HTTP 传输失败: EOF')
+ const wrapper=mount(NodeExitSummary,{props:{compact:true,attempts:[ping]},global:{stubs:{Modal:modalStub}}})
+ expect(wrapper.get('.node-exit-provider-status').text()).toBe('TLS 连接失败')
+ await wrapper.get('.node-exit-provider').trigger('click')
+ expect(wrapper.get('.modal-stub').text()).toContain('TLS 握手失败：对端或节点代理过早关闭连接 (EOF)');wrapper.unmount()
+})

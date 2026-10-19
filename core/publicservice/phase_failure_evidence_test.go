@@ -31,7 +31,7 @@ func TestPhaseEvidenceSeparatesTLSFailureFromSuccess(t *testing.T) {
 		if response != nil {
 			response.Body.Close()
 		}
-		result := Result{}
+		result := Result{Outcome: "transport_error", FailurePhase: "transport"}
 		phases.attach(&result)
 		wantFailures, wantWritten := "0", "1"
 		if failed {
@@ -39,6 +39,9 @@ func TestPhaseEvidenceSeparatesTLSFailureFromSuccess(t *testing.T) {
 		}
 		if result.Details["tls_handshake_attempts"] != "1" || result.Details["tls_handshake_failures"] != wantFailures || result.Details["http_requests_written"] != wantWritten {
 			t.Fatalf("TLS success/failure evidence missing: %+v", result.Details)
+		}
+		if failed && (result.FailurePhase != "tls_handshake" || !strings.Contains(result.ErrorMessage, "TLS 握手失败")) {
+			t.Fatalf("TLS failure still generic: %+v", result)
 		}
 		if failed && (result.Details["tls_handshake_error"] == "" || strings.Contains(result.Details["tls_handshake_error"], "private-value")) {
 			t.Fatalf("TLS error missing or unsafe: %+v", result.Details)

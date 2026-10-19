@@ -19,11 +19,13 @@ export function exitFamily(a:Attempt,id:string,ip:string):string {
  return '地址族未返回'
 }
 export function exitIdentity(a:Attempt){return JSON.stringify([a.profile_id,a.node_identity_key||a.node_key,a.config_revision_key])}
+function savedTLSFailure(a:Attempt){return a.result?.outcome==='transport_error'&&Number(exitField(a,'tls_handshake_failures'))>0&&exitField(a,'http_requests_written')==='0'}
 function failureStatus(a:Attempt):string {
  const out=a.result?.outcome||''
  // Keep persisted backend conclusions intact. HTTP 429 is not a challenge score.
  if(['rate_limited','source_rate_limited'].includes(out)||a.result?.http_status===429)return '目标限流'
  if(['challenge','suspected_challenge'].includes(out)||/challenge|captcha|验证页|验证挑战/i.test([a.result?.summary,a.result?.error_message].join(' ')))return '验证页拦截，未取得风险结果'
+ if(savedTLSFailure(a))return 'TLS 握手失败：'+(exitField(a,'tls_handshake_error')||'连接被中断，未发出 HTTP 请求')
  const raw=(a.result?.error_message||a.result?.summary||'未取得结果').replace(/\s+/g,' ').trim()
  return '查询未完成：'+(raw.length>120?raw.slice(0,117)+'…':raw)
 }
@@ -38,6 +40,7 @@ export function compactExitStatus(r?:ExitRecord):string {
  if(['queued','running','cancelling','saving'].includes(r.attempt.execution_state))return ({queued:'排队中',running:'查询中',cancelling:'正在取消',saving:'保存中'} as Record<string,string>)[r.attempt.execution_state]
  if(/cancel|interrupt/.test(out+r.attempt.execution_state))return '已取消或中断'
  if(out==='timed_out'||/timeout|deadline|超时/i.test(r.attempt.result?.error_message||''))return '查询超时'
+ if(savedTLSFailure(r.attempt))return 'TLS 连接失败'
  return out==='http_rejected'?'HTTP 拒绝':'未取得结果'
 }
 export function toExitRecord(a:Attempt,observedAt:string):ExitRecord {

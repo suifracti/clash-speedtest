@@ -197,6 +197,12 @@ func (p *requestPhases) attach(result *Result) {
 	if result.Details == nil {
 		result.Details = map[string]string{}
 	}
+	// A recorded failed handshake before any HTTP write identifies the stage,
+	// even when net/http reports the outer error as a generic EOF.
+	if result.Outcome == "transport_error" && p.written == 0 && p.tlsFailures > 0 && p.tlsPending == 0 {
+		result.FailurePhase = "tls_handshake"
+		result.ErrorMessage = "TLS 握手失败：" + p.tlsError
+	}
 	result.RequestCount = p.requests
 	result.Details["request_count_kind"] = "http_transport_attempts_including_pre_header_failure"
 	result.Details["http_requests_written"] = strconv.Itoa(p.written)

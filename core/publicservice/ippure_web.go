@@ -292,6 +292,13 @@ func checkIPPureWeb(ctx context.Context, client *http.Client, rule Rule, started
 		}
 	}
 	if status := ippureStatusCode(basicResult); status != http.StatusOK {
+		// An ordinary 403 need not carry Cloudflare's challenge header. The
+		// official public API remains a separate, bounded lookup on this node.
+		// Keep frozen v4 plans unchanged and do not retry nonce/signature errors.
+		if rule.RuleVersion >= 5 && status == http.StatusForbidden && !hasNonce {
+			ippureHTTPRejected(&basicResult)
+			return ippureOfficialFallback(ctx, client, rule, result, basicResult, freshIP, started)
+		}
 		ippureCarryFailure(&result, basicResult)
 		ippureHTTPRejected(&result)
 		return finish(result, started)

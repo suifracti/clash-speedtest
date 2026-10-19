@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -369,8 +370,8 @@ func historicalIPPureWebRule() (Rule, bool) {
 
 func TestIPPureRuleIsRestoredForManualUseOnly(t *testing.T) {
 	rule, ok := RuleFor("ippure_ip_quality")
-	if !ok || rule.RuleVersion != 4 || rule.BatchDefault || rule.Name != "IPPure IPv4风险画像" {
-		t.Fatalf("IPPure rule metadata = %+v, want v4, on-demand, and IPv4 risk profile", rule)
+	if !ok || rule.RuleVersion != 5 || rule.BatchDefault || rule.Name != "IPPure IPv4风险画像" {
+		t.Fatalf("IPPure rule metadata = %+v, want v5, on-demand, and IPv4 risk profile", rule)
 	}
 	for _, listed := range Catalog() {
 		if listed.ServiceID == rule.ServiceID {
@@ -420,5 +421,44 @@ func TestIPPureOfficialFallbackAfterBasicChallenge(t *testing.T) {
 				t.Fatalf("zero score lost: %+v", r.Details)
 			}
 		})
+	}
+}
+
+func TestIPPureUnmarkedForbiddenUsesOfficialAPIOnlyForNewRule(t *testing.T) {
+	for _, version := range []int{4, 5} {
+		for _, contentType := range []string{"text/html", "application/json"} {
+			t.Run(fmt.Sprintf("v%d_%s", version, contentType), func(t *testing.T) {
+				calls := 0
+				checker := ippureChecker(func(req *http.Request) (*http.Response, error) {
+					calls++
+					switch calls {
+					case 1:
+						return ippureJSONResponse(req, 200, `{"ip":"8.8.8.8"}`), nil
+					case 2:
+						return fixtureResponse(req, 403, contentType, `{"error":"forbidden"}`), nil
+					case 3:
+						if req.URL.String() != "https://my.ippure.com/v1/info" {
+							t.Fatalf("unexpected fallback %s", req.URL)
+						}
+						return ippureJSONResponse(req, 200, `{"ip":"8.8.8.8","fraudScore":61}`), nil
+					default:
+						t.Fatal("unexpected extra request")
+						return nil, nil
+					}
+				})
+				rule, _ := RuleFor("ippure_ip_quality")
+				rule.RuleVersion = version
+				result := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
+				if version == 4 {
+					if result.Outcome != "http_rejected" || calls != 2 {
+						t.Fatalf("old rule changed: %+v calls=%d", result, calls)
+					}
+					return
+				}
+				if result.Outcome != "profiled" || calls != 3 || result.RequestCount != 3 || result.Details["fraud_score"] != "61" || result.Details["web_basic_http_status"] != "403" || result.Details["web_basic_outcome"] != "http_rejected" {
+					t.Fatalf("missing plain 403 fallback: %+v calls=%d", result, calls)
+				}
+			})
+		}
 	}
 }
