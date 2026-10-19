@@ -43,17 +43,17 @@ beforeEach(()=>{
 })
 afterEach(()=>{wrapper?.unmount();wrapper=undefined;w.dispose();document.body.innerHTML=''})
 
-it('opens standalone IP reputation with available defaults and leaves ordinary plan defaults alone',()=>{
+it('defaults to every available IP reputation rule without changing normal service selection',()=>{
  w.project.value='service';w.catalog.value=rules.filter(item=>item.service_id!=='exit_ipv6');w.serviceIds.value=['cloudflare_204','exit_ipv4','ippure_ip_quality']
  w.openPlan([node])
  expect(w.plan.value?.projects).toEqual(['service'])
  expect(w.plan.value?.serviceIds).toEqual(['cloudflare_204'])
- expect(w.plan.value?.includeReputation).toBe(false)
- expect(w.plan.value?.reputationServiceIds).toEqual([])
+ expect(w.plan.value?.includeReputation).toBe(true)
+ expect(w.plan.value?.reputationServiceIds).toEqual(['exit_ipv4','ping0_ip_quality','ippure_ip_quality','ipok_optional','quality_optional'])
  w.openReputationPlan([node])
  expect(w.plan.value?.projects).toEqual([])
  expect(w.plan.value?.includeReputation).toBe(true)
- expect(w.plan.value?.reputationServiceIds).toEqual(['exit_ipv4','ping0_ip_quality','ippure_ip_quality'])
+ expect(w.plan.value?.reputationServiceIds).toEqual(['exit_ipv4','ping0_ip_quality','ippure_ip_quality','ipok_optional','quality_optional'])
  expect(w.plan.value?.serviceIds).toEqual(['cloudflare_204'])
  expect(w.serviceIds.value).toEqual(['cloudflare_204'])
 })
@@ -63,6 +63,9 @@ it('keeps the IP reputation checkbox and its filtered picker independent from no
  wrapper=mount(TestPlanModal,{global:{provide:{[workspaceKey as symbol]:w},stubs:{Modal:modalStub}}})
  const reputationToggle=wrapper.findAll('.plan-projects label').find(label=>label.text().includes('IP信誉/纯净度'))
  expect(reputationToggle).toBeDefined()
+ expect((reputationToggle!.find('input').element as HTMLInputElement).checked).toBe(true)
+ await reputationToggle!.find('input').setValue(false)
+ expect(w.plan.value?.includeReputation).toBe(false)
  await reputationToggle!.find('input').setValue(true)
  const pickers=wrapper.findAll('.service-picker')
  expect(pickers).toHaveLength(2)
@@ -70,6 +73,8 @@ it('keeps the IP reputation checkbox and its filtered picker independent from no
  const reputationNames=pickers[1].findAll('.service-picker-list strong').map(item=>item.text())
  expect(regularNames).toEqual(['Cloudflare 204','Netflix','Antigravity'])
  expect(reputationNames).toEqual(['IPv4 出口','IPv6 出口','Ping0','IPPure','IPOK optional','Quality optional'])
+ expect(pickers[1].findAll('.service-picker-list input').every(input=>(input.element as HTMLInputElement).checked)).toBe(true)
+ for(const input of pickers[1].findAll('.service-picker-list input'))await input.setValue(false)
  const ping0=pickers[1].findAll('.service-picker-list label').find(label=>label.text().includes('Ping0'))!
  await ping0.find('input').setValue(true)
  expect(w.plan.value?.reputationServiceIds).toEqual(['ping0_ip_quality'])
