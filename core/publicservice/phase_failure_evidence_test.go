@@ -61,8 +61,12 @@ func TestPhaseEvidenceRecordsProxyDialFailureWithoutNetwork(t *testing.T) {
 		t.Fatal("expected fixture dial failure")
 	}
 	result := Result{}
+	classifyRequestError(&result, context.Background(), err)
 	phases.attach(&result)
 	d := result.Details
+	if result.FailurePhase != "proxy_connect" || d["request_failure_phase"] != "proxy_connect" || strings.Contains(result.ErrorMessage, "private-value") {
+		t.Fatalf("proxy failure stage lost or unsafe: %+v", result)
+	}
 	if d["proxy_connect_attempts"] != "1" || d["proxy_connect_failures"] != "1" || d["proxy_connect_error"] == "" || strings.Contains(d["proxy_connect_error"], "private-value") || d["tls_handshake_attempts"] != "" || d["http_requests_written"] != "0" {
 		t.Fatalf("dial failure evidence missing, unsafe or invented: %+v", d)
 	}

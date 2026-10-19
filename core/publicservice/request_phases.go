@@ -14,6 +14,27 @@ import (
 	"time"
 )
 
+// Keep the failed request's stage with its error. Aggregate telemetry cannot
+// identify which request failed in a composite or concurrent service check.
+type serviceRequestError struct {
+	phase string
+	err   error
+}
+
+func (e *serviceRequestError) Error() string { return e.err.Error() }
+func (e *serviceRequestError) Unwrap() error { return e.err }
+
+func atRequestPhase(err error, phase string) error {
+	if err == nil || phase == "" {
+		return err
+	}
+	var existing *serviceRequestError
+	if errors.As(err, &existing) {
+		return err
+	}
+	return &serviceRequestError{phase: phase, err: err}
+}
+
 // requestPhases records only timings that the HTTP client can actually see.
 // The proxy adapter can perform DNS and TCP work internally, so proxy dial is
 // deliberately not called a TCP handshake or a DNS lookup.
@@ -72,7 +93,7 @@ func (p *requestPhases) wrap(original http.RoundTripper, proxyDial bool) http.Ro
 					p.dialError = sanitizeTransportError(err)
 				}
 				p.mu.Unlock()
-				return conn, err
+				return conn, atRequestPhase(err, "proxy_connect")
 			}
 		}
 		original = clone
@@ -108,6 +129,7 @@ func (t phaseTransport) RoundTrip(request *http.Request) (*http.Response, error)
 	t.phases.requests++
 	t.phases.mu.Unlock()
 	var dnsStart, tlsStart time.Time
+	var tlsFailed, wroteRequest, writeFailed bool
 	var startMu sync.Mutex
 	trace := &httptrace.ClientTrace{
 		GotConn: func(info httptrace.GotConnInfo) {
@@ -134,6 +156,7 @@ func (t phaseTransport) RoundTrip(request *http.Request) (*http.Response, error)
 		TLSHandshakeStart: func() {
 			startMu.Lock()
 			tlsStart = time.Now()
+			tlsFailed, wroteRequest, writeFailed = false, false, false
 			startMu.Unlock()
 			t.phases.mu.Lock()
 			t.phases.tlsCount++
@@ -144,6 +167,7 @@ func (t phaseTransport) RoundTrip(request *http.Request) (*http.Response, error)
 			startMu.Lock()
 			start := tlsStart
 			tlsStart = time.Time{}
+			tlsFailed = err != nil
 			startMu.Unlock()
 			if start.IsZero() {
 				return
@@ -158,6 +182,9 @@ func (t phaseTransport) RoundTrip(request *http.Request) (*http.Response, error)
 			t.phases.mu.Unlock()
 		},
 		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			startMu.Lock()
+			wroteRequest, writeFailed = info.Err == nil, info.Err != nil
+			startMu.Unlock()
 			if info.Err == nil {
 				t.phases.mu.Lock()
 				t.phases.written++
@@ -172,6 +199,20 @@ func (t phaseTransport) RoundTrip(request *http.Request) (*http.Response, error)
 		},
 	}
 	response, err := base.RoundTrip(request.WithContext(httptrace.WithClientTrace(request.Context(), trace)))
+	if err != nil {
+		startMu.Lock()
+		phase := ""
+		switch {
+		case !tlsStart.IsZero() || tlsFailed:
+			phase = "tls_handshake"
+		case writeFailed:
+			phase = "request_write"
+		case wroteRequest:
+			phase = "response_headers"
+		}
+		startMu.Unlock()
+		err = atRequestPhase(err, phase)
+	}
 	t.phases.mu.Lock()
 	var physical *speedtester.PhysicalPathError
 	if errors.As(err, &physical) {
@@ -199,7 +240,7 @@ func (p *requestPhases) attach(result *Result) {
 	}
 	// A recorded failed handshake before any HTTP write identifies the stage,
 	// even when net/http reports the outer error as a generic EOF.
-	if result.Outcome == "transport_error" && p.written == 0 && p.tlsFailures > 0 && p.tlsPending == 0 {
+	if result.Outcome == "transport_error" && result.Details["request_failure_phase"] == "" && p.requests == 1 && p.written == 0 && p.tlsFailures > 0 && p.tlsPending == 0 {
 		result.FailurePhase = "tls_handshake"
 		result.ErrorMessage = "TLS 握手失败：" + p.tlsError
 	}
@@ -274,6 +315,9 @@ func (b timedServiceBody) Read(buffer []byte) (int, error) {
 		b.phases.mu.Lock()
 		b.phases.body += time.Since(start)
 		b.phases.mu.Unlock()
+	}
+	if err != nil && err != io.EOF {
+		err = atRequestPhase(err, "response_read")
 	}
 	return n, err
 }

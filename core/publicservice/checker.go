@@ -513,6 +513,11 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
 	phases := &requestPhases{}
 	client.Transport = phases.wrap(client.Transport, c.ClientFactory == nil)
+	if c.ClientFactory == nil {
+		// Telemetry owns a cloned transport; close its pool as well as the
+		// original physical client/proxy, especially after cancellation.
+		defer client.CloseIdleConnections()
+	}
 	defer phases.attach(&final)
 	if host := selectedNodeIPv4Host(rule); host != "" {
 		resolved, evidence, failure := prepareTargetIPv4(ctx, client, phases, host)
@@ -847,23 +852,9 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 		if errors.As(err, &pathErr) {
 			return finish(Result{Outcome: "not_executed", FailurePhase: "physical_binding", ErrorMessage: "物理出口约束未核实；未取得服务结论"}, startedAt)
 		}
-		if ctx.Err() == context.Canceled || errors.Is(err, context.Canceled) {
-			return finish(Result{Outcome: "cancelled", FailurePhase: "cancelled", ErrorMessage: "检测已取消"}, startedAt)
-		}
-		if ctx.Err() == context.DeadlineExceeded {
-			return finish(Result{Outcome: "timed_out", FailurePhase: "timeout", ErrorMessage: "请求超过设定超时", Details: map[string]string{"timeout_origin": "checker_deadline"}}, startedAt)
-		}
-		var networkErr net.Error
-		if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &networkErr) && networkErr.Timeout()) {
-			return finish(Result{Outcome: "timed_out", FailurePhase: "timeout", ErrorMessage: "网络连接或响应超时；检查总时限尚未到达，服务结论未确认", Details: map[string]string{"timeout_origin": "transport"}}, startedAt)
-		}
-		detail := sanitizeTransportError(err)
-		return finish(Result{
-			Outcome:      "transport_error",
-			FailurePhase: "transport",
-			ErrorMessage: fmt.Sprintf("节点代理或 HTTP 传输失败: %s", detail),
-			Details:      map[string]string{"transport_error": detail},
-		}, startedAt)
+		result := Result{}
+		classifyRequestError(&result, ctx, err)
+		return finish(result, startedAt)
 	}
 	defer response.Body.Close()
 
@@ -917,7 +908,7 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 		body, readErr := io.ReadAll(io.LimitReader(response.Body, bodyLimit))
 		result.BytesRead = int64(len(body))
 		if readErr != nil {
-			classifyRequestError(&result, ctx, readErr)
+			classifyRequestError(&result, ctx, atRequestPhase(readErr, "response_read"))
 			return finish(result, startedAt)
 		}
 		if rule.ServiceID == "grok_web" {
@@ -986,29 +977,7 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 	body, readErr := io.ReadAll(io.LimitReader(response.Body, MaximumResponseBytes+1))
 	result.BytesRead = int64(min(len(body), MaximumResponseBytes))
 	if readErr != nil {
-		var networkErr net.Error
-		switch {
-		case ctx.Err() == context.Canceled || errors.Is(readErr, context.Canceled):
-			result.Outcome = "cancelled"
-			result.FailurePhase = "cancelled"
-			result.ErrorMessage = "检测已取消"
-		case ctx.Err() == context.DeadlineExceeded || errors.Is(readErr, context.DeadlineExceeded) || (errors.As(readErr, &networkErr) && networkErr.Timeout()):
-			result.Outcome = "timed_out"
-			result.FailurePhase = "timeout"
-			result.ErrorMessage = "请求超过设定超时"
-			if result.Details == nil {
-				result.Details = map[string]string{}
-			}
-			result.Details["timeout_origin"] = "checker_deadline"
-			if ctx.Err() != context.DeadlineExceeded {
-				result.Details["timeout_origin"] = "transport"
-				result.ErrorMessage = "读取响应超时；检查总时限尚未到达，服务结论未确认"
-			}
-		default:
-			result.Outcome = "transport_error"
-			result.FailurePhase = "response_read"
-			result.ErrorMessage = "读取响应时发生传输错误"
-		}
+		classifyRequestError(&result, ctx, atRequestPhase(readErr, "response_read"))
 		return finish(result, startedAt)
 	}
 	if len(body) > MaximumResponseBytes {

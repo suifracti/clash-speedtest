@@ -527,7 +527,7 @@ func readPage(ctx context.Context, client *http.Client, target string, allowedHo
 	body, err := io.ReadAll(io.LimitReader(response.Body, int64(maximum)+1))
 	result.BytesRead = int64(min(len(body), maximum))
 	if err != nil {
-		classifyRequestError(&result, ctx, err)
+		classifyRequestError(&result, ctx, atRequestPhase(err, "response_read"))
 		return result, fetchedPage{}, false
 	}
 	truncated := len(body) > maximum
@@ -655,7 +655,7 @@ func netflixGET(ctx context.Context, client *http.Client, target string, result 
 	body, err := io.ReadAll(io.LimitReader(response.Body, int64(maximum)+1))
 	result.BytesRead += int64(min(len(body), maximum))
 	if err != nil {
-		classifyRequestError(result, ctx, err)
+		classifyRequestError(result, ctx, atRequestPhase(err, "response_read"))
 		return netflixPage{}, false
 	}
 	truncated := len(body) > maximum
@@ -857,7 +857,7 @@ func boundedGETStatuses(ctx context.Context, client *http.Client, target string,
 	body, err := io.ReadAll(io.LimitReader(response.Body, int64(maximum)+1))
 	result.BytesRead = int64(min(len(body), maximum))
 	if err != nil {
-		classifyRequestError(&result, ctx, err)
+		classifyRequestError(&result, ctx, atRequestPhase(err, "response_read"))
 		return result, nil, false
 	}
 	if len(body) > maximum {
@@ -917,19 +917,44 @@ func sanitizeTransportError(err error) string {
 }
 
 func classifyRequestError(result *Result, ctx context.Context, err error) {
+	if result.Details == nil {
+		result.Details = make(map[string]string)
+	}
+	var requestErr *serviceRequestError
+	if errors.As(err, &requestErr) {
+		result.Details["request_failure_phase"] = requestErr.phase
+	}
 	var networkErr net.Error
 	switch {
 	case ctx.Err() == context.Canceled || errors.Is(err, context.Canceled):
 		result.Outcome, result.FailurePhase, result.ErrorMessage = "cancelled", "cancelled", "检测已取消"
 	case ctx.Err() == context.DeadlineExceeded || errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &networkErr) && networkErr.Timeout()):
 		result.Outcome, result.FailurePhase, result.ErrorMessage = "timed_out", "timeout", "请求超过设定超时"
+		result.Details["timeout_origin"] = "checker_deadline"
+		if ctx.Err() != context.DeadlineExceeded {
+			result.Details["timeout_origin"] = "transport"
+			result.ErrorMessage = "网络连接或响应超时；检查总时限尚未到达，服务结论未确认"
+			if result.Details["request_failure_phase"] == "response_read" {
+				result.ErrorMessage = "读取响应超时；检查总时限尚未到达，服务结论未确认"
+			}
+		}
 	default:
 		detail := sanitizeTransportError(err)
 		result.Outcome, result.FailurePhase, result.ErrorMessage = "transport_error", "transport", fmt.Sprintf("节点代理或 HTTP 传输失败: %s", detail)
-		if result.Details == nil {
-			result.Details = make(map[string]string)
-		}
 		result.Details["transport_error"] = detail
+		if requestErr != nil {
+			labels := map[string]string{
+				"proxy_connect":    "节点代理建连失败",
+				"tls_handshake":    "TLS 握手失败",
+				"request_write":    "发送 HTTP 请求失败",
+				"response_headers": "等待 HTTP 响应头时连接中断",
+				"response_read":    "读取 HTTP 响应正文时连接中断",
+			}
+			if label := labels[requestErr.phase]; label != "" {
+				result.FailurePhase = requestErr.phase
+				result.ErrorMessage = label + "：" + detail
+			}
+		}
 	}
 }
 
