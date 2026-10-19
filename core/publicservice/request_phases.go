@@ -23,6 +23,14 @@ type serviceRequestError struct {
 
 func (e *serviceRequestError) Error() string { return e.err.Error() }
 func (e *serviceRequestError) Unwrap() error { return e.err }
+func (e *serviceRequestError) Timeout() bool {
+	var networkErr net.Error
+	return errors.As(e.err, &networkErr) && networkErr.Timeout()
+}
+func (e *serviceRequestError) Temporary() bool {
+	var networkErr net.Error
+	return errors.As(e.err, &networkErr) && networkErr.Temporary()
+}
 
 func atRequestPhase(err error, phase string) error {
 	if err == nil || phase == "" {

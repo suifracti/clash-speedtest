@@ -10,6 +10,9 @@ import (
 	"net/http/httptrace"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/faceair/clash-speedtest/core/monitor"
 )
 
 func TestLaterRequestTLSFailureKeepsItsOwnStage(t *testing.T) {
@@ -82,5 +85,19 @@ func TestHeaderTimeoutRetainsTimeoutAndRequestStage(t *testing.T) {
 	classifyRequestError(&result, context.Background(), err)
 	if result.Outcome != "timed_out" || result.FailurePhase != "timeout" || result.Details["request_failure_phase"] != "response_headers" || result.Details["timeout_origin"] != "transport" {
 		t.Fatalf("timeout lost cause or stage: %+v", result)
+	}
+}
+
+func TestStagedNetworkTimeoutSurvivesHTTPClientErrorWrapping(t *testing.T) {
+	rule, _ := RuleFor("cloudflare_204")
+	checker := Checker{DriftSamples: 1, ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+		trace := httptrace.ContextClientTrace(req.Context())
+		trace.TLSHandshakeStart()
+		trace.TLSHandshakeDone(tls.ConnectionState{}, networkTimeoutError{})
+		return nil, networkTimeoutError{}
+	})}
+	got := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, time.Second)
+	if got.Outcome != "timed_out" || got.FailurePhase != "timeout" || got.Details["timeout_origin"] != "transport" || got.Details["request_failure_phase"] != "tls_handshake" || got.Details["sample_failure"] != "0" {
+		t.Fatalf("HTTP client no longer recognizes the wrapped network timeout: %+v", got)
 	}
 }

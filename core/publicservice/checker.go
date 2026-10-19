@@ -607,8 +607,9 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	var observedIPs, observedColos, observedOutcomes []string
 	seenIPs, seenColos, seenOutcomes := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	keepaliveCount, idleCloseCount := 0, 0
-	var firstUnknown *Result
+	var firstUnconfirmed *Result
 	var limitedSample *Result
+	var cancelledSample *Result
 
 	for _, sample := range samples {
 		if sample.outcome == "rate_limited" && limitedSample == nil {
@@ -643,13 +644,21 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 			failureSamples++
 		case sample.outcome == "cancelled" || sample.outcome == "user_cancelled" || sample.outcome == "interrupted":
 			cancelledSamples++
+			if cancelledSample == nil {
+				r := sample.res
+				cancelledSample = &r
+			}
 		case sample.outcome == "not_executed" || sample.outcome == "credentials_required":
 			notExecutedSamples++
+			if firstUnconfirmed == nil {
+				r := sample.res
+				firstUnconfirmed = &r
+			}
 		default:
 			unknownSamples++
-			if firstUnknown == nil {
+			if firstUnconfirmed == nil {
 				r := sample.res
-				firstUnknown = &r
+				firstUnconfirmed = &r
 			}
 		}
 	}
@@ -663,6 +672,23 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 		res1.Details = map[string]string{}
 	}
 	details := res1.Details
+	details["http_status_scope"] = "first_sample"
+	if samples[0].httpStatus != nil {
+		details["first_sample_http_status"] = fmt.Sprint(*samples[0].httpStatus)
+	}
+	// The summary message/status/stage must refer to the same observation.
+	// Keep prior successes in counts and the explicit first-sample evidence.
+	selectSampleDiagnostics := func(sample *Result, scope string) {
+		res1.HTTPStatus = sample.HTTPStatus
+		details["http_status_scope"] = scope
+		for _, key := range []string{"request_failure_phase", "timeout_origin", "transport_error"} {
+			if value := sample.Details[key]; value != "" {
+				details[key] = value
+			} else {
+				delete(details, key)
+			}
+		}
+	}
 	if limitedSample != nil {
 		details["sampling_stop_reason"] = "rate_limited"
 		for _, key := range []string{"rate_limit_source", "retry_after_seconds", "retry_after_at", "rate_limit_reset_at"} {
@@ -718,6 +744,9 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	counts := fmt.Sprintf("%d通过 / %d判据未通过 / %d未确认 / %d取消 / %d未执行 / %d未启动", successSamples, failureSamples, unknownSamples, cancelledSamples, notExecutedSamples, unstartedSamples)
 	switch {
 	case ctx.Err() == context.Canceled || cancelledSamples > 0:
+		if cancelledSample != nil {
+			selectSampleDiagnostics(cancelledSample, "first_cancelled_sample")
+		}
 		res1.Outcome, res1.FailurePhase = "cancelled", "cancelled"
 		res1.Summary = "多次检测已取消；已取得的样本保留"
 		res1.ErrorMessage = "检测已取消；取消和未启动样本不算服务失败"
@@ -726,18 +755,19 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 		res1.Summary = "检测结论不一致；同时取得通过与判据未通过的证据"
 		res1.ErrorMessage = "多次检测结论有差异；不能仅凭结论差异判定出口 IP 漂移"
 	case limitedSample != nil:
+		selectSampleDiagnostics(limitedSample, "first_rate_limited_sample")
 		res1.Outcome, res1.FailurePhase = "rate_limited", limitedSample.FailurePhase
-		res1.HTTPStatus = limitedSample.HTTPStatus
 		res1.Summary = "目标限流，已停止本次后续采样；不判为节点故障"
 		res1.ErrorMessage = limitedSample.ErrorMessage
 	case incomplete:
 		res1.Outcome, res1.FailurePhase = "unknown", "sampling_incomplete"
 		res1.Summary = "多次检测尚未确认；部分样本未知或未完成"
 		res1.ErrorMessage = "未确认、取消和未执行样本不计为服务失败"
-		if firstUnknown != nil {
-			res1.ErrorMessage = firstUnknown.ErrorMessage
-			details["first_unconfirmed_outcome"] = firstUnknown.Outcome
-			details["first_unconfirmed_phase"] = firstUnknown.FailurePhase
+		if firstUnconfirmed != nil {
+			selectSampleDiagnostics(firstUnconfirmed, "first_unconfirmed_sample")
+			res1.ErrorMessage = firstUnconfirmed.ErrorMessage
+			details["first_unconfirmed_outcome"] = firstUnconfirmed.Outcome
+			details["first_unconfirmed_phase"] = firstUnconfirmed.FailurePhase
 		}
 	case successSamples == totalSamples:
 		res1.Summary = fmt.Sprintf("%d/%d 次探针规则一致通过", totalSamples, driftTarget)
