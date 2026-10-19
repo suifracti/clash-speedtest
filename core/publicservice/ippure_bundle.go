@@ -88,6 +88,10 @@ func ippureExtraExchange(ctx context.Context, client *http.Client, method, targe
 	if len(session) > 0 && session[0] != nil {
 		state = session[0]
 	}
+	// A refusal in the CF gateway must not poison the independent ASN GET.
+	if _, protocolError, rechallenged := state.status(); protocolError != "" || rechallenged {
+		state = newIPPureNonceState()
+	}
 	hadKey, _, _ := state.status()
 	local := ippureWebClient(client, state, true)
 	total := Result{}

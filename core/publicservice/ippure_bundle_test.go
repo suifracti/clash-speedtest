@@ -131,12 +131,24 @@ func TestIPPureBundleKeepsOfficialFallbackWhenWebNonceIsRejected(t *testing.T) {
 			r.Header.Set("x-t", strconv.FormatInt(time.Now().UnixMilli(), 10))
 			return r, nil
 		}
+		if req.URL.Host == "cf.999831.xyz" {
+			return fixtureResponse(req, 200, "application/octet-stream", "opaque"), nil
+		}
+		if req.URL.Path == "/api/gateway/cf" || req.URL.Path == "/api/info/asn/botclass/15169" && req.Header.Get("x-k") == "" {
+			r := fixtureResponse(req, 200, "text/plain", `{"ok":false}`)
+			r.Header.Set("x-k", "fresh-extra-key")
+			r.Header.Set("x-t", strconv.FormatInt(time.Now().UnixMilli(), 10))
+			return r, nil
+		}
+		if req.URL.Path == "/api/info/asn/botclass/15169" {
+			return ippureJSONResponse(req, 200, `{"ok":true,"data":{"human":30,"bot":70}}`), nil
+		}
 		return fixtureResponse(req, 403, "text/plain", "403"), nil
 	})
 	rule, _ := RuleFor("ippure_ip_quality")
 	rule.RuleVersion = 6
 	r := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
-	if r.Outcome != "profiled" || r.Details["fraud_score"] != "61" || r.Details["api_method"] != "ippure_official_self_api_fallback_v1" {
+	if r.Outcome != "profiled" || r.Details["fraud_score"] != "61" || r.Details["api_method"] != "ippure_official_self_api_fallback_v1" || r.Details["asn_human_percent"] != "30.00" {
 		t.Fatalf("new extras lost the working fallback: %+v", r)
 	}
 }
