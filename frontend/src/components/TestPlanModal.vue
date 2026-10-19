@@ -81,7 +81,7 @@ async function submit(){
     <div v-if="w.plan.value.includeReputation" class="plan-section reputation-section">
       <h3>IP信誉/纯净度</h3>
       <ServicePicker v-model="reputationServiceIds" :catalog="reputationCatalog"/>
-      <p class="muted small">IPPure 官方暂不提供 IPv6 风险分，不发起 IPv6 评分请求。</p>
+      <p class="muted small">IPPure 包含 IPv4 风险、Cloudflare 请求环境系数和 ASN 人机流量比。IPPure 本身不提供 IPv6 风险分；各项结果独立保存。</p>
     </div>
 
     <label class="inline-field">重复检测<UiSelect v-model.number="w.plan.value.repeats"><option v-for="n in [1,2,3,5]" :key="n" :value="n">{{n}} 轮</option></UiSelect></label>

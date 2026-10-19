@@ -154,6 +154,9 @@ func checkPing0(ctx context.Context, client *http.Client, rule Rule, started tim
 }
 
 func checkIPPure(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
+	if rule.RuleVersion >= 6 {
+		return checkIPPureBundle(ctx, client, rule, started)
+	}
 	if rule.RuleVersion >= 3 {
 		return checkIPPureWeb(ctx, client, rule, started)
 	}

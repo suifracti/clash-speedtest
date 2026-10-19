@@ -89,6 +89,8 @@ export function detailFields(r:ExitRecord,historical=false){
  const queryAt=exitField(r.attempt,'query_at'),cache=exitField(r.attempt,'cache_status')
  return [
   {label:'IP',value:r.ip},{label:'地区',value:r.region},{label:'ASN',value:r.asn},{label:'运营商',value:r.organization},{label:'类型',value:r.ipType},{label:'风险',value:r.confirmed?formattedRisk(r):''},{label:'风险等级',value:r.confirmed?r.tier:''},
+  {label:'Cloudflare风险系数',value:exitField(r.attempt,'cf_risk_score')},{label:'Cloudflare状态',value:exitField(r.attempt,'cf_status')},{label:'Cloudflare地址族',value:exitField(r.attempt,'cf_ip_family')},{label:'Cloudflare观察范围',value:exitField(r.attempt,'cf_scope')},{label:'Cloudflare查询时间',value:exitField(r.attempt,'cf_query_at')},
+  {label:'ASN人机流量比',value:exitField(r.attempt,'asn_human_percent')&&exitField(r.attempt,'asn_bot_percent')?`人类 ${exitField(r.attempt,'asn_human_percent')}% · 机器 ${exitField(r.attempt,'asn_bot_percent')}%`:''},{label:'统计ASN',value:exitField(r.attempt,'asn_traffic_asn')},{label:'流量比状态',value:exitField(r.attempt,'asn_traffic_status')},{label:'流量比范围',value:exitField(r.attempt,'asn_traffic_scope')},{label:'流量比查询时间',value:exitField(r.attempt,'asn_traffic_query_at')},
   {label:'状态',value:historical?'历史有效画像，不代表当前':r.status},{label:'观测时间',value:r.observedAt},{label:'查询时间',value:queryAt},{label:'出口观察时间',value:exitField(r.attempt,'exit_observed_at')||queryAt},{label:'数据新鲜度',value:exitField(r.attempt,'data_freshness')},{label:'出口范围',value:exitField(r.attempt,'exit_scope')},{label:'缓存',value:cache==='hit'?'复用本地结果缓存':cache?`缓存状态：${cache}`:''}
  ].filter(row=>!!row.value)
 }

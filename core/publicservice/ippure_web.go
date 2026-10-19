@@ -123,7 +123,7 @@ func (s *ippureNonceState) status() (hasKey bool, protocolError string, rechalle
 	return len(s.key) > 0, s.protocolError, s.rechallenged
 }
 
-func (s *ippureNonceState) firstNonceResponseAllowsReplay(body []byte) bool {
+func (s *ippureNonceState) firstNonceResponseAllowsReplay(body []byte, allowPlainJSON ...bool) bool {
 	s.mu.Lock()
 	status := s.firstStatus
 	contentType := s.firstContentType
@@ -133,7 +133,7 @@ func (s *ippureNonceState) firstNonceResponseAllowsReplay(body []byte) bool {
 		return false
 	}
 	mediaType, _, err := mime.ParseMediaType(contentType)
-	if err != nil || !(strings.EqualFold(mediaType, "application/json") || strings.HasSuffix(strings.ToLower(mediaType), "+json")) {
+	if err != nil || !(strings.EqualFold(mediaType, "application/json") || strings.HasSuffix(strings.ToLower(mediaType), "+json") || len(allowPlainJSON) > 0 && allowPlainJSON[0] && strings.EqualFold(mediaType, "text/plain")) {
 		return false
 	}
 	var object map[string]json.RawMessage
@@ -166,9 +166,24 @@ func (t *ippureNonceTransport) RoundTrip(request *http.Request) (*http.Response,
 		transportRequest.Header = request.Header.Clone()
 		timestamp := strconv.FormatInt(t.state.nextTimestamp(), 10)
 		mac := hmac.New(sha256.New, key)
-		_, _ = io.WriteString(mac, "GET-"+request.URL.String()+"--"+timestamp)
+		var payload []byte
+		if request.Body != nil && request.Method != http.MethodGet {
+			var err error
+			payload, err = io.ReadAll(io.LimitReader(request.Body, ippureWebBodyLimit+1))
+			request.Body.Close()
+			if err != nil || len(payload) > ippureWebBodyLimit {
+				return nil, fmt.Errorf("IPPure API request body unavailable or too large")
+			}
+		}
+		_, _ = io.WriteString(mac, request.Method+"-"+request.URL.String()+"-"+string([]rune(string(payload)))+"-"+timestamp)
 		transportRequest.Header.Set("x-k", string(key))
-		transportRequest.Header.Set("x-t", timestamp+"-"+hex.EncodeToString(mac.Sum(nil)))
+		xT := timestamp + "-" + hex.EncodeToString(mac.Sum(nil))
+		transportRequest.Header.Set("x-t", xT)
+		if request.Method == http.MethodPost {
+			if err := ippureEncryptedBody(transportRequest, payload, xT); err != nil {
+				return nil, err
+			}
+		}
 	}
 	response, err := t.base.RoundTrip(transportRequest)
 	if response != nil {
@@ -261,7 +276,7 @@ func checkIPPureWeb(ctx context.Context, client *http.Client, rule Rule, started
 		return finish(result, started)
 	}
 	if hasNonce {
-		if !state.firstNonceResponseAllowsReplay(basicBody) {
+		if !state.firstNonceResponseAllowsReplay(basicBody, rule.RuleVersion >= 6) {
 			if ippureStatusCode(basicResult) >= 400 {
 				ippureCarryFailure(&result, basicResult)
 				ippureHTTPRejected(&result)

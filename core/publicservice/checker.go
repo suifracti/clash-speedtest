@@ -106,8 +106,8 @@ var catalog = []Rule{
 		RedirectPolicy:   "do_not_follow", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: 8 * 1024, Accept: "application/json",
 	},
 	{
-		ServiceID: "ippure_ip_quality", Name: "IPPure IPv4风险画像", RuleVersion: 5,
-		Category: "出口与 IP", Region: "全球", ResultKind: "ip_quality", Description: "通过所选节点的 IPv4 出口读取 IPPure；网页基础接口返回403或验证拦截时，最多尝试一次官方公开 API。",
+		ServiceID: "ippure_ip_quality", Name: "IPPure 画像与风险", RuleVersion: 6,
+		Category: "出口与 IP", Region: "全球", ResultKind: "ip_quality", Description: "同一节点查询IPPure IPv4风险、Cloudflare请求环境系数及ASN人机流量比；各项独立保留结果与失败状态。",
 		TargetURL: "https://api.123169.xyz/api/info/ip-basic/", Method: http.MethodGet,
 		SuccessCriterion: "先确认公开 IPv4；网页 basic/risk 或官方 API 必须对应相同 IPv4，风险分须为 0–100 整数，越低越好",
 		RedirectPolicy:   "do_not_follow", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: 16 * 1024, Accept: "application/json",

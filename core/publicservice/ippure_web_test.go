@@ -370,8 +370,8 @@ func historicalIPPureWebRule() (Rule, bool) {
 
 func TestIPPureRuleIsRestoredForManualUseOnly(t *testing.T) {
 	rule, ok := RuleFor("ippure_ip_quality")
-	if !ok || rule.RuleVersion != 5 || rule.BatchDefault || rule.Name != "IPPure IPv4风险画像" {
-		t.Fatalf("IPPure rule metadata = %+v, want v5, on-demand, and IPv4 risk profile", rule)
+	if !ok || rule.RuleVersion != 6 || rule.BatchDefault || rule.Name != "IPPure 画像与风险" {
+		t.Fatalf("IPPure rule metadata = %+v, want v6, on-demand, and IPv4 risk profile", rule)
 	}
 	for _, listed := range Catalog() {
 		if listed.ServiceID == rule.ServiceID {

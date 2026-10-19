@@ -3,7 +3,7 @@ import {computed,ref} from 'vue'
 import {date,type Attempt} from '../domain'
 import {attemptObservedAt,latestServices} from '../nodeQuality'
 import {serviceIsProfile} from '../sharedResults'
-import {toExitRecord,completeExitFamilies,exitAddressRows,reputationRows,riskScore,formattedRisk,detailFields,compactExitStatus,reputationAddressHint,type ExitRecord} from '../exitSummaryPresentation'
+import {toExitRecord,completeExitFamilies,exitAddressRows,reputationRows,riskScore,formattedRisk,detailFields,compactExitStatus,reputationAddressHint,exitField,type ExitRecord} from '../exitSummaryPresentation'
 import Modal from './Modal.vue'
 
 const props=withDefaults(defineProps<{attempts?:Attempt[];compact?:boolean}>(),{attempts:()=>[]})
@@ -31,6 +31,11 @@ const historicalRecords=computed(()=>{
 })
 const detailCount=computed(()=>currentRecords.value.length+historicalRecords.value.length)
 const latestAt=computed(()=>currentRecords.value.reduce((v,r)=>(Date.parse(r.observedAt)||0)>(Date.parse(v)||0)?r.observedAt:v,''))
+const pureRecord=computed(()=>currentRecords.value.find(r=>r.serviceId==='ippure_ip_quality'))
+const metricNumber=(key:string)=>{const raw=pureRecord.value?exitField(pureRecord.value.attempt,key):'';if(!/^\d+(?:\.\d+)?$/.test(raw))return undefined;const n=Number(raw);return n>=0&&n<=100?n:undefined}
+const cfRisk=computed(()=>pureRecord.value&&exitField(pureRecord.value.attempt,'cf_status')==='已取得'?metricNumber('cf_risk_score'):undefined)
+const traffic=computed(()=>{const human=metricNumber('asn_human_percent'),bot=metricNumber('asn_bot_percent');return human!==undefined&&bot!==undefined&&Math.abs(human+bot-100)<=0.1?{human,bot}:undefined})
+const pureField=(key:string)=>pureRecord.value?exitField(pureRecord.value.attempt,key):''
 // Display-only captions. Classification and source matching stay in the existing helper.
 const providerCaption=(r?:ExitRecord)=>!r?'没有保存记录':!r.confirmed?[r.attempt.result?.http_status?`HTTP ${r.attempt.result.http_status}`:'','未取得风险分'].filter(Boolean).join(' · '):riskScore(r)!==undefined?'风险分 · 越低越好':r.risk?`风险分 ${r.risk} · 刻度未声明`:'未返回风险分'
 </script>
@@ -42,11 +47,24 @@ const providerCaption=(r?:ExitRecord)=>!r?'没有保存记录':!r.confirmed?[r.a
    <template v-else>
    <button v-if="!reputations.length" type="button" class="node-exit-compact" @click="open=true">出口 / 信誉详情</button>
    <div v-if="reputations.length" class="node-exit-provider-grid" aria-label="各来源信誉结果，分数独立">
-    <button v-for="provider in reputations" :key="provider.serviceId" type="button" class="node-exit-provider" :data-provider="provider.serviceId" :class="{'has-score':provider.record?.confirmed&&!!provider.record.risk,'no-score':!provider.record?.confirmed||!provider.record.risk}" :title="provider.provider+' · '+reputationAddressHint(provider.record,addresses)+' · '+providerCaption(provider.record)+' · '+date(provider.record?.observedAt)" @click="open=true">
+    <div v-for="provider in reputations" :key="provider.serviceId" :class="provider.serviceId==='ippure_ip_quality'?'ippure-group':'node-exit-provider-slot'">
+    <button type="button" class="node-exit-provider" :data-provider="provider.serviceId" :class="{'has-score':provider.record?.confirmed&&!!provider.record.risk,'no-score':!provider.record?.confirmed||!provider.record.risk}" :title="provider.provider+' · '+reputationAddressHint(provider.record,addresses)+' · '+providerCaption(provider.record)+' · '+date(provider.record?.observedAt)" @click="open=true">
      <span class="node-exit-provider-head"><span class="node-exit-provider-title">{{provider.provider}}</span><span class="node-exit-provider-family">{{reputationAddressHint(provider.record,addresses)}}</span><strong v-if="provider.record?.confirmed&&provider.record.risk" class="node-exit-compact-risk">{{provider.record.risk}}</strong><strong v-else class="node-exit-provider-status">{{compactExitStatus(provider.record)}}</strong></span>
      <span v-if="provider.record&&riskScore(provider.record)!==undefined" class="node-exit-risk-scale" role="img" :aria-label="`${provider.provider} 分数 ${provider.record.risk}/100，0 到 100，越低越好`" :style="{'--risk-position':`${riskScore(provider.record)}%`}"><span>0</span><span class="node-exit-risk-track"><span class="node-exit-risk-marker"></span></span><span>100</span></span>
     </button>
-    <span v-if="reputations.some(r=>r.serviceId==='ippure_ip_quality')" class="node-exit-provider no-score" data-provider="ippure_ipv6"><span class="node-exit-provider-head"><span class="node-exit-provider-title">IPPure</span><span class="node-exit-provider-family">IPv6</span></span><span class="node-exit-provider-status" title="IPPure官方暂不计算IPv6风险系数，不会发起评分请求">不支持评分</span></span>
+    <template v-if="provider.serviceId==='ippure_ip_quality'">
+     <button type="button" class="node-exit-provider" data-metric="cf" :title="[pureField('cf_scope'),pureField('cf_query_at')].filter(Boolean).join(' · ')" @click="open=true">
+      <span class="node-exit-provider-head"><span class="node-exit-provider-title">Cloudflare 系数</span><span>{{pureField('cf_ip_family')}}</span><strong v-if="cfRisk!==undefined" class="node-exit-compact-risk">{{cfRisk}}</strong><span v-else>{{pureField('cf_status')||'未查询'}}</span></span>
+      <span v-if="cfRisk!==undefined" class="node-exit-risk-scale" role="img" :aria-label="`Cloudflare 风险系数 ${cfRisk}，0到100，越低越好`" :style="{'--risk-position':`${cfRisk}%`}"><span>0</span><span class="node-exit-risk-track"><span class="node-exit-risk-marker"></span></span><span>100</span></span>
+     </button>
+     <button type="button" class="ippure-traffic node-exit-provider" data-metric="asn-traffic" :title="'整个ASN的统计，并非当前节点流量 · '+pureField('asn_traffic_query_at')" @click="open=true">
+      <span class="node-exit-provider-head"><span class="node-exit-provider-title">ASN 人机流量比</span><span>{{pureField('asn_traffic_asn')}}</span></span>
+      <template v-if="traffic"><span class="ippure-traffic-track" role="img" :aria-label="`人类 ${traffic.human.toFixed(2)}%，机器 ${traffic.bot.toFixed(2)}%`"><span :style="{width:`${traffic.human}%`}"></span></span><span class="ippure-traffic-values"><span>人类 {{traffic.human.toFixed(2)}}%</span><span>机器 {{traffic.bot.toFixed(2)}}%</span></span></template>
+      <span v-else>{{pureField('asn_traffic_status')||'未查询'}}</span>
+     </button>
+     <span class="ippure-note" data-provider="ippure_ipv6" title="IPPure官方暂不计算IPv6风险系数">IPPure IPv6：不支持评分</span>
+    </template>
+    </div>
    </div>
    </template>
   </template>
@@ -84,6 +102,7 @@ const providerCaption=(r?:ExitRecord)=>!r?'没有保存记录':!r.confirmed?[r.a
 .node-exit-summary{min-width:0;font-size:12px;line-height:1.5;color:var(--muted)}
 .node-exit-compact,.node-exit-provider{border:0;background:none;padding:0;text-align:left;color:inherit;font:inherit;cursor:pointer}
 
+.node-exit-provider-slot{min-width:0}.ippure-group{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px 10px;border-top:1px solid var(--line);padding-top:5px}.ippure-traffic,.ippure-note{grid-column:1/-1}.ippure-note{font-size:11px;color:var(--muted)}.ippure-traffic-track{display:block;width:100%;height:4px;background:#ff718f;border-radius:3px;overflow:hidden}.ippure-traffic-track>span{display:block;height:100%;background:#48c78e}.ippure-traffic-values{display:flex;justify-content:space-between;width:100%;font-size:11px}.ippure-traffic-values>span:first-child{color:#208858}.ippure-traffic-values>span:last-child{color:#b1405c}
 .node-exit-provider-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px 10px;margin-top:5px}.node-exit-provider{display:flex;flex-direction:column;gap:2px;min-width:0}.node-exit-provider-head{display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 4px;width:100%}.node-exit-provider-title{font-weight:550;color:var(--ink)}.node-exit-provider-title>span{display:none}.node-exit-provider-family{font-size:12px}.node-exit-compact-risk,.node-exit-provider-status{font-size:12px;font-weight:550;color:var(--ink)}.node-exit-provider-caption,.node-exit-provider-tier,.node-exit-provider time{font-size:12px;color:var(--muted)}.node-exit-provider.no-score .node-exit-provider-status{color:var(--warning,#986700)}.node-exit-provider:hover,.node-exit-compact:hover{color:var(--blue)}
 .node-exit-risk-scale{width:100%;display:inline-flex;align-items:center;gap:3px;vertical-align:middle;font-size:10px;color:var(--muted)}.node-exit-risk-track{position:relative;display:inline-block;width:auto;flex:1;min-width:25px;height:4px;border-radius:4px;background:linear-gradient(90deg,#75a983,#c5bb72 50%,#c97470)}.node-exit-risk-marker{position:absolute;top:50%;left:var(--risk-position);width:6px;height:6px;transform:translate(-50%,-50%);border:1px solid var(--surface,#fff);border-radius:50%;background:var(--ink)}.node-exit-open{margin-top:4px;color:var(--blue);font-size:12px;border:0;background:none;padding:0;text-align:left;cursor:pointer}
 .node-exit-summary-records{display:grid;gap:7px}.node-exit-summary-main,.node-exit-summary-source,.node-exit-summary-address-only{display:block}.node-exit-address{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px/1.5 ui-monospace,monospace}.node-exit-footer{display:flex;gap:4px 10px;align-items:center;margin-top:5px}.node-exit-fields{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 10px;margin:8px 0}.node-exit-fields>div{display:contents}.node-exit-fields dt{font-size:12px;color:var(--muted)}.node-exit-fields dd{margin:0;overflow-wrap:anywhere}.node-exit-history{border-top:1px solid var(--line);padding-top:8px}

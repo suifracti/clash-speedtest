@@ -125,3 +125,14 @@ it('shows separate Ping0 families, hides IPOK and marks IPPure IPv6 as unsupport
  const unsupported=wrapper.get('[data-provider="ippure_ipv6"]');expect(unsupported.text()).toContain('不支持评分');expect(unsupported.find('.node-exit-risk-scale').exists()).toBe(false)
  wrapper.unmount()
 })
+
+it('groups IPPure risk, independent Cloudflare coefficient and ASN traffic without mixing scores',()=>{
+ const pure=attempt('ippure_ip_quality','2026-10-19T07:00:00Z','profiled',{ip:'198.51.100.1',fraud_score:0,risk_scale_max:100,risk_direction:'lower_is_better',cf_risk_score:61,cf_ip_family:'IPv6',cf_status:'已取得',asn_traffic_status:'已取得',asn_traffic_asn:'AS15169',asn_human_percent:'5.78',asn_bot_percent:'94.22'})
+ const w=mount(NodeExitSummary,{props:{compact:true,attempts:[pure]}}),group=w.get('.ippure-group')
+ expect(group.get('[data-provider="ippure_ip_quality"] .node-exit-compact-risk').text()).toBe('0')
+ expect(group.get('[data-metric="cf"] .node-exit-compact-risk').text()).toBe('61')
+ expect(group.get('[data-metric="asn-traffic"]').text()).toContain('人类 5.78%')
+ expect(group.get('[data-metric="asn-traffic"]').text()).toContain('机器 94.22%')
+ expect(group.get('[data-metric="asn-traffic"]').attributes('title')).toContain('整个ASN')
+ w.unmount()
+})
