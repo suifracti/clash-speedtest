@@ -2,12 +2,12 @@
 .hd{
   --hd-bg:#f5f5f7;--hd-panel:#fff;--hd-panel-2:#fafafa;--hd-line:#e3e3e8;--hd-text:#1d1d1f;--hd-muted:#6e6e73;--hd-accent:#0a66d9;--hd-accent-ink:#fff;
   --hd-good:#1f8f4e;--hd-good-bg:#e5f5ec;--hd-warn:#b26a00;--hd-warn-bg:#fdf1dc;--hd-bad:#c9302c;--hd-bad-bg:#fbe7e6;--hd-empty:#8e8e93;--hd-empty-bg:#f0f0f2;
-  --hd-radius:10px;--hd-font:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",sans-serif;--hd-size:13px;--hd-shadow:none;
+  --hd-focus-bg:#e8f0fc;--hd-radius:10px;--hd-font:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",sans-serif;--hd-size:13px;--hd-shadow:none;
   font-family:var(--hd-font);font-size:var(--hd-size);color:var(--hd-text);background:var(--hd-bg);
   margin:-8px -4px 0;padding:20px 24px 28px;border-radius:14px;min-height:calc(100vh - 120px);display:flex;flex-direction:column;gap:12px;
 }
 html[data-theme="dark"] .hd{
-  --hd-bg:#1c1c1e;--hd-panel:#242426;--hd-panel-2:#2c2c2e;--hd-line:#38383c;--hd-text:#f2f2f7;--hd-muted:#a1a1a6;--hd-accent:#4c9bff;--hd-accent-ink:#0b1220;
+  --hd-bg:#1c1c1e;--hd-panel:#242426;--hd-panel-2:#2c2c2e;--hd-line:#38383c;--hd-text:#f2f2f7;--hd-muted:#a1a1a6;--hd-accent:#4c9bff;--hd-accent-ink:#0b1220;--hd-focus-bg:#1f2b3b;
   --hd-good:#4cd17f;--hd-good-bg:#173a26;--hd-warn:#ffb340;--hd-warn-bg:#3d2d10;--hd-bad:#ff6961;--hd-bad-bg:#43201e;--hd-empty:#8e8e93;--hd-empty-bg:#2c2c2e;
 }
 /* B 成绩单：纸面、墨色、大号结论 */
@@ -121,7 +121,7 @@ html[data-theme="dark"] .hd{
 .hd-tr{display:grid;grid-template-columns:var(--hd-cols);align-items:center;gap:0 8px;padding:0 12px;min-height:44px;border-top:1px solid var(--hd-line);cursor:pointer}
 .hd-th{position:sticky;top:0;min-height:34px;border-top:0;background:var(--hd-panel-2);color:var(--hd-muted);font-size:12px;font-weight:600;cursor:default;z-index:1}
 .hd-tr:not(.hd-th):hover{background:var(--hd-panel-2)}
-.hd-tr.focus{background:color-mix(in srgb,var(--hd-accent) 10%,var(--hd-panel));box-shadow:inset 3px 0 0 var(--hd-accent)}
+.hd-tr.focus{background:var(--hd-focus-bg);box-shadow:inset 3px 0 0 var(--hd-accent)}
 .hd-node{display:flex;align-items:center;gap:8px;min-width:0}
 .hd-node>span:nth-child(2){display:flex;flex-direction:column;min-width:0}
 .hd-node strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
