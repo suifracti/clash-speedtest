@@ -584,24 +584,16 @@ func checkNetflix(ctx context.Context, client *http.Client, rule Rule, started t
 		return finish(result, started)
 	}
 	globalAvailable, globalBlocked := netflixPageEvidence(&result, "global_title", global, rule)
+	if netflixPageChallenge(&result, global) {
+		return finish(result, started)
+	}
 	licensed, ok := netflixGET(ctx, &clone, "https://www.netflix.com/title/70143836", &result, rule.MaximumBodyBytes)
 	if !ok {
 		return finish(result, started)
 	}
 	licensedAvailable, licensedBlocked := netflixPageEvidence(&result, "licensed_title", licensed, rule)
 	result.HTTPStatus = intPointer(licensed.status)
-	if global.challenge || licensed.challenge {
-		result.Outcome = "challenge"
-		result.Summary = "Netflix 要求网页验证"
-		result.ErrorMessage = "已连通 Netflix，但测试请求遇到挑战页"
-		return finish(result, started)
-	}
-	if global.suspectedChallenge || licensed.suspectedChallenge {
-		body := licensed.body
-		if global.suspectedChallenge {
-			body = global.body
-		}
-		classifyPageChallenge(&result, body)
+	if netflixPageChallenge(&result, licensed) {
 		return finish(result, started)
 	}
 	if region := netflixRegion(licensed.finalURL + "\n" + string(licensed.body)); region != "" {
@@ -649,6 +641,16 @@ func netflixGET(ctx context.Context, client *http.Client, target string, result 
 		return netflixPage{}, false
 	}
 	result.HTTPStatus = intPointer(response.StatusCode)
+	finalURL := target
+	if response.Request != nil && response.Request.URL != nil {
+		finalURL = response.Request.URL.String()
+	}
+	// The response header already proves a challenge. Reading its body can
+	// time out and overwrite that evidence with a misleading network failure.
+	if strings.EqualFold(strings.TrimSpace(response.Header.Get("cf-mitigated")), "challenge") {
+		result.Details["challenge_evidence"] = "cf-mitigated header"
+		return netflixPage{status: response.StatusCode, finalURL: finalURL, challenge: true}, true
+	}
 	if maximum <= 0 || maximum > MaximumWebDocumentBytes {
 		maximum = MaximumResponseBytes
 	}
@@ -662,15 +664,26 @@ func netflixGET(ctx context.Context, client *http.Client, target string, result 
 	if truncated {
 		body = body[:maximum]
 	}
-	finalURL := target
-	if response.Request != nil && response.Request.URL != nil {
-		finalURL = response.Request.URL.String()
-	}
-	explicitChallenge := strings.EqualFold(strings.TrimSpace(response.Header.Get("cf-mitigated")), "challenge") || pageHasExplicitChallenge(body)
+	explicitChallenge := pageHasExplicitChallenge(body)
 	return netflixPage{
 		status: response.StatusCode, body: body, finalURL: finalURL, truncated: truncated,
 		challenge: explicitChallenge, suspectedChallenge: !explicitChallenge && pageHasChallenge(body),
 	}, true
+}
+
+// Stop the title chain as soon as a barrier is observed; another title cannot
+// prove playback and its connection failure must not erase the first page.
+func netflixPageChallenge(result *Result, page netflixPage) bool {
+	if page.challenge {
+		result.Outcome = "challenge"
+		result.Summary = "Netflix 要求网页验证"
+		result.ErrorMessage = "已连通 Netflix，但测试请求遇到挑战页"
+		if result.Details["challenge_evidence"] == "" {
+			result.Details["challenge_evidence"] = "challenge platform marker"
+		}
+		return true
+	}
+	return page.suspectedChallenge && classifyPageChallenge(result, page.body)
 }
 
 // Store each completed page before the next request so partial failures do not

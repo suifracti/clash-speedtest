@@ -82,6 +82,12 @@ func checkAntigravity(ctx context.Context, client *http.Client, token string, st
 		defer resp.Body.Close()
 		status := resp.StatusCode
 		r.HTTPStatus = &status
+		if serviceRateLimit(&r, resp, false) {
+			// Keep the account/catalog/model step visible. The HTTP quota is
+			// already known; a slow error body must not turn it into a timeout.
+			r.FailurePhase = step
+			return nil, false
+		}
 		// The model catalog is substantially larger than an ordinary probe
 		// response. Keep a bounded cap, but do not misclassify a valid catalog
 		// as unavailable just because it exceeds the generic 64 KiB limit.
