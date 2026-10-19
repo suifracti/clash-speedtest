@@ -19,8 +19,8 @@ func serviceSocketBudget(rule Rule, observations int) int {
 			perSample = 10
 		} // plus CF summary/gateway and ASN traffic, each API allows one nonce replay
 		if rule.RuleVersion >= 7 {
-			perSample = 12
-		} // primary + CF summary + up to five normal nonce exchanges for each API
+			perSample = 22
+		} // primary + CF summary + four API exchanges with at most five normal nonce requests each
 	case "antigravity":
 		perSample = 4 // existing account/catalog/model requests plus independent trace
 	case "ipok_ipv4", "ipok_ipv6":

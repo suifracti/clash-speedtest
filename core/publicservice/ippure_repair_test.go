@@ -124,3 +124,30 @@ func TestIPPureV7KeepsCFWhenPrimaryUsesWholeDeadline(t *testing.T) {
 		t.Fatalf("completed CF result lost: %+v", r)
 	}
 }
+
+func TestIPPureV7FallsBackToWebForFreshCFIPv4Only(t *testing.T) {
+	checker := ippureChecker(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Host + req.URL.Path {
+		case "my.ippure.com/v1/info":
+			return fixtureResponse(req, 403, "text/html", "blocked"), nil
+		case "cf.999831.xyz/api/cf-summary":
+			return fixtureResponse(req, 200, "application/octet-stream", "opaque"), nil
+		case "api.123169.xyz/api/gateway/cf":
+			return ippureJSONResponse(req, 200, `{"ip":"8.8.8.8","risk_score":98}`), nil
+		case "api.123169.xyz/api/info/ip-basic/8.8.8.8":
+			return ippureJSONResponse(req, 200, `{"ok":true,"data":{"ip":"8.8.8.8","asn":{"number":15169}}}`), nil
+		case "api.123169.xyz/api/info/ip-risk/8.8.8.8":
+			return ippureJSONResponse(req, 200, `{"ok":true,"data":{"ip":"8.8.8.8","risk_score":68}}`), nil
+		case "api.123169.xyz/api/info/asn/botclass/15169":
+			return ippureJSONResponse(req, 200, `{"ok":true,"data":{"human":5.78,"bot":94.22}}`), nil
+		default:
+			t.Fatalf("unexpected URL %s", req.URL)
+			return nil, nil
+		}
+	})
+	rule, _ := RuleFor("ippure_ip_quality")
+	r := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
+	if r.Outcome != "profiled" || r.Details["fraud_score"] != "68" || r.Details["cf_risk_score"] != "98" || r.Details["asn_human_percent"] != "5.78" {
+		t.Fatal(r)
+	}
+}

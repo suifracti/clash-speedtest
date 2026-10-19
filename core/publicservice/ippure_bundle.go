@@ -275,6 +275,28 @@ func checkIPPureBundle(ctx context.Context, client *http.Client, rule Rule, star
 	for k, v := range cfResult.Details {
 		d[k] = v
 	}
+	// The public self-IP endpoint may be challenged even while the normal
+	// website API is usable. Query only this freshly observed CF IPv4.
+	if rule.RuleVersion >= 7 && result.Outcome != "profiled" && ctx.Err() == nil {
+		if ip, valid := ippurePublicIPv4(d["cf_ip"]); valid {
+			d["official_self_outcome"] = result.Outcome
+			d["official_self_http_status"] = strconv.Itoa(ippureStatusCode(result))
+			d["official_self_error"] = result.ErrorMessage
+			part := checkIPPureObservedIPv4(ctx, &local, state, ip, started)
+			d["web_fallback_outcome"] = part.Outcome
+			add(part)
+			for k, v := range part.Details {
+				d[k] = v
+			}
+			if part.Outcome == "profiled" {
+				result.Outcome = "profiled"
+				result.HTTPStatus = part.HTTPStatus
+				result.ErrorMessage = ""
+				result.FailurePhase = ""
+				result.Summary = part.Summary
+			}
+		}
+	}
 	asn := strings.TrimPrefix(strings.ToUpper(d["asn"]), "AS")
 	if asn == "" {
 		asn = d["cf_asn"]
@@ -364,5 +386,60 @@ func checkIPPureCF(ctx context.Context, local *http.Client, state *ippureNonceSt
 		d["cf_status"] = ippureExtraStatus(part)
 	}
 	d["cf_asn"] = asn
+	return result
+}
+
+func checkIPPureObservedIPv4(ctx context.Context, client *http.Client, state *ippureNonceState, ip string, started time.Time) Result {
+	result := Result{Details: map[string]string{}}
+	add := func(part Result) { result.RequestCount += part.RequestCount; result.BytesRead += part.BytesRead }
+	part, body, ok := ippureExtraExchange(ctx, client, http.MethodGet, ippureWebAPIBase+ippureWebBasicPath+ip, nil, state)
+	add(part)
+	if !ok {
+		ippureCarryFailure(&result, part)
+		return result
+	}
+	data, err := ippureEnvelopeData(body)
+	if err != nil {
+		ippureUnknown(&result, "basic_response", "网页基础资料无效")
+		return result
+	}
+	fields, err := ippureBasicDetails(data, ip)
+	if err != nil {
+		ippureUnknown(&result, "basic_ip", "基础资料地址不匹配")
+		return result
+	}
+	for k, v := range fields {
+		result.Details[k] = v
+	}
+	result.Details["ip"] = ip
+	result.Details["ip_family"] = "IPv4"
+	result.Details["queried_ip"] = ip
+	result.Details["api_method"] = "ippure_web_cf_observation_v1"
+	result.Details["query_at"] = started.UTC().Format(time.RFC3339Nano)
+	result.Details["ip_observation_source"] = "Cloudflare summary, same selected node, current attempt"
+	result.Details["web_basic_url"] = ippureWebAPIBase + ippureWebBasicPath + ip
+	result.Details["web_risk_url"] = ippureWebAPIBase + ippureWebRiskPath + ip
+	part, body, ok = ippureExtraExchange(ctx, client, http.MethodGet, ippureWebAPIBase+ippureWebRiskPath+ip, nil, state)
+	add(part)
+	if !ok {
+		ippureCarryFailure(&result, part)
+		return result
+	}
+	data, err = ippureEnvelopeData(body)
+	if err != nil {
+		ippureUnknown(&result, "risk_response", "网页风险资料无效")
+		return result
+	}
+	score, riskIP, hasIP, err := ippureRiskFields(data)
+	if err != nil || score < 0 || score > 100 || hasIP && !ippureSameIPv4(riskIP, ip) {
+		ippureUnknown(&result, "risk_score", "风险分无效或地址不匹配")
+		return result
+	}
+	result.Outcome = "profiled"
+	result.HTTPStatus = part.HTTPStatus
+	result.Details["fraud_score"] = strconv.Itoa(score)
+	result.Details["risk_scale_max"] = "100"
+	result.Details["risk_direction"] = "lower_is_better"
+	result.Summary = fmt.Sprintf("IPPure风险 %d，越低越好", score)
 	return result
 }
