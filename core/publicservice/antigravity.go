@@ -4,10 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -59,6 +56,7 @@ func checkAntigravity(ctx context.Context, client *http.Client, token string, st
 	}
 	call := func(step string, payload any) ([]byte, bool) {
 		r.FailurePhase = step
+		r.HTTPStatus = nil // A later pre-header failure has no response status of its own.
 		encoded, err := json.Marshal(payload)
 		if err != nil {
 			r.Outcome, r.ErrorMessage = "unknown", "无法构造检测请求"
@@ -98,7 +96,7 @@ func checkAntigravity(ctx context.Context, client *http.Client, token string, st
 		body, err := io.ReadAll(io.LimitReader(resp.Body, int64(maximum)+1))
 		r.BytesRead += int64(min(len(body), maximum))
 		if err != nil {
-			antigravityReadError(&r, ctx, err)
+			antigravityReadError(&r, ctx, atRequestPhase(err, "response_read"))
 			return nil, false
 		}
 		if len(body) > maximum {
@@ -197,20 +195,11 @@ func checkAntigravity(ctx context.Context, client *http.Client, token string, st
 }
 
 func antigravityReadError(r *Result, ctx context.Context, err error) {
-	var ne net.Error
-	switch {
-	case ctx.Err() == context.Canceled || errors.Is(err, context.Canceled):
-		r.Outcome, r.ErrorMessage = "cancelled", "检测已取消"
-	case ctx.Err() == context.DeadlineExceeded || errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()):
-		r.Outcome, r.ErrorMessage = "timed_out", "检测超过总时长上限"
-	default:
-		detail := sanitizeTransportError(err)
-		r.Outcome, r.ErrorMessage = "transport_error", fmt.Sprintf("所选节点的服务连接或响应读取失败: %s", detail)
-		if r.Details == nil {
-			r.Details = make(map[string]string)
-		}
-		r.Details["transport_error"] = detail
-	}
+	step := r.FailurePhase
+	classifyRequestError(r, ctx, err)
+	// Keep the model workflow step in the existing field; the precise request
+	// stage and timeout origin are separate Details shared with other probes.
+	r.FailurePhase = step
 }
 
 func antigravityHasContent(body []byte) bool {

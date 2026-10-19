@@ -623,6 +623,7 @@ func checkNetflix(ctx context.Context, client *http.Client, rule Rule, started t
 }
 
 func netflixGET(ctx context.Context, client *http.Client, target string, result *Result, maximum int) (netflixPage, bool) {
+	result.HTTPStatus = nil // Completed title statuses remain in per-title Details.
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		result.Outcome, result.FailurePhase, result.ErrorMessage = "transport_error", "request_setup", "无法创建 Netflix 测试请求"
