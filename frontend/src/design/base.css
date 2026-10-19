@@ -106,3 +106,6 @@ h2{font-size:16px;font-weight:600;letter-spacing:-.2px}
 .cst-queue-save.empty span{color:var(--cst-muted)}
 .cst-queue-save .text-button{justify-content:flex-start}
 @media(max-width:640px){.cst-queue-cols{display:none}.cst-queue-row{grid-template-columns:1fr 1fr;row-gap:4px}.cst-queue-node{grid-column:1/-1}}
+/* 设置项生效时机标记 */
+.cst-effect{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:5px;font-size:11px;font-weight:500;vertical-align:2px;background:var(--cst-empty-bg);color:var(--cst-muted)}
+.cst-effect.now{background:var(--cst-accent-soft);color:var(--cst-accent)}

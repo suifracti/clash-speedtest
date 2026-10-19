@@ -35,7 +35,7 @@ async function apply(){const kind=confirmation.value;if(!kind||locked.value)retu
     <p v-if="pageError&&!confirmation" class="inline-error" role="alert">{{pageError}}</p>
     <p class="operation-status" role="status" aria-live="polite">{{operation?`正在${operation}…`:w.loading.value?'正在加载数据状态…':feedback||'操作前请核对来源与目标位置。'}}</p>
     <section class="settings-section data-storage-panel"><div class="section-heading"><h2>当前存储</h2><span class="badge" :class="{good:w.setup.value?.state==='ready'&&!pageError&&!w.loading.value}">{{setupLabel}}</span></div>
-      <dl class="path-list"><div><dt>数据根目录</dt><dd>{{w.setup.value?.data_root||'尚未读取'}}</dd></div><div><dt>订阅目录</dt><dd>{{w.setup.value?.profile_dir||'尚未读取'}}</dd></div><div><dt>历史目录</dt><dd>{{w.setup.value?.history_dir||'尚未读取'}}</dd></div><div><dt>设置文件</dt><dd>{{w.setup.value?.settings_file||'尚未读取'}}</dd></div></dl>
+      <dl class="path-list"><div><dt>数据根目录</dt><dd>{{w.setup.value?.data_root||'尚未读取'}}</dd></div><div><dt>订阅目录</dt><dd>{{w.setup.value?.profile_dir||'尚未读取'}}</dd></div><div><dt>历史目录</dt><dd>{{w.setup.value?.history_dir||'尚未读取'}}</dd></div><div><dt>设置文件</dt><dd>{{w.setup.value?.settings_file||'尚未读取'}}</dd></div><div><dt>数据库版本</dt><dd class="muted">暂无数据来源</dd></div><div><dt>最近备份</dt><dd class="muted">暂无数据来源（应用不记录导出时间）</dd></div></dl>
       <div class="data-backup-actions"><div class="button-group"><button class="button" :disabled="locked||!w.setup.value?.data_root" @click="openFolder">打开数据目录</button><button class="button primary" :disabled="locked||!w.setup.value?.data_root" @click="exportBackup"><Icon name="download"/>导出备份</button></div>
       <p class="section-note">完整备份包含订阅、历史与设置；导出文件格式与保存方式沿用现有功能。下方订阅导入不等于完整备份恢复。</p></div>
     </section>
