@@ -9,7 +9,7 @@ import (
 func LatencyTargetURL(id string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(id)) {
 	case "all":
-		return "multi://latency-v1", nil
+		return "multi://latency-four-v1", nil
 	case "", "cloudflare":
 		return "https://speed.cloudflare.com/__down?bytes=1", nil
 	case "google":
@@ -29,6 +29,9 @@ func LatencyTargetURL(id string) (string, error) {
 
 // LatencyProbeURLs expands the versioned suite while preserving single-target callers.
 func LatencyProbeURLs(target string) []string {
+	if target == "multi://latency-four-v1" {
+		return []string{"https://speed.cloudflare.com/__down?bytes=1", "https://www.gstatic.com/generate_204", "https://api.github.com/zen", "https://captive.apple.com/hotspot-detect.html"}
+	}
 	if target != "multi://latency-v1" {
 		return []string{target}
 	}

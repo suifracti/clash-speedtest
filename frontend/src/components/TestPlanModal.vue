@@ -25,7 +25,7 @@ const selectedServiceIds=computed(()=>{
   if(!p)return []
   return [...new Set([...(p.projects.includes('service')?p.serviceIds.filter(id=>!isReputationId(id)):[]),...(p.includeReputation?(p.reputationServiceIds||[]).filter(isReputationId):[])])]
 })
-const plannedRequests=computed(()=>{const p=w.plan.value;if(!p)return 0;return p.nodes.length*p.repeats*((p.projects.includes('latency')?(p.target==='all'?6:1)*p.samples:0)+(p.projects.includes('download')?1:0)+selectedServiceIds.value.length*(p.serviceSamples??4))})
+const plannedRequests=computed(()=>{const p=w.plan.value;if(!p)return 0;return p.nodes.length*p.repeats*((p.projects.includes('latency')?(p.target==='all'?targets.length:1)*p.samples:0)+(p.projects.includes('download')?1:0)+selectedServiceIds.value.length*(p.serviceSamples??4))})
 const groups=computed(()=>[...new Map(w.plan.value?.nodes.map(n=>[n.profile_id,{id:n.profile_id,name:n.profile_name,count:w.plan.value!.nodes.filter(x=>x.profile_id===n.profile_id).length}])||[]).values()])
 
 async function submit(){
@@ -53,7 +53,7 @@ async function submit(){
     <div v-if="w.plan.value.projects.includes('latency')" class="plan-section">
       <h3>延迟检测</h3>
       <div class="form-grid">
-        <label>检测站点<UiSelect v-model="w.plan.value.target"><option value="all">六站综合检测</option><option v-for="target in targets" :key="target.id" :value="target.id">{{target.name}}</option></UiSelect></label>
+        <label>检测站点<UiSelect v-model="w.plan.value.target"><option value="all">四站综合检测</option><option v-for="target in targets" :key="target.id" :value="target.id">{{target.name}}</option></UiSelect></label>
         <label>每站采样次数<UiSelect v-model.number="w.plan.value.samples"><option v-for="n in [1,3,6,10,20]" :key="n" :value="n">{{n}} 次</option></UiSelect></label>
         <label>请求超时<UiSelect v-model.number="w.plan.value.timeout"><option v-for="n in [3,5,10,20,30]" :key="n" :value="n">{{n}} 秒</option></UiSelect></label>
         <label>节点并发<UiSelect v-model.number="w.plan.value.concurrency"><option v-for="n in [1,4,8,16]" :key="n" :value="n">{{n}} 个节点</option></UiSelect></label>

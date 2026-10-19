@@ -66,3 +66,15 @@ func TestSixLatencyHTTPRejectionStillRecordsMeasuredDelay(t *testing.T) {
 		}
 	}
 }
+
+func TestFourLatencyScopePreservesLegacySix(t *testing.T) {
+	targets := GetProbeTargets(ProbeSetLatencyFour)
+	if len(targets) != 4 {
+		t.Fatal(len(targets))
+	}
+	for i, target := range targets {
+		if !target.ResponseDelayOnly || target != GetProbeTargets(ProbeSetLatencySix)[i] {
+			t.Fatal(target)
+		}
+	}
+}

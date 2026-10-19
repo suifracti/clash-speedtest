@@ -224,7 +224,7 @@ func TestLatencyTargetURLNormalization(t *testing.T) {
 		{"  CLOUDFLARE  ", "https://speed.cloudflare.com/__down?bytes=1", false},
 		{"google", "https://www.gstatic.com/generate_204", false},
 		{" Google ", "https://www.gstatic.com/generate_204", false},
-		{"ALL", "multi://latency-v1", false},
+		{"ALL", "multi://latency-four-v1", false},
 		{"", "https://speed.cloudflare.com/__down?bytes=1", false},
 		{"unknown_xyz", "", true},
 	} {

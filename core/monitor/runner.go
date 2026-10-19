@@ -124,6 +124,8 @@ type TargetSpec struct {
 // GetProbeTargets returns the target probes for a given ProbeSetType.
 func GetProbeTargets(pset ProbeSetType) []TargetSpec {
 	switch pset {
+	case ProbeSetLatencyFour:
+		return GetProbeTargets(ProbeSetLatencySix)[:4]
 	case ProbeSetLatencySix:
 		return []TargetSpec{
 			{ResponseDelayOnly: true, ProbeType: "rtt", URL: "https://speed.cloudflare.com/__down?bytes=1"},

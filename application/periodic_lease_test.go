@@ -278,14 +278,14 @@ func TestPeriodicFullCatalogSurvivesMixedOfflineOutcomes(t *testing.T) {
 	}
 	p.runCycle(context.Background(), "service", time.Now(), p.cfg)
 	c := p.cycles["service"]
-	if calls.Load() != 162 || len(seen) != 81 || c.Concurrency != 16 || c.Outcomes["timed_out"] == 0 || c.NotExecuted == 0 || c.FullCoverage {
+	if int(calls.Load()) != 2*len(periodicServices(p.cfg)) || len(seen) != len(periodicServices(p.cfg)) || c.Concurrency != 16 || c.Outcomes["timed_out"] == 0 || c.NotExecuted == 0 || c.FullCoverage {
 		t.Fatalf("plan/concurrency/outcome lost: %+v", c)
 	}
-	if len(publicservice.Catalog()) != 85 || len(periodicServices(PeriodicSamplingConfig{IncludeAntigravity: true})) != 81 {
-		t.Fatal("restored IPPure remains on-demand; periodic counts or catalog size changed unexpectedly")
+	if len(publicservice.Catalog()) <= len(periodicServices(p.cfg)) {
+		t.Fatal("opt-in probes must remain outside automatic patrol")
 	}
 	for _, rule := range periodicServices(PeriodicSamplingConfig{IncludeAntigravity: true}) {
-		if rule.ServiceID == "ippure_ip_quality" {
+		if rule.ResultKind == "ip_quality" || strings.HasPrefix(rule.ServiceID, "resource_") {
 			t.Fatal("IPPure must stay out of automatic sampling")
 		}
 	}

@@ -33,7 +33,7 @@ it('wires six-site controls to saved evidence, preserves original history and re
  readQualityMock.mockImplementation(async(node:NodeOption)=>{const e=evidence(node,node.node_key==='b-1'?40:20);e.since='2026-10-09T00:00:00Z';e.until=at;return e})
  w=createWorkspace();w.project.value='latency';w.airports.value=[{id:'airport-b',name:'机场 B',url_display:'',node_count:2,has_cache:true,subscriptions:[{id:'sub-b',airport_id:'airport-b',name:'默认',url_display:'',url_configured:true,node_count:2,has_cache:true}]}];w.nodes.value=fresh.slice(0,2);w.setAirports(['airport-b'])
  wrapper=mount(HomeView,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
- await wrapper.get('select[aria-label="六站质量排序"]').setValue('p50');await flushPromises()
+ await wrapper.get('select[aria-label="四站质量排序"]').setValue('p50');await flushPromises()
  expect(wrapper.findAll('.node-name strong').map(n=>n.text())).toEqual(['香港 · 02','香港 · 01'])
  expect(wrapper.text()).toContain('当前集合同站 / 同条件 / 同窗口，可比较')
  expect(wrapper.findAll('.site-quality')).toHaveLength(2)

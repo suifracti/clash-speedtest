@@ -6,6 +6,7 @@ export const latencyTargets=[
  {id:'microsoft',name:'Microsoft',match:'msftconnecttest.com',urls:['http://www.msftconnecttest.com/connecttest.txt']},
  {id:'firefox',name:'Firefox',match:'detectportal.firefox.com',urls:['https://detectportal.firefox.com/success.txt']},
 ]
+export const activeLatencyTargets=latencyTargets.filter(t=>!['microsoft','firefox'].includes(t.id))
 // Attribution is separate from comparison conditions. Keep the original URL.
 export function latencyTargetId(raw?:string){
  if(!raw||raw==='旧版 Cloudflare')return 'cloudflare'

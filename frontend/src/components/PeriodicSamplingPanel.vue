@@ -35,7 +35,7 @@ function duration(seconds:number|null|undefined){if(seconds===undefined||seconds
  <p class="muted">全部 {{status?.service_count??82}} 项作为持续巡检，按订阅、节点和服务公平轮转。计划间隔不等于全覆盖耗时；一轮完成后安排下一轮，超期跳过、不积压。</p>
  <p class="inline-warning">5 分钟全覆盖目标尚未实现，以实际耗时和覆盖进度为准。</p>
  <p class="muted">下载保持单路、每节点最多 {{form.mib}} MiB，不与服务请求同时测量；每批最多 4 个节点并设 15 秒交让预算（正在执行的单节点完成后交让），批次间让巡检继续。配置保存后随服务启动恢复。</p>
- <p class="muted">新延迟任务默认 Cloudflare、Google、GitHub、Apple、Microsoft、Firefox 六站；旧冻结任务保持原范围，当前均未启动。全局站点有记录不代表每个节点都覆盖六站。延迟与其他探测可能重叠；应用内竞争写入结果标记，延迟或速度下降不能直接归因于节点。外部应用流量无法自动排除。</p>
+ <p class="muted">新延迟任务默认 Cloudflare、Google、GitHub、Apple 四站；旧冻结任务保持原范围，当前均未启动。全局站点有记录不代表每个节点都覆盖四站。延迟与其他探测可能重叠；应用内竞争写入结果标记，延迟或速度下降不能直接归因于节点。外部应用流量无法自动排除。</p>
  <p v-if="status?.config.selections?.length" class="inline-warning">当前为 {{status.config.selections.length}} 个节点的验证范围；点“保存并启动”切换为全部当前节点。</p>
  <p v-if="error||readError||status?.error||status?.pause_reason" class="inline-warning" role="alert">{{error||readError||status?.pause_reason||status?.error}}</p>
  <div v-for="(cycle,kind) in status?.cycles" :key="kind" class="periodic-progress">

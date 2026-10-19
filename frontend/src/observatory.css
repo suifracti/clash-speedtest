@@ -366,3 +366,7 @@
 @media(min-width:741px) and (max-width:1279px){.observatory-app .overview-layout .node-list:not(.observatory-matrix) .node-row{grid-template-columns:20px minmax(180px,1fr) minmax(220px,1.5fr) 104px}.observatory-app .overview-layout .node-list .row-run{grid-column:4!important}.observatory-app .overview-layout .overview-latency{grid-column:3;grid-row:1}.observatory-app .overview-layout .overview-download{grid-column:3;grid-row:2}.observatory-app .overview-layout .overview-services{grid-column:2/4;grid-row:3}}
 /* Keep the node and its action anchored while a station's history grows. */
 .observatory-app .node-row:has(.site-history-panel) .node-identity-block,.observatory-app .node-row:has(.site-history-panel) .row-run{align-self:start}
+
+/* Compact latency overview: four named groups, history bars carry the detail. */
+.observatory-app .site-metrics.compact .health-bars .health-cell{height:38px;flex:0 1 7px;max-width:7px}
+.observatory-app .site-metrics.compact .site-name{font-size:11px}

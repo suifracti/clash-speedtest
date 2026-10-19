@@ -210,7 +210,7 @@ onBeforeUnmount(()=>{mounted=false;reloadGeneration++;runsGeneration++;clearInte
         <div class="monitor-spec">
           <span>{{job.node_keys?.length||0}} 个节点</span>
           <span>每 {{job.interval_seconds>=60?`${job.interval_seconds/60} 分钟`:`${job.interval_seconds} 秒`}}</span>
-          <span>{{job.probe_set==='latency_six_v1'?'六站延迟':job.probe_set==='light'?'旧单站延迟':job.probe_set==='service'?'基础服务':'深度诊断'}}</span>
+          <span>{{job.probe_set==='latency_four_v1'?'四站延迟':job.probe_set==='latency_six_v1'?'旧六站延迟':job.probe_set==='light'?'旧单站延迟':job.probe_set==='service'?'基础服务':'深度诊断'}}</span>
           <span>{{job.sampling_tier==='focus'?'重点':job.sampling_tier==='sparse'?'稀疏':'常规'}}采样</span>
         </div>
         <p v-if="job.blocked_reason||job.recovery_reason||job.persistence_error||job.storage_reason||job.budget_reason" class="inline-warning">

@@ -23,7 +23,7 @@ const serviceLabel=(a?:Attempt)=>{
  if(a.execution_state==='not_executed'||a.result?.outcome==='not_executed')return '未执行'
  if(!a.result)return attemptStatus(a)
  if(servicePassed(a))return '规则通过'
- if(a.result.outcome==='reachable')return '网页可达'
+ if(a.result.outcome==='reachable')return (a.service_id||a.rule.service_id||'').startsWith('resource_')?'资源可达':'网页可达'
  if(a.result.outcome==='profiled')return '已获取画像'
  if(['matched','unlocked','flapping'].includes(a.result.outcome)&&serviceAvailability(a)===null)return '未确认'
  return outcomeLabel(a.result.outcome)
@@ -34,9 +34,9 @@ const downloadPhase=computed(()=>download.value.latest?.result?.failure_phase||d
 const zeroBytesTLS=computed(()=>downloadRead.value===0&&downloadPhase.value==='tls')
 </script>
 <template>
- <section class="overview-latency" aria-label="六站延迟与历史比较">
-  <header class="overview-section-head"><button type="button" class="overview-history-title" aria-label="查看六站延迟历史" @click="metrics?.showAll()">{{sites.length===6?'六站响应':'所选站点响应'}}</button><span>{{caption}}</span></header>
-  <div class="overview-latency-title"><span>{{!measuredSites?'尚无对应测量':successfulSites===0?(viewMode==='window'?'窗口内未取得有效延迟':'本次未取得有效延迟'):successfulSites+' / '+sites.length+' 站测得延迟'}}</span><time v-if="observedAt">{{date(observedAt)}}</time></div>
+ <section class="overview-latency" aria-label="四站延迟与历史比较">
+  <header class="overview-section-head" :title="(!measuredSites?'尚无对应测量':successfulSites+'/'+sites.length+' 站测得延迟')+(observedAt?' · '+date(observedAt):'')"><button type="button" class="overview-history-title" aria-label="查看四站延迟历史" @click="metrics?.showAll()">{{sites.length===4?'四站响应':'所选站点响应'}}</button><span>{{caption}}</span></header>
+
   <SiteMetrics ref="metrics" compact :summaries="summaries" :target-ids="targetIds" :tests="evidence?.tests" :view-mode="viewMode" :error="error" @history="$emit('history',$event)"/>
   <small v-if="sites.some(s=>s.summary&&!s.summary.readComplete)" class="warn">部分站点的历史读取不完整</small>
  </section>

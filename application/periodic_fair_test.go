@@ -27,7 +27,7 @@ func TestPeriodicFairQueueBalancesProfilesNodesAndServices(t *testing.T) {
 		}
 	}
 	tasks := periodicFairServiceTasks(nodes, periodicServices(PeriodicSamplingConfig{IncludeAntigravity: true}))
-	if len(tasks) != 6*81 {
+	if len(tasks) != 6*len(periodicServices(PeriodicSamplingConfig{IncludeAntigravity: true})) {
 		t.Fatalf("missing combinations: %d", len(tasks))
 	}
 	seen := map[string]bool{}
@@ -138,7 +138,7 @@ func TestPeriodicRuntimeHonorsConfiguredConcurrency(t *testing.T) {
 		t.Fatalf("configured bound bypassed: %d", peak.Load())
 	}
 	c := p.cycles["service"]
-	if c.CompletedNodes != 2 || c.CoveredServices != 81 || c.CoveredNodes != 2 {
+	if c.CompletedNodes != 2 || c.CoveredServices != len(periodicServices(p.cfg)) || c.CoveredNodes != 2 {
 		t.Fatalf("coverage incomplete: %+v", c)
 	}
 }

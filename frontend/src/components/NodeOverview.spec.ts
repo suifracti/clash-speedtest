@@ -18,12 +18,12 @@ it('keeps the latest service failure and latest download status visible beside c
  expect(w.get('.overview-latency').text()).toContain('未测');w.unmount()
 })
 
-it('shows full site names and opens all six charts from the heading',async()=>{
+it('shows full site names and opens all four charts from the heading',async()=>{
  const tests:LatencyTest[]=[{...node,attempt_id:'latency',display_name:'fixture',node_type:'ss',requested_at:at,finished_at:at,status:'completed',latency_ms:80,total_samples:6,success_samples:6,failure_samples:0,persistence_state:'saved',samples:['https://speed.cloudflare.com/__down?bytes=1','https://www.gstatic.com/generate_204','https://api.github.com','http://captive.apple.com/hotspot-detect.html','http://www.msftconnecttest.com/connecttest.txt','https://detectportal.firefox.com/success.txt'].map((target,i)=>({seq:i+1,target,timestamp:at,success:true,latency_ms:80+i*10}))}]
  const evidence:QualityEvidence={tests,monitor:[],services:[],downloads:[],reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true,since:'2026-10-18T00:00:00Z',until:at}
  const w=mount(NodeOverview,{props:{evidence,summaries:multiSiteQuality(node,evidence),target:'all',targetIds:['cloudflare','google','github','apple','microsoft','firefox'],serviceIds:[],catalog:[]}})
- const sites=w.get('.overview-sites').text();for(const name of ['Cloudflare','Google','GitHub','Apple','Microsoft','Firefox'])expect(sites).toContain(name)
- expect(w.findAll('.overview-sites .site-name')).toHaveLength(6);expect(w.find('.overview-six').exists()).toBe(false);expect(w.find('.overview-history-link').exists()).toBe(false);expect(sites).not.toContain('↗');await w.get('[aria-label="查看六站延迟历史"]').trigger('click');expect(w.findAll('.site-history-gallery>section')).toHaveLength(6);expect(w.findAll('.site-history-gallery .trend-holder')).toHaveLength(6);w.unmount()
+ const sites=w.get('.overview-sites').text();expect(sites).not.toContain('Microsoft');expect(sites).not.toContain('Firefox');for(const name of ['Cloudflare','Google','GitHub','Apple'])expect(sites).toContain(name)
+ expect(w.findAll('.overview-sites .site-name')).toHaveLength(4);expect(w.find('.overview-six').exists()).toBe(false);expect(w.find('.overview-history-link').exists()).toBe(false);expect(sites).not.toContain('↗');await w.get('[aria-label="查看四站延迟历史"]').trigger('click');expect(w.findAll('.site-history-gallery>section')).toHaveLength(4);expect(w.findAll('.site-history-gallery .trend-holder')).toHaveLength(4);w.unmount()
 })
 
 it('restores per-site vertical history bars with preview, pinning and the selected round curve',async()=>{

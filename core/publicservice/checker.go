@@ -141,7 +141,7 @@ var catalog = []Rule{
 		RedirectPolicy:   "do_not_follow", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
 	},
 	{
-		ServiceID: "chatgpt_web", Name: "ChatGPT 网页与挑战", RuleVersion: 2,
+		ServiceID: "chatgpt_web", Name: "ChatGPT 网页与挑战", RuleVersion: 3,
 		Category: "AI 服务", Region: "全球", ResultKind: "web_access", Description: "区分网页可达、Cloudflare 挑战和 HTTP 拒绝；不登录账号。",
 		TargetURL: "https://chatgpt.com/", Method: http.MethodGet,
 		SuccessCriterion: "收到网页响应；Cloudflare 挑战单独展示，网页可达不代表账号可用",
@@ -314,7 +314,7 @@ func webRule(id, name, category, region, target, description string) Rule {
 	}
 	return Rule{
 		ServiceID: id, Name: name, Category: category, Region: region, ResultKind: resultKind, Description: description,
-		RuleVersion: 3, TargetURL: target, Method: http.MethodGet,
+		RuleVersion: 4, TargetURL: target, Method: http.MethodGet,
 		SuccessCriterion: "最多跟随3次同服务HTTPS跳转，最终2xx且无挑战标记才记入口可达；跨服务跳转单列；不等同于账号、支付或播放解锁",
 		RedirectPolicy:   "follow_same_service", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
 	}
@@ -344,12 +344,12 @@ func Catalog() []Rule {
 	result := make([]Rule, 0, len(catalog))
 	for _, rule := range catalog {
 		// Keep old snapshots resolvable through RuleFor, outside new plans.
-		if strings.HasPrefix(rule.ServiceID, "ipok_") || rule.ServiceID == "ping0_ip_quality" {
+		if strings.HasPrefix(rule.ServiceID, "ipok_") || rule.ServiceID == "ping0_ip_quality" || rule.ServiceID == "microsoft_connect" || rule.ServiceID == "firefox_portal" {
 			continue
 		}
 		result = append(result, rule)
 	}
-	return append(result, ping0FamilyRule("IPv4"), ping0FamilyRule("IPv6"))
+	return append(append(result, ping0FamilyRule("IPv4"), ping0FamilyRule("IPv6")), resourceRules()...)
 }
 
 func RuleFor(serviceID string) (Rule, bool) {
@@ -360,7 +360,7 @@ func RuleFor(serviceID string) (Rule, bool) {
 	if serviceID == "ping0_ipv6" {
 		return ping0FamilyRule("IPv6"), true
 	}
-	for _, rule := range catalog {
+	for _, rule := range append(append([]Rule{}, catalog...), resourceRules()...) {
 		if rule.ServiceID == serviceID {
 			return rule, true
 		}
@@ -789,6 +789,9 @@ func recordSingleServiceSample(r *Result) {
 
 func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monitor.MonitoredNode, rule Rule, startedAt time.Time) (final Result) {
 
+	if strings.HasPrefix(rule.ServiceID, "resource_") {
+		return checkResource(ctx, client, rule, startedAt)
+	}
 	if rule.ServiceID == "antigravity" {
 		return checkAntigravityObserved(ctx, client, c.AntigravityToken, startedAt)
 	}
@@ -902,7 +905,7 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 		result.Summary = "服务与鉴权入口可达"
 		return finish(result, startedAt)
 	}
-	if isReachabilityRule(rule) && (status >= 200 && status < 300 || rule.ServiceID == "grok_web") {
+	if isReachabilityRule(rule) {
 		bodyLimit := int64(8192)
 		if rule.ServiceID == "peacock_web" {
 			bodyLimit = MaximumResponseBytes
@@ -928,6 +931,12 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 				return finish(result, startedAt)
 			}
 		} else if classifyPageChallenge(&result, body) {
+			return finish(result, startedAt)
+		}
+
+		if status < 200 || status >= 300 {
+			result.Outcome, result.FailurePhase = "http_rejected", "http_status"
+			result.ErrorMessage = fmt.Sprintf("入口返回 HTTP %d；未发现明确挑战标记", status)
 			return finish(result, startedAt)
 		}
 

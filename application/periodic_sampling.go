@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,7 +29,7 @@ type PeriodicSamplingConfig struct {
 }
 
 func defaultPeriodicSamplingConfig() PeriodicSamplingConfig {
-	return PeriodicSamplingConfig{LatencyProbeSet: monitor.ProbeSetLatencySix, LatencyIntervalSeconds: 120, ServiceIntervalSeconds: 300, DownloadIntervalSeconds: 3600, DownloadMiB: 10, ServiceConcurrency: 16, IncludeAntigravity: true}
+	return PeriodicSamplingConfig{LatencyProbeSet: monitor.ProbeSetLatencyFour, LatencyIntervalSeconds: 120, ServiceIntervalSeconds: 300, DownloadIntervalSeconds: 3600, DownloadMiB: 10, ServiceConcurrency: 16, IncludeAntigravity: true}
 }
 
 func validatePeriodicSamplingConfig(cfg PeriodicSamplingConfig) error {
@@ -152,7 +153,7 @@ func newPeriodicSampling(app *AppService) *periodicSampling {
 		if err != nil {
 			p.lastError = "定时配置读取失败，未自动启动：" + err.Error()
 		} else {
-			saved.Config.LatencyProbeSet = monitor.ProbeSetLatencySix
+			saved.Config.LatencyProbeSet = monitor.ProbeSetLatencyFour
 			saved.Config.ServiceConcurrency = periodicServiceConcurrency(saved.Config)
 			p.cfg = saved.Config
 			if saved.Jobs != nil {
@@ -197,7 +198,7 @@ func (s *AppService) GetPeriodicSampling() (*PeriodicSamplingStatus, error) {
 	p := s.periodic
 	p.mu.Lock()
 	status := &PeriodicSamplingStatus{Config: p.cfg, Running: p.cancel != nil, PauseReason: p.pauseReason, Error: p.lastError, Cycles: map[string]PeriodicCycle{}}
-	status.Config.LatencyProbeSet = monitor.ProbeSetLatencySix
+	status.Config.LatencyProbeSet = monitor.ProbeSetLatencyFour
 	status.Config.Selections = append([]MonitorNodeOptionDTO(nil), p.cfg.Selections...)
 	for _, job := range p.jobs {
 		status.MonitorJobIDs = append(status.MonitorJobIDs, job.ID)
@@ -239,8 +240,8 @@ func clonePeriodicOutcomes(source map[string]int) map[string]int {
 func periodicServices(cfg PeriodicSamplingConfig) []publicservice.Rule {
 	result := []publicservice.Rule{}
 	for _, r := range publicservice.Catalog() {
-		// Reputation queries and superseded compatibility aliases are never periodic.
-		if r.SupersededBy != "" || r.ServiceID == "ipok_ipv4" || r.ServiceID == "ipok_ipv6" || r.ServiceID == "ippure_ip_quality" {
+		// Reputation queries and new opt-in resources must not expand existing automatic patrols.
+		if r.SupersededBy != "" || r.ResultKind == "ip_quality" || strings.HasPrefix(r.ServiceID, "resource_") {
 			continue
 		}
 		if cfg.IncludeAntigravity || r.ServiceID != "antigravity" {
@@ -288,7 +289,7 @@ func (s *AppService) ConfigurePeriodicSampling(cfg PeriodicSamplingConfig) (*Per
 	if s == nil || s.periodic == nil {
 		return nil, fmt.Errorf("periodic sampling is not initialized")
 	}
-	cfg.LatencyProbeSet = monitor.ProbeSetLatencySix
+	cfg.LatencyProbeSet = monitor.ProbeSetLatencyFour
 	cfg.ServiceConcurrency = periodicServiceConcurrency(cfg)
 	if err := validatePeriodicSamplingConfig(cfg); err != nil {
 		return nil, err
@@ -439,7 +440,7 @@ func (p *periodicSampling) syncMonitors(ctx context.Context, cfg PeriodicSamplin
 			ProbeSet monitor.ProbeSetType
 			Interval int64
 			Nodes    []MonitorNodeOptionDTO
-		}{monitor.ProbeSetLatencySix, cfg.LatencyIntervalSeconds, selected})
+		}{monitor.ProbeSetLatencyFour, cfg.LatencyIntervalSeconds, selected})
 		signature := fmt.Sprintf("%x", sha256.Sum256(data))
 		p.mu.Lock()
 		entry := p.jobs[profile]
@@ -454,7 +455,7 @@ func (p *periodicSampling) syncMonitors(ctx context.Context, cfg PeriodicSamplin
 			}
 		}
 		if entry.ID == "" {
-			req := MonitorJobCreateRequest{Name: "定时采样·延迟·" + selected[0].ProfileName, ProfileID: profile, ProbeSet: monitor.ProbeSetLatencySix, SamplingTier: monitor.SamplingTierRegular, IntervalSeconds: cfg.LatencyIntervalSeconds, TimeoutSeconds: 5}
+			req := MonitorJobCreateRequest{Name: "定时采样·延迟·" + selected[0].ProfileName, ProfileID: profile, ProbeSet: monitor.ProbeSetLatencyFour, SamplingTier: monitor.SamplingTierRegular, IntervalSeconds: cfg.LatencyIntervalSeconds, TimeoutSeconds: 5}
 			for _, n := range selected {
 				req.NodeKeys = append(req.NodeKeys, n.NodeKey)
 				req.NodeContexts = append(req.NodeContexts, MonitorNodeSelectionContext{NodeKey: n.NodeKey, NodeIdentityKey: n.NodeIdentityKey, ConfigRevisionKey: n.ConfigRevisionKey})

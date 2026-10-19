@@ -222,7 +222,7 @@ func (s *AppService) CreateMonitorJobFromRequest(req MonitorJobCreateRequest) (*
 		return nil, monitor.NewValidationError("至少选择一个订阅节点")
 	}
 	if !validMonitorProbeSet(req.ProbeSet) {
-		return nil, monitor.NewValidationError("probe_set 必须是 latency_six_v1、light、service 或 heavy")
+		return nil, monitor.NewValidationError("probe_set 必须是 latency_four_v1、latency_six_v1、light、service 或 heavy")
 	}
 	tier := req.SamplingTier
 	if tier == "" {
@@ -697,7 +697,7 @@ func monitorJobDTO(job monitor.MonitorJob, profileName string) MonitorJobDTO {
 
 func validMonitorProbeSet(probeSet monitor.ProbeSetType) bool {
 	switch probeSet {
-	case monitor.ProbeSetLight, monitor.ProbeSetService, monitor.ProbeSetHeavy, monitor.ProbeSetLatencySix:
+	case monitor.ProbeSetLight, monitor.ProbeSetService, monitor.ProbeSetHeavy, monitor.ProbeSetLatencySix, monitor.ProbeSetLatencyFour:
 		return true
 	default:
 		return false
