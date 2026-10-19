@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {computed,inject,ref} from 'vue'
+import {computed,inject,nextTick,ref,watch} from 'vue'
 import '../../home-design.css'
 import {useWorkspace} from '../../workspace'
 import {date,isReputationRule,key,projectNames,targets,type NodeOption,type Project} from '../../domain'
@@ -39,6 +39,16 @@ const qualityFiltering=computed(()=>m.qualityGate.value!=='all'||m.qualitySort.v
 const focusKey=ref<string|null>(null)
 const focusNode=computed(()=>m.pageNodes.value.find(n=>key(n)===focusKey.value)||m.pageNodes.value[0])
 function focus(n:NodeOption){if(focusNode.value&&key(focusNode.value)===key(n))return;m.closeHover();focusKey.value=key(n)}
+// ⌘K「查看节点」：只改查看中的节点和页码，不勾选、不动筛选；被筛掉的节点改用详情弹窗查看。
+const table=ref<HTMLElement>()
+watch(()=>w.viewRequest.value,n=>{
+ if(!n)return
+ w.viewRequest.value=null
+ const k=key(n),i=m.visibleNodes.value.findIndex(v=>key(v)===k)
+ if(i<0){w.inspectNode.value=n;return}
+ m.currentPage.value=Math.floor(i/m.pageSize.value)+1;m.closeHover();focusKey.value=k
+ void nextTick(()=>table.value?.querySelector<HTMLElement>('.hd-tr.focus')?.scrollIntoView?.({block:'nearest'}))
+},{immediate:true})
 function isFocus(n:NodeOption){return !!focusNode.value&&key(focusNode.value)===key(n)}
 function selected(n:NodeOption){return w.selectedKeys.value.includes(key(n))}
 const verdicts=computed<Record<string,Verdict>>(()=>Object.fromEntries(m.pageNodes.value.map(n=>[key(n),latencyVerdict(sites.value.map(s=>m.metricPoint(n,s.id)))])))
@@ -121,7 +131,7 @@ function keyNav(e:KeyboardEvent){
     <div v-if="w.busy.value" class="hd-live"><span class="spinner"/>检测进行中{{w.queue.value.length?` · ${w.done.value}/${w.queue.value.length}`:''}}<button class="hd-link" @click="w.queueOpen.value=true">查看进度</button><button class="hd-link bad" @click="w.cancelTests()">{{w.cancelRequested.value?'正在取消…':'取消'}}</button></div>
 
     <div class="hd-body">
-      <div class="hd-table" role="table" aria-label="节点列表" tabindex="0" :style="{'--hd-cols':columns}" @keydown="keyNav">
+      <div ref="table" class="hd-table" role="table" aria-label="节点列表" tabindex="0" :style="{'--hd-cols':columns}" @keydown="keyNav">
         <div class="hd-tr hd-th" role="row">
           <span role="columnheader"><input type="checkbox" :checked="allOnPage" aria-label="选择本页全部节点" @change="w.toggleAll(m.pageNodes.value)"></span>
           <span role="columnheader">节点</span>

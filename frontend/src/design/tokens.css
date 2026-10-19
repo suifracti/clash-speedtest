@@ -1,0 +1,32 @@
+/* CST 设计系统：唯一的颜色、字体、圆角来源。旧变量（--canvas/--surface/…/--hd-*）单向映射到这里，随各页迁移逐步退役。 */
+:root{
+  --cst-bg:#f5f5f7;--cst-side:#ececef;--cst-panel:#fff;--cst-panel-2:#fafafa;--cst-hover:#f0f0f3;
+  --cst-line:#e3e3e8;--cst-line-strong:#d1d1d6;
+  --cst-text:#1d1d1f;--cst-muted:#6e6e73;--cst-subtle:#a1a1a6;
+  --cst-accent:#0a66d9;--cst-accent-hover:#0857bb;--cst-accent-soft:#e8f0fc;--cst-accent-ink:#fff;
+  --cst-good:#1f8f4e;--cst-good-bg:#e5f5ec;--cst-warn:#b26a00;--cst-warn-bg:#fdf1dc;--cst-bad:#c9302c;--cst-bad-bg:#fbe7e6;--cst-empty:#8e8e93;--cst-empty-bg:#f0f0f2;
+  --cst-focus-bg:#e8f0fc;--cst-backdrop:#1d1d1f59;
+  --cst-radius:10px;--cst-radius-sm:7px;--cst-radius-lg:14px;
+  --cst-font:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",sans-serif;
+  --cst-mono:"SF Mono",ui-monospace,Menlo,monospace;
+  --cst-shadow:0 1px 2px #0000000d;--cst-shadow-pop:0 18px 60px #0000002e,0 0 0 1px #0000000f;
+  --cst-side-w:212px;
+}
+:root[data-theme=dark]{
+  --cst-bg:#1c1c1e;--cst-side:#161618;--cst-panel:#242426;--cst-panel-2:#2c2c2e;--cst-hover:#303033;
+  --cst-line:#38383c;--cst-line-strong:#48484c;
+  --cst-text:#f2f2f7;--cst-muted:#a1a1a6;--cst-subtle:#76767b;
+  --cst-accent:#4c9bff;--cst-accent-hover:#6badff;--cst-accent-soft:#1f2b3b;--cst-accent-ink:#0b1220;
+  --cst-good:#4cd17f;--cst-good-bg:#173a26;--cst-warn:#ffb340;--cst-warn-bg:#3d2d10;--cst-bad:#ff6961;--cst-bad-bg:#43201e;--cst-empty:#8e8e93;--cst-empty-bg:#2c2c2e;
+  --cst-focus-bg:#1f2b3b;--cst-backdrop:#00000080;
+  --cst-shadow:0 1px 2px #0006;--cst-shadow-pop:0 18px 60px #0009,0 0 0 1px #ffffff14;
+}
+/* 旧变量 → 新 token（data-theme 总会设置，[data-theme] 让它压过旧样式表里的同名定义） */
+:root[data-theme]{
+  --canvas:var(--cst-bg);--surface:var(--cst-panel);--surface-soft:var(--cst-panel-2);--ink:var(--cst-text);--muted:var(--cst-muted);--subtle:var(--cst-subtle);--line:var(--cst-line);--gray:var(--cst-line-strong);
+  --blue:var(--cst-accent);--blue-hover:var(--cst-accent-hover);--blue-soft:var(--cst-accent-soft);--signal:var(--cst-accent);
+  --green:var(--cst-good);--green-soft:var(--cst-good-bg);--amber:var(--cst-warn);--amber-soft:var(--cst-warn-bg);--red:var(--cst-bad);--red-soft:var(--cst-bad-bg);
+  --shadow:var(--cst-shadow-pop);
+  font-family:var(--cst-font);font-size:13px;color:var(--cst-text);background:var(--cst-bg);
+}
+:root[data-theme=dark] .observatory-app .home-view{--muted:var(--cst-muted)}

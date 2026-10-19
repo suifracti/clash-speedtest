@@ -1,0 +1,97 @@
+/* 应用外壳：左侧栏（品牌、跳转、页面、机场快捷切换、任务区、工具、连接状态）+ 主区。 */
+.cst-shell{display:grid;grid-template-columns:var(--cst-side-w) minmax(0,1fr);min-height:100vh;background:var(--cst-bg)}
+.cst-side{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:14px;padding:16px 10px 12px;background:var(--cst-side);border-right:1px solid var(--cst-line);overflow-y:auto;overscroll-behavior:contain;z-index:20}
+.cst-main{min-width:0}
+.cst-brand{display:flex;align-items:center;gap:9px;padding:2px 6px;color:var(--cst-text);text-decoration:none}
+.cst-brand-mark{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:var(--cst-accent);color:var(--cst-accent-ink);flex:none}
+.cst-brand-mark .icon{width:16px;height:16px}
+.cst-brand-copy{display:flex;flex-direction:column;line-height:1.2;min-width:0}
+.cst-brand-copy strong{font-size:16px;font-weight:700;letter-spacing:-.4px}
+.cst-brand-copy small{font-size:11px;color:var(--cst-muted)}
+.cst-jump{display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border:1px solid var(--cst-line);border-radius:8px;background:var(--cst-panel);color:var(--cst-muted);font-size:12px;text-align:left}
+.cst-jump:hover{border-color:var(--cst-line-strong);color:var(--cst-text)}
+.cst-jump .icon{width:14px;height:14px}
+.cst-jump span{flex:1}
+kbd{font:500 11px/1 var(--cst-font);padding:2px 5px;border:1px solid var(--cst-line);border-radius:4px;background:var(--cst-panel-2);color:var(--cst-muted)}
+.cst-nav,.cst-utilities{display:flex;flex-direction:column;gap:2px}
+.cst-nav button,.cst-utilities button{display:flex;align-items:center;gap:9px;height:32px;padding:0 9px;border:0;border-radius:7px;background:transparent;color:var(--cst-text);font-size:13px;text-align:left;white-space:nowrap}
+.cst-nav button span,.cst-utilities button span{flex:1;overflow:hidden;text-overflow:ellipsis}
+.cst-nav .icon,.cst-utilities .icon{width:16px;height:16px;color:var(--cst-muted)}
+.cst-nav button:hover,.cst-utilities button:hover{background:var(--cst-hover)}
+.cst-nav button[aria-current=page],.cst-utilities button[aria-current=page]{background:var(--cst-panel);box-shadow:var(--cst-shadow),0 0 0 1px var(--cst-line);font-weight:600}
+.cst-nav button[aria-current=page] .icon,.cst-utilities button[aria-current=page] .icon{color:var(--cst-accent)}
+.cst-nav small{min-width:18px;padding:0 5px;border-radius:9px;background:var(--cst-accent-soft);color:var(--cst-accent);font-size:11px;line-height:18px;text-align:center;font-variant-numeric:tabular-nums}
+.cst-side-airports{display:flex;flex-direction:column;gap:1px}
+.cst-side-airports h2{margin:0 9px 4px;font-size:11px;font-weight:600;color:var(--cst-muted);letter-spacing:.2px}
+.cst-side-airports button{display:flex;align-items:center;gap:8px;height:28px;padding:0 9px;border:0;border-radius:7px;background:transparent;color:var(--cst-text);font-size:12px;text-align:left}
+.cst-side-airports button span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cst-side-airports button small{color:var(--cst-muted);font-variant-numeric:tabular-nums}
+.cst-side-airports button:hover{background:var(--cst-hover)}
+.cst-side-airports button[aria-pressed=true]{color:var(--cst-accent);font-weight:600}
+.cst-side-foot{margin-top:auto;display:flex;flex-direction:column;gap:8px}
+.cst-task{display:flex;flex-direction:column;align-items:stretch;gap:3px;padding:9px 10px;border:1px solid var(--cst-line);border-radius:9px;background:var(--cst-panel);color:var(--cst-text);text-align:left;font-size:12px}
+.cst-task:disabled{opacity:1;cursor:default}
+.cst-task:not(:disabled):hover{border-color:var(--cst-line-strong)}
+.cst-task-title{display:flex;align-items:center;gap:6px;font-weight:600}
+.cst-task-title .spinner{width:11px;height:11px}
+.cst-task.empty .cst-task-title{font-weight:500;color:var(--cst-muted)}
+.cst-task-detail{color:var(--cst-muted);font-variant-numeric:tabular-nums}
+.cst-task-bar{height:3px;border-radius:2px;background:var(--cst-line);overflow:hidden}
+.cst-task-bar i{display:block;height:100%;background:var(--cst-accent);transition:width .3s}
+.cst-task-attention{color:var(--cst-warn);font-weight:500}
+.cst-connection{display:flex;align-items:center;gap:7px;padding:2px 9px;color:var(--cst-muted);font-size:11px}
+.cst-dot{width:7px;height:7px;border-radius:50%;background:var(--cst-empty);flex:none}
+.cst-connection.good .cst-dot{background:var(--cst-good)}
+.cst-connection.warn .cst-dot{background:var(--cst-warn)}
+.cst-connection.bad .cst-dot{background:var(--cst-bad)}
+.cst-mobile-task{display:none}
+.cst-main .app-error{margin:16px 28px 0}
+/* 首页原来要抵消旧页头的负边距，侧栏布局下不再需要 */
+.cst-main .hd{margin:0;min-height:100vh;border-radius:0}
+.cst-main .home-view{max-width:none;padding:0}
+/* 快速跳转 */
+.modal.cst-palette{width:min(600px,calc(100vw - 32px));margin-top:12vh;max-height:min(560px,76vh);display:flex;flex-direction:column}
+.modal.cst-palette .modal-header{display:none}
+.modal.cst-palette .modal-body{padding:0;display:flex;flex-direction:column;min-height:0;flex:1}
+.cst-palette-search{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--cst-line)}
+.cst-palette-search .icon{color:var(--cst-muted)}
+.cst-palette-search input[type=search]{flex:1;border:0;background:transparent;font-size:15px;padding:4px 0;box-shadow:none}
+.cst-palette-search input[type=search]:focus{box-shadow:none}
+.cst-palette-list{overflow-y:auto;padding:6px 8px 8px;flex:1;min-height:0}
+.cst-palette-list h3{margin:8px 8px 4px;font-size:11px;font-weight:600;color:var(--cst-muted)}
+.cst-palette-row{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:7px;cursor:pointer}
+.cst-palette-row .icon{width:15px;height:15px;color:var(--cst-muted)}
+.cst-palette-row[aria-selected=true]{background:var(--cst-accent);color:var(--cst-accent-ink)}
+.cst-palette-row[aria-selected=true] .icon,.cst-palette-row[aria-selected=true] small{color:inherit;opacity:.85}
+.cst-palette-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cst-palette-row small{margin-left:auto;color:var(--cst-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:55%}
+.cst-palette-empty,.cst-palette-hint{margin:14px 10px;color:var(--cst-muted);font-size:12px}
+.cst-palette-keys{display:flex;gap:16px;padding:8px 16px;border-top:1px solid var(--cst-line);color:var(--cst-muted);font-size:11px}
+.cst-palette-keys kbd{margin-right:2px}
+/* <900：图标栏 */
+@media(max-width:899px){
+  .cst-shell{grid-template-columns:56px minmax(0,1fr)}
+  .cst-side{padding:12px 8px;align-items:center}
+  .cst-brand{padding:0}.cst-brand-copy,.cst-jump span,.cst-jump kbd,.cst-nav button span,.cst-utilities button span,.cst-side-airports,.cst-connection small,.cst-task-detail,.cst-task-attention,.cst-task-bar{display:none}
+  .cst-jump{width:36px;justify-content:center;padding:0}
+  .cst-nav button,.cst-utilities button{width:36px;justify-content:center;padding:0;position:relative}
+  .cst-nav small{position:absolute;top:-2px;right:-4px;min-width:16px;line-height:16px;font-size:10px}
+  .cst-task{width:36px;height:36px;padding:0;align-items:center;justify-content:center}
+  .cst-task-title{font-size:0;gap:0}
+  .cst-task-title::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--cst-empty)}
+  .cst-task.running .cst-task-title::before,.cst-task.pending .cst-task-title::before{display:none}
+  .cst-task.attention .cst-task-title::before{background:var(--cst-warn)}
+  .cst-connection{padding:4px 0;justify-content:center}
+}
+/* <640：底部标签栏 */
+@media(max-width:639px){
+  .cst-shell{grid-template-columns:minmax(0,1fr)}
+  .cst-main{padding-bottom:64px}
+  .cst-side{position:fixed;top:auto;bottom:0;left:0;right:0;height:auto;flex-direction:row;justify-content:space-around;padding:6px 8px calc(6px + env(safe-area-inset-bottom));border-right:0;border-top:1px solid var(--cst-line);overflow:visible}
+  .cst-brand,.cst-jump,.cst-task,.cst-connection{display:none}
+  .cst-nav,.cst-utilities,.cst-side-foot{flex-direction:row;gap:2px;margin:0}
+  .cst-side-foot{display:contents}
+  .cst-nav button,.cst-utilities button{width:44px;height:40px}
+  .cst-mobile-task{display:flex;bottom:76px}
+  .cst-main .app-error{margin:12px 16px 0}
+}
