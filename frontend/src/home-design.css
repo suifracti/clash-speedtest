@@ -195,3 +195,5 @@ body.cst-resizing{cursor:col-resize;user-select:none}
 .hd-more-group .hd-more-grid{padding:8px 14px 6px}
 .hd-more-group>p{margin:0 14px 8px;font-size:12px}
 .hd-more-sites{grid-column:auto/span 2}
+.hd-orbit-logos span.dim{opacity:.35}
+.hd-head-airport{font-weight:600;color:var(--hd-text)}

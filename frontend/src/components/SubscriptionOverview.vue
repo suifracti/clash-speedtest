@@ -9,7 +9,7 @@ import Modal from './Modal.vue'
 
 const props=defineProps<{airports:Airport[];notices:NodeOption[]}>()
 type SubscriptionDisclosureSummary={refreshState:'loading'|'ready'|'error';noticeCount:number;expiredAccountCount:number;unknownExpiryAccountCount:number;failedItemCount:number;interruptedItemCount:number;runningItemCount:number;latestRefreshIssueAccount?:string;latestRefreshIssueState?:'failed'|'interrupted'}
-const emit=defineEmits<{summary:[value:SubscriptionDisclosureSummary]}>()
+const emit=defineEmits<{summary:[value:SubscriptionDisclosureSummary];viewed:[airportId:string]}>()
 const workspace=useWorkspace()
 const viewedAirportId=ref('')
 const viewedAirport=computed(()=>props.airports.find(airport=>airport.id===viewedAirportId.value)||props.airports[0])
@@ -154,15 +154,22 @@ const statusTone=computed(()=>jobRunning(activeJob.value)?'warn':['failed','inte
 const refreshDisabled=computed(()=>loading.value||jobRunning(activeJob.value))
 const cancelJob=computed(()=>jobRunning(activeJob.value)?activeJob.value:jobRunning(visibleJob.value)?visibleJob.value:null)
 
+// 切到指定机场（工作台按机场筛选时同步过来），记住每个机场上次看的订阅。
+function showAirport(id:string){
+  const target=props.airports.find(airport=>airport.id===id)
+  if(!target||viewedAirport.value?.id===id&&viewedAirportId.value===id)return
+  if(viewedAirport.value&&accounts.value.some(account=>account.key===selectedKey.value))rememberedAccountByAirport.value[viewedAirport.value.id]=selectedKey.value
+  viewedAirportId.value=target.id
+  const nextAccounts=airportAccounts([target]),remembered=rememberedAccountByAirport.value[target.id]
+  selectedKey.value=nextAccounts.some(account=>account.key===remembered)?remembered:nextAccounts[0]?.key||''
+}
 function cycleAirport(){
   const airportList=props.airports
   if(!airportList.length){viewedAirportId.value='';selectedKey.value='';return}
   const currentIndex=airportList.findIndex(airport=>airport.id===viewedAirport.value?.id)
   const nextAirport=airportList[(currentIndex+1)%airportList.length]
-  if(viewedAirport.value&&accounts.value.some(account=>account.key===selectedKey.value))rememberedAccountByAirport.value[viewedAirport.value.id]=selectedKey.value
-  viewedAirportId.value=nextAirport.id
-  const nextAccounts=airportAccounts([nextAirport]),remembered=rememberedAccountByAirport.value[nextAirport.id]
-  selectedKey.value=nextAccounts.some(account=>account.key===remembered)?remembered:nextAccounts[0]?.key||''
+  showAirport(nextAirport.id)
+  emit('viewed',nextAirport.id)
 }
 function defaultScopeKeys(){
   const propAirportIds=new Set(props.airports.map(airport=>airport.id))
@@ -250,7 +257,7 @@ watch(()=>workspace.airports.value,syncDefaultScope,{deep:true})
 watch(disclosureSummary,value=>emit('summary',value),{immediate:true})
 onMounted(()=>void loadJobs())
 onBeforeUnmount(()=>{disposed=true;clearTimeout(pollTimer)})
-defineExpose({cycleAirport,viewedAirportName,usageRatio,viewedAccount:selected})
+defineExpose({cycleAirport,showAirport,viewedAirportName,usageRatio,viewedAccount:selected})
 </script>
 
 <template>

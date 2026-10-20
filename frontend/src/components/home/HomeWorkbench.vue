@@ -43,6 +43,10 @@ const filterSummary=computed(()=>[
  w.downloadFullOnly.value&&w.project.value==='download'?'只看完整读取':''].filter(Boolean).join(' · '))
 const more=ref<HTMLDetailsElement>(),moreSummary=ref<HTMLElement>()
 function closeMore(){if(!more.value?.open)return;more.value.open=false;moreSummary.value?.focus({preventScroll:true})}
+// 按机场筛选时，页头和来源带都切到这个机场，不再显示全部机场的汇总。
+const filteredAirport=computed(()=>w.airportFilter.value==='all'?undefined:chosen.value.find(a=>a.id===w.airportFilter.value))
+const filteredAirportNodes=computed(()=>w.proxyNodes.value.filter(n=>w.nodeAirportId(n)===w.airportFilter.value).length)
+watch([()=>w.airportFilter.value,overview],([id])=>{if(id!=='all')overview.value?.showAirport(id)},{flush:'post',immediate:true})
 const qualityFiltering=computed(()=>m.qualityGate.value!=='all'||m.qualitySort.value!=='existing')
 const focusKey=ref<string|null>(null)
 const focusNode=computed(()=>m.pageNodes.value.find(n=>key(n)===focusKey.value)||m.pageNodes.value[0])
@@ -97,16 +101,17 @@ function keyNav(e:KeyboardEvent){
     <header class="hd-head">
       <div class="hd-title">
         <h1>线路工作台</h1>
-        <p><button class="hd-link" @click="m.picker.value=true">{{chosen.length?m.chosenNames.value:'选择机场'}}</button> · {{w.proxyNodes.value.length}} 个节点</p>
+        <p v-if="filteredAirport"><strong class="hd-head-airport">{{filteredAirport.name}}</strong> · {{filteredAirportNodes}} 个节点 · <button class="hd-link" @click="w.viewAirport('all')">看全部 {{chosen.length}} 个机场</button></p>
+        <p v-else><button class="hd-link" @click="m.picker.value=true">{{chosen.length?m.chosenNames.value:'选择机场'}}</button> · {{w.proxyNodes.value.length}} 个节点</p>
       </div>
     </header>
 
     <section class="hd-source" aria-label="机场选择">
       <button class="hd-orbit" :aria-label="'循环查看机场：'+(overview?.viewedAirportName||m.chosenNames.value||'尚未选择')" @click="chosen.length?overview?.cycleAirport():m.picker.value=true">
-        <span class="hd-orbit-logos"><span v-for="a in chosen.slice(0,4)" :key="a.id">{{a.name.slice(0,1)}}</span><span v-if="chosen.length>4">+{{chosen.length-4}}</span><Icon v-if="!chosen.length" name="plus"/></span>
-        <span class="hd-orbit-text"><strong>{{overview?.viewedAirportName||'选择机场'}}</strong><small>{{chosen.length>1?'点击切换 · 共 '+chosen.length+' 个机场':'可同时选择多个机场'}}</small></span>
+        <span class="hd-orbit-logos"><span v-for="a in chosen.slice(0,4)" :key="a.id" :class="{dim:!!filteredAirport&&filteredAirport.id!==a.id}">{{a.name.slice(0,1)}}</span><span v-if="chosen.length>4">+{{chosen.length-4}}</span><Icon v-if="!chosen.length" name="plus"/></span>
+        <span class="hd-orbit-text"><strong>{{overview?.viewedAirportName||'选择机场'}}</strong><small>{{filteredAirport?(chosen.length>1?'只看这个机场 · 点击换下一个':'只看这个机场'):chosen.length>1?'点击切换 · 共 '+chosen.length+' 个机场':'可同时选择多个机场'}}</small></span>
       </button>
-      <SubscriptionOverview ref="overview" :airports="chosen" :notices="w.notices.value"/>
+      <SubscriptionOverview ref="overview" :airports="chosen" :notices="w.notices.value" @viewed="id=>{if(w.airportFilter.value!=='all')w.airportFilter.value=id}"/>
       <div v-if="overview?.viewedAccount" class="hd-usage"><h3>账户用量</h3><UsageDays :airport-id="overview.viewedAccount.airport.id" :subscription-id="overview.viewedAccount.subscription.id" :days="3" :refresh-version="w.usageRefreshVersion.value"/></div>
     </section>
 

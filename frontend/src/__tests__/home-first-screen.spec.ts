@@ -186,3 +186,20 @@ describe('synthetic 256-node home first screen',()=>{
     expect(api.startRefresh).toHaveBeenCalledWith(expect.objectContaining({retry_of:otherAirportFailure.id}))
   })
 })
+
+describe('airport filter keeps the header and source strip on that airport (synthetic data)',()=>{
+  it('switches the source strip when the sidebar filter changes and follows the orbit while filtered',async()=>{
+    const {workspace,wrapper}=attachHome();await flushPromises()
+    expect(wrapper.get('.hd-orbit-text strong').text()).toBe('合成机场 1')
+    workspace.viewAirport('airport-3');await flushPromises()
+    expect(wrapper.get('.hd-orbit-text strong').text()).toBe('合成机场 3')
+    expect(wrapper.get('.hd-title p').text()).toContain('合成机场 3 · 64 个节点')
+    expect(wrapper.get('.hd-title p').text()).toContain('看全部 4 个机场')
+    await wrapper.get('.hd-orbit').trigger('click');await flushPromises()
+    expect(workspace.airportFilter.value).toBe('airport-4')
+    expect(wrapper.get('.hd-orbit-text strong').text()).toBe('合成机场 4')
+    await wrapper.findAll('.hd-title button').find(b=>b.text().includes('看全部'))!.trigger('click');await flushPromises()
+    expect(workspace.airportFilter.value).toBe('all')
+    expect(wrapper.get('.hd-title p').text()).toContain('256 个节点')
+  })
+})
