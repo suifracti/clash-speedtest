@@ -70,7 +70,7 @@ var (
 	durationFlag          = flag.Duration("duration", 0, "keep testing for this long, e.g. 10m (0 = one pass per node)")
 	roundsFlag            = flag.Int("rounds", 1, "number of test rounds per node (default 1)")
 	versionFlag           = flag.Bool("v", false, "show version information")
-	userAgent             = flag.String("ua", "", "User-Agent for fetching config from http(s) URL (default: mihomo kernel UA, e.g. mihomo/1.10.0)")
+	userAgent             = flag.String("ua", "", "User-Agent for fetching config from http(s) URL (default: Clash Verge-compatible, e.g. clash-verge/v2.5.8)")
 	antigravityTokenFlag  = flag.String("antigravity-token", "", "OAuth Bearer token (ya29...) for the Antigravity availability check")
 	antigravityTokenFile  = flag.String("antigravity-token-file", "", "OAuth token file for the Antigravity availability check; required when --metrics includes antigravity (file holds a bare Bearer token or an 'Authorization: Bearer ...' line)")
 	guiFlag               = flag.Bool("gui", false, "launch desktop graphical user interface (GUI)")

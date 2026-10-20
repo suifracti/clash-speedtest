@@ -12,8 +12,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"github.com/metacubex/mihomo/constant"
 )
 
 func newAirportID() string {
@@ -30,7 +28,7 @@ func IsHTTPURL(raw string) bool {
 }
 
 func DefaultUserAgent() string {
-	return constant.MihomoName + "/" + constant.Version
+	return "clash-verge/v2.5.8"
 }
 
 func FetchSubscription(rawURL, userAgent string) ([]byte, error) {
@@ -99,7 +97,7 @@ func fetchSubscriptionResponseContext(ctx context.Context, rawURL, userAgent str
 	if evidence != nil {
 		evidence.BodySHA256 = fmt.Sprintf("%x", sha256.Sum256(body))
 	}
-	return body, parseSubscriptionUsage(resp.Header.Get("Subscription-Userinfo")), nil
+	return body, parseSubscriptionUsageHeaders(resp.Header), nil
 }
 
 func RedactURL(raw string) string {

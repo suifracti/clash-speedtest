@@ -1,6 +1,8 @@
 package profiles
 
 import (
+	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -53,4 +55,28 @@ func parseSubscriptionUsage(header string) *SubscriptionUsage {
 		result.Expire = &expire
 	}
 	return result
+}
+
+func parseSubscriptionUsageHeaders(headers http.Header) *SubscriptionUsage {
+	standard, metadata := []string{}, []string{}
+	for name := range headers {
+		lower := strings.ToLower(strings.TrimSpace(name))
+		if lower == "subscription-userinfo" {
+			standard = append(standard, name)
+		} else if strings.HasSuffix(lower, "-subscription-userinfo") {
+			metadata = append(metadata, name)
+		}
+	}
+	sort.Strings(standard)
+	sort.Strings(metadata)
+	for _, names := range [][]string{standard, metadata} {
+		for _, name := range names {
+			for _, value := range headers.Values(name) {
+				if usage := parseSubscriptionUsage(value); usage != nil {
+					return usage
+				}
+			}
+		}
+	}
+	return nil
 }

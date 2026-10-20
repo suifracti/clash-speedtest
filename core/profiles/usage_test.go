@@ -28,6 +28,35 @@ func TestSubscriptionUsageHeader(t *testing.T) {
 	}
 }
 
+func TestDefaultSubscriptionUserAgentUsesClashVergeCompatibility(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.UserAgent(); got != "clash-verge/v2.5.8" {
+			t.Errorf("default subscription user agent = %q", got)
+		}
+		w.Header().Set("Subscription-Userinfo", "upload=1024;download=3072;total=8192")
+		_, _ = w.Write([]byte("proxies: [fixture]"))
+	}))
+	defer server.Close()
+
+	_, usage, err := FetchSubscriptionWithUsage(server.URL, "")
+	if err != nil || usage == nil || usage.Total == nil || *usage.Total != 8192 {
+		t.Fatalf("default compatible fetch failed: usage=%+v err=%v", usage, err)
+	}
+}
+
+func TestFetchSubscriptionUsageRecognizesObjectStorageMetadataHeader(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Oss-Meta-Subscription-Userinfo", "upload=1024;download=3072;total=8192;expire=2000000000")
+		_, _ = w.Write([]byte("proxies: [fixture]"))
+	}))
+	defer server.Close()
+
+	_, usage, err := FetchSubscriptionWithUsage(server.URL, "fixture")
+	if err != nil || usage == nil || usage.Upload != 1024 || usage.Download != 3072 || usage.Total == nil || *usage.Total != 8192 {
+		t.Fatalf("object-storage usage header was not parsed: usage=%+v err=%v", usage, err)
+	}
+}
+
 func TestCompatiblePrimaryUserAgentKeepsUsageAndBody(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
