@@ -17,6 +17,23 @@ function attach(component:any,w:ReturnType<typeof workspace>){const wrapper=moun
 beforeEach(()=>{window.localStorage.clear();vi.clearAllMocks();HTMLDialogElement.prototype.showModal=vi.fn();HTMLDialogElement.prototype.close=vi.fn();vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}})})
 afterEach(()=>{wrappers.forEach(w=>w.unmount());wrappers=[];document.body.innerHTML='';vi.useRealTimers();vi.unstubAllGlobals()})
 describe('shared node selection',()=>{
+  it('collapses the same airport node across subscriptions only in the combined view',()=>{
+    const w=workspace(),duplicate={...a,profile_id:'sub-a-2',profile_name:'机场 A · 备用',node_key:'node-a-2',config_revision_key:'revision-a-2'},alias={...duplicate,node_key:'node-a-alias',config_revision_key:'revision-a-alias',display_name:'香港 01 · 备用线路'},otherEndpoint={...duplicate,node_key:'node-a-other',node_identity_key:'identity-other',config_revision_key:'revision-other'},otherAirport={...a,profile_id:'sub-b',profile_name:'机场 B',node_key:'node-other-airport',config_revision_key:'revision-other-airport'}
+    w.airports.value[0].subscriptions!.push({id:'sub-a-2',airport_id:'airport-a',name:'备用',url_display:'',url_configured:true,node_count:1,has_cache:true})
+    w.nodes.value=[a,duplicate,alias,otherEndpoint,otherAirport,b]
+
+    expect(w.filteredNodes.value.map(n=>n.node_key)).toHaveLength(5)
+    expect(w.filteredNodes.value.map(n=>n.node_key)).toContain('node-a')
+    expect(w.filteredNodes.value.map(n=>n.node_key)).not.toContain('node-a-2')
+    expect(w.filteredNodes.value.map(n=>n.node_key)).toContain('node-a-alias')
+    expect(w.filteredNodes.value.map(n=>n.node_key)).toContain('node-a-other')
+    expect(w.filteredNodes.value.map(n=>n.node_key)).toContain('node-other-airport')
+
+    w.subscription.value='sub-a-2'
+    expect(w.filteredNodes.value.map(n=>n.node_key)).toEqual(expect.arrayContaining(['node-a-2','node-a-alias','node-a-other']))
+    expect(w.filteredNodes.value).toHaveLength(3)
+    w.dispose()
+  })
   it('uses uniform node labels without changing subscription names or identity',async()=>{
     const samples=[
       ['🇦🇷 [IPLC-移动优化 -阿根廷] ✨ 5x','阿根廷 · IPLC · 移动优化 · 5×'],

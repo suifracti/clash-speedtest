@@ -47,7 +47,7 @@ export function createWorkspace(){
     const q=search.value.trim().toLowerCase();
     const isExcluded=excludeRegion.value||region.value.startsWith('exclude:');
     const targetRegion=region.value.startsWith('exclude:')?region.value.slice(8):region.value;
-    return proxyNodes.value.filter(n=>{
+    let visible=proxyNodes.value.filter(n=>{
       if(downloadFullOnly.value&&project.value==='download'&&downloadGroup(summaryDownload(n)).kind!=='full')return false;
       if(airportFilter.value!=='all'&&nodeAirportId(n)!==airportFilter.value)return false;
       if(subscription.value!=='all'&&n.profile_id!==subscription.value)return false;
@@ -56,7 +56,18 @@ export function createWorkspace(){
         if(isExcluded?matches:!matches)return false;
       }
       return !q||(n.display_name+' '+nodeDisplayName(n)+' '+n.profile_name+' '+nodeAirportName(n)+' '+nodeSubscriptionName(n)+' '+n.country_code).toLowerCase().includes(q);
-    }).sort((a,b)=>{if(sort.value==='latency'){const x=latencyComparisonGroup(sortSnapshots.value[key(a)]?.latency),y=latencyComparisonGroup(sortSnapshots.value[key(b)]?.latency);if(x.valid!==y.valid)return x.valid?-1:1;if(x.key!==y.key)return x.key.localeCompare(y.key)}if(sort.value==='download'){const x=downloadGroup(summaryDownload(a)),y=downloadGroup(summaryDownload(b));if(x.comparable!==y.comparable)return x.comparable?-1:1;if(x.key!==y.key)return x.kind==='invalid'?1:y.kind==='invalid'?-1:x.key.localeCompare(y.key)}if(sort.value==='service'){const group=(n:NodeOption)=>serviceComparisonGroup(displayServiceIds.value.map(id=>summaryService(n,id)),displayServiceIds.value);const x=group(a),y=group(b);if(x.complete!==y.complete)return x.complete?-1:1;if(x.key!==y.key)return x.key.localeCompare(y.key)}return compareNodes(a,b,nodeSources.value,sort.value,priorityAirportId.value,sortMetric)})})
+    });
+    if(subscription.value==='all'){
+      const seen=new Set<string>();
+      visible=visible.filter(n=>{
+        if(!n.node_identity_key)return true;
+        const duplicateKey=JSON.stringify([nodeAirportId(n),n.node_identity_key,n.display_name.trim().toLowerCase()]);
+        if(seen.has(duplicateKey))return false;
+        seen.add(duplicateKey);
+        return true;
+      });
+    }
+    return visible.sort((a,b)=>{if(sort.value==='latency'){const x=latencyComparisonGroup(sortSnapshots.value[key(a)]?.latency),y=latencyComparisonGroup(sortSnapshots.value[key(b)]?.latency);if(x.valid!==y.valid)return x.valid?-1:1;if(x.key!==y.key)return x.key.localeCompare(y.key)}if(sort.value==='download'){const x=downloadGroup(summaryDownload(a)),y=downloadGroup(summaryDownload(b));if(x.comparable!==y.comparable)return x.comparable?-1:1;if(x.key!==y.key)return x.kind==='invalid'?1:y.kind==='invalid'?-1:x.key.localeCompare(y.key)}if(sort.value==='service'){const group=(n:NodeOption)=>serviceComparisonGroup(displayServiceIds.value.map(id=>summaryService(n,id)),displayServiceIds.value);const x=group(a),y=group(b);if(x.complete!==y.complete)return x.complete?-1:1;if(x.key!==y.key)return x.key.localeCompare(y.key)}return compareNodes(a,b,nodeSources.value,sort.value,priorityAirportId.value,sortMetric)})})
   const busy=computed(()=>running.value||!!pendingStart.value||!!activeBatch.value&&!terminal(activeBatch.value.state)||!!activeAttempt.value&&(!terminal(activeAttempt.value.attempt.execution_state)||activeAttempt.value.attempt.persistence_state==='saving'))
   const done=computed(()=>queue.value.filter(q=>terminal(q.state)).length)
   let historyVersion=0,unsubscribe:(()=>void)|null=null,toastTimer:ReturnType<typeof setTimeout>|undefined,disposed=false,polling=0,lifetime=0
