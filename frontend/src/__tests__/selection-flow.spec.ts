@@ -234,6 +234,7 @@ describe('shared node selection',()=>{
     expect(wrapper.get('.download-failure').text()).toContain('不是节点的问题')
     await wrapper.get('.download-failure button').trigger('click')
     expect(w.plan.value?.downloadSource).toBe('cachefly')
+    expect(w.plan.value?.projects).toEqual(['download']);expect(w.plan.value?.includeReputation).toBe(false)
     expect(w.plan.value?.nodes.map(n=>n.node_key)).toEqual(['node-a'])
     expect(api.startAttempt).not.toHaveBeenCalled()
   })

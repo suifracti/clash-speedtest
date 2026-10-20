@@ -59,7 +59,7 @@ const downloadSpark=computed(()=>{
  return points.map((p,i)=>{if(p.value===null){started=false;return ''}const cmd=started?'L':'M';started=true;return `${cmd}${4+i*344/Math.max(1,points.length-1)},${30-p.value/max*26}`}).join(' ')
 })
 function retryDownload(){
- w.project.value='download';w.openPlan([props.node]);if(w.plan.value)w.plan.value.downloadSource=downloadSource.value==='Cachefly'?'cloudflare':'cachefly'
+ w.openPlan([props.node]);if(w.plan.value){w.plan.value.projects=['download'];w.plan.value.includeReputation=false;w.plan.value.reputationServiceIds=[];w.plan.value.downloadSource=downloadSource.value==='Cachefly'?'cloudflare':'cachefly'}
 }
 function windowText(id:string){
  if(readError.value)return '已保存记录读取失败'
