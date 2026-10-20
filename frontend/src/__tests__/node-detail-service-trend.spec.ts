@@ -10,7 +10,7 @@ import type {Attempt,NodeOption} from '../domain'
 vi.hoisted(()=>{Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:()=>null,setItem:()=>{}}})})
 vi.mock('../api',async importOriginal=>{
   const actual=await importOriginal<typeof import('../api')>()
-  return {...actual,api:{...actual.api,measurementRounds:vi.fn(async()=>[]),revisions:vi.fn(async()=>[]),attemptHistory:vi.fn()}}
+  return {...actual,api:{...actual.api,measurementRounds:vi.fn(async()=>[]),revisions:vi.fn(async()=>[]),attemptHistory:vi.fn(),previousAttempt:vi.fn()}}
 })
 
 const node:NodeOption={profile_id:'profile',node_key:'node',node_identity_key:'identity',config_revision_key:'revision',profile_name:'Airport',display_name:'Node',type:'ss',country_code:'',country_flag:''}
@@ -53,4 +53,23 @@ it('uses confirmed service availability for each manual-history trend point',asy
   expect(byId['rate-limited'].tone).toBe('warn')
   expect(byId['transport-error'].tone).toBe('warn')
   expect(byId['not-executed'].tone).toBe('empty')
+})
+
+it('shows the previous service result and reports a comparison read failure',async()=>{
+  vi.mocked(api.attemptHistory).mockResolvedValue({attempts:[attempt('current','matched')],has_more:false,complete:true})
+  vi.mocked(api.previousAttempt).mockResolvedValue(attempt('old','region_blocked'))
+  wrapper=mount(NodeDetailModal,{props:{node},attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
+  const detail=()=>Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(b=>b.textContent==='详情')!
+  detail().click();await flushPromises();await flushPromises();expect(document.querySelector('[aria-label="和上次比"]')?.textContent).toContain('→ 探针规则通过')
+  detail().click();await flushPromises();vi.mocked(api.previousAttempt).mockRejectedValue(new Error('history unavailable'))
+  detail().click();await flushPromises();await flushPromises();expect(document.querySelector('[aria-label="和上次比"]')?.textContent).toContain('对比读取失败：history unavailable')
+})
+
+it('shows the download speed change for the same conditions',async()=>{
+  w.project.value='download'
+  const make=(id:string,size:number)=>({...attempt(id,'byte_limit'),node_type:'ss',rule:{target_url:'https://download.example',method:'GET',rule_version:1,maximum_bytes:10485760,maximum_duration_ns:10000000000,network_path_method:'physical_socket_v1',physical_interface:'en0',dns_mode:'physical'},result:{outcome:'byte_limit',bytes_read:size,duration_ns:1000000000,finished_at:time,network_path:{method:'physical_socket_v1',interface:'en0',dns_mode:'physical',dns_bind_verified:true,socket_bind_verified:true,tcp_bindings:1,udp_bindings:0,address_family:'ipv4',address_source:'dns'}}})
+  vi.mocked(api.attemptHistory).mockResolvedValue({attempts:[make('now',2097152)],has_more:false,complete:true});vi.mocked(api.previousAttempt).mockResolvedValue(make('old',1048576))
+  wrapper=mount(NodeDetailModal,{props:{node},attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
+  Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(b=>b.textContent==='详情')!.click();await flushPromises()
+  expect(document.querySelector('[aria-label="和上次比"]')?.textContent).toContain('增加 1.00 MiB/s')
 })

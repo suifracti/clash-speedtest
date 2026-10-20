@@ -152,6 +152,13 @@ func (a *App) GetWorkbenchPublicServiceAttempt(attemptID string, query applicati
 	return a.app.GetWorkbenchPublicServiceAttempt(a.context(), attemptID, query)
 }
 
+func (a *App) PreviousWorkbenchPublicServiceAttempt(attemptID string, query application.WorkbenchPublicServiceHistoryQuery) (*history.PublicServiceAttempt, error) {
+	if a == nil || a.app == nil {
+		return nil, errAppNotInitialized
+	}
+	return a.app.PreviousWorkbenchPublicServiceAttempt(a.context(), attemptID, query)
+}
+
 func (a *App) CancelWorkbenchPublicServiceTest(attemptID string, query application.WorkbenchPublicServiceHistoryQuery) (*history.PublicServiceAttempt, error) {
 	if a == nil || a.app == nil {
 		return nil, errAppNotInitialized
@@ -186,6 +193,13 @@ func (a *App) GetWorkbenchDownloadAttempt(attemptID string, query application.Wo
 		return nil, errAppNotInitialized
 	}
 	return a.app.GetWorkbenchDownloadAttempt(a.context(), attemptID, query)
+}
+
+func (a *App) PreviousWorkbenchDownloadAttempt(attemptID string, query application.WorkbenchDownloadHistoryQuery) (*history.WorkbenchDownloadAttempt, error) {
+	if a == nil || a.app == nil {
+		return nil, errAppNotInitialized
+	}
+	return a.app.PreviousWorkbenchDownloadAttempt(a.context(), attemptID, query)
 }
 
 func (a *App) CancelWorkbenchDownloadTest(attemptID string, query application.WorkbenchDownloadHistoryQuery) (*history.WorkbenchDownloadAttempt, error) {

@@ -47,5 +47,10 @@
 - 最近备份时间保存在数据目录 `last-backup-at`；界面沿用原存储信息列表。
 - 验证：备份成功与写入失败；`go vet`、`go test ./...`、359 项前端测试及构建通过。
 
+## B3.3：上次同条件记录
+- Web `GET /api/workbench/{download|public-service}-tests/{attempt_id}/previous`；Wails `PreviousWorkbenchDownloadAttempt/PreviousWorkbenchPublicServiceAttempt`。
+- 匹配账户、节点、配置、来源及规则快照关键字段；无匹配返回 null，节点记录详情展示“和上次比”。
+- 验证：下载/服务匹配与无匹配、前端数值/结论和读取失败；`go vet`、`go test ./...`、361 项前端测试及构建通过。
+
 ## 待定
 - 暂无新增保护或扩展项。

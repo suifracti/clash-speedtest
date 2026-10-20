@@ -274,11 +274,13 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("POST /api/workbench/public-service-tests", s.handleStartWorkbenchPublicServiceTest)
 	mux.HandleFunc("GET /api/workbench/public-service-tests", s.handleListWorkbenchPublicServiceTests)
 	mux.HandleFunc("GET /api/workbench/public-service-tests/{attempt_id}", s.handleGetWorkbenchPublicServiceAttempt)
+	mux.HandleFunc("GET /api/workbench/public-service-tests/{attempt_id}/previous", s.handlePreviousWorkbenchPublicServiceAttempt)
 	mux.HandleFunc("POST /api/workbench/public-service-tests/{attempt_id}/cancel", s.handleCancelWorkbenchPublicServiceTest)
 	mux.HandleFunc("POST /api/workbench/public-service-tests/{attempt_id}/retry-save", s.handleRetrySaveWorkbenchPublicServiceTest)
 	mux.HandleFunc("POST /api/workbench/download-tests", s.handleStartWorkbenchDownloadTest)
 	mux.HandleFunc("GET /api/workbench/download-tests", s.handleListWorkbenchDownloadTests)
 	mux.HandleFunc("GET /api/workbench/download-tests/{attempt_id}", s.handleGetWorkbenchDownloadAttempt)
+	mux.HandleFunc("GET /api/workbench/download-tests/{attempt_id}/previous", s.handlePreviousWorkbenchDownloadAttempt)
 	mux.HandleFunc("POST /api/workbench/download-tests/{attempt_id}/cancel", s.handleCancelWorkbenchDownloadTest)
 	mux.HandleFunc("POST /api/workbench/download-tests/{attempt_id}/retry-save", s.handleRetrySaveWorkbenchDownloadTest)
 
@@ -1551,6 +1553,20 @@ func (s *Server) handleGetWorkbenchPublicServiceAttempt(w http.ResponseWriter, r
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (s *Server) handlePreviousWorkbenchPublicServiceAttempt(w http.ResponseWriter, r *http.Request) {
+	query, err := parseWorkbenchPublicServiceQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	result, err := s.app.PreviousWorkbenchPublicServiceAttempt(r.Context(), r.PathValue("attempt_id"), query)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (s *Server) handleCancelWorkbenchPublicServiceTest(w http.ResponseWriter, r *http.Request) {
 	query, err := parseWorkbenchPublicServiceQuery(r.URL.Query())
 	if err != nil {
@@ -1624,6 +1640,20 @@ func (s *Server) handleGetWorkbenchDownloadAttempt(w http.ResponseWriter, r *htt
 		return
 	}
 	result, err := s.app.GetWorkbenchDownloadAttempt(r.Context(), r.PathValue("attempt_id"), query)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handlePreviousWorkbenchDownloadAttempt(w http.ResponseWriter, r *http.Request) {
+	query, err := parseWorkbenchDownloadQuery(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	result, err := s.app.PreviousWorkbenchDownloadAttempt(r.Context(), r.PathValue("attempt_id"), query)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
