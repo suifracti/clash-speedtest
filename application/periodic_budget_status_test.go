@@ -7,26 +7,25 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
-func TestPeriodicBudgetExhaustionBeforeProbeHasStage(t *testing.T) {
+func TestPeriodicCancellationBeforeProbeHasStage(t *testing.T) {
 	for _, phase := range []string{"admission", "preparation"} {
 		t.Run(phase, func(t *testing.T) {
 			var calls atomic.Int32
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 			app, _ := newPublicServiceApplication(t, func(_ string, node string) (monitor.MonitoredNode, error) {
 				if phase == "preparation" {
-					time.Sleep(30 * time.Millisecond)
+					cancel()
 				}
 				return monitor.MonitoredNode{NodeKey: node, NodeIdentityKey: "identity-a", ConfigRevisionKey: "revision-a"}, nil
 			}, func(r *http.Request) (*http.Response, error) {
 				calls.Add(1)
 				return publicServiceHTTPResponse(r, 204, "text/plain", ""), nil
 			})
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-			defer cancel()
 			if phase == "admission" {
-				<-ctx.Done()
+				cancel()
 			}
 			a, err := app.startWorkbenchPublicServiceTest(ctx, publicServiceRequest("preprobe-budget", "profile-a", "identity-a", "revision-a", "google_204"), 16)
 			app.publicServiceWG.Wait()
