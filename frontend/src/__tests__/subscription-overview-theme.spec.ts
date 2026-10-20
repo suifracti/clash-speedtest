@@ -35,7 +35,7 @@ describe('SubscriptionOverview theme tokens',()=>{
   it('makes the remaining amount primary and reserves a labeled daily chart column',()=>{
     expect(declaration('.subscription-main','display')).toBe('grid')
     expect(declaration('.subscription-overview','padding')).toBe('8px 14px')
-    expect(declaration('.subscription-overview','min-height')).toBe('120px')
+    expect(declaration('.subscription-overview','min-height')).toBe('104px')
     expect(declaration('.subscription-main','grid-template-columns')).toBe('minmax(160px,.9fr) minmax(225px,1.4fr) minmax(175px,1.1fr) minmax(140px,.85fr)')
     expect(declaration('.subscription-remaining-value','font-size')).toBe('26px')
     expect(declaration('.subscription-remaining-value','color')).toBe('var(--blue)')
@@ -45,7 +45,8 @@ describe('SubscriptionOverview theme tokens',()=>{
     expect(declaration('.subscription-daily','border-left')).toBe('1px solid var(--line)')
     expect(declaration('.subscription-actions .subscription-daily','flex')).toBe('0 0 148px')
     expect(declaration('.subscription-daily :deep(.cst-usage-summary)','grid-template-rows')).toBeUndefined()
-    expect(declaration('.subscription-daily :deep(.cst-usage-day)','grid-template-rows')).toBe('9px minmax(14px,1fr) 9px')
+    expect(declaration('.subscription-daily :deep(.cst-usage-summary)','height')).toBe('30px')
+    expect(declaration('.subscription-daily :deep(.cst-usage-day)','grid-template-rows')).toBe('9px minmax(10px,1fr) 9px')
     expect(declaration('.subscription-daily :deep(.cst-usage-day-track)','width')).toBe('12px')
     expect(declaration('.usage-track','height')).toBe('9px')
     expect(declaration('.usage-track','border-radius')).toBe('999px')
