@@ -326,7 +326,8 @@ func (s *AppService) refreshUsageSource(ctx context.Context, source usageRefresh
 		if err := s.seedSubscriptionUsageLocked(ctx, store); err != nil {
 			return err
 		}
-		rawURL, fetched.updatedAt = sub.URL, sub.UpdatedAt
+		rawURL, fetched.updatedAt, fetched.userAgent = sub.URL, sub.UpdatedAt, sub.UserAgent
+		userAgent = sub.EffectiveUserAgent(userAgent)
 		return nil
 	}()
 	if err != nil {

@@ -188,6 +188,7 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("GET /api/airports/{id}/nodes", s.handleGetAirportNodes)
 	mux.HandleFunc("POST /api/airports/{id}/subscriptions", s.handleCreateSubscription)
 	mux.HandleFunc("PUT /api/airports/{id}/subscriptions/{subId}", s.handleUpdateSubscription)
+	mux.HandleFunc("PUT /api/airports/{id}/subscriptions/{subId}/user-agent", s.handleSubscriptionUserAgent)
 	mux.HandleFunc("DELETE /api/airports/{id}/subscriptions/{subId}", s.handleDeleteSubscription)
 	mux.HandleFunc("POST /api/airports/{id}/subscriptions/{subId}/refresh", s.handleRefreshSubscription)
 	mux.HandleFunc("GET /api/airports/{id}/subscriptions/{subId}/url", s.handleGetSubscriptionURL)

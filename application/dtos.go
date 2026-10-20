@@ -264,6 +264,7 @@ type TokenStatusDTO struct {
 
 // SubscriptionDTO represents an individual subscription link under an airport.
 type SubscriptionDTO struct {
+	UserAgent     string                      `json:"user_agent"`
 	Usage         *profiles.SubscriptionUsage `json:"usage,omitempty"`
 	ID            string                      `json:"id"`
 	AirportID     string                      `json:"airport_id"`

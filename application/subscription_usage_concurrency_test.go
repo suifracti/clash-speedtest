@@ -63,7 +63,7 @@ func TestUsageRefreshCancellationFinalizesClaimAndReleasesProfileLock(t *testing
 }
 
 func TestUsageRefreshConcurrentProvidersDoNotOverwriteChangedSources(t *testing.T) {
-	for _, change := range []string{"source_url", "newer_refresh"} {
+	for _, change := range []string{"source_url", "newer_refresh", "user_agent"} {
 		t.Run(change, func(t *testing.T) {
 			s, paths := newAirportURLTestService(t)
 			var block atomic.Bool
@@ -121,6 +121,8 @@ func TestUsageRefreshConcurrentProvidersDoNotOverwriteChangedSources(t *testing.
 					sub := store.Get(airports[0].ID).Subscriptions[0]
 					if change == "source_url" {
 						sub.URL += "/changed"
+					} else if change == "user_agent" {
+						sub.UserAgent = "changed-UA"
 					} else {
 						sub.UpdatedAt = time.Now().Add(time.Second)
 						*sub.Usage.Download = 333

@@ -750,6 +750,7 @@ type subscriptionFetchResult struct {
 	usage     *profiles.SubscriptionUsage
 	err       error
 	updatedAt time.Time
+	userAgent string
 }
 
 func fetchSubscriptionSource(ctx context.Context, rawURL, userAgent string) ([]byte, *profiles.SubscriptionUsage, error) {
@@ -829,7 +830,7 @@ func (s *AppService) refreshSubscriptionWithFetchLocked(ctx context.Context, air
 	if expectedFingerprint != "" && refreshSourceFingerprint(sub.URL) != expectedFingerprint {
 		return nil, &refreshError{Code: "configuration_changed", Message: "排队期间订阅配置已变化；请重新提交刷新"}
 	}
-	if fetched != nil && !sub.UpdatedAt.Equal(fetched.updatedAt) {
+	if fetched != nil && (!sub.UpdatedAt.Equal(fetched.updatedAt) || sub.UserAgent != fetched.userAgent) {
 		return nil, &refreshError{Code: "configuration_changed", Message: "抓取期间订阅已有更新；旧响应未写入，请重新提交刷新"}
 	}
 	if err := refreshSourceCooldown(store, sub.URL, time.Now()); err != nil {
@@ -894,7 +895,7 @@ func (s *AppService) refreshSubscriptionWithFetchLocked(ctx context.Context, air
 	if fetched != nil {
 		body, usage, err = fetched.body, fetched.usage, fetched.err
 	} else {
-		body, usage, err = fetchSubscriptionSource(ctx, sub.URL, userAgent)
+		body, usage, err = fetchSubscriptionSource(ctx, sub.URL, sub.EffectiveUserAgent(userAgent))
 	}
 	if err != nil {
 		return fail(err)

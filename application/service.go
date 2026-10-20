@@ -1177,7 +1177,7 @@ func (s *AppService) CreateAirport(name, rawURL, userAgent string, optionalLinks
 			URL:  rawURL,
 		}
 		if profiles.IsHTTPURL(rawURL) {
-			body, usage, err := profiles.FetchSubscriptionWithUsage(rawURL, userAgent)
+			body, usage, err := profiles.FetchSubscriptionWithUsage(rawURL, sub.EffectiveUserAgent(userAgent))
 			sub.Usage = usage
 			if err != nil {
 				return nil, airportOperationError("获取订阅节点失败", ap.ID, rawURL)
@@ -1273,7 +1273,7 @@ func (s *AppService) UpdateAirport(id, name, rawURL, userAgent string, optionalL
 		ap.URL = rawURL
 		if urlChanged || !s.profilePaths.HasCache(firstSub.ID) {
 			if profiles.IsHTTPURL(rawURL) {
-				body, usage, err := profiles.FetchSubscriptionWithUsage(rawURL, userAgent)
+				body, usage, err := profiles.FetchSubscriptionWithUsage(rawURL, firstSub.EffectiveUserAgent(userAgent))
 				firstSub.Usage = usage
 				if err != nil {
 					return nil, airportOperationError("获取订阅节点失败", ap.ID, rawURL)
@@ -1424,7 +1424,7 @@ func (s *AppService) AddSubscription(airportID, name, rawURL, note, userAgent st
 	}
 
 	if profiles.IsHTTPURL(rawURL) {
-		body, usage, err := profiles.FetchSubscriptionWithUsage(rawURL, userAgent)
+		body, usage, err := profiles.FetchSubscriptionWithUsage(rawURL, sub.EffectiveUserAgent(userAgent))
 		sub.Usage = usage
 		if err != nil {
 			return nil, airportOperationError("获取订阅节点失败", ap.ID, rawURL)
@@ -1501,7 +1501,7 @@ func (s *AppService) UpdateSubscription(airportID, subID, name, rawURL, note, us
 	if urlChanged || !s.profilePaths.HasCache(sub.ID) {
 		sub.Usage = nil
 		if profiles.IsHTTPURL(rawURL) {
-			body, usage, err := profiles.FetchSubscriptionWithUsage(rawURL, userAgent)
+			body, usage, err := profiles.FetchSubscriptionWithUsage(rawURL, sub.EffectiveUserAgent(userAgent))
 			sub.Usage = usage
 			if err != nil {
 				return nil, airportOperationError("获取订阅节点失败", ap.ID, rawURL)

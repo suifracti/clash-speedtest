@@ -18,6 +18,7 @@ const (
 )
 
 type Subscription struct {
+	UserAgent          string             `json:"user_agent,omitempty"`
 	LastFailureRetryAt time.Time          `json:"last_failure_retry_at,omitempty"`
 	LastFailureAt      time.Time          `json:"last_failure_at,omitempty"`
 	LastFailureCode    string             `json:"last_failure_code,omitempty"`

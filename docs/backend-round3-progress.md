@@ -48,6 +48,13 @@ Scope and order: [roadmap-round3.md](roadmap-round3.md). Tests use synthetic dat
 - `FetchEvidence.usage_fallback` and optional DTO `usage.fallback` identify `user_agent`, `http_status`, `error_code` and `retry_after_until`; they contain no source address. Primary status, byte count and body digest retain their original meaning. Alternate HTTP 429 cooldown is saved with the usage diagnostic and blocks further same-origin refreshes, including another forced collection.
 - Validation uses local HTTP fixtures, including an alternate response that sends headers and never sends a body, primary-body/digest preservation, cancellation, failed-primary suppression, and persisted same-origin cooldown. Full `go vet ./...` and `go test -race ./...` passed. No real subscriptions or production history were requested.
 
+## B2.3 Per-subscription request preference
+
+- Profile and SubscriptionDTO field `user_agent` stores an account override. Resolution is account override → app/global UA → `clash-verge/v2.5.8`. Empty string clears the override. Manual account/airport refresh, URL-change fetches and daily usage collection use the same resolution.
+- Web: `PUT /api/airports/{id}/subscriptions/{subId}/user-agent`, JSON `{ "user_agent": "mihomo" }`. The key is required; use `""` to restore the default. Wails binding: `SetSubscriptionUserAgent(airportID, subscriptionID, userAgent)`. Both return SubscriptionDTO. This setting endpoint is available for the frontend subscription editor; it does not request the subscription, modify cache or change the node `updated_at`.
+- An in-flight daily fetch also compares the stored UA before apply, preventing an older UA response from overwriting newer configuration. Other accounts retain their own/global preference.
+- Local Web/service fixtures cover persistence, no network/cache/timestamp changes on setting, manual and daily account isolation, reset to default, invalid control characters and stale-UA rejection. Full `go vet ./...` and `go test -race ./...` passed.
+
 ## Next
 
-B2.3 per-subscription UA, then B2.4 per-account usage-only refresh. B3–B6 and backend support for subscription diffs, recommendations and native notifications remain pending.
+B2.4 per-account usage-only refresh. B3–B6 and backend support for subscription diffs, recommendations and native notifications remain pending.
