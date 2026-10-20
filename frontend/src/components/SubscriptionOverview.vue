@@ -4,15 +4,17 @@ import {api,type SubscriptionRefreshJob,type SubscriptionRefreshRequest} from '.
 import {bytes,date,subscriptionUsed,type Airport,type NodeOption} from '../domain'
 import {airportAccounts,noticesForAccount,safeAirportLink,parseNoticeUsage,type AirportAccount} from '../airportViewing'
 import {useWorkspace} from '../workspace'
+import {accountDailyUsage,shanghaiDay,shiftDay,type DayUsage} from '../usageDaily'
 import SubscriptionChanges from './SubscriptionChanges.vue'
 import UiSelect from './UiSelect.vue'
 import Modal from './Modal.vue'
 import UsageDays from './UsageDays.vue'
 
-const props=defineProps<{airports:Airport[];notices:NodeOption[]}>()
+const props=defineProps<{airports:Airport[];notices:NodeOption[];airportId?:string}>()
 type SubscriptionDisclosureSummary={refreshState:'loading'|'ready'|'error';noticeCount:number;expiredAccountCount:number;unknownExpiryAccountCount:number;failedItemCount:number;interruptedItemCount:number;runningItemCount:number;latestRefreshIssueAccount?:string;latestRefreshIssueState?:'failed'|'interrupted'}
 const emit=defineEmits<{summary:[value:SubscriptionDisclosureSummary];viewed:[airportId:string]}>()
 const workspace=useWorkspace()
+const allAirports=computed(()=>props.airportId==='all')
 const viewedAirportId=ref('')
 const viewedAirport=computed(()=>props.airports.find(airport=>airport.id===viewedAirportId.value)||props.airports[0])
 const viewedAirportName=computed(()=>viewedAirport.value?.name||'')
@@ -106,6 +108,40 @@ const workspaceRefreshIssues=computed(()=>workspaceAccounts.value.flatMap(accoun
   }
   return latest&&(latest.item.state==='failed'||latest.item.state==='interrupted')?[{account,...latest}]:[]
 }).sort((a,b)=>Date.parse(b.job.created_at)-Date.parse(a.job.created_at)))
+// 全部机场只汇总现有账户数据，不改变订阅或检测范围。
+const dailyByAccount=ref<Record<string,DayUsage[]>>({})
+watch(()=>[allAirports.value,airportAccounts(props.airports).map(a=>a.key).join('|'),workspace.usageRefreshVersion.value],async()=>{
+  if(!allAirports.value)return
+  const entries=await Promise.all(airportAccounts(props.airports).map(async account=>{
+    const result=await accountDailyUsage(account.airport.id,account.subscription.id,3).catch(()=>undefined)
+    return [account.key,result?.days||[]] as const
+  }))
+  dailyByAccount.value=Object.fromEntries(entries)
+},{immediate:true})
+function sumDay(list:AirportAccount[],index:number){
+  const day=shiftDay(shanghaiDay(),-index)
+  const values=list.map(account=>dailyByAccount.value[account.key]?.find(d=>d.date===day))
+  const known=values.filter(d=>d?.bytes!=null)
+  return {date:day,label:['今天','昨天','前天'][index],bytes:known.length?known.reduce((sum,d)=>sum+d!.bytes!,0):null,partial:known.length<values.length&&known.length>0,recorded:values.some(d=>d?.recorded)}
+}
+function dayText(day:ReturnType<typeof sumDay>){return day.partial?'部分记录':day.bytes!==null?bytes(day.bytes):day.recorded?'未知':'未记录'}
+const allDays=computed(()=>[0,1,2].map(index=>sumDay(airportAccounts(props.airports),index)))
+const dailyMax=computed(()=>Math.max(1,...allDays.value.map(d=>d.bytes||0)))
+const airportRows=computed(()=>props.airports.map(airport=>{
+  const list=airportAccounts([airport])
+  const quotas=list.map(account=>{
+    const parsed=parseNoticeUsage(noticesForAccount(props.notices,account)),usage=account.subscription.usage
+    const total=usage?.total??parsed.total,used=subscriptionUsed(usage)??parsed.used
+    return {total,remaining:total!==undefined&&used!=null?Math.max(0,total-used):parsed.remaining}
+  })
+  const remaining=quotas.every(q=>q.remaining!=null)?quotas.reduce((sum,q)=>sum+q.remaining!,0):null
+  const total=quotas.every(q=>q.total!=null)?quotas.reduce((sum,q)=>sum+q.total!,0):null
+  const ratio=remaining!==null&&total!==null&&total>0?Math.min(1,Math.max(0,remaining/total)):null
+  const issues=workspaceRefreshIssues.value.filter(issue=>issue.account.airport.id===airport.id)
+  const refreshTimes=latestRefreshByAccount.value.filter(entry=>entry.account.airport.id===airport.id).map(entry=>entry.item?.finished_at||entry.job?.created_at||'')
+  const updated=[...refreshTimes,...list.map(account=>account.subscription.updated_at||airport.updated_at||'')].filter(Boolean).sort((a,b)=>Date.parse(a)-Date.parse(b)).at(-1)
+  return {airport,remaining,ratio,today:sumDay(list,0),updated,issues}
+}))
 const workspaceRefreshIssueJobs=computed(()=>[...new Map(workspaceRefreshIssues.value.map(issue=>[issue.job.id,issue.job])).values()])
 const disclosureSummary=computed<SubscriptionDisclosureSummary>(()=>{
   const expiry=airportAccounts(props.airports).map(account=>account.subscription.usage?.expire).filter((value):value is number=>typeof value==='number'&&Number.isFinite(value)&&value>0)
@@ -227,6 +263,7 @@ async function startSelections(accountsToRefresh:AirportAccount[]){
 }
 async function startCurrent(){if(selected.value)await startSelections([selected.value])}
 async function startChosenScope(){await startSelections(selectedScopeAccounts.value);scopeOpen.value=false}
+async function startAirport(){await startSelections(accounts.value)}
 async function startAll(){await startSelections(workspaceAccounts.value)}
 async function cancelCurrent(){
   const job=cancelJob.value
@@ -247,6 +284,7 @@ async function retryJob(job:SubscriptionRefreshJob){
     if(jobRunning(next))schedulePoll(next.id)
   }catch(e){error.value=e instanceof Error?e.message:String(e)}finally{loading.value=false}
 }
+watch(()=>props.airportId,id=>{if(id&&id!=='all')showAirport(id)},{immediate:true})
 watch(accounts,value=>{
   const airport=viewedAirport.value
   if(!airport){selectedKey.value='';return}
@@ -266,8 +304,36 @@ defineExpose({cycleAirport,showAirport,viewedAirportName,usageRatio,viewedAccoun
 </script>
 
 <template>
-  <section class="subscription-overview" aria-label="首页订阅账户状态">
-    <template v-if="selected">
+  <section class="subscription-overview" :class="{'all-airports':allAirports}" aria-label="首页订阅账户状态">
+    <template v-if="allAirports">
+      <div class="subscription-all-main">
+        <div class="subscription-airport-list" aria-label="全部机场用量汇总">
+          <div v-for="row in airportRows" :key="row.airport.id" class="subscription-airport-row">
+            <strong class="airport-summary-name">{{row.airport.name}}</strong>
+            <div class="airport-summary-quota">
+              <span>剩余 <b>{{row.remaining===null?'未知':bytes(row.remaining)}}</b> <small v-if="row.ratio!==null">{{(row.ratio*100).toFixed(2)}}% 可用</small></span>
+              <div v-if="row.ratio!==null" class="usage-track"><i :style="{width:`${row.ratio*100}%`}"/></div>
+            </div>
+            <span class="airport-summary-today">今日 {{dayText(row.today)}}</span>
+            <time class="airport-summary-time">{{row.updated?date(row.updated):'未刷新'}}</time>
+            <span :class="{'airport-refresh-failed':row.issues.length}" :title="row.issues.map(issue=>issue.item.error_message||'刷新中断').join('；')">{{row.issues.length?'刷新失败':'正常'}}</span>
+            <button class="text-button" @click="emit('viewed',row.airport.id)">只看</button>
+          </div>
+        </div>
+        <div class="subscription-daily all-daily">
+          <h3>近 3 日用量 · 合计</h3>
+          <div class="all-daily-chart" aria-label="全部机场近三日用量">
+            <div v-for="day in allDays" :key="day.date" :title="day.partial?`已记录 ${bytes(day.bytes!)}，另有账户缺少记录`:dayText(day)">
+              <small>{{dayText(day)}}</small>
+              <span class="all-day-track"><i :class="{unknown:day.bytes===null,partial:day.partial}" :style="{height:day.bytes===null?'100%':Math.max(6,day.bytes/dailyMax*100)+'%'}"/></span>
+              <small>{{day.label}}</small>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="subscription-actions"><button class="button primary" :disabled="refreshDisabled||!workspaceAccounts.length" @click="startAll">{{loading?'提交中…':'全部刷新'}}</button><button v-if="cancelJob" class="text-button danger" @click="cancelCurrent">取消刷新</button></div>
+    </template>
+    <template v-else-if="selected">
       <div class="subscription-main">
         <div class="subscription-identity">
           <div class="subscription-icon" aria-hidden="true">
@@ -314,6 +380,7 @@ defineExpose({cycleAirport,showAirport,viewedAirportName,usageRatio,viewedAccoun
 
       <div class="subscription-actions">
         <button class="button primary" :disabled="refreshDisabled" @click="startCurrent">{{loading?'提交中…':'刷新当前订阅'}}</button>
+        <button class="button ghost" :disabled="refreshDisabled" @click="startAirport">刷新此机场</button>
         <div class="refresh-scope">
           <button class="button ghost" type="button" aria-label="选择刷新范围" :aria-expanded="scopeOpen" @click="scopeOpen=!scopeOpen">选择范围</button>
           <div v-if="scopeOpen" class="refresh-scope-panel" role="group" aria-label="刷新订阅范围">
@@ -324,32 +391,32 @@ defineExpose({cycleAirport,showAirport,viewedAirportName,usageRatio,viewedAccoun
             <button class="button primary" :disabled="refreshDisabled||!selectedScopeAccounts.length" @click="startChosenScope">刷新所选 {{selectedScopeAccounts.length}}</button>
           </div>
         </div>
-        <button class="button ghost" :disabled="refreshDisabled||!workspaceAccounts.length" @click="startAll">全部刷新</button>
         <span v-if="statusLabel" class="badge" :class="statusTone">{{statusLabel}}</span>
         <button v-if="visibleItem?.state==='failed'" class="text-button" :disabled="loading" @click="retryFailed">重试失败项</button>
         <button v-if="cancelJob" class="text-button danger" @click="cancelCurrent">取消刷新</button>
-        <div v-if="visibleItem?.error_message||visibleJob?.persistence_error||error||jobsReadState==='error'" class="subscription-message" role="alert" :title="visibleItem?.error_message||visibleJob?.persistence_error||error||'刷新状态读取失败'">
-          {{visibleItem?.error_message||visibleJob?.persistence_error||error||'刷新状态读取失败'}}
-        </div>
-        <details v-if="workspaceRefreshIssues.length" class="subscription-issues">
-          <summary>刷新异常 {{workspaceRefreshIssues.length}} 项</summary>
-          <p v-for="issue in workspaceRefreshIssues" :key="issue.account.key">
-            <strong>{{issue.account.airport.name}} · {{issue.account.subscription.name}}</strong>
-            <span>{{issue.item.state==='failed'?'刷新失败':'刷新中断'}}</span>
-            <small v-if="issue.item.error_message">{{issue.item.error_message}}</small>
-          </p>
-          <div class="issue-retries">
-            <template v-for="job in workspaceRefreshIssueJobs" :key="job.id">
-              <button v-if="job.failed>0&&!(visibleJob?.id===job.id&&visibleItem?.state==='failed')" class="text-button" :disabled="refreshDisabled" @click="retryJob(job)">重试此任务失败项（{{job.failed}}）</button>
-            </template>
-          </div>
-        </details>
         <span v-if="jobsReadState==='loading'" class="status-read muted">刷新状态读取中…</span>
         <span v-else-if="jobsReadState==='error'" class="status-read inline-error" role="alert">刷新状态未知</span>
 
       </div>
     </template>
     <span v-else class="muted">选择机场查看订阅</span>
+
+    <details v-if="workspaceRefreshIssues.length||error||jobsReadState==='error'" class="subscription-issues">
+      <summary>刷新异常 {{workspaceRefreshIssues.length||1}} 项</summary>
+      <p v-for="issue in workspaceRefreshIssues" :key="issue.account.key">
+        <strong>{{issue.account.airport.name}} · {{issue.account.subscription.name}}</strong>
+        <span>{{issue.item.state==='failed'?'刷新失败':'刷新中断'}}</span>
+        <small v-if="issue.item.error_message">{{issue.item.error_message}}</small>
+      </p>
+      <p v-if="error||jobsReadState==='error'" class="subscription-message" role="alert">{{error||'刷新状态读取失败'}}</p>
+      <div class="issue-retries">
+        <template v-for="job in workspaceRefreshIssueJobs" :key="job.id">
+          <button v-if="job.failed>0&&!(visibleJob?.id===job.id&&visibleItem?.state==='failed')" class="text-button" :disabled="refreshDisabled" @click="retryJob(job)">重试此任务失败项（{{job.failed}}）</button>
+        </template>
+      </div>
+    </details>
+
+    <span v-if="allAirports&&jobsReadState!=='ready'" class="status-read muted">{{jobsReadState==='loading'?'刷新状态读取中…':'刷新状态未知'}}</span>
 
     <Modal v-if="noticeOpen&&selected" title="订阅公告" @close="noticeOpen=false">
       <div v-for="notice in accountNotices" :key="notice.profile_id+'|'+notice.node_identity_key+'|'+notice.config_revision_key" class="notice-row">
@@ -370,7 +437,10 @@ defineExpose({cycleAirport,showAirport,viewedAirportName,usageRatio,viewedAccoun
 .subscription-quota{display:grid;gap:6px;min-width:0}.subscription-quota-legend{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}.subscription-quota-used,.subscription-quota-total{display:grid;gap:2px;min-width:0;padding-left:12px;position:relative;color:var(--muted);font-size:10px;line-height:1.2}.subscription-quota-used::before,.subscription-quota-total::before{content:'';position:absolute;left:0;top:3px;width:6px;height:6px;border-radius:50%;background:var(--blue-soft)}.subscription-quota-total::before{background:var(--blue)}.subscription-quota-used>strong,.subscription-quota-total>strong{color:var(--ink);font-size:11px;font-weight:500;line-height:1.2;white-space:nowrap}.usage-track{height:8px;margin:0;overflow:hidden;border-radius:999px;background:var(--blue-soft);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--blue) 7%,transparent)}.usage-track i{display:block;height:100%;border-radius:inherit;background:var(--blue);transition:width .35s ease}
 .subscription-daily{display:flex;flex-direction:column;justify-content:center;gap:3px;min-width:0;padding-left:12px;border-left:1px solid var(--line)}.subscription-daily h3{margin:0;color:var(--muted);font-size:10px;line-height:12px;font-weight:600}.subscription-daily :deep(.cst-usage-summary){height:50px;gap:4px;padding-bottom:0}.subscription-daily :deep(.cst-usage-day){grid-template-rows:10px 24px 10px;gap:3px}.subscription-daily :deep(.cst-usage-day-value),.subscription-daily :deep(.cst-usage-day-label){font-size:8.5px;line-height:10px}.subscription-daily :deep(.cst-usage-day-track){width:20px;height:24px;border-radius:5px 5px 2px 2px}.subscription-daily :deep(.cst-usage-caption){font-size:8px;line-height:10px}
 
-.subscription-actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;min-height:30px;font-size:11px}.subscription-actions .button{min-height:28px;padding:4px 10px;font-size:12px}.subscription-actions .badge{padding:4px 7px;font-size:11px}.subscription-actions .text-button{font-size:11px}.subscription-message{max-width:220px;overflow:hidden;color:var(--red);font-size:10px;line-height:1.3;white-space:nowrap;text-overflow:ellipsis}.subscription-issues{position:relative;font-size:11px}.subscription-issues summary{width:max-content;max-width:100%;color:var(--red);cursor:pointer}.subscription-issues p{display:flex;flex-wrap:wrap;gap:4px 8px;margin:6px 0 0;line-height:1.5}.subscription-issues p small{flex:1 0 100%;color:var(--muted)}.issue-retries{display:flex;flex-wrap:wrap;gap:8px;margin-top:7px}.issue-retries button{font-size:12px}.status-read{font-size:11px}.refresh-scope{position:relative}.refresh-scope-panel{position:absolute;top:calc(100% + 5px);left:0;z-index:20;display:grid;gap:8px;width:min(310px,calc(100vw - 28px));max-height:250px;overflow:auto;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--surface);box-shadow:var(--shadow)}.refresh-scope-panel label{display:flex;align-items:center;gap:8px;font-size:12px;line-height:1.4}.refresh-scope-panel label span{overflow-wrap:anywhere}.refresh-scope-panel>.button{justify-self:start}.notice-row{padding:8px 0;border-bottom:1px solid var(--line)}.notice-row small{color:var(--muted)}.notice-row p{margin-top:4px;overflow-wrap:anywhere}
+.subscription-actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;min-height:30px;font-size:11px}.subscription-actions .button{min-height:28px;padding:4px 10px;font-size:12px}.subscription-actions .badge{padding:4px 7px;font-size:11px}.subscription-actions .text-button{font-size:11px}.subscription-message{color:var(--red);font-size:10px;line-height:1.3}.subscription-issues{position:relative;font-size:11px}.subscription-issues summary{width:max-content;max-width:100%;color:var(--red);cursor:pointer}.subscription-issues p{display:flex;flex-wrap:wrap;gap:4px 8px;margin:6px 0 0;line-height:1.5}.subscription-issues p small{flex:1 0 100%;color:var(--muted)}.issue-retries{display:flex;flex-wrap:wrap;gap:8px;margin-top:7px}.issue-retries button{font-size:12px}.status-read{font-size:11px}.refresh-scope{position:relative}.refresh-scope-panel{position:absolute;top:calc(100% + 5px);left:0;z-index:20;display:grid;gap:8px;width:min(310px,calc(100vw - 28px));max-height:250px;overflow:auto;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--surface);box-shadow:var(--shadow)}.refresh-scope-panel label{display:flex;align-items:center;gap:8px;font-size:12px;line-height:1.4}.refresh-scope-panel label span{overflow-wrap:anywhere}.refresh-scope-panel>.button{justify-self:start}.notice-row{padding:8px 0;border-bottom:1px solid var(--line)}.notice-row small{color:var(--muted)}.notice-row p{margin-top:4px;overflow-wrap:anywhere}
+.subscription-all-main{display:grid;grid-template-columns:minmax(0,1fr) 140px;align-items:center;gap:12px;min-width:0}.subscription-airport-list{display:grid;gap:8px;min-width:0}.subscription-airport-row{display:grid;grid-template-columns:minmax(56px,.6fr) minmax(145px,1.7fr) minmax(74px,.8fr) 78px 48px 26px;align-items:center;gap:10px;font-size:11px}.airport-summary-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.airport-summary-quota{display:grid;gap:5px;min-width:0}.airport-summary-quota>span{font-size:10px;color:var(--muted);white-space:nowrap}.airport-summary-quota b{color:var(--ink);font-size:11px;font-weight:600}.airport-summary-quota small{color:var(--blue);font-size:9px;margin-left:3px}.airport-summary-quota .usage-track{height:4px}.airport-summary-time,.airport-summary-today{color:var(--muted);font-size:10px}.airport-refresh-failed{color:var(--red)}.subscription-airport-row .text-button{font-size:11px}.all-airports>.subscription-issues{order:-1}.all-daily-chart{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}.all-daily-chart>div{display:grid;justify-items:center;gap:3px}.all-daily-chart small{font-size:8.5px;color:var(--muted);white-space:nowrap}.all-day-track{display:flex;align-items:flex-end;width:20px;height:24px;overflow:hidden;border-radius:5px 5px 2px 2px}.all-day-track i{display:block;width:100%;background:var(--blue);border-radius:inherit}.all-day-track i.partial{opacity:.5}.all-day-track i.unknown{background:repeating-linear-gradient(-45deg,var(--line) 0 3px,transparent 3px 6px);border:1px dashed var(--line)}
+@media(max-width:1200px){.subscription-all-main{grid-template-columns:minmax(0,1fr)}.all-daily{flex-direction:row;align-items:center;gap:12px;padding:0;border:0}.all-daily-chart{width:150px}.all-daily-chart>div{grid-template-columns:1fr 1fr}.all-day-track{display:none}.subscription-airport-row{gap:7px}}
+@media(max-width:760px){.subscription-airport-row{grid-template-columns:64px minmax(140px,1fr) 48px 26px}.airport-summary-time,.airport-summary-today{grid-row:2}.airport-summary-today{grid-column:1/3}.airport-summary-time{grid-column:3/5}.subscription-airport-row{gap:5px 8px}}
 @media(max-width:1200px){.subscription-main{grid-template-columns:minmax(120px,.8fr) minmax(210px,1.5fr) 144px;gap:10px}.subscription-overview{padding-right:12px;padding-left:12px}.subscription-daily{padding-left:8px}}
 @media(max-width:980px){.subscription-main{grid-template-columns:minmax(0,1fr) 144px;row-gap:8px}.subscription-identity{grid-column:1/-1}.subscription-message{max-width:100%}}
 @media(max-width:760px){.subscription-overview{gap:8px;padding:10px}.subscription-main{gap:8px}.subscription-remaining-value{font-size:16px}.subscription-actions{gap:6px}.refresh-scope-panel{left:0;right:auto}}

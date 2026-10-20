@@ -44,6 +44,7 @@ describe('HomeView subscription account integration',()=>{
     workspace.airports.value=[airport]
     workspace.nodes.value=[notice('account-a1','notice-a1','A1 only'),notice('account-a2','notice-a2','A2 only')]
     workspace.selectedAirportIds.value=['airport-a']
+    workspace.airportFilter.value='airport-a'
     workspace.subscription.value='all'
     refreshMocks.refreshJobs.mockResolvedValue([{id:'prior-job',state:'finished',created_at:'2026-10-10T00:00:00Z',completed:1,success:0,failed:1,cancelled:0,not_executed:0,cancel_requested:false,items:[{airport_id:'airport-a',subscription_id:'account-a2',airport_name:'Airport A',subscription_name:'Account A2',source_fingerprint:'fingerprint',source_version:1,state:'failed',error_code:'http_429',error_message:'订阅源限流；旧缓存保留',duration_ms:1,node_count:1,stages:[]}]}])
     wrapper=mount(HomeView,{global:{provide:{[workspaceKey as symbol]:workspace},stubs:{QualityMetrics:true,HealthBars:true,ServicePicker:true,TrendChart:true,RoundResults:true,MeasurementResults:true,InlineHistory:true,SiteDisplayPicker:true}}})

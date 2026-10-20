@@ -89,6 +89,19 @@ describe('SubscriptionOverview status strip',()=>{
     expect(wrapper.find('[role="meter"]').exists()).toBe(false)
   })
 
+  it('refreshes only the viewed airport with the airport refresh button',async()=>{
+    const workspace=createWorkspace();workspace.airports.value=[airportA,airportB]
+    wrapper=mount(SubscriptionOverview,{props:{airports:[airportA,airportB],notices:[],airportId:'airport-a'},global:{provide:{[workspaceKey as symbol]:workspace}}})
+    await flushPromises()
+    const buttons=wrapper.findAll('.subscription-actions .button')
+    expect(buttons.slice(0,3).map(b=>b.text())).toEqual(['刷新当前订阅','刷新此机场','选择范围'])
+    await buttons[1]!.trigger('click');await flushPromises()
+    expect(refreshMocks.startRefresh).toHaveBeenLastCalledWith(expect.objectContaining({selections:[
+      {airport_id:'airport-a',subscription_id:'account-a1'},
+      {airport_id:'airport-a',subscription_id:'account-a2'},
+    ]}))
+  })
+
   it('sends selected and full workspace refresh scopes without changing measurement scope',async()=>{
     const workspace=createWorkspace()
     workspace.airports.value=[airportA,airportB]
@@ -117,6 +130,7 @@ describe('SubscriptionOverview status strip',()=>{
     expect(workspace.selectedAirportIds.value).toEqual(['airport-a'])
     expect(workspace.subscription.value).toBe('all')
 
+    await wrapper!.setProps({airportId:'all'})
     const refreshAll=wrapper!.findAll('button').find(button=>button.text().includes('全部刷新'))
     expect(refreshAll).toBeTruthy()
     await refreshAll!.trigger('click')

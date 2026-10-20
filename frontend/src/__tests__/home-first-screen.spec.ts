@@ -61,6 +61,7 @@ const workspaces:ReturnType<typeof createWorkspace>[]=[]
 function attachHome(options:{airports?:Airport[];nodes?:NodeOption[]}={}){
   const workspace=createWorkspace();workspaces.push(workspace)
   workspace.airports.value=options.airports||airports();workspace.nodes.value=options.nodes||nodes();workspace.setAirports(workspace.airports.value.map(airport=>airport.id))
+  workspace.airportFilter.value=workspace.airports.value[0]?.id||'all'
   const wrapper=mount(HomeView,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:workspace}}});wrappers.push(wrapper)
   return {workspace,wrapper}
 }
@@ -141,12 +142,12 @@ describe('synthetic 256-node home first screen',()=>{
     expect(wrapper.find('.subscription-message').exists()).toBe(false)
   })
 
-  it('keeps the status strip visible without changing airport and node measurement scope',async()=>{
+  it('keeps the status strip visible while cycling the sidebar airport filter',async()=>{
     const {workspace,wrapper}=attachHome();await flushPromises()
     expect(wrapper.find('details.home-subscription-disclosure').exists()).toBe(false)
     expect(wrapper.find('.subscription-overview').exists()).toBe(true)
     expect(wrapper.get('.hd-orbit').text()).toContain('合成机场 1')
-    expect(wrapper.get('.hd-foot').text()).toContain('256 个节点')
+    expect(wrapper.get('.hd-foot').text()).toContain('64 个节点')
 
     const selectedAirports=[...workspace.selectedAirportIds.value!]
     const accountPicker=wrapper.get('select[aria-label="首页用量订阅"]')
@@ -160,7 +161,7 @@ describe('synthetic 256-node home first screen',()=>{
 
     expect(wrapper.get('.subscription-account').text()).toContain('合成账户 6')
     expect(workspace.selectedAirportIds.value).toEqual(selectedAirports)
-    expect(workspace.filteredNodes.value).toHaveLength(256)
+    expect(workspace.filteredNodes.value).toHaveLength(64)
     expect(workspace.subscription.value).toBe('all')
     expect(api.startRefresh).not.toHaveBeenCalled()
     expect(api.startLatency).not.toHaveBeenCalled()
@@ -188,6 +189,20 @@ describe('synthetic 256-node home first screen',()=>{
 })
 
 describe('airport filter keeps the header and source strip on that airport (synthetic data)',()=>{
+  it('shows airport summary rows when switching to all airports',async()=>{
+    const {workspace,wrapper}=attachHome();workspace.viewAirport('airport-2');await flushPromises()
+    workspace.viewAirport('all');await flushPromises()
+    expect(wrapper.get('.hd-orbit-text strong').text()).toBe('全部机场')
+    expect(wrapper.get('.hd-orbit-text small').text()).toBe('4 个机场 · 128 个节点')
+    expect(wrapper.findAll('.subscription-airport-row')).toHaveLength(4)
+    expect(wrapper.find('select[aria-label="首页用量订阅"]').exists()).toBe(false)
+    expect(wrapper.findAll('.subscription-actions .button').map(b=>b.text())).toEqual(['全部刷新'])
+    await wrapper.get('.hd-orbit').trigger('click')
+    expect(workspace.airportFilter.value).toBe('all')
+    await wrapper.get('.subscription-airport-row button').trigger('click');await flushPromises()
+    expect(workspace.airportFilter.value).toBe('airport-1')
+  })
+
   it('switches the source strip when the sidebar filter changes and follows the orbit while filtered',async()=>{
     const {workspace,wrapper}=attachHome();await flushPromises()
     expect(wrapper.get('.hd-orbit-text strong').text()).toBe('合成机场 1')

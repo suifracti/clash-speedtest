@@ -49,7 +49,6 @@ function closeMore(){if(!more.value?.open)return;more.value.open=false;moreSumma
 // 按机场筛选时，页头和来源带都切到这个机场，不再显示全部机场的汇总。
 const filteredAirport=computed(()=>w.airportFilter.value==='all'?undefined:chosen.value.find(a=>a.id===w.airportFilter.value))
 const filteredAirportNodes=computed(()=>airportNodeCount(w.airports.value.find(airport=>airport.id===w.airportFilter.value)))
-watch([()=>w.airportFilter.value,overview],([id])=>{if(id!=='all')overview.value?.showAirport(id)},{flush:'post',immediate:true})
 const qualityFiltering=computed(()=>m.qualityGate.value!=='all'||m.qualitySort.value!=='existing')
 const focusKey=ref<string|null>(null)
 const focusNode=computed(()=>m.pageNodes.value.find(n=>key(n)===focusKey.value)||m.pageNodes.value[0])
@@ -110,11 +109,11 @@ function keyNav(e:KeyboardEvent){
     </header>
 
     <section class="hd-source" aria-label="机场选择">
-      <button class="hd-orbit" :aria-label="'循环查看机场：'+(overview?.viewedAirportName||m.chosenNames.value||'尚未选择')" @click="chosen.length?overview?.cycleAirport():m.picker.value=true">
+      <button class="hd-orbit" :aria-label="filteredAirport?'循环查看机场：'+filteredAirport.name:chosen.length?'全部机场':'选择机场'" @click="!chosen.length?m.picker.value=true:filteredAirport?overview?.cycleAirport():undefined">
         <span class="hd-orbit-logos"><span v-for="a in chosen.slice(0,4)" :key="a.id" :class="{dim:!!filteredAirport&&filteredAirport.id!==a.id}">{{a.name.slice(0,1)}}</span><span v-if="chosen.length>4">+{{chosen.length-4}}</span><Icon v-if="!chosen.length" name="plus"/></span>
-        <span class="hd-orbit-text"><strong>{{overview?.viewedAirportName||'选择机场'}}</strong><small>{{filteredAirport?(chosen.length>1?'只看这个机场 · 点击换下一个':'只看这个机场'):chosen.length>1?'点击切换 · 共 '+chosen.length+' 个机场':'可同时选择多个机场'}}</small></span>
+        <span class="hd-orbit-text"><strong>{{filteredAirport?.name||(chosen.length?'全部机场':'选择机场')}}</strong><small>{{filteredAirport?(chosen.length>1?'只看这个机场 · 点击换下一个':'只看这个机场'):chosen.length?chosen.length+' 个机场 · '+chosenNodeCount+' 个节点':'可同时选择多个机场'}}</small></span>
       </button>
-      <SubscriptionOverview ref="overview" :airports="chosen" :notices="w.notices.value" @viewed="id=>{if(w.airportFilter.value!=='all')w.airportFilter.value=id}"/>
+      <SubscriptionOverview ref="overview" :airports="chosen" :notices="w.notices.value" :airport-id="w.airportFilter.value" @viewed="id=>{w.airportFilter.value=id}"/>
     </section>
 
     <div class="hd-toolbar">
