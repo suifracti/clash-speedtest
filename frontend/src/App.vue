@@ -6,6 +6,7 @@ import type {Page} from './domain'
 import Icon from './components/Icon.vue'
 import Modal from './components/Modal.vue'
 import HomeView from './components/HomeView.vue'
+import RecommendationView from './components/RecommendationView.vue'
 import AirportsView from './components/AirportsView.vue'
 import MonitorView from './components/MonitorView.vue'
 import HistoryView from './components/HistoryView.vue'
@@ -22,7 +23,7 @@ const w=createWorkspace();provide(workspaceKey,w)
 const windowHidden=ref(document.hidden)
 function visibilityChanged(){windowHidden.value=document.hidden}
 const password=ref(''),loginError=ref(''),loggingIn=ref(false)
-const pages:{id:Page;label:string;icon:string}[]=[{id:'home',label:'线路工作台',icon:'home'},{id:'airports',label:'机场与账户',icon:'layers'},{id:'history',label:'检测记录',icon:'history'},{id:'monitor',label:'持续监测',icon:'monitor'}]
+const pages:{id:Page;label:string;icon:string}[]=[{id:'home',label:'线路工作台',icon:'home'},{id:'recommend',label:'现在用哪个',icon:'pulse'},{id:'airports',label:'机场与账户',icon:'layers'},{id:'history',label:'检测记录',icon:'history'},{id:'monitor',label:'持续监测',icon:'monitor'}]
 const utilities:{id:Page;label:string;icon:string}[]=[{id:'settings',label:'偏好设置',icon:'settings'},{id:'data',label:'数据与备份',icon:'data'}]
 const palette=ref(false)
 const runningJobs=computed(()=>w.jobs.value.filter(j=>j.state==='running').length)
@@ -79,6 +80,7 @@ onBeforeUnmount(()=>{document.removeEventListener('visibilitychange',visibilityC
         <HomeView v-if="w.setup.value?.state==='ready'" v-show="w.page.value==='home'"/>
         <AirportsView v-if="w.page.value==='airports'&&w.setup.value?.state==='ready'"/>
         <MonitorView v-if="w.page.value==='monitor'&&w.setup.value?.state==='ready'"/>
+        <RecommendationView v-if="w.page.value==='recommend'&&w.setup.value?.state==='ready'"/>
         <HistoryView v-if="w.page.value==='history'&&w.setup.value?.state==='ready'"/>
         <SettingsView v-if="w.page.value==='settings'&&w.setup.value?.state==='ready'"/>
         <DataView v-if="w.page.value==='data'||w.setup.value?.state!=='ready'"/>

@@ -1,5 +1,5 @@
 import {activeLatencyTargets,latencyTargetId} from './latencyTargets'
-export type Page = 'home'|'airports'|'monitor'|'history'|'settings'|'data'
+export type Page = 'recommend'|'home'|'airports'|'monitor'|'history'|'settings'|'data'
 export type Project = 'latency'|'download'|'service'|'combined'
 export interface NodeScope { profile_id:string;node_key:string;node_identity_key:string;config_revision_key:string }
 export interface NodeOption extends NodeScope { profile_name:string;display_name:string;type:string;country_code:string;country_flag:string }
