@@ -29,6 +29,7 @@ const (
 const defaultDownloadSampleInterval = 100 * time.Millisecond
 
 type DownloadStreamOptions struct {
+	TargetURL           string
 	MaximumBytes        int64
 	MaximumDuration     time.Duration
 	SampleEveryBytes    int64
@@ -181,6 +182,9 @@ func (st *SpeedTester) measureDownloadStream(ctx context.Context, client *http.C
 		result.FailurePhase = "request_setup"
 		result.ErrorMessage = "无法创建固定下载目标"
 		return finish()
+	}
+	if options.TargetURL != "" {
+		target = options.TargetURL
 	}
 	result.TargetURL = target
 	runCtx, cancel := context.WithTimeout(ctx, options.MaximumDuration)

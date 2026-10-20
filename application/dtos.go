@@ -79,6 +79,7 @@ type WorkbenchPublicServiceHistoryResult struct {
 }
 
 type WorkbenchDownloadTestRequest struct {
+	SourceID          string `json:"source_id,omitempty"`
 	RequestID         string `json:"request_id"`
 	ProfileID         string `json:"profile_id"`
 	NodeKey           string `json:"node_key"`

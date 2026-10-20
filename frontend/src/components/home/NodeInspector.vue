@@ -3,12 +3,12 @@ import {computed,inject} from 'vue'
 import {useWorkspace} from '../../workspace'
 import {date,key,targets,type NodeOption,type Project} from '../../domain'
 import {nodeDisplayName} from '../../nodePresentation'
-import {latencyTargetId} from '../../latencyTargets'
 import {monitorHTTPServices,type TrendPoint} from '../../presentation'
 import Icon from '../Icon.vue'
 import HealthBars from '../HealthBars.vue'
+import RecordedBars from '../RecordedBars.vue'
+import InspectorLatency from './InspectorLatency.vue'
 import NodeExitSummary from '../NodeExitSummary.vue'
-import RoundResults from '../RoundResults.vue'
 import MeasurementResults from '../MeasurementResults.vue'
 import InlineHistory from '../InlineHistory.vue'
 import TrendChart from '../TrendChart.vue'
@@ -40,17 +40,27 @@ const others=computed(()=>project.value==='combined'?[]:([
 const runText=computed(()=>project.value==='combined'?'检测这个节点':m.runLabel(project.value))
 const attempts=computed(()=>m.qualityData.value[key(props.node)]?.services||w.services.value[key(props.node)]||[])
 const readError=computed(()=>m.qualityErrors.value[key(props.node)])
-// Saved-history snapshot for download: latest check and the last valid speed stay separate.
-const savedDownload=computed(()=>{
- const e=m.qualityData.value[key(props.node)]
- if(!e)return ''
- const {latest,valid}=downloadEvidence(e.downloads),speed=downloadSpeed(valid)
- const parts=['最近检测：'+(latest?attemptStatus(latest,true):'未测')]
- if(valid&&speed!==null)parts.push(`${valid.attempt_id===latest?.attempt_id?'最近有效速度':'历史有效速度'} ${speed.toFixed(2)} MiB/s（${date(attemptObservedAt(valid))}）`)
- else parts.push(latest?'本次未取得有效速度':'尚无测速记录')
- if(!e.reads.download.complete)parts.push('下载读取不完整，状态未确认')
- return parts.join(' · ')
+const downloadRecords=computed(()=>[...new Map([...(w.downloads.value[key(props.node)]||[]),...(m.qualityData.value[key(props.node)]?.downloads||[])].map(a=>[a.attempt_id,a])).values()])
+const downloadHistoryContext=computed(()=>{const {latest,valid}=downloadEvidence(downloadRecords.value),speed=downloadSpeed(valid);return valid&&speed!==null?`${valid.attempt_id===latest?.attempt_id?'最近有效速度':'历史有效速度'} ${speed.toFixed(2)} MiB/s（${date(attemptObservedAt(valid))}）`:''})
+const downloadLatest=computed(()=>downloadEvidence(downloadRecords.value).latest)
+const downloadValue=computed(()=>downloadSpeed(downloadLatest.value))
+const downloadSource=computed(()=>{const url=downloadLatest.value?.rule.target_url||'';return url.includes('cachefly')?'Cachefly':url.includes('cloudflare')?'Cloudflare':url?new URL(url).hostname:'测速源未记录'})
+const downloadFailure=computed(()=>{
+ const a=downloadLatest.value,r=a?.result
+ if(readError.value)return '已保存记录读取失败'
+ if(!a)return '尚无测速记录'
+ if(r?.http_status===429)return '测速网站嫌太频繁，拒绝了（429）。不是节点的问题。'
+ if(r?.http_status===403)return '测速网站拒绝了请求（403）。不是节点的问题。'
+ return attemptStatus(a,true)+((r?.error_message||a.not_executed_reason)?'：'+(r?.error_message||a.not_executed_reason):'')
 })
+const downloadTrend=computed(()=>m.rowPoints(props.node,'download').filter(p=>!p.id.startsWith('planned:')))
+const downloadSpark=computed(()=>{
+ const points=downloadTrend.value,values=points.flatMap(p=>p.value===null?[]:[p.value]),max=Math.max(1,...values);let started=false
+ return points.map((p,i)=>{if(p.value===null){started=false;return ''}const cmd=started?'L':'M';started=true;return `${cmd}${4+i*344/Math.max(1,points.length-1)},${30-p.value/max*26}`}).join(' ')
+})
+function retryDownload(){
+ w.project.value='download';w.openPlan([props.node]);if(w.plan.value)w.plan.value.downloadSource=downloadSource.value==='Cachefly'?'cloudflare':'cachefly'
+}
 function windowText(id:string){
  if(readError.value)return '已保存记录读取失败'
  const s=m.siteSummaries.value[key(props.node)]?.find(x=>x.targetId===id)
@@ -58,16 +68,7 @@ function windowText(id:string){
  const range=({6:'6 小时',24:'24 小时',168:'7 天',720:'30 天'} as Record<number,string>)[w.hours.value]||w.hours.value+' 小时'
  return `${range}内 ${s.success}/${s.total} 次响应`+(s.p50!=null?` · 中位 ${Math.round(s.p50)} ms`:'')+(s.p95!=null&&s.success>=20?` · 尾部 P95 ${Math.round(s.p95)} ms`:'')
 }
-function siteReadout(id:string){
- const point=m.metricPoint(props.node,id),samples=point?.sampleGroups?.filter(g=>latencyTargetId(g.target)===id).flatMap(g=>g.samples)||point?.samples||[],values=samples.flatMap(s=>s.value===null?[]:[s.value])
- return m.siteMetric(props.node,id)+(samples.length?` · ${values.length}/${samples.length}`:'')+(values.length?` · ${Math.round(Math.min(...values))}–${Math.round(Math.max(...values))} ms`:'')
-}
-function spark(id:string){
- const points=m.sitePoints(props.node,id).filter(p=>p.value!==null)
- if(points.length<3)return ''
- const values=points.map(p=>p.value!),min=Math.min(...values),span=Math.max(...values)-min
- return values.map((value,index)=>`${index/(values.length-1)*80},${span?22-(value-min)/span*20:12}`).join(' ')
-}
+const latencySeries=computed(()=>sites.value.map(s=>({...s,points:m.sitePoints(props.node,s.id),context:(windowText(s.id)||m.siteContext(props.node,s.id))+(m.siteReason(props.node,s.id)?' · '+m.siteReason(props.node,s.id):'')})))
 const mine=computed(()=>!!m.hoverNode.value&&key(m.hoverNode.value)===key(props.node))
 const showRound=computed(()=>mine.value&&m.inlineTab.value==='round'&&!!m.activeRound.value)
 const showHistory=computed(()=>mine.value&&m.inlineTab.value==='history')
@@ -101,23 +102,16 @@ function run(){m.closeHover();w.openPlan([props.node])}
     </div>
 
     <div v-if="shows('latency')" class="hd-ins-block hd-latency">
-      <h3>延迟 <button class="hd-link" @click="openHistory('latency','all')">完整走势</button> <small>最近一轮</small><small v-if="m.monitorErrors.value[key(node)]" class="bad">监测记录读取失败</small><small v-else-if="m.monitorData.value[key(node)]?.length">含持续监测 · 各站独立记录</small></h3>
-      <div v-for="s in sites" :key="s.id" class="hd-site">
-        <button class="hd-site-name" :title="'查看 '+s.name+' 的历史'" @click="openHistory('latency',s.id)">{{s.name}}</button>
-        <button class="hd-site-value" :class="m.metricPoint(node,s.id)?.tone||'empty'" :title="(windowText(s.id)||m.siteContext(node,s.id))+(m.siteReason(node,s.id)?' · '+m.siteReason(node,s.id):'')" @click="openHistory('latency',s.id)">{{siteReadout(s.id)}}</button>
-        <svg v-if="spark(s.id)" class="latency-spark" viewBox="0 0 80 24" role="img" :aria-label="s.name+' 实测轮次走势'"><polyline :points="spark(s.id)" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
-      </div>
+      <InspectorLatency :series="latencySeries"/>
+      <small v-if="m.monitorErrors.value[key(node)]" class="bad">监测记录读取失败</small>
     </div>
 
     <div v-if="shows('download')" class="hd-ins-block hd-download">
-      <h3>下载</h3>
-      <div class="hd-site">
-        <button class="hd-site-name" @click="openHistory('download',w.displayTarget.value)">最近一次</button>
-        <button class="hd-site-value" :class="m.downloadMetricTone(node)" :title="m.downloadMetricContext(node)" @click="openHistory('download',w.displayTarget.value)">{{m.downloadMetric(node)}}</button>
-        <HealthBars defer :points="m.rowPoints(node,'download')" label="下载轮次" @inspect="inspect('download',$event)" @leave="m.leaveRound" @open="open('download',$event)"/>
-        <small class="hd-site-window hd-download-context">{{m.downloadMetricContext(node)}}</small>
-        <small v-if="readError||savedDownload" class="hd-site-window hd-saved-download" :class="{bad:readError}">{{readError?'已保存记录读取失败':savedDownload}}</small>
-      </div>
+      <h3>下载 <button class="hd-link" @click="openHistory('download',w.displayTarget.value)">记录</button></h3>
+      <div v-if="downloadValue!==null&&!readError" class="download-success"><strong>{{downloadValue.toFixed(2)}} <small>MiB/s</small></strong></div>
+      <div v-else class="download-failure" :class="{empty:!downloadLatest}"><span>{{downloadFailure}}</span><button v-if="downloadLatest&&!readError" class="hd-btn" :disabled="w.busy.value" @click="retryDownload">换源重测</button></div>
+      <small v-if="downloadLatest" class="hd-saved-download" :title="downloadHistoryContext">{{downloadSource}} · {{date(attemptObservedAt(downloadLatest))}}</small>
+      <svg v-if="downloadTrend.length>=3" class="download-spark" viewBox="0 0 352 34" role="img" aria-label="已有下载测速走势"><path :d="downloadSpark" fill="none" stroke="var(--hd-accent)" stroke-width="1.8"/><g v-for="(p,i) in downloadTrend" :key="p.id"><title>{{date(p.time)}} · {{p.value===null?'未取得速度':p.value.toFixed(2)+' MiB/s'}}</title><circle v-if="p.value!==null" :cx="4+i*344/Math.max(1,downloadTrend.length-1)" :cy="30-p.value/Math.max(1,...downloadTrend.map(p=>p.value||0))*26" r="2" fill="var(--hd-accent)"/></g></svg>
     </div>
 
     <div v-if="hasHTTP&&shows('service')" class="hd-ins-block hd-http">
@@ -136,11 +130,11 @@ function run(){m.closeHover();w.openPlan([props.node])}
       <div v-for="s in m.displayServices.value" :key="s.service_id" class="hd-site hd-service-row">
         <button class="hd-site-name" :title="s.name" @click="m.showService(node,s.service_id)">{{s.name}}</button>
         <button class="hd-site-value" :class="m.serviceTone(node,s.service_id)" @click="m.showService(node,s.service_id)">{{m.serviceMetric(node,s.service_id)}}</button>
-        <HealthBars defer :points="m.servicePoints(node,s.service_id)" :label="s.name+' 服务轮次'" @inspect="inspect('service',$event,w.displayTarget.value,s.service_id)" @leave="m.leaveRound" @open="open('service',$event,w.displayTarget.value,s.service_id)"/>
+        <RecordedBars :points="m.servicePoints(node,s.service_id).filter(point=>!point.id.startsWith('planned:')).slice(-12)" :label="s.name+' 实际检测记录'"/>
       </div>
     </div>
 
-    <div v-if="showRound||showHistory" class="hd-ins-detail" @mouseenter="m.keepRound" @mouseleave="m.leaveRound" @keydown.esc.stop="m.closeHover">
+    <div v-if="(showRound||showHistory)&&m.hoverMode.value!=='latency'" class="hd-ins-detail" @mouseenter="m.keepRound" @mouseleave="m.leaveRound" @keydown.esc.stop="m.closeHover">
       <header><strong>{{showRound?'这一轮的数据':detailTitle}}</strong>
         <span>
           <button v-if="showRound" class="hd-link" @click="m.expandHistory">看完整走势</button>
@@ -150,11 +144,10 @@ function run(){m.closeHover();w.openPlan([props.node])}
         </span>
       </header>
       <template v-if="showRound&&m.activeRound.value">
-        <RoundResults v-if="m.hoverMode.value==='latency'" :point="m.activeRound.value"/>
-        <MeasurementResults v-else :point="m.activeRound.value" :project="m.hoverMode.value"/>
+        <MeasurementResults :point="m.activeRound.value" :project="m.hoverMode.value"/>
         <TrendChart :points="m.hoverPoints.value" :unit="m.hoverMode.value==='download'?'MiB/s':m.hoverMode.value==='service'?'通过':'ms'" label="节点近期走势"/>
       </template>
-      <InlineHistory v-else :node="node" :nodes="m.visibleNodes.value" :project="m.hoverMode.value" :source="m.inlineHistorySource.value" :monitor-service-id="m.hoverService.value" :anchor-points="m.hoverPoints.value" :target-ids="m.hoverMode.value==='latency'&&m.hoverTarget.value!=='all'?[m.hoverTarget.value]:w.displayTargets.value" :service-ids="m.displayServices.value.map(s=>s.service_id)"/>
+      <InlineHistory v-else :node="node" :nodes="m.visibleNodes.value" :project="m.hoverMode.value" :source="m.inlineHistorySource.value" :monitor-service-id="m.hoverService.value" :anchor-points="m.hoverPoints.value" :target-ids="w.displayTargets.value" :service-ids="m.displayServices.value.map(s=>s.service_id)"/>
     </div>
     <nav v-if="others.length" class="hd-ins-others" aria-label="其他项目摘要"><span>其他项目</span><button v-for="o in others" :key="o.id" type="button" :title="'切到'+o.name+'：'+o.v.detail+' · '+date(o.at)" @click="w.project.value=o.id"><small>{{o.name}}</small><strong :class="o.v.tone">{{o.v.label}}</strong><time v-if="o.at" :datetime="o.at">{{date(o.at)}}</time><small v-else>尚未测量</small></button></nav>
     <p class="hd-legend"><span class="good">{{toneLabel('good')}}</span><span class="warn">{{toneLabel('warn')}}</span><span class="bad">{{toneLabel('bad')}}</span><span class="empty">{{toneLabel('empty')}}</span></p>
@@ -162,5 +155,5 @@ function run(){m.closeHover();w.openPlan([props.node])}
 </template>
 
 <style scoped>
-.hd-latency .hd-site{grid-template-columns:84px minmax(0,1fr) 80px}.hd-latency .hd-site-value{font-size:11px;white-space:nowrap}.latency-spark{width:80px;height:24px;color:var(--blue)}
+.hd-service-row :deep(.recorded-bars){align-self:center}.hd-service-row{grid-template-columns:minmax(0,1fr) 65px minmax(0,177px)}.hd-service-row .hd-site-name{white-space:normal;overflow:visible;text-overflow:clip}.download-success strong{font-size:25px;font-weight:600;font-variant-numeric:tabular-nums}.download-success small{font-size:12px;font-weight:400;color:var(--hd-muted)}.download-failure{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fff0d3;color:#805211;border-radius:8px;font-size:12px;line-height:1.55}.download-failure .hd-btn{flex-shrink:0;background:transparent;border-color:#cfad72;color:inherit}.download-failure.empty{padding:0;background:none;color:var(--hd-muted)}.hd-saved-download{display:block;margin-top:7px;color:var(--hd-muted);font-size:10px}.download-spark{display:block;width:100%;height:34px;margin-top:8px}
 </style>

@@ -243,7 +243,7 @@ export function createWorkspace(){
         for(const q of entries){
           if(cancelRequested.value||!alive(version))break
           starting=[q];q.state='running'
-          const body={...scope(q.node),request_id:q.id,...(p==='download'?{maximum_bytes:frozen.downloadMiB*1048576,timeout_seconds:frozen.downloadSeconds}:{service_id:q.serviceId,timeout_seconds:15,drift_samples:frozen.serviceSamples??4})}
+          const body={...scope(q.node),request_id:q.id,...(p==='download'?{maximum_bytes:frozen.downloadMiB*1048576,timeout_seconds:frozen.downloadSeconds,...(frozen.downloadSource?{source_id:frozen.downloadSource}:{})}:{service_id:q.serviceId,timeout_seconds:15,drift_samples:frozen.serviceSamples??4})}
           pendingStart.value={kind:p,requestId:q.id,node:q.node,body,serviceId:q.serviceId};remember(pendingStart.value)
           try{const a=await api.startAttempt(p,body);if(!alive(version))return;q.attempt=a;starting=[];await pollAttempt(p,q.node,a)}catch(e){if(!alive(version))return;if(!startRejected(e))throw e;q.state='not_executed';q.error=e instanceof Error?e.message:String(e);pendingStart.value=null;forget(q.id);starting=[]}
         }

@@ -121,6 +121,9 @@ func (s *AppService) StartWorkbenchDownloadTest(ctx context.Context, req Workben
 	if err != nil {
 		return nil, fmt.Errorf("初始化固定下载目标失败；未发出请求: %w", err)
 	}
+	if req.SourceID == "cachefly" {
+		target = "https://cachefly.cachefly.net/100mb.test"
+	}
 	if err := s.checkDownloadRetryAfter(ctx, req, target); err != nil {
 		return nil, err
 	}
@@ -328,6 +331,7 @@ func (s *AppService) executeWorkbenchDownload(runtime *workbenchDownloadRuntime)
 			result = speedtester.DownloadStreamResult{Outcome: "connection_failed", TargetURL: runtime.rule.TargetURL, StartedAt: now, FinishedAt: now, Phase: "proxy_setup", ErrorClass: "proxy_setup", EndReason: "connection_failed", FailurePhase: "proxy_setup", ErrorMessage: "无法建立节点隔离下载连接", Samples: []speedtester.DownloadStreamSample{}}
 		} else {
 			options := speedtester.DownloadStreamOptions{
+				TargetURL:    runtime.rule.TargetURL,
 				MaximumBytes: runtime.rule.MaximumBytes, MaximumDuration: time.Duration(runtime.rule.MaximumDurationNS),
 				SampleEveryBytes: runtime.rule.SampleEveryBytes, SampleEveryDuration: time.Duration(runtime.rule.SampleEveryNS),
 			}

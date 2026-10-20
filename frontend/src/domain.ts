@@ -29,7 +29,7 @@ export interface Setup {schema_version?:number;last_backup_at?:string;state:stri
 export interface NotificationSettings {enabled:boolean;failure_percent:number;remaining_percent:number;expiry_days:number}
 export interface Settings {local_notifications?:NotificationSettings;airport_monthly_prices?:Record<string,number>;subscription_daily_update_enabled?:boolean;preferred_browser:string;monitor_retention_policy:string;monitor_retention_custom_days:number;monitor_storage_warning_bytes?:number;monitor_storage_hard_bytes?:number;monitor_budget_max_concurrent?:number;monitor_budget_response_bytes?:number;favorite_services?:string[];selected_profile_id?:string}
 export interface TokenStatus {has_token:boolean;source:string;preview:string}
-export interface Plan {nodes:NodeOption[];projects:Exclude<Project,'combined'>[];target:string;samples:number;timeout:number;concurrency:number;downloadMiB:number;downloadSeconds:number;serviceIds:string[];serviceSamples?:number;repeats:number;includeReputation?:boolean;reputationServiceIds?:string[]}
+export interface Plan {nodes:NodeOption[];projects:Exclude<Project,'combined'>[];target:string;samples:number;timeout:number;concurrency:number;downloadMiB:number;downloadSeconds:number;downloadSource?:string;serviceIds:string[];serviceSamples?:number;repeats:number;includeReputation?:boolean;reputationServiceIds?:string[]}
 export interface QueueItem {id:string;node:NodeOption;project:Exclude<Project,'combined'>;serviceId?:string;state:string;error?:string;batchId?:string;itemId?:string;attempt?:Attempt}
 export const projectNames:Record<Project,string>={latency:'延迟检测',download:'下载测速',service:'服务可用性',combined:'综合'}
 export const targets=activeLatencyTargets

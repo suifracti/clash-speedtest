@@ -58,9 +58,7 @@ describe('shared node selection',()=>{
     expect(wrapper.find('.hd-node strong').text()).toBe('加拿大 · 01 · 流媒体解锁 · AI · 移动优化')
     expect(wrapper.find('.hd-node').attributes('title')).toContain('🇨🇦加拿大01|流媒体解锁|AI|移动优化')
     expect(wrapper.find('.hd-inspector h2').text()).toBe('加拿大 · 01 · 流媒体解锁 · AI · 移动优化')
-    await wrapper.findAll('.hd-latency h3 button').find(b=>b.text()==='完整走势')!.trigger('click');await flushPromises()
-    expect(wrapper.find('.multi-node-chart').exists()).toBe(true)
-    expect(wrapper.find('.multi-node-chart h3').text()).toBe('加拿大 · 01 · 流媒体解锁 · AI · 移动优化 · 完整走势')
+    expect(wrapper.find('.latency-combined').exists()).toBe(false)
     expect(w.nodes.value[0].display_name).toBe('🇨🇦加拿大01|流媒体解锁|AI|移动优化')
     expect(key(w.nodes.value[0])).toBe(originalKey)
     w.nodes.value=[{...node,country_code:'VN',display_name:'🇻🇳VN²_3|3.1MB/s|YT-US'}]
@@ -167,8 +165,7 @@ describe('shared node selection',()=>{
     w.downloads.value[key(a)]=[{...a,attempt_id:'download-a',request_id:'req-a',requested_at:at,finished_at:at,execution_state:'byte_limit',persistence_state:'saved',rule:{target_url:''},result:{outcome:'byte_limit',bytes_read:20971520,duration_ns:2000000000,finished_at:at}}]
     const wrapper=attach(HomeView,w);await flushPromises()
     const panel=()=>wrapper.find('.hd-ins-detail')
-    await wrapper.find('.hd-download .health-cell.has-record').trigger('click')
-    await panel().findAll('button').find(b=>b.text()==='看完整走势')!.trigger('click');await flushPromises()
+    await wrapper.get('.hd-download h3 .hd-link').trigger('click');await flushPromises()
     expect(wrapper.findAll('.hd-tr:not(.hd-th)')).toHaveLength(20)
     expect(panel().findAll('.overview-series')).toHaveLength(1)
     expect(panel().find('h3').text()).toContain('香港 · 01')
@@ -181,13 +178,11 @@ describe('shared node selection',()=>{
     expect(panel().exists()).toBe(true)
     expect(w.selectedKeys.value).toEqual([key(b)])
     expect(w.inspectNode.value).toBe(null)
-    await panel().findAll('button').find(b=>b.text()==='本轮数据')!.trigger('click')
-    expect(panel().text()).toContain('10.00 MiB/s')
     await panel().findAll('button').find(b=>b.text()==='收起')!.trigger('click')
     expect(panel().exists()).toBe(false)
     await wrapper.findAll('.hd-tr:not(.hd-th)')[1].trigger('click');await flushPromises()
     expect(wrapper.get('.hd-inspector h2').text()).toBe('新加坡 · 01')
-    await wrapper.get('.hd-download .hd-site-name').trigger('click');await flushPromises()
+    await wrapper.get('.hd-download h3 .hd-link').trigger('click');await flushPromises()
     expect(panel().find('.inline-full-history').exists()).toBe(true)
     expect(panel().find('.chart-empty').text()).toContain('暂无已读取的检测记录')
     expect(panel().findAll('header button').find(b=>b.text()==='本轮数据')!.attributes('disabled')).toBeDefined()
@@ -203,64 +198,24 @@ describe('shared node selection',()=>{
     const rows=wrapper.findAll('.hd-service-row')
     expect(rows).toHaveLength(2)
     expect(rows[0].text()).toContain('Netflix')
-    await rows[1].find('.health-cell.has-record').trigger('mouseenter')
-    const panel=wrapper.find('.hd-ins-detail')
+    expect(rows[1].find('.recorded-mark').attributes('title')).toContain('无法判断')
+    await rows[1].find('.hd-site-name').trigger('click');await flushPromises()
+    const panel={find:(selector:string)=>({text:()=>document.body.querySelector(selector)?.textContent||''})}
     expect(panel.find('.measurement-results').text()).toContain('YouTube')
     expect(panel.find('.measurement-results').text()).toContain('connection refused')
     expect(panel.find('.measurement-results').text()).not.toContain('Netflix')
     expect(w.serviceIds.value).toEqual(['netflix_unlock','youtube'])
     expect(w.inspectNode.value).toBe(null)
   })
-  it('opens data directly from the corresponding status bar and closes it on leaving',async()=>{
-    vi.useFakeTimers()
-    const w=workspace(),at=new Date().toISOString(),olderAt=new Date(Date.now()-3600000).toISOString();w.jobs.value=[{id:'job-a',profile_id:'sub-a',node_keys:['node-a'],state:'running'} as MonitorJob]
-    vi.mocked(api.monitorSamples).mockResolvedValue({items:[{...a,sample_id:'monitor-a',timestamp:at,latency:400000000,success:true,display_name_snapshot:a.display_name,target:'https://cp.cloudflare.com/generate_204',probe_type:'rtt',ttfb:0,sampling_tier:'regular'} as MonitorSample],has_more:false,next_cursor:''})
-    w.downloads.value[key(a)]=[
-      {...a,attempt_id:'download-a',request_id:'req-a',requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',trigger_type:'scheduled',round_id:'scheduled-round',rule:{target_url:'https://download.example'},result:{outcome:'byte_limit',bytes_read:20971520,duration_ns:2000000000,finished_at:at}},
-      {...a,attempt_id:'download-older',request_id:'req-older',requested_at:olderAt,finished_at:olderAt,execution_state:'completed',persistence_state:'saved',trigger_type:'manual',round_id:'manual-round',rule:{target_url:'https://download.example'},result:{outcome:'time_limit',bytes_read:5242880,duration_ns:1000000000,finished_at:olderAt}}
-    ]
-    w.catalog.value.push({service_id:'youtube',name:'YouTube',category:'影音',description:'',result_kind:'unlock',success_criterion:'',timeout_seconds:15})
-    w.displayServiceIds.value=['netflix_unlock','youtube']
-    const selectedServicesBeforeHover=[...w.serviceIds.value]
-    w.services.value[key(a)]=[{...a,attempt_id:'netflix-a',request_id:'netflix-round',service_id:'netflix_unlock',requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',rule:{name:'Netflix',target_url:''},result:{outcome:'matched',bytes_read:0,finished_at:at}},{...a,attempt_id:'youtube-a',request_id:'youtube-round',service_id:'youtube',requested_at:at,finished_at:at,execution_state:'failed',persistence_state:'saved',rule:{name:'YouTube',target_url:''},result:{outcome:'connection_failed',bytes_read:0,finished_at:at}}]
-    w.project.value='combined';const wrapper=attach(HomeView,w);await flushPromises()
-    expect(wrapper.get('.hd-download .hd-site-value').text()).toBe('10.0 MiB/s')
-    const serviceRows=wrapper.findAll('.hd-service-row').map(row=>row.text())
-    expect(serviceRows[0]).toContain('Netflix');expect(serviceRows[0]).toContain('通过')
-    expect(serviceRows[1]).toContain('YouTube');expect(serviceRows[1]).toContain('连接失败')
-    await wrapper.find('.hd-tr:not(.hd-th)').trigger('mouseenter')
-    expect(wrapper.find('.hd-ins-detail').exists()).toBe(false)
-    const bars=wrapper.find('.hd-inspector').findAll('.health-bars')
-    expect(wrapper.get('.hd-latency .hd-site-value').text()).toContain('400 ms')
-    expect(wrapper.findAll('.hd-latency .health-bars')).toHaveLength(0)
-    const downloadBar=bars.find(bar=>(bar.attributes('aria-label')||'').startsWith('下载'))!
-    const downloadCells=downloadBar.findAll('.health-cell.has-record')
-    expect(downloadCells.map(cell=>cell.classes())).toEqual(expect.arrayContaining([expect.arrayContaining(['trigger-manual']),expect.arrayContaining(['trigger-scheduled'])]))
-    await downloadCells[0].trigger('mouseenter')
-    expect(wrapper.findComponent(TrendChart).props('unit')).toBe('MiB/s')
-    expect(wrapper.findComponent(TrendChart).props('points')[0]).toMatchObject({id:'download-older',value:5,tone:'warn'})
-    expect(wrapper.find('.hd-ins-detail').text()).toContain('5.00 MiB/s')
-    const downloadValue=()=>wrapper.get('.hd-download .hd-site-value'),downloadContext=()=>wrapper.get('.hd-download-context').text()
-    expect(downloadValue().text()).toBe('5.0 MiB/s')
-    expect(downloadContext()).toContain('手动')
-    expect(downloadContext()).toContain('部分测量')
-    expect(downloadValue().classes()).toContain('warn')
-    await downloadCells[1].trigger('mouseenter')
-    expect(downloadValue().text()).toBe('10.0 MiB/s')
-    expect(downloadContext()).toContain('定时')
-    expect(downloadContext()).not.toContain('部分测量')
-    const serviceCells=(name:string)=>bars.find(bar=>(bar.attributes('aria-label')||'').startsWith(name+' 服务轮次'))!.findAll('.health-cell.has-record')
-    await serviceCells('Netflix')[0].trigger('mouseenter')
-    expect(wrapper.findComponent(TrendChart).props('points')).toEqual([expect.objectContaining({id:'netflix-a',value:1,tone:'good'})])
-    expect(wrapper.find('.measurement-results').text()).toContain('Netflix')
-    await serviceCells('YouTube').at(-1)!.trigger('mouseenter')
-    expect(wrapper.findComponent(TrendChart).props('points')).toEqual([expect.objectContaining({id:'youtube-a',value:null,tone:'bad'})])
-    expect(wrapper.find('.measurement-results').text()).toContain('YouTube')
-    expect(wrapper.find('.measurement-results').text()).not.toContain('Netflix')
-    expect(w.serviceIds.value).toEqual(selectedServicesBeforeHover)
-    await bars[1].trigger('mouseleave');await vi.advanceTimersByTimeAsync(150)
-    expect(wrapper.find('.hd-ins-detail').exists()).toBe(false)
-    vi.mocked(api.monitorSamples).mockResolvedValue({items:[],has_more:false,next_cursor:''})
+  it('shows only actual service squares and opens the selected service evidence',async()=>{
+    const w=workspace(),at=new Date().toISOString();w.project.value='combined'
+    w.services.value[key(a)]=[{...a,attempt_id:'netflix-a',request_id:'netflix-round',service_id:'netflix_unlock',requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',rule:{name:'Netflix',target_url:''},result:{outcome:'matched',bytes_read:0,finished_at:at}}]
+    const wrapper=attach(HomeView,w);await flushPromises()
+    expect(wrapper.findAll('.recorded-mark')).toHaveLength(1)
+    expect(wrapper.get('.recorded-mark').attributes('title')).toContain('可用')
+    await wrapper.get('.hd-service-row .hd-site-name').trigger('click');await flushPromises()
+    expect(document.body.querySelector('.measurement-results')?.textContent).toContain('Netflix')
+    expect(w.serviceIds.value).toEqual(['netflix_unlock'])
   })
   it('makes both individual and filtered-range test entry points use the displayed project',async()=>{
     const w=workspace(),wrapper=attach(HomeView,w);await flushPromises()
@@ -272,43 +227,26 @@ describe('shared node selection',()=>{
     await wrapper.find('.hd-run').trigger('click')
     expect((w.plan.value as Plan|null)?.projects).toEqual(['download']);expect((w.plan.value as Plan|null)?.nodes.map(n=>n.node_key)).toEqual(['node-a','node-b'])
   })
-  it('previews unexecuted and saving-failed download states without borrowing the latest speed',async()=>{
-    vi.useFakeTimers()
-    const w=workspace(),now=Date.now();w.project.value='download'
-    const time=(seconds:number)=>new Date(now-seconds*1000).toISOString()
-    w.downloads.value[key(a)]=[
-      {...a,attempt_id:'latest-speed',request_id:'latest',requested_at:time(0),finished_at:time(0),execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://download.example'},result:{outcome:'byte_limit',bytes_read:10485760,duration_ns:1000000000,finished_at:time(0)}},
-      {...a,attempt_id:'unsaved',request_id:'unsaved',requested_at:time(60),execution_state:'completed',persistence_state:'failed',persistence_error:'disk full',rule:{target_url:'https://download.example'}},
-      {...a,attempt_id:'never-started',request_id:'never-started',requested_at:time(120),execution_state:'not_executed',persistence_state:'not_started',rule:{target_url:'https://download.example'}}
-    ]
+  it('shows a human download failure and selects another source without starting a measurement',async()=>{
+    const w=workspace(),at=new Date().toISOString();w.project.value='download'
+    w.downloads.value[key(a)]=[{...a,attempt_id:'limited',request_id:'limited',requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://speed.cloudflare.com/__down'},result:{outcome:'http_error',http_status:429,bytes_read:0,finished_at:at}}]
     const wrapper=attach(HomeView,w);await flushPromises()
-    const block=wrapper.find('.hd-download'),cells=block.findAll('.health-cell.has-record'),metric=()=>block.find('.hd-site-value').text()
-    expect(metric()).toBe('10.0 MiB/s')
-    await cells[0].trigger('mouseenter')
-    expect(metric()).toBe('未执行');expect(block.find('.hd-download-context').text()).toContain('未执行')
-    await cells[1].trigger('mouseenter')
-    expect(metric()).toContain('保存失败');expect(metric()).not.toContain('MiB/s')
-    await block.find('.health-bars').trigger('mouseleave');await vi.advanceTimersByTimeAsync(160)
-    expect(metric()).toBe('10.0 MiB/s');expect(wrapper.find('.hd-ins-detail').exists()).toBe(false)
-    w.dispose()
+    expect(wrapper.get('.download-failure').text()).toContain('不是节点的问题')
+    await wrapper.get('.download-failure button').trigger('click')
+    expect(w.plan.value?.downloadSource).toBe('cachefly')
+    expect(w.plan.value?.nodes.map(n=>n.node_key)).toEqual(['node-a'])
+    expect(api.startAttempt).not.toHaveBeenCalled()
   })
-  it('refreshes a stationary download hover after a result update and clears it on filtering',async()=>{
-    const w=workspace(),now=Date.now();w.project.value='download'
-    const time=(seconds:number)=>new Date(now-seconds*1000).toISOString()
-    w.downloads.value[key(a)]=[
-      {...a,attempt_id:'latest',request_id:'latest',requested_at:time(0),finished_at:time(0),execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://download.example'},result:{outcome:'byte_limit',bytes_read:10485760,duration_ns:1000000000,finished_at:time(0)}},
-      {...a,attempt_id:'hovered',request_id:'hovered',requested_at:time(60),finished_at:time(60),execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://download.example'},result:{outcome:'byte_limit',bytes_read:10485760,duration_ns:2500000000,finished_at:time(60)}}
-    ]
+  it('updates the saved download summary and clears it when switching nodes',async()=>{
+    const w=workspace(),at=new Date().toISOString();w.project.value='download'
+    w.downloads.value[key(a)]=[{...a,attempt_id:'latest',request_id:'latest',requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://download.example'},result:{outcome:'byte_limit',bytes_read:10485760,duration_ns:1000000000,finished_at:at}}]
     const wrapper=attach(HomeView,w);await flushPromises()
-    await wrapper.find('.health-cell.has-record').trigger('mouseenter')
-    expect(wrapper.find('.hd-download .hd-site-value').text()).toBe('4.0 MiB/s')
-    w.downloads.value[key(a)][1].result!.duration_ns=5000000000;await flushPromises()
-    expect(wrapper.find('.hd-download .hd-site-value').text()).toBe('2.0 MiB/s')
-    expect(wrapper.find('.hd-ins-detail').exists()).toBe(true)
+    expect(wrapper.get('.download-success').text()).toBe('10.00 MiB/s')
+    expect(wrapper.find('.download-spark').exists()).toBe(false)
+    w.downloads.value[key(a)][0].result!.duration_ns=2000000000;await flushPromises()
+    expect(wrapper.get('.download-success').text()).toBe('5.00 MiB/s')
     w.search.value='新加坡';await flushPromises()
-    expect(wrapper.find('.hd-ins-detail').exists()).toBe(false);expect(wrapper.find('.hd-download .hd-site-value').text()).toBe('未测')
-    w.search.value='香港';await flushPromises();expect(wrapper.find('.hd-download .hd-site-value').text()).toBe('10.0 MiB/s')
-    await wrapper.find('.health-cell.has-record').trigger('mouseenter');expect(wrapper.find('.hd-download .hd-site-value').text()).toBe('2.0 MiB/s')
+    expect(wrapper.get('.download-failure').text()).toBe('尚无测速记录')
     w.dispose()
   })
   it('keeps the selected node when changing project and sends that exact node to download and service',async()=>{const w=workspace(),wrapper=attach(HomeView,w);await flushPromises();w.toggleNode(b);await flushPromises();await wrapper.findAll('.hd-seg button').find(b=>b.text()==='下载测速')!.trigger('click');await wrapper.find('.hd-selection .primary').trigger('click');expect((w.plan.value as Plan|null)?.projects).toEqual(['download']);expect((w.plan.value as Plan|null)?.nodes.map(n=>n.node_key)).toEqual(['node-b']);w.plan.value=null;await wrapper.findAll('.hd-seg button').find(b=>b.text()==='服务可用性')!.trigger('click');await wrapper.find('.hd-selection .primary').trigger('click');expect((w.plan.value as Plan|null)?.projects).toEqual(['service']);expect((w.plan.value as Plan|null)?.nodes.map(n=>n.node_key)).toEqual(['node-b']);expect((w.plan.value as Plan|null)?.serviceIds).toEqual(['netflix_unlock'])})
@@ -337,7 +275,7 @@ it('quality download filter survives unrelated incomplete latency history and id
  const w=workspace(),wrapper=attach(HomeView,w);await flushPromises()
  await wrapper.get('select[aria-label="质量证据筛选"]').setValue('download');await flushPromises()
  expect(wrapper.findAll('.hd-node strong').map(e=>e.text())).toEqual(['香港 · 01'])
- expect(wrapper.get('.hd-saved-download').text()).toContain('历史有效速度 2.00 MiB/s');expect(wrapper.get('.hd-saved-download').text()).toContain('超时')
+ expect(wrapper.get('.hd-saved-download').attributes('title')).toContain('历史有效速度 2.00 MiB/s');expect(wrapper.get('.download-failure').text()).toContain('超时')
  w.dispose();vi.mocked(api.latencyHistory).mockResolvedValue({tests:[],has_more:false,complete:true});vi.mocked(api.attemptHistory).mockResolvedValue({attempts:[],has_more:false,complete:true})
 })
 it('preserves low-frequency filters and cross-airport node selection when collapsed/reopened, with Escape focus recovery',async()=>{

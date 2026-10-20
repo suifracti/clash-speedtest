@@ -89,6 +89,7 @@ async function submit(){
       <div v-if="w.plan.value.projects.includes('download')" class="plan-section">
         <h4>下载测速</h4>
         <div class="form-grid">
+          <label>测速源<UiSelect :model-value="w.plan.value.downloadSource||'cloudflare'" @update:model-value="w.plan.value.downloadSource=String($event)"><option value="cloudflare">Cloudflare</option><option value="cachefly">Cachefly</option></UiSelect></label>
           <label>每节点最多读取<UiSelect v-model.number="w.plan.value.downloadMiB"><option v-for="n in [5,10,20,50,100]" :key="n" :value="n">{{n}} MiB</option></UiSelect></label>
           <label>每节点最多持续<UiSelect v-model.number="w.plan.value.downloadSeconds"><option v-for="n in [5,10,20,30]" :key="n" :value="n">{{n}} 秒</option></UiSelect></label>
         </div>

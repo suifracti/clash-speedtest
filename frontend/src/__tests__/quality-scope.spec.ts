@@ -40,7 +40,7 @@ function emptyEvidence(node:NodeOption){const e=evidence(node,40);e.tests=[];ret
 it('refreshes the completed saved round without a manual click, but not while the frozen plan is running',async()=>{
  let saved=false
  readQualityMock.mockImplementation(async(node:NodeOption,_since:string,until:string)=>saved&&Date.parse(until)>=Date.parse('2026-10-10T00:01:00Z')?evidence(node,980):emptyEvidence(node))
- attachSavedSnapshot();await flushPromises();expect(latency()).toContain('未测');expect(windowStats()).toBe('')
+ attachSavedSnapshot();await flushPromises();expect(latency()).toContain('暂无采样');expect(windowStats()).toBe('')
  const snapshot={fixture:{services:[]}};w!.sortSnapshots.value=snapshot
  w!.running.value=true;vi.setSystemTime(new Date('2026-10-10T00:01:00Z'));saved=true
  const test={...evidence(fresh[0],980).tests[0],finished_at:'2026-10-10T00:01:00Z'}
@@ -95,11 +95,11 @@ it('refreshes a later successful save without treating a failed save as saved ev
  const attempt:Attempt={...fresh[0],attempt_id:'new-download',request_id:'new-download',requested_at:'2026-10-10T00:01:00Z',finished_at:'2026-10-10T00:01:01Z',execution_state:'failed',persistence_state:'failed',rule:{method:'GET',target_url:'https://example.test/'},result:{outcome:'failed',bytes_read:0,error_message:'EOF',finished_at:'2026-10-10T00:01:01Z'}}
  attachSavedSnapshot();w!.project.value='download';await flushPromises()
  w!.mergeAttempt('download',attempt);await flushPromises()
- expect(wrapper!.get('.hd-saved-download').text()).toContain('最近检测：未测')
+ expect(wrapper!.get('.hd-download').text()).toContain('EOF')
  vi.setSystemTime(new Date('2026-10-10T00:01:02Z'));saved=true
  w!.mergeAttempt('download',{...attempt,persistence_state:'saved'});await flushPromises()
- expect(wrapper!.get('.hd-saved-download').text()).toContain('最近检测：失败')
- expect(wrapper!.get('.hd-saved-download').text()).toContain('本次未取得有效速度')
+ expect(wrapper!.get('.hd-download').text()).toContain('EOF')
+ expect(wrapper!.find('.download-success').exists()).toBe(false)
  expect(api.startAttempt).not.toHaveBeenCalled()
 })
 
@@ -152,7 +152,7 @@ it('automatically reads both saved S5 nodes through the real projection with a n
  vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-10-12T14:54:00Z'))
  w=createWorkspace();w.project.value='combined';w.catalog.value=[...new Set(services.map(a=>a.service_id!))].map(id=>({service_id:id,name:id,category:'fixture',description:'',result_kind:'connectivity',success_criterion:'fixture',timeout_seconds:10}));w.displayServiceIds.value=w.catalog.value.map(s=>s.service_id);w.airports.value=nodes.map(n=>({id:n.profile_id,name:n.profile_name,url_display:'',node_count:1,has_cache:true,subscriptions:[{id:n.profile_id,airport_id:n.profile_id,name:'S5',url_display:'',url_configured:false,node_count:1,has_cache:true}]}));w.nodes.value=nodes;w.setAirports(nodes.map(n=>n.profile_id))
  wrapper=mount(HomeView,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
- const perNode=async()=>{const out:string[]=[];for(const row of wrapper!.findAll('.hd-tr:not(.hd-th)')){await row.trigger('click');await flushPromises();out.push(windowStats()+' '+(wrapper!.find('.hd-saved-download').exists()?wrapper!.get('.hd-saved-download').text():''))}return out.join(' ')}
+ const perNode=async()=>{const out:string[]=[];for(const row of wrapper!.findAll('.hd-tr:not(.hd-th)')){await row.trigger('click');await flushPromises();out.push(windowStats()+' '+(wrapper!.find('.hd-saved-download').exists()?wrapper!.get('.hd-saved-download').attributes('title'):''))}return out.join(' ')}
  expect(windowStats()).toBe('')
  w.running.value=true;available=true
  for(const t of tests)w.mergeLatency(t)
