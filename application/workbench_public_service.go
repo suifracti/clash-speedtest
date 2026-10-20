@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -281,6 +282,17 @@ func (s *AppService) executeWorkbenchPublicServiceTest(ctx context.Context, runt
 		delete(s.publicServiceActive, runtime.attemptID)
 		s.publicServiceMu.Unlock()
 	}()
+
+	defer func() {
+		if recover() != nil {
+			log.Printf("workbench_public_service worker panic")
+			attempt, _ := s.historyStore.GetPublicServiceAttemptByRequestID(context.Background(), runtime.requestID)
+			if attempt != nil && attempt.Result == nil {
+				_ = s.historyStore.MarkPublicServiceStageFailed(context.Background(), runtime.attemptID, "failed", time.Now().UTC(), "检测出现内部异常，请重试")
+			}
+			s.emitWorkbenchPublicServiceUpdate(runtime.requestID)
+		}
+	}()
 	checker := s.publicServiceChecker
 	if s.historyStore != nil {
 		checker.ReputationStore = s.historyStore.DB()
@@ -292,6 +304,7 @@ func (s *AppService) executeWorkbenchPublicServiceTest(ctx context.Context, runt
 		checker.DriftSamples = runtime.driftSamples
 	}
 	finishActivity := s.probeActivity.begin("service")
+	defer finishActivity()
 	result := checker.Check(ctx, runtime.node, runtime.rule, runtime.timeout)
 	peers := finishActivity()
 	finishNetwork()

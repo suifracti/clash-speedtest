@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -285,7 +286,19 @@ func (s *AppService) executeWorkbenchDownload(runtime *workbenchDownloadRuntime)
 		_ = s.historyStore.DB().FinishAutomaticMeasurementRound(context.Background(), runtime.requestID)
 		s.endWorkbenchDownload(runtime)
 	}()
+
+	defer func() {
+		if recover() != nil {
+			log.Printf("workbench_download worker panic")
+			attempt, _ := s.historyStore.GetWorkbenchDownloadAttemptByRequestID(context.Background(), runtime.requestID)
+			if attempt != nil && attempt.Result == nil {
+				_ = s.historyStore.MarkWorkbenchDownloadStageFailed(context.Background(), runtime.attemptID, "failed", time.Now().UTC(), "检测出现内部异常，请重试")
+			}
+			s.emitWorkbenchDownloadUpdate(runtime.requestID)
+		}
+	}()
 	finishActivity := s.probeActivity.begin("download")
+	defer finishActivity()
 	var result speedtester.DownloadStreamResult
 	started := time.Now().UTC()
 	var preparationErr error

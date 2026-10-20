@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptrace"
@@ -164,7 +165,7 @@ func (r *Runner) ExecuteRun(ctx context.Context, job *MonitorJob, scheduledAt ti
 
 // ExecuteRunWithAdmission lets the scheduler distinguish a cancellable wait
 // from an admitted round. Direct runner callers use ExecuteRun.
-func (r *Runner) ExecuteRunWithAdmission(ctx context.Context, job *MonitorJob, scheduledAt time.Time, onAdmitted func() error) (*MonitorRun, []*MonitorSample, error) {
+func (r *Runner) ExecuteRunWithAdmission(ctx context.Context, job *MonitorJob, scheduledAt time.Time, onAdmitted func() error) (resultRun *MonitorRun, resultSamples []*MonitorSample, resultErr error) {
 	if r == nil {
 		return nil, nil, fmt.Errorf("runner is nil")
 	}
@@ -220,6 +221,21 @@ func (r *Runner) ExecuteRunWithAdmission(ctx context.Context, job *MonitorJob, s
 		SuccessNodes:            0,
 		FailedNodes:             0,
 	}
+
+	defer func() {
+		if recover() != nil {
+			log.Printf("monitor run worker panic")
+			finished := time.Now()
+			run.FinishedAt = &finished
+			run.Status = RunStatusFailed
+			run.ErrorMessage = "监测工作器出现内部异常，请重试"
+			if r.store != nil {
+				_ = r.store.UpdateMonitorRun(context.WithoutCancel(ctx), run)
+			}
+			resultRun = run
+			resultErr = fmt.Errorf("%s", run.ErrorMessage)
+		}
+	}()
 
 	if r.store != nil {
 		if err := r.store.SaveMonitorRun(ctx, run); err != nil {
@@ -351,7 +367,19 @@ func (r *Runner) ExecuteRunWithAdmission(ctx context.Context, job *MonitorJob, s
 	return run, allSamples, nil
 }
 
-func (r *Runner) probeNode(ctx context.Context, profileID string, node MonitoredNode, targets []TargetSpec, timeout time.Duration, runID string, heavy bool, priority int) ([]*MonitorSample, bool, error) {
+func (r *Runner) probeNode(ctx context.Context, profileID string, node MonitoredNode, targets []TargetSpec, timeout time.Duration, runID string, heavy bool, priority int) (resultSamples []*MonitorSample, resultSuccess bool, resultErr error) {
+	defer func() {
+		if recover() != nil {
+			log.Printf("monitor probe worker panic")
+			resultSamples = nil
+			resultSuccess = false
+			resultErr = nil
+			for _, target := range targets {
+				resultSamples = append(resultSamples, unexecutedProbe(profileID, node, target, runID, "监测工作器出现内部异常，请重试"))
+			}
+		}
+	}()
+
 	PopulateNodeKeys(&node)
 
 	client, err := r.dialer.CreateClient(node, timeout)

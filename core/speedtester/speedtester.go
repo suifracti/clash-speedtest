@@ -83,7 +83,7 @@ func (st *SpeedTester) fetchHTTPConfig(targetURL string) ([]byte, error) {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", st.fetchConfigUA())
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := (&http.Client{Timeout: 60 * time.Second}).Do(req)
 	if err != nil {
 		return nil, err
 	}

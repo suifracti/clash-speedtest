@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -741,7 +742,13 @@ func (s *AppService) refreshSubscriptionContext(ctx context.Context, airportID, 
 	return s.refreshSubscriptionLocked(ctx, airportID, subID, userAgent, expectedFingerprint, stage)
 }
 
-func (s *AppService) refreshSubscriptionLocked(ctx context.Context, airportID, subID, userAgent, expectedFingerprint string, stage func(string) error) (*SubscriptionDTO, error) {
+func (s *AppService) refreshSubscriptionLocked(ctx context.Context, airportID, subID, userAgent, expectedFingerprint string, stage func(string) error) (result *SubscriptionDTO, retErr error) {
+	defer func() {
+		if recover() != nil {
+			log.Printf("subscription refresh worker panic")
+			retErr = &refreshError{Code: "internal_error", Message: "订阅更新出现内部异常，请重试"}
+		}
+	}()
 	return s.refreshSubscriptionWithFetchLocked(ctx, airportID, subID, userAgent, expectedFingerprint, stage, nil)
 }
 

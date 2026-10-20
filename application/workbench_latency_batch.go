@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -396,6 +397,20 @@ dispatchDone:
 }
 
 func (s *AppService) runWorkbenchLatencyBatchItem(runtime *workbenchLatencyBatchRuntime, batch *history.LatencyBatch, index int, update func(int, func(*history.LatencyBatchItem)) error) {
+	defer func() {
+		if recover() != nil {
+			log.Printf("latency queue worker panic")
+			if batch.Items[index].Result == nil {
+				_ = update(index, func(item *history.LatencyBatchItem) {
+					item.ExecutionState = "failed"
+					item.PersistenceState = "not_applicable"
+					item.ErrorMessage = "检测出现内部异常，请重试"
+					item.FinishedAt = time.Now().UTC()
+				})
+			}
+		}
+	}()
+
 	runtime.mu.Lock()
 	if runtime.cancelRequested || runtime.shutdown {
 		runtime.mu.Unlock()

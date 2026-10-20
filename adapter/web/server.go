@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -50,6 +51,7 @@ const minRemoteWebPasswordLength = 12
 
 // Server provides the HTTP REST and SSE endpoints, adapting them to AppService.
 type Server struct {
+	oauthRunning atomic.Bool
 	config       ServerConfig
 	app          *application.AppService
 	emitter      *SSEEmitter
@@ -336,9 +338,10 @@ func (s *Server) Start() error {
 	}
 
 	s.httpServer = &http.Server{
-		Handler:      s.buildHandler(),
-		ReadTimeout:  120 * time.Second,
-		WriteTimeout: 0, // Allow SSE streaming
+		Handler:           s.buildHandler(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       120 * time.Second,
+		WriteTimeout:      0, // Allow SSE streaming
 	}
 
 	go func() {
@@ -894,7 +897,12 @@ func (s *Server) handleAntigravityToken(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleAntigravityLogin(w http.ResponseWriter, r *http.Request) {
+	if !s.oauthRunning.CompareAndSwap(false, true) {
+		writeJSON(w, http.StatusOK, map[string]bool{"started": true})
+		return
+	}
 	go func() {
+		defer s.oauthRunning.Store(false)
 		token, err := auth.StartOAuthBrowserFlow(os.Stdout)
 		if err != nil {
 			log.Printf("OAuth login failed: %s", err)

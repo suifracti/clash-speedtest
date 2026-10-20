@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -520,6 +521,7 @@ func (s *Scheduler) TriggerImmediate(ctx context.Context) (*MonitorRun, error) {
 
 func (s *Scheduler) scheduleLoop(ctx context.Context, interval time.Duration) {
 	defer s.loopWg.Done()
+	defer s.recoverWorker()
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -586,6 +588,7 @@ func (s *Scheduler) launchScheduledRound(ctx context.Context, scheduledAt time.T
 		defer s.clearPending(id)
 		defer atomic.StoreInt32(&s.isExecuting, 0)
 		defer s.runWg.Done()
+		defer s.recoverWorker()
 		s.executeScheduledRound(roundCtx, scheduledAt, id, recoveryRound)
 	}()
 }
@@ -673,6 +676,21 @@ func (s *Scheduler) blockRecoveryStartAfterAdmissionFailure(reason string) {
 	s.job.State = JobStateStopped
 	s.job.RecoveryState = RecoveryStateBlocked
 	s.job.RecoveryReason = reason
+	if s.cancel != nil {
+		s.cancel()
+	}
+}
+
+func (s *Scheduler) recoverWorker() {
+	if recover() == nil {
+		return
+	}
+	log.Printf("monitor scheduler worker panic")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.state = JobStateStopped
+	s.job.State = JobStateStopped
+	s.job.BlockedReason = "监测调度出现内部异常，请重新启动任务"
 	if s.cancel != nil {
 		s.cancel()
 	}
