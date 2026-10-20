@@ -54,7 +54,10 @@ describe('HomeView subscription account integration',()=>{
     expect(Array.from((accountSelect.element as HTMLSelectElement).options).map(option=>option.value)).toEqual([JSON.stringify(['airport-a','account-a1']),JSON.stringify(['airport-a','account-a2'])])
     await accountSelect.setValue(JSON.stringify(['airport-a','account-a2']))
     expect(wrapper.text()).toContain('Account A2')
-    expect(wrapper.text()).toContain('剩余 5.0 KiB / 8.0 KiB')
+    // 额度卡片改版后：剩余量单独显示，已使用与总量分两格。
+    expect(wrapper.get('.subscription-remaining').text()).toContain('5.0 KiB')
+    expect(wrapper.get('.subscription-quota-used').text()).toContain('3.0 KiB')
+    expect(wrapper.get('.subscription-quota-total').text()).toContain('8.0 KiB')
     expect(wrapper.text()).toContain('已过期')
     expect(wrapper.text()).toContain('订阅源限流；旧缓存保留')
     expect(workspace.selectedAirportIds.value).toEqual(['airport-a'])
@@ -75,7 +78,7 @@ describe('HomeView subscription account integration',()=>{
     expect(wrapper.find('.subscription-issues').text()).toContain('A2 refresh result')
     await accountSelect.setValue(JSON.stringify(['airport-a','account-a2']))
 
-    const noticeButton=wrapper.findAll('button').find(button=>button.text().trim()==='公告 1')
+    const noticeButton=wrapper.findAll('button').find(button=>button.text().trim().startsWith('公告 1'))
     expect(noticeButton).toBeTruthy()
     await noticeButton!.trigger('click')
     await flushPromises()

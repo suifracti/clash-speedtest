@@ -203,3 +203,8 @@ it('offers one Netflix choice and retains the temporary alias for history only',
  expect(labels).toHaveLength(1);expect(labels[0].textContent).toContain('Netflix');expect(labels[0].textContent).not.toContain('temporary alias')
  expect(w.catalog.value).toHaveLength(2);expect(w.plan.value?.serviceIds).toEqual(['netflix_unlock'])
 })
+
+it('does not pre-select IP reputation when the catalog offers no reputation items',()=>{
+  w.catalog.value=[];w.project.value='latency';w.openPlan([node])
+  expect(w.plan.value).toMatchObject({includeReputation:false,reputationServiceIds:[]})
+})

@@ -24,9 +24,10 @@ it('keeps an unrecognized RTT target inspectable without attributing it to a kno
  const sample={...realShape[0],sample_id:'unknown',run_id:'unknown',target:'https://cp.cloudflare.com.evil.test/generate_204',success:true,latency:80000000} as MonitorSample
  const points=monitorLatencyPoints([sample],'all'),ui=mount(HealthBars,{props:{points,label:'历史',sites:targets}})
  const record=ui.find('.health-cell.has-record'),segments=record.findAll('.health-segment')
- expect(segments).toHaveLength(7)
- expect(segments.slice(0,6).every(s=>s.classes().includes('empty'))).toBe(true)
- expect(segments[6].attributes('title')).toContain('旧/未知目标')
+ // 每个现行站点一格（都为空），再加一格“旧/未知目标”。
+ expect(segments).toHaveLength(targets.length+1)
+ expect(segments.slice(0,targets.length).every(s=>s.classes().includes('empty'))).toBe(true)
+ expect(segments[targets.length].attributes('title')).toContain('旧/未知目标')
  await record.trigger('click');expect(ui.emitted('open')?.[0]?.[0]).toEqual(points[0])
  expect(monitorLatencyPoints([sample],'cloudflare')).toEqual([])
  ui.unmount()
