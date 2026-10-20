@@ -593,9 +593,18 @@ func TestMonitorRecoveryHonorsPausedIntentAndLeavesDiagnosticManual(t *testing.T
 	if err := first.PauseMonitorJob(job.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := first.TriggerMonitorJob(job.ID); err != nil {
-		t.Fatal(err)
+	// Persisting the run result precedes releasing the scheduler's active slot.
+	for deadline := time.Now().Add(4 * time.Second); ; {
+		_, err := first.TriggerMonitorJob(job.ID)
+		if err == nil {
+			break
+		}
+		if !strings.Contains(err.Error(), "上一轮监测正在执行中") || time.Now().After(deadline) {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Millisecond)
 	}
+
 	waitRecoveryRuns(t, firstSignals.completed, job.ID)
 	if err := first.Close(); err != nil {
 		t.Fatal(err)
