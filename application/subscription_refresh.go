@@ -742,6 +742,55 @@ func (s *AppService) refreshSubscriptionContext(ctx context.Context, airportID, 
 }
 
 func (s *AppService) refreshSubscriptionLocked(ctx context.Context, airportID, subID, userAgent, expectedFingerprint string, stage func(string) error) (*SubscriptionDTO, error) {
+	return s.refreshSubscriptionWithFetchLocked(ctx, airportID, subID, userAgent, expectedFingerprint, stage, nil)
+}
+
+type subscriptionFetchResult struct {
+	body      []byte
+	usage     *profiles.SubscriptionUsage
+	err       error
+	updatedAt time.Time
+}
+
+func fetchSubscriptionSource(ctx context.Context, rawURL, userAgent string) ([]byte, *profiles.SubscriptionUsage, error) {
+	if profiles.IsHTTPURL(rawURL) {
+		return profiles.FetchSubscriptionWithUsageContext(ctx, rawURL, userAgent)
+	}
+	body, err := os.ReadFile(profiles.ExpandLocalPath(rawURL))
+	if err != nil {
+		return nil, nil, &refreshError{Code: "local_file", Message: "本地订阅文件读取失败；旧缓存保留"}
+	}
+	return body, nil, nil
+}
+
+func refreshSourceCooldown(store *profiles.Store, rawURL string, now time.Time) error {
+	if !profiles.IsHTTPURL(rawURL) {
+		return nil
+	}
+	origin := profiles.SourceOrigin(rawURL)
+	for _, airport := range store.Airports {
+		if airport == nil {
+			continue
+		}
+		for _, sub := range airport.Subscriptions {
+			if sub == nil || profiles.SourceOrigin(sub.URL) != origin || sub.LastFailureCode != "http_429" {
+				continue
+			}
+			retryAt := sub.LastFailureRetryAt
+			if retryAt.IsZero() {
+				retryAt = sub.LastFailureAt.Add(30 * time.Minute)
+			}
+			if !retryAt.IsZero() && now.Before(retryAt) {
+				return &refreshError{Code: "source_cooldown", Message: "同源 HTTP 429 冷却中，未发出请求；请在冷却结束后重新提交刷新"}
+			}
+		}
+	}
+	return nil
+}
+
+// A prepared fetch lets the daily collector reuse cache/history rollback under
+// a short write lock, without making network requests while that lock is held.
+func (s *AppService) refreshSubscriptionWithFetchLocked(ctx context.Context, airportID, subID, userAgent, expectedFingerprint string, stage func(string) error, fetched *subscriptionFetchResult) (*SubscriptionDTO, error) {
 	advance := func(name string) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -774,25 +823,11 @@ func (s *AppService) refreshSubscriptionLocked(ctx context.Context, airportID, s
 	if expectedFingerprint != "" && refreshSourceFingerprint(sub.URL) != expectedFingerprint {
 		return nil, &refreshError{Code: "configuration_changed", Message: "排队期间订阅配置已变化；请重新提交刷新"}
 	}
-	if profiles.IsHTTPURL(sub.URL) {
-		origin := profiles.SourceOrigin(sub.URL)
-		for _, candidateAirport := range store.Airports {
-			if candidateAirport == nil {
-				continue
-			}
-			for _, candidate := range candidateAirport.Subscriptions {
-				if candidate == nil || profiles.SourceOrigin(candidate.URL) != origin || candidate.LastFailureCode != "http_429" {
-					continue
-				}
-				retryAt := candidate.LastFailureRetryAt
-				if retryAt.IsZero() {
-					retryAt = candidate.LastFailureAt.Add(30 * time.Minute)
-				}
-				if !retryAt.IsZero() && time.Now().Before(retryAt) {
-					return nil, &refreshError{Code: "source_cooldown", Message: "同源 HTTP 429 冷却中，未发出请求；请在冷却结束后重新提交刷新"}
-				}
-			}
-		}
+	if fetched != nil && !sub.UpdatedAt.Equal(fetched.updatedAt) {
+		return nil, &refreshError{Code: "configuration_changed", Message: "抓取期间订阅已有更新；旧响应未写入，请重新提交刷新"}
+	}
+	if err := refreshSourceCooldown(store, sub.URL, time.Now()); err != nil {
+		return nil, err
 	}
 
 	fail := func(cause error) (*SubscriptionDTO, error) {
@@ -850,13 +885,10 @@ func (s *AppService) refreshSubscriptionLocked(ctx context.Context, airportID, s
 	fetchFingerprint := refreshSourceFingerprint(sub.URL)
 	var body []byte
 	var usage *profiles.SubscriptionUsage
-	if profiles.IsHTTPURL(sub.URL) {
-		body, usage, err = profiles.FetchSubscriptionWithUsageContext(ctx, sub.URL, userAgent)
+	if fetched != nil {
+		body, usage, err = fetched.body, fetched.usage, fetched.err
 	} else {
-		body, err = os.ReadFile(profiles.ExpandLocalPath(sub.URL))
-		if err != nil {
-			err = &refreshError{Code: "local_file", Message: "本地订阅文件读取失败；旧缓存保留"}
-		}
+		body, usage, err = fetchSubscriptionSource(ctx, sub.URL, userAgent)
 	}
 	if err != nil {
 		return fail(err)

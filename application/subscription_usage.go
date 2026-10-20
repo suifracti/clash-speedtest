@@ -3,11 +3,14 @@ package application
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/faceair/clash-speedtest/core/profiles"
@@ -16,6 +19,8 @@ import (
 )
 
 var noticeRemainingValue = regexp.MustCompile(`(?i)(?:距离下次重置剩余|剩余(?:可用)?(?:流量)?|可用流量)[：:\s]*([0-9]+(?:\.[0-9]+)?)\s*(PiB|PB|TiB|TB|GiB|GB|MiB|MB|KiB|KB|B)\b`)
+
+var errUsageRefreshPanic = errors.New("订阅用量更新出现内部异常；请查看账户状态并重试")
 
 func fillDefaultSubscriptionUsage(settings *AppSettings) {
 	if settings == nil {
@@ -162,7 +167,7 @@ func (s *AppService) UpdateSubscriptionUsage(ctx context.Context, userAgent stri
 	return s.collectSubscriptionUsage(ctx, time.Now(), userAgent, true)
 }
 
-func (s *AppService) collectSubscriptionUsage(ctx context.Context, now time.Time, userAgent string, force bool) (*subscriptionusage.RefreshState, error) {
+func (s *AppService) collectSubscriptionUsage(ctx context.Context, now time.Time, userAgent string, force bool) (result *subscriptionusage.RefreshState, retErr error) {
 	if s == nil {
 		return nil, fmt.Errorf("app service is not initialized")
 	}
@@ -191,38 +196,144 @@ func (s *AppService) collectSubscriptionUsage(ctx context.Context, now time.Time
 	if !claimed {
 		return s.historyStore.SubscriptionRefreshState(ctx)
 	}
+	state, message := "failed", "用量更新未完成；请手动重试"
+	defer func() {
+		if err := ctx.Err(); err != nil {
+			state, message = "cancelled", "用量更新已取消；已保存的观测保留"
+			if !errors.Is(retErr, err) {
+				retErr = errors.Join(retErr, err)
+			}
+		}
+		// A cancelled request must still persist a terminal claim state.
+		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := s.historyStore.FinishSubscriptionRefresh(finishCtx, state, message); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("保存用量更新终态失败：%w", err))
+			return
+		}
+		var err error
+		result, err = s.historyStore.SubscriptionRefreshState(finishCtx)
+		retErr = errors.Join(retErr, err)
+	}()
 	s.profileWriteMu.Lock()
 	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
 	s.profileWriteMu.Unlock()
 	if err != nil {
-		_ = s.historyStore.FinishSubscriptionRefresh(ctx, "failed", "无法读取订阅来源，请手动重试")
+		message = "无法读取订阅来源，请手动重试"
 		return nil, err
 	}
-	failed, processed := 0, 0
+	// Serialize each origin (including its 429 cooldown), while allowing up to
+	// four independent providers to fetch concurrently. Only IDs/hashes queue.
+	groups := map[string][]usageRefreshSource{}
+	var origins []string
 	for _, ap := range store.Airports {
 		if ap == nil {
 			continue
 		}
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		s.profileWriteMu.Lock()
-		_, refreshErr := s.refreshAirportLocked(ctx, ap.ID, userAgent)
-		s.profileWriteMu.Unlock()
-		processed++
-		if refreshErr != nil {
-			failed++
+		for _, sub := range ap.Subscriptions {
+			if sub == nil {
+				continue
+			}
+			origin := profiles.SourceOrigin(sub.URL)
+			if _, exists := groups[origin]; !exists {
+				origins = append(origins, origin)
+			}
+			groups[origin] = append(groups[origin], usageRefreshSource{RefreshSelection: RefreshSelection{AirportID: ap.ID, SubscriptionID: sub.ID}, fingerprint: refreshSourceFingerprint(sub.URL)})
 		}
 	}
-	state, message := "completed", fmt.Sprintf("已更新 %d 个机场并记录用量；不提供用量的订阅保持未知", processed)
-	if failed > 0 {
-		state = "completed_with_issues"
-		message = fmt.Sprintf("已尝试 %d 个机场，%d 个更新或保存异常；请查看观测记录并重试", processed, failed)
+	jobs := make(chan []usageRefreshSource, len(origins))
+	for _, origin := range origins {
+		jobs <- groups[origin]
 	}
-	if err := s.historyStore.FinishSubscriptionRefresh(ctx, state, message); err != nil {
+	close(jobs)
+	var processed, failed atomic.Int64
+	var panicked atomic.Bool
+	var workers sync.WaitGroup
+	for i := 0; i < min(4, len(origins)); i++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for group := range jobs {
+				for _, source := range group {
+					if ctx.Err() != nil {
+						return
+					}
+					err := s.refreshUsageSource(ctx, source, userAgent)
+					processed.Add(1)
+					if err != nil {
+						failed.Add(1)
+					}
+					if errors.Is(err, errUsageRefreshPanic) {
+						panicked.Store(true)
+					}
+				}
+			}
+		}()
+	}
+	workers.Wait()
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return s.historyStore.SubscriptionRefreshState(ctx)
+	if panicked.Load() {
+		message = errUsageRefreshPanic.Error()
+		return nil, errUsageRefreshPanic
+	}
+	state, message = "completed", fmt.Sprintf("已更新 %d 个订阅并记录用量；不提供用量的订阅保持未知", processed.Load())
+	if failed.Load() > 0 {
+		state = "completed_with_issues"
+		message = fmt.Sprintf("已尝试 %d 个订阅，%d 个更新或保存异常；请查看观测记录并重试", processed.Load(), failed.Load())
+	}
+	return nil, nil
+}
+
+type usageRefreshSource struct {
+	RefreshSelection
+	fingerprint string
+}
+
+func (s *AppService) refreshUsageSource(ctx context.Context, source usageRefreshSource, userAgent string) (retErr error) {
+	defer func() {
+		if recover() != nil {
+			retErr = errUsageRefreshPanic
+		}
+	}()
+	var rawURL string
+	fetched := &subscriptionFetchResult{}
+	err := func() error {
+		s.profileWriteMu.Lock()
+		defer s.profileWriteMu.Unlock()
+		store, err := profiles.LoadStore(s.profilePaths.StoreFile())
+		if err != nil {
+			return err
+		}
+		ap := store.Get(source.AirportID)
+		if ap == nil {
+			return &refreshError{Code: "configuration_changed", Message: "机场配置已变化；未发出请求"}
+		}
+		sub := ap.GetSubscription(source.SubscriptionID)
+		if sub == nil || strings.TrimSpace(sub.URL) == "" || refreshSourceFingerprint(sub.URL) != source.fingerprint {
+			return &refreshError{Code: "configuration_changed", Message: "订阅配置已变化；未发出请求"}
+		}
+		if err := refreshSourceCooldown(store, sub.URL, time.Now()); err != nil {
+			return err
+		}
+		if err := s.seedSubscriptionUsageLocked(ctx, store); err != nil {
+			return err
+		}
+		rawURL, fetched.updatedAt = sub.URL, sub.UpdatedAt
+		return nil
+	}()
+	if err != nil {
+		return err
+	}
+	fetched.body, fetched.usage, fetched.err = fetchSubscriptionSource(ctx, rawURL, userAgent)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.profileWriteMu.Lock()
+	defer s.profileWriteMu.Unlock()
+	_, err = s.refreshSubscriptionWithFetchLocked(ctx, source.AirportID, source.SubscriptionID, userAgent, source.fingerprint, nil, fetched)
+	return err
 }
 
 func (s *AppService) GetSubscriptionUsage(ctx context.Context, from, until, period, account string) (*subscriptionusage.Report, error) {

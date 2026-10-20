@@ -21,7 +21,15 @@ Scope and order: [roadmap-round3.md](roadmap-round3.md). Tests use synthetic dat
 - Latency tests, batches, public-service attempts and download attempts are pruned in one transaction. Execution, affected-row and commit errors are returned; failed cleanups report zero committed deletions and roll back all tables.
 - Old terminal attempts with `finished_at IS NULL` use `requested_at`. Live queued/running/cancelling work, saving/pending persistence and batches with active items are preserved. Counts describe deleted parent records; children cascade.
 - Synthetic tests cover old interrupted records, recent/active/saving/late-finished records, cascades, cancellation, and a third-table delete error that must roll back earlier deletes. `go vet ./...` and `go test -race ./...` passed. No cleanup was run against user history.
+- [GitHub matrix for fc16f63](https://github.com/suifracti/clash-speedtest/actions/runs/39404189012) passed all three jobs.
+
+## B1.3 Daily usage collection lifecycle
+
+- A claimed collection always attempts to persist a terminal state using a separate five-second cleanup context. Cancelled requests now leave `refresh.state="cancelled"` and a message, rather than `running`; cancellation errors are still returned.
+- Up to four independent origins fetch concurrently outside `profileWriteMu`. Accounts on one origin remain serial so a first HTTP 429 activates cooldown before another request. Snapshot and cache/store/history apply remain locked; the existing rollback path is reused.
+- Apply checks the source fingerprint and last-update time again, so a changed URL or newer completed refresh wins over an older in-flight response. Existing manual refresh entry points retain their behavior.
+- Local HTTP fixtures prove cancellation finalization, free profile editing during fetch, provider overlap, stale-source/newer-counter protection and same-origin cooldown. Focused race tests, `go vet ./...` and full `go test -race ./...` passed. No real subscriptions or nodes were requested.
 
 ## Next
 
-B1.3 cancellable usage refresh without network requests under the profile write lock. B2–B6 and backend support for subscription diffs, recommendations and native notifications remain pending.
+B2 partial usage headers, UA fallback and per-account usage-only refresh. B3–B6 and backend support for subscription diffs, recommendations and native notifications remain pending.
