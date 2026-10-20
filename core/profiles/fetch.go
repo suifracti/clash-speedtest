@@ -123,6 +123,28 @@ func RedactURL(raw string) string {
 			changed = true
 		}
 	}
+	parts := strings.Split(parsed.Path, "/")
+	pathChanged := false
+pathLoop:
+	for i, part := range parts {
+		if i > 0 {
+			switch strings.ToLower(parts[i-1]) {
+			case "link", "sub", "subscribe", "subscription", "token":
+				parts = append(parts[:i], "REDACTED")
+				pathChanged = true
+				break pathLoop
+			}
+		}
+		if len(part) >= 20 && !strings.Contains(part, ".") {
+			parts[i] = "REDACTED"
+			pathChanged = true
+		}
+	}
+	if pathChanged {
+		parsed.Path = strings.Join(parts, "/")
+		parsed.RawPath = ""
+		changed = true
+	}
 	query := parsed.Query()
 	queryChanged := false
 	for key := range query {

@@ -110,6 +110,18 @@ func TestRedactURL(t *testing.T) {
 	}
 }
 
+func TestRedactURLPathTokens(t *testing.T) {
+	for _, raw := range []string{"https://example.test/link/short-secret/clash", "https://example.test/link/encoded%2Fprivate-token", "https://example.test/0123456789abcdefghijklmnop"} {
+		got := RedactURL(raw)
+		if !strings.Contains(got, "REDACTED") || strings.Contains(got, "secret") || strings.Contains(got, "private-token") || strings.Contains(got, "0123456789") {
+			t.Fatalf("path token exposed: %s", got)
+		}
+	}
+	if got := RedactURL("https://example.test/docs/help"); got != "https://example.test/docs/help" {
+		t.Fatal(got)
+	}
+}
+
 func TestCompactDisplayValidUTF8(t *testing.T) {
 	s := "a" + strings.Repeat("中", 30)
 	got := compactDisplay(s, 72)
