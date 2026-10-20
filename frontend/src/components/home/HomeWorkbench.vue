@@ -23,8 +23,14 @@ const sorts=computed(()=>[{id:'region',label:'地区 → 机场'},{id:'airport',
  ...(['latency','combined'].includes(w.project.value)?[{id:'latency',label:'已保存延迟 / 监测'}]:[]),
  ...(['download','combined'].includes(w.project.value)?[{id:'download',label:'最近下载速度'}]:[]),
  ...(['service','combined'].includes(w.project.value)?[{id:'service',label:'自选服务通过'}]:[])])
-const gates=[{id:'all',label:'全部节点状态'},{id:'samples',label:'测试充分（成功样本 ≥5）'},{id:'response',label:'高可用（样本 ≥5 / 成功率 ≥90%）'},{id:'fresh',label:'近期活跃（24 小时内有测试）'},{id:'download',label:'测速可用（有历史有效下载）'},{id:'service',label:'服务通过（流媒体/规则检测通过）'}]
-const qualitySorts=[{id:'existing',label:'默认排序（沿用列表顺序）'},{id:'observed',label:'单次实测延迟升序（仅供参考）'},{id:'p50',label:'中位延迟升序（P50 典型延迟）'},{id:'p95',label:'尾部延迟升序（P95）'},{id:'rate',label:'响应成功率降序（高到低）'}]
+const gates=[{id:'all',label:'全部节点',short:'全部'},{id:'samples',label:'测得够多的（成功样本 ≥5 次）',short:'测得够多的'},{id:'response',label:'稳定能连的（≥5 次且成功率 ≥90%）',short:'稳定能连的'},{id:'fresh',label:'最近 24 小时测过的',short:'最近 24 小时测过的'},{id:'download',label:'有过有效下载速度的',short:'有过有效下载速度的节点'},{id:'service',label:'已选服务检测通过的',short:'已选服务检测通过的节点'}]
+// 每个标签只给和它相关的条件；综合标签保留全部。
+const tabGateIds:Record<Project,string[]>={combined:['all','samples','response','fresh','download','service'],latency:['all','samples','response','fresh'],download:['all','download'],service:['all','service']}
+const tabGates=computed(()=>gates.filter(g=>tabGateIds[w.project.value].includes(g.id)))
+const latencyTab=computed(()=>['combined','latency'].includes(w.project.value))
+const resultHint=computed(()=>({combined:'按已保存的检测记录筛选和排序',latency:'用已保存的延迟记录筛选，再按延迟统计排序',download:'用已保存的测速记录筛选',service:'用已保存的服务检测记录筛选'} as Record<Project,string>)[w.project.value])
+watch(()=>w.project.value,p=>{if(!tabGateIds[p].includes(m.qualityGate.value))m.qualityGate.value='all';if(!['combined','latency'].includes(p)&&m.qualitySort.value!=='existing')m.qualitySort.value='existing'})
+const qualitySorts=[{id:'existing',label:'不额外排序（用上方排序）'},{id:'observed',label:'最近一次延迟，低到高（仅供参考）'},{id:'p50',label:'典型延迟（中位数），低到高'},{id:'p95',label:'慢的时候（P95），低到高'},{id:'rate',label:'成功率，高到低'}]
 const moreActive=computed(()=>[w.airportFilter.value!=='all',w.subscription.value!=='all',w.excludeRegion.value,m.protocolFilter.value!=='all',m.qualityGate.value!=='all',m.qualitySort.value!=='existing',w.downloadFullOnly.value&&w.project.value==='download'].filter(Boolean).length)
 const scopeLabel=computed(()=>w.selectedNodes.value.length?`已选 ${w.selectedNodes.value.length} 个节点`:`筛选 ${m.runNodes.value.length} 个`)
 const filterSummary=computed(()=>[
@@ -115,21 +121,39 @@ function keyNav(e:KeyboardEvent){
       <button v-if="w.project.value!=='combined'" class="hd-btn hd-run-combined" :disabled="w.busy.value||!m.runNodes.value.length" title="按当前显示的节点范围打开组合检测" @click="m.openCombinedPlan()">组合检测</button>
     </div>
     <details ref="more" class="hd-more" @keydown.esc="closeMore"><summary ref="moreSummary">更多筛选<small>{{filterSummary?filterSummary+' · ':''}}{{m.qualityFiltersPending.value?'范围确认中':'符合 '+m.visibleNodes.value.length+' 个'}}</small></summary>
-      <div class="hd-more-grid">
-        <label>机场<UiSelect v-model="w.airportFilter.value" aria-label="机场筛选"><option value="all">全部机场</option><option v-for="a in chosen" :key="a.id" :value="a.id">{{a.name}}</option></UiSelect></label>
-        <label v-if="m.filterProfiles.value.length>1">订阅<UiSelect v-model="w.subscription.value" aria-label="订阅筛选"><option value="all">全部订阅</option><option v-for="[id,name] in m.filterProfiles.value" :key="id" :value="id">{{name}}</option></UiSelect></label>
-        <label class="hd-check"><input v-model="w.excludeRegion.value" type="checkbox" :disabled="w.region.value==='all'">排除所选地区</label>
-        <label>协议<UiSelect v-model="m.protocolFilter.value" aria-label="协议筛选"><option value="all">全部协议</option><option v-for="p in m.protocolChoices.value" :key="p" :value="p">{{p}}</option></UiSelect></label>
-        <label>节点状态<UiSelect v-model="m.qualityGate.value" aria-label="质量证据筛选"><option v-for="g in gates" :key="g.id" :value="g.id">{{g.label}}</option></UiSelect></label>
-        <label>质量排序<UiSelect v-model="m.qualitySort.value" aria-label="质量分组排序"><option v-for="q in qualitySorts" :key="q.id" :value="q.id">{{q.label}}</option></UiSelect></label>
-        <label>统计 / 排序站点<UiSelect v-model="w.displayTarget.value" aria-label="质量统计站点"><option v-for="s in targets" :key="s.id" :value="s.id">{{s.name}}</option></UiSelect></label>
-        <label v-if="w.sort.value==='airport'&&chosen.length>1&&w.airportFilter.value==='all'">优先机场<UiSelect v-model="w.priorityAirportId.value" aria-label="优先机场"><option value="all">机场自然顺序</option><option v-for="a in chosen" :key="a.id" :value="a.id">{{a.name}}优先</option></UiSelect></label>
-        <label v-if="w.project.value==='download'" class="hd-check"><input v-model="w.downloadFullOnly.value" type="checkbox">只看完整读取</label>
-        <label>每页<UiSelect :model-value="m.pageSize.value" aria-label="每页显示节点数" @update:model-value="m.setPageSize(Number($event))"><option :value="10">10</option><option :value="20">20</option><option :value="50">50</option><option :value="100">100</option><option :value="0">全部</option></UiSelect></label>
-        <div class="hd-more-sites"><SiteDisplayPicker v-model="w.displayTargets.value"/></div>
+      <div class="hd-more-groups">
+        <section class="hd-more-group" aria-labelledby="more-scope">
+          <h4 id="more-scope">看哪些节点<small>按来源和协议缩小列表</small></h4>
+          <div class="hd-more-grid">
+            <label>机场<UiSelect v-model="w.airportFilter.value" aria-label="机场筛选"><option value="all">全部机场</option><option v-for="a in chosen" :key="a.id" :value="a.id">{{a.name}}</option></UiSelect></label>
+            <label v-if="m.filterProfiles.value.length>1">订阅<UiSelect v-model="w.subscription.value" aria-label="订阅筛选"><option value="all">全部订阅</option><option v-for="[id,name] in m.filterProfiles.value" :key="id" :value="id">{{name}}</option></UiSelect></label>
+            <label>协议<UiSelect v-model="m.protocolFilter.value" aria-label="协议筛选"><option value="all">全部协议</option><option v-for="p in m.protocolChoices.value" :key="p" :value="p">{{p}}</option></UiSelect></label>
+            <label v-if="w.sort.value==='airport'&&chosen.length>1&&w.airportFilter.value==='all'">优先机场<UiSelect v-model="w.priorityAirportId.value" aria-label="优先机场"><option value="all">机场自然顺序</option><option v-for="a in chosen" :key="a.id" :value="a.id">{{a.name}}优先</option></UiSelect></label>
+            <label v-if="w.region.value!=='all'" class="hd-check"><input v-model="w.excludeRegion.value" type="checkbox">反过来：排除「{{nodeRegionLabel(w.region.value)}}」</label>
+          </div>
+        </section>
+        <section class="hd-more-group" aria-labelledby="more-result">
+          <h4 id="more-result">按{{w.project.value==='combined'?'检测':projectNames[w.project.value]}}结果<small>{{resultHint}}</small></h4>
+          <div class="hd-more-grid">
+            <label v-if="tabGates.length>2">只看<UiSelect v-model="m.qualityGate.value" aria-label="质量证据筛选"><option v-for="g in tabGates" :key="g.id" :value="g.id">{{g.label}}</option></UiSelect></label>
+            <label v-else-if="tabGates.length===2" class="hd-check"><input type="checkbox" :checked="m.qualityGate.value===tabGates[1].id" @change="m.qualityGate.value=($event.target as HTMLInputElement).checked?tabGates[1].id:'all'">只看{{tabGates[1].short}}</label>
+            <label v-if="w.project.value==='download'" class="hd-check"><input v-model="w.downloadFullOnly.value" type="checkbox">只看完整读完的测速</label>
+            <template v-if="latencyTab">
+              <label>延迟排序<UiSelect v-model="m.qualitySort.value" aria-label="质量分组排序"><option v-for="q in qualitySorts" :key="q.id" :value="q.id">{{q.label}}</option></UiSelect></label>
+              <label>延迟按哪个站点算<UiSelect v-model="w.displayTarget.value" aria-label="质量统计站点"><option v-for="s in targets" :key="s.id" :value="s.id">{{s.name}}</option></UiSelect></label>
+            </template>
+          </div>
+          <p class="hd-muted hd-more-note">数据截止 {{date(m.qualityCutoff.value)}} · 各项分别测量，不作综合打分<button class="hd-link" :disabled="m.qualityLoading.value" @click="m.readQualityNodes(qualityFiltering?w.proxyNodes.value:m.pageNodes.value,true)">{{m.qualityLoading.value?'读取中…':'更新质量记录'}}</button></p>
+          <p v-if="qualityFiltering" class="hd-muted" role="status">{{m.allQualityReady.value?`已读固定范围 ${w.proxyNodes.value.length} 个节点 · 当前符合 ${m.visibleNodes.value.length} 个 · 读取失败 ${Object.keys(m.qualityErrors.value).length} 个 · 存在缺页/读取错误 ${Object.values(m.qualityData.value).filter(e=>!e.complete).length} 个（只限制对应类型的证据）`:`正在读取全部 ${w.proxyNodes.value.length} 个节点的历史记录（已读 ${Object.keys(m.qualityData.value).length}）；读取完成后应用条件筛选与排序`}}</p>
+        </section>
+        <section class="hd-more-group" aria-labelledby="more-view">
+          <h4 id="more-view">怎么显示</h4>
+          <div class="hd-more-grid">
+            <label>每页<UiSelect :model-value="m.pageSize.value" aria-label="每页显示节点数" @update:model-value="m.setPageSize(Number($event))"><option :value="10">10 个节点</option><option :value="20">20 个节点</option><option :value="50">50 个节点</option><option :value="100">100 个节点</option><option :value="0">全部</option></UiSelect></label>
+            <div v-if="latencyTab" class="hd-more-sites"><SiteDisplayPicker v-model="w.displayTargets.value"/></div>
+          </div>
+        </section>
       </div>
-      <p class="hd-muted hd-more-note">数据截止 {{date(m.qualityCutoff.value)}} · 各项分别测量，不作综合打分<button class="hd-link" :disabled="m.qualityLoading.value" @click="m.readQualityNodes(qualityFiltering?w.proxyNodes.value:m.pageNodes.value,true)">{{m.qualityLoading.value?'读取中…':'更新质量记录'}}</button></p>
-      <p v-if="qualityFiltering" class="hd-muted" role="status">{{m.allQualityReady.value?`已读固定范围 ${w.proxyNodes.value.length} 个节点 · 当前符合 ${m.visibleNodes.value.length} 个 · 读取失败 ${Object.keys(m.qualityErrors.value).length} 个 · 存在缺页/读取错误 ${Object.values(m.qualityData.value).filter(e=>!e.complete).length} 个（只限制对应类型的证据）`:`正在读取全部 ${w.proxyNodes.value.length} 个节点的历史记录（已读 ${Object.keys(m.qualityData.value).length}）；读取完成后应用条件筛选与排序`}}</p>
     </details>
     <p v-if="['latency','download','service'].includes(w.sort.value)" class="hd-muted hd-sort-status" role="status">{{w.sortLoading.value?`读取全部节点 ${w.sortReadCount.value}/${w.proxyNodes.value.length}…`:w.sortError.value||(w.sortAt.value?'排序截止 '+date(w.sortAt.value)+' · 翻页不改变排名':'尚未读取全部节点，仅按已读记录排序')}}<button class="hd-link" :disabled="w.sortLoading.value" @click="w.refreshSort()">更新排序</button></p>
     <details v-if="w.project.value==='service'||w.project.value==='combined'" class="hd-services"><summary>选择服务<small>{{m.displayServices.value.length?m.displayServices.value.map(s=>s.name).join(' · '):'还没选'}}</small><span v-if="w.project.value==='service'&&m.servicePages.value>1" class="hd-svc-pages" aria-label="服务列分页" @click.prevent><button class="hd-link" :disabled="m.servicePage.value<=1" aria-label="上一组服务" @click="m.servicePage.value--">‹</button>{{(m.servicePage.value-1)*m.servicesPerPage.value+1}}–{{Math.min(m.servicePage.value*m.servicesPerPage.value,m.displayServices.value.length)}} / {{m.displayServices.value.length}}<button class="hd-link" :disabled="m.servicePage.value>=m.servicePages.value" aria-label="下一组服务" @click="m.servicePage.value++">›</button></span></summary><ServicePicker v-model="w.serviceIds.value" :catalog="catalog"/></details>

@@ -186,3 +186,12 @@ body.cst-resizing{cursor:col-resize;user-select:none}
 .hd-ins-others small{color:var(--hd-muted);font-size:11px}
 .hd-ins-others strong{font-size:12px;font-weight:600;color:var(--tone,var(--hd-text));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hd-ins-others strong.empty{color:var(--hd-muted);font-weight:500}
+/* 更多筛选：按“看哪些节点 / 按结果 / 怎么显示”分三组，每组一句说明 */
+.hd-more-groups{display:flex;flex-direction:column}
+.hd-more-group{padding:4px 0 6px;border-bottom:1px solid var(--hd-line)}
+.hd-more-group:last-child{border-bottom:0}
+.hd-more-group h4{display:flex;align-items:baseline;gap:8px;margin:10px 14px 0;font-size:12px;font-weight:600;color:var(--hd-text)}
+.hd-more-group h4 small{font-weight:400;color:var(--hd-muted)}
+.hd-more-group .hd-more-grid{padding:8px 14px 6px}
+.hd-more-group>p{margin:0 14px 8px;font-size:12px}
+.hd-more-sites{grid-column:auto/span 2}
