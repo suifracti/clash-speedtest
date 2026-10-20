@@ -28,7 +28,7 @@ func TestFetchSubscriptionObservedRecordsOneGETAndBodyDigest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != body || usage == nil || usage.Upload != 2 || usage.Download != 3 {
+	if string(data) != body || usage == nil || usage.Upload == nil || *usage.Upload != 2 || usage.Download == nil || *usage.Download != 3 {
 		t.Fatalf("response body or usage mismatch: body=%q usage=%+v", data, usage)
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(body)))

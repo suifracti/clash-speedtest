@@ -12,7 +12,7 @@ async function load(){
  finally{if(current===generation)loading.value=false}
 }
 watch(()=>[props.airportId,props.subscriptionId,props.days,props.refreshVersion],()=>void load(),{immediate:true})
-const statusText:Record<string,string>={ok:'机场已报告',baseline:'首次基线',reset:'计数重置',missing:'机场未提供用量',local_file:'本地配置，无用量',refresh_failed:'更新失败',observed:'已观测',cross_period:'跨期区间'}
+const statusText:Record<string,string>={ok:'机场已报告',baseline:'首次基线',reset:'计数重置',partial:'用量字段不完整',missing:'机场未提供用量',local_file:'本地配置，无用量',refresh_failed:'更新失败',observed:'已观测',cross_period:'跨期区间'}
 const when=(v?:string)=>!v||v.startsWith('0001')?'':new Date(v).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})
 function text(d:DayUsage){return d.bytes!=null?(d.estimated?'约 ':'')+bytes(d.bytes):d.recorded?'未知':'未记录'}
 function title(d:DayUsage){return `${d.date} · ${d.bytes!=null?bytes(d.bytes)+(d.estimated?`（${d.sourceKind==='notice_remaining'?'按公告余额变化估算':'区间估算'}）`:''):d.recorded?'有更新记录但无法归属增量':'当天没有更新记录'}${d.message?' · '+d.message:''}`}

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {computed,onBeforeUnmount,onMounted,ref,watch} from 'vue'
 import {api,type SubscriptionRefreshJob,type SubscriptionRefreshRequest} from '../api'
-import {bytes,date,type Airport,type NodeOption} from '../domain'
+import {bytes,date,subscriptionUsed,type Airport,type NodeOption} from '../domain'
 import {airportAccounts,noticesForAccount,safeAirportLink,parseNoticeUsage,type AirportAccount} from '../airportViewing'
 import {useWorkspace} from '../workspace'
 import UiSelect from './UiSelect.vue'
@@ -32,7 +32,7 @@ const selected=computed(()=>accounts.value.find(account=>account.key===selectedK
 const accountNotices=computed(()=>noticesForAccount(props.notices,selected.value))
 const usage=computed(()=>selected.value?.subscription.usage)
 const parsedNoticeUsage=computed(()=>parseNoticeUsage(accountNotices.value))
-const used=computed(()=>usage.value?usage.value.upload+usage.value.download:parsedNoticeUsage.value.used??null)
+const used=computed(()=>subscriptionUsed(usage.value)??parsedNoticeUsage.value.used??null)
 const total=computed(()=>{
   const usageTotal=usage.value?.total
   if(typeof usageTotal==='number'&&Number.isFinite(usageTotal))return usageTotal
@@ -67,8 +67,9 @@ const expireLabel=computed(()=>{
   return '到期未知'
 })
 const sourceLabel=computed(()=>{
-  if(usage.value)return '订阅返回'
+  if(usage.value&&subscriptionUsed(usage.value)!==null)return '订阅返回'
   if(parsedNoticeUsage.value.remaining!==undefined||parsedNoticeUsage.value.used!==undefined||parsedNoticeUsage.value.total!==undefined||parsedNoticeUsage.value.expireText)return '公告识别'
+  if(usage.value)return '订阅字段不完整'
   const account=selected.value
   return account&&account.subscription.id===account.airport.id&&!account.airport.subscriptions?.length?'机场默认订阅':'额度来源未知'
 })

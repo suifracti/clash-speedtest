@@ -30,6 +30,15 @@ Scope and order: [roadmap-round3.md](roadmap-round3.md). Tests use synthetic dat
 - Apply checks the source fingerprint and last-update time again, so a changed URL or newer completed refresh wins over an older in-flight response. Existing manual refresh entry points retain their behavior.
 - Local HTTP fixtures prove cancellation finalization, free profile editing during fetch, provider overlap, stale-source/newer-counter protection and same-origin cooldown. Focused race tests, `go vet ./...` and full `go test -race ./...` passed. No real subscriptions or nodes were requested.
 
+- [GitHub matrix for 9a29ffd](https://github.com/suifracti/clash-speedtest/actions/runs/39405127807) passed all three jobs. The following compact-summary UI change [6cf7517](https://github.com/suifracti/clash-speedtest/actions/runs/39406101066) also passed the full matrix.
+
+## B2.1 Partial usage header compatibility
+
+- Usage fields are parsed independently. Decimal and scientific notation are accepted and fractional bytes/seconds are truncated. The last valid duplicate wins; invalid repeats do not erase valid fields. Repeated lines of one header are parsed together; a more complete metadata header can supersede an incomplete standard header.
+- Subscription DTO `usage.upload` and `usage.download` are now `number | null`. `null` means unknown; numeric zero remains known. Existing numeric profile JSON remains readable. `usage.raw_header` retains the selected original header for local diagnosis, with repeated lines separated by a newline. It is not copied to usage history or logs. Nonempty malformed headers remain diagnostic objects with unknown counters.
+- History snapshots use `status="partial"` when both counters cannot be combined. Known individual counters and total remain available, but a partial snapshot does not create a daily increment. Existing explicitly identified notice-balance accounting remains available. The overview and account ledger show unknown instead of coercing null to zero or drawing a false meter.
+- Validation: parser cases, repeated headers/metadata, temporary-store/history persistence and UI null regressions pass. Full `go vet ./...`, `go test -race ./...`, 357 frontend tests and the production frontend build passed. No real subscriptions, node probes or user-history writes were used.
+
 ## Next
 
-B2 partial usage headers, UA fallback and per-account usage-only refresh. B3–B6 and backend support for subscription diffs, recommendations and native notifications remain pending.
+B2.2 header-only alternate-UA fallback, then per-subscription UA and per-account usage-only refresh. B3–B6 and backend support for subscription diffs, recommendations and native notifications remain pending.

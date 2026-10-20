@@ -25,7 +25,7 @@ func TestSubscriptionUsageRefreshPersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 	sub := ap.Subscriptions[0]
-	if sub.Usage == nil || sub.Usage.Upload+sub.Usage.Download != 4096 {
+	if sub.Usage == nil || sub.Usage.Upload == nil || sub.Usage.Download == nil || *sub.Usage.Upload+*sub.Usage.Download != 4096 {
 		t.Fatalf("usage missing on create: %+v", sub)
 	}
 	saved, err := profiles.LoadStore(paths.StoreFile())
@@ -37,7 +37,7 @@ func TestSubscriptionUsageRefreshPersistence(t *testing.T) {
 	}
 	header = "upload=2048;download=4096;total=8192"
 	refreshed, err := s.RefreshSubscription(ap.ID, sub.ID, "fixture")
-	if err != nil || refreshed.Usage == nil || refreshed.Usage.Download != 4096 {
+	if err != nil || refreshed.Usage == nil || refreshed.Usage.Download == nil || *refreshed.Usage.Download != 4096 {
 		t.Fatalf("refresh: %+v %v", refreshed, err)
 	}
 	status = http.StatusForbidden
@@ -48,7 +48,7 @@ func TestSubscriptionUsageRefreshPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if list[0].Subscriptions[0].Usage.Download != 4096 {
+	if *list[0].Subscriptions[0].Usage.Download != 4096 {
 		t.Fatal("failure lost last known usage")
 	}
 	encoded, _ := json.Marshal(list)

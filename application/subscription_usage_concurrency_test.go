@@ -123,7 +123,7 @@ func TestUsageRefreshConcurrentProvidersDoNotOverwriteChangedSources(t *testing.
 						sub.URL += "/changed"
 					} else {
 						sub.UpdatedAt = time.Now().Add(time.Second)
-						sub.Usage.Download = 333
+						*sub.Usage.Download = 333
 						wantDownload = 333
 					}
 					if err := profiles.SaveStore(paths.StoreFile(), store); err != nil {
@@ -145,8 +145,8 @@ func TestUsageRefreshConcurrentProvidersDoNotOverwriteChangedSources(t *testing.
 				t.Fatal(err)
 			}
 			first, second := store.Get(airports[0].ID).Subscriptions[0], store.Get(airports[1].ID).Subscriptions[0]
-			if first.Usage.Download != wantDownload || second.Usage.Download != 200 {
-				t.Fatalf("stale/current counters: first=%d second=%d", first.Usage.Download, second.Usage.Download)
+			if *first.Usage.Download != wantDownload || *second.Usage.Download != 200 {
+				t.Fatalf("stale/current counters: first=%d second=%d", *first.Usage.Download, *second.Usage.Download)
 			}
 			body, err := os.ReadFile(paths.CacheFile(first.ID))
 			if err != nil {

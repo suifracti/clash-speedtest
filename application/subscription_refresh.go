@@ -952,7 +952,7 @@ func (s *AppService) refreshSubscriptionWithFetchLocked(ctx context.Context, air
 		status = "missing"
 	}
 	snapshot := usageSnapshot(airport, sub, status, "subscription_update", now)
-	if status == "missing" {
+	if snapshot.Status == "missing" || snapshot.Status == "partial" {
 		if remaining, ok := noticeRemainingBytes(body); ok {
 			snapshot.Status = "ok"
 			snapshot.Source = "subscription_notice"

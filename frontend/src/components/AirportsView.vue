@@ -3,7 +3,7 @@ import UiSelect from './UiSelect.vue'
 import {computed,onBeforeUnmount,onMounted,ref} from 'vue'
 import {api,desktop,request,type SubscriptionRefreshJob} from '../api'
 import {useWorkspace} from '../workspace'
-import {bytes,date,type Airport,type Subscription} from '../domain'
+import {bytes,date,subscriptionUsed,type Airport,type Subscription} from '../domain'
 import Modal from './Modal.vue'
 import Icon from './Icon.vue'
 import SubscriptionUsageView from './SubscriptionUsageView.vue'
@@ -29,7 +29,9 @@ async function retryRefresh(){const job=refreshJob.value;if(!job||job.failed===0
 async function deleteItem(){const item=remove.value;if(!item)return;busy.value='delete';try{await request(item.sub?`/api/airports/${item.airport.id}/subscriptions/${item.sub.id}`:`/api/airports/${item.airport.id}`,'DELETE',undefined,item.sub?'DeleteSubscription':'DeleteAirport',item.sub?[item.airport.id,item.sub.id]:[item.airport.id]);remove.value=null;await w.refreshNodes();await w.refreshJobs();w.notify('订阅已删除')}catch(e){w.fail(e)}finally{busy.value=''}}
 function openMaintenance(a:Airport){maintenance.value={airport:a,settings:JSON.parse(JSON.stringify(a.maintenance||{refresh_hours:0,links:[]}))}}
 async function saveMaintenance(){const m=maintenance.value;if(!m)return;busy.value='maintenance';try{await request(`/api/airports/${m.airport.id}/maintenance`,'PUT',m.settings,'SaveAirportMaintenance',[m.airport.id,m.settings]);await w.refreshNodes();maintenance.value=null;w.notify('维护设置已保存')}catch(e){w.fail(e)}finally{busy.value=''}}
-function remaining(s:Subscription){return s.usage?.total?Math.max(0,s.usage.total-s.usage.upload-s.usage.download):null}
+function used(s:Subscription){return subscriptionUsed(s.usage)}
+function remaining(s:Subscription){const amount=used(s);return s.usage?.total&&amount!==null?Math.max(0,s.usage.total-amount):null}
+function usagePercent(s:Subscription){return Math.min(100,(used(s)??0)/(s.usage?.total||1)*100)}
 // 订阅头没有用量时，退回到节点列表里的公告文字（标明来源，不当作订阅返回值）。
 function noticeUsage(a:Airport,s:Subscription){return parseNoticeUsage(noticesForAccount(w.notices.value,airportAccounts([a]).find(x=>x.subscription.id===s.id)))}
 function expireDays(t:number){return Math.ceil((t*1000-Date.now())/86400000)}
@@ -56,7 +58,7 @@ onBeforeUnmount(()=>{disposed=true;clearTimeout(refreshTimer)})
       <code :title="s.url_display">{{s.url_display}}</code>
     </div>
     <div class="cst-ledger-quota">
-      <template v-if="s.usage"><span><strong>{{bytes(s.usage.upload+s.usage.download)}}</strong><template v-if="s.usage.total"> / {{bytes(s.usage.total)}}</template></span><div v-if="s.usage.total" class="cst-meter" role="meter" aria-label="套餐已用比例" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Math.round(Math.min(100,(s.usage.upload+s.usage.download)/s.usage.total*100))"><i :class="{warn:(s.usage.upload+s.usage.download)/s.usage.total>.85}" :style="{width:`${Math.min(100,(s.usage.upload+s.usage.download)/s.usage.total*100)}%`}"/></div><small v-if="s.usage.total">剩余 {{bytes(remaining(s)||0)}}</small><small v-else>机场未返回总量</small></template>
+      <template v-if="s.usage&&(used(s)!==null||noticeUsage(a,s).remaining==null&&noticeUsage(a,s).used==null)"><span><strong>{{used(s)===null?'已用未知':bytes(used(s)!)}}</strong><template v-if="s.usage.total"> / {{bytes(s.usage.total)}}</template></span><div v-if="s.usage.total&&used(s)!==null" class="cst-meter" role="meter" aria-label="套餐已用比例" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Math.round(usagePercent(s))"><i :class="{warn:usagePercent(s)>85}" :style="{width:`${usagePercent(s)}%`}"/></div><small v-if="s.usage.total">{{remaining(s)===null?'剩余未知':'剩余 '+bytes(remaining(s)!)}}</small><small v-else>机场未返回总量</small></template>
       <template v-else-if="noticeUsage(a,s).remaining!=null||noticeUsage(a,s).used!=null"><span><strong>{{noticeUsage(a,s).remaining!=null?'剩余 '+bytes(noticeUsage(a,s).remaining):'已用 '+bytes(noticeUsage(a,s).used)}}</strong><template v-if="noticeUsage(a,s).total"> / {{bytes(noticeUsage(a,s).total)}}</template></span><small>公告识别 · 订阅未返回用量头</small></template>
       <small v-else class="muted">机场未返回套餐用量</small>
     </div>

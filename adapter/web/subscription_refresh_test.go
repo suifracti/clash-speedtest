@@ -247,10 +247,10 @@ func TestFailedRefreshPreservesCacheAndUsageAndAddsFailureHistory(t *testing.T) 
 	root := t.TempDir()
 	paths := profiles.Paths{Dir: filepath.Join(root, "profiles")}
 	oldAt := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
-	total := int64(100)
+	total, upload, download := int64(100), int64(2), int64(9)
 	store := &profiles.Store{Airports: []*profiles.Airport{{ID: "a", Name: "A", Subscriptions: []*profiles.Subscription{{
 		ID: "one", Name: "One", URL: fixture.URL + "/sub?token=FAIL_SECRET", UpdatedAt: oldAt,
-		Usage: &profiles.SubscriptionUsage{Upload: 2, Download: 9, Total: &total, UpdatedAt: oldAt},
+		Usage: &profiles.SubscriptionUsage{Upload: &upload, Download: &download, Total: &total, UpdatedAt: oldAt},
 	}}}}}
 	if err := profiles.SaveStore(paths.StoreFile(), store); err != nil {
 		t.Fatal(err)
@@ -277,7 +277,7 @@ func TestFailedRefreshPreservesCacheAndUsageAndAddsFailureHistory(t *testing.T) 
 		t.Fatal(err)
 	}
 	sub := saved.Get("a").GetSubscription("one")
-	if sub.Usage == nil || sub.Usage.Download != 9 || !sub.UpdatedAt.Equal(oldAt) {
+	if sub.Usage == nil || sub.Usage.Download == nil || *sub.Usage.Download != 9 || !sub.UpdatedAt.Equal(oldAt) {
 		t.Fatalf("failed refresh changed the last successful usage: %+v", sub)
 	}
 	day := time.Now().In(subscriptionusage.Location).Format("2006-01-02")

@@ -78,6 +78,17 @@ describe('SubscriptionOverview status strip',()=>{
     expect((wrapper!.vm as unknown as {usageRatio:number|null}).usageRatio).toBe(0.25)
   })
 
+  it('keeps incomplete provider counters unknown instead of drawing a false quota',async()=>{
+    const partial:Airport={...airportB,subscriptions:[{...airportB.subscriptions![0],usage:{upload:null,download:2048,total:4096} as any}]}
+    const workspace=createWorkspace();workspace.airports.value=[partial]
+    wrapper=mount(SubscriptionOverview,{props:{airports:[partial],notices:[]},global:{provide:{[workspaceKey as symbol]:workspace}}})
+    await flushPromises()
+    expect(wrapper.get('.subscription-remaining-value').text()).toBe('未知')
+    expect(wrapper.get('.subscription-quota-used').text()).toBe('已使用未知')
+    expect(wrapper.get('.subscription-quota-total').text()).toBe('总量4.0 KiB')
+    expect(wrapper.find('[role="meter"]').exists()).toBe(false)
+  })
+
   it('sends selected and full workspace refresh scopes without changing measurement scope',async()=>{
     const workspace=createWorkspace()
     workspace.airports.value=[airportA,airportB]

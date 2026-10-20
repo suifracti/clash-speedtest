@@ -34,6 +34,15 @@ beforeEach(()=>{
 afterEach(()=>{wrapper?.unmount();wrapper=undefined;document.body.innerHTML='';vi.useRealTimers();vi.clearAllMocks()})
 
 describe('AirportsView manual refresh jobs',()=>{
+  it('preserves unknown usage in the account ledger',async()=>{
+    mocks.workspace.airports.value=[{...airports[0],subscriptions:[{...airports[0].subscriptions![0],usage:{upload:null,download:2048,total:4096} as any}]}]
+    wrapper=mount(AirportsView);await flushPromises()
+    const quota=wrapper.get('.cst-ledger-quota')
+    expect(quota.text()).toContain('已用未知')
+    expect(quota.text()).toContain('4.0 KiB')
+    expect(quota.text()).toContain('剩余未知')
+    expect(quota.find('[role="meter"]').exists()).toBe(false)
+  })
   it('starts a selected subscription job and exposes progress and cancellation',async()=>{
     const running=job('refresh-running','running',[{airport_id:'airport-a',subscription_id:'account-a2',airport_name:'A',subscription_name:'A2',state:'fetching',stages:[{state:'fetching',at:'2026-10-11T00:00:01Z'}]}])
     mocks.api.startRefresh.mockResolvedValue(running)

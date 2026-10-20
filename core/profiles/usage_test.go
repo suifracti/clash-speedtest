@@ -10,10 +10,10 @@ import (
 
 func TestSubscriptionUsageHeader(t *testing.T) {
 	u := parseSubscriptionUsage("upload=1024; download=3072; total=8192; expire=2000000000")
-	if u == nil || u.Upload != 1024 || u.Download != 3072 || u.Total == nil || *u.Total != 8192 || u.Expire == nil || *u.Expire != 2000000000 || u.UpdatedAt.IsZero() {
+	if u == nil || u.Upload == nil || *u.Upload != 1024 || u.Download == nil || *u.Download != 3072 || u.Total == nil || *u.Total != 8192 || u.Expire == nil || *u.Expire != 2000000000 || u.UpdatedAt.IsZero() {
 		t.Fatalf("unexpected usage: %+v", u)
 	}
-	for _, input := range []string{"", "upload=1", "upload=-1;download=2", "upload=bad;download=2", "upload=1;download=2;total=secret", "upload=1;upload=2;download=3"} {
+	for _, input := range []string{"", "   "} {
 		if parseSubscriptionUsage(input) != nil {
 			t.Fatalf("accepted invalid header %q", input)
 		}
@@ -23,7 +23,7 @@ func TestSubscriptionUsageHeader(t *testing.T) {
 		t.Fatal("zero provider limits must not imply known capacity or expiry")
 	}
 	u = parseSubscriptionUsage("upload=1024; download=3072; total=8192; expire=")
-	if u == nil || u.Upload != 1024 || u.Download != 3072 || u.Total == nil || *u.Total != 8192 || u.Expire != nil {
+	if u == nil || u.Upload == nil || *u.Upload != 1024 || u.Download == nil || *u.Download != 3072 || u.Total == nil || *u.Total != 8192 || u.Expire != nil {
 		t.Fatal("empty optional expiry must not discard valid traffic usage")
 	}
 }
@@ -52,7 +52,7 @@ func TestFetchSubscriptionUsageRecognizesObjectStorageMetadataHeader(t *testing.
 	defer server.Close()
 
 	_, usage, err := FetchSubscriptionWithUsage(server.URL, "fixture")
-	if err != nil || usage == nil || usage.Upload != 1024 || usage.Download != 3072 || usage.Total == nil || *usage.Total != 8192 {
+	if err != nil || usage == nil || usage.Upload == nil || *usage.Upload != 1024 || usage.Download == nil || *usage.Download != 3072 || usage.Total == nil || *usage.Total != 8192 {
 		t.Fatalf("object-storage usage header was not parsed: usage=%+v err=%v", usage, err)
 	}
 }
@@ -69,7 +69,7 @@ func TestCompatiblePrimaryUserAgentKeepsUsageAndBody(t *testing.T) {
 	}))
 	defer server.Close()
 	body, usage, err := FetchSubscriptionWithUsage(server.URL, "clash.meta")
-	if err != nil || string(body) != "proxies: [fixture]" || usage == nil || usage.Download != 3072 || calls != 1 {
+	if err != nil || string(body) != "proxies: [fixture]" || usage == nil || usage.Download == nil || *usage.Download != 3072 || calls != 1 {
 		t.Fatalf("single compatible primary request failed: calls=%d usage=%+v err=%v", calls, usage, err)
 	}
 }

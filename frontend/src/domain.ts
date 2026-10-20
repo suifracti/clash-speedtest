@@ -3,7 +3,13 @@ export type Page = 'home'|'airports'|'monitor'|'history'|'settings'|'data'
 export type Project = 'latency'|'download'|'service'|'combined'
 export interface NodeScope { profile_id:string;node_key:string;node_identity_key:string;config_revision_key:string }
 export interface NodeOption extends NodeScope { profile_name:string;display_name:string;type:string;country_code:string;country_flag:string }
-export interface Subscription { id:string;airport_id:string;name:string;url_display:string;url_configured:boolean;note?:string;updated_at?:string;node_count:number;has_cache:boolean;status?:string;usage?:{upload:number;download:number;total?:number;expire?:number} }
+export interface Subscription { id:string;airport_id:string;name:string;url_display:string;url_configured:boolean;note?:string;updated_at?:string;node_count:number;has_cache:boolean;status?:string;usage?:{upload:number|null;download:number|null;total?:number;expire?:number;raw_header?:string;updated_at?:string} }
+// A provider may report one counter only. Never coerce its missing peer to zero.
+export function subscriptionUsed(usage:Subscription['usage']):number|null {
+  const up=usage?.upload,down=usage?.download
+  if(typeof up!=='number'||typeof down!=='number'||!Number.isSafeInteger(up)||!Number.isSafeInteger(down)||up<0||down<0||!Number.isSafeInteger(up+down))return null
+  return up+down
+}
 export interface Airport { id:string;name:string;subscriptions?:Subscription[];website_url?:string;backup_url?:string;note?:string;url_display:string;node_count:number;has_cache:boolean;updated_at?:string;maintenance?:{refresh_hours:number;next_refresh?:string;last_result?:string;links:{label:string;url:string;monthly_day:number;done_month?:string}[]} }
 export interface LatencySample {seq:number;target?:string;timestamp:string;latency_ms:number;success:boolean;error?:string}
 export interface DNSQueryEvidence {type:string;response_code?:string;answer_count:number;answer_record_count?:number;cname_count?:number;outcome:string;transport?:string}
