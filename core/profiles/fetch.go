@@ -32,7 +32,7 @@ func DefaultUserAgent() string {
 }
 
 func FetchSubscription(rawURL, userAgent string) ([]byte, error) {
-	body, _, err := fetchSubscriptionResponse(rawURL, userAgent)
+	body, _, err := fetchSubscriptionPrimaryContext(context.Background(), rawURL, userAgent)
 	return body, err
 }
 
@@ -44,11 +44,19 @@ func FetchSubscriptionWithUsageContext(ctx context.Context, rawURL, userAgent st
 	return fetchSubscriptionResponseContext(ctx, rawURL, userAgent)
 }
 
-func fetchSubscriptionResponse(rawURL, userAgent string) ([]byte, *SubscriptionUsage, error) {
-	return fetchSubscriptionResponseContext(context.Background(), rawURL, userAgent)
+func fetchSubscriptionResponseContext(ctx context.Context, rawURL, userAgent string) ([]byte, *SubscriptionUsage, error) {
+	// Share one deadline between the primary download and the optional headers.
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	body, usage, err := fetchSubscriptionPrimaryContext(ctx, rawURL, userAgent)
+	if err != nil || usageHeaderScore(usage) > 0 {
+		return body, usage, err
+	}
+	usage, err = fetchUsageFallback(ctx, rawURL, userAgent, usage)
+	return body, usage, err
 }
 
-func fetchSubscriptionResponseContext(ctx context.Context, rawURL, userAgent string) ([]byte, *SubscriptionUsage, error) {
+func fetchSubscriptionPrimaryContext(ctx context.Context, rawURL, userAgent string) ([]byte, *SubscriptionUsage, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSpace(rawURL), nil)
 	if err != nil {
 		return nil, nil, err

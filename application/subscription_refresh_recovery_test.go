@@ -150,8 +150,8 @@ func TestRefreshRollbackFailuresKeepRecoveryCopiesAndReportUnconfirmedState(t *t
 			if strings.Contains(err.Error(), secretURL) || strings.Contains(err.Error(), fakeAirportSecret) || strings.Contains(err.Error(), paths.Dir) {
 				t.Fatalf("recovery error leaked URL credentials or local paths: %v", err)
 			}
-			if requests.Load() != 1 {
-				t.Fatalf("expected one fixture request, got %d", requests.Load())
+			if requests.Load() != 2 {
+				t.Fatalf("expected primary plus one header fallback, got %d requests", requests.Load())
 			}
 
 			actualCache, err := os.ReadFile(paths.CacheFile("rollback-sub"))

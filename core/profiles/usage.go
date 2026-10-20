@@ -14,12 +14,13 @@ const maxUsageInteger int64 = 9007199254740991
 // SubscriptionUsage is a provider-reported snapshot, not local traffic accounting.
 // Nil counters are unknown; zero is a known value. Older numeric JSON remains readable.
 type SubscriptionUsage struct {
-	Upload    *int64    `json:"upload"`
-	Download  *int64    `json:"download"`
-	Total     *int64    `json:"total,omitempty"`
-	Expire    *int64    `json:"expire,omitempty"`
-	RawHeader string    `json:"raw_header,omitempty"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Upload    *int64         `json:"upload"`
+	Download  *int64         `json:"download"`
+	Total     *int64         `json:"total,omitempty"`
+	Expire    *int64         `json:"expire,omitempty"`
+	Fallback  *UsageFallback `json:"fallback,omitempty"`
+	RawHeader string         `json:"raw_header,omitempty"`
+	UpdatedAt time.Time      `json:"updated_at"`
 }
 
 // UsedBytes requires both counters and keeps the sum exact for JavaScript consumers.

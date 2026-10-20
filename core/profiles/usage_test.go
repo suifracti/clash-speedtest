@@ -74,7 +74,7 @@ func TestCompatiblePrimaryUserAgentKeepsUsageAndBody(t *testing.T) {
 	}
 }
 
-func TestMissingUsageHeaderDoesNotFetchSubscriptionTwice(t *testing.T) {
+func TestMissingUsageHeaderTriesOnlyOneHeaderFallback(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests.Add(1)
@@ -86,7 +86,7 @@ func TestMissingUsageHeaderDoesNotFetchSubscriptionTwice(t *testing.T) {
 	if err != nil || string(body) != "proxies: []" || usage != nil {
 		t.Fatalf("fetch result = (%q, %v, %v)", body, usage, err)
 	}
-	if got := requests.Load(); got != 1 {
-		t.Fatalf("missing usage header caused %d requests, want exactly one", got)
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("missing usage header caused %d requests, want primary plus one header fallback", got)
 	}
 }

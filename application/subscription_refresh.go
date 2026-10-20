@@ -773,12 +773,18 @@ func refreshSourceCooldown(store *profiles.Store, rawURL string, now time.Time) 
 			continue
 		}
 		for _, sub := range airport.Subscriptions {
-			if sub == nil || profiles.SourceOrigin(sub.URL) != origin || sub.LastFailureCode != "http_429" {
+			if sub == nil || profiles.SourceOrigin(sub.URL) != origin {
 				continue
 			}
-			retryAt := sub.LastFailureRetryAt
-			if retryAt.IsZero() {
-				retryAt = sub.LastFailureAt.Add(30 * time.Minute)
+			retryAt := time.Time{}
+			if sub.LastFailureCode == "http_429" {
+				retryAt = sub.LastFailureRetryAt
+				if retryAt.IsZero() {
+					retryAt = sub.LastFailureAt.Add(30 * time.Minute)
+				}
+			}
+			if sub.Usage != nil && sub.Usage.Fallback != nil && sub.Usage.Fallback.HTTPStatus == http.StatusTooManyRequests && sub.Usage.Fallback.RetryAfterUntil.After(retryAt) {
+				retryAt = sub.Usage.Fallback.RetryAfterUntil
 			}
 			if !retryAt.IsZero() && now.Before(retryAt) {
 				return &refreshError{Code: "source_cooldown", Message: "同源 HTTP 429 冷却中，未发出请求；请在冷却结束后重新提交刷新"}

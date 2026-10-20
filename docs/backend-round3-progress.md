@@ -39,6 +39,15 @@ Scope and order: [roadmap-round3.md](roadmap-round3.md). Tests use synthetic dat
 - History snapshots use `status="partial"` when both counters cannot be combined. Known individual counters and total remain available, but a partial snapshot does not create a daily increment. Existing explicitly identified notice-balance accounting remains available. The overview and account ledger show unknown instead of coercing null to zero or drawing a false meter.
 - Validation: parser cases, repeated headers/metadata, temporary-store/history persistence and UI null regressions pass. Full `go vet ./...`, `go test -race ./...`, 357 frontend tests and the production frontend build passed. No real subscriptions, node probes or user-history writes were used.
 
+- [GitHub matrix for 4e1e996](https://github.com/suifracti/clash-speedtest/actions/runs/39406973314) passed all three jobs.
+
+## B2.2 Header-only alternate-UA acquisition
+
+- A successful primary node download with no usable usage fields gets at most one alternate-UA GET (`clash.meta`, or `mihomo` when the primary already uses `clash.meta`). The alternate response is closed after its headers: its body is never consumed, parsed or written to node cache. Existing valid partial headers remain partial and do not trigger an unnecessary second request. Plain node-only `FetchSubscription` also keeps a single request.
+- Both requests share the caller's context and one 60-second deadline. Primary HTTP/body failures do not trigger fallback. Cancellation remains an error. An optional header-request error preserves the successful primary node content.
+- `FetchEvidence.usage_fallback` and optional DTO `usage.fallback` identify `user_agent`, `http_status`, `error_code` and `retry_after_until`; they contain no source address. Primary status, byte count and body digest retain their original meaning. Alternate HTTP 429 cooldown is saved with the usage diagnostic and blocks further same-origin refreshes, including another forced collection.
+- Validation uses local HTTP fixtures, including an alternate response that sends headers and never sends a body, primary-body/digest preservation, cancellation, failed-primary suppression, and persisted same-origin cooldown. Full `go vet ./...` and `go test -race ./...` passed. No real subscriptions or production history were requested.
+
 ## Next
 
-B2.2 header-only alternate-UA fallback, then per-subscription UA and per-account usage-only refresh. B3–B6 and backend support for subscription diffs, recommendations and native notifications remain pending.
+B2.3 per-subscription UA, then B2.4 per-account usage-only refresh. B3–B6 and backend support for subscription diffs, recommendations and native notifications remain pending.

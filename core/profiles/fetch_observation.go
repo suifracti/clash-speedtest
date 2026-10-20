@@ -17,15 +17,16 @@ import (
 const MaxSubscriptionBytes = 8 << 20
 
 type FetchEvidence struct {
-	ProxyPolicy     string    `json:"proxy_policy,omitempty"`
-	Method          string    `json:"method"`
-	UserAgent       string    `json:"user_agent"`
-	RequestCount    int       `json:"request_count"`
-	RedirectCount   int       `json:"redirect_count"`
-	BytesRead       int       `json:"bytes_read"`
-	BodySHA256      string    `json:"body_sha256,omitempty"`
-	HTTPStatus      int       `json:"http_status,omitempty"`
-	RetryAfterUntil time.Time `json:"retry_after_until,omitempty"`
+	UsageFallback   *UsageFallback `json:"usage_fallback,omitempty"`
+	ProxyPolicy     string         `json:"proxy_policy,omitempty"`
+	Method          string         `json:"method"`
+	UserAgent       string         `json:"user_agent"`
+	RequestCount    int            `json:"request_count"`
+	RedirectCount   int            `json:"redirect_count"`
+	BytesRead       int            `json:"bytes_read"`
+	BodySHA256      string         `json:"body_sha256,omitempty"`
+	HTTPStatus      int            `json:"http_status,omitempty"`
+	RetryAfterUntil time.Time      `json:"retry_after_until,omitempty"`
 }
 
 type FetchHTTPError struct {

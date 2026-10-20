@@ -67,9 +67,12 @@ func usageSnapshot(ap *profiles.Airport, sub *profiles.Subscription, status, sou
 		if _, known := sub.Usage.UsedBytes(); !known {
 			snap.Status = "partial"
 			snap.Message = "机场仅返回部分用量字段；缺失的计数未知，不计为零用量"
+			if sub.Usage.Upload == nil && sub.Usage.Download == nil && sub.Usage.Total == nil && sub.Usage.Expire == nil {
+				snap.Status = "missing"
+			}
 		}
 	}
-	if status == "missing" {
+	if snap.Status == "missing" {
 		snap.Message = "机场未返回有效用量字段；不计为零用量"
 	}
 	if status == "refresh_failed" {
