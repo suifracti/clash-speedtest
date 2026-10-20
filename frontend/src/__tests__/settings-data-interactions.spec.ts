@@ -77,3 +77,9 @@ it('opening settings and refreshing status do not silently discover external cre
  await click('刷新状态');expect(api.discoverToken).not.toHaveBeenCalled();expect(api.token).toHaveBeenCalled()
  await click('检测查找凭据');expect(api.discoverToken).toHaveBeenCalledOnce();expect(document.body.textContent).toContain('已绑定')
 })
+it('requests notification authorization when enabled, then saves without requesting twice',async()=>{
+ const view=attach(SettingsView);await flushPromises();const toggle=view.get('input[type=checkbox]');await toggle.setValue(true);await flushPromises();expect(request).toHaveBeenCalledWith('','POST',undefined,'EnableLocalNotifications');await click('保存设置');expect(request).toHaveBeenCalledTimes(1);expect(api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({local_notifications:expect.objectContaining({enabled:true})}))
+})
+it('keeps notifications off and offers system settings when authorization fails',async()=>{
+ vi.mocked(request).mockRejectedValueOnce(new Error('UNErrorDomain error 1'));const view=attach(SettingsView);await flushPromises();await view.get('input[type=checkbox]').setValue(true);await flushPromises();expect((view.get('input[type=checkbox]').element as HTMLInputElement).checked).toBe(false);expect(view.text()).toContain('系统未允许 CST 发送通知');expect(view.text()).not.toContain('UNErrorDomain');expect(api.saveSettings).not.toHaveBeenCalled();await click('打开系统通知设置');expect(request).toHaveBeenLastCalledWith('','POST',undefined,'OpenSystemNotificationSettings')
+})
