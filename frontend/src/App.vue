@@ -25,7 +25,7 @@ const password=ref(''),loginError=ref(''),loggingIn=ref(false)
 const pages:{id:Page;label:string;icon:string}[]=[{id:'home',label:'线路工作台',icon:'home'},{id:'airports',label:'机场与账户',icon:'layers'},{id:'history',label:'检测记录',icon:'history'},{id:'monitor',label:'持续监测',icon:'monitor'}]
 const utilities:{id:Page;label:string;icon:string}[]=[{id:'settings',label:'偏好设置',icon:'settings'},{id:'data',label:'数据与备份',icon:'data'}]
 const palette=ref(false)
-const airportNodes=computed(()=>airportNodeCounts(w.nodes.value,w.airports.value))
+const airportNodes=computed(()=>airportNodeCounts(w.airports.value))
 const airportNodeTotal=computed(()=>Object.values(airportNodes.value).reduce((sum,count)=>sum+count,0))
 const runningJobs=computed(()=>w.jobs.value.filter(j=>j.state==='running').length)
 // 侧栏任务区只回答三件事：在做什么、已处理多少、有没有需要注意的。不写“成功”，未确认启动时不画进度。

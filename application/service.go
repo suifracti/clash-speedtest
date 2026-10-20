@@ -1035,6 +1035,8 @@ func (s *AppService) ListAirports() ([]AirportDTO, error) {
 		totalNodes := 0
 		hasAnyCache := false
 		subDTOs := make([]SubscriptionDTO, 0, len(ap.Subscriptions))
+		// Subscriptions under one airport can mirror the same node inventory. Keep
+		// their individual counts, but use the largest one for the airport total.
 		for _, sub := range ap.Subscriptions {
 			if sub == nil {
 				continue
@@ -1043,11 +1045,15 @@ func (s *AppService) ListAirports() ([]AirportDTO, error) {
 			nodeCount := 0
 			if hasCache {
 				nodeCount = s.CountCachedNodes(sub.ID)
-				totalNodes += nodeCount
+				if nodeCount > totalNodes {
+					totalNodes = nodeCount
+				}
 				hasAnyCache = true
 			} else if s.profilePaths.HasCache(ap.ID) && len(ap.Subscriptions) == 1 {
 				nodeCount = s.CountCachedNodes(ap.ID)
-				totalNodes += nodeCount
+				if nodeCount > totalNodes {
+					totalNodes = nodeCount
+				}
 				hasAnyCache = true
 				hasCache = true
 			}

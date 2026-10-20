@@ -4,6 +4,7 @@ import '../../home-design.css'
 import {useWorkspace} from '../../workspace'
 import {date,isReputationRule,key,projectNames,targets,type NodeOption,type Project} from '../../domain'
 import {nodeDisplayName,nodeRegionLabel} from '../../nodePresentation'
+import {airportNodeCount} from '../../airportViewing'
 import Icon from '../Icon.vue'
 import UiSelect from '../UiSelect.vue'
 import ServicePicker from '../ServicePicker.vue'
@@ -19,6 +20,7 @@ const chosen=m.chosen,overview=ref<InstanceType<typeof SubscriptionOverview>>()
 const sites=computed(()=>targets.filter(t=>w.displayTargets.value.includes(t.id)))
 const catalog=computed(()=>w.catalog.value.filter(r=>!isReputationRule(r)))
 const projects:Project[]=['combined','latency','download','service']
+const chosenNodeCount=computed(()=>chosen.value.reduce((count,airport)=>count+airportNodeCount(airport),0))
 const sorts=computed(()=>[{id:'region',label:'地区 → 机场'},{id:'airport',label:'机场 → 地区'},{id:'name',label:'名称'},
  ...(['latency','combined'].includes(w.project.value)?[{id:'latency',label:'已保存延迟 / 监测'}]:[]),
  ...(['download','combined'].includes(w.project.value)?[{id:'download',label:'最近下载速度'}]:[]),
@@ -45,7 +47,7 @@ const more=ref<HTMLDetailsElement>(),moreSummary=ref<HTMLElement>()
 function closeMore(){if(!more.value?.open)return;more.value.open=false;moreSummary.value?.focus({preventScroll:true})}
 // 按机场筛选时，页头和来源带都切到这个机场，不再显示全部机场的汇总。
 const filteredAirport=computed(()=>w.airportFilter.value==='all'?undefined:chosen.value.find(a=>a.id===w.airportFilter.value))
-const filteredAirportNodes=computed(()=>w.proxyNodes.value.filter(n=>w.nodeAirportId(n)===w.airportFilter.value).length)
+const filteredAirportNodes=computed(()=>airportNodeCount(w.airports.value.find(airport=>airport.id===w.airportFilter.value)))
 watch([()=>w.airportFilter.value,overview],([id])=>{if(id!=='all')overview.value?.showAirport(id)},{flush:'post',immediate:true})
 const qualityFiltering=computed(()=>m.qualityGate.value!=='all'||m.qualitySort.value!=='existing')
 const focusKey=ref<string|null>(null)
@@ -102,7 +104,7 @@ function keyNav(e:KeyboardEvent){
       <div class="hd-title">
         <h1>线路工作台</h1>
         <p v-if="filteredAirport"><strong class="hd-head-airport">{{filteredAirport.name}}</strong> · {{filteredAirportNodes}} 个节点 · <button class="hd-link" @click="w.viewAirport('all')">看全部 {{chosen.length}} 个机场</button></p>
-        <p v-else><button class="hd-link" @click="m.picker.value=true">{{chosen.length?m.chosenNames.value:'选择机场'}}</button> · {{w.proxyNodes.value.length}} 个节点</p>
+        <p v-else><button class="hd-link" @click="m.picker.value=true">{{chosen.length?m.chosenNames.value:'选择机场'}}</button> · {{chosenNodeCount}} 个节点</p>
       </div>
     </header>
 
