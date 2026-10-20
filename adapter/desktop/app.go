@@ -19,17 +19,19 @@ import (
 	"github.com/faceair/clash-speedtest/core/policy"
 	"github.com/faceair/clash-speedtest/core/profiles"
 	"github.com/faceair/clash-speedtest/core/publicservice"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 var errAppNotInitialized = fmt.Errorf("应用服务未初始化")
 
 // App is the desktop adapter struct exposed to the Vue 3 frontend via Wails IPC.
 type App struct {
-	ctx          context.Context
-	app          *application.AppService
-	emitter      *WailsEventEmitter
-	profilePaths profiles.Paths
-	userAgent    string
+	notificationsReady bool
+	ctx                context.Context
+	app                *application.AppService
+	emitter            *WailsEventEmitter
+	profilePaths       profiles.Paths
+	userAgent          string
 }
 
 // NewApp creates a new desktop Wails binding application.
@@ -73,6 +75,9 @@ func (a *App) Startup(ctx context.Context) {
 
 // Shutdown is called by Wails on termination.
 func (a *App) Shutdown(ctx context.Context) {
+	if a != nil && a.notificationsReady {
+		wailsruntime.CleanupNotifications(a.ctx)
+	}
 	if a != nil && a.app != nil {
 		_ = a.app.Close()
 	}

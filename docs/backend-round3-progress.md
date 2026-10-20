@@ -72,5 +72,10 @@
 - 本机设置 `airport_monthly_prices` 保存月费，月费÷近 30 日已观测 GB 估算成本；未知/缺失不补零。
 - 复用历史和用量接口，界面明确统计口径；验证正常轮次与缺失历史，`go vet`、`go test ./...`、366 项前端测试及构建通过。
 
+## F3.4：本机通知
+- 设置 `local_notifications.{enabled,failure_percent,remaining_percent,expiry_days}`，默认关闭；桌面绑定 `EnableLocalNotifications/SendLocalNotification` 复用 Wails 原生通知。
+- 应用运行时读取已保存批次/已结束监测轮次与套餐，按阈值提醒失败、低余量和到期；相同告警本机去重，恢复后可再提醒。
+- 验证判断/去重与投递失败；`go vet`、`go test ./...`、368 项前端测试及构建通过。未触发系统授权或实机通知，未启用用户设置。
+
 ## 待定
 - 暂无新增保护或扩展项。

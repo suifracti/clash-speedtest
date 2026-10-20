@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {computed,onMounted,onBeforeUnmount,provide,ref} from 'vue'
+import {useLocalNotifications} from './localNotifications'
 import {api} from './api'
 import {createWorkspace,workspaceKey} from './workspace'
 import type {Page} from './domain'
@@ -19,7 +20,7 @@ import QueueModal from './components/QueueModal.vue'
 import CommandPalette from './components/CommandPalette.vue'
 import {projectNames} from './domain'
 import AirportSidebar from './components/AirportSidebar.vue'
-const w=createWorkspace();provide(workspaceKey,w)
+const w=createWorkspace();provide(workspaceKey,w);useLocalNotifications(w)
 const windowHidden=ref(document.hidden)
 function visibilityChanged(){windowHidden.value=document.hidden}
 const password=ref(''),loginError=ref(''),loggingIn=ref(false)

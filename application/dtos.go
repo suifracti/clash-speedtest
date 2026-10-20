@@ -344,19 +344,27 @@ type ProfileSetupDTO struct {
 	Migration         DataMigrationDTO   `json:"migration"`
 }
 
+type LocalNotificationSettings struct {
+	Enabled          bool    `json:"enabled"`
+	FailurePercent   float64 `json:"failure_percent"`
+	RemainingPercent float64 `json:"remaining_percent"`
+	ExpiryDays       int     `json:"expiry_days"`
+}
+
 // AppSettings represents user-configurable persistent settings.
 type AppSettings struct {
-	AirportMonthlyPrices           map[string]float64      `json:"airport_monthly_prices,omitempty"`
-	SubscriptionDailyUpdateEnabled *bool                   `json:"subscription_daily_update_enabled,omitempty"`
-	PreferredBrowser               string                  `json:"preferred_browser"` // "auto", "chrome", "edge", "default", or custom path
-	MonitorRetentionPolicy         monitor.RetentionPolicy `json:"monitor_retention_policy"`
-	MonitorRetentionCustomDays     int                     `json:"monitor_retention_custom_days"`
-	MonitorStorageWarningBytes     *int64                  `json:"monitor_storage_warning_bytes,omitempty"`
-	MonitorStorageHardBytes        *int64                  `json:"monitor_storage_hard_bytes,omitempty"`
-	MonitorBudgetMaxConcurrent     *int                    `json:"monitor_budget_max_concurrent,omitempty"`
-	MonitorBudgetResponseBytes     *int64                  `json:"monitor_budget_response_bytes,omitempty"`
-	FavoriteServices               []string                `json:"favorite_services,omitempty"`
-	SelectedProfileID              string                  `json:"selected_profile_id,omitempty"`
+	LocalNotifications             *LocalNotificationSettings `json:"local_notifications,omitempty"`
+	AirportMonthlyPrices           map[string]float64         `json:"airport_monthly_prices,omitempty"`
+	SubscriptionDailyUpdateEnabled *bool                      `json:"subscription_daily_update_enabled,omitempty"`
+	PreferredBrowser               string                     `json:"preferred_browser"` // "auto", "chrome", "edge", "default", or custom path
+	MonitorRetentionPolicy         monitor.RetentionPolicy    `json:"monitor_retention_policy"`
+	MonitorRetentionCustomDays     int                        `json:"monitor_retention_custom_days"`
+	MonitorStorageWarningBytes     *int64                     `json:"monitor_storage_warning_bytes,omitempty"`
+	MonitorStorageHardBytes        *int64                     `json:"monitor_storage_hard_bytes,omitempty"`
+	MonitorBudgetMaxConcurrent     *int                       `json:"monitor_budget_max_concurrent,omitempty"`
+	MonitorBudgetResponseBytes     *int64                     `json:"monitor_budget_response_bytes,omitempty"`
+	FavoriteServices               []string                   `json:"favorite_services,omitempty"`
+	SelectedProfileID              string                     `json:"selected_profile_id,omitempty"`
 }
 
 // ControllerConfigDTO configures connection to external proxy controller.
