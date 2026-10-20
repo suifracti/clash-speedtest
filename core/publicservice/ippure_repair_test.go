@@ -2,17 +2,24 @@ package publicservice
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"errors"
-	"github.com/faceair/clash-speedtest/core/monitor"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/faceair/clash-speedtest/core/monitor"
 )
 
 func TestIPPureV7UsesOfficialRiskAndAcceptsNormalNonceRefresh(t *testing.T) {
@@ -86,21 +93,86 @@ func TestIPPureV7NonceRotationStopsAtWebsiteLimit(t *testing.T) {
 }
 
 func TestIPPureBrowserTransportKeepsNodeDialAndCertificateValidation(t *testing.T) {
-	server := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("untrusted certificate reached HTTP") }))
-	server.EnableHTTP2 = true
-	server.StartTLS()
-	defer server.Close()
-	called := false
-	tr := &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-		called = true
-		return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
-	}}
-	client := &http.Client{Transport: ippureBrowserSession(tr), Timeout: time.Second}
-	defer client.CloseIdleConnections()
-	_, err := client.Get(ippureWebAPIBase + "/api/gateway/cf")
-	var certErr x509.UnknownAuthorityError
-	if !called || err == nil || !errors.As(err, &certErr) || !tr.DisableKeepAlives {
-		t.Fatalf("dial/certificate/original transport changed: called=%v err=%v", called, err)
+	for _, tc := range []struct {
+		name, certHost string
+		trusted        bool
+	}{
+		{"untrusted", "api.123169.xyz", false},
+		{"trusted", "api.123169.xyz", true},
+		{"wrong_hostname", "example.com", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), DNSNames: []string{tc.certHost}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+			der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cert, err := x509.ParseCertificate(der)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Explicit roots avoid platform-specific system verifier/error ordering.
+			roots := x509.NewCertPool()
+			if tc.trusted {
+				roots.AddCert(cert)
+			}
+			var dialCalls, httpCalls atomic.Int32
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				httpCalls.Add(1)
+				if r.ProtoMajor != 2 || r.Host != "api.123169.xyz" || r.TLS.ServerName != "api.123169.xyz" {
+					t.Error("HTTP/2 or original target identity was lost")
+				}
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			server.EnableHTTP2 = true
+			server.TLS = &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
+			server.StartTLS()
+			defer server.Close()
+			tr := &http.Transport{DisableKeepAlives: true, TLSClientConfig: &tls.Config{RootCAs: roots}, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+				dialCalls.Add(1)
+				if address != "api.123169.xyz:443" {
+					return nil, errors.New("unexpected fixture destination")
+				}
+				// Public host is request metadata only: every socket goes to loopback.
+				return (&net.Dialer{}).DialContext(ctx, "tcp", server.Listener.Addr().String())
+			}}
+			client := &http.Client{Transport: ippureBrowserSession(tr), Timeout: 2 * time.Second}
+			defer client.CloseIdleConnections()
+			if !ippureUsesBrowserSession(client.Transport) {
+				t.Fatal("browser session not installed")
+			}
+			resp, err := client.Get(ippureWebAPIBase + "/api/gateway/cf")
+			if resp != nil {
+				resp.Body.Close()
+			}
+			var authorityErr x509.UnknownAuthorityError
+			var hostnameErr x509.HostnameError
+			switch tc.name {
+			case "untrusted":
+				if !errors.As(err, &authorityErr) {
+					t.Fatalf("expected unknown authority: %v", err)
+				}
+			case "wrong_hostname":
+				if !errors.As(err, &hostnameErr) {
+					t.Fatalf("expected hostname rejection: %v", err)
+				}
+			default:
+				if err != nil || resp.StatusCode != http.StatusNoContent {
+					t.Fatalf("trusted local TLS failed: %v", err)
+				}
+			}
+			wantHTTP := int32(0)
+			if tc.name == "trusted" {
+				wantHTTP = 1
+			}
+			if dialCalls.Load() != 1 || httpCalls.Load() != wantHTTP || !tr.DisableKeepAlives {
+				t.Fatalf("dial/HTTP/original transport changed: dial=%d HTTP=%d", dialCalls.Load(), httpCalls.Load())
+			}
+		})
 	}
 }
 
