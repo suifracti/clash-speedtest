@@ -91,5 +91,9 @@
 - `RedactURL` 遮住 link/sub/subscribe/token 路径中的凭据，以及长不透明路径片段；不增加鉴权或限速。
 - 验证常见 token、编码斜线及普通路径；`go vet`、`go test ./...` 通过。
 
+## B6：删除旧 GUI 实现
+- 删除 `gui/server.go`、`gui/manager.go` 及只覆盖旧服务器/广播器的测试；CLI 启动器和现有导出功能保留。
+- 验证引用与 `go vet`、`go test ./...` 通过；未拆文件、合并测试或加自动清理。
+
 ## 待定
 - 暂无新增保护或扩展项。
