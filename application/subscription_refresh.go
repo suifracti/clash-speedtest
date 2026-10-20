@@ -923,6 +923,13 @@ func (s *AppService) refreshSubscriptionWithFetchLocked(ctx context.Context, air
 		return fail(err)
 	}
 	cachePath := s.profilePaths.CacheFile(sub.ID)
+	previousBody, _ := os.ReadFile(cachePath)
+	previousNodes, _ := subscriptionNodeList(previousBody)
+	currentNodes, err := subscriptionNodeList(body)
+	if err != nil {
+		return fail(err)
+	}
+	oldNodeVersions := sub.NodeVersions
 	cacheRecovery, err := createRefreshRecoveryCopy(cachePath)
 	if err != nil {
 		return fail(&refreshError{Code: "persist", Message: "旧节点缓存恢复副本无法创建；旧缓存保留"})
@@ -939,6 +946,7 @@ func (s *AppService) refreshSubscriptionWithFetchLocked(ctx context.Context, air
 		return fail(&refreshError{Code: "cache_write", Message: "节点缓存写入失败；旧缓存保留"})
 	}
 	now := time.Now()
+	sub.NodeVersions = &profiles.SubscriptionNodeVersions{Previous: previousNodes, Current: currentNodes}
 	sub.Usage = usage
 	sub.UpdatedAt = now
 	airport.UpdatedAt = now
@@ -948,6 +956,7 @@ func (s *AppService) refreshSubscriptionWithFetchLocked(ctx context.Context, air
 	if err = s.saveSubscriptionRefreshStore(store); err != nil {
 		cacheRollbackErr := s.restoreRefreshRecoveryCopy("cache", cacheRecovery)
 		storeRollbackErr := s.restoreRefreshStoreBytes(oldStoreBytes)
+		sub.NodeVersions = oldNodeVersions
 		sub.Usage, sub.UpdatedAt, airport.UpdatedAt = oldUsage, oldUpdatedAt, oldAirportUpdatedAt
 		sub.LastFailureAt, sub.LastFailureRetryAt, sub.LastFailureCode, sub.LastFailureMessage = oldFailureAt, oldRetryAt, oldFailureCode, oldFailureMessage
 		return fail(refreshRollbackError("订阅更新保存失败；旧缓存和订阅状态已恢复", errors.Join(cacheRollbackErr, storeRollbackErr)))
@@ -962,6 +971,7 @@ func (s *AppService) refreshSubscriptionWithFetchLocked(ctx context.Context, air
 	if err = s.saveUsageObservations(context.WithoutCancel(ctx), []subscriptionusage.Snapshot{snapshot}); err != nil {
 		cacheRollbackErr := s.restoreRefreshRecoveryCopy("cache", cacheRecovery)
 		storeRollbackErr := s.restoreRefreshStoreBytes(oldStoreBytes)
+		sub.NodeVersions = oldNodeVersions
 		sub.Usage, sub.UpdatedAt, airport.UpdatedAt = oldUsage, oldUpdatedAt, oldAirportUpdatedAt
 		sub.LastFailureAt, sub.LastFailureRetryAt, sub.LastFailureCode, sub.LastFailureMessage = oldFailureAt, oldRetryAt, oldFailureCode, oldFailureMessage
 		return fail(refreshRollbackError("用量历史保存失败；旧缓存和订阅状态已恢复", errors.Join(cacheRollbackErr, storeRollbackErr)))

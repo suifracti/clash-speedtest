@@ -469,3 +469,22 @@ func enrichSourceTLS(proxies []map[string]any, body []byte) {
 		}
 	}
 }
+
+// SubscriptionNodeConfigs parses a snapshot without connecting to any node.
+func SubscriptionNodeConfigs(body []byte) ([]map[string]any, error) {
+	cfg, err := parseConfigBody(body)
+	if err != nil {
+		if ValidateSubscriptionBody(body) == nil {
+			return []map[string]any{}, nil
+		}
+		return nil, err
+	}
+	nodes := make([]map[string]any, 0, len(cfg.Proxies))
+	for _, node := range cfg.Proxies {
+		name, _ := node["name"].(string)
+		if !isSubscriptionNoticeName(name) {
+			nodes = append(nodes, node)
+		}
+	}
+	return nodes, nil
+}

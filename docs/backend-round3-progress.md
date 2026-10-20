@@ -52,5 +52,10 @@
 - 匹配账户、节点、配置、来源及规则快照关键字段；无匹配返回 null，节点记录详情展示“和上次比”。
 - 验证：下载/服务匹配与无匹配、前端数值/结论和读取失败；`go vet`、`go test ./...`、361 项前端测试及构建通过。
 
+## F3.1：订阅节点变化
+- 成功更新保留 `node_versions.previous/current`，`node_changes.added/removed/renamed` 接入台账和来源带；点击查看名单。
+- Web `GET /api/airports/{id}/subscriptions/{subId}/changes`，Wails `GetSubscriptionNodeChanges`；公告排除，首次无旧列表只建立基线。
+- 验证：新增/下线/改名及刷新失败保留上一版；`go vet`、`go test ./...`、362 项前端测试及构建通过。
+
 ## 待定
 - 暂无新增保护或扩展项。

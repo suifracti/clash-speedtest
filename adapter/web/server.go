@@ -192,6 +192,7 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("DELETE /api/airports/{id}/subscriptions/{subId}", s.handleDeleteSubscription)
 	mux.HandleFunc("POST /api/airports/{id}/subscriptions/{subId}/refresh", s.handleRefreshSubscription)
 	mux.HandleFunc("POST /api/airports/{id}/subscriptions/{subId}/usage/refresh", s.handleRefreshAccountUsage)
+	mux.HandleFunc("GET /api/airports/{id}/subscriptions/{subId}/changes", s.handleSubscriptionNodeChanges)
 	mux.HandleFunc("GET /api/airports/{id}/subscriptions/{subId}/url", s.handleGetSubscriptionURL)
 	mux.HandleFunc("GET /api/subscriptions/{subId}/url", s.handleGetSubscriptionURL)
 
@@ -2415,4 +2416,13 @@ func (s *Server) handleCleanupWorkbenchHistory(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, map[string]any{
 		"deleted_count": deleted,
 	})
+}
+
+func (s *Server) handleSubscriptionNodeChanges(w http.ResponseWriter, r *http.Request) {
+	changes, err := s.app.GetSubscriptionNodeChanges(r.PathValue("id"), r.PathValue("subId"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, changes)
 }

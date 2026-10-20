@@ -264,18 +264,19 @@ type TokenStatusDTO struct {
 
 // SubscriptionDTO represents an individual subscription link under an airport.
 type SubscriptionDTO struct {
-	UserAgent     string                      `json:"user_agent"`
-	Usage         *profiles.SubscriptionUsage `json:"usage,omitempty"`
-	ID            string                      `json:"id"`
-	AirportID     string                      `json:"airport_id"`
-	Name          string                      `json:"name"`
-	URLDisplay    string                      `json:"url_display"`
-	URLConfigured bool                        `json:"url_configured"`
-	Note          string                      `json:"note,omitempty"`
-	UpdatedAt     time.Time                   `json:"updated_at,omitempty"`
-	NodeCount     int                         `json:"node_count"`
-	HasCache      bool                        `json:"has_cache"`
-	Status        string                      `json:"status"` // "normal", "error", "unfetched"
+	NodeChanges   *profiles.SubscriptionNodeChanges `json:"node_changes,omitempty"`
+	UserAgent     string                            `json:"user_agent"`
+	Usage         *profiles.SubscriptionUsage       `json:"usage,omitempty"`
+	ID            string                            `json:"id"`
+	AirportID     string                            `json:"airport_id"`
+	Name          string                            `json:"name"`
+	URLDisplay    string                            `json:"url_display"`
+	URLConfigured bool                              `json:"url_configured"`
+	Note          string                            `json:"note,omitempty"`
+	UpdatedAt     time.Time                         `json:"updated_at,omitempty"`
+	NodeCount     int                               `json:"node_count"`
+	HasCache      bool                              `json:"has_cache"`
+	Status        string                            `json:"status"` // "normal", "error", "unfetched"
 }
 
 // AirportDTO represents airport subscription status for GUI/API display.

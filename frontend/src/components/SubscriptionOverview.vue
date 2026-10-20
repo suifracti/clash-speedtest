@@ -4,6 +4,7 @@ import {api,type SubscriptionRefreshJob,type SubscriptionRefreshRequest} from '.
 import {bytes,date,subscriptionUsed,type Airport,type NodeOption} from '../domain'
 import {airportAccounts,noticesForAccount,safeAirportLink,parseNoticeUsage,type AirportAccount} from '../airportViewing'
 import {useWorkspace} from '../workspace'
+import SubscriptionChanges from './SubscriptionChanges.vue'
 import UiSelect from './UiSelect.vue'
 import Modal from './Modal.vue'
 import UsageDays from './UsageDays.vue'
@@ -285,7 +286,7 @@ defineExpose({cycleAirport,showAirport,viewedAirportName,usageRatio,viewedAccoun
                 <summary>更多入口 {{extraLinks.length}}</summary>
                 <div><a v-for="link in extraLinks" :key="link.label+link.url" :href="link.url" target="_blank" rel="noopener noreferrer">{{link.label}} ↗</a></div>
               </details>
-              <button v-if="accountNotices.length" class="text-button" @click="noticeOpen=true">公告 {{accountNotices.length}} ›</button>
+              <SubscriptionChanges :airport-id="selected.airport.id" :subscription="selected.subscription"/><button v-if="accountNotices.length" class="text-button" @click="noticeOpen=true">公告 {{accountNotices.length}} ›</button>
             </div>
           </div>
         </div>

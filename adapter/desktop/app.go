@@ -735,3 +735,10 @@ func desktopStartError(err error) error {
 	}{"not_accepted", 400, err.Error()})
 	return fmt.Errorf("CST_START_ERROR:%s", payload)
 }
+
+func (a *App) GetSubscriptionNodeChanges(airportID, subID string) (*profiles.SubscriptionNodeChanges, error) {
+	if a == nil || a.app == nil {
+		return nil, errAppNotInitialized
+	}
+	return a.app.GetSubscriptionNodeChanges(airportID, subID)
+}

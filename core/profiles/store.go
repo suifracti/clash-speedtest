@@ -18,17 +18,18 @@ const (
 )
 
 type Subscription struct {
-	UserAgent          string             `json:"user_agent,omitempty"`
-	LastFailureRetryAt time.Time          `json:"last_failure_retry_at,omitempty"`
-	LastFailureAt      time.Time          `json:"last_failure_at,omitempty"`
-	LastFailureCode    string             `json:"last_failure_code,omitempty"`
-	LastFailureMessage string             `json:"last_failure_message,omitempty"`
-	Usage              *SubscriptionUsage `json:"usage,omitempty"`
-	ID                 string             `json:"id"`
-	Name               string             `json:"name"`
-	URL                string             `json:"url"`
-	Note               string             `json:"note,omitempty"`
-	UpdatedAt          time.Time          `json:"updated_at,omitempty"`
+	NodeVersions       *SubscriptionNodeVersions `json:"node_versions,omitempty"`
+	UserAgent          string                    `json:"user_agent,omitempty"`
+	LastFailureRetryAt time.Time                 `json:"last_failure_retry_at,omitempty"`
+	LastFailureAt      time.Time                 `json:"last_failure_at,omitempty"`
+	LastFailureCode    string                    `json:"last_failure_code,omitempty"`
+	LastFailureMessage string                    `json:"last_failure_message,omitempty"`
+	Usage              *SubscriptionUsage        `json:"usage,omitempty"`
+	ID                 string                    `json:"id"`
+	Name               string                    `json:"name"`
+	URL                string                    `json:"url"`
+	Note               string                    `json:"note,omitempty"`
+	UpdatedAt          time.Time                 `json:"updated_at,omitempty"`
 }
 
 type Airport struct {

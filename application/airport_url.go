@@ -40,6 +40,7 @@ func subscriptionDTO(airportID string, sub *profiles.Subscription, nodeCount int
 		}
 	}
 	return SubscriptionDTO{
+		NodeChanges:   sub.NodeVersions.Changes(),
 		UserAgent:     sub.UserAgent,
 		Usage:         sub.Usage,
 		ID:            sub.ID,

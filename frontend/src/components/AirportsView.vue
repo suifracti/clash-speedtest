@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SubscriptionChanges from './SubscriptionChanges.vue'
 import UiSelect from './UiSelect.vue'
 import {computed,onBeforeUnmount,onMounted,ref} from 'vue'
 import {api,desktop,request,type SubscriptionRefreshJob} from '../api'
@@ -66,7 +67,7 @@ onBeforeUnmount(()=>{disposed=true;clearTimeout(refreshTimer)})
     <div class="cst-ledger-account">
       <strong>{{s.name}}</strong>
       <small><span :class="s.status==='error'?'bad':''">{{s.status==='error'?'更新失败':s.has_cache?'已缓存':'尚未更新'}}</span> · {{s.node_count}} 条配置 · {{date(s.updated_at)}}</small>
-      <code :title="s.url_display">{{s.url_display}}</code>
+      <code :title="s.url_display">{{s.url_display}}</code><SubscriptionChanges :airport-id="a.id" :subscription="s"/>
     </div>
     <div class="cst-ledger-quota">
       <template v-if="s.usage&&(used(s)!==null||noticeUsage(a,s).remaining==null&&noticeUsage(a,s).used==null)"><span><strong>{{used(s)===null?'已用未知':bytes(used(s)!)}}</strong><template v-if="s.usage.total"> / {{bytes(s.usage.total)}}</template></span><div v-if="s.usage.total&&used(s)!==null" class="cst-meter" role="meter" aria-label="套餐已用比例" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Math.round(usagePercent(s))"><i :class="{warn:usagePercent(s)>85}" :style="{width:`${usagePercent(s)}%`}"/></div><small v-if="s.usage.total">{{remaining(s)===null?'剩余未知':'剩余 '+bytes(remaining(s)!)}}</small><small v-else>机场未返回总量</small></template>
