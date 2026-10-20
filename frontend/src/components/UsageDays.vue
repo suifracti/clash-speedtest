@@ -3,11 +3,12 @@ import {computed,ref,watch} from 'vue'
 import {bytes} from '../domain'
 import {accountDailyUsage,shanghaiDay,shiftDay,type DayUsage,type UsageSnapshot} from '../usageDaily'
 const props=withDefaults(defineProps<{airportId:string;subscriptionId:string;days?:number;chart?:boolean;summary?:boolean;refreshVersion?:number}>(),{days:14,chart:false,summary:false,refreshVersion:0})
+const emit=defineEmits<{account:[value:UsageSnapshot|undefined]}>()
 const series=ref<DayUsage[]>([]),account=ref<UsageSnapshot>(),error=ref(''),loading=ref(false)
 let generation=0
 async function load(){
  const current=++generation;loading.value=true;error.value=''
- try{const r=await accountDailyUsage(props.airportId,props.subscriptionId,props.days);if(current!==generation)return;series.value=r.days;account.value=r.account}
+ try{const r=await accountDailyUsage(props.airportId,props.subscriptionId,props.days);if(current!==generation)return;series.value=r.days;account.value=r.account;emit('account',r.account)}
  catch(e){if(current===generation)error.value=e instanceof Error?e.message:String(e)}
  finally{if(current===generation)loading.value=false}
 }

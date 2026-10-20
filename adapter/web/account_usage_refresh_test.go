@@ -44,15 +44,18 @@ func accountUsageFixture(t *testing.T, providerURL string, cached bool) (*Server
 
 func TestRefreshOneAccountUsageKeepsNodesAndOtherAccounts(t *testing.T) {
 	var requests atomic.Int32
+	var failed atomic.Bool
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
+		if failed.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
 		if r.UserAgent() != "account-fixture" {
 			t.Errorf("per-account UA ignored: %q", r.UserAgent())
 		}
 		w.Header().Set("Subscription-Userinfo", "upload=0;download=1100;total=6000")
-		w.WriteHeader(http.StatusOK)
-		w.(http.Flusher).Flush()
-		<-r.Context().Done()
+		_, _ = w.Write([]byte(validRefreshBody))
 	}))
 	defer provider.Close()
 	server, paths, at := accountUsageFixture(t, provider.URL, true)
@@ -102,39 +105,14 @@ func TestRefreshOneAccountUsageKeepsNodesAndOtherAccounts(t *testing.T) {
 	if len(report.Accounts) != 1 || !observed {
 		t.Fatalf("usage change not recorded once: %+v", report)
 	}
-}
-
-func TestAccountUsageOnlySupportsEmptyAndPartialResponsesWithoutCache(t *testing.T) {
-	for _, test := range []struct{ name, header, want string }{{"empty body with counters", "upload=0;download=0;total=6000", "ok"}, {"partial counters", "download=1100;total=6000", "partial"}, {"no headers", "", "missing"}} {
-		t.Run(test.name, func(t *testing.T) {
-			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if test.header != "" {
-					w.Header().Set("Subscription-Userinfo", test.header)
-				}
-			}))
-			defer provider.Close()
-			server, paths, at := accountUsageFixture(t, provider.URL, false)
-			response := performRefreshRequest(server.Handler(), http.MethodPost, "/api/airports/a/subscriptions/one/usage/refresh", "")
-			if response.Code != http.StatusOK {
-				t.Fatalf("usage endpoint: %d %s", response.Code, response.Body.String())
-			}
-			var result struct {
-				Observation subscriptionusage.Snapshot `json:"observation"`
-			}
-			_ = json.Unmarshal(response.Body.Bytes(), &result)
-			if result.Observation.Status != test.want {
-				t.Fatalf("usage status=%q want %q", result.Observation.Status, test.want)
-			}
-			if test.want != "ok" && result.Observation.Upload != nil {
-				t.Fatal("missing upload became zero")
-			}
-			if paths.HasCache("one") {
-				t.Fatal("usage refresh created node cache")
-			}
-			saved, _ := profiles.LoadStore(paths.StoreFile())
-			if !saved.Get("a").GetSubscription("one").UpdatedAt.Equal(at) {
-				t.Fatal("usage refresh changed node timestamp")
-			}
-		})
+	failed.Store(true)
+	response = performRefreshRequest(server.Handler(), http.MethodPost, "/api/airports/a/subscriptions/one/usage/refresh", "")
+	if response.Code == http.StatusOK {
+		t.Fatal("provider failure reported as success")
 	}
+	saved, _ := profiles.LoadStore(paths.StoreFile())
+	if *saved.Get("a").GetSubscription("one").Usage.Download != 1100 {
+		t.Fatal("failed fetch replaced known usage")
+	}
+
 }

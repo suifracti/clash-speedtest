@@ -32,7 +32,7 @@ func DefaultUserAgent() string {
 }
 
 func FetchSubscription(rawURL, userAgent string) ([]byte, error) {
-	body, _, err := fetchSubscriptionPrimaryContext(context.Background(), rawURL, userAgent, false)
+	body, _, err := fetchSubscriptionPrimaryContext(context.Background(), rawURL, userAgent)
 	return body, err
 }
 
@@ -41,21 +41,14 @@ func FetchSubscriptionWithUsage(rawURL, userAgent string) ([]byte, *Subscription
 }
 
 func FetchSubscriptionWithUsageContext(ctx context.Context, rawURL, userAgent string) ([]byte, *SubscriptionUsage, error) {
-	return fetchSubscriptionResponseContext(ctx, rawURL, userAgent, false)
+	return fetchSubscriptionResponseContext(ctx, rawURL, userAgent)
 }
 
-// FetchSubscriptionForUsageContext acquires account counters without requiring
-// a node body. A useful header ends the request immediately; otherwise the
-// bounded primary body remains available for subscription-notice accounting.
-func FetchSubscriptionForUsageContext(ctx context.Context, rawURL, userAgent string) ([]byte, *SubscriptionUsage, error) {
-	return fetchSubscriptionResponseContext(ctx, rawURL, userAgent, true)
-}
-
-func fetchSubscriptionResponseContext(ctx context.Context, rawURL, userAgent string, usageOnly bool) ([]byte, *SubscriptionUsage, error) {
+func fetchSubscriptionResponseContext(ctx context.Context, rawURL, userAgent string) ([]byte, *SubscriptionUsage, error) {
 	// Share one deadline between the primary download and the optional headers.
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	body, usage, err := fetchSubscriptionPrimaryContext(ctx, rawURL, userAgent, usageOnly)
+	body, usage, err := fetchSubscriptionPrimaryContext(ctx, rawURL, userAgent)
 	if err != nil || usageHeaderScore(usage) > 0 {
 		return body, usage, err
 	}
@@ -63,7 +56,7 @@ func fetchSubscriptionResponseContext(ctx context.Context, rawURL, userAgent str
 	return body, usage, err
 }
 
-func fetchSubscriptionPrimaryContext(ctx context.Context, rawURL, userAgent string, usageOnly bool) ([]byte, *SubscriptionUsage, error) {
+func fetchSubscriptionPrimaryContext(ctx context.Context, rawURL, userAgent string) ([]byte, *SubscriptionUsage, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSpace(rawURL), nil)
 	if err != nil {
 		return nil, nil, err
@@ -96,10 +89,6 @@ func fetchSubscriptionPrimaryContext(ctx context.Context, rawURL, userAgent stri
 		}
 		return nil, nil, &FetchHTTPError{Status: resp.StatusCode, RetryAfterUntil: retryAt}
 	}
-	usage := parseSubscriptionUsageHeaders(resp.Header)
-	if usageOnly && usageHeaderScore(usage) > 0 {
-		return nil, usage, nil
-	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxSubscriptionBytes+1))
 	if evidence != nil {
 		evidence.BytesRead = len(body)
@@ -110,13 +99,13 @@ func fetchSubscriptionPrimaryContext(ctx context.Context, rawURL, userAgent stri
 	if len(body) > MaxSubscriptionBytes {
 		return nil, nil, &FetchBodyError{Reason: "subscription response exceeds 8 MiB"}
 	}
-	if len(body) == 0 && !usageOnly {
+	if len(body) == 0 {
 		return nil, nil, &FetchBodyError{Reason: "empty subscription body"}
 	}
 	if evidence != nil {
 		evidence.BodySHA256 = fmt.Sprintf("%x", sha256.Sum256(body))
 	}
-	return body, usage, nil
+	return body, parseSubscriptionUsageHeaders(resp.Header), nil
 }
 
 func RedactURL(raw string) string {
