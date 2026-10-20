@@ -54,9 +54,10 @@ describe('SubscriptionOverview status strip',()=>{
     expect(meter.attributes('aria-label')).toBe('套餐已用比例')
     expect(meter.attributes('aria-valuenow')).toBe('25')
     expect(meter.get('i').attributes('style')).toContain('width: 25%')
-    const readout=wrapper!.get('.subscription-quota-copy')
-    expect(readout.get('strong').text()).toBe('已用 1.0 KiB / 4.0 KiB')
-    expect(readout.get('small').text()).toBe('剩余 3.0 KiB')
+    const readout=wrapper!.get('.subscription-quota')
+    expect(readout.get('.subscription-quota-used').text()).toBe('已用1.0 KiB')
+    expect(readout.get('.subscription-quota-total').text()).toBe('总量4.0 KiB')
+    expect(readout.get('.subscription-quota-remaining').text()).toBe('剩余 3.0 KiB')
     expect((wrapper!.vm as unknown as {usageRatio:number|null}).usageRatio).toBe(0.25)
   })
 
