@@ -929,6 +929,14 @@ func (s *AppService) GetProfileSetup() (*ProfileSetupDTO, error) {
 		LockPresent:       status.LockPresent,
 		Migration:         migration,
 	}
+	if s.historyStore != nil && s.historyStore.DB() != nil {
+		dto.SchemaVersion = history.CurrentSchemaVersion
+	}
+	if data, err := os.ReadFile(filepath.Join(s.appPaths.DataRoot, "last-backup-at")); s.appPaths.DataRoot != "" && err == nil {
+		if stamp, err := time.Parse(time.RFC3339Nano, string(data)); err == nil {
+			dto.LastBackupAt = &stamp
+		}
+	}
 	if dto.DataRoot == "" && s.profilePaths.Dir != "" {
 		dto.DataRoot = filepath.Dir(s.profilePaths.Dir)
 	}

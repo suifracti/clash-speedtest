@@ -114,7 +114,10 @@ func (s *AppService) ExportDataBackup(ctx context.Context, destination io.Writer
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return archive.Close()
+	if err := archive.Close(); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(root, "last-backup-at"), []byte(time.Now().UTC().Format(time.RFC3339Nano)), 0600)
 }
 
 func appendBackupFile(archive *zip.Writer, name, path string, info os.FileInfo) error {

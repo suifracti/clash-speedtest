@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {computed,nextTick,ref,watch} from 'vue'
 import {api,backup,desktop,request,selectProfileSourceDirectory} from '../api'
+import {date} from '../domain'
 import {useWorkspace} from '../workspace'
 import Icon from './Icon.vue'
 import Modal from './Modal.vue'
@@ -21,7 +22,7 @@ async function refresh(){await perform('刷新状态',async()=>{await w.boot();i
 async function inspectPath(path:string){inspected.value=null;inspectedPath.value='';const result=await api.inspect(path);inspected.value=result;inspectedPath.value=path;feedback.value=result.available?'来源检查完成，请核对后确认导入':'来源不可用，请查看检查结果'}
 async function inspect(){const path=source.value.trim();if(!path)return;await perform('检查来源',()=>inspectPath(path))}
 async function browse(){await perform('选择来源',async()=>{const chosen=await selectProfileSourceDirectory();if(!chosen){feedback.value='已取消选择目录，当前来源保持不变';return}source.value=chosen;await inspectPath(chosen)})}
-async function exportBackup(){await perform('导出备份',async()=>{feedback.value=await backup()?'备份已导出':'已取消备份导出';if(feedback.value==='备份已导出')w.notify(feedback.value)})}
+async function exportBackup(){await perform('导出备份',async()=>{feedback.value=await backup()?'备份已导出':'已取消备份导出';if(feedback.value==='备份已导出'){w.notify(feedback.value);w.setup.value=await api.setup()}})}
 async function openFolder(){await perform('打开数据目录',async()=>{await request('/api/data/open-folder','POST',undefined,'OpenDataFolder');feedback.value='已请求打开数据目录'})}
 async function refreshAfterMutation(){await w.boot();if(w.error.value)error.value=`操作已完成，但部分状态刷新失败：${w.error.value}`}
 async function initialize(){await perform('创建空白存储',async()=>{await api.initialize();feedback.value='空白存储已创建';await refreshAfterMutation()})}
@@ -35,7 +36,7 @@ async function apply(){const kind=confirmation.value;if(!kind||locked.value)retu
     <p v-if="pageError&&!confirmation" class="inline-error" role="alert">{{pageError}}</p>
     <p class="operation-status" role="status" aria-live="polite">{{operation?`正在${operation}…`:w.loading.value?'正在加载数据状态…':feedback||'操作前请核对来源与目标位置。'}}</p>
     <section class="settings-section data-storage-panel"><div class="section-heading"><h2>当前存储</h2><span class="badge" :class="{good:w.setup.value?.state==='ready'&&!pageError&&!w.loading.value}">{{setupLabel}}</span></div>
-      <dl class="path-list"><div><dt>数据根目录</dt><dd>{{w.setup.value?.data_root||'尚未读取'}}</dd></div><div><dt>订阅目录</dt><dd>{{w.setup.value?.profile_dir||'尚未读取'}}</dd></div><div><dt>历史目录</dt><dd>{{w.setup.value?.history_dir||'尚未读取'}}</dd></div><div><dt>设置文件</dt><dd>{{w.setup.value?.settings_file||'尚未读取'}}</dd></div><div><dt>数据库版本</dt><dd class="muted">暂无数据来源</dd></div><div><dt>最近备份</dt><dd class="muted">暂无数据来源（应用不记录导出时间）</dd></div></dl>
+      <dl class="path-list"><div><dt>数据根目录</dt><dd>{{w.setup.value?.data_root||'尚未读取'}}</dd></div><div><dt>订阅目录</dt><dd>{{w.setup.value?.profile_dir||'尚未读取'}}</dd></div><div><dt>历史目录</dt><dd>{{w.setup.value?.history_dir||'尚未读取'}}</dd></div><div><dt>设置文件</dt><dd>{{w.setup.value?.settings_file||'尚未读取'}}</dd></div><div><dt>数据库版本</dt><dd>{{w.setup.value?.schema_version??'尚未读取'}}</dd></div><div><dt>最近备份</dt><dd><time v-if="w.setup.value?.last_backup_at" :datetime="w.setup.value.last_backup_at">{{date(w.setup.value.last_backup_at)}}</time><span v-else>尚未备份</span></dd></div></dl>
       <div class="data-backup-actions"><div class="button-group"><button class="button" :disabled="locked||!w.setup.value?.data_root" @click="openFolder">打开数据目录</button><button class="button primary" :disabled="locked||!w.setup.value?.data_root" @click="exportBackup"><Icon name="download"/>导出备份</button></div>
       <p class="section-note">完整备份包含订阅、历史与设置；导出文件格式与保存方式沿用现有功能。下方订阅导入不等于完整备份恢复。</p></div>
     </section>

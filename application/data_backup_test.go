@@ -60,6 +60,10 @@ func TestDataBackupRestoresCommittedHistoryAndUserFiles(t *testing.T) {
 	if err := service.ExportDataBackup(ctx, &output); err != nil {
 		t.Fatal(err)
 	}
+	setup, err := service.GetProfileSetup()
+	if err != nil || setup.SchemaVersion != history.CurrentSchemaVersion || setup.LastBackupAt == nil {
+		t.Fatalf("backup metadata: %+v, err=%v", setup, err)
+	}
 	archive, err := zip.NewReader(bytes.NewReader(output.Bytes()), int64(output.Len()))
 	if err != nil {
 		t.Fatal(err)
@@ -112,6 +116,10 @@ func TestDataBackupRestoresCommittedHistoryAndUserFiles(t *testing.T) {
 	}
 	if err := service.ExportDataBackup(ctx, failingBackupWriter{}); err == nil {
 		t.Fatal("backup must report a destination write failure")
+	}
+	after, _ := service.GetProfileSetup()
+	if after.LastBackupAt == nil || !after.LastBackupAt.Equal(*setup.LastBackupAt) {
+		t.Fatal("failed export changed last backup timestamp")
 	}
 }
 

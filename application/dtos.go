@@ -334,6 +334,8 @@ type ProfileSetupDTO struct {
 	ProfileDir        string             `json:"profile_dir"`
 	HistoryDir        string             `json:"history_dir"`
 	SettingsFile      string             `json:"settings_file"`
+	SchemaVersion     int                `json:"schema_version,omitempty"`
+	LastBackupAt      *time.Time         `json:"last_backup_at,omitempty"`
 	UnfinishedStaging []string           `json:"unfinished_staging,omitempty"`
 	LockPresent       bool               `json:"lock_present"`
 	Error             string             `json:"error,omitempty"`
