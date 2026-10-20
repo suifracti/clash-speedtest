@@ -43,15 +43,20 @@ const remaining=computed(()=>{
   if(parsedNoticeUsage.value.remaining!==undefined)return parsedNoticeUsage.value.remaining
   return null
 })
-const remainingRatio=computed<number|null>(()=>{
-  if(total.value===undefined||!Number.isFinite(total.value)||total.value<=0||remaining.value===null||!Number.isFinite(remaining.value))return null
-  return Math.min(1,Math.max(0,remaining.value/total.value))
+const usedAmount=computed<number|null>(()=>{
+  if(used.value!==null&&Number.isFinite(used.value))return Math.max(0,used.value)
+  if(total.value!==undefined&&Number.isFinite(total.value)&&remaining.value!==null&&Number.isFinite(remaining.value))return Math.max(0,total.value-remaining.value)
+  return null
+})
+const usageRatio=computed<number|null>(()=>{
+  if(total.value===undefined||!Number.isFinite(total.value)||total.value<=0||usedAmount.value===null||!Number.isFinite(usedAmount.value))return null
+  return Math.min(1,Math.max(0,usedAmount.value/total.value))
 })
 const quotaLabel=computed(()=>{
-  if(remaining.value!==null&&total.value!==undefined)return `剩余 ${bytes(remaining.value)} / ${bytes(total.value)}`
+  if(usedAmount.value!==null&&total.value!==undefined)return `已用 ${bytes(usedAmount.value)} / ${bytes(total.value)}`
+  if(usedAmount.value!==null)return `已用 ${bytes(usedAmount.value)} / 总量未知`
+  if(total.value!==undefined)return `已用未知 / ${bytes(total.value)}`
   if(remaining.value!==null)return `剩余 ${bytes(remaining.value)} / 总量未知`
-  if(total.value!==undefined)return `剩余未知 / ${bytes(total.value)}`
-  if(used.value!==null)return `剩余与总量未知 · 已用 ${bytes(used.value)}`
   return '用量未知'
 })
 const expireLabel=computed(()=>{
@@ -257,7 +262,7 @@ watch(()=>workspace.airports.value,syncDefaultScope,{deep:true})
 watch(disclosureSummary,value=>emit('summary',value),{immediate:true})
 onMounted(()=>void loadJobs())
 onBeforeUnmount(()=>{disposed=true;clearTimeout(pollTimer)})
-defineExpose({cycleAirport,showAirport,viewedAirportName,remainingRatio,viewedAccount:selected})
+defineExpose({cycleAirport,showAirport,viewedAirportName,usageRatio,viewedAccount:selected})
 </script>
 
 <template>
@@ -272,9 +277,12 @@ defineExpose({cycleAirport,showAirport,viewedAirportName,remainingRatio,viewedAc
       </div>
 
       <div class="subscription-quota">
-        <span>{{quotaLabel}}</span>
-        <div v-if="remainingRatio!==null" class="usage-track" role="meter" aria-label="套餐剩余比例" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Math.round(remainingRatio*100)">
-          <i :style="{width:`${remainingRatio*100}%`}"/>
+        <div class="subscription-quota-copy">
+          <strong>{{quotaLabel}}</strong>
+          <small v-if="remaining!==null&&total!==undefined">剩余 {{bytes(remaining)}}</small>
+        </div>
+        <div v-if="usageRatio!==null" class="usage-track" role="meter" aria-label="套餐已用比例" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Math.round(usageRatio*100)">
+          <i :style="{width:`${usageRatio*100}%`}"/>
         </div>
       </div>
 
@@ -339,7 +347,7 @@ defineExpose({cycleAirport,showAirport,viewedAirportName,remainingRatio,viewedAc
 <style scoped>
 .subscription-overview{position:relative;display:flex;align-items:center;align-content:center;flex-wrap:wrap;gap:8px 12px;min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink)}
 .subscription-account{display:grid;gap:3px;min-width:105px;max-width:210px}.subscription-account>strong,.subscription-account>small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.subscription-account>strong{font-size:13px}.subscription-account>small{font-size:12px;color:var(--muted)}.subscription-account .ui-select{max-width:100%}.subscription-account .ui-select-trigger{min-height:30px;padding:4px 8px;font-size:12px}
-.subscription-quota{display:grid;gap:6px;flex:1 1 105px;min-width:100px;padding:7px 9px;border-radius:8px;background:var(--blue-soft);font-size:12px;font-variant-numeric:tabular-nums}.subscription-quota>span{color:var(--blue);font-size:13px;font-weight:600;line-height:1.3;letter-spacing:.005em}.usage-track{height:5px;overflow:hidden;border-radius:999px;background:var(--line)}.usage-track i{display:block;height:100%;border-radius:inherit;background:var(--blue);transition:width .35s ease}
+.subscription-quota{display:grid;gap:6px;flex:1 1 105px;min-width:100px;padding:7px 9px;border-radius:8px;background:var(--blue-soft);font-size:12px;font-variant-numeric:tabular-nums}.subscription-quota-copy{display:grid;gap:2px;min-width:0}.subscription-quota-copy>strong{color:var(--blue);font-size:13px;font-weight:600;line-height:1.3;letter-spacing:.005em}.subscription-quota-copy>small{color:var(--muted);font-size:11px;line-height:1.2}.usage-track{height:5px;overflow:hidden;border-radius:999px;background:var(--line)}.usage-track i{display:block;height:100%;border-radius:inherit;background:var(--blue);transition:width .35s ease}
 .subscription-facts,.subscription-actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;font-size:12px}.subscription-facts{color:var(--muted)}.subscription-facts a,.subscription-facts button{white-space:nowrap}.subscription-extra-links{position:relative}.subscription-extra-links summary{cursor:pointer;white-space:nowrap}.subscription-extra-links>div{position:absolute;top:calc(100% + 4px);right:0;z-index:10;display:grid;gap:7px;min-width:130px;padding:9px;border:1px solid var(--line);border-radius:8px;background:var(--surface);box-shadow:var(--shadow)}.subscription-actions .button{min-height:30px;padding:5px 9px;font-size:12px}.subscription-actions .badge{padding:4px 7px}.subscription-actions .text-button{font-size:12px}.subscription-message{flex:1 0 100%;color:var(--red);font-size:12px;overflow-wrap:anywhere}.subscription-issues{flex:1 0 100%;font-size:12px}.subscription-issues summary{width:max-content;max-width:100%;color:var(--red);cursor:pointer}.subscription-issues p{display:flex;flex-wrap:wrap;gap:4px 8px;margin:6px 0 0;line-height:1.5}.subscription-issues p small{flex:1 0 100%;color:var(--muted)}.issue-retries{display:flex;flex-wrap:wrap;gap:8px;margin-top:7px}.issue-retries button{font-size:12px}.status-read{font-size:12px}.refresh-scope{position:relative}.refresh-scope-panel{position:absolute;top:calc(100% + 5px);right:0;z-index:20;display:grid;gap:8px;width:min(310px,calc(100vw - 28px));max-height:250px;overflow:auto;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--surface);box-shadow:var(--shadow)}.refresh-scope-panel label{display:flex;align-items:center;gap:8px;font-size:12px;line-height:1.4}.refresh-scope-panel label span{overflow-wrap:anywhere}.refresh-scope-panel>.button{justify-self:start}.notice-row{padding:8px 0;border-bottom:1px solid var(--line)}.notice-row small{color:var(--muted)}.notice-row p{margin-top:4px;overflow-wrap:anywhere}
 @media(max-width:760px){.subscription-overview{align-items:flex-start;gap:8px 10px;padding:9px}.subscription-account{flex:1 1 120px;max-width:none}.subscription-quota{flex:1 1 115px}.subscription-facts,.subscription-actions{flex:1 1 100%}.subscription-actions{gap:6px}.refresh-scope-panel{left:0;right:auto}}
 </style>
