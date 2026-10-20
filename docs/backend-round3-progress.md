@@ -95,5 +95,10 @@
 - 删除 `gui/server.go`、`gui/manager.go` 及只覆盖旧服务器/广播器的测试；CLI 启动器和现有导出功能保留。
 - 验证引用与 `go vet`、`go test ./...` 通过；未拆文件、合并测试或加自动清理。
 
+## 收尾自检
+- 补上 `completed_with_issues/completed_with_save_failures` 批次的健康点与通知，避免失败批次被过滤。
+- `go vet`、`go test ./...`、368 项前端测试及构建通过；合成页面实看：首页、推荐、体检、监测、数据，12 个推荐候选，页面错误 0。
+- 截图留本机 `.ui-preview/round3-*.png`；未读取真实订阅、未运行真实检测、未替换当前 App；后续 CI 不阻塞推进。
+
 ## 待定
 - 暂无新增保护或扩展项。

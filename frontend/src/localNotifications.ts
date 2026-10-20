@@ -25,7 +25,7 @@ export function useLocalNotifications(w:Workspace){
  async function check(){
   const settings=w.settings.value?.local_notifications;if(!desktop()||!settings?.enabled)return
   try{
-   const health:HealthObservation[]=[],batches=await Promise.all(w.batches.value.filter(b=>b.state==='completed').map(async b=>{const detail=b.items?b:cache.get(b.batch_id)||await api.batch(b.batch_id);cache.set(b.batch_id,detail);return detail}))
+   const health:HealthObservation[]=[],batches=await Promise.all(w.batches.value.filter(b=>b.state.startsWith('completed')).map(async b=>{const detail=b.items?b:cache.get(b.batch_id)||await api.batch(b.batch_id);cache.set(b.batch_id,detail);return detail}))
    for(const a of w.airports.value){const ids=a.subscriptions?.map(s=>s.id)||[a.id],batch=batches.find(b=>b.items?.some(i=>ids.includes(i.profile_id))),items=batch?.items?.filter(i=>ids.includes(i.profile_id)&&i.result&&i.result.total_samples>0)||[];if(batch&&items.length)health.push({airportId:a.id,at:batch.requested_at,total:items.length,failed:items.filter(i=>i.result!.success_samples===0).length,source:'最近延迟批次'})}
    for(const job of w.jobs.value){
     const runs=await request<{run_id:string;finished_at?:string}[]>('','GET',undefined,'QueryMonitorRuns',[job.id,2]);const latest=runs?.find(r=>r.finished_at),run=latest?.run_id;if(!run)continue

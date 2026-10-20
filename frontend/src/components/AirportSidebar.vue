@@ -13,7 +13,7 @@ watch(()=>w.batches.value,async(rows,_,onCleanup)=>{
  try{
   const read:LatencyBatch[]=[],covered=new Set<string>()
   for(const row of rows){
-   if(row.state!=='completed')continue
+   if(!row.state.startsWith('completed'))continue
    const batch=row.items?row:cache.get(row.batch_id)||await api.batch(row.batch_id)
    if(cancelled)return
    cache.set(batch.batch_id,batch);read.push(batch)
