@@ -29,5 +29,7 @@ describe('SubscriptionOverview theme tokens',()=>{
     expect(declaration('.subscription-quota>span','font-weight')).toBe('600')
     expect(declaration('.usage-track','height')).toBe('5px')
     expect(declaration('.usage-track','border-radius')).toBe('999px')
+    expect(declaration('.subscription-quota','background')).toBe('var(--blue-soft)')
+    expect(declaration('.subscription-quota','border-radius')).toBe('8px')
   })
 })

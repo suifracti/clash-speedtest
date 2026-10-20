@@ -41,7 +41,20 @@ describe('SubscriptionOverview status strip',()=>{
     await flushPromises()
 
     expect(wrapper!.find('.usage-track').exists()).toBe(false)
-    expect((wrapper!.vm as unknown as {usageRatio:number|null}).usageRatio).toBeNull()
+    expect((wrapper!.vm as unknown as {remainingRatio:number|null}).remainingRatio).toBeNull()
+  })
+
+  it('shows the same remaining share in the quota meter as the readout',async()=>{
+    const workspace=createWorkspace()
+    workspace.airports.value=[airportA]
+    wrapper=mount(SubscriptionOverview,{props:{airports:[airportA],notices:[]},global:{provide:{[workspaceKey as symbol]:workspace}}})
+    await flushPromises()
+
+    const meter=wrapper!.get('[role="meter"]')
+    expect(meter.attributes('aria-label')).toBe('套餐剩余比例')
+    expect(meter.attributes('aria-valuenow')).toBe('75')
+    expect(meter.get('i').attributes('style')).toContain('width: 75%')
+    expect((wrapper!.vm as unknown as {remainingRatio:number|null}).remainingRatio).toBe(0.75)
   })
 
   it('sends selected and full workspace refresh scopes without changing measurement scope',async()=>{
