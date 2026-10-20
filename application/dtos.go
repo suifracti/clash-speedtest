@@ -346,6 +346,7 @@ type ProfileSetupDTO struct {
 
 // AppSettings represents user-configurable persistent settings.
 type AppSettings struct {
+	AirportMonthlyPrices           map[string]float64      `json:"airport_monthly_prices,omitempty"`
 	SubscriptionDailyUpdateEnabled *bool                   `json:"subscription_daily_update_enabled,omitempty"`
 	PreferredBrowser               string                  `json:"preferred_browser"` // "auto", "chrome", "edge", "default", or custom path
 	MonitorRetentionPolicy         monitor.RetentionPolicy `json:"monitor_retention_policy"`

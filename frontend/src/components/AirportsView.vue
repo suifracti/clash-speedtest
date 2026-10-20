@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import SubscriptionChanges from './SubscriptionChanges.vue'
+import AirportReport from './AirportReport.vue'
 import UiSelect from './UiSelect.vue'
 import {computed,onBeforeUnmount,onMounted,ref} from 'vue'
 import {api,desktop,request,type SubscriptionRefreshJob} from '../api'
@@ -53,7 +54,7 @@ function browse(a:Airport,s?:Subscription){w.setAirports([a.id]);if(s)w.subscrip
 onMounted(()=>void loadRefreshJobs())
 onBeforeUnmount(()=>{disposed=true;clearTimeout(refreshTimer)})
 </script>
-<template><section class="page-view airports-view"><div class="page-header"><div><h1>机场与账户</h1><p>每个订阅账户一行：套餐用量、到期、每日用量和更新状态。这里是机场账户计数，不是本工具的探测流量。</p></div><button v-if="section==='manage'&&refreshJob&&!refreshProgressVisible" class="button ghost" @click="refreshProgressVisible=true"><Icon name="refresh"/>查看刷新进度</button><button v-if="section==='manage'" class="button primary" @click="edit()"><Icon name="plus"/>添加机场</button></div><div class="subscription-view-tabs" role="group" aria-label="机场订阅视图"><button class="button" :class="{active:section==='manage'}" :aria-pressed="section==='manage'" @click="section='manage'">账户台账</button><button class="button" :class="{active:section==='usage'}" :aria-pressed="section==='usage'" @click="section='usage'">用量明细</button></div><SubscriptionUsageView v-if="section==='usage'"/><template v-else><div class="page-toolbar"><label class="search-field"><Icon name="search"/><input v-model="search" placeholder="搜索机场" aria-label="搜索机场"></label><span class="muted small">{{w.airports.value.length}} 个机场 · {{w.airports.value.reduce((n,x)=>n+(x.subscriptions?.length||1),0)}} 个账户</span></div>
+<template><section class="page-view airports-view"><div class="page-header"><div><h1>机场与账户</h1><p>每个订阅账户一行：套餐用量、到期、每日用量和更新状态。这里是机场账户计数，不是本工具的探测流量。</p></div><button v-if="section==='manage'&&refreshJob&&!refreshProgressVisible" class="button ghost" @click="refreshProgressVisible=true"><Icon name="refresh"/>查看刷新进度</button><button v-if="section==='manage'" class="button primary" @click="edit()"><Icon name="plus"/>添加机场</button></div><div class="subscription-view-tabs" role="group" aria-label="机场订阅视图"><button class="button" :class="{active:section==='manage'}" :aria-pressed="section==='manage'" @click="section='manage'">账户台账</button><button class="button" :class="{active:section==='usage'}" :aria-pressed="section==='usage'" @click="section='usage'">用量明细</button><button class="button" :class="{active:section==='report'}" :aria-pressed="section==='report'" @click="section='report'">体检</button></div><SubscriptionUsageView v-if="section==='usage'"/><AirportReport v-else-if="section==='report'"/><template v-else><div class="page-toolbar"><label class="search-field"><Icon name="search"/><input v-model="search" placeholder="搜索机场" aria-label="搜索机场"></label><span class="muted small">{{w.airports.value.length}} 个机场 · {{w.airports.value.reduce((n,x)=>n+(x.subscriptions?.length||1),0)}} 个账户</span></div>
 <div class="cst-ledger">
 <article v-for="a in visible" :key="a.id" class="airport-card cst-ledger-airport">
   <header class="cst-ledger-airport-head">
