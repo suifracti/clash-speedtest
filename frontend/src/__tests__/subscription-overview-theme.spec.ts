@@ -23,4 +23,11 @@ describe('SubscriptionOverview theme tokens',()=>{
     expect(style).not.toContain('--surface-muted')
     expect(style).not.toContain('--accent')
   })
+
+  it('gives the quota readout and progress bar a clearer visual hierarchy',()=>{
+    expect(declaration('.subscription-quota>span','font-size')).toBe('13px')
+    expect(declaration('.subscription-quota>span','font-weight')).toBe('600')
+    expect(declaration('.usage-track','height')).toBe('5px')
+    expect(declaration('.usage-track','border-radius')).toBe('999px')
+  })
 })
