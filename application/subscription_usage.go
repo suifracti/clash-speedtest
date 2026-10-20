@@ -129,21 +129,40 @@ func (s *AppService) seedSubscriptionUsageLocked(ctx context.Context, store *pro
 			continue
 		}
 		for _, sub := range ap.Subscriptions {
-			if sub == nil || sub.Usage == nil || sub.Usage.UpdatedAt.IsZero() || !profiles.IsHTTPURL(sub.URL) {
-				continue
-			}
-			exists, err := s.historyStore.HasSubscriptionUsage(ctx, usageAccountKey(sub.URL))
-			if err != nil {
+			if err := s.seedAccountUsageLocked(ctx, ap, sub); err != nil {
 				return err
-			}
-			if !exists {
-				if err := s.historyStore.SaveSubscriptionUsage(ctx, usageSnapshot(ap, sub, "ok", "cached_baseline", sub.Usage.UpdatedAt)); err != nil {
-					return err
-				}
 			}
 		}
 	}
 	return nil
+}
+
+func (s *AppService) seedAccountUsageLocked(ctx context.Context, ap *profiles.Airport, sub *profiles.Subscription) error {
+	if s == nil || s.historyStore == nil || sub == nil || sub.Usage == nil || sub.Usage.UpdatedAt.IsZero() || !profiles.IsHTTPURL(sub.URL) {
+		return nil
+	}
+	exists, err := s.historyStore.HasSubscriptionUsage(ctx, usageAccountKey(sub.URL))
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return s.historyStore.SaveSubscriptionUsage(ctx, usageSnapshot(ap, sub, "ok", "cached_baseline", sub.Usage.UpdatedAt))
+	}
+	return nil
+}
+
+func usageSnapshotWithNotice(ap *profiles.Airport, sub *profiles.Subscription, status, source string, at time.Time, body []byte) subscriptionusage.Snapshot {
+	snapshot := usageSnapshot(ap, sub, status, source, at)
+	if snapshot.Status == "missing" || snapshot.Status == "partial" {
+		if remaining, ok := noticeRemainingBytes(body); ok {
+			snapshot.Status = "ok"
+			snapshot.Source = "subscription_notice"
+			snapshot.CounterKind = "notice_remaining"
+			snapshot.Remaining = &remaining
+			snapshot.Message = "从订阅公告读取剩余流量；后续增量按余额下降估算"
+		}
+	}
+	return snapshot
 }
 
 func (s *AppService) saveUsageObservations(ctx context.Context, snapshots []subscriptionusage.Snapshot) error {

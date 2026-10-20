@@ -958,16 +958,7 @@ func (s *AppService) refreshSubscriptionWithFetchLocked(ctx context.Context, air
 	} else if usage == nil {
 		status = "missing"
 	}
-	snapshot := usageSnapshot(airport, sub, status, "subscription_update", now)
-	if snapshot.Status == "missing" || snapshot.Status == "partial" {
-		if remaining, ok := noticeRemainingBytes(body); ok {
-			snapshot.Status = "ok"
-			snapshot.Source = "subscription_notice"
-			snapshot.CounterKind = "notice_remaining"
-			snapshot.Remaining = &remaining
-			snapshot.Message = "从订阅公告读取剩余流量；后续增量按余额下降估算"
-		}
-	}
+	snapshot := usageSnapshotWithNotice(airport, sub, status, "subscription_update", now, body)
 	if err = s.saveUsageObservations(context.WithoutCancel(ctx), []subscriptionusage.Snapshot{snapshot}); err != nil {
 		cacheRollbackErr := s.restoreRefreshRecoveryCopy("cache", cacheRecovery)
 		storeRollbackErr := s.restoreRefreshStoreBytes(oldStoreBytes)

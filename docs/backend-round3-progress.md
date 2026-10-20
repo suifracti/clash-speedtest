@@ -55,6 +55,15 @@ Scope and order: [roadmap-round3.md](roadmap-round3.md). Tests use synthetic dat
 - An in-flight daily fetch also compares the stored UA before apply, preventing an older UA response from overwriting newer configuration. Other accounts retain their own/global preference.
 - Local Web/service fixtures cover persistence, no network/cache/timestamp changes on setting, manual and daily account isolation, reset to default, invalid control characters and stale-UA rejection. Full `go vet ./...` and `go test -race ./...` passed.
 
+- [GitHub matrix for 2626bd2](https://github.com/suifracti/clash-speedtest/actions/runs/39407721040) and [e5007fe](https://github.com/suifracti/clash-speedtest/actions/runs/39408599745) passed all three jobs.
+
+## B2.4 Account usage refresh independent of node updates
+
+- Web: `POST /api/airports/{id}/subscriptions/{subId}/usage/refresh`. Wails: `RefreshSubscriptionUsage(airportID, subscriptionID)`. Return shape: `{ "subscription": SubscriptionDTO, "observation": UsageSnapshot }`. The observation includes `status`, `captured_at`, `counter_kind`, nullable `upload`/`download`, optional `remaining`/`total`, `source` and `message`. For a notice-only provider, use the fresh observation's `remaining`; cached node notices are not a new usage reading.
+- The selected account's header usage and history update independently of its nodes. Cache bytes, cache presence, subscription `updated_at`, airport `updated_at` and other subscriptions remain unchanged. `usage.updated_at` and observation `captured_at` identify the usage reading separately. A useful primary usage header closes the response without consuming a node body, including an empty/streaming body; otherwise a bounded primary body can supply notice-balance accounting. The alternate UA still reads headers only.
+- Acquisition happens outside the profile lock. Cancelled or stale-source/UA/node/usage responses are rejected before apply; only one manual/daily usage collection proceeds at a time. The selected account's cached baseline is seeded when necessary, not every account. History-save failure restores profile state, and HTTP 429 preserves old counters while saving source cooldown.
+- Validation: local Web/service fixtures cover complete, zero, partial and missing headers, streamed/empty body, notices, account isolation, unchanged cache/timestamps, no cache creation, cancellation/free profile lock, stale UA/newer counters, rate limits and history-write rollback. Full `go vet ./...` and `go test -race ./...` passed. No real node probes or user-history writes were run.
+
 ## Next
 
-B2.4 per-account usage-only refresh. B3–B6 and backend support for subscription diffs, recommendations and native notifications remain pending.
+B3 runtime and backup metadata and same-condition history queries. B4–B6 and backend support for subscription diffs, recommendations and native notifications remain pending.
