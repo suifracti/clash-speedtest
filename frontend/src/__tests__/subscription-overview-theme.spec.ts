@@ -36,7 +36,7 @@ describe('SubscriptionOverview theme tokens',()=>{
     expect(declaration('.subscription-main','display')).toBe('grid')
     expect(declaration('.subscription-overview','padding')).toBe('8px 14px')
     expect(declaration('.subscription-overview','min-height')).toBe('120px')
-    expect(declaration('.subscription-main','grid-template-columns')).toBe('minmax(205px,1.2fr) minmax(150px,.95fr) minmax(210px,1.35fr) minmax(116px,.75fr)')
+    expect(declaration('.subscription-main','grid-template-columns')).toBe('minmax(175px,1fr) minmax(200px,1.25fr) minmax(190px,1.15fr) minmax(120px,.75fr)')
     expect(declaration('.subscription-remaining-value','font-size')).toBe('26px')
     expect(declaration('.subscription-remaining-value','color')).toBe('var(--blue)')
     expect(declaration('.subscription-remaining-percent','background')).toBe('var(--blue-soft)')
