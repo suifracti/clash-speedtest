@@ -68,6 +68,7 @@
 .hd-search svg{width:16px;height:16px;color:var(--hd-muted);transition:color .15s ease}
 .hd-search:focus-within svg{color:var(--hd-accent)}
 .hd .hd-search input{flex:1;min-width:0;border:0;outline:0;background:transparent;box-shadow:none;color:inherit;font:500 13px/1.2 var(--hd-font);height:100%;padding:0}
+.hd .hd-search input:focus{outline:none;box-shadow:none}
 .hd .hd-search input::placeholder{color:var(--hd-muted);font:400 12px/1.2 var(--hd-font);opacity:.85}
 .hd-run{margin-left:auto}
 .hd-more{background:var(--hd-panel);border:1px solid var(--hd-line);border-radius:var(--hd-radius)}

@@ -17,6 +17,8 @@ describe('home search styling',()=>{
     expect(declaration('.hd-search:focus-within','border-color')).toBe('var(--hd-accent)')
     expect(declaration('.hd-search:focus-within','box-shadow')).toContain('color-mix(')
     expect(declaration('.hd .hd-search input','font')).toBe('500 13px/1.2 var(--hd-font)')
+    expect(declaration('.hd .hd-search input:focus','outline')).toBe('none')
+    expect(declaration('.hd .hd-search input:focus','box-shadow')).toBe('none')
     expect(declaration('.hd .hd-search input::placeholder','color')).toBe('var(--hd-muted)')
     expect(declaration('.hd .hd-search input::placeholder','font')).toBe('400 12px/1.2 var(--hd-font)')
   })
