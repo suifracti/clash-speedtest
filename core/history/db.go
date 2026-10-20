@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -264,24 +265,17 @@ func (d *DB) SetTestBatchFailAt(n int) {
 
 // OpenDB opens (or creates) the SQLite database in the given directory and executes migrations.
 func OpenDB(dir string) (*DB, error) {
-	dbPath := filepath.Join(dir, "history.db")
-	db, err := sql.Open("sqlite", dbPath)
+	dbPath, err := filepath.Abs(filepath.Join(dir, "history.db"))
+	if err != nil {
+		return nil, fmt.Errorf("resolve history path: %w", err)
+	}
+	// modernc applies these options whenever the pool opens a connection.
+	// An Exec on sql.DB configures only whichever connection it happens to use.
+	params := url.Values{"_pragma": {"busy_timeout(5000)", "synchronous(NORMAL)", "foreign_keys(1)"}}
+	dsn := (&url.URL{Scheme: "file", Path: filepath.ToSlash(dbPath), RawQuery: params.Encode()}).String()
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite db at %s: %w", dbPath, err)
-	}
-
-	// Pragmas for WAL mode, high concurrency reading, and safe busy timeout
-	pragmas := []string{
-		"PRAGMA busy_timeout = 5000;",
-		"PRAGMA synchronous = NORMAL;",
-		"PRAGMA foreign_keys = ON;",
-	}
-
-	for _, pragma := range pragmas {
-		if _, err := db.Exec(pragma); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("execute pragma %q: %w", pragma, err)
-		}
 	}
 
 	// Initialize or upgrade the schema inside one explicit transaction. This
