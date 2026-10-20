@@ -20,6 +20,8 @@ const sites=computed(()=>targets.filter(t=>w.displayTargets.value.includes(t.id)
 const catalog=computed(()=>w.catalog.value.filter(r=>!isReputationRule(r)))
 const projects:Project[]=['combined','latency','download','service']
 const chosenNodeCount=computed(()=>chosen.value.reduce((count,airport)=>count+airportNodeCount(airport),0))
+const hasSourceNodes=computed(()=>w.proxyNodes.value.some(n=>w.airportFilter.value==='all'||w.nodeAirportId(n)===w.airportFilter.value))
+function clearFilters(){w.search.value='';w.region.value='all';w.excludeRegion.value=false;w.subscription.value='all';w.downloadFullOnly.value=false;m.protocolFilter.value='all';m.qualityGate.value='all';m.currentPage.value=1}
 const sorts=computed(()=>[{id:'region',label:'地区 → 机场'},{id:'airport',label:'机场 → 地区'},{id:'name',label:'名称'},
  ...(['latency','combined'].includes(w.project.value)?[{id:'latency',label:'已保存延迟 / 监测'}]:[]),
  ...(['download','combined'].includes(w.project.value)?[{id:'download',label:'最近下载速度'}]:[]),
@@ -202,7 +204,7 @@ function keyNav(e:KeyboardEvent){
             <span v-if="!m.visibleServices.value.length" role="cell" class="hd-num empty">未选服务</span>
           </template>
         </div>
-        <div v-if="!m.pageNodes.value.length" class="hd-empty"><Icon name="layers"/><strong>{{!chosen.length?'先选择一个机场':'没有符合条件的节点'}}</strong><button class="hd-btn" @click="!chosen.length?m.picker.value=true:w.search.value=''">{{!chosen.length?'选择机场':'清空搜索'}}</button></div>
+        <div v-if="!m.pageNodes.value.length" class="hd-empty"><Icon name="layers"/><strong>{{!chosen.length?'先选择一个机场':hasSourceNodes?'节点被筛选条件隐藏了':'这个机场还没有节点'}}</strong><button class="hd-btn" @click="!chosen.length?m.picker.value=true:hasSourceNodes?clearFilters():w.page.value='airports'">{{!chosen.length?'选择机场':hasSourceNodes?'清除筛选':'管理订阅'}}</button></div>
       </div>
       <div class="hd-resize" role="separator" aria-orientation="vertical" aria-label="调整检查器宽度" :aria-valuenow="sideWidth" :aria-valuemin="SIDE_MIN" :aria-valuemax="SIDE_MAX" tabindex="0" @pointerdown="startResize" @keydown.left.prevent="setSide(sideWidth+24)" @keydown.right.prevent="setSide(sideWidth-24)" @dblclick="setSide(420)"/>
       <NodeCompare v-if="m.compareOpen.value" class="hd-side"/>

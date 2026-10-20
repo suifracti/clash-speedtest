@@ -200,3 +200,5 @@ body.cst-resizing{cursor:col-resize;user-select:none}
 .hd-more-sites{grid-column:auto/span 2}
 .hd-orbit-logos span.dim{opacity:.35}
 .hd-head-airport{font-weight:600;color:var(--hd-text)}
+
+.hd-ins-others time{font-size:10px;color:var(--hd-muted);font-variant-numeric:tabular-nums}

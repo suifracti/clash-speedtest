@@ -203,3 +203,9 @@ describe('airport filter keeps the header and source strip on that airport (synt
     expect(wrapper.get('.hd-title p').text()).toContain('128 个节点')
   })
 })
+
+it('clears all node filters and distinguishes an airport with no nodes',async()=>{
+ const {wrapper,workspace}=attachHome();workspace.search.value='missing';workspace.region.value='US';workspace.excludeRegion.value=true;workspace.subscription.value='missing';workspace.downloadFullOnly.value=true
+ await flushPromises();expect(wrapper.get('.hd-empty').text()).toContain('节点被筛选条件隐藏了');await wrapper.get('.hd-empty button').trigger('click');expect(workspace.search.value).toBe('');expect(workspace.region.value).toBe('all');expect(workspace.excludeRegion.value).toBe(false);expect(workspace.subscription.value).toBe('all');expect(workspace.downloadFullOnly.value).toBe(false)
+ workspace.nodes.value=[];await flushPromises();expect(wrapper.get('.hd-empty').text()).toContain('这个机场还没有节点');await wrapper.get('.hd-empty button').trigger('click');expect(workspace.page.value).toBe('airports')
+})

@@ -17,7 +17,7 @@ import NodeDetailModal from './components/NodeDetailModal.vue'
 import QueueModal from './components/QueueModal.vue'
 import CommandPalette from './components/CommandPalette.vue'
 import {projectNames} from './domain'
-import {airportNodeCounts} from './airportViewing'
+import AirportSidebar from './components/AirportSidebar.vue'
 const w=createWorkspace();provide(workspaceKey,w)
 const windowHidden=ref(document.hidden)
 function visibilityChanged(){windowHidden.value=document.hidden}
@@ -25,8 +25,6 @@ const password=ref(''),loginError=ref(''),loggingIn=ref(false)
 const pages:{id:Page;label:string;icon:string}[]=[{id:'home',label:'线路工作台',icon:'home'},{id:'airports',label:'机场与账户',icon:'layers'},{id:'history',label:'检测记录',icon:'history'},{id:'monitor',label:'持续监测',icon:'monitor'}]
 const utilities:{id:Page;label:string;icon:string}[]=[{id:'settings',label:'偏好设置',icon:'settings'},{id:'data',label:'数据与备份',icon:'data'}]
 const palette=ref(false)
-const airportNodes=computed(()=>airportNodeCounts(w.airports.value))
-const airportNodeTotal=computed(()=>Object.values(airportNodes.value).reduce((sum,count)=>sum+count,0))
 const runningJobs=computed(()=>w.jobs.value.filter(j=>j.state==='running').length)
 // 侧栏任务区只回答三件事：在做什么、已处理多少、有没有需要注意的。不写“成功”，未确认启动时不画进度。
 const task=computed(()=>{
@@ -60,11 +58,7 @@ onBeforeUnmount(()=>{document.removeEventListener('visibilitychange',visibilityC
           <small v-if="p.id==='monitor'&&runningJobs" :aria-label="runningJobs+' 个监测任务运行中'">{{runningJobs}}</small>
         </button>
       </nav>
-      <section v-if="w.airports.value.length" class="cst-side-airports" aria-label="机场快捷切换">
-        <h2>机场</h2>
-        <button type="button" :aria-pressed="w.airportFilter.value==='all'" @click="w.viewAirport('all');navigate('home')"><span>全部机场</span><small>{{airportNodeTotal}}</small></button>
-        <button v-for="a in w.airports.value" :key="a.id" type="button" :title="'在工作台只看 '+a.name" :aria-pressed="w.airportFilter.value===a.id" @click="w.viewAirport(a.id);navigate('home')"><span>{{a.name}}</span><small>{{airportNodes[a.id]||0}}</small></button>
-      </section>
+      <AirportSidebar @select="id=>{w.viewAirport(id);navigate('home')}"/>
       <div class="cst-side-foot">
         <button class="cst-task" type="button" :class="task.state" :disabled="!w.queue.value.length&&!w.busy.value" :aria-label="'检测任务：'+task.title+(task.detail?'，'+task.detail:'')+(task.attention?'，'+task.attention:'')" @click="w.queueOpen.value=true">
           <span class="cst-task-title"><span v-if="task.state==='running'||task.state==='pending'" class="spinner"/>{{task.title}}</span>

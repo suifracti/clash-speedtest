@@ -35,7 +35,7 @@ const others=computed(()=>project.value==='combined'?[]:([
  {id:'latency' as const,name:'延迟',v:latencyVerdictValue.value},
  {id:'download' as const,name:'下载',v:downloadVerdict.value},
  {id:'service' as const,name:'服务',v:serviceVerdict.value},
-]).filter(o=>o.id!==project.value))
+]).filter(o=>o.id!==project.value).map(o=>({...o,at:m.rowPoints(props.node,o.id).reduce((at,p)=>Date.parse(p.time)>Date.parse(at||'1970-01-01')?p.time:at,'')})))
 const runText=computed(()=>project.value==='combined'?'检测这个节点':m.runLabel(project.value))
 const attempts=computed(()=>m.qualityData.value[key(props.node)]?.services||w.services.value[key(props.node)]||[])
 const readError=computed(()=>m.qualityErrors.value[key(props.node)])
@@ -146,7 +146,7 @@ function run(){m.closeHover();w.openPlan([props.node])}
       </template>
       <InlineHistory v-else :node="node" :nodes="m.visibleNodes.value" :project="m.hoverMode.value" :source="m.inlineHistorySource.value" :monitor-service-id="m.hoverService.value" :anchor-points="m.hoverPoints.value" :target-ids="m.hoverMode.value==='latency'&&m.hoverTarget.value!=='all'?[m.hoverTarget.value]:w.displayTargets.value" :service-ids="m.displayServices.value.map(s=>s.service_id)"/>
     </div>
-    <nav v-if="others.length" class="hd-ins-others" aria-label="其他项目摘要"><span>其他项目</span><button v-for="o in others" :key="o.id" type="button" :title="'切到'+o.name+'：'+o.v.detail" @click="w.project.value=o.id"><small>{{o.name}}</small><strong :class="o.v.tone">{{o.v.label}}</strong></button></nav>
+    <nav v-if="others.length" class="hd-ins-others" aria-label="其他项目摘要"><span>其他项目</span><button v-for="o in others" :key="o.id" type="button" :title="'切到'+o.name+'：'+o.v.detail+' · '+date(o.at)" @click="w.project.value=o.id"><small>{{o.name}}</small><strong :class="o.v.tone">{{o.v.label}}</strong><time v-if="o.at" :datetime="o.at">{{date(o.at)}}</time><small v-else>尚未测量</small></button></nav>
     <p class="hd-legend"><span class="good">{{toneLabel('good')}}</span><span class="warn">{{toneLabel('warn')}}</span><span class="bad">{{toneLabel('bad')}}</span><span class="empty">{{toneLabel('empty')}}</span></p>
   </section>
 </template>
