@@ -14,9 +14,10 @@ function declaration(selector:string,property:string){
 }
 
 describe('SubscriptionOverview theme tokens',()=>{
-  it('uses the shared surface and foreground tokens for the compact status strip',()=>{
+  it('uses the shared surface and foreground tokens for the subscription card',()=>{
     expect(declaration('.subscription-overview','background')).toBe('var(--surface)')
     expect(declaration('.subscription-overview','color')).toBe('var(--ink)')
+    expect(declaration('.subscription-overview','display')).toBe('grid')
     expect(declaration('.subscription-account>small','color')).toBe('var(--muted)')
     expect(declaration('.usage-track','background')).toBe('var(--blue-soft)')
     expect(declaration('.usage-track i','background')).toBe('var(--blue)')
@@ -24,14 +25,16 @@ describe('SubscriptionOverview theme tokens',()=>{
     expect(style).not.toContain('--accent')
   })
 
-  it('gives the quota readout and progress bar a clearer visual hierarchy',()=>{
-    expect(declaration('.subscription-quota-line','display')).toBe('flex')
-    expect(declaration('.subscription-quota-used>strong','font-size')).toBe('13px')
-    expect(declaration('.subscription-quota-used>strong','font-weight')).toBe('600')
-    expect(declaration('.subscription-quota-used>strong','color')).toBe('var(--blue)')
-    expect(declaration('.subscription-quota-total>strong','color')).toBe('var(--ink)')
-    expect(declaration('.subscription-quota-remaining','color')).toBe('var(--muted)')
-    expect(declaration('.usage-track','height')).toBe('6px')
+  it('makes the remaining amount primary and reserves a labeled daily chart column',()=>{
+    expect(declaration('.subscription-main','display')).toBe('grid')
+    expect(declaration('.subscription-main','grid-template-columns')).toBe('minmax(180px,1fr) minmax(260px,1.45fr) minmax(190px,.9fr)')
+    expect(declaration('.subscription-remaining-value','font-size')).toBe('36px')
+    expect(declaration('.subscription-remaining-value','color')).toBe('var(--blue)')
+    expect(declaration('.subscription-remaining-percent','background')).toBe('var(--blue-soft)')
+    expect(declaration('.subscription-quota-line','justify-content')).toBe('flex-end')
+    expect(declaration('.subscription-quota-used>strong,.subscription-quota-total>strong','color')).toBe('var(--ink)')
+    expect(declaration('.subscription-daily','border-left')).toBe('1px solid var(--line)')
+    expect(declaration('.usage-track','height')).toBe('16px')
     expect(declaration('.usage-track','border-radius')).toBe('999px')
     expect(declaration('.usage-track','background')).toBe('var(--blue-soft)')
     expect(declaration('.subscription-quota','background')).toBeUndefined()

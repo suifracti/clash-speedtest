@@ -6,6 +6,7 @@ import {airportAccounts,noticesForAccount,safeAirportLink,parseNoticeUsage,type 
 import {useWorkspace} from '../workspace'
 import UiSelect from './UiSelect.vue'
 import Modal from './Modal.vue'
+import UsageDays from './UsageDays.vue'
 
 const props=defineProps<{airports:Airport[];notices:NodeOption[]}>()
 type SubscriptionDisclosureSummary={refreshState:'loading'|'ready'|'error';noticeCount:number;expiredAccountCount:number;unknownExpiryAccountCount:number;failedItemCount:number;interruptedItemCount:number;runningItemCount:number;latestRefreshIssueAccount?:string;latestRefreshIssueState?:'failed'|'interrupted'}
@@ -51,6 +52,10 @@ const usedAmount=computed<number|null>(()=>{
 const usageRatio=computed<number|null>(()=>{
   if(total.value===undefined||!Number.isFinite(total.value)||total.value<=0||usedAmount.value===null||!Number.isFinite(usedAmount.value))return null
   return Math.min(1,Math.max(0,usedAmount.value/total.value))
+})
+const remainingRatio=computed<number|null>(()=>{
+  if(total.value===undefined||!Number.isFinite(total.value)||total.value<=0||remaining.value===null||!Number.isFinite(remaining.value))return null
+  return Math.min(1,Math.max(0,remaining.value/total.value))
 })
 const expireLabel=computed(()=>{
   const expire=usage.value?.expire
@@ -261,33 +266,52 @@ defineExpose({cycleAirport,showAirport,viewedAirportName,usageRatio,viewedAccoun
 <template>
   <section class="subscription-overview" aria-label="首页订阅账户状态">
     <template v-if="selected">
-      <div class="subscription-account">
-        <UiSelect v-if="accounts.length>1" v-model="selectedKey" aria-label="首页用量订阅">
-          <option v-for="entry in accounts" :key="entry.key" :value="entry.key">{{entry.subscription.name}}</option>
-        </UiSelect>
-        <strong v-else>{{selected.subscription.name}}</strong>
-        <small>{{sourceLabel}} · {{updatedAtLabel}}</small>
-      </div>
-
-      <div class="subscription-quota">
-        <div class="subscription-quota-line">
-          <div class="subscription-quota-used"><span>已用</span><strong>{{usedAmount===null?'未知':bytes(usedAmount)}}</strong></div>
-          <div class="subscription-quota-total"><span>总量</span><strong>{{total===undefined?'未知':bytes(total)}}</strong></div>
+      <header class="subscription-heading">
+        <div class="subscription-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 4.5-9 4.5-9-4.5L12 3Z"/><path d="m3 12 9 4.5 9-4.5"/><path d="m3 16.5 9 4.5 9-4.5"/></svg>
         </div>
-        <div v-if="usageRatio!==null" class="usage-track" role="meter" aria-label="套餐已用比例" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Math.round(usageRatio*100)">
-          <i :style="{width:`${usageRatio*100}%`}"/>
+        <div class="subscription-account">
+          <UiSelect v-if="accounts.length>1" v-model="selectedKey" aria-label="首页用量订阅">
+            <option v-for="entry in accounts" :key="entry.key" :value="entry.key">{{entry.subscription.name}}</option>
+          </UiSelect>
+          <strong v-else>{{selected.subscription.name}}</strong>
+          <small>{{sourceLabel}} · {{updatedAtLabel}}</small>
         </div>
-        <small v-if="remaining!==null&&total!==undefined" class="subscription-quota-remaining">剩余 {{bytes(remaining)}}</small>
-      </div>
+        <div class="subscription-facts">
+          <span class="subscription-expiry">{{expireLabel}}</span>
+          <a v-if="officialLink" :href="officialLink" target="_blank" rel="noopener noreferrer">官网 ↗</a>
+          <details v-if="extraLinks.length" class="subscription-extra-links">
+            <summary>更多入口 {{extraLinks.length}}</summary>
+            <div><a v-for="link in extraLinks" :key="link.label+link.url" :href="link.url" target="_blank" rel="noopener noreferrer">{{link.label}} ↗</a></div>
+          </details>
+          <button v-if="accountNotices.length" class="text-button" @click="noticeOpen=true">公告 {{accountNotices.length}} ›</button>
+        </div>
+      </header>
 
-      <div class="subscription-facts">
-        <span>{{expireLabel}}</span>
-        <a v-if="officialLink" :href="officialLink" target="_blank" rel="noopener noreferrer">官网 ↗</a>
-        <details v-if="extraLinks.length" class="subscription-extra-links">
-          <summary>更多入口 {{extraLinks.length}}</summary>
-          <div><a v-for="link in extraLinks" :key="link.label+link.url" :href="link.url" target="_blank" rel="noopener noreferrer">{{link.label}} ↗</a></div>
-        </details>
-        <button v-if="accountNotices.length" class="text-button" @click="noticeOpen=true">公告 {{accountNotices.length}}</button>
+      <div class="subscription-main">
+        <div class="subscription-remaining">
+          <span class="subscription-remaining-label">剩余可用流量</span>
+          <strong class="subscription-remaining-value">{{remaining===null?'未知':bytes(remaining)}}</strong>
+          <span v-if="remainingRatio!==null" class="subscription-remaining-percent">{{(remainingRatio*100).toFixed(2)}}% 可用</span>
+        </div>
+
+        <div class="subscription-quota">
+          <div class="subscription-quota-line">
+            <span>已用 {{usedAmount===null?'未知':bytes(usedAmount)}} / 总量 {{total===undefined?'未知':bytes(total)}}</span>
+          </div>
+          <div v-if="remainingRatio!==null" class="usage-track" role="meter" aria-label="套餐剩余比例" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Math.round(remainingRatio*100)">
+            <i :style="{width:`${remainingRatio*100}%`}"/>
+          </div>
+          <div class="subscription-quota-legend">
+            <div class="subscription-quota-used"><i aria-hidden="true"/><span>已使用</span><strong>{{usedAmount===null?'未知':bytes(usedAmount)}}</strong></div>
+            <div class="subscription-quota-total"><i aria-hidden="true"/><span>总量</span><strong>{{total===undefined?'未知':bytes(total)}}</strong></div>
+          </div>
+        </div>
+
+        <div class="subscription-daily">
+          <h3>近 3 日用量</h3>
+          <UsageDays :airport-id="selected.airport.id" :subscription-id="selected.subscription.id" :days="3" :refresh-version="workspace.usageRefreshVersion.value" summary/>
+        </div>
       </div>
 
       <div class="subscription-actions">
@@ -339,9 +363,14 @@ defineExpose({cycleAirport,showAirport,viewedAirportName,usageRatio,viewedAccoun
 </template>
 
 <style scoped>
-.subscription-overview{position:relative;display:flex;align-items:center;align-content:center;flex-wrap:wrap;gap:8px 12px;min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink)}
-.subscription-account{display:grid;gap:3px;min-width:105px;max-width:210px}.subscription-account>strong,.subscription-account>small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.subscription-account>strong{font-size:13px}.subscription-account>small{font-size:12px;color:var(--muted)}.subscription-account .ui-select{max-width:100%}.subscription-account .ui-select-trigger{min-height:30px;padding:4px 8px;font-size:12px}
-.subscription-quota{display:grid;gap:5px;flex:1 1 105px;min-width:100px;font-size:12px;font-variant-numeric:tabular-nums}.subscription-quota-line{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:3px 12px;min-width:0}.subscription-quota-used,.subscription-quota-total{display:flex;align-items:baseline;gap:5px;min-width:0;white-space:nowrap}.subscription-quota-used>span,.subscription-quota-total>span{color:var(--muted);font-size:11px}.subscription-quota-used>strong{color:var(--blue);font-size:13px;font-weight:600;line-height:1.3;letter-spacing:.005em}.subscription-quota-total>strong{color:var(--ink);font-size:12px;font-weight:500}.subscription-quota-remaining{display:block;color:var(--muted);font-size:11px;line-height:1.2}.usage-track{height:6px;overflow:hidden;border-radius:999px;background:var(--blue-soft)}.usage-track i{display:block;height:100%;border-radius:inherit;background:var(--blue);transition:width .35s ease}
-.subscription-facts,.subscription-actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;font-size:12px}.subscription-facts{color:var(--muted)}.subscription-facts a,.subscription-facts button{white-space:nowrap}.subscription-extra-links{position:relative}.subscription-extra-links summary{cursor:pointer;white-space:nowrap}.subscription-extra-links>div{position:absolute;top:calc(100% + 4px);right:0;z-index:10;display:grid;gap:7px;min-width:130px;padding:9px;border:1px solid var(--line);border-radius:8px;background:var(--surface);box-shadow:var(--shadow)}.subscription-actions .button{min-height:30px;padding:5px 9px;font-size:12px}.subscription-actions .badge{padding:4px 7px}.subscription-actions .text-button{font-size:12px}.subscription-message{flex:1 0 100%;color:var(--red);font-size:12px;overflow-wrap:anywhere}.subscription-issues{flex:1 0 100%;font-size:12px}.subscription-issues summary{width:max-content;max-width:100%;color:var(--red);cursor:pointer}.subscription-issues p{display:flex;flex-wrap:wrap;gap:4px 8px;margin:6px 0 0;line-height:1.5}.subscription-issues p small{flex:1 0 100%;color:var(--muted)}.issue-retries{display:flex;flex-wrap:wrap;gap:8px;margin-top:7px}.issue-retries button{font-size:12px}.status-read{font-size:12px}.refresh-scope{position:relative}.refresh-scope-panel{position:absolute;top:calc(100% + 5px);right:0;z-index:20;display:grid;gap:8px;width:min(310px,calc(100vw - 28px));max-height:250px;overflow:auto;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--surface);box-shadow:var(--shadow)}.refresh-scope-panel label{display:flex;align-items:center;gap:8px;font-size:12px;line-height:1.4}.refresh-scope-panel label span{overflow-wrap:anywhere}.refresh-scope-panel>.button{justify-self:start}.notice-row{padding:8px 0;border-bottom:1px solid var(--line)}.notice-row small{color:var(--muted)}.notice-row p{margin-top:4px;overflow-wrap:anywhere}
-@media(max-width:760px){.subscription-overview{align-items:flex-start;gap:8px 10px;padding:9px}.subscription-account{flex:1 1 120px;max-width:none}.subscription-quota{flex:1 1 115px}.subscription-facts,.subscription-actions{flex:1 1 100%}.subscription-actions{gap:6px}.refresh-scope-panel{left:0;right:auto}}
+.subscription-overview{position:relative;display:grid;gap:18px;min-width:0;padding:18px 20px;border:1px solid var(--line);border-radius:16px;background:var(--surface);color:var(--ink);font-variant-numeric:tabular-nums;box-shadow:0 2px 10px rgba(27,49,79,.045)}
+.subscription-heading{display:flex;align-items:center;gap:12px;min-width:0}.subscription-icon{display:grid;place-items:center;flex:none;width:48px;height:48px;border-radius:12px;background:var(--blue-soft);color:var(--blue)}.subscription-icon svg{width:28px;height:28px}
+.subscription-account{display:grid;gap:3px;min-width:105px;max-width:320px}.subscription-account>strong,.subscription-account>small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.subscription-account>strong{font-size:19px;font-weight:650}.subscription-account>small{font-size:12px;color:var(--muted)}.subscription-account .ui-select{max-width:100%}.subscription-account .ui-select-trigger{min-height:34px;padding:3px 8px;font-size:18px;font-weight:650}
+.subscription-facts{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:6px 16px;margin-left:auto;color:var(--muted);font-size:13px}.subscription-facts a,.subscription-facts button{white-space:nowrap}.subscription-expiry{padding-right:14px;border-right:1px solid var(--line)}.subscription-extra-links{position:relative}.subscription-extra-links summary{cursor:pointer;white-space:nowrap}.subscription-extra-links>div{position:absolute;top:calc(100% + 4px);right:0;z-index:10;display:grid;gap:7px;min-width:130px;padding:9px;border:1px solid var(--line);border-radius:8px;background:var(--surface);box-shadow:var(--shadow)}
+.subscription-main{display:grid;grid-template-columns:minmax(180px,1fr) minmax(260px,1.45fr) minmax(190px,.9fr);align-items:stretch;gap:24px;padding:16px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}.subscription-remaining{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:7px;min-width:0}.subscription-remaining-label{font-size:13px;color:var(--muted)}.subscription-remaining-value{max-width:100%;color:var(--blue);font-size:36px;font-weight:700;line-height:1.08;letter-spacing:-.035em;white-space:nowrap}.subscription-remaining-percent{display:inline-flex;align-items:center;min-height:26px;padding:3px 10px;border-radius:8px;background:var(--blue-soft);color:var(--blue);font-size:13px;font-weight:600;white-space:nowrap}
+.subscription-quota{display:flex;flex-direction:column;justify-content:center;gap:14px;min-width:0;font-size:12px}.subscription-quota-line{display:flex;align-items:baseline;justify-content:flex-end;gap:4px;min-width:0;color:var(--muted);font-size:13px;white-space:nowrap}.usage-track{height:16px;overflow:hidden;border-radius:999px;background:var(--blue-soft);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--blue) 7%,transparent)}.usage-track i{display:block;height:100%;border-radius:inherit;background:var(--blue);transition:width .35s ease}.subscription-quota-legend{display:flex;justify-content:space-between;gap:12px}.subscription-quota-used,.subscription-quota-total{display:grid;grid-template-columns:10px auto;align-items:center;column-gap:7px;min-width:0;color:var(--muted);font-size:12px}.subscription-quota-used>i,.subscription-quota-total>i{grid-row:span 2;width:10px;height:10px;border-radius:50%;background:var(--blue-soft)}.subscription-quota-total>i{background:var(--blue)}.subscription-quota-used>strong,.subscription-quota-total>strong{grid-column:2;color:var(--ink);font-size:13px;font-weight:500;white-space:nowrap}
+.subscription-daily{display:flex;flex-direction:column;justify-content:center;gap:7px;min-width:0;padding-left:18px;border-left:1px solid var(--line)}.subscription-daily h3{margin:0;color:var(--muted);font-size:13px;font-weight:600}
+.subscription-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px 10px;font-size:12px}.subscription-actions .button{min-height:34px;padding:6px 12px;font-size:13px}.subscription-actions .badge{padding:5px 9px}.subscription-actions .text-button{font-size:12px}.subscription-message{grid-column:1/-1;color:var(--red);font-size:12px;overflow-wrap:anywhere}.subscription-issues{grid-column:1/-1;font-size:12px}.subscription-issues summary{width:max-content;max-width:100%;color:var(--red);cursor:pointer}.subscription-issues p{display:flex;flex-wrap:wrap;gap:4px 8px;margin:6px 0 0;line-height:1.5}.subscription-issues p small{flex:1 0 100%;color:var(--muted)}.issue-retries{display:flex;flex-wrap:wrap;gap:8px;margin-top:7px}.issue-retries button{font-size:12px}.status-read{font-size:12px}.refresh-scope{position:relative}.refresh-scope-panel{position:absolute;top:calc(100% + 5px);right:0;z-index:20;display:grid;gap:8px;width:min(310px,calc(100vw - 28px));max-height:250px;overflow:auto;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--surface);box-shadow:var(--shadow)}.refresh-scope-panel label{display:flex;align-items:center;gap:8px;font-size:12px;line-height:1.4}.refresh-scope-panel label span{overflow-wrap:anywhere}.refresh-scope-panel>.button{justify-self:start}.notice-row{padding:8px 0;border-bottom:1px solid var(--line)}.notice-row small{color:var(--muted)}.notice-row p{margin-top:4px;overflow-wrap:anywhere}
+@media(max-width:1200px){.subscription-overview{padding:16px}.subscription-main{grid-template-columns:minmax(170px,1fr) minmax(240px,1.3fr)}.subscription-daily{grid-column:1/-1;padding:12px 0 0;border-top:1px solid var(--line);border-left:0}.subscription-daily :deep(.cst-usage-summary){max-width:420px}}
+@media(max-width:760px){.subscription-overview{gap:14px;padding:14px}.subscription-heading{flex-wrap:wrap}.subscription-account{flex:1 1 160px;max-width:none}.subscription-facts{flex:1 0 100%;justify-content:flex-start;margin-left:0}.subscription-main{grid-template-columns:minmax(0,1fr);gap:14px;padding:14px 0}.subscription-remaining-value{font-size:32px}.subscription-quota{gap:10px}.subscription-quota-line{justify-content:flex-start;flex-wrap:wrap;white-space:normal}.subscription-daily{grid-column:auto;padding:12px 0 0;border-top:1px solid var(--line)}.subscription-actions{gap:6px}.refresh-scope-panel{left:0;right:auto}}
 </style>

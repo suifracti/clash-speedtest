@@ -13,7 +13,6 @@ import NodeActivity from '../NodeActivity.vue'
 import SiteDisplayPicker from '../SiteDisplayPicker.vue'
 import NodeInspector from './NodeInspector.vue'
 import NodeCompare from './NodeCompare.vue'
-import UsageDays from '../UsageDays.vue'
 import {homeModelKey,latencyVerdict,type Verdict} from './homeModel'
 const w=useWorkspace(),m=inject(homeModelKey)!
 const chosen=m.chosen,overview=ref<InstanceType<typeof SubscriptionOverview>>()
@@ -114,7 +113,6 @@ function keyNav(e:KeyboardEvent){
         <span class="hd-orbit-text"><strong>{{overview?.viewedAirportName||'选择机场'}}</strong><small>{{filteredAirport?(chosen.length>1?'只看这个机场 · 点击换下一个':'只看这个机场'):chosen.length>1?'点击切换 · 共 '+chosen.length+' 个机场':'可同时选择多个机场'}}</small></span>
       </button>
       <SubscriptionOverview ref="overview" :airports="chosen" :notices="w.notices.value" @viewed="id=>{if(w.airportFilter.value!=='all')w.airportFilter.value=id}"/>
-      <div v-if="overview?.viewedAccount" class="hd-usage"><h3>账户用量</h3><UsageDays :airport-id="overview.viewedAccount.airport.id" :subscription-id="overview.viewedAccount.subscription.id" :days="3" :refresh-version="w.usageRefreshVersion.value"/></div>
     </section>
 
     <div class="hd-toolbar">

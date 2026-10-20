@@ -5,9 +5,14 @@ import {createWorkspace,workspaceKey} from '../workspace'
 import type {Airport} from '../domain'
 
 const refreshMocks=vi.hoisted(()=>({refreshJobs:vi.fn(async():Promise<any[]>=>[]),startRefresh:vi.fn(),refreshJob:vi.fn(),cancelRefresh:vi.fn()}))
+const usageMocks=vi.hoisted(()=>({accountDailyUsage:vi.fn()}))
 vi.mock('../api',async importOriginal=>{
   const actual=await importOriginal<typeof import('../api')>()
   return {...actual,api:{...actual.api,...refreshMocks}}
+})
+vi.mock('../usageDaily',async importOriginal=>{
+  const actual=await importOriginal<typeof import('../usageDaily')>()
+  return {...actual,accountDailyUsage:usageMocks.accountDailyUsage}
 })
 
 let wrapper:VueWrapper|undefined
@@ -25,6 +30,11 @@ const airportB:Airport={
 
 beforeEach(()=>{
   window.localStorage.clear()
+  usageMocks.accountDailyUsage.mockReset().mockResolvedValue({account:{account_key:'a',airport_id:'airport-a',subscription_id:'account-a1',airport_name:'Airport A',subscription_name:'Account A1',captured_at:'2026-10-20T00:00:00Z',status:'ok',counter_kind:'notice_remaining',upload:null,download:null,source:'subscription'},report:undefined,days:[
+    {date:'2026-10-20',label:'今天',bytes:1024,estimated:false,recorded:true},
+    {date:'2026-10-19',label:'昨天',bytes:2048,estimated:false,recorded:true},
+    {date:'2026-10-18',label:'前天',bytes:null,estimated:false,recorded:false},
+  ]})
   refreshMocks.refreshJobs.mockReset().mockResolvedValue([])
   refreshMocks.startRefresh.mockReset().mockResolvedValue({id:'scope-job',state:'finished',created_at:'2026-10-12T00:00:00Z',completed:0,success:0,failed:0,cancelled:0,not_executed:0,cancel_requested:false,items:[]})
   refreshMocks.refreshJob.mockReset()
@@ -44,20 +54,24 @@ describe('SubscriptionOverview status strip',()=>{
     expect((wrapper!.vm as unknown as {usageRatio:number|null}).usageRatio).toBeNull()
   })
 
-  it('shows used quota in the same proportion as the meter and keeps remaining as a secondary readout',async()=>{
+  it('shows remaining quota as the large value, links the bar to availability and includes recent daily usage',async()=>{
     const workspace=createWorkspace()
     workspace.airports.value=[airportA]
     wrapper=mount(SubscriptionOverview,{props:{airports:[airportA],notices:[]},global:{provide:{[workspaceKey as symbol]:workspace}}})
     await flushPromises()
 
     const meter=wrapper!.get('[role="meter"]')
-    expect(meter.attributes('aria-label')).toBe('套餐已用比例')
-    expect(meter.attributes('aria-valuenow')).toBe('25')
-    expect(meter.get('i').attributes('style')).toContain('width: 25%')
+    expect(wrapper!.get('.subscription-remaining-value').text()).toBe('3.0 KiB')
+    expect(wrapper!.get('.subscription-remaining-percent').text()).toBe('75.00% 可用')
+    expect(meter.attributes('aria-label')).toBe('套餐剩余比例')
+    expect(meter.attributes('aria-valuenow')).toBe('75')
+    expect(meter.get('i').attributes('style')).toContain('width: 75%')
     const readout=wrapper!.get('.subscription-quota')
-    expect(readout.get('.subscription-quota-used').text()).toBe('已用1.0 KiB')
+    expect(readout.get('.subscription-quota-used').text()).toBe('已使用1.0 KiB')
     expect(readout.get('.subscription-quota-total').text()).toBe('总量4.0 KiB')
-    expect(readout.get('.subscription-quota-remaining').text()).toBe('剩余 3.0 KiB')
+    expect(wrapper!.get('.subscription-daily').text()).toContain('近 3 日用量')
+    expect(wrapper!.findAll('.cst-usage-day')).toHaveLength(3)
+    expect(usageMocks.accountDailyUsage).toHaveBeenCalledWith('airport-a','account-a1',3)
     expect((wrapper!.vm as unknown as {usageRatio:number|null}).usageRatio).toBe(0.25)
   })
 
