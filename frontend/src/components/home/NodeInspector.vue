@@ -130,7 +130,7 @@ function run(){m.closeHover();w.openPlan([props.node])}
       <div v-for="s in m.displayServices.value" :key="s.service_id" class="hd-site hd-service-row">
         <button class="hd-site-name" :title="s.name" @click="m.showService(node,s.service_id)">{{s.name}}</button>
         <button class="hd-site-value" :class="m.serviceTone(node,s.service_id)" @click="m.showService(node,s.service_id)">{{m.serviceMetric(node,s.service_id)}}</button>
-        <RecordedBars :points="m.servicePoints(node,s.service_id).filter(point=>!point.id.startsWith('planned:')).slice(-12)" :label="s.name+' 实际检测记录'"/>
+        <RecordedBars :service-id="s.service_id" :points="m.servicePoints(node,s.service_id).filter(point=>!point.id.startsWith('planned:')).slice(-12)" :label="s.name+' 实际检测记录'"/>
       </div>
     </div>
 

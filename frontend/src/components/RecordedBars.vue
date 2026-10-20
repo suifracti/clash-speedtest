@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import {date} from '../domain'
 import type {TrendPoint} from '../presentation'
-defineProps<{points:TrendPoint[];label:string}>()
-const value=(point:TrendPoint)=>point.attempts?.some(a=>['challenge','suspected_challenge'].includes(a.result?.outcome||''))?null:point.value
+const props=defineProps<{points:TrendPoint[];label:string;serviceId:string}>()
+const value=(point:TrendPoint)=>point.attempts?.some(a=>(a.service_id||a.rule.service_id)===props.serviceId&&['challenge','suspected_challenge'].includes(a.result?.outcome||''))?null:point.value
 const conclusion=(point:TrendPoint)=>value(point)===1?'可用':value(point)===0?'不可用':'无法判断'
 </script>
 <template>
