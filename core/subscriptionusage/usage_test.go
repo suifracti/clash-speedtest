@@ -52,6 +52,47 @@ func TestDailyUsageKeepsResetsMissingAndGapsUnknown(t *testing.T) {
 	}
 }
 
+func TestNoticeRemainingUsageUsesItsOwnBaselineAndReset(t *testing.T) {
+	remaining := func(n int64) *int64 { return &n }
+	notice := func(at string, n int64) Snapshot {
+		when, _ := time.Parse(time.RFC3339, at)
+		return Snapshot{AccountKey: "a", AirportName: "机场", SubscriptionName: "订阅", CapturedAt: when, Status: "ok", Source: "subscription_notice", CounterKind: "notice_remaining", Remaining: remaining(n)}
+	}
+	header := func(at string, up, down int64) Snapshot {
+		s := fixture("a", at, up, down)
+		s.CounterKind = "subscription_header"
+		return s
+	}
+	s := []Snapshot{
+		notice("2026-10-20T00:05:00+08:00", 1024),   // baseline
+		notice("2026-10-20T00:15:00+08:00", 800),    // inferred decrease
+		notice("2026-10-20T00:25:00+08:00", 900),    // reset/top-up
+		notice("2026-10-20T00:35:00+08:00", 850),    // inferred after reset
+		header("2026-10-20T00:45:00+08:00", 10, 20), // new counter source is a baseline
+		header("2026-10-20T00:55:00+08:00", 15, 45),
+	}
+	a, b, _ := ParseRange("2026-10-20", "2026-10-20", "day")
+	r := Build(s, a, b, "day")
+	if r.ObservedBytes == nil || *r.ObservedBytes != 304 {
+		t.Fatalf("inferred and provider deltas were not kept: %+v", r)
+	}
+	statuses := map[string]Interval{}
+	for _, interval := range r.Intervals {
+		statuses[interval.Until.Format(time.RFC3339)] = interval
+	}
+	inferred := statuses["2026-10-20T00:15:00+08:00"]
+	if inferred.Status != "observed" || inferred.Bytes == nil || *inferred.Bytes != 224 || !inferred.Estimated || inferred.Upload != nil || inferred.Download != nil {
+		t.Fatalf("notice decrease should be clearly inferred without upload/download split: %+v", inferred)
+	}
+	reset := statuses["2026-10-20T00:25:00+08:00"]
+	if reset.Status != "reset" || reset.Bytes != nil {
+		t.Fatalf("remaining increase should be unknown reset/top-up: %+v", reset)
+	}
+	if got := statuses["2026-10-20T00:45:00+08:00"]; got.Status != "baseline" || got.Bytes != nil {
+		t.Fatalf("switching back to provider counters must start a new baseline: %+v", got)
+	}
+}
+
 func TestWeeklyMonthlyUsageDoesNotSplitBoundaryIntervals(t *testing.T) {
 	s := []Snapshot{fixture("a", "2026-09-30T00:05:00+08:00", 0, 100), fixture("a", "2026-10-01T00:05:00+08:00", 0, 160), fixture("a", "2026-10-03T00:05:00+08:00", 0, 200)}
 	a, b, _ := ParseRange("2026-09-28", "2026-10-04", "week")

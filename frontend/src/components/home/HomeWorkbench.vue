@@ -101,12 +101,12 @@ function keyNav(e:KeyboardEvent){
         <span class="hd-orbit-text"><strong>{{overview?.viewedAirportName||'选择机场'}}</strong><small>{{chosen.length>1?'点击切换 · 共 '+chosen.length+' 个机场':'可同时选择多个机场'}}</small></span>
       </button>
       <SubscriptionOverview ref="overview" :airports="chosen" :notices="w.notices.value"/>
-      <div v-if="overview?.viewedAccount" class="hd-usage"><h3>账户用量</h3><UsageDays :airport-id="overview.viewedAccount.airport.id" :subscription-id="overview.viewedAccount.subscription.id" :days="3"/></div>
+      <div v-if="overview?.viewedAccount" class="hd-usage"><h3>账户用量</h3><UsageDays :airport-id="overview.viewedAccount.airport.id" :subscription-id="overview.viewedAccount.subscription.id" :days="3" :refresh-version="w.usageRefreshVersion.value"/></div>
     </section>
 
     <div class="hd-toolbar">
       <nav class="hd-seg" aria-label="检测项目"><button v-for="p in projects" :key="p" :aria-pressed="w.project.value===p" @click="w.project.value=p">{{projectNames[p]}}</button></nav>
-      <label class="hd-search"><Icon name="search"/><input v-model="w.search.value" type="search" placeholder="搜索节点、机场、地区" aria-label="搜索节点"></label>
+      <label class="hd-search"><Icon name="search"/><input v-model="w.search.value" type="search" placeholder="搜节点、机场、地区" aria-label="搜索节点、机场或地区" title="可搜索节点名、机场名或地区"></label>
       <UiSelect v-model="w.region.value" aria-label="地区"><option value="all">全部地区</option><option v-for="r in m.filterRegions.value" :key="r" :value="r">{{nodeRegionLabel(r)}}</option></UiSelect>
       <UiSelect v-model="w.sort.value" aria-label="排序"><option v-for="s in sorts" :key="s.id" :value="s.id">排序：{{s.label}}</option></UiSelect>
       <UiSelect v-model.number="w.hours.value" aria-label="时间范围"><option :value="6">最近 6 小时</option><option :value="24">最近 24 小时</option><option :value="168">最近 7 天</option><option :value="720">最近 30 天</option></UiSelect>

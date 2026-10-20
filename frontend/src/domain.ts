@@ -33,7 +33,7 @@ export function isNotice(n:NodeOption){
   if(/^\[[^\]\r\n]{1,30}\][✨\s]*(?:永久|官网|网址|备用)[:：]{2,}[^|\s]+\.[a-z]{2,}(?:$|\s)/i.test(n.display_name.trim()))return true
   if(/(?:电报群|交流群|防失联|官网|官方地址|备用网址|使用文档|客户端).*(?:https?:\/\/|t\.me\/)/i.test(name)||/^https?:\/\/(?:t\.me|telegram\.me|github\.com)\//i.test(name))return true
   // Account metadata is a notice even when a unit such as GB resembles a region code.
-  if(/^(?:剩余流量|套餐到期|到期时间|订阅到期|套餐有效期|有效期[至:：]|流量重置(?:时间|日期|[：:])|订阅更新(?:时间|日期|[：:]))/.test(name))return true
+  if(/^(?:距离下次重置剩余|剩余(?:可用)?(?:流量)?|可用流量|套餐到期|到期时间|订阅到期|套餐有效期|有效期[至:：]|流量重置(?:时间|日期|[：:])|订阅更新(?:时间|日期|[：:]))/.test(name))return true
   if(/^(?:如果只(?:显示|看到)(?:此|一个)?节点|是客户端太旧|更新(?:一下|你的)?客户端|请到(?:官网|网站).*(?:教程|使用说明)|请重新(?:复制)?导入)/.test(name))return true
   // Keep region-bearing route names intact when they include instructions.
   if(/^[A-Z]{2}$/i.test(n.country_code||'')&&!['XX','ZZ'].includes(n.country_code.toUpperCase()))return false

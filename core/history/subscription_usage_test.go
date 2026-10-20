@@ -63,6 +63,15 @@ func TestSubscriptionUsageMigrationPersistenceAndSingleDailyClaim(t *testing.T) 
 	if err != nil || len(snaps) != 1 || *snaps[0].Download != 20 {
 		t.Fatalf("baseline readback/dedup: %+v %v", snaps, err)
 	}
+	remaining := int64(10 * 1024 * 1024 * 1024)
+	notice := subscriptionusage.Snapshot{AccountKey: "notice-account", CapturedAt: at.Add(time.Minute), Status: "ok", Source: "subscription_notice", CounterKind: "notice_remaining", Remaining: &remaining}
+	if err := s.SaveSubscriptionUsage(ctx, notice); err != nil {
+		t.Fatalf("save notice remaining baseline: %v", err)
+	}
+	noticeReadback, err := s.QuerySubscriptionUsage(ctx, at, at.Add(time.Hour))
+	if err != nil || len(noticeReadback) != 2 || noticeReadback[1].Remaining == nil || *noticeReadback[1].Remaining != remaining {
+		t.Fatalf("notice remaining did not persist: %+v %v", noticeReadback, err)
+	}
 	if samples, err := s.QueryMonitorSamples(ctx, monitor.SampleFilter{Limit: 10}); err != nil || len(samples) != 1 || samples[0].SampleID != "existing" {
 		t.Fatalf("migration touched existing history: %+v %v", samples, err)
 	}

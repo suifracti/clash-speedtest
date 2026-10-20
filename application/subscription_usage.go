@@ -4,12 +4,18 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"math"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/faceair/clash-speedtest/core/profiles"
+	"github.com/faceair/clash-speedtest/core/speedtester"
 	"github.com/faceair/clash-speedtest/core/subscriptionusage"
 )
+
+var noticeRemainingValue = regexp.MustCompile(`(?i)(?:距离下次重置剩余|剩余(?:可用)?(?:流量)?|可用流量)[：:\s]*([0-9]+(?:\.[0-9]+)?)\s*(PiB|PB|TiB|TB|GiB|GB|MiB|MB|KiB|KB|B)\b`)
 
 func fillDefaultSubscriptionUsage(settings *AppSettings) {
 	if settings == nil {
@@ -53,6 +59,7 @@ func usageSnapshot(ap *profiles.Airport, sub *profiles.Subscription, status, sou
 		snap.Upload = &up
 		snap.Download = &down
 		snap.Total = sub.Usage.Total
+		snap.CounterKind = "subscription_header"
 	}
 	if status == "missing" {
 		snap.Message = "机场未返回有效用量字段；不计为零用量"
@@ -64,6 +71,42 @@ func usageSnapshot(ap *profiles.Airport, sub *profiles.Subscription, status, sou
 		snap.Message = "本地配置不提供机场账户用量"
 	}
 	return snap
+}
+
+func noticeRemainingBytes(body []byte) (int64, bool) {
+	names, err := speedtester.SubscriptionNoticeNames(body)
+	if err != nil {
+		return 0, false
+	}
+	for _, name := range names {
+		match := noticeRemainingValue.FindStringSubmatch(name)
+		if len(match) != 3 {
+			continue
+		}
+		value, err := strconv.ParseFloat(match[1], 64)
+		if err != nil || value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+			continue
+		}
+		unit := strings.ToUpper(match[2])
+		power := 0
+		switch unit[:1] {
+		case "K":
+			power = 1
+		case "M":
+			power = 2
+		case "G":
+			power = 3
+		case "T":
+			power = 4
+		case "P":
+			power = 5
+		}
+		bytes := math.Round(value * math.Pow(1024, float64(power)))
+		if bytes <= 9007199254740991 {
+			return int64(bytes), true
+		}
+	}
+	return 0, false
 }
 
 func (s *AppService) seedSubscriptionUsageLocked(ctx context.Context, store *profiles.Store) error {

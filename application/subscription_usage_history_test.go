@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -76,6 +77,66 @@ func fmtUsage(download int64) string {
 	return fmt.Sprintf("upload=0; download=%d; total=1000", download)
 }
 
+func TestNoticeRemainingBytesUsesSubscriptionNoticeAndBinaryUnits(t *testing.T) {
+	body := []byte(`proxies:
+  - name: "⏳剩余 10260.48 GiB"
+    type: ss
+    server: example.com
+    port: 443
+    cipher: aes-128-gcm
+    password: ignored-test-value
+  - name: "US 01"
+    type: ss
+    server: proxy.example.com
+    port: 443
+    cipher: aes-128-gcm
+    password: ignored-test-value
+`)
+	got, ok := noticeRemainingBytes(body)
+	want := int64(math.Round(10260.48 * math.Pow(1024, 3)))
+	if !ok || got != want {
+		t.Fatalf("notice remaining: got %d, found=%t, want %d", got, ok, want)
+	}
+}
+
+func TestSubscriptionRefreshRecordsNoticeBalanceChanges(t *testing.T) {
+	remainingGiB := atomic.Int64{}
+	remainingGiB.Store(10)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprintf(w, `proxies:
+  - name: "剩余流量：%d GiB"
+    type: ss
+    server: example.com
+    port: 443
+    cipher: aes-128-gcm
+    password: ignored-test-value
+`, remainingGiB.Load())
+	}))
+	defer server.Close()
+	s, _ := newAirportURLTestService(t)
+	ap, err := s.CreateAirport("Notice fixture", server.URL, "fixture")
+	if err != nil || len(ap.Subscriptions) != 1 {
+		t.Fatalf("create subscription: airport=%+v err=%v", ap, err)
+	}
+	refresh := func() {
+		t.Helper()
+		s.profileWriteMu.Lock()
+		_, err := s.refreshSubscriptionLocked(context.Background(), ap.ID, ap.Subscriptions[0].ID, "fixture", "", nil)
+		s.profileWriteMu.Unlock()
+		if err != nil {
+			t.Fatalf("refresh subscription: %v", err)
+		}
+	}
+	refresh() // establish the remaining-balance baseline
+	remainingGiB.Store(9)
+	refresh()
+	day := time.Now().In(subscriptionusage.Location).Format("2006-01-02")
+	report, err := s.GetSubscriptionUsage(context.Background(), day, day, "day", "")
+	if err != nil || len(report.Accounts) != 1 || report.Accounts[0].CounterKind != "notice_remaining" || report.Accounts[0].Remaining == nil || *report.Accounts[0].Remaining != 9*1024*1024*1024 || report.ObservedBytes == nil || *report.ObservedBytes != 1024*1024*1024 {
+		t.Fatalf("notice balance history: report=%+v err=%v", report, err)
+	}
+}
+
 func TestSubscriptionUsageNilDefenses(t *testing.T) {
 	// 1. fillDefaultSubscriptionUsage with nil settings should not panic
 	fillDefaultSubscriptionUsage(nil)
@@ -146,4 +207,3 @@ func TestSaveSettingsAtomicPersistence(t *testing.T) {
 		t.Fatalf("expected PreferredBrowser firefox, got: %s", got.PreferredBrowser)
 	}
 }
-

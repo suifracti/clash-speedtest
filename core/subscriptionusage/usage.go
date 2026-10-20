@@ -17,24 +17,27 @@ type Snapshot struct {
 	CapturedAt       time.Time `json:"captured_at"`
 	Status           string    `json:"status"`
 	Source           string    `json:"source"`
+	CounterKind      string    `json:"counter_kind,omitempty"`
 	Upload           *int64    `json:"upload"`
 	Download         *int64    `json:"download"`
+	Remaining        *int64    `json:"remaining,omitempty"`
 	Total            *int64    `json:"total,omitempty"`
 	Message          string    `json:"message,omitempty"`
 }
 
 type Interval struct {
-	AccountKey string     `json:"account_key"`
-	Name       string     `json:"name"`
-	From       *time.Time `json:"from,omitempty"`
-	Until      time.Time  `json:"until"`
-	Upload     *int64     `json:"upload"`
-	Download   *int64     `json:"download"`
-	Bytes      *int64     `json:"bytes"`
-	Status     string     `json:"status"`
-	Bucket     string     `json:"bucket,omitempty"`
-	Estimated  bool       `json:"estimated"`
-	Message    string     `json:"message,omitempty"`
+	AccountKey  string     `json:"account_key"`
+	Name        string     `json:"name"`
+	From        *time.Time `json:"from,omitempty"`
+	Until       time.Time  `json:"until"`
+	CounterKind string     `json:"counter_kind,omitempty"`
+	Upload      *int64     `json:"upload"`
+	Download    *int64     `json:"download"`
+	Bytes       *int64     `json:"bytes"`
+	Status      string     `json:"status"`
+	Bucket      string     `json:"bucket,omitempty"`
+	Estimated   bool       `json:"estimated"`
+	Message     string     `json:"message,omitempty"`
 }
 
 type Bucket struct {
@@ -117,6 +120,30 @@ func add(value **int64, n int64) {
 	**value += n
 }
 
+func snapshotCounterKind(s Snapshot) string {
+	if s.CounterKind != "" {
+		return s.CounterKind
+	}
+	if s.Upload != nil && s.Download != nil {
+		return "subscription_header" // older snapshots used only the two provider counters
+	}
+	if s.Remaining != nil {
+		return "notice_remaining"
+	}
+	return ""
+}
+
+func validCounter(s Snapshot, kind string) bool {
+	switch kind {
+	case "subscription_header":
+		return s.Upload != nil && s.Download != nil && *s.Upload >= 0 && *s.Download >= 0
+	case "notice_remaining":
+		return s.Remaining != nil && *s.Remaining >= 0
+	default:
+		return false
+	}
+}
+
 // Build uses provider counters, never local probe bytes. Gaps and resets remain
 // explicit. Near-midnight daily intervals are attributed to the preceding day
 // as an estimate; other cross-bucket intervals are not split or extrapolated.
@@ -137,13 +164,26 @@ func Build(snapshots []Snapshot, from, until time.Time, period string) Report {
 		latest[s.AccountKey] = s
 		i := Interval{AccountKey: s.AccountKey, Name: s.AirportName + " · " + s.SubscriptionName, Until: s.CapturedAt, Status: s.Status, Message: s.Message}
 		p, exists := previous[s.AccountKey]
-		if s.Status == "ok" && s.Upload != nil && s.Download != nil {
-			if !exists {
+		kind := snapshotCounterKind(s)
+		i.CounterKind = kind
+		if s.Status == "ok" && validCounter(s, kind) {
+			if !exists || snapshotCounterKind(p) != kind || !validCounter(p, kind) {
 				i.Status = "baseline"
 			} else {
 				start := p.CapturedAt
 				i.From = &start
-				if *s.Upload < *p.Upload || *s.Download < *p.Download {
+				if kind == "notice_remaining" {
+					if *s.Remaining > *p.Remaining {
+						i.Status = "reset"
+						i.Message = "公告剩余量增加，可能是重置或套餐变更；本区间用量未知"
+					} else {
+						delta := *p.Remaining - *s.Remaining
+						i.Bytes = &delta
+						i.Status = "observed"
+						i.Estimated = true
+						i.Message = "根据公告剩余量下降估算；无法拆分上传和下载"
+					}
+				} else if *s.Upload < *p.Upload || *s.Download < *p.Download {
 					i.Status = "reset"
 					i.Message = "机场计数下降，本区间用量未知；从新计数继续记录"
 				} else {
@@ -153,6 +193,8 @@ func Build(snapshots []Snapshot, from, until time.Time, period string) Report {
 					i.Download = &down
 					i.Bytes = &sum
 					i.Status = "observed"
+				}
+				if i.Bytes != nil {
 					startKey, endKey := bucketKey(start, period), bucketKey(s.CapturedAt, period)
 					startLocal, endLocal := start.In(Location), s.CapturedAt.In(Location)
 					startDay := time.Date(startLocal.Year(), startLocal.Month(), startLocal.Day(), 0, 0, 0, 0, Location)
@@ -162,13 +204,21 @@ func Build(snapshots []Snapshot, from, until time.Time, period string) Report {
 					if !startDay.Before(from) && startDay.Before(until) && endLocal.Format("2006-01-02") == startDay.AddDate(0, 0, 1).Format("2006-01-02") && endLocal.Hour() == 0 && s.CapturedAt.Sub(start) <= 26*time.Hour {
 						i.Bucket = startKey
 						i.Estimated = true
-						i.Message = "每日更新区间，近午夜增量归前一日；并非精确自然日账单"
+						if i.Message == "" {
+							i.Message = "每日更新区间，近午夜增量归前一日；并非精确自然日账单"
+						} else {
+							i.Message += "；近午夜区间归前一日"
+						}
 					} else if startKey == endKey && !start.Before(from) && s.CapturedAt.Before(until) {
 						i.Bucket = endKey
 					}
 					if i.Bucket == "" {
 						i.Status = "cross_period"
-						i.Message = "跨日、周或月的观测区间，未按天数摊分"
+						if kind == "notice_remaining" {
+							i.Message = "公告余额变化跨日，未按天数摊分；无法拆分上传和下载"
+						} else {
+							i.Message = "跨日、周或月的观测区间，未按天数摊分"
+						}
 					}
 				}
 			}
@@ -186,8 +236,12 @@ func Build(snapshots []Snapshot, from, until time.Time, period string) Report {
 			if allocated {
 				b := buckets[i.Bucket]
 				add(&b.Bytes, *i.Bytes)
-				add(&b.Upload, *i.Upload)
-				add(&b.Download, *i.Download)
+				if i.Upload != nil {
+					add(&b.Upload, *i.Upload)
+				}
+				if i.Download != nil {
+					add(&b.Download, *i.Download)
+				}
 				b.Intervals++
 				if i.Estimated {
 					b.EstimatedIntervals++

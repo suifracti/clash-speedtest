@@ -17,6 +17,7 @@ import NodeDetailModal from './components/NodeDetailModal.vue'
 import QueueModal from './components/QueueModal.vue'
 import CommandPalette from './components/CommandPalette.vue'
 import {projectNames} from './domain'
+import {airportNodeCounts} from './airportViewing'
 const w=createWorkspace();provide(workspaceKey,w)
 const windowHidden=ref(document.hidden)
 function visibilityChanged(){windowHidden.value=document.hidden}
@@ -24,7 +25,8 @@ const password=ref(''),loginError=ref(''),loggingIn=ref(false)
 const pages:{id:Page;label:string;icon:string}[]=[{id:'home',label:'线路工作台',icon:'home'},{id:'airports',label:'机场与账户',icon:'layers'},{id:'history',label:'检测记录',icon:'history'},{id:'monitor',label:'持续监测',icon:'monitor'}]
 const utilities:{id:Page;label:string;icon:string}[]=[{id:'settings',label:'偏好设置',icon:'settings'},{id:'data',label:'数据与备份',icon:'data'}]
 const palette=ref(false)
-const airportNodes=computed(()=>{const c:Record<string,number>={};for(const n of w.proxyNodes.value){const id=w.nodeAirportId(n);if(id)c[id]=(c[id]||0)+1}return c})
+const airportNodes=computed(()=>airportNodeCounts(w.nodes.value,w.airports.value))
+const airportNodeTotal=computed(()=>Object.values(airportNodes.value).reduce((sum,count)=>sum+count,0))
 const runningJobs=computed(()=>w.jobs.value.filter(j=>j.state==='running').length)
 // 侧栏任务区只回答三件事：在做什么、已处理多少、有没有需要注意的。不写“成功”，未确认启动时不画进度。
 const task=computed(()=>{
@@ -60,7 +62,7 @@ onBeforeUnmount(()=>{document.removeEventListener('visibilitychange',visibilityC
       </nav>
       <section v-if="w.airports.value.length" class="cst-side-airports" aria-label="机场快捷切换">
         <h2>机场</h2>
-        <button type="button" :aria-pressed="w.airportFilter.value==='all'" @click="w.airportFilter.value='all';navigate('home')"><span>全部机场</span><small>{{w.proxyNodes.value.length}}</small></button>
+        <button type="button" :aria-pressed="w.airportFilter.value==='all'" @click="w.airportFilter.value='all';navigate('home')"><span>全部机场</span><small>{{airportNodeTotal}}</small></button>
         <button v-for="a in w.airports.value" :key="a.id" type="button" :title="'在工作台只看 '+a.name" :aria-pressed="w.airportFilter.value===a.id" @click="w.airportFilter.value=w.airportFilter.value===a.id?'all':a.id;navigate('home')"><span>{{a.name}}</span><small>{{airportNodes[a.id]||0}}</small></button>
       </section>
       <div class="cst-side-foot">

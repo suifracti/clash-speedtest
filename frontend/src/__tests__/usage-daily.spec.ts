@@ -14,4 +14,9 @@ describe('daily usage series (synthetic data)',()=>{
     expect(s[1]).toMatchObject({bytes:0,estimated:true})
     expect(s[2]).toMatchObject({bytes:null,recorded:false})
   })
+  it('shows a baseline or missing snapshot as unknown for the day it was recorded',()=>{
+    const r=report([])
+    r.intervals=[{account_key:'a',name:'机场 · 订阅',until:'2026-10-02T02:00:00Z',bytes:null,upload:null,download:null,status:'baseline',estimated:false}]
+    expect(dailySeries(r,'2026-10-02',1)[0]).toMatchObject({bytes:null,recorded:true})
+  })
 })

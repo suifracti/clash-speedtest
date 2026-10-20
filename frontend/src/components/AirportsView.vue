@@ -61,7 +61,7 @@ onBeforeUnmount(()=>{disposed=true;clearTimeout(refreshTimer)})
       <small v-else class="muted">机场未返回套餐用量</small>
     </div>
     <div class="cst-ledger-expire"><template v-if="s.usage?.expire"><strong :class="expireTone(s.usage.expire)">{{expireLabel(s.usage.expire)}}</strong><small>{{new Date(s.usage.expire*1000).toLocaleDateString('zh-CN')}}</small></template><template v-else-if="noticeUsage(a,s).expireText"><strong>{{noticeUsage(a,s).expireText}}</strong><small>公告识别</small></template><small v-else class="muted">未提供</small></div>
-    <UsageDays :airport-id="a.id" :subscription-id="s.id" :days="14" chart/>
+    <UsageDays :airport-id="a.id" :subscription-id="s.id" :days="14" :refresh-version="w.usageRefreshVersion.value" chart/>
     <div class="cst-ledger-actions">
       <button class="button" :disabled="!s.has_cache" title="在工作台把这个账户设为测量来源并查看节点" @click="browse(a,s)">选为测量来源</button>
       <button class="button ghost icon-button" :disabled="!!busy||refreshLoading||refreshJob?.state==='running'" aria-label="刷新订阅" title="更新订阅：重新拉取节点，并记录机场返回的用量" @click="refresh(a,s)"><Icon name="refresh"/></button>

@@ -97,7 +97,7 @@ func DetectCountry(name string) (code string) {
 	metadataName := strings.TrimLeftFunc(name, func(r rune) bool {
 		return unicode.IsSpace(r) || unicode.IsPunct(r) || unicode.IsSymbol(r) || r == '\uFE0F'
 	})
-	for _, prefix := range []string{"剩余流量", "套餐到期", "到期时间", "订阅到期", "套餐有效期", "有效期至", "有效期:", "有效期：", "流量重置时间", "流量重置日期", "流量重置：", "流量重置:", "订阅更新时间", "订阅更新日期", "订阅更新：", "订阅更新:"} {
+	for _, prefix := range []string{"距离下次重置剩余", "剩余流量", "剩余可用", "剩余", "可用流量", "套餐到期", "到期时间", "订阅到期", "套餐有效期", "有效期至", "有效期:", "有效期：", "流量重置时间", "流量重置日期", "流量重置：", "流量重置:", "订阅更新时间", "订阅更新日期", "订阅更新：", "订阅更新:"} {
 		if strings.HasPrefix(metadataName, prefix) {
 			return OtherCountryCode
 		}

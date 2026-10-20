@@ -2,13 +2,14 @@ import {query,request} from './api'
 
 // 机场账户流量（订阅计数）按天读取。未知就是未知：不补 0、不平摊、不把计数重置当成省流量。
 export interface UsageBucket {date:string;bytes:number|null;upload:number|null;download:number|null;intervals:number;estimated_intervals:number}
-export interface UsageSnapshot {account_key:string;airport_id?:string;subscription_id?:string;airport_name:string;subscription_name:string;captured_at:string;status:string;upload:number|null;download:number|null;total?:number;source:string;message?:string}
-export interface UsageInterval {account_key:string;name:string;from?:string;until:string;bytes:number|null;upload:number|null;download:number|null;status:string;estimated:boolean;message?:string}
+export interface UsageSnapshot {account_key:string;airport_id?:string;subscription_id?:string;airport_name:string;subscription_name:string;captured_at:string;status:string;counter_kind?:string;upload:number|null;download:number|null;remaining?:number;total?:number;source:string;message?:string}
+export interface UsageInterval {account_key:string;name:string;from?:string;until:string;bucket?:string;counter_kind?:string;bytes:number|null;upload:number|null;download:number|null;status:string;estimated:boolean;message?:string}
 export interface UsageReport {from:string;until:string;period:string;buckets:UsageBucket[];intervals:UsageInterval[];accounts:UsageSnapshot[];observed_bytes:number|null;unallocated_bytes:number|null;unknown_intervals:number;daily_enabled:boolean;refresh?:{last_attempt:string;next_refresh:string;state:string;message:string}}
-export interface DayUsage {date:string;label:string;bytes:number|null;estimated:boolean;recorded:boolean}
+export interface DayUsage {date:string;label:string;bytes:number|null;estimated:boolean;recorded:boolean;sourceKind?:string;message?:string}
 
 const zone='Asia/Shanghai'
 export function shanghaiDay(now=new Date()){const parts=new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(now);return ['year','month','day'].map(k=>parts.find(p=>p.type===k)?.value).join('-')}
+function shanghaiDayAt(value:string){const parts=new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(value));return ['year','month','day'].map(k=>parts.find(p=>p.type===k)?.value).join('-')}
 export function shiftDay(day:string,delta:number){const d=new Date(day+'T00:00:00Z');d.setUTCDate(d.getUTCDate()+delta);return d.toISOString().slice(0,10)}
 
 const cache=new Map<string,{at:number;value:Promise<UsageReport>}>()
@@ -38,8 +39,10 @@ export async function accountDailyUsage(airportId:string,subscriptionId:string,d
 const names=['今天','昨天','前天']
 export function dailySeries(report:UsageReport,today:string,days:number):DayUsage[]{
  const byDate=new Map(report.buckets.map(b=>[b.date,b]))
+ const intervalsByDate=new Map<string,UsageInterval[]>()
+ for(const interval of report.intervals){const date=interval.bucket||shanghaiDayAt(interval.until);intervalsByDate.set(date,[...(intervalsByDate.get(date)||[]),interval])}
  return Array.from({length:days},(_,i)=>{
-  const date=shiftDay(today,-i),b=byDate.get(date)
-  return {date,label:names[i]||date.slice(5),bytes:b?.bytes??null,estimated:!!b?.estimated_intervals,recorded:!!b?.intervals}
+  const date=shiftDay(today,-i),b=byDate.get(date),intervals=intervalsByDate.get(date)||[]
+  return {date,label:names[i]||date.slice(5),bytes:b?.bytes??null,estimated:!!b?.estimated_intervals||intervals.some(interval=>interval.estimated),recorded:!!b?.intervals||intervals.length>0,sourceKind:intervals.find(interval=>interval.counter_kind)?.counter_kind,message:intervals.find(interval=>interval.message)?.message}
  })
 }

@@ -1,7 +1,17 @@
-import type {Airport,NodeOption,Subscription} from './domain'
+import {isNotice,type Airport,type NodeOption,type Subscription} from './domain'
 import {nodeSourceIndex,sourceForNode} from './nodePresentation'
 
 export interface AirportAccount {airport:Airport;subscription:Subscription;key:string}
+
+export function airportNodeCounts(nodes:NodeOption[],airports:Airport[]):Record<string,number>{
+  const sources=nodeSourceIndex(airports),known=new Set(airports.map(airport=>airport.id)),counts:Record<string,number>={}
+  for(const node of nodes){
+    if(isNotice(node))continue
+    const id=sourceForNode(node,sources).airportId
+    if(known.has(id))counts[id]=(counts[id]||0)+1
+  }
+  return counts
+}
 
 export function airportAccounts(airports:Airport[]):AirportAccount[]{
   const accounts:AirportAccount[]=[]
@@ -48,7 +58,7 @@ export function parseNoticeUsage(notices:NodeOption[]):NoticeParsedUsage{
   const res:NoticeParsedUsage={}
   for(const n of notices){
     const text=(n.display_name||'').replace(/^[#\s]+/,'').trim()
-    const remMatch=text.match(/(?:剩余流量|剩余|距离下次重置剩余|可用流量|剩余可用)[：:\s]+([0-9.]+)\s*([A-Za-z]+)/i)
+    const remMatch=text.match(/(?:距离下次重置剩余|剩余(?:可用)?(?:流量)?|可用流量)[：:\s]+([0-9.]+)\s*([A-Za-z]+)/i)
     if(remMatch)res.remaining=parseTrafficBytes(remMatch[1],remMatch[2])
     const usedMatch=text.match(/(?:已用流量|已用|本月已用|已产生流量)[：:\s]+([0-9.]+)\s*([A-Za-z]+)/i)
     if(usedMatch)res.used=parseTrafficBytes(usedMatch[1],usedMatch[2])

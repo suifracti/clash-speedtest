@@ -34,8 +34,19 @@ func (s *Store) SaveSubscriptionUsage(ctx context.Context, snapshot subscription
 	if snapshot.AccountKey == "" || snapshot.CapturedAt.IsZero() {
 		return fmt.Errorf("incomplete subscription usage snapshot")
 	}
-	if snapshot.Status == "ok" && (snapshot.Upload == nil || snapshot.Download == nil || *snapshot.Upload < 0 || *snapshot.Download < 0) {
-		return fmt.Errorf("invalid subscription counters")
+	if snapshot.Status == "ok" {
+		switch snapshot.CounterKind {
+		case "notice_remaining":
+			if snapshot.Remaining == nil || *snapshot.Remaining < 0 {
+				return fmt.Errorf("invalid remaining usage")
+			}
+		case "subscription_header", "":
+			if snapshot.Upload == nil || snapshot.Download == nil || *snapshot.Upload < 0 || *snapshot.Download < 0 {
+				return fmt.Errorf("invalid subscription counters")
+			}
+		default:
+			return fmt.Errorf("unsupported subscription usage counter")
+		}
 	}
 	raw, err := json.Marshal(snapshot)
 	if err != nil {

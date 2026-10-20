@@ -29,6 +29,7 @@ func TestDetectCountry(t *testing.T) {
 		{"US-01|YT-CN", "US"},
 		{"剩余流量：12.29 GB", "OTHER"},
 		{"⏳剩余流量: 183.8GB", "OTHER"},
+		{"剩余 10260.48 GiB", "OTHER"},
 		{"🇬🇧 到期时间：2052-08-30", "OTHER"},
 		{"香港 02 · 剩余流量 100 GB", "HK"},
 		{"[IPLC-家宽-移动优化 -柬埔寨] ✨ 5x", "KH"},

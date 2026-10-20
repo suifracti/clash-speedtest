@@ -2,7 +2,7 @@
 import {computed,ref,watch} from 'vue'
 import {bytes} from '../domain'
 import {accountDailyUsage,type DayUsage,type UsageSnapshot} from '../usageDaily'
-const props=withDefaults(defineProps<{airportId:string;subscriptionId:string;days?:number;chart?:boolean}>(),{days:14,chart:false})
+const props=withDefaults(defineProps<{airportId:string;subscriptionId:string;days?:number;chart?:boolean;refreshVersion?:number}>(),{days:14,chart:false,refreshVersion:0})
 const series=ref<DayUsage[]>([]),account=ref<UsageSnapshot>(),error=ref(''),loading=ref(false)
 let generation=0
 async function load(){
@@ -11,17 +11,17 @@ async function load(){
  catch(e){if(current===generation)error.value=e instanceof Error?e.message:String(e)}
  finally{if(current===generation)loading.value=false}
 }
-watch(()=>[props.airportId,props.subscriptionId,props.days],()=>void load(),{immediate:true})
+watch(()=>[props.airportId,props.subscriptionId,props.days,props.refreshVersion],()=>void load(),{immediate:true})
 const statusText:Record<string,string>={ok:'机场已报告',baseline:'首次基线',reset:'计数重置',missing:'机场未提供用量',local_file:'本地配置，无用量',refresh_failed:'更新失败',observed:'已观测',cross_period:'跨期区间'}
 const when=(v?:string)=>!v||v.startsWith('0001')?'':new Date(v).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})
 function text(d:DayUsage){return d.bytes!=null?(d.estimated?'约 ':'')+bytes(d.bytes):d.recorded?'未知':'未记录'}
-function title(d:DayUsage){return `${d.date} · ${d.bytes!=null?bytes(d.bytes)+(d.estimated?'（含近午夜估算）':''):d.recorded?'有更新记录但无法归属增量':'当天没有更新记录'}`}
+function title(d:DayUsage){return `${d.date} · ${d.bytes!=null?bytes(d.bytes)+(d.estimated?`（${d.sourceKind==='notice_remaining'?'按公告余额变化估算':'区间估算'}）`:''):d.recorded?'有更新记录但无法归属增量':'当天没有更新记录'}${d.message?' · '+d.message:''}`}
 const max=computed(()=>Math.max(1,...series.value.map(d=>d.bytes||0)))
 const caption=computed(()=>{
  if(error.value)return '用量读取失败：'+error.value
  if(!account.value)return loading.value?'正在读取用量…':`近 ${props.days} 天没有用量记录`
  const s=account.value,status=statusText[s.status]||s.status
- return `截至 ${when(s.captured_at)||'—'} · ${status}`
+ return `截至 ${when(s.captured_at)||'—'} · ${s.counter_kind==='notice_remaining'?'公告余额':status}`
 })
 </script>
 <template>

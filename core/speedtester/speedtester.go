@@ -373,7 +373,7 @@ func (st *SpeedTester) LoadProxies() (map[string]*CProxy, error) {
 
 // Information labels may reuse a real node's configuration. Keep those labels
 // separate so filtering announcements later cannot remove the real node.
-var subscriptionNoticePrefix = regexp.MustCompile(`(?i)^(公告|机场公告|通知|重要提示|使用说明|官网地址|官方网址|官方地址|防失联|电报群|交流群|剩余流量|套餐到期|到期时间|订阅到期|套餐有效期|有效期[至:：]|流量重置(时间|日期|[：:])|订阅更新(时间|日期|[：:]))`)
+var subscriptionNoticePrefix = regexp.MustCompile(`(?i)^(公告|机场公告|通知|重要提示|使用说明|官网地址|官方网址|官方地址|防失联|电报群|交流群|剩余(?:可用)?(?:流量)?|可用流量|距离下次重置剩余|套餐到期|到期时间|订阅到期|套餐有效期|有效期[至:：]|流量重置(时间|日期|[：:])|订阅更新(时间|日期|[：:]))`)
 
 func isSubscriptionNoticeName(name string) bool {
 	name = strings.TrimLeftFunc(strings.TrimSpace(name), func(r rune) bool { return unicode.IsSpace(r) || unicode.IsPunct(r) || unicode.IsSymbol(r) })
