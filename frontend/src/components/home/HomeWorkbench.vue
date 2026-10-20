@@ -111,7 +111,7 @@ function keyNav(e:KeyboardEvent){
     <section class="hd-source" aria-label="机场选择">
       <button class="hd-orbit" :aria-label="filteredAirport?'循环查看机场：'+filteredAirport.name:chosen.length?'全部机场':'选择机场'" @click="!chosen.length?m.picker.value=true:filteredAirport?overview?.cycleAirport():undefined">
         <span class="hd-orbit-logos"><span v-for="a in chosen.slice(0,4)" :key="a.id" :class="{dim:!!filteredAirport&&filteredAirport.id!==a.id}">{{a.name.slice(0,1)}}</span><span v-if="chosen.length>4">+{{chosen.length-4}}</span><Icon v-if="!chosen.length" name="plus"/></span>
-        <span class="hd-orbit-text"><strong>{{filteredAirport?.name||(chosen.length?'全部机场':'选择机场')}}</strong><small>{{filteredAirport?(chosen.length>1?'只看这个机场 · 点击换下一个':'只看这个机场'):chosen.length?chosen.length+' 个机场 · '+chosenNodeCount+' 个节点':'可同时选择多个机场'}}</small></span>
+        <span class="hd-orbit-text"><strong>{{filteredAirport?.name||(chosen.length?'全部机场':'选择机场')}}</strong><small>{{filteredAirport?(chosen.length>1?'点击切换机场':'只看这个机场'):chosen.length?chosen.length+' 个机场 · '+chosenNodeCount+' 个节点':'可同时选择多个机场'}}</small></span>
       </button>
       <SubscriptionOverview ref="overview" :airports="chosen" :notices="w.notices.value" :airport-id="w.airportFilter.value" @viewed="id=>{w.airportFilter.value=id}"/>
     </section>
@@ -217,3 +217,7 @@ function keyNav(e:KeyboardEvent){
     </footer>
   </section>
 </template>
+
+<style scoped>
+.hd-orbit-text small{white-space:nowrap}
+</style>
