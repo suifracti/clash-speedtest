@@ -289,12 +289,12 @@ defineExpose({cycleAirport,showAirport,viewedAirportName,usageRatio,viewedAccoun
           </div>
         </div>
 
-        <div class="subscription-remaining" aria-label="剩余可用流量">
-          <strong class="subscription-remaining-value">{{remaining===null?'未知':bytes(remaining)}}</strong>
-          <span v-if="remainingRatio!==null" class="subscription-remaining-percent">{{(remainingRatio*100).toFixed(2)}}% 可用</span>
-        </div>
-
         <div class="subscription-quota">
+          <div class="subscription-remaining" aria-label="剩余可用流量">
+            <span class="subscription-remaining-label">剩余</span>
+            <strong class="subscription-remaining-value">{{remaining===null?'未知':bytes(remaining)}}</strong>
+            <span v-if="remainingRatio!==null" class="subscription-remaining-percent">{{(remainingRatio*100).toFixed(2)}}% 可用</span>
+          </div>
           <div v-if="remainingRatio!==null" class="usage-track" role="meter" aria-label="套餐剩余比例" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Math.round(remainingRatio*100)">
             <i :style="{width:`${remainingRatio*100}%`}"/>
           </div>
@@ -302,6 +302,10 @@ defineExpose({cycleAirport,showAirport,viewedAirportName,usageRatio,viewedAccoun
             <div class="subscription-quota-used"><span>已使用</span><strong>{{usedAmount===null?'未知':bytes(usedAmount)}}</strong></div>
             <div class="subscription-quota-total"><span>总量</span><strong>{{total===undefined?'未知':bytes(total)}}</strong></div>
           </div>
+        </div>
+        <div class="subscription-daily">
+          <h3>近 3 日用量</h3>
+          <UsageDays :airport-id="selected.airport.id" :subscription-id="selected.subscription.id" :days="3" :refresh-version="workspace.usageRefreshVersion.value" summary/>
         </div>
 
       </div>
@@ -340,10 +344,7 @@ defineExpose({cycleAirport,showAirport,viewedAirportName,usageRatio,viewedAccoun
         </details>
         <span v-if="jobsReadState==='loading'" class="status-read muted">刷新状态读取中…</span>
         <span v-else-if="jobsReadState==='error'" class="status-read inline-error" role="alert">刷新状态未知</span>
-        <div class="subscription-daily">
-          <h3>近 3 日用量</h3>
-          <UsageDays :airport-id="selected.airport.id" :subscription-id="selected.subscription.id" :days="3" :refresh-version="workspace.usageRefreshVersion.value" summary/>
-        </div>
+
       </div>
     </template>
     <span v-else class="muted">选择机场查看订阅</span>
@@ -359,15 +360,17 @@ defineExpose({cycleAirport,showAirport,viewedAirportName,usageRatio,viewedAccoun
 
 <style scoped>
 .subscription-overview{position:relative;display:grid;gap:6px;min-width:0;min-height:104px;padding:8px 14px;border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--ink);font-variant-numeric:tabular-nums;box-shadow:0 2px 8px rgba(27,49,79,.035)}
-.subscription-main{display:grid;grid-template-columns:minmax(160px,.9fr) minmax(225px,1.4fr) minmax(175px,1.1fr) minmax(140px,.85fr);align-items:center;gap:12px;min-width:0}
+.subscription-main{display:grid;grid-template-columns:minmax(140px,.85fr) minmax(220px,1.65fr) 156px;align-items:center;gap:14px;min-width:0}
 .subscription-identity{display:flex;align-items:center;gap:8px;min-width:0}.subscription-icon{display:grid;place-items:center;flex:none;width:32px;height:32px;border-radius:9px;background:var(--blue-soft);color:var(--blue)}.subscription-icon svg{width:21px;height:21px}
 .subscription-account{display:grid;gap:1px;min-width:0}.subscription-account>strong,.subscription-account>small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.subscription-account>strong{font-size:14px;font-weight:650}.subscription-account>small{font-size:10px;line-height:1.25;color:var(--muted)}.subscription-account .ui-select{max-width:100%}.subscription-account .ui-select-trigger{min-height:26px;padding:2px 6px;font-size:14px;font-weight:650}
 .subscription-facts{display:flex;align-items:center;flex-wrap:wrap;gap:1px 7px;color:var(--muted);font-size:10px;line-height:1.2}.subscription-facts a,.subscription-facts button{white-space:nowrap}.subscription-expiry{white-space:nowrap}.subscription-extra-links{position:relative}.subscription-extra-links summary{cursor:pointer;white-space:nowrap}.subscription-extra-links>div{position:absolute;top:calc(100% + 4px);left:0;z-index:10;display:grid;gap:7px;min-width:130px;padding:9px;border:1px solid var(--line);border-radius:8px;background:var(--surface);box-shadow:var(--shadow)}.subscription-facts .text-button{font-size:10px}
-.subscription-remaining{display:flex;align-items:center;gap:7px;min-width:0;white-space:nowrap}.subscription-remaining-value{max-width:100%;overflow:hidden;text-overflow:ellipsis;color:var(--blue);font-size:26px;font-weight:700;line-height:1;letter-spacing:-.035em}.subscription-remaining-percent{display:inline-flex;align-items:center;flex:none;min-height:21px;padding:2px 7px;border-radius:7px;background:var(--blue-soft);color:var(--blue);font-size:10px;font-weight:600;white-space:nowrap}
-.subscription-quota{display:grid;gap:4px;min-width:0}.subscription-quota-legend{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}.subscription-quota-used,.subscription-quota-total{display:grid;gap:0;min-width:0;color:var(--muted);font-size:9px;line-height:1.15}.subscription-quota-used>strong,.subscription-quota-total>strong{overflow:hidden;color:var(--ink);font-size:10px;font-weight:600;line-height:1.2;white-space:nowrap;text-overflow:ellipsis}.usage-track{height:9px;overflow:hidden;border-radius:999px;background:var(--blue-soft);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--blue) 7%,transparent)}.usage-track i{display:block;height:100%;border-radius:inherit;background:var(--blue);transition:width .35s ease}
-.subscription-daily{display:flex;flex-direction:column;justify-content:center;gap:3px;min-width:0;padding-left:10px;border-left:1px solid var(--line)}.subscription-daily h3{margin:0;color:var(--muted);font-size:11px;line-height:1.2;font-weight:600}.subscription-actions .subscription-daily{flex:0 0 148px;gap:1px;margin-left:auto;padding-left:8px}.subscription-actions .subscription-daily h3{font-size:9px;line-height:11px}.subscription-daily :deep(.cst-usage-summary){height:30px;gap:2px;padding-bottom:0}.subscription-daily :deep(.cst-usage-day){grid-template-rows:9px minmax(10px,1fr) 9px;gap:1px}.subscription-daily :deep(.cst-usage-day-value),.subscription-daily :deep(.cst-usage-day-label){font-size:8px;line-height:9px}.subscription-daily :deep(.cst-usage-day-track){width:12px}.subscription-daily :deep(.cst-usage-caption){font-size:8px;line-height:8px}
+.subscription-remaining{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 7px;min-width:0;white-space:nowrap}.subscription-remaining-label{color:var(--muted);font-size:10px}.subscription-remaining-value{color:var(--blue);font-size:17px;font-weight:650;line-height:1.2;letter-spacing:-.02em;white-space:nowrap}.subscription-remaining-percent{display:inline-flex;align-items:center;flex:none;padding:2px 5px;border-radius:5px;background:var(--blue-soft);color:var(--blue);font-size:9px;font-weight:600;white-space:nowrap}
+.subscription-quota{display:grid;gap:6px;min-width:0}.subscription-quota-legend{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}.subscription-quota-used,.subscription-quota-total{display:grid;gap:2px;min-width:0;padding-left:12px;position:relative;color:var(--muted);font-size:10px;line-height:1.2}.subscription-quota-used::before,.subscription-quota-total::before{content:'';position:absolute;left:0;top:3px;width:6px;height:6px;border-radius:50%;background:var(--blue-soft)}.subscription-quota-total::before{background:var(--blue)}.subscription-quota-used>strong,.subscription-quota-total>strong{color:var(--ink);font-size:11px;font-weight:500;line-height:1.2;white-space:nowrap}.usage-track{height:8px;margin:0;overflow:hidden;border-radius:999px;background:var(--blue-soft);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--blue) 7%,transparent)}.usage-track i{display:block;height:100%;border-radius:inherit;background:var(--blue);transition:width .35s ease}
+.subscription-daily{display:flex;flex-direction:column;justify-content:center;gap:3px;min-width:0;padding-left:12px;border-left:1px solid var(--line)}.subscription-daily h3{margin:0;color:var(--muted);font-size:10px;line-height:12px;font-weight:600}.subscription-daily :deep(.cst-usage-summary){height:50px;gap:4px;padding-bottom:0}.subscription-daily :deep(.cst-usage-day){grid-template-rows:10px 24px 10px;gap:3px}.subscription-daily :deep(.cst-usage-day-value),.subscription-daily :deep(.cst-usage-day-label){font-size:8.5px;line-height:10px}.subscription-daily :deep(.cst-usage-day-track){width:20px;height:24px;border-radius:5px 5px 2px 2px}.subscription-daily :deep(.cst-usage-caption){font-size:8px;line-height:10px}
+
 .subscription-actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;min-height:30px;font-size:11px}.subscription-actions .button{min-height:28px;padding:4px 10px;font-size:12px}.subscription-actions .badge{padding:4px 7px;font-size:11px}.subscription-actions .text-button{font-size:11px}.subscription-message{max-width:220px;overflow:hidden;color:var(--red);font-size:10px;line-height:1.3;white-space:nowrap;text-overflow:ellipsis}.subscription-issues{position:relative;font-size:11px}.subscription-issues summary{width:max-content;max-width:100%;color:var(--red);cursor:pointer}.subscription-issues p{display:flex;flex-wrap:wrap;gap:4px 8px;margin:6px 0 0;line-height:1.5}.subscription-issues p small{flex:1 0 100%;color:var(--muted)}.issue-retries{display:flex;flex-wrap:wrap;gap:8px;margin-top:7px}.issue-retries button{font-size:12px}.status-read{font-size:11px}.refresh-scope{position:relative}.refresh-scope-panel{position:absolute;top:calc(100% + 5px);left:0;z-index:20;display:grid;gap:8px;width:min(310px,calc(100vw - 28px));max-height:250px;overflow:auto;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--surface);box-shadow:var(--shadow)}.refresh-scope-panel label{display:flex;align-items:center;gap:8px;font-size:12px;line-height:1.4}.refresh-scope-panel label span{overflow-wrap:anywhere}.refresh-scope-panel>.button{justify-self:start}.notice-row{padding:8px 0;border-bottom:1px solid var(--line)}.notice-row small{color:var(--muted)}.notice-row p{margin-top:4px;overflow-wrap:anywhere}
-@media(max-width:1200px){.subscription-main{grid-template-columns:minmax(155px,1fr) minmax(200px,1.3fr) minmax(160px,1fr) minmax(120px,.75fr);gap:8px}.subscription-overview{padding-right:12px;padding-left:12px}.subscription-remaining{gap:5px}.subscription-remaining-value{font-size:19px}.subscription-daily{padding-left:7px}}
-@media(max-width:980px){.subscription-main{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);row-gap:8px}.subscription-identity{grid-column:1/-1}.subscription-daily{max-width:148px}.subscription-actions .subscription-daily{margin-left:auto;padding-top:0;border-top:0;border-left:1px solid var(--line)}}
-@media(max-width:760px){.subscription-overview{gap:8px;padding:10px}.subscription-main{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}.subscription-identity{grid-column:1/-1}.subscription-remaining{flex-wrap:wrap}.subscription-remaining-value{font-size:24px}.subscription-actions{gap:6px}.subscription-actions .subscription-daily{margin-left:0}.subscription-message{max-width:100%}.refresh-scope-panel{left:0;right:auto}}
+@media(max-width:1200px){.subscription-main{grid-template-columns:minmax(120px,.8fr) minmax(210px,1.5fr) 144px;gap:10px}.subscription-overview{padding-right:12px;padding-left:12px}.subscription-daily{padding-left:8px}}
+@media(max-width:980px){.subscription-main{grid-template-columns:minmax(0,1fr) 144px;row-gap:8px}.subscription-identity{grid-column:1/-1}.subscription-message{max-width:100%}}
+@media(max-width:760px){.subscription-overview{gap:8px;padding:10px}.subscription-main{gap:8px}.subscription-remaining-value{font-size:16px}.subscription-actions{gap:6px}.refresh-scope-panel{left:0;right:auto}}
+@media(max-width:440px){.subscription-main{grid-template-columns:minmax(0,1fr)}.subscription-daily{padding:8px 0 0;border-left:0;border-top:1px solid var(--line)}.subscription-daily :deep(.cst-usage){max-width:180px}}
 </style>

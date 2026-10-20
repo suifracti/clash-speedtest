@@ -54,7 +54,7 @@ describe('SubscriptionOverview status strip',()=>{
     expect((wrapper!.vm as unknown as {usageRatio:number|null}).usageRatio).toBeNull()
   })
 
-  it('shows remaining quota as the large value, links the bar to availability and includes recent daily usage',async()=>{
+  it('groups the compact remaining quota with its meter, links the bar to availability and includes recent daily usage',async()=>{
     const workspace=createWorkspace()
     workspace.airports.value=[airportA]
     wrapper=mount(SubscriptionOverview,{props:{airports:[airportA],notices:[]},global:{provide:{[workspaceKey as symbol]:workspace}}})
@@ -70,7 +70,7 @@ describe('SubscriptionOverview status strip',()=>{
     expect(readout.get('.subscription-quota-used').text()).toBe('已使用1.0 KiB')
     expect(readout.get('.subscription-quota-total').text()).toBe('总量4.0 KiB')
     expect(readout.findAll('.subscription-quota-legend>div')).toHaveLength(2)
-    const daily=wrapper!.get('.subscription-actions').get('.subscription-daily')
+    const daily=wrapper!.get('.subscription-main').get('.subscription-daily')
     expect(daily.text()).toContain('近 3 日用量')
     expect(daily.findAll('.cst-usage-day')).toHaveLength(3)
     expect(daily.findAll('.cst-usage-day-track i')).toHaveLength(3)
