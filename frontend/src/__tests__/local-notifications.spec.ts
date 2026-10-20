@@ -25,3 +25,12 @@ it('sends a native alert once and exposes delivery errors',async()=>{
  w.airports.value=[...w.airports.value];await flushPromises();expect(request).toHaveBeenCalledTimes(2)
  values.clear();wrapper.unmount();vi.mocked(request).mockRejectedValue(new Error('delivery denied'));const again=mount(component);await flushPromises();expect(fail).toHaveBeenCalledWith(new Error('delivery denied'));again.unmount();w.dispose()
 })
+
+it('checks on settings changes and every five minutes, not batch progress or airport updates',async()=>{
+ vi.useFakeTimers();vi.mocked(request).mockClear();vi.mocked(request).mockResolvedValue([])
+ const w=createWorkspace();w.settings.value={local_notifications:{enabled:true}} as any;w.jobs.value=[{id:'j'}] as any
+ const wrapper=mount(defineComponent({setup(){useLocalNotifications(w);return()=>null}}));await flushPromises();expect(request).toHaveBeenCalledTimes(1)
+ w.batches.value=[{state:'running',item_count:1}] as any;w.airports.value=[{id:'a',subscriptions:[]}] as any;await flushPromises();await vi.advanceTimersByTimeAsync(60_000);expect(request).toHaveBeenCalledTimes(1)
+ w.settings.value={...w.settings.value!};await flushPromises();expect(request).toHaveBeenCalledTimes(2)
+ await vi.advanceTimersByTimeAsync(240_000);await flushPromises();expect(request).toHaveBeenCalledTimes(3);wrapper.unmount();w.dispose();vi.useRealTimers()
+})

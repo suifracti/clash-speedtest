@@ -38,6 +38,6 @@ export function useLocalNotifications(w:Workspace){
    localStorage.setItem('cst-notified-alerts',JSON.stringify([...seen]))
   }catch(e){w.fail(e)}
  }
- const stop=watch([w.settings,w.airports,w.batches],()=>void check(),{immediate:true}),timer=setInterval(()=>void check(),60_000)
+ const stop=watch(w.settings,()=>void check(),{immediate:true}),timer=setInterval(()=>void check(),300_000)
  onBeforeUnmount(()=>{stop();clearInterval(timer)})
 }
