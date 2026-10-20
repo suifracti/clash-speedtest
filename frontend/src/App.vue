@@ -62,8 +62,8 @@ onBeforeUnmount(()=>{document.removeEventListener('visibilitychange',visibilityC
       </nav>
       <section v-if="w.airports.value.length" class="cst-side-airports" aria-label="机场快捷切换">
         <h2>机场</h2>
-        <button type="button" :aria-pressed="w.airportFilter.value==='all'" @click="w.airportFilter.value='all';navigate('home')"><span>全部机场</span><small>{{airportNodeTotal}}</small></button>
-        <button v-for="a in w.airports.value" :key="a.id" type="button" :title="'在工作台只看 '+a.name" :aria-pressed="w.airportFilter.value===a.id" @click="w.airportFilter.value=w.airportFilter.value===a.id?'all':a.id;navigate('home')"><span>{{a.name}}</span><small>{{airportNodes[a.id]||0}}</small></button>
+        <button type="button" :aria-pressed="w.airportFilter.value==='all'" @click="w.viewAirport('all');navigate('home')"><span>全部机场</span><small>{{airportNodeTotal}}</small></button>
+        <button v-for="a in w.airports.value" :key="a.id" type="button" :title="'在工作台只看 '+a.name" :aria-pressed="w.airportFilter.value===a.id" @click="w.viewAirport(a.id);navigate('home')"><span>{{a.name}}</span><small>{{airportNodes[a.id]||0}}</small></button>
       </section>
       <div class="cst-side-foot">
         <button class="cst-task" type="button" :class="task.state" :disabled="!w.queue.value.length&&!w.busy.value" :aria-label="'检测任务：'+task.title+(task.detail?'，'+task.detail:'')+(task.attention?'，'+task.attention:'')" @click="w.queueOpen.value=true">

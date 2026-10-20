@@ -3,6 +3,7 @@ import {computed,nextTick,onMounted,ref,watch} from 'vue'
 import {useWorkspace} from '../workspace'
 import type {NodeOption,Page} from '../domain'
 import {nodeDisplayName,nodeRegionLabel} from '../nodePresentation'
+import {airportNodeCounts} from '../airportViewing'
 import Modal from './Modal.vue'
 import Icon from './Icon.vue'
 const props=defineProps<{pages:{id:Page;label:string;icon:string}[]}>()
@@ -17,7 +18,8 @@ const items=computed<Item[]>(()=>{
  const q=norm(query.value),out:Item[]=[]
  for(const p of props.pages)if(matches(p.label,q))out.push({id:'page:'+p.id,group:'页面',label:p.label,meta:w.page.value===p.id?'当前页面':'',icon:p.icon,run:()=>emit('navigate',p.id)})
  if(w.queue.value.length&&matches('检测队列 进度',q))out.push({id:'queue',group:'页面',label:'检测队列',meta:`已处理 ${w.done.value}/${w.queue.value.length}`,icon:'select',run:()=>{w.queueOpen.value=true}})
- for(const a of w.airports.value)if(matches(a.name,q))out.push({id:'airport:'+a.id,group:'机场',label:a.name,meta:`${w.proxyNodes.value.filter(n=>w.nodeAirportId(n)===a.id).length} 个节点 · 在工作台只看此机场`,icon:'layers',run:()=>{w.airportFilter.value=a.id;emit('navigate','home')}})
+ const counts=airportNodeCounts(w.nodes.value,w.airports.value)
+ for(const a of w.airports.value)if(matches(a.name,q))out.push({id:'airport:'+a.id,group:'机场',label:a.name,meta:`${counts[a.id]||0} 个节点 · 在工作台只看此机场`,icon:'layers',run:()=>{if(w.airportFilter.value!==a.id)w.viewAirport(a.id);emit('navigate','home')}})
  if(q){
   let count=0
   for(const n of w.proxyNodes.value){

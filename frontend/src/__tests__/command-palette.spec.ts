@@ -44,3 +44,20 @@ describe('command palette (synthetic data)',()=>{
     expect(wrapper.emitted('navigate')?.[0]).toEqual(['home'])
   })
 })
+
+describe('airport quick switch (synthetic data)',()=>{
+  it('adds an airport outside the measurement scope before filtering to it',()=>{
+    const w=createWorkspace()
+    w.airports.value=[{id:'a1',name:'甲',url_display:'',node_count:1,has_cache:true,subscriptions:[{id:'p1',airport_id:'a1',name:'默认',url_display:'',url_configured:true,node_count:1,has_cache:true}]},{id:'a2',name:'乙',url_display:'',node_count:1,has_cache:true,subscriptions:[{id:'p2',airport_id:'a2',name:'默认',url_display:'',url_configured:true,node_count:1,has_cache:true}]}] as never
+    w.nodes.value=[node(1,'甲 01'),{...node(2,'乙 01'),profile_id:'p2'}]
+    w.selectedAirportIds.value=['a1']
+    expect(w.proxyNodes.value).toHaveLength(1)
+    w.viewAirport('a2')
+    expect(w.selectedAirportIds.value).toEqual(['a1','a2'])
+    expect(w.airportFilter.value).toBe('a2')
+    expect(w.filteredNodes.value.map(n=>n.display_name)).toEqual(['乙 01'])
+    w.viewAirport('all')
+    expect(w.airportFilter.value).toBe('all')
+    expect(w.filteredNodes.value).toHaveLength(2)
+  })
+})
