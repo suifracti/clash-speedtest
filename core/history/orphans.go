@@ -40,7 +40,7 @@ func InspectOrphans(ctx context.Context, path string) (*OrphanReport, error) {
 		return nil, err
 	}
 	params := url.Values{"mode": {"ro"}, "_pragma": {"query_only(1)", "busy_timeout(5000)"}}
-	dsn := (&url.URL{Scheme: "file", Path: filepath.ToSlash(abs), RawQuery: params.Encode()}).String()
+	dsn := sqliteFileURI(abs, params)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err

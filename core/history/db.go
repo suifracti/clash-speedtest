@@ -272,7 +272,7 @@ func OpenDB(dir string) (*DB, error) {
 	// modernc applies these options whenever the pool opens a connection.
 	// An Exec on sql.DB configures only whichever connection it happens to use.
 	params := url.Values{"_pragma": {"busy_timeout(5000)", "synchronous(NORMAL)", "foreign_keys(1)"}}
-	dsn := (&url.URL{Scheme: "file", Path: filepath.ToSlash(dbPath), RawQuery: params.Encode()}).String()
+	dsn := sqliteFileURI(dbPath, params)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite db at %s: %w", dbPath, err)

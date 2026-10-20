@@ -86,6 +86,9 @@ jobs:
       - name: Test Windows Synthetic GUI Lifecycle
         run: go test -v ./gui -run '^TestServerLifecycle$' -count=1 -timeout=90s
 
+      - name: Test Windows SQLite Connection Settings and Read-Only Inspection
+        run: go test ./core/history -run '^(TestSQLiteFileURIHasNoDriveAuthority|TestSQLitePragmasAndCascadeOnEveryConnection|TestInspectOrphans)' -count=1 -timeout=90s
+
       - name: Test Windows v11 Unsupported Upgrade Safety Refusal
         run: go test -v ./core/history -run '^TestV11UpgradeBackupWindowsUnsupportedPrivateRootBlocksDDL$' -count=1 -timeout=90s
 

@@ -4,11 +4,30 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestSQLiteFileURIHasNoDriveAuthority(t *testing.T) {
+	for _, path := range []string{"C:/fixture #&/history.db", "d:/fixture #&/history.db", "/tmp/fixture #&/history.db"} {
+		uri := sqliteFileURI(path, url.Values{"_pragma": {"foreign_keys(1)", "busy_timeout(5000)"}})
+		parsed, err := url.Parse(uri)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantPath := path
+		if !strings.HasPrefix(wantPath, "/") {
+			wantPath = "/" + wantPath
+		}
+		if !strings.HasPrefix(uri, "file:///") || parsed.Host != "" || parsed.Path != wantPath || len(parsed.Query()["_pragma"]) != 2 {
+			t.Errorf("invalid local SQLite URI %q: host=%q path=%q, want hostless %q", uri, parsed.Host, parsed.Path, wantPath)
+		}
+	}
+}
 
 func TestSQLitePragmasAndCascadeOnEveryConnection(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "quota #& space")
