@@ -101,6 +101,7 @@ type MonitoredNode struct {
 
 // MonitorJob holds the persistent configuration and state of a 24/7 monitoring task.
 type MonitorJob struct {
+	NextRunAt    *time.Time      `json:"next_run_at,omitempty"`
 	ID           string          `json:"id"`
 	Name         string          `json:"name"`
 	ProfileID    string          `json:"profile_id"`

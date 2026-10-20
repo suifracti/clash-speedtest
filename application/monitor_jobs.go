@@ -62,6 +62,7 @@ type MonitorJobNodeDTO struct {
 // MonitorJobDTO is the public monitor-job read model. RawConfig is deliberately
 // absent: the scheduler retains it in memory, but neither Web nor Wails needs it.
 type MonitorJobDTO struct {
+	NextRunAt              *time.Time                   `json:"next_run_at,omitempty"`
 	ScopeKind              string                       `json:"scope_kind"`
 	UnresolvedNodeCount    int                          `json:"unresolved_node_count"`
 	UnresolvedNodes        []MonitorNodeResolutionIssue `json:"unresolved_nodes,omitempty"`
@@ -664,6 +665,7 @@ func monitorJobDTO(job monitor.MonitorJob, profileName string) MonitorJobDTO {
 		}
 	}
 	return MonitorJobDTO{
+		NextRunAt:              job.NextRunAt,
 		ID:                     job.ID,
 		Name:                   job.Name,
 		ProfileID:              job.ProfileID,

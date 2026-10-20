@@ -42,6 +42,15 @@ beforeEach(()=>{
 afterEach(()=>{cleanups.forEach(cleanup=>cleanup());cleanups=[];document.body.innerHTML='';document.documentElement.dataset.theme='light';setViewport(1440,900)})
 
 describe('MonitorView truthful read state and async interactions',()=>{
+  it('shows the scheduled next run and clears it for a paused job',async()=>{
+    const at='2026-10-20T12:30:00Z'
+    vi.mocked(api.jobs).mockResolvedValueOnce([{...job(),next_run_at:at} as MonitorJob])
+    const {wrapper,workspace}=mountMonitorView();await flushPromises()
+    expect(wrapper.get('.monitor-next-run time').attributes('datetime')).toBe(at)
+    workspace.jobs.value=[job('paused')];await nextTick()
+    expect(wrapper.get('.monitor-next-run').text()).toContain('—')
+  })
+
   it('shows unknown budget and storage when the first reads fail instead of displaying zero',async()=>{
     vi.mocked(api.budget).mockRejectedValueOnce(new Error('budget offline'))
     vi.mocked(api.storage).mockRejectedValueOnce(new Error('storage offline'))

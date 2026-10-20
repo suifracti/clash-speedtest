@@ -29,6 +29,7 @@ type Scheduler struct {
 	pendingCancel         context.CancelFunc
 	pendingID             uint64
 	recoveryPending       bool
+	nextTickAt            time.Time
 	state                 JobState
 	stopping              bool
 	ctx                   context.Context
@@ -88,6 +89,11 @@ func (s *Scheduler) Job() MonitorJob {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	copy := *s.job
+	copy.NextRunAt = nil
+	if s.state == JobStateRunning && !s.stopping && s.ctx != nil && s.ctx.Err() == nil && !s.nextTickAt.IsZero() {
+		next := s.nextTickAt
+		copy.NextRunAt = &next
+	}
 	copy.SkippedRounds = atomic.LoadInt64(&s.skippedRounds)
 	copy.ResourceSkippedRounds = atomic.LoadInt64(&s.resourceSkippedRounds)
 	return copy
@@ -354,6 +360,7 @@ func (s *Scheduler) Start(parentCtx context.Context) error {
 	s.loopWg.Add(1)
 	scheduleCtx := s.ctx
 	interval := s.job.Interval
+	s.nextTickAt = time.Now().Add(interval)
 	s.mu.Unlock()
 	// Claim the initial round before returning. Pause/Stop can cancel its
 	// pending admission; an already-admitted request follows normal cancellation.
@@ -516,6 +523,9 @@ func (s *Scheduler) scheduleLoop(ctx context.Context, interval time.Duration) {
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	s.mu.Lock()
+	s.nextTickAt = time.Now().Add(interval)
+	s.mu.Unlock()
 
 	for {
 		select {
@@ -523,6 +533,7 @@ func (s *Scheduler) scheduleLoop(ctx context.Context, interval time.Duration) {
 			return
 		case tickTime := <-ticker.C:
 			s.mu.Lock()
+			s.nextTickAt = tickTime.Add(interval)
 			currentState := s.state
 			isStopping := s.stopping
 			s.mu.Unlock()

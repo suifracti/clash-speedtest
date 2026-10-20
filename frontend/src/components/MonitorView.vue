@@ -213,6 +213,7 @@ onBeforeUnmount(()=>{mounted=false;reloadGeneration++;runsGeneration++;clearInte
           <span>每 {{job.interval_seconds>=60?`${job.interval_seconds/60} 分钟`:`${job.interval_seconds} 秒`}}</span>
           <span>{{job.probe_set==='latency_four_v1'?'四站延迟':job.probe_set==='latency_six_v1'?'旧六站延迟':job.probe_set==='light'?'旧单站延迟':job.probe_set==='service'?'基础服务':'深度诊断'}}</span>
           <span>{{job.sampling_tier==='focus'?'重点':job.sampling_tier==='sparse'?'稀疏':'常规'}}采样</span>
+        <span class="monitor-next-run">下次运行 <time v-if="job.next_run_at" :datetime="job.next_run_at">{{new Date(job.next_run_at).toLocaleString('zh-CN',{hour12:false})}}</time><span v-else>—</span></span>
         </div>
         <MonitorTimeBand :job="job"/>
         <p v-if="job.blocked_reason||job.recovery_reason||job.persistence_error||job.storage_reason||job.budget_reason" class="inline-warning">

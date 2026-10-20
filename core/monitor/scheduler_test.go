@@ -76,6 +76,9 @@ func TestScheduler_Lifecycle(t *testing.T) {
 	}
 
 	t.Cleanup(func() { _ = scheduler.Stop() })
+	if scheduler.Job().NextRunAt == nil {
+		t.Fatal("running scheduler did not expose next_run_at")
+	}
 	waitForRun := func(after int64) int64 {
 		t.Helper()
 		deadline := time.NewTimer(2 * time.Second)
@@ -106,6 +109,9 @@ func TestScheduler_Lifecycle(t *testing.T) {
 		t.Fatalf("Expected state %s after Pause, got %s", JobStatePaused, scheduler.State())
 	}
 
+	if scheduler.Job().NextRunAt != nil {
+		t.Fatal("paused scheduler still advertised a next run")
+	}
 	// Pause prevents new admission; an already admitted run may finish.
 	scheduler.runWg.Wait()
 	completed1 = scheduler.CompletedRuns()
