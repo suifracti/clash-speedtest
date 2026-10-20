@@ -22,7 +22,7 @@ it('uses the newer same-site stopped-monitor round including refusal latency',as
  vi.mocked(api.latencyHistory).mockResolvedValue({tests:[],has_more:false,complete:true})
  vi.mocked(api.monitorSamples).mockResolvedValue({items:[{...n,sample_id:'s',run_id:'m',timestamp:at,display_name_snapshot:'n',target:'https://api.github.com/zen',probe_type:'rtt',success:true,latency:368e6,ttfb:0,sampling_tier:'regular',error_detail:'HTTP 403'}],has_more:false,next_cursor:''})
  const result=await readSortSnapshot([n],'latency','github',[],at,at,()=>{})
- expect(result.snapshot[key(n)].latency).toMatchObject({value:368,tone:'warn',source:'monitor'})
+ expect(result.snapshot[key(n)].latency).toMatchObject({value:368,tone:'good',source:'monitor'})
  expect(api.latencyHistory).toHaveBeenCalledWith(n,{target_id:'github',since:at,until:at,limit:1})
  expect(api.monitorSamples).toHaveBeenCalledWith(expect.objectContaining({...scope(n),probe_type:'rtt',target:'https://api.github.com/zen'}))
 })

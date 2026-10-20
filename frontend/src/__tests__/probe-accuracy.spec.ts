@@ -49,8 +49,8 @@ it('does not count an explicitly unexecuted persisted result as an executed serv
  const cache=createPresentationCache(w,ref({}),ref({}));expect(cache.services(n)[0].description).toContain('实际执行 0 · 未执行 1')
 })
 
-it('retains HTTP refusal latency as a warning with a reason rather than a node failure',()=>{
+it('counts HTTP refusal as connected while retaining the HTTP note',()=>{
  const sample:MonitorSample={...n,sample_id:'http',sampling_tier:'regular',run_id:'six-http',display_name_snapshot:'n',timestamp:'2026-10-07T00:00:00Z',target:'https://api.github.com/zen',probe_type:'rtt',success:true,latency:368e6,ttfb:368e6,error_detail:'HTTP 403；已测得响应时延，业务／解锁未确认'}
  const w={displayTarget:ref('github'),serviceIds:ref([] as string[]),latency:ref({}),downloads:ref({}),services:ref({})};const cache=createPresentationCache(w,ref({[key(n)]:[sample]}),ref({}));const p=cache.site(n,'github')[0]
- expect(p.value).toBe(368);expect(p.tone).toBe('warn');expect(p.sampleGroups![0].samples[0].note).toContain('403')
+ expect(p.value).toBe(368);expect(p.tone).toBe('good');expect(p.sampleGroups![0].samples[0].note).toContain('403')
 })

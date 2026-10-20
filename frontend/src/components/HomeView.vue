@@ -124,7 +124,7 @@ function toggleAirport(id:string){const selected=w.selectedAirportIds.value||[];
 function metricPoint(n:NodeOption,target:string){if(w.sort.value==='latency'&&target===w.displayTarget.value&&w.sortSnapshots.value[key(n)])return w.sortSnapshots.value[key(n)].latency;return sitePoints(n,target).at(-1)}
 function siteMetric(n:NodeOption,target:string){const point=metricPoint(n,target);return latencyPointLabel(point,target)}
 function siteContext(n:NodeOption,target:string){const p=metricPoint(n,target);return p?date(p.time)+(p.source==='monitor'?' · 监测':' · 手动'):'未测'}
-function siteReason(n:NodeOption,target:string){return metricPoint(n,target)?.sampleGroups?.find(g=>latencyTargetId(g.target)===target)?.samples.map(s=>s.note||s.error).filter(Boolean).join('；')||''}
+function siteReason(n:NodeOption,target:string){return [...new Set(metricPoint(n,target)?.sampleGroups?.find(g=>latencyTargetId(g.target)===target)?.samples.map(s=>s.note||s.error).filter(Boolean)||[])].join('；')}
 function expanded(n:NodeOption){return !!hoverNode.value&&key(hoverNode.value)===key(n)&&!!(activeRound.value||inlineTab.value==='history')}
 function httpPoints(n:NodeOption,id=''){return presentation.http(n,id)}
 function monitorPoints(n:NodeOption){return presentation.monitor(n)}

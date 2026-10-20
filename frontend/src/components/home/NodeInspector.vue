@@ -3,6 +3,7 @@ import {computed,inject} from 'vue'
 import {useWorkspace} from '../../workspace'
 import {date,key,targets,type NodeOption,type Project} from '../../domain'
 import {nodeDisplayName} from '../../nodePresentation'
+import {latencyTargetId} from '../../latencyTargets'
 import {monitorHTTPServices,type TrendPoint} from '../../presentation'
 import Icon from '../Icon.vue'
 import HealthBars from '../HealthBars.vue'
@@ -57,6 +58,16 @@ function windowText(id:string){
  const range=({6:'6 小时',24:'24 小时',168:'7 天',720:'30 天'} as Record<number,string>)[w.hours.value]||w.hours.value+' 小时'
  return `${range}内 ${s.success}/${s.total} 次响应`+(s.p50!=null?` · 中位 ${Math.round(s.p50)} ms`:'')+(s.p95!=null&&s.success>=20?` · 尾部 P95 ${Math.round(s.p95)} ms`:'')
 }
+function siteReadout(id:string){
+ const point=m.metricPoint(props.node,id),samples=point?.sampleGroups?.filter(g=>latencyTargetId(g.target)===id).flatMap(g=>g.samples)||point?.samples||[],values=samples.flatMap(s=>s.value===null?[]:[s.value])
+ return m.siteMetric(props.node,id)+(samples.length?` · ${values.length}/${samples.length}`:'')+(values.length?` · ${Math.round(Math.min(...values))}–${Math.round(Math.max(...values))} ms`:'')
+}
+function spark(id:string){
+ const points=m.sitePoints(props.node,id).filter(p=>p.value!==null)
+ if(points.length<3)return ''
+ const values=points.map(p=>p.value!),min=Math.min(...values),span=Math.max(...values)-min
+ return values.map((value,index)=>`${index/(values.length-1)*80},${span?22-(value-min)/span*20:12}`).join(' ')
+}
 const mine=computed(()=>!!m.hoverNode.value&&key(m.hoverNode.value)===key(props.node))
 const showRound=computed(()=>mine.value&&m.inlineTab.value==='round'&&!!m.activeRound.value)
 const showHistory=computed(()=>mine.value&&m.inlineTab.value==='history')
@@ -90,12 +101,11 @@ function run(){m.closeHover();w.openPlan([props.node])}
     </div>
 
     <div v-if="shows('latency')" class="hd-ins-block hd-latency">
-      <h3>延迟 <button class="hd-link" @click="openHistory('latency','all')">完整走势</button> <small>每格一轮 · 左旧右新 · 悬停看这一轮 · 点击固定</small><small v-if="m.monitorErrors.value[key(node)]" class="bad">监测记录读取失败</small><small v-else-if="m.monitorData.value[key(node)]?.length">含持续监测 · 各站独立记录</small></h3>
+      <h3>延迟 <button class="hd-link" @click="openHistory('latency','all')">完整走势</button> <small>最近一轮</small><small v-if="m.monitorErrors.value[key(node)]" class="bad">监测记录读取失败</small><small v-else-if="m.monitorData.value[key(node)]?.length">含持续监测 · 各站独立记录</small></h3>
       <div v-for="s in sites" :key="s.id" class="hd-site">
         <button class="hd-site-name" :title="'查看 '+s.name+' 的历史'" @click="openHistory('latency',s.id)">{{s.name}}</button>
-        <button class="hd-site-value" :class="m.metricPoint(node,s.id)?.tone||'empty'" :title="m.siteContext(node,s.id)+(m.siteReason(node,s.id)?' · '+m.siteReason(node,s.id):'')" @click="openHistory('latency',s.id)">{{m.siteMetric(node,s.id)}}</button>
-        <HealthBars defer :points="m.sitePoints(node,s.id)" :label="s.name+' 延迟轮次'" @inspect="inspect('latency',$event,s.id)" @leave="m.leaveRound" @open="open('latency',$event,s.id)"/>
-        <small v-if="windowText(s.id)" class="hd-site-window">{{windowText(s.id)}}</small>
+        <button class="hd-site-value" :class="m.metricPoint(node,s.id)?.tone||'empty'" :title="(windowText(s.id)||m.siteContext(node,s.id))+(m.siteReason(node,s.id)?' · '+m.siteReason(node,s.id):'')" @click="openHistory('latency',s.id)">{{siteReadout(s.id)}}</button>
+        <svg v-if="spark(s.id)" class="latency-spark" viewBox="0 0 80 24" role="img" :aria-label="s.name+' 实测轮次走势'"><polyline :points="spark(s.id)" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
       </div>
     </div>
 
@@ -150,3 +160,7 @@ function run(){m.closeHover();w.openPlan([props.node])}
     <p class="hd-legend"><span class="good">{{toneLabel('good')}}</span><span class="warn">{{toneLabel('warn')}}</span><span class="bad">{{toneLabel('bad')}}</span><span class="empty">{{toneLabel('empty')}}</span></p>
   </section>
 </template>
+
+<style scoped>
+.hd-latency .hd-site{grid-template-columns:84px minmax(0,1fr) 80px}.hd-latency .hd-site-value{font-size:11px;white-space:nowrap}.latency-spark{width:80px;height:24px;color:var(--blue)}
+</style>

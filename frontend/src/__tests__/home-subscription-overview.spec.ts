@@ -39,93 +39,19 @@ beforeEach(()=>{
 afterEach(()=>{wrapper?.unmount();wrapper=undefined;vi.clearAllMocks()})
 
 describe('HomeView subscription account integration',()=>{
-  it('mounts the account overview and scopes quota, failure, and announcements to its selected account',async()=>{
-    const workspace=createWorkspace()
-    workspace.airports.value=[airport]
-    workspace.nodes.value=[notice('account-a1','notice-a1','A1 only'),notice('account-a2','notice-a2','A2 only')]
-    workspace.selectedAirportIds.value=['airport-a']
-    workspace.airportFilter.value='airport-a'
-    workspace.subscription.value='all'
-    refreshMocks.refreshJobs.mockResolvedValue([{id:'prior-job',state:'finished',created_at:'2026-10-10T00:00:00Z',completed:1,success:0,failed:1,cancelled:0,not_executed:0,cancel_requested:false,items:[{airport_id:'airport-a',subscription_id:'account-a2',airport_name:'Airport A',subscription_name:'Account A2',source_fingerprint:'fingerprint',source_version:1,state:'failed',error_code:'http_429',error_message:'订阅源限流；旧缓存保留',duration_ms:1,node_count:1,stages:[]}]}])
-    wrapper=mount(HomeView,{global:{provide:{[workspaceKey as symbol]:workspace},stubs:{QualityMetrics:true,HealthBars:true,ServicePicker:true,TrendChart:true,RoundResults:true,MeasurementResults:true,InlineHistory:true,SiteDisplayPicker:true}}})
-    await flushPromises()
-
-    const accountSelect=wrapper.find('select[aria-label="首页用量订阅"]')
-    expect(accountSelect.exists()).toBe(true)
-    expect(Array.from((accountSelect.element as HTMLSelectElement).options).map(option=>option.value)).toEqual([JSON.stringify(['airport-a','account-a1']),JSON.stringify(['airport-a','account-a2'])])
-    await accountSelect.setValue(JSON.stringify(['airport-a','account-a2']))
-    expect(wrapper.text()).toContain('Account A2')
-    // 额度卡片改版后：剩余量单独显示，已使用与总量分两格。
-    expect(wrapper.get('.subscription-remaining').text()).toContain('5.0 KiB')
-    expect(wrapper.get('.subscription-quota-used').text()).toContain('3.0 KiB')
-    expect(wrapper.get('.subscription-quota-total').text()).toContain('8.0 KiB')
-    expect(wrapper.text()).toContain('已过期')
-    expect(wrapper.text()).toContain('订阅源限流；旧缓存保留')
-    expect(workspace.selectedAirportIds.value).toEqual(['airport-a'])
-    expect(workspace.subscription.value).toBe('all')
-
-    expect(wrapper.find('a[href="https://official.example/"]').exists()).toBe(true)
-    expect(wrapper.find('a[href="https://t.me/airport_channel"]').exists()).toBe(true)
-
-    refreshMocks.startRefresh.mockResolvedValue({id:'selected-job',state:'finished',created_at:'2026-10-11T00:00:00Z',completed:1,success:0,failed:1,cancelled:0,not_executed:0,items:[{airport_id:'airport-a',subscription_id:'account-a2',state:'failed',error_message:'A2 refresh result'}]})
-    const refreshCurrent=wrapper.findAll('button').find(button=>button.text().trim()==='刷新当前订阅')
-    expect(refreshCurrent).toBeTruthy()
-    await refreshCurrent!.trigger('click')
-    await flushPromises()
-    expect(refreshMocks.startRefresh).toHaveBeenCalledWith(expect.objectContaining({selections:[{airport_id:'airport-a',subscription_id:'account-a2'}]}))
-    expect(wrapper.text()).toContain('A2 refresh result')
-    await accountSelect.setValue(JSON.stringify(['airport-a','account-a1']))
-    expect(wrapper.find('.subscription-message').exists()).toBe(false)
-    expect(wrapper.find('.subscription-issues').text()).toContain('A2 refresh result')
-    await accountSelect.setValue(JSON.stringify(['airport-a','account-a2']))
-
-    const noticeButton=wrapper.findAll('button').find(button=>button.text().trim().startsWith('公告 1'))
-    expect(noticeButton).toBeTruthy()
-    await noticeButton!.trigger('click')
-    await flushPromises()
-    const dialog=document.body.querySelector('dialog.modal')
-    expect(dialog?.textContent).toContain('A2 only')
-    expect(dialog?.textContent).not.toContain('A1 only')
+  it('shows one row per subscription and refreshes only the row account',async()=>{
+    const workspace=createWorkspace();workspace.airports.value=[airport,airportB];workspace.selectedAirportIds.value=['airport-a','airport-b'];workspace.airportFilter.value='airport-a'
+    refreshMocks.startRefresh.mockResolvedValue({id:'one',state:'finished',created_at:'2026-10-20T00:00:00Z',items:[],success:0})
+    wrapper=mount(HomeView,{global:{provide:{[workspaceKey as symbol]:workspace}}});await flushPromises()
+    expect(wrapper.find('.hd-orbit').exists()).toBe(false)
+    expect(wrapper.get('.subscription-airport-heading').text()).toContain('Airport A')
+    const rows=wrapper.findAll('.subscription-airport-row');expect(rows).toHaveLength(2)
+    expect(rows[0].text()).toContain('Account A1');expect(rows[1].text()).toContain('Account A2')
+    await rows[1].get('button').trigger('click');await flushPromises()
+    expect(refreshMocks.startRefresh).toHaveBeenLastCalledWith(expect.objectContaining({selections:[{airport_id:'airport-a',subscription_id:'account-a2'}]}))
+    workspace.viewAirport('all');await flushPromises()
+    expect(wrapper.findAll('.subscription-airport-row')).toHaveLength(2)
+    expect(wrapper.get('.airport-summary-name').text()).toContain('2 个订阅')
+    expect(workspace.airportFilter.value).toBe('all');workspace.dispose()
   })
-
-  it('cycles viewed airports, remembers each airport account, and leaves the measurement scope untouched',async()=>{
-    const workspace=createWorkspace()
-    const airportNoticeB={...notice('account-b1','notice-b1','B1 only'),profile_name:'Airport B'}
-    const fixtureNotices=[notice('account-a1','notice-a1','A1 only'),notice('account-a2','notice-a2','A2 only'),airportNoticeB]
-    workspace.airports.value=[airport,airportB]
-    workspace.nodes.value=fixtureNotices
-    workspace.selectedAirportIds.value=['airport-a','airport-b']
-    workspace.subscription.value='all'
-    wrapper=mount(SubscriptionOverview,{props:{airports:[airport,airportB],notices:fixtureNotices},global:{provide:{[workspaceKey as symbol]:workspace}}})
-    await flushPromises()
-
-    let accountSelect=wrapper.get('select[aria-label="首页用量订阅"]')
-    const optionValues=()=>Array.from((accountSelect.element as HTMLSelectElement).options).map(option=>option.value)
-    expect((wrapper.vm as unknown as {viewedAirportName:string}).viewedAirportName).toBe('Airport A')
-    expect(optionValues()).toEqual([JSON.stringify(['airport-a','account-a1']),JSON.stringify(['airport-a','account-a2'])])
-
-    await accountSelect.setValue(JSON.stringify(['airport-a','account-a2']))
-    expect(wrapper.text()).toContain('Account A2')
-    ;(wrapper.vm as unknown as {cycleAirport:()=>void}).cycleAirport()
-    await flushPromises()
-    expect((wrapper.vm as unknown as {viewedAirportName:string}).viewedAirportName).toBe('Airport B')
-    expect(wrapper.find('select[aria-label="首页用量订阅"]').exists()).toBe(false)
-    expect(wrapper.text()).toContain('Account B1')
-
-    ;(wrapper.vm as unknown as {cycleAirport:()=>void}).cycleAirport()
-    await flushPromises()
-    expect((wrapper.vm as unknown as {viewedAirportName:string}).viewedAirportName).toBe('Airport A')
-    accountSelect=wrapper.get('select[aria-label="首页用量订阅"]')
-    expect(optionValues()).toEqual([JSON.stringify(['airport-a','account-a1']),JSON.stringify(['airport-a','account-a2'])])
-    expect((accountSelect.element as HTMLSelectElement).value).toBe(JSON.stringify(['airport-a','account-a2']))
-    expect(wrapper.text()).toContain('Account A2')
-
-    ;(wrapper.vm as unknown as {cycleAirport:()=>void}).cycleAirport()
-    await flushPromises()
-    expect((wrapper.vm as unknown as {viewedAirportName:string}).viewedAirportName).toBe('Airport B')
-    expect(workspace.selectedAirportIds.value).toEqual(['airport-a','airport-b'])
-    expect(workspace.subscription.value).toBe('all')
-    expect(workspace.nodes.value).toEqual(fixtureNotices)
-  })
-
 })

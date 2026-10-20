@@ -56,8 +56,9 @@ describe('SubscriptionOverview status strip',()=>{
 
   it('groups the compact remaining quota with its meter, links the bar to availability and includes recent daily usage',async()=>{
     const workspace=createWorkspace()
-    workspace.airports.value=[airportA]
-    wrapper=mount(SubscriptionOverview,{props:{airports:[airportA],notices:[]},global:{provide:{[workspaceKey as symbol]:workspace}}})
+    const single={...airportA,subscriptions:airportA.subscriptions!.slice(0,1)}
+    workspace.airports.value=[single]
+    wrapper=mount(SubscriptionOverview,{props:{airports:[single],notices:[]},global:{provide:{[workspaceKey as symbol]:workspace}}})
     await flushPromises()
 
     const meter=wrapper!.get('[role="meter"]')
@@ -94,8 +95,10 @@ describe('SubscriptionOverview status strip',()=>{
     wrapper=mount(SubscriptionOverview,{props:{airports:[airportA,airportB],notices:[],airportId:'airport-a'},global:{provide:{[workspaceKey as symbol]:workspace}}})
     await flushPromises()
     const buttons=wrapper.findAll('.subscription-actions .button')
-    expect(buttons.slice(0,3).map(b=>b.text())).toEqual(['刷新当前订阅','刷新此机场','选择范围'])
-    await buttons[1]!.trigger('click');await flushPromises()
+    expect(wrapper.findAll('.subscription-airport-row')).toHaveLength(2)
+    expect(wrapper.find('select[aria-label="首页用量订阅"]').exists()).toBe(false)
+    expect(buttons.slice(0,2).map(b=>b.text())).toEqual(['刷新此机场','选择范围'])
+    await buttons[0]!.trigger('click');await flushPromises()
     expect(refreshMocks.startRefresh).toHaveBeenLastCalledWith(expect.objectContaining({selections:[
       {airport_id:'airport-a',subscription_id:'account-a1'},
       {airport_id:'airport-a',subscription_id:'account-a2'},
@@ -111,8 +114,6 @@ describe('SubscriptionOverview status strip',()=>{
     await flushPromises()
 
     expect(refreshMocks.startRefresh).not.toHaveBeenCalled()
-    const accountSelect=wrapper!.get('select[aria-label="首页用量订阅"]')
-    await accountSelect.setValue(JSON.stringify(['airport-a','account-a2']))
     expect(workspace.selectedAirportIds.value).toEqual(['airport-a'])
     expect(workspace.subscription.value).toBe('all')
 

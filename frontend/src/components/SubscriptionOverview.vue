@@ -6,7 +6,6 @@ import {airportAccounts,noticesForAccount,safeAirportLink,parseNoticeUsage,type 
 import {useWorkspace} from '../workspace'
 import {accountDailyUsage,shanghaiDay,shiftDay,type DayUsage} from '../usageDaily'
 import SubscriptionChanges from './SubscriptionChanges.vue'
-import UiSelect from './UiSelect.vue'
 import Modal from './Modal.vue'
 import UsageDays from './UsageDays.vue'
 
@@ -15,12 +14,10 @@ type SubscriptionDisclosureSummary={refreshState:'loading'|'ready'|'error';notic
 const emit=defineEmits<{summary:[value:SubscriptionDisclosureSummary];viewed:[airportId:string]}>()
 const workspace=useWorkspace()
 const allAirports=computed(()=>props.airportId==='all')
-const viewedAirportId=ref('')
-const viewedAirport=computed(()=>props.airports.find(airport=>airport.id===viewedAirportId.value)||props.airports[0])
-const viewedAirportName=computed(()=>viewedAirport.value?.name||'')
+const viewedAirport=computed(()=>props.airports.find(airport=>airport.id===props.airportId)||props.airports[0])
 const accounts=computed(()=>viewedAirport.value?airportAccounts([viewedAirport.value]):[])
-const selectedKey=ref('')
-const rememberedAccountByAirport=ref<Record<string,string>>({})
+const rowMode=computed(()=>allAirports.value||accounts.value.length>1)
+const displayedAccounts=computed(()=>allAirports.value?airportAccounts(props.airports):accounts.value)
 const jobs=ref<SubscriptionRefreshJob[]>([])
 const activeJob=ref<SubscriptionRefreshJob|null>(null)
 const loading=ref(false)
@@ -31,7 +28,7 @@ const scopeTouched=ref(false)
 const selectedScopeKeys=ref<string[]>([])
 const error=ref('')
 
-const selected=computed(()=>accounts.value.find(account=>account.key===selectedKey.value))
+const selected=computed(()=>accounts.value[0])
 const accountNotices=computed(()=>noticesForAccount(props.notices,selected.value))
 const usage=computed(()=>selected.value?.subscription.usage)
 const parsedNoticeUsage=computed(()=>parseNoticeUsage(accountNotices.value))
@@ -110,9 +107,9 @@ const workspaceRefreshIssues=computed(()=>workspaceAccounts.value.flatMap(accoun
 }).sort((a,b)=>Date.parse(b.job.created_at)-Date.parse(a.job.created_at)))
 // 全部机场只汇总现有账户数据，不改变订阅或检测范围。
 const dailyByAccount=ref<Record<string,DayUsage[]>>({})
-watch(()=>[allAirports.value,airportAccounts(props.airports).map(a=>a.key).join('|'),workspace.usageRefreshVersion.value],async()=>{
-  if(!allAirports.value)return
-  const entries=await Promise.all(airportAccounts(props.airports).map(async account=>{
+watch(()=>[rowMode.value,displayedAccounts.value.map(a=>a.key).join('|'),workspace.usageRefreshVersion.value],async()=>{
+  if(!rowMode.value)return
+  const entries=await Promise.all(displayedAccounts.value.map(async account=>{
     const result=await accountDailyUsage(account.airport.id,account.subscription.id,3).catch(()=>undefined)
     return [account.key,result?.days||[]] as const
   }))
@@ -125,10 +122,9 @@ function sumDay(list:AirportAccount[],index:number){
   return {date:day,label:['今天','昨天','前天'][index],bytes:known.length?known.reduce((sum,d)=>sum+d!.bytes!,0):null,partial:known.length<values.length&&known.length>0,recorded:values.some(d=>d?.recorded)}
 }
 function dayText(day:ReturnType<typeof sumDay>){return day.partial?'部分记录':day.bytes!==null?bytes(day.bytes):day.recorded?'未知':'未记录'}
-const allDays=computed(()=>[0,1,2].map(index=>sumDay(airportAccounts(props.airports),index)))
+const allDays=computed(()=>[0,1,2].map(index=>sumDay(displayedAccounts.value,index)))
 const dailyMax=computed(()=>Math.max(1,...allDays.value.map(d=>d.bytes||0)))
-const airportRows=computed(()=>props.airports.map(airport=>{
-  const list=airportAccounts([airport])
+function accountRow(airport:Airport,list:AirportAccount[]){
   const quotas=list.map(account=>{
     const parsed=parseNoticeUsage(noticesForAccount(props.notices,account)),usage=account.subscription.usage
     const total=usage?.total??parsed.total,used=subscriptionUsed(usage)??parsed.used
@@ -137,11 +133,12 @@ const airportRows=computed(()=>props.airports.map(airport=>{
   const remaining=quotas.every(q=>q.remaining!=null)?quotas.reduce((sum,q)=>sum+q.remaining!,0):null
   const total=quotas.every(q=>q.total!=null)?quotas.reduce((sum,q)=>sum+q.total!,0):null
   const ratio=remaining!==null&&total!==null&&total>0?Math.min(1,Math.max(0,remaining/total)):null
-  const issues=workspaceRefreshIssues.value.filter(issue=>issue.account.airport.id===airport.id)
-  const refreshTimes=latestRefreshByAccount.value.filter(entry=>entry.account.airport.id===airport.id).map(entry=>entry.item?.finished_at||entry.job?.created_at||'')
+  const issues=workspaceRefreshIssues.value.filter(issue=>list.some(account=>account.key===issue.account.key))
+  const refreshTimes=latestRefreshByAccount.value.filter(entry=>list.some(account=>account.key===entry.account.key)).map(entry=>entry.item?.finished_at||entry.job?.created_at||'')
   const updated=[...refreshTimes,...list.map(account=>account.subscription.updated_at||airport.updated_at||'')].filter(Boolean).sort((a,b)=>Date.parse(a)-Date.parse(b)).at(-1)
-  return {airport,remaining,ratio,today:sumDay(list,0),updated,issues}
-}))
+  return {airport,remaining,ratio,today:sumDay(list,0),updated,issues,accounts:list}
+}
+const overviewRows=computed(()=>allAirports.value?props.airports.map(airport=>({...accountRow(airport,airportAccounts([airport])),id:airport.id,name:airport.name})):accounts.value.map(account=>({...accountRow(account.airport,[account]),id:account.key,name:account.subscription.name})))
 const workspaceRefreshIssueJobs=computed(()=>[...new Map(workspaceRefreshIssues.value.map(issue=>[issue.job.id,issue.job])).values()])
 const disclosureSummary=computed<SubscriptionDisclosureSummary>(()=>{
   const expiry=airportAccounts(props.airports).map(account=>account.subscription.usage?.expire).filter((value):value is number=>typeof value==='number'&&Number.isFinite(value)&&value>0)
@@ -195,23 +192,6 @@ const statusTone=computed(()=>jobRunning(activeJob.value)?'warn':['failed','inte
 const refreshDisabled=computed(()=>loading.value||jobRunning(activeJob.value))
 const cancelJob=computed(()=>jobRunning(activeJob.value)?activeJob.value:jobRunning(visibleJob.value)?visibleJob.value:null)
 
-// 切到指定机场（工作台按机场筛选时同步过来），记住每个机场上次看的订阅。
-function showAirport(id:string){
-  const target=props.airports.find(airport=>airport.id===id)
-  if(!target||viewedAirport.value?.id===id&&viewedAirportId.value===id)return
-  if(viewedAirport.value&&accounts.value.some(account=>account.key===selectedKey.value))rememberedAccountByAirport.value[viewedAirport.value.id]=selectedKey.value
-  viewedAirportId.value=target.id
-  const nextAccounts=airportAccounts([target]),remembered=rememberedAccountByAirport.value[target.id]
-  selectedKey.value=nextAccounts.some(account=>account.key===remembered)?remembered:nextAccounts[0]?.key||''
-}
-function cycleAirport(){
-  const airportList=props.airports
-  if(!airportList.length){viewedAirportId.value='';selectedKey.value='';return}
-  const currentIndex=airportList.findIndex(airport=>airport.id===viewedAirport.value?.id)
-  const nextAirport=airportList[(currentIndex+1)%airportList.length]
-  showAirport(nextAirport.id)
-  emit('viewed',nextAirport.id)
-}
 function defaultScopeKeys(){
   const propAirportIds=new Set(props.airports.map(airport=>airport.id))
   return workspaceAccounts.value.filter(account=>propAirportIds.has(account.airport.id)).map(account=>account.key)
@@ -284,32 +264,22 @@ async function retryJob(job:SubscriptionRefreshJob){
     if(jobRunning(next))schedulePoll(next.id)
   }catch(e){error.value=e instanceof Error?e.message:String(e)}finally{loading.value=false}
 }
-watch(()=>props.airportId,id=>{if(id&&id!=='all')showAirport(id)},{immediate:true})
-watch(accounts,value=>{
-  const airport=viewedAirport.value
-  if(!airport){selectedKey.value='';return}
-  const remembered=rememberedAccountByAirport.value[airport.id]
-  if(!value.some(account=>account.key===selectedKey.value))selectedKey.value=value.some(account=>account.key===remembered)?remembered:value[0]?.key||''
-},{immediate:true})
-watch(selectedKey,value=>{
-  const airport=viewedAirport.value
-  if(airport&&accounts.value.some(account=>account.key===value))rememberedAccountByAirport.value[airport.id]=value
-})
 watch(()=>props.airports,syncDefaultScope,{immediate:true,deep:true})
 watch(()=>workspace.airports.value,syncDefaultScope,{deep:true})
 watch(disclosureSummary,value=>emit('summary',value),{immediate:true})
 onMounted(()=>void loadJobs())
 onBeforeUnmount(()=>{disposed=true;clearTimeout(pollTimer)})
-defineExpose({cycleAirport,showAirport,viewedAirportName,usageRatio,viewedAccount:selected})
+defineExpose({usageRatio})
 </script>
 
 <template>
   <section class="subscription-overview" :class="{'all-airports':allAirports}" aria-label="首页订阅账户状态">
-    <template v-if="allAirports">
+    <header v-if="!allAirports&&viewedAirport" class="subscription-airport-heading"><strong>{{viewedAirport.name}}</strong><small>{{accounts.length}} 个订阅</small></header>
+    <template v-if="rowMode">
       <div class="subscription-all-main">
-        <div class="subscription-airport-list" aria-label="全部机场用量汇总">
-          <div v-for="row in airportRows" :key="row.airport.id" class="subscription-airport-row">
-            <strong class="airport-summary-name">{{row.airport.name}}</strong>
+        <div class="subscription-airport-list" :aria-label="allAirports?'全部机场用量汇总':'机场订阅用量'">
+          <div v-for="row in overviewRows" :key="row.id" class="subscription-airport-row">
+            <strong class="airport-summary-name">{{row.name}}<small v-if="allAirports&&row.accounts.length>1">{{row.accounts.length}} 个订阅</small></strong>
             <div class="airport-summary-quota">
               <span>剩余 <b>{{row.remaining===null?'未知':bytes(row.remaining)}}</b> <small v-if="row.ratio!==null">{{(row.ratio*100).toFixed(2)}}% 可用</small></span>
               <div v-if="row.ratio!==null" class="usage-track"><i :style="{width:`${row.ratio*100}%`}"/></div>
@@ -317,7 +287,7 @@ defineExpose({cycleAirport,showAirport,viewedAirportName,usageRatio,viewedAccoun
             <span class="airport-summary-today">今日 {{dayText(row.today)}}</span>
             <time class="airport-summary-time">{{row.updated?date(row.updated):'未刷新'}}</time>
             <span :class="{'airport-refresh-failed':row.issues.length}" :title="row.issues.map(issue=>issue.item.error_message||'刷新中断').join('；')">{{row.issues.length?'刷新失败':'正常'}}</span>
-            <button class="text-button" @click="emit('viewed',row.airport.id)">只看</button>
+            <button v-if="allAirports" class="text-button" @click="emit('viewed',row.airport.id)">只看</button><button v-else class="text-button" :disabled="refreshDisabled" @click="startSelections(row.accounts)">刷新</button>
           </div>
         </div>
         <div class="subscription-daily all-daily">
@@ -331,7 +301,16 @@ defineExpose({cycleAirport,showAirport,viewedAirportName,usageRatio,viewedAccoun
           </div>
         </div>
       </div>
-      <div class="subscription-actions"><button class="button primary" :disabled="refreshDisabled||!workspaceAccounts.length" @click="startAll">{{loading?'提交中…':'全部刷新'}}</button><button v-if="cancelJob" class="text-button danger" @click="cancelCurrent">取消刷新</button></div>
+      <div class="subscription-actions"><button class="button primary" :disabled="refreshDisabled||!workspaceAccounts.length" @click="allAirports?startAll():startAirport()">{{loading?'提交中…':allAirports?'全部刷新':'刷新此机场'}}</button><template v-if="!allAirports"><div class="refresh-scope">
+          <button class="button ghost" type="button" aria-label="选择刷新范围" :aria-expanded="scopeOpen" @click="scopeOpen=!scopeOpen">选择范围</button>
+          <div v-if="scopeOpen" class="refresh-scope-panel" role="group" aria-label="刷新订阅范围">
+            <label v-for="entry in workspaceAccounts" :key="entry.key">
+              <input type="checkbox" :aria-label="`${entry.airport.name} · ${entry.subscription.name}`" :checked="selectedScopeKeys.includes(entry.key)" @change="setScopeSelected(entry.key,($event.target as HTMLInputElement).checked)">
+              <span>{{entry.airport.name}} · {{entry.subscription.name}}</span>
+            </label>
+            <button class="button primary" :disabled="refreshDisabled||!selectedScopeAccounts.length" @click="startChosenScope">刷新所选 {{selectedScopeAccounts.length}}</button>
+          </div>
+        </div></template><button v-if="cancelJob" class="text-button danger" @click="cancelCurrent">取消刷新</button></div>
     </template>
     <template v-else-if="selected">
       <div class="subscription-main">
@@ -340,10 +319,7 @@ defineExpose({cycleAirport,showAirport,viewedAirportName,usageRatio,viewedAccoun
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 4.5-9 4.5-9-4.5L12 3Z"/><path d="m3 12 9 4.5 9-4.5"/><path d="m3 16.5 9 4.5 9-4.5"/></svg>
           </div>
           <div class="subscription-account">
-            <UiSelect v-if="accounts.length>1" v-model="selectedKey" aria-label="首页用量订阅">
-              <option v-for="entry in accounts" :key="entry.key" :value="entry.key">{{entry.subscription.name}}</option>
-            </UiSelect>
-            <strong v-else>{{selected.subscription.name}}</strong>
+            <strong>{{selected.subscription.name}}</strong>
             <small>{{sourceLabel}} · {{updatedAtLabel}}</small>
             <div class="subscription-facts">
               <span class="subscription-expiry">{{expireLabel}}</span>
@@ -416,7 +392,7 @@ defineExpose({cycleAirport,showAirport,viewedAirportName,usageRatio,viewedAccoun
       </div>
     </details>
 
-    <span v-if="allAirports&&jobsReadState!=='ready'" class="status-read muted">{{jobsReadState==='loading'?'刷新状态读取中…':'刷新状态未知'}}</span>
+    <span v-if="rowMode&&jobsReadState!=='ready'" class="status-read muted">{{jobsReadState==='loading'?'刷新状态读取中…':'刷新状态未知'}}</span>
 
     <Modal v-if="noticeOpen&&selected" title="订阅公告" @close="noticeOpen=false">
       <div v-for="notice in accountNotices" :key="notice.profile_id+'|'+notice.node_identity_key+'|'+notice.config_revision_key" class="notice-row">
@@ -438,7 +414,7 @@ defineExpose({cycleAirport,showAirport,viewedAirportName,usageRatio,viewedAccoun
 .subscription-daily{display:flex;flex-direction:column;justify-content:center;gap:3px;min-width:0;padding-left:12px;border-left:1px solid var(--line)}.subscription-daily h3{margin:0;color:var(--muted);font-size:10px;line-height:12px;font-weight:600}.subscription-daily :deep(.cst-usage-summary){height:50px;gap:4px;padding-bottom:0}.subscription-daily :deep(.cst-usage-day){grid-template-rows:10px 24px 10px;gap:3px}.subscription-daily :deep(.cst-usage-day-value),.subscription-daily :deep(.cst-usage-day-label){font-size:8.5px;line-height:10px}.subscription-daily :deep(.cst-usage-day-track){width:20px;height:24px;border-radius:5px 5px 2px 2px}.subscription-daily :deep(.cst-usage-caption){font-size:8px;line-height:10px}
 
 .subscription-actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;min-height:30px;font-size:11px}.subscription-actions .button{min-height:28px;padding:4px 10px;font-size:12px}.subscription-actions .badge{padding:4px 7px;font-size:11px}.subscription-actions .text-button{font-size:11px}.subscription-message{color:var(--red);font-size:10px;line-height:1.3}.subscription-issues{position:relative;font-size:11px}.subscription-issues summary{width:max-content;max-width:100%;color:var(--red);cursor:pointer}.subscription-issues p{display:flex;flex-wrap:wrap;gap:4px 8px;margin:6px 0 0;line-height:1.5}.subscription-issues p small{flex:1 0 100%;color:var(--muted)}.issue-retries{display:flex;flex-wrap:wrap;gap:8px;margin-top:7px}.issue-retries button{font-size:12px}.status-read{font-size:11px}.refresh-scope{position:relative}.refresh-scope-panel{position:absolute;top:calc(100% + 5px);left:0;z-index:20;display:grid;gap:8px;width:min(310px,calc(100vw - 28px));max-height:250px;overflow:auto;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--surface);box-shadow:var(--shadow)}.refresh-scope-panel label{display:flex;align-items:center;gap:8px;font-size:12px;line-height:1.4}.refresh-scope-panel label span{overflow-wrap:anywhere}.refresh-scope-panel>.button{justify-self:start}.notice-row{padding:8px 0;border-bottom:1px solid var(--line)}.notice-row small{color:var(--muted)}.notice-row p{margin-top:4px;overflow-wrap:anywhere}
-.subscription-all-main{display:grid;grid-template-columns:minmax(0,1fr) 140px;align-items:center;gap:12px;min-width:0}.subscription-airport-list{display:grid;gap:8px;min-width:0}.subscription-airport-row{display:grid;grid-template-columns:minmax(56px,.6fr) minmax(145px,1.7fr) minmax(74px,.8fr) 78px 48px 26px;align-items:center;gap:10px;font-size:11px}.airport-summary-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.airport-summary-quota{display:grid;gap:5px;min-width:0}.airport-summary-quota>span{font-size:10px;color:var(--muted);white-space:nowrap}.airport-summary-quota b{color:var(--ink);font-size:11px;font-weight:600}.airport-summary-quota small{color:var(--blue);font-size:9px;margin-left:3px}.airport-summary-quota .usage-track{height:4px}.airport-summary-time,.airport-summary-today{color:var(--muted);font-size:10px}.airport-refresh-failed{color:var(--red)}.subscription-airport-row .text-button{font-size:11px;color:var(--blue)}.subscription-airport-row .text-button:hover{text-decoration:underline}.all-airports>.subscription-issues{order:-1}.all-daily-chart{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}.all-daily-chart>div{display:grid;justify-items:center;gap:3px}.all-daily-chart small{font-size:8.5px;color:var(--muted);white-space:nowrap}.all-day-track{display:flex;align-items:flex-end;width:20px;height:24px;overflow:hidden;border-radius:5px 5px 2px 2px}.all-day-track i{display:block;width:100%;background:var(--blue);border-radius:inherit}.all-day-track i.partial{opacity:.5}.all-day-track i.unknown{background:repeating-linear-gradient(-45deg,var(--line) 0 3px,transparent 3px 6px);border:1px dashed var(--line)}
+.subscription-all-main{display:grid;grid-template-columns:minmax(0,1fr) 140px;align-items:center;gap:12px;min-width:0}.subscription-airport-list{display:grid;gap:8px;min-width:0}.subscription-airport-heading{display:flex;align-items:center;gap:8px;font-size:13px}.subscription-airport-heading small,.airport-summary-name small{font-size:10px;color:var(--muted);font-weight:400;margin-left:5px}.subscription-airport-row{display:grid;grid-template-columns:minmax(56px,.6fr) minmax(145px,1.7fr) minmax(74px,.8fr) 78px 48px 26px;align-items:center;gap:10px;font-size:11px}.airport-summary-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.airport-summary-quota{display:grid;gap:5px;min-width:0}.airport-summary-quota>span{font-size:10px;color:var(--muted);white-space:nowrap}.airport-summary-quota b{color:var(--ink);font-size:11px;font-weight:600}.airport-summary-quota small{color:var(--blue);font-size:9px;margin-left:3px}.airport-summary-quota .usage-track{height:4px}.airport-summary-time,.airport-summary-today{color:var(--muted);font-size:10px}.airport-refresh-failed{color:var(--red)}.subscription-airport-row .text-button{font-size:11px;color:var(--blue)}.subscription-airport-row .text-button:hover{text-decoration:underline}.all-airports>.subscription-issues{order:-1}.all-daily-chart{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}.all-daily-chart>div{display:grid;justify-items:center;gap:3px}.all-daily-chart small{font-size:8.5px;color:var(--muted);white-space:nowrap}.all-day-track{display:flex;align-items:flex-end;width:20px;height:24px;overflow:hidden;border-radius:5px 5px 2px 2px}.all-day-track i{display:block;width:100%;background:var(--blue);border-radius:inherit}.all-day-track i.partial{opacity:.5}.all-day-track i.unknown{background:repeating-linear-gradient(-45deg,var(--line) 0 3px,transparent 3px 6px);border:1px dashed var(--line)}
 @media(max-width:1200px){.subscription-all-main{grid-template-columns:minmax(0,1fr)}.all-daily{flex-direction:row;align-items:center;gap:12px;padding:0;border:0}.all-daily-chart{width:150px}.all-daily-chart>div{grid-template-columns:1fr 1fr}.all-day-track{display:none}.subscription-airport-row{gap:7px}}
 @media(max-width:760px){.subscription-airport-row{grid-template-columns:64px minmax(140px,1fr) 48px 26px}.airport-summary-time,.airport-summary-today{grid-row:2}.airport-summary-today{grid-column:1/3}.airport-summary-time{grid-column:3/5}.subscription-airport-row{gap:5px 8px}}
 @media(max-width:1200px){.subscription-main{grid-template-columns:minmax(120px,.8fr) minmax(210px,1.5fr) 144px;gap:10px}.subscription-overview{padding-right:12px;padding-left:12px}.subscription-daily{padding-left:8px}}

@@ -4,6 +4,7 @@ import {ref} from 'vue'
 import HealthBars from '../components/HealthBars.vue'
 import RoundResults from '../components/RoundResults.vue'
 import MeasurementResults from '../components/MeasurementResults.vue'
+import {latencyVerdict} from '../components/home/homeModel'
 import {points,monitorRoundPoints,serviceHealthPoints,serviceSummary} from '../presentation'
 import {createWorkspace} from '../workspace'
 import {key,type Attempt,type LatencyTest,type MonitorSample,type NodeOption} from '../domain'
@@ -171,4 +172,18 @@ it('retains a download round when an independent service filter is selected',()=
  const w={latency:ref({}),downloads:ref({[key(node)]:[a]}),services:ref({}),serviceIds:ref(['chatgpt_web']),displayTarget:ref('cloudflare'),measurementRounds:ref({[key(node)]:[{round_id:'download-root',trigger_type:'scheduled' as const,started_at:base.requested_at,state:'finished',items:[{...node,request_id:a.request_id,project:'download' as const,execution_state:'completed',persistence_state:'saved',download:a}]}]})}
  expect(points(w,node,'download')).toHaveLength(1)
  expect(points(w,node,'download')[0]).toMatchObject({id:'download-root',trigger:'scheduled',value:10})
+})
+
+it('counts HTTP responses as latency success and collapses identical HTTP notes',()=>{
+ const round={...base,samples:Array.from({length:6},(_,i)=>({seq:i+1,target:'https://speed.cloudflare.com/__down?bytes=1',timestamp:base.finished_at,success:true,latency_ms:300+i,error:'HTTP 403'}))}
+ const w=createWorkspace();w.latency.value[key(node)]=[round]
+ const point=points(w,node,'latency','cloudflare')[0]
+ expect(point.sampleGroups![0].samples.every(s=>s.tone==='good')).toBe(true)
+ expect(latencyVerdict([point]).label).toBe('能用')
+ const view=mount(RoundResults,{props:{point}})
+ expect(view.text()).toContain('6 次均为 HTTP 403（连通正常）')
+ expect(view.findAll('.round-note')).toHaveLength(1);view.unmount()
+ w.latency.value[key(node)]=[{...round,samples:[...round.samples.slice(0,5),{...round.samples[5],success:false,error:'timeout'}]}]
+ expect(latencyVerdict(points(w,node,'latency','cloudflare')).label).toBe('偶有失败')
+ w.dispose()
 })

@@ -231,10 +231,8 @@ describe('shared node selection',()=>{
     await wrapper.find('.hd-tr:not(.hd-th)').trigger('mouseenter')
     expect(wrapper.find('.hd-ins-detail').exists()).toBe(false)
     const bars=wrapper.find('.hd-inspector').findAll('.health-bars')
-    const cloudflareBar=bars.find(bar=>(bar.attributes('aria-label')||'').startsWith('Cloudflare 延迟轮次'))!
-    await cloudflareBar.find('.health-cell.has-record').trigger('mouseenter')
-    expect(wrapper.findComponent(TrendChart).props('points')[0].value).toBe(400)
-    expect(wrapper.find('.hd-ins-detail').text()).toContain('400 ms')
+    expect(wrapper.get('.hd-latency .hd-site-value').text()).toContain('400 ms')
+    expect(wrapper.findAll('.hd-latency .health-bars')).toHaveLength(0)
     const downloadBar=bars.find(bar=>(bar.attributes('aria-label')||'').startsWith('下载'))!
     const downloadCells=downloadBar.findAll('.health-cell.has-record')
     expect(downloadCells.map(cell=>cell.classes())).toEqual(expect.arrayContaining([expect.arrayContaining(['trigger-manual']),expect.arrayContaining(['trigger-scheduled'])]))

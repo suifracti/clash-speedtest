@@ -81,18 +81,14 @@ describe('synthetic 256-node home first screen',()=>{
     const syntheticAirports=airports()
     syntheticAirports[0]!.subscriptions![0]!.usage!.expire=Math.floor(Date.now()/1000)-60
     vi.mocked(api.refreshJobs).mockResolvedValueOnce([refreshJob()])
-    const {wrapper}=attachHome({airports:syntheticAirports,nodes:[...nodes(),noticeNode()]});await flushPromises()
+    const {workspace,wrapper}=attachHome({airports:syntheticAirports,nodes:[...nodes(),noticeNode()]});await flushPromises()
     const overview=wrapper.get('.subscription-overview')
     expect(wrapper.find('details.home-subscription-disclosure').exists()).toBe(false)
-    expect(overview.text()).toContain('公告 1')
-    expect(overview.text()).toContain('已过期')
+    expect(wrapper.findAll('.subscription-airport-row')).toHaveLength(2)
     expect(overview.text()).toContain('刷新失败')
     expect(overview.text()).toContain('synthetic refresh failure')
-    await wrapper.get('.hd-orbit').trigger('click');await wrapper.get('.hd-orbit').trigger('click');await flushPromises()
-    const accountSelect=wrapper.get('select[aria-label="首页用量订阅"]')
-    await accountSelect.setValue((accountSelect.element as HTMLSelectElement).options[1]!.value)
-    await flushPromises()
-    expect(wrapper.get('.subscription-account').text()).toContain('合成账户 6')
+    workspace.viewAirport('airport-3');await flushPromises()
+    expect(wrapper.get('.subscription-airport-heading').text()).toContain('合成机场 3')
     expect(overview.text()).toContain('刷新异常 1 项')
     expect(wrapper.get('.subscription-issues').text()).toContain('合成机场 1 · 合成账户 1')
     expect(api.startRefresh).not.toHaveBeenCalled()
@@ -115,12 +111,12 @@ describe('synthetic 256-node home first screen',()=>{
   it('shows interrupted refreshes and replaces them with a newer success',async()=>{
     vi.mocked(api.refreshJobs).mockResolvedValueOnce([refreshJob('interrupted')])
     const interrupted=attachHome().wrapper;await flushPromises()
-    expect(interrupted.get('.subscription-actions .badge').text()).toBe('刷新中断')
+    expect(interrupted.get('.airport-refresh-failed').text()).toBe('刷新失败')
     expect(interrupted.get('.subscription-issues summary').text()).toBe('刷新异常 1 项')
 
     vi.mocked(api.refreshJobs).mockResolvedValueOnce([refreshJob('succeeded','2026-10-11T12:00:00Z'),refreshJob('interrupted')])
     const recovered=attachHome().wrapper;await flushPromises()
-    expect(recovered.get('.subscription-actions .badge').text()).toBe('刷新成功')
+    expect(recovered.get('.subscription-airport-row').text()).toContain('正常')
     expect(recovered.find('.subscription-issues').exists()).toBe(false)
   })
 
@@ -128,7 +124,7 @@ describe('synthetic 256-node home first screen',()=>{
     vi.mocked(api.refreshJobs).mockResolvedValueOnce([runningRefreshJob()])
     const {wrapper}=attachHome();await flushPromises()
 
-    expect(wrapper.get('.subscription-actions .badge').text()).toBe('刷新成功 · 其他订阅刷新中 1/2')
+    expect(wrapper.get('.subscription-actions button').attributes('disabled')).toBeDefined()
     expect(api.startRefresh).not.toHaveBeenCalled()
   })
 
@@ -146,20 +142,12 @@ describe('synthetic 256-node home first screen',()=>{
     const {workspace,wrapper}=attachHome();await flushPromises()
     expect(wrapper.find('details.home-subscription-disclosure').exists()).toBe(false)
     expect(wrapper.find('.subscription-overview').exists()).toBe(true)
-    expect(wrapper.get('.hd-orbit').text()).toContain('合成机场 1')
+    expect(wrapper.get('.subscription-airport-heading').text()).toContain('合成机场 1')
     expect(wrapper.get('.hd-foot').text()).toContain('64 个节点')
 
     const selectedAirports=[...workspace.selectedAirportIds.value!]
-    const accountPicker=wrapper.get('select[aria-label="首页用量订阅"]')
-    const accountSelect=accountPicker.element as HTMLSelectElement
-    expect(accountSelect.options).toHaveLength(2)
-    await wrapper.get('.hd-orbit').trigger('click');await wrapper.get('.hd-orbit').trigger('click');await flushPromises()
-    const nextAccountPicker=wrapper.get('select[aria-label="首页用量订阅"]')
-    const nextAccountSelect=nextAccountPicker.element as HTMLSelectElement
-    await nextAccountPicker.setValue(nextAccountSelect.options[1]!.value)
-    await flushPromises()
-
-    expect(wrapper.get('.subscription-account').text()).toContain('合成账户 6')
+    workspace.viewAirport('airport-3');await flushPromises()
+    expect(wrapper.get('.subscription-airport-heading').text()).toContain('合成机场 3')
     expect(workspace.selectedAirportIds.value).toEqual(selectedAirports)
     expect(workspace.filteredNodes.value).toHaveLength(64)
     expect(workspace.subscription.value).toBe('all')
@@ -192,12 +180,10 @@ describe('airport filter keeps the header and source strip on that airport (synt
   it('shows airport summary rows when switching to all airports',async()=>{
     const {workspace,wrapper}=attachHome();workspace.viewAirport('airport-2');await flushPromises()
     workspace.viewAirport('all');await flushPromises()
-    expect(wrapper.get('.hd-orbit-text strong').text()).toBe('全部机场')
-    expect(wrapper.get('.hd-orbit-text small').text()).toBe('4 个机场 · 128 个节点')
+    expect(wrapper.find('.hd-orbit').exists()).toBe(false)
     expect(wrapper.findAll('.subscription-airport-row')).toHaveLength(4)
     expect(wrapper.find('select[aria-label="首页用量订阅"]').exists()).toBe(false)
     expect(wrapper.findAll('.subscription-actions .button').map(b=>b.text())).toEqual(['全部刷新'])
-    await wrapper.get('.hd-orbit').trigger('click')
     expect(workspace.airportFilter.value).toBe('all')
     await wrapper.get('.subscription-airport-row button').trigger('click');await flushPromises()
     expect(workspace.airportFilter.value).toBe('airport-1')
@@ -205,14 +191,14 @@ describe('airport filter keeps the header and source strip on that airport (synt
 
   it('switches the source strip when the sidebar filter changes and follows the orbit while filtered',async()=>{
     const {workspace,wrapper}=attachHome();await flushPromises()
-    expect(wrapper.get('.hd-orbit-text strong').text()).toBe('合成机场 1')
+    expect(wrapper.get('.subscription-airport-heading strong').text()).toBe('合成机场 1')
     workspace.viewAirport('airport-3');await flushPromises()
-    expect(wrapper.get('.hd-orbit-text strong').text()).toBe('合成机场 3')
+    expect(wrapper.get('.subscription-airport-heading strong').text()).toBe('合成机场 3')
     expect(wrapper.get('.hd-title p').text()).toContain('合成机场 3 · 32 个节点')
     expect(wrapper.get('.hd-title p').text()).toContain('看全部 4 个机场')
-    await wrapper.get('.hd-orbit').trigger('click');await flushPromises()
+    workspace.viewAirport('airport-4');await flushPromises()
     expect(workspace.airportFilter.value).toBe('airport-4')
-    expect(wrapper.get('.hd-orbit-text strong').text()).toBe('合成机场 4')
+    expect(wrapper.get('.subscription-airport-heading strong').text()).toBe('合成机场 4')
     await wrapper.findAll('.hd-title button').find(b=>b.text().includes('看全部'))!.trigger('click');await flushPromises()
     expect(workspace.airportFilter.value).toBe('all')
     expect(wrapper.get('.hd-title p').text()).toContain('128 个节点')

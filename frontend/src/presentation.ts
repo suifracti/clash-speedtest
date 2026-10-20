@@ -12,7 +12,7 @@ export interface TrendPoint {id:string;time:string;value:number|null;tone:Health
 export function latencySampleState(sample:LatencyTest['samples'][number]):{tone:HealthTone;executionState?:'cancelled'|'not_executed'} {
  if(!sample.success&&sample.error?.includes('context canceled'))return {tone:'empty',executionState:'cancelled'}
  if(!sample.success&&(sample.error?.startsWith('未执行：物理出口')||/(?:^|:\s)ip version error$/i.test(sample.error||'')))return {tone:'empty',executionState:'not_executed'}
- return {tone:sample.success?(sample.error?'warn':'good'):'bad'}
+ return {tone:sample.success?'good':'bad'}
 }
 export function latencyPointLabel(point?:TrendPoint,target='all') {
  if(point?.value!=null)return Math.round(point.value)+' ms'
@@ -77,10 +77,10 @@ export function monitorRoundPoints(samples:MonitorSample[]):TrendPoint[]{
   for(const sample of samples){if(sample.probe_type!=='rtt')continue;const id=sample.run_id||sample.sample_id;const group=rounds.get(id)||[];group.push(sample);rounds.set(id,group)}
   return Array.from(rounds,([id,group]):TrendPoint=>{
     const ordered=group.slice().sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp)||a.sample_id.localeCompare(b.sample_id)),successful=ordered.filter(s=>s.success)
-    return {id,time:ordered[ordered.length-1].timestamp,value:median(successful.map(s=>s.latency/1e6)),tone:ordered.every(s=>s.error_class==='not_executed')?'empty':!successful.length?'bad':successful.length<ordered.length||ordered.some(s=>s.success&&s.error_detail)?'warn':'good',conditionKey:JSON.stringify(['monitor-rtt-method-unrecorded',...new Set(ordered.map(s=>s.target))]),source:'monitor',trigger:ordered[0].trigger_type==='scheduled'?'scheduled':ordered[0].trigger_type==='manual'?'manual':'unknown',
+    return {id,time:ordered[ordered.length-1].timestamp,value:median(successful.map(s=>s.latency/1e6)),tone:ordered.every(s=>s.error_class==='not_executed')?'empty':!successful.length?'bad':successful.length<ordered.length?'warn':'good',conditionKey:JSON.stringify(['monitor-rtt-method-unrecorded',...new Set(ordered.map(s=>s.target))]),source:'monitor',trigger:ordered[0].trigger_type==='scheduled'?'scheduled':ordered[0].trigger_type==='manual'?'manual':'unknown',
       description:date(ordered[ordered.length-1].timestamp)+' · '+triggerLabel(ordered[0].trigger_type)+' · 持续监测 RTT · 方法/出口未记录 · 目标 '+[...new Set(ordered.map(s=>s.target))].join('、')+' · 已读 '+successful.length+'/'+ordered.length+' 样本成功',
-      samples:ordered.map<SamplePoint>((s,i)=>({id:s.sample_id,time:s.timestamp,value:s.success?s.latency/1e6:null,tone:s.error_class==='not_executed'?'empty':s.success?(s.error_detail?'warn':'good'):'bad',label:'第 '+(i+1)+' 次',description:'第 '+(i+1)+' 次采样 · '+date(s.timestamp)+' · '+(s.success?(s.latency/1e6).toFixed(0)+' ms':s.error_detail||s.error_class||'失败')})),
-      sampleGroups:groupSamples(ordered.map((s,i)=>({id:s.sample_id,target:s.target,time:s.timestamp,value:s.success?s.latency/1e6:null,tone:s.error_class==='not_executed'?'empty':s.success?(s.error_detail?'warn':'good'):'bad',label:'第 '+(i+1)+' 次',note:s.success?s.error_detail:undefined,error:s.success?undefined:s.error_detail||s.error_class||'失败',description:date(s.timestamp)+' · '+(s.success?(s.latency/1e6).toFixed(0)+' ms':s.error_detail||s.error_class||'失败')})))}
+      samples:ordered.map<SamplePoint>((s,i)=>({id:s.sample_id,time:s.timestamp,value:s.success?s.latency/1e6:null,tone:s.error_class==='not_executed'?'empty':s.success?'good':'bad',label:'第 '+(i+1)+' 次',description:'第 '+(i+1)+' 次采样 · '+date(s.timestamp)+' · '+(s.success?(s.latency/1e6).toFixed(0)+' ms':s.error_detail||s.error_class||'失败')})),
+      sampleGroups:groupSamples(ordered.map((s,i)=>({id:s.sample_id,target:s.target,time:s.timestamp,value:s.success?s.latency/1e6:null,tone:s.error_class==='not_executed'?'empty':s.success?'good':'bad',label:'第 '+(i+1)+' 次',note:s.success?s.error_detail:undefined,error:s.success?undefined:s.error_detail||s.error_class||'失败',description:date(s.timestamp)+' · '+(s.success?(s.latency/1e6).toFixed(0)+' ms':s.error_detail||s.error_class||'失败')})))}
   }).sort((a,b)=>Date.parse(a.time)-Date.parse(b.time))
 }
 export function monitorLatencyPoints(samples:MonitorSample[],target='all'):TrendPoint[]{
