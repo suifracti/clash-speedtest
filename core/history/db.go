@@ -2854,22 +2854,35 @@ func (d *DB) CleanupWorkbenchHistory(ctx context.Context, cutoff time.Time) (int
 		return 0, fmt.Errorf("history database is closed")
 	}
 
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin workbench history cleanup: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	// Recovery can leave terminal attempts without finished_at. Use their
+	// request time, while preserving live execution and persistence operations.
+	queries := []struct{ table, predicate string }{
+		{"workbench_latency_tests", `finished_at < ? AND status NOT IN ('queued','running','cancelling','saving')`},
+		{"workbench_latency_batches", `requested_at < ? AND state NOT IN ('queued','running','cancelling','saving') AND NOT EXISTS (
+			SELECT 1 FROM workbench_latency_batch_items i WHERE i.batch_id=workbench_latency_batches.batch_id
+			AND (i.execution_state IN ('queued','running','cancelling') OR i.persistence_state IN ('pending','saving')))`},
+		{"workbench_public_service_attempts", `COALESCE(finished_at,requested_at) < ? AND execution_state NOT IN ('queued','running','cancelling','saving') AND persistence_state NOT IN ('pending','saving')`},
+		{"workbench_download_attempts", `COALESCE(finished_at,requested_at) < ? AND execution_state NOT IN ('queued','running','cancelling','saving') AND persistence_state NOT IN ('pending','saving')`},
+	}
 	var totalDeleted int64
-	if res, err := d.db.ExecContext(ctx, `DELETE FROM workbench_latency_tests WHERE finished_at < ?`, cutoff); err == nil {
-		c, _ := res.RowsAffected()
-		totalDeleted += c
+	for _, query := range queries {
+		res, err := tx.ExecContext(ctx, `DELETE FROM `+query.table+` WHERE `+query.predicate, cutoff)
+		if err != nil {
+			return 0, fmt.Errorf("cleanup %s: %w", query.table, err)
+		}
+		count, err := res.RowsAffected()
+		if err != nil {
+			return 0, fmt.Errorf("count cleanup %s: %w", query.table, err)
+		}
+		totalDeleted += count
 	}
-	if res, err := d.db.ExecContext(ctx, `DELETE FROM workbench_latency_batches WHERE requested_at < ?`, cutoff); err == nil {
-		c, _ := res.RowsAffected()
-		totalDeleted += c
-	}
-	if res, err := d.db.ExecContext(ctx, `DELETE FROM workbench_public_service_attempts WHERE finished_at < ?`, cutoff); err == nil {
-		c, _ := res.RowsAffected()
-		totalDeleted += c
-	}
-	if res, err := d.db.ExecContext(ctx, `DELETE FROM workbench_download_attempts WHERE finished_at < ?`, cutoff); err == nil {
-		c, _ := res.RowsAffected()
-		totalDeleted += c
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit workbench history cleanup: %w", err)
 	}
 	return totalDeleted, nil
 }
