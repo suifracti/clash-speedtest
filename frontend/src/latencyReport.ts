@@ -2,8 +2,8 @@ import {inspectorMedian} from './inspectorLatency'
 import {activeLatencyTargets,latencyTargetId} from './latencyTargets'
 import type {BatchItem,LatencyBatch,LatencyTest} from './domain'
 
-export type LatencyReportStatus='usable'|'slow'|'no-response'|'incomplete'|'skipped'
-export type LatencyReportIssueKind='slow'|'no-response'|'incomplete'|'suspected'
+export type LatencyReportStatus='usable'|'slow'|'no-response'|'skipped'
+export type LatencyReportIssueKind='slow'|'no-response'|'suspected'
 
 export interface LatencyReportSite {
  id:string
@@ -40,7 +40,6 @@ export interface LatencyReportCounts {
  noResponse:number
  suspected:number
  skipped:number
- incomplete:number
 }
 
 export interface LatencyReportSummary {
@@ -160,9 +159,9 @@ function makeRow(item:BatchItem,airportNames:Record<string,string>,batchTarget?:
  const executed=attemptedSamples>0
  const firstValues=sites.map(s=>s.firstMs).filter(finite)
  const stableValues=sites.map(s=>s.stableMs).filter(finite)
- const firstMedianMs=firstValues.length===sites.length?inspectorMedian(firstValues):null
- const stableMs=stableValues.length===sites.length?inspectorMedian(stableValues):null
- const status:LatencyReportStatus=!executed?'skipped':responseSamples===0?'no-response':stableMs===null?(result?.source==='monitor'?'usable':'incomplete'):stableMs<=1500?'usable':'slow'
+ const firstMedianMs=inspectorMedian(firstValues)
+ const stableMs=inspectorMedian(stableValues)
+ const status:LatencyReportStatus=!executed?'skipped':responseSamples===0?'no-response':stableMs!==null&&stableMs>1500?'slow':'usable'
  const dynamicType=(item as ItemNodeType).node_type||result?.node_type||''
  return {
   key:identity(item),item,nodeName:item.display_name||result?.display_name||item.node_key,
@@ -217,12 +216,11 @@ function buildGroups(rows:LatencyReportRow[]):{groups:LatencyReportGroup[];issue
  for(const row of rows){
   if(row.status==='slow')add(row,'slow','偏慢',`四站稳定中位 ${Math.round(row.stableMs!)} ms（阈值 1,500 ms）`)
   if(row.status==='no-response')add(row,'no-response',failureReason(row),'已执行采样，但四站均未取得响应')
-  if(row.status==='incomplete')add(row,'incomplete','采样不完整','有响应，但不足以计算四站稳定中位数')
   if(row.suspected)add(row,'suspected','疑似检测问题',row.suspectedReasons.join('；'))
  }
  const skipped=rows.filter(row=>row.status==='skipped')
  if(skipped.length)groupsByKey.set('skipped\u0000未执行',{kind:'skipped',reason:'未执行',rows:skipped,issues:[]})
- const order:Record<LatencyReportGroup['kind'],number>={'no-response':0,suspected:1,slow:2,incomplete:3,skipped:4}
+ const order:Record<LatencyReportGroup['kind'],number>={'no-response':0,suspected:1,slow:2,skipped:4}
  return {groups:[...groupsByKey.values()].sort((a,b)=>order[a.kind]-order[b.kind]||a.reason.localeCompare(b.reason,'zh-CN')),issues}
 }
 
@@ -240,8 +238,7 @@ export function buildLatencyReport(batch:LatencyBatch,airportNames:Record<string
   slow:rows.filter(row=>row.status==='slow').length,
   noResponse:rows.filter(row=>row.status==='no-response').length,
   suspected:rows.filter(row=>row.suspected).length,
-  skipped:rows.filter(row=>row.status==='skipped').length,
-  incomplete:rows.filter(row=>row.status==='incomplete').length
+  skipped:rows.filter(row=>row.status==='skipped').length
  }
  const finishedAt=latestTimestamp(batch.items||[])
  const requestedAt=batch.requested_at
@@ -254,7 +251,7 @@ export function buildLatencyReport(batch:LatencyBatch,airportNames:Record<string
   rows,counts,
   summary:{requestedAt,finishedAt,durationMs,nodeCount:rows.length,airportNames:airportList,targetId:batch.target_id,
    timeoutSeconds:finite(conditions.timeout_seconds)&&conditions.timeout_seconds>0?conditions.timeout_seconds:null,
-   sampleCountPerSite:finite(batch.sample_count)&&batch.sample_count>0?batch.sample_count:null,
+   sampleCountPerSite:observedSampleCount(batch)||null,
    siteCount:targets.length,
    firstMedianMs:inspectorMedian(rows.flatMap(row=>row.firstMedianMs===null?[]:[row.firstMedianMs])),
    stableMedianMs:inspectorMedian(rows.flatMap(row=>row.stableMs===null?[]:[row.stableMs]))},
@@ -267,7 +264,7 @@ export function buildLatencyReport(batch:LatencyBatch,airportNames:Record<string
 function batchConditions(batch:LatencyBatch):{target:string;timeout:number;sampleCount:number}|undefined{
  const extended=batch as BatchConditions
  const target=batch.target_id?.trim()
- const timeout=extended.timeout_seconds,sampleCount=batch.sample_count
+ const timeout=extended.timeout_seconds,sampleCount=observedSampleCount(batch)
  if(!target||target==='unknown'||target==='unverified'||!finite(timeout)||timeout<=0||!finite(sampleCount)||sampleCount<=0)return undefined
  return {target,timeout,sampleCount}
 }
@@ -311,3 +308,5 @@ export function compareLatencyReports(batch:LatencyBatch,current:LatencyReport,p
 }
 
 export function latencyReportText(batch:LatencyBatch){const c=buildLatencyReport(batch).counts;return `${c.usable} 能用 · ${c.slow} 偏慢 · ${c.noResponse} 无响应${c.skipped?` · ${c.skipped} 未执行`:''}`}
+
+function observedSampleCount(batch:LatencyBatch){if(batch.sample_count)return batch.sample_count;return Math.max(0,...(batch.items||[]).flatMap(i=>{const counts=new Map<string,number>();for(const s of i.result?.samples||[])counts.set(s.target||'',1+(counts.get(s.target||'')||0));return [...counts.values()]}))}

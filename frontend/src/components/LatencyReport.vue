@@ -56,7 +56,7 @@ function formatDuration(value:number|null){
 function formatMs(value:number|null|undefined){return value===null||value===undefined||!Number.isFinite(value)?'—':`${Math.round(value)} ms`}
 function formatSignedMs(value:number){const rounded=Math.round(value);return `${rounded>0?'+':''}${rounded} ms`}
 function statusLabel(row:LatencyReportRow){
- return ({usable:'能用',slow:'偏慢', 'no-response':'无响应',incomplete:'采样不完整',skipped:'未执行'} as const)[row.status]
+ return ({usable:'能用',slow:'偏慢', 'no-response':'无响应',skipped:'未执行'} as const)[row.status]
 }
 function issueDetail(group:LatencyReportGroup,row:LatencyReportRow){
  return group.issues.find(issue=>issue.row.key===row.key)?.detail||row.skipReason||row.suspectedReasons.join('；')
@@ -86,8 +86,8 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
     <span v-if="card.key==='suspected'">与其他结果重叠</span>
    </article>
   </div>
-  <p v-if="report.counts.skipped||report.counts.incomplete" class="latency-report-note">
-   未执行 {{report.counts.skipped}} 项（不计入无响应）<span v-if="report.counts.incomplete"> · 有响应但采样不完整 {{report.counts.incomplete}} 项</span>
+  <p v-if="report.counts.skipped" class="latency-report-note">
+   未执行 {{report.counts.skipped}} 项（不计入无响应）
   </p>
 
   <p class="latency-report-compare">{{comparisonLine}}</p>
