@@ -472,12 +472,39 @@ func buildProxyServerPortKey(proxy *CProxy) (string, bool) {
 			config["ws-opts"] = cloned
 		}
 	}
-	serialized, err := json.Marshal(config)
+	serialized, err := json.Marshal(normalizeJSONValue(config))
 	if err != nil {
 		return "", false
 	}
 	digest := sha256.Sum256(serialized)
 	return fmt.Sprintf("%x", digest), true
+}
+
+// normalizeJSONValue converts nested YAML maps (map[interface{}]interface{})
+// into JSON-marshalable maps so alias configs can be compared.
+func normalizeJSONValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		converted := make(map[string]any, len(typed))
+		for k, v := range typed {
+			converted[k] = normalizeJSONValue(v)
+		}
+		return converted
+	case map[any]any:
+		converted := make(map[string]any, len(typed))
+		for k, v := range typed {
+			converted[fmt.Sprintf("%v", k)] = normalizeJSONValue(v)
+		}
+		return converted
+	case []any:
+		converted := make([]any, len(typed))
+		for i, v := range typed {
+			converted[i] = normalizeJSONValue(v)
+		}
+		return converted
+	default:
+		return value
+	}
 }
 
 func (st *SpeedTester) TestSingle(name string, proxy *CProxy, emit func(*Result) bool) *Result {

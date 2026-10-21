@@ -213,6 +213,22 @@ func TestEquivalentProxyConfigurationIgnoresInternalMarkers(t *testing.T) {
 	}
 }
 
+func TestEquivalentProxyConfigurationComparesNestedYAMLMaps(t *testing.T) {
+	alias := func(name, path string) *CProxy {
+		return &CProxy{Config: map[string]any{
+			"name": name, "type": "vless", "server": "cf.example.com", "port": 443, "uuid": "u",
+			"network": "ws",
+			"ws-opts": map[any]any{"path": path, "headers": map[any]any{"Host": "cf.example.com"}},
+		}}
+	}
+	if !EquivalentProxyConfiguration(alias("node-a", "/same"), alias("node-b", "/same")) {
+		t.Fatal("expected aliases with identical nested YAML config to be equivalent")
+	}
+	if EquivalentProxyConfiguration(alias("node-a", "/same"), alias("node-b", "/other")) {
+		t.Fatal("expected different ws paths to be non-equivalent")
+	}
+}
+
 func TestLatencyTargetURLNormalization(t *testing.T) {
 	for _, tc := range []struct {
 		input   string
