@@ -208,7 +208,7 @@ export function createWorkspace(){
   async function loadMoreHistory(list:NodeOption[],projects:Project[]=[project.value]){await readHistory(list,projects,true)}
   function historyMoreCount(list:NodeOption[],p:Project=project.value){const nodesWithMore=new Set<string>();for(const kind of historyKinds([p]))for(const n of list)if(historyHasMore.value[historyID(kind,n)])nodesWithMore.add(key(n));return nodesWithMore.size}
   // 目录里有可用的 IP 信誉项时才默认勾上；目录为空（或读取失败）时不勾，否则每次检测都会被“至少选一个信誉项”挡住。
-  function nodeUnlockRegion(n:NodeOption){return exitLanding(n,[...(landingEvidence.value[key(n)]||[]),...(services.value[key(n)]||[])]).region}
+  function nodeUnlockRegion(n:NodeOption){return exitLanding(n,[...(landingEvidence.value[key(n)]||[]),...(services.value[key(n)]||[])]).consensusRegion}
   function allowedUnlockServices(n:NodeOption,ids:string[]){return ids.filter(id=>unlockServiceAllowed(id,nodeUnlockRegion(n),skipByApplicableRegions.value,settings.value?.unlock_service_regions))}
   function defaultReputation(){const ids=[...new Set(catalog.value.filter(rule=>isReputationRule(rule)&&!rule.service_id.startsWith('ipok_')).map(rule=>rule.service_id))];return {includeReputation:ids.length>0,reputationServiceIds:ids}}
   function openPlan(list=selectedNodes.value){if(!list.length){notify('先选择要检测的节点');return}plan.value={nodes:list.map(n=>({...n})),projects:project.value==='combined'?['latency','download','service']:[project.value],target:'all',samples:6,timeout:5,concurrency:8,downloadMiB:10,downloadSeconds:10,serviceIds:[...new Set(serviceIds.value.filter(id=>!isReputationServiceId(id)))],serviceSamples:1,repeats:1,...defaultReputation()}}

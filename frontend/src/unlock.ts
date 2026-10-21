@@ -8,7 +8,7 @@ export function unlockResult(a?:Attempt){
  if(!r)return {state:'unknown',tone:'empty',label:a?.started_at?'无法判断':'未测',reason:a?.started_at?'检测未完成':'',region}
  const netflix=['netflix_unlock','netflix_unlock_ipv4'].includes(a?.service_id||a?.rule.service_id||'')
  if(netflix&&details.title_check_version!=='dual_title_v1'&&['region_blocked','region_limited','originals_only'].includes(o||''))return {state:'unknown',tone:'empty',label:'仅自制剧或不可用（旧检测）',reason:'未验证账号播放',region}
- if(o==='originals_only')return {state:'available',tone:'warn',label:'仅自制剧'+(region?'（'+region+'）':''),reason:'未验证账号播放',region}
+ if(o==='originals_only')return {state:'partial',tone:'warn',label:'仅自制剧'+(region?'（'+region+'）':''),reason:'未验证账号播放',region}
  if(servicePassed(a))return {state:'available',tone:'good',label:netflix?'完整'+(region?'（'+region+'）':''):'可用 · '+(region||'地区未返回'),reason:netflix?'未验证账号播放':r.summary||'检测规则通过',region}
  if(['region_blocked','region_limited','service_rejected'].includes(o||''))return {state:'unavailable',tone:netflix?'bad':'warn',label:'不可用',reason:r.summary||r.error_message||'地区不支持',region}
  const reasons:Record<string,string>={challenge:'验证挑战',suspected_challenge:'疑似验证挑战',rate_limited:'网站限流',credentials_required:'需要凭据',auth_failed:'凭据失效',permission_denied:'账号权限不足',transport_error:'连接或读取失败',connection_failed:'连接失败',timed_out:'连接超时'}
@@ -29,9 +29,9 @@ export function unlockGroupSkipReason(groupId:string,region:string,enabled=true,
 export function unlockGroupSummary(groupId:string,catalog:Pick<ServiceRule,'service_id'|'name'>[],lookup:(id:string)=>Attempt|undefined,region?:string,enabled=true,rules:ServiceRegions={}){
  const services=catalog.filter(s=>unlockGroup(s.service_id)===groupId),eligible=services.filter(s=>region===undefined||unlockServiceAllowed(s.service_id,region,enabled,rules))
  if((services.length&&!eligible.length)||(!services.length&&region!==undefined&&unlockGroupSkipReason(groupId,region,enabled,rules)))return {available:0,total:0,tone:'empty',label:'—',reason:'',title:services.length?unlockServiceSkipReason(services[0]!.service_id,region!,enabled,rules):unlockGroupSkipReason(groupId,region!,enabled,rules)}
- const list=eligible.map(s=>({...s,result:unlockResult(lookup(s.service_id))})),available=list.filter(s=>s.result.state==='available').length,unavailable=list.filter(s=>s.result.state==='unavailable')
+ const list=eligible.map(s=>({...s,result:unlockResult(lookup(s.service_id))})),available=list.filter(s=>s.result.state==='available').length,unavailable=list.filter(s=>s.result.state==='unavailable'||s.result.state==='partial')
  const total=available+unavailable.length
- return {available,total,tone:unavailable.length?'warn':available?'good':'empty',label:total?available+'/'+total:'未测',reason:unavailable.map(s=>s.name+'：'+s.result.reason).join('；'),title:list.map(s=>s.name+'：'+s.result.label+' · '+s.result.reason).join('\n')}
+ return {available,total,tone:unavailable.length?'warn':available?'good':'empty',label:total?available+'/'+total:'未测',reason:unavailable.map(s=>s.name+'：'+(s.result.state==='partial'?s.result.label:s.result.reason)).join('；'),title:list.map(s=>s.name+'：'+s.result.label+' · '+s.result.reason).join('\n')}
 }
 export function unlockSummary(catalog:Pick<ServiceRule,'service_id'|'name'>[],lookup:(id:string)=>Attempt|undefined,region?:string,enabled=true,rules:ServiceRegions={}){
  const groups=unlockGroups.map(g=>({...g,...unlockGroupSummary(g.id,catalog,lookup,region,enabled,rules)}))

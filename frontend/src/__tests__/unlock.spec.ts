@@ -14,7 +14,7 @@ it('separates untested from inconclusive and keeps old Netflix restrictions inde
  const old={...attempt('region_blocked'),service_id:'netflix_unlock'}
  expect(unlockResult(old)).toMatchObject({state:'unknown',tone:'empty',label:'仅自制剧或不可用（旧检测）'})
  const current={...old,result:{...old.result!,outcome:'originals_only',details:{service_region:'SG',title_check_version:'dual_title_v1'}}}
- expect(unlockResult(current)).toMatchObject({state:'available',tone:'warn',label:'仅自制剧（SG）'})
+ expect(unlockResult(current)).toMatchObject({state:'partial',tone:'warn',label:'仅自制剧（SG）'})
 })
 
 it('uses saved service regions, empty overrides and disabled skipping',()=>{

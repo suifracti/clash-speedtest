@@ -13,7 +13,7 @@ beforeEach(()=>{
  nodes=['SG','SG','SG','JP'].map((country_code,i)=>({profile_id:'p',node_key:String(i),node_identity_key:String(i),config_revision_key:'r',profile_name:'fixture',display_name:country_code+' '+i,type:'ss',country_code,country_flag:''}))
  scope=ref(nodes)
  const records=new Map(nodes.slice(0,2).map((n,i)=>[key(n),{...n,attempt_id:String(i),request_id:String(i),requested_at:'2026-10-21T01:00:00Z',execution_state:'completed',persistence_state:'saved',service_id:'chatgpt_unlock',started_at:'2026-10-21T01:00:00Z',rule:{service_id:'chatgpt_unlock',target_url:'https://example.test'},result:{outcome:i?'region_blocked':'unlocked',summary:i?'地区不支持':'',bytes_read:0,finished_at:'2026-10-21T02:00:00Z'}} as Attempt]))
- const model={runNodes:computed(()=>scope.value),qualityCutoff:ref('2026-10-21T03:00:00Z'),qualityErrors:ref({}),qualityLoading:ref(false),readQualityNodes:vi.fn(async()=>{}),displayServices:computed(()=>[{service_id:'chatgpt_unlock',name:'ChatGPT'},{service_id:'abema_unlock',name:'ABEMA'}]),shownService:(n:NodeOption,id:string)=>id==='chatgpt_unlock'?records.get(key(n)):undefined} as unknown as HomeModel
+ const model={runNodes:computed(()=>scope.value),qualityCutoff:ref('2026-10-21T03:00:00Z'),qualityData:ref({}),qualityErrors:ref({}),qualityLoading:ref(false),readQualityNodes:vi.fn(async()=>{}),displayServices:computed(()=>[{service_id:'chatgpt_unlock',name:'ChatGPT'},{service_id:'abema_unlock',name:'ABEMA'},{service_id:'netflix_unlock',name:'Netflix'}]),shownService:(n:NodeOption,id:string)=>id==='netflix_unlock'&&n.node_key==='0'?{...records.get(key(n))!,service_id:id,result:{...records.get(key(n))!.result!,outcome:'originals_only',details:{title_check_version:'dual_title_v1',service_region:'SG'}}}:id==='chatgpt_unlock'?records.get(key(n)):undefined} as unknown as HomeModel
  w.catalog.value=model.displayServices.value as ServiceRule[]
  vi.mocked(api.exportClash).mockResolvedValue({yaml_content:'fixture',node_count:1})
  view=mount(UnlockServiceMatrix,{global:{provide:{[workspaceKey as symbol]:w,[homeModelKey as symbol]:model}}})
@@ -27,6 +27,7 @@ it('shares scope, confirmed counts, service-only untested plan and available exp
  expect(w.plan.value).toMatchObject({nodes:[nodes[2]],projects:['service'],serviceIds:['chatgpt_unlock'],includeReputation:false,reputationServiceIds:[]})
  await view.findAll('button').find(b=>b.text()==='导出可用节点')!.trigger('click');await flushPromises()
  expect(api.exportClash).toHaveBeenCalledWith([nodes[0]],'ChatGPT · 新加坡');expect(saveFile).toHaveBeenCalledOnce()
+ const partial=view.get('button[aria-label="Netflix · 新加坡 · 0/1"]');expect(partial.classes()).toContain('warn');await partial.trigger('click');expect(view.findAll('button').find(b=>b.text()==='导出可用节点')!.attributes('disabled')).toBeDefined()
  scope.value=[nodes[3]!];await flushPromises();expect(view.find('[aria-label="ChatGPT · 新加坡 · 1/2"]').exists()).toBe(false)
 })
 it('reports a failed export without claiming success',async()=>{

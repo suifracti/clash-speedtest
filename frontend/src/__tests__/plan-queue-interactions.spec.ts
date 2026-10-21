@@ -211,7 +211,7 @@ it('does not pre-select IP reputation when the catalog offers no reputation item
 
 it('omits off-region unlock items from both the round plan and progress',async()=>{
  const jp={...node,node_key:'jp',node_identity_key:'jp',country_code:'JP'},overseas={...node,node_key:'us',node_identity_key:'us',country_code:'JP'}
- w.nodes.value=[jp,overseas];w.services.value[key(overseas)]=[{...overseas,attempt_id:'geo',service_id:'google_region',rule:{service_id:'google_region'},result:{outcome:'profiled',details:{service_region:'US'}}} as unknown as Attempt]
+ w.nodes.value=[jp,overseas];w.services.value[key(overseas)]=[{...overseas,attempt_id:'geo',service_id:'cloudflare_trace',rule:{service_id:'cloudflare_trace'},result:{outcome:'profiled',details:{country_code:'US'}}} as unknown as Attempt]
  w.project.value='service';w.serviceIds.value=['chatgpt_unlock','abema_unlock'];w.openPlan([jp,overseas]);w.plan.value!.includeReputation=false
  vi.mocked(api.startAttempt).mockImplementation(async(_kind,body:any)=>({...savedDownload(body),execution_state:'running'}));vi.spyOn(api,'attempt').mockImplementation(async(_kind,id,n)=>savedDownload({...n,request_id:id}))
  await w.runPlan()

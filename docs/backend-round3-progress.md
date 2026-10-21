@@ -215,3 +215,9 @@
 - 规则版本升为 2；官方列表 `core/publicservice/claude_regions.json`，旧记录不迁移、不删除；不登录、不发送聊天或调用 Antigravity。
 - 保留浏览器 UA/Accept-Language、既有超时和站点限流；缺证据、挑战与限流均无法判断。
 - 验证：主路径/缺证据及地区拒绝、Go vet/test；原 SG04/JP/US 三节点仅复测三项，TUN 开启。
+
+## 矩阵地区与部分解锁显示（2026-10-21）
+- 地区列和适用地区跳过使用 IP 库 / Cloudflare / 名称多数；三者互异选 IP 库，Google 不一致只在矩阵明细提示。
+- Netflix 仅自制改为部分，计入已测但不计可用，格子橙色且不进入可用导出；地区跳过勾选框移入适用地区卡片。
+- 前端字段 `consensusRegion` / `googleNote`；不改历史库，无新接口，不追加检测。
+- 验证：既有统计断言及多数/分歧路径、Go vet/test、前端测试和构建；用本轮已有实测结果截图。

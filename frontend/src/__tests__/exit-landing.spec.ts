@@ -9,3 +9,8 @@ it('highlights a Google mismatch and makes any mainland source red',()=>{
  expect(exitLanding({country_code:'SG'},[...records,record('google_region',{service_region:'HK'})]).label).toContain('Google 判定 HK')
  expect(exitLanding({country_code:'SG'},[record('cloudflare_trace',{country_code:'CN'})])).toMatchObject({tone:'bad',label:'Cloudflare 判定 CN（中国大陆）'})
 })
+
+it('uses IP library, Cloudflare and name consensus instead of Google',()=>{
+ expect(exitLanding({country_code:'SG'},[...records,record('google_region',{service_region:'US'})])).toMatchObject({consensusRegion:'SG',googleNote:'Google 判定 US，与落地 SG 不一致'})
+ expect(exitLanding({country_code:'JP'},[record('ippure_ip_quality',{country_code:'SG'}),record('cloudflare_trace',{country_code:'HK'})]).consensusRegion).toBe('SG')
+})
