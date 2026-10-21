@@ -542,7 +542,7 @@ func readPage(ctx context.Context, client *http.Client, target string, allowedHo
 	result := Result{RequestCount: 1}
 	clone := *client
 	clone.CheckRedirect = func(request *http.Request, via []*http.Request) error {
-		if len(via) >= 5 || request.URL.Scheme != "https" {
+		if googleVerificationURL(request.URL.String()) || len(via) >= 5 || request.URL.Scheme != "https" {
 			return http.ErrUseLastResponse
 		}
 		host := strings.ToLower(request.URL.Hostname())
@@ -572,6 +572,9 @@ func readPage(ctx context.Context, client *http.Client, target string, allowedHo
 	defer response.Body.Close()
 	status := response.StatusCode
 	result.HTTPStatus = &status
+	if googleVerification(&result, response, nil) {
+		return result, fetchedPage{}, false
+	}
 	if serviceRateLimit(&result, response, false) {
 		return result, fetchedPage{}, false
 	}
@@ -592,6 +595,9 @@ func readPage(ctx context.Context, client *http.Client, target string, allowedHo
 	truncated := len(body) > maximum
 	if truncated {
 		body = body[:maximum]
+	}
+	if googleVerification(&result, response, body) {
+		return result, fetchedPage{}, false
 	}
 	if classifyPageChallenge(&result, body) {
 		return result, fetchedPage{}, false

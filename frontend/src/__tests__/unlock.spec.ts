@@ -24,3 +24,11 @@ it('uses saved service regions, empty overrides and disabled skipping',()=>{
  expect(unlockServiceAllowed('abema_unlock','US',true,rules)).toBe(true)
  expect(unlockServiceAllowed('chatgpt_unlock','US',false,rules)).toBe(true)
 })
+
+it('shows Google verification separately without counting it as unavailable',()=>{
+ const a={...attempt('verification_required'),service_id:'gemini_unlock'}
+ expect(unlockResult(a)).toMatchObject({state:'verification',tone:'warn',label:'需人机验证'})
+ expect(unlockGroupSummary('ai',[{service_id:'gemini_unlock',name:'Gemini'}],()=>a)).toMatchObject({total:0,label:'需人机验证',tone:'warn'})
+ const cn={...a,result:{...a.result!,outcome:'region_blocked',details:{service_region:'CN'}}}
+ expect(unlockResult(cn)).toMatchObject({label:'Google 判定为中国大陆',tone:'bad'})
+})

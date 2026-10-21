@@ -24,10 +24,10 @@ const entries=computed(()=>{
 })
 function cell(id:string,region:string){
  if(!allowed(id,region))return {label:'—',tone:'empty',title:unlockServiceSkipReason(id,region,w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions),available:0,total:0}
- const scope=nodes.value.filter(n=>w.nodeUnlockRegion(n)===region),results=scope.map(n=>unlockResult(m.shownService(n,id))),available=results.filter(r=>r.state==='available').length,total=results.filter(r=>r.state!=='unknown').length
- const partial=results.some(r=>r.state==='partial')
+ const scope=nodes.value.filter(n=>w.nodeUnlockRegion(n)===region),results=scope.map(n=>unlockResult(m.shownService(n,id))),available=results.filter(r=>r.state==='available').length,total=results.filter(r=>['available','unavailable','partial'].includes(r.state)).length
+ const partial=results.some(r=>r.state==='partial'),verification=results.some(r=>r.state==='verification')
  const error=scope.some(n=>m.qualityErrors.value[key(n)])
- return {label:total?`${available}/${total}`:error?'读取失败':'未测',tone:!total?'empty':available===total?'good':available||partial?'warn':'bad',title:`${available} 可用 / ${total} 已测 · ${scope.length} 个节点`,available,total}
+ return {label:total?`${available}/${total}`:error?'读取失败':verification?'需人机验证':'未测',tone:!total?(verification?'warn':'empty'):available===total?'good':available||partial?'warn':'bad',title:`${available} 可用 / ${total} 已测 · ${scope.length} 个节点`,available,total}
 }
 const current=computed(()=>cell(selected.value.service,selected.value.region)),service=computed(()=>m.displayServices.value.find(s=>s.service_id===selected.value.service)),latest=computed(()=>entries.value.find(e=>e.at)?.at)
 const untested=computed(()=>entries.value.filter(e=>!e.attempt?.result&&!e.attempt?.started_at&&!e.error).map(e=>e.node))

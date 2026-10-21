@@ -18,7 +18,7 @@ export function exitLanding(node:Pick<NodeOption,'country_code'>,attempts:Attemp
  const consensusRegion=votes.find(c=>votes.filter(v=>v===c).length>=2)||library[0]||cfRegion||expected
  const googleNote=google&&consensusRegion&&google!==consensusRegion?`Google 判定 ${google}，与落地 ${consensusRegion} 不一致`:''
  const count=Number(!!library.length)+Number(!!cfRegion)+Number(!!google)
- const label=mainland?`${mainland.name} 判定 CN（中国大陆）`:mismatch?`名称 ${expected}，${mismatch.name} 判定 ${mismatch.region}`:count===3&&expected?'落地一致':count?`待补来源（${count}/3）`:'未测'
+ const label=mainland?(mainland.name==='Google'?'Google 判定为中国大陆':`${mainland.name} 判定 CN（中国大陆）`):mismatch?`名称 ${expected}，${mismatch.name} 判定 ${mismatch.region}`:count===3&&expected?'落地一致':count?`待补来源（${count}/3）`:'未测'
  const tags=[`名称 ${expected||'未识别'}`,`IP 库 ${library.join(' / ')||'未取得'}`,`Cloudflare ${cfRegion||'未取得'}`,`Google ${google||'未取得'}`]
  const field=(a:Attempt|undefined,...keys:string[])=>a&&valid(a)?exitField(a,...keys)||'—':'—'
  const riskOptions=[{label:'IPPure',value:field(pure,'risk_score','fraud_score')},{label:'机器',value:field(pure,'asn_bot_percent')}].filter(s=>s.value!=='—'&&Number.isFinite(Number(s.value))).sort((a,b)=>Number(b.value)-Number(a.value)),risk=riskOptions[0],riskValue=risk?Number(risk.value):undefined

@@ -217,7 +217,7 @@ var catalog = []Rule{
 	streamingRule("fod_unlock", "FOD 日本地区判定", "日本", "https://geocontrol1.stream.ne.jp/fod-geo/check.xml?time=1624504256", "读取 FOD 地区控制端点，不下载视频。", "XML FLAG TYPE=true 判定地区允许"),
 	streamingRule("hulu_jp_unlock", "Hulu Japan 入口限制检查", "日本", "https://id.hulu.jp/", "识别明确的 restrict 跳转；首页可达不代表地区或播放解锁。", "明确 restrict 跳转记为受限；200 仅记网页可达；403 不推断为地区封锁"),
 	{
-		ServiceID: "youtube_premium", Name: "YouTube Premium 地区判定", Category: "流媒体解锁", Region: "全球", ResultKind: "streaming_unlock", RuleVersion: 4,
+		ServiceID: "youtube_premium", Name: "YouTube Premium 地区判定", Category: "流媒体解锁", Region: "全球", ResultKind: "streaming_unlock", RuleVersion: 5,
 		TargetURL: "https://www.youtube.com/premium", Method: http.MethodGet,
 		Description:      "读取公开地区及订阅方案；仅此规则每请求最多读取2MiB网页，不验证账号或播放。",
 		SuccessCriterion: "可识别地区且页面实际订阅方案及按钮存在，才记公开方案判据通过；广告文案不算；不验证购买或播放",

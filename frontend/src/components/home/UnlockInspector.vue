@@ -20,7 +20,7 @@ function records(id:string){return m.servicePoints(props.node,id).filter(p=>!p.i
 </script>
 <template><div class="unlock-inspector" aria-label="解锁检测明细">
  <template v-for="group in groups" :key="group.id"><p v-if="group.skip" class="unlock-skipped">{{group.name}} · {{group.skip}}</p><component v-else :is="group.id==='legacy'?'details':'section'" class="unlock-group" :class="{legacy:group.id==='legacy'}">
-  <component :is="group.id==='legacy'?'summary':'h4'">{{group.name}}<small>{{group.items.some(s=>!s.skip&&s.result.state!=='unknown')?group.items.filter(s=>!s.skip&&s.result.state==='available').length+'/'+group.items.filter(s=>!s.skip&&s.result.state!=='unknown').length+' 可用':'未测'}}</small></component>
+  <component :is="group.id==='legacy'?'summary':'h4'">{{group.name}}<small>{{group.items.some(s=>!s.skip&&['available','unavailable','partial'].includes(s.result.state))?group.items.filter(s=>!s.skip&&s.result.state==='available').length+'/'+group.items.filter(s=>!s.skip&&['available','unavailable','partial'].includes(s.result.state)).length+' 可用':group.items.some(s=>!s.skip&&s.result.state==='verification')?'需人机验证':'未测'}}</small></component>
   <div v-for="s in group.items" :key="s.id" class="hd-service-row unlock-row">
    <button class="hd-site-name unlock-name" @click="m.showService(node,s.id)">{{s.name}}</button>
    <button class="hd-site-value unlock-state" :class="s.result.tone" :title="s.result.reason" @click="m.showService(node,s.id)">{{s.skip?'—':s.result.label}}<small v-if="s.attempt?.result&&(s.id==='netflix_unlock'||s.id==='netflix_unlock_ipv4')">未验证账号播放</small></button>

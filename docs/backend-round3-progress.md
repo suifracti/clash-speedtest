@@ -221,3 +221,20 @@
 - Netflix 仅自制改为部分，计入已测但不计可用，格子橙色且不进入可用导出；地区跳过勾选框移入适用地区卡片。
 - 前端字段 `consensusRegion` / `googleNote`；不改历史库，无新接口，不追加检测。
 - 验证：既有统计断言及多数/分歧路径、Go vet/test、前端测试和构建；用本轮已有实测结果截图。
+
+## 三节点 trace 与 TUN 结论（2026-10-21）
+- 原 JP04 / SG04 专线 / US04 的 ChatGPT、Claude trace loc 均与节点地区一致，本轮请求确实经过所选节点，未见本机 TUN 干扰。
+- 旧 Google US 来自 YouTube 默认 INNERTUBE_CONTEXT_GL 的误读，不是本轮 TUN 串线；不扩大为所有站点、所有时间的路由保证。
+- 依据：61a0af9 前保存的三节点 AI / YouTube 原始响应与结果，本项不新增检测。
+
+## Gemini 地区与 Google 验证页（2026-10-21）
+- Gemini 旧 CN 来自 bootstrap 数组 `,2,1,200,"CHN"`；原请求已为 `en-US,en;q=0.9`，不是 zh-CN 回显。
+- 英文请求读到 CN 时红色“Google 判定为中国大陆”，沿用真实落地 Google 来源；新明细 `request_language` / `region_field` / `region_raw`。
+- Gemini / YouTube / Google 地区遇 sorry/验证页记 `verification_required`，橙色“需人机验证”，独立于未知、不计可用/不可用分母。
+- 验证：Go vet/test、前端 389 项及构建；TUN 开启，原 JP04/SG04/US04 本轮 Gemini 均 302 验证跳转，无新 CN 证据。
+
+## Disney+ / Spotify / TikTok 判法修复（2026-10-21）
+- Disney+ 修正地区 GraphQL 公共 SDK 认证；Spotify 改注册地区校验（不提交邮箱/密码/同意条款）；TikTok 读取完整页面启动地区。
+- 三项规则版本升为 2；Spotify 明确代理拒绝记 `service_rejected`，显示“Spotify 拒绝代理 IP 注册”；旧记录不迁移。
+- 实测仅原三节点四项共 12 次，Disney+/Spotify 定向补测 6 次：TikTok JP/SG/US 均取得地区，Spotify 三项均拒绝代理 IP。
+- Disney+ 三节点仍在 TLS 握手 EOF，未取得地区结论；浏览器 TLS 复用无效已撤回，不再追加探测。原始返回和截图仅存本机。

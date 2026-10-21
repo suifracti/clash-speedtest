@@ -36,7 +36,7 @@ func aiUnlockRules() []Rule {
 			Accept: "text/html,application/xhtml+xml",
 		},
 		{
-			ServiceID: "gemini_unlock", Name: "Gemini（Google）网页解锁", Category: "AI 服务", Region: "全球", ResultKind: "unlock", RuleVersion: 2,
+			ServiceID: "gemini_unlock", Name: "Gemini（Google）网页解锁", Category: "AI 服务", Region: "全球", ResultKind: "unlock", RuleVersion: 3,
 			Description: "读取 Gemini 页面明确的地区可用标记；不登录或发送消息。",
 			TargetURL:   "https://gemini.google.com/", Method: http.MethodGet,
 			SuccessCriterion: "Gemini 页面出现地区可用标记 45631641,null,true；缺失时未知，不验证账号或消息发送。",
@@ -75,28 +75,36 @@ var claudeRegions = func() struct {
 
 func checkAIUnlock(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
 	result := Result{Details: map[string]string{}}
+	if rule.ServiceID == "gemini_unlock" {
+		result.Details["request_language"] = "en-US,en;q=0.9"
+	}
 	endpoint, _ := aiUnlockEndpointFor(rule.ServiceID)
 	page, ok := fetchAIUnlockPage(ctx, client, rule, endpoint, &result)
 	if !ok {
 		return finish(result, started)
 	}
 	result.Details["final_url"] = page.finalURL
-	if result.Outcome == "challenge" || result.Outcome == "suspected_challenge" {
+	if result.Outcome == "challenge" || result.Outcome == "suspected_challenge" || result.Outcome == "verification_required" {
 		return finish(result, started)
 	}
 	body := string(page.body)
-	if aiUnlockRegionRefusal(rule.ServiceID, page.finalURL, strings.ToLower(body)) {
+	if rule.ServiceID != "gemini_unlock" && aiUnlockRegionRefusal(rule.ServiceID, page.finalURL, strings.ToLower(body)) {
 		result.Outcome, result.Summary = "region_blocked", "服务明确提示当前地区不可用"
 		return finish(result, started)
 	}
 	if rule.ServiceID == "gemini_unlock" {
-		region := firstRegexGroup(regexp.MustCompile(`,2,1,200,"([A-Z]{3})"`), body)
+		pattern := regexp.MustCompile(`,2,1,200,"([A-Z]{3})"`)
+		region := firstRegexGroup(pattern, body)
+		result.Details["region_field"] = `Gemini bootstrap [,2,1,200,"ISO3"]`
+		result.Details["region_raw"] = pattern.FindString(body)
 		if region != "" {
 			if code, err := language.ParseRegion(region); err == nil {
 				result.Details["service_region"] = code.String()
 			}
 		}
 		switch {
+		case result.Details["service_region"] == "CN":
+			result.Outcome, result.Summary = "region_blocked", "Google 判定为中国大陆"
 		case page.status == 200 && !page.truncated && regexp.MustCompile(`45631641,\s*null,\s*true`).MatchString(body):
 			result.Outcome, result.Summary = "unlocked", "Gemini 地区可用标记通过；未验证账号或对话"
 		default:
@@ -148,7 +156,7 @@ func fetchAIUnlockPage(ctx context.Context, client *http.Client, rule Rule, endp
 	result.RequestCount = 1
 	clone := *client
 	clone.CheckRedirect = func(request *http.Request, via []*http.Request) error {
-		if len(via) >= 5 || request.URL.Scheme != "https" {
+		if googleVerificationURL(request.URL.String()) || len(via) >= 5 || request.URL.Scheme != "https" {
 			return http.ErrUseLastResponse
 		}
 		host := strings.ToLower(request.URL.Hostname())
@@ -177,6 +185,9 @@ func fetchAIUnlockPage(ctx context.Context, client *http.Client, rule Rule, endp
 
 	status := response.StatusCode
 	result.HTTPStatus = &status
+	if googleVerification(result, response, nil) {
+		return fetchedPage{}, false
+	}
 	if serviceRateLimit(result, response, false) {
 		return fetchedPage{}, false
 	}
@@ -203,6 +214,9 @@ func fetchAIUnlockPage(ctx context.Context, client *http.Client, rule Rule, endp
 		finalURL = response.Request.URL.String()
 	}
 	page := fetchedPage{status: status, body: body, finalURL: finalURL, truncated: truncated}
+	if googleVerification(result, response, body) {
+		return page, false
+	}
 	classifyPageChallenge(result, body)
 	return page, true
 }

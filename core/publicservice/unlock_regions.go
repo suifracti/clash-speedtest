@@ -18,7 +18,7 @@ const (
 	disneyDeviceURL  = "https://disney.api.edge.bamgrid.com/devices"
 	disneyTokenURL   = "https://disney.api.edge.bamgrid.com/token"
 	disneyGraphURL   = "https://disney.api.edge.bamgrid.com/graph/v1/device/graphql"
-	spotifyRegionURL = "https://www.spotify.com/api/content/v1/country-selector?platform=web&format=json"
+	spotifyRegionURL = "https://spclient.wg.spotify.com/signup/public/v1/account"
 	tiktokRegionURL  = "https://www.tiktok.com/"
 	unextRegionURL   = "https://cc.unext.jp/?zxuid=1b64984ecc23&zxemp=29854391&operationName=cosmo_getPlaylistUrl&variables=%7B%22code%22%3A%22ED00440417%22%2C%22playMode%22%3A%22caption%22%2C%22bitrateLow%22%3A192%2C%22bitrateHigh%22%3Anull%2C%22validationOnly%22%3Atrue%7D&extensions=%7B%22persistedQuery%22%3A%7B%22version%22%3A1%2C%22sha256Hash%22%3A%22a2309e22a6819ff747cf9a389dd78db35fa3c386fac1d53461061ba20fa44e34%22%7D%7D"
 	dmmRegionURL     = "https://tv.dmm.com/vod/"
@@ -36,7 +36,7 @@ var (
 func regionUnlockRules() []Rule {
 	return []Rule{
 		regionUnlockRule("disney_unlock", "Disney+ 地区判定", "流媒体", "全球", disneyDeviceURL, http.MethodPost, "Disney+ 会话返回国家代码及 supported-location 地区判据"),
-		regionUnlockRule("spotify_unlock", "Spotify 地区判定", "流媒体", "全球", spotifyRegionURL, http.MethodGet, "Spotify 国家选择接口返回国家代码；页面 200 本身不算解锁"),
+		regionUnlockRule("spotify_unlock", "Spotify 地区判定", "流媒体", "全球", spotifyRegionURL, http.MethodPost, "Spotify 注册校验接口返回 country 与 is_country_launched；不提交邮箱或密码，不注册账号"),
 		regionUnlockRule("tiktok_unlock", "TikTok 地区判定", "流媒体", "全球", tiktokRegionURL, http.MethodGet, "TikTok 首页启动数据提供 region；普通网页响应不算解锁"),
 		regionUnlockRule("unext_unlock", "U-NEXT 日本地区判定", "日本", "日本", unextRegionURL, http.MethodGet, "U-NEXT 播放校验返回地区判定状态；validationOnly 不取播放清单"),
 		regionUnlockRule("dmm_unlock", "DMM TV 日本地区判定", "日本", "日本", dmmRegionURL, http.MethodGet, "DMM TV 地区拒绝页或服务数据中的明确地区字段"),
@@ -45,12 +45,19 @@ func regionUnlockRules() []Rule {
 }
 
 func regionUnlockRule(id, name, category, region, target, method, criterion string) Rule {
-	return Rule{
+	rule := Rule{
 		ServiceID: id, Name: name, Category: category, Region: region, ResultKind: "unlock",
 		RuleVersion: 1, Description: "使用服务自身返回的地区字段或明确地区拒绝；不验证账号、订阅或播放。",
 		TargetURL: target, Method: method, SuccessCriterion: criterion, RedirectPolicy: "probe_specific",
 		TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
 	}
+	if id == "tiktok_unlock" {
+		rule.MaximumBodyBytes = MaximumWebDocumentBytes
+	}
+	if id == "disney_unlock" || id == "spotify_unlock" || id == "tiktok_unlock" {
+		rule.RuleVersion = 2
+	}
+	return rule
 }
 
 func checkRegionUnlock(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
@@ -142,29 +149,37 @@ func checkDisneyRegion(ctx context.Context, client *http.Client, rule Rule, star
 }
 
 func checkSpotifyRegion(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
-	result, page, ok := readPage(ctx, client, rule.TargetURL, []string{"spotify.com"}, map[string]string{"Accept": "application/json"}, rule.MaximumBodyBytes)
+	// Deliberately omit email, password and agreement: this only reads signup validation geography.
+	form := url.Values{"birth_day": {"11"}, "birth_month": {"11"}, "birth_year": {"2000"}, "platform": {"www"}, "key": {"a1e486e2729f46d6bb368d6b2bcda326"}, "identifier_token": {"invalid-region-check"}}
+	body, result, ok := regionRequest(ctx, client, http.MethodPost, rule.TargetURL, "application/x-www-form-urlencoded", []byte(form.Encode()), rule.MaximumBodyBytes)
 	if !ok {
-		return finishPageResult(result, "Spotify 地区接口未提供可确认结果", started)
+		return finishPageResult(result, "Spotify 注册地区接口未取得结论", started)
 	}
-	text := strings.ToLower(string(page.body))
-	if strings.Contains(text, "not available in your country") {
-		result.Outcome, result.Summary = "region_blocked", "Spotify 明确提示当前国家不可用"
-		return finish(result, started)
+	var data struct {
+		Status   int               `json:"status"`
+		Country  string            `json:"country"`
+		Launched *bool             `json:"is_country_launched"`
+		Errors   map[string]string `json:"errors"`
 	}
-	if strings.Contains(text, "page not found") || strings.Contains(text, "404") {
-		return regionUnknown(result, "region_document", "Spotify 国家选择接口未返回地区数据", started)
+	if json.Unmarshal(body, &data) != nil {
+		return regionUnknown(result, "region_document", "Spotify 注册地区响应无法识别", started)
 	}
-	region := spotifySelectedRegion(page.finalURL, page.body)
-	if !validRegionCode(region) || (!json.Valid(page.body) && !strings.Contains(text, "spotify")) {
-		return regionUnknown(result, "region_document", "Spotify 未返回可识别的国家及服务数据", started)
+	result.Details = map[string]string{"service_region": strings.ToUpper(data.Country)}
+	switch {
+	case data.Status == 320 && strings.Contains(strings.ToLower(data.Errors["generic_error"]), "proxy"):
+		result.Outcome, result.Summary = "service_rejected", "Spotify 拒绝代理 IP 注册"
+	case data.Status == 320 || data.Status == 120 || (data.Launched != nil && !*data.Launched):
+		result.Outcome, result.Summary = "region_blocked", "Spotify 当前国家未开放注册"
+	case data.Status == 311 && validRegionCode(data.Country) && data.Launched != nil && *data.Launched:
+		result.Outcome, result.Summary = "unlocked", "Spotify 注册地区可用；未注册账号或验证播放"
+	default:
+		return regionUnknown(result, "region_document", "Spotify 未返回完整注册地区判据", started)
 	}
-	result.Outcome, result.Summary = "unlocked", "Spotify 服务地区判定通过；未验证账号或曲目播放"
-	result.Details = map[string]string{"service_region": strings.ToUpper(region)}
 	return finish(result, started)
 }
 
 func checkTikTokRegion(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
-	result, page, ok := readPage(ctx, client, rule.TargetURL, []string{"tiktok.com"}, nil, rule.MaximumBodyBytes)
+	result, page, ok := readPage(ctx, client, rule.TargetURL, []string{"tiktok.com"}, map[string]string{"Accept-Language": "en-US,en;q=0.9"}, rule.MaximumBodyBytes)
 	if !ok {
 		return finishPageResult(result, "TikTok 地区数据未能读取", started)
 	}
@@ -175,6 +190,13 @@ func checkTikTokRegion(ctx context.Context, client *http.Client, rule Rule, star
 	}
 	match := tiktokBootstrap.FindSubmatch(page.body)
 	if len(match) != 2 {
+		// TikTok also serves a compact JSON page state outside the hydration script.
+		region := firstRegexGroup(regexp.MustCompile(`"region"\s*:\s*"([A-Z]{2})"`), string(page.body))
+		if validRegionCode(region) {
+			result.Details = map[string]string{"service_region": region, "region_field": "region"}
+			result.Outcome, result.Summary = "unlocked", "TikTok 网页地区判定通过；未验证账号或推荐内容"
+			return finish(result, started)
+		}
 		return regionUnknown(result, "region_document", "TikTok 首页没有地区启动数据", started)
 	}
 	var document map[string]any
@@ -269,8 +291,13 @@ func regionRequest(ctx context.Context, client *http.Client, method, target, con
 	}
 	request.Header.Set("User-Agent", browserUserAgent)
 	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	if strings.Contains(target, "disney.api.edge.bamgrid.com") {
-		request.Header.Set("Authorization", disneyRegionAuth)
+		auth := disneyRegionAuth
+		if target == disneyGraphURL {
+			auth = strings.TrimPrefix(auth, "Bearer ")
+		}
+		request.Header.Set("Authorization", auth)
 	}
 	if contentType != "" {
 		request.Header.Set("Content-Type", contentType)
@@ -362,34 +389,6 @@ func regionUnknown(result Result, phase, message string, started time.Time) Resu
 }
 
 func validRegionCode(value string) bool { return regionCodePattern.MatchString(strings.ToUpper(value)) }
-
-func spotifySelectedRegion(raw string, body []byte) string {
-	parsed, err := url.Parse(raw)
-	if err == nil {
-		parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
-		if len(parts) >= 5 && strings.EqualFold(parts[1], "api") && strings.EqualFold(parts[2], "content") && parts[3] == "v1" && strings.EqualFold(parts[4], "country-selector") {
-			code := strings.ToUpper(strings.SplitN(parts[0], "-", 2)[0])
-			if validRegionCode(code) {
-				return code
-			}
-		}
-	}
-	var selector struct {
-		CountryCode         string `json:"countryCode"`
-		CountryCodeSnake    string `json:"country_code"`
-		CurrentCountryCode  string `json:"currentCountryCode"`
-		SelectedCountryCode string `json:"selectedCountryCode"`
-	}
-	if json.Unmarshal(body, &selector) != nil {
-		return ""
-	}
-	for _, code := range []string{selector.CurrentCountryCode, selector.SelectedCountryCode, selector.CountryCode, selector.CountryCodeSnake} {
-		if validRegionCode(code) {
-			return strings.ToUpper(code)
-		}
-	}
-	return ""
-}
 
 func jsonRegionField(body []byte, keys ...string) string {
 	var document any
