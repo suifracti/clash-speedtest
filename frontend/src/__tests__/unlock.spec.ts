@@ -33,8 +33,7 @@ it('shows Google verification separately without counting it as unavailable',()=
  expect(unlockResult(cn)).toMatchObject({label:'Google 判定为中国大陆',tone:'bad'})
 })
 
-it('counts verification in 2/3 and shows Spotify registration restriction in orange',()=>{
- const catalog=['chatgpt_unlock','claude_unlock','gemini_unlock'].map(service_id=>({service_id,name:service_id}))
+it('counts verification in 2/3 and shows Spotify registration restriction in orange',()=>{ const catalog=['chatgpt_unlock','claude_unlock','gemini_unlock'].map(service_id=>({service_id,name:service_id}))
  expect(unlockGroupSummary('ai',catalog,id=>({...attempt(id==='gemini_unlock'?'verification_required':'unlocked'),service_id:id}))).toMatchObject({label:'2/3',tone:'warn'})
  expect(unlockResult({...attempt('service_rejected'),service_id:'spotify_unlock',result:{...attempt('service_rejected').result!,summary:'Spotify 拒绝代理 IP 注册'}})).toMatchObject({state:'partial',tone:'warn',label:'限注册',reason:'识别为代理 IP，已有账号通常不受影响'})
 })
@@ -50,4 +49,11 @@ it('disables new Disney checks while preserving successful old results',()=>{
  expect(unlockSupported('disney_unlock')).toBe(false)
  expect(unlockResult(undefined,'disney_unlock')).toMatchObject({label:'暂不支持',tone:'empty'})
  expect(unlockResult({...attempt('unlocked'),service_id:'disney_unlock'}).state).toBe('available')
+})
+
+it('keeps YouTube not-available amber and only CN red',()=>{
+ const blocked={...attempt('region_blocked'),service_id:'youtube_premium',result:{...attempt('region_blocked').result!,details:{},summary:'YouTube 不向该 IP 提供 Premium（常见于机房/代理 IP）'}}
+ expect(unlockResult(blocked)).toMatchObject({state:'unavailable',tone:'warn',label:'不可用',reason:'YouTube 不向该 IP 提供 Premium（常见于机房/代理 IP）'})
+ const cn={...blocked,result:{...blocked.result!,details:{service_region:'CN'},summary:'Google 判定为中国大陆'}}
+ expect(unlockResult(cn)).toMatchObject({state:'unavailable',tone:'bad',label:'Google 判定为中国大陆'})
 })

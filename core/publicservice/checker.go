@@ -559,13 +559,24 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	}
 	defer phases.attach(&final)
 	if host := selectedNodeIPv4Host(rule); host != "" {
-		resolved, evidence, failure := prepareTargetIPv4(ctx, client, phases, host, targetPassthroughHosts(rule))
-		defer func() { evidence.attach(&final) }()
-		if failure != nil {
-			return finish(*failure, startedAt)
+		// Fast.com needs no pinned IPv4 and can settle the region on its own, so
+		// it runs first: a node whose DoH times out must not lose the verdict.
+		skipPinning := false
+		if rule.ServiceID == "netflix_unlock" && rule.RuleVersion >= 5 {
+			pre := &netflixFastPreflight{result: Result{Details: map[string]string{}}}
+			pre.region, pre.banned, pre.decided = checkNetflixFast(ctx, client, &pre.result)
+			ctx = context.WithValue(ctx, netflixFastPreflightKey{}, pre)
+			skipPinning = pre.decided
 		}
-		client = resolved
-		defer client.CloseIdleConnections()
+		if !skipPinning {
+			resolved, evidence, failure := prepareTargetIPv4(ctx, client, phases, host, targetPassthroughHosts(rule))
+			defer func() { evidence.attach(&final) }()
+			if failure != nil {
+				return finish(*failure, startedAt)
+			}
+			client = resolved
+			defer client.CloseIdleConnections()
+		}
 	}
 
 	res1 := c.checkOnce(ctx, client, node, rule, startedAt)

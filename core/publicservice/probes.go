@@ -358,7 +358,7 @@ func checkYouTubePremium(ctx context.Context, client *http.Client, rule Rule, st
 		return finish(result, started)
 	}
 	if strings.Contains(lower, "premium is not available in your country") || strings.Contains(lower, "premium is not available in your region") {
-		result.Outcome, result.Summary = "region_blocked", "YouTube Premium 在该地区不可用"
+		result.Outcome, result.Summary = "region_blocked", "YouTube 不向该 IP 提供 Premium（常见于机房/代理 IP）"
 		return finish(result, started)
 	}
 	if page.truncated {
@@ -620,16 +620,25 @@ type netflixPage struct {
 func checkNetflix(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
 	result := Result{RequestCount: 0, Details: map[string]string{}}
 	if rule.ServiceID == "netflix_unlock" && rule.RuleVersion >= 5 {
-		if region, banned, decided := checkNetflixFast(ctx, client, &result); decided {
+		pre, cached := ctx.Value(netflixFastPreflightKey{}).(*netflixFastPreflight)
+		if !cached || pre == nil {
+			pre = &netflixFastPreflight{result: Result{Details: map[string]string{}}}
+			pre.region, pre.banned, pre.decided = checkNetflixFast(ctx, client, &pre.result)
+		}
+		mergeNetflixFast(&result, pre.result)
+		if pre.decided {
 			result.Details["netflix_check_version"] = "fast_api_v1"
-			if banned {
+			if cached {
+				result.Details["target_dns_skipped"] = "fast_api_decided"
+			}
+			if pre.banned {
 				result.Outcome, result.FailurePhase = "banned", "netflix_banned"
 				result.Summary = "Netflix 封禁该 IP（Fast.com 返回 403）；未验证账号播放"
 				result.ErrorMessage = "Fast.com 的 Netflix 测速接口直接拒绝该出口，按封禁处理；不是地区片库差异"
 			} else {
 				result.Outcome = "unlocked"
-				result.Details["service_region"] = region
-				result.Summary = "Netflix 完整片库（Fast.com 地区 " + region + "）；未验证账号播放"
+				result.Details["service_region"] = pre.region
+				result.Summary = "Netflix 完整片库（Fast.com 地区 " + pre.region + "）；未验证账号播放"
 			}
 			return finish(result, started)
 		}
@@ -702,6 +711,29 @@ func checkNetflix(ctx context.Context, client *http.Client, rule Rule, started t
 		result.ErrorMessage = "两部测试片目均未给出可确认结果；Netflix 片库或页面结构可能已变化"
 	}
 	return finish(result, started)
+}
+
+// netflixFastPreflightKey carries the Fast.com verdict from the checker into
+// checkNetflix. The checker asks Fast.com before the pinned-IPv4 lookup, so a
+// failing node DoH cannot swallow the one request that settles the region.
+type netflixFastPreflightKey struct{}
+
+type netflixFastPreflight struct {
+	region  string
+	banned  bool
+	decided bool
+	result  Result
+}
+
+func mergeNetflixFast(result *Result, pre Result) {
+	result.RequestCount += pre.RequestCount
+	result.BytesRead += pre.BytesRead
+	if pre.HTTPStatus != nil {
+		result.HTTPStatus = pre.HTTPStatus
+	}
+	for name, value := range pre.Details {
+		result.Details[name] = value
+	}
 }
 
 // checkNetflixFast follows subs-check's checkNetflixCDN: one Fast.com request

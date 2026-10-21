@@ -417,3 +417,27 @@ func TestABEMAWebResolvesWithinNodeAndRetainsErrorPage(t *testing.T) {
 		t.Fatalf("error page hidden or normal DNS used: dns=%d target=%d result=%+v", f.dnsCalls, f.titleCalls, r)
 	}
 }
+
+func TestNetflixFastSettlesBeforePinnedDNS(t *testing.T) {
+	rule, _ := RuleFor("netflix_unlock")
+	dnsCalls, titleCalls := 0, 0
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Host {
+		case "api.fast.com":
+			return fixtureResponse(req, 200, "application/json", `{"client":{"location":{"country":"hk"}}}`), nil
+		case "cloudflare-dns.com":
+			dnsCalls++
+		default:
+			titleCalls++
+		}
+		return fixtureResponse(req, 200, "text/html", "<html></html>"), nil
+	})}
+	c := Checker{DriftSamples: 1, ClientFactory: func(monitor.MonitoredNode, time.Duration) (*http.Client, error) { return client, nil }}
+	result := c.Check(context.Background(), monitor.MonitoredNode{}, rule, 2*time.Second)
+	if result.Outcome != "unlocked" || result.Details["service_region"] != "HK" || result.RequestCount != 1 {
+		t.Fatalf("Fast.com verdict was not used: %+v", result)
+	}
+	if dnsCalls != 0 || titleCalls != 0 || result.Details["target_dns_skipped"] != "fast_api_decided" {
+		t.Fatalf("pinned DNS still ran: dns=%d titles=%d details=%v", dnsCalls, titleCalls, result.Details)
+	}
+}
