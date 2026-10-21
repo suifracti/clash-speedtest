@@ -11,13 +11,15 @@ import UnlockPicker from '../UnlockPicker.vue'
 import SubscriptionOverview from '../SubscriptionOverview.vue'
 import NodeActivity from '../NodeActivity.vue'
 import SiteDisplayPicker from '../SiteDisplayPicker.vue'
+import UnlockServiceMatrix from './UnlockServiceMatrix.vue'
 import NodeInspector from './NodeInspector.vue'
 import NodeCompare from './NodeCompare.vue'
 import {homeModelKey,latencyVerdict,type Verdict} from './homeModel'
 import {exitLanding} from '../../exitLanding'
 import {unlockGroups,unlockGroupSummary,unlockSummary} from '../../unlock'
 const w=useWorkspace(),m=inject(homeModelKey)!
-const exitMode=ref(false)
+const exitMode=ref(false),serviceView=ref('nodes')
+const matrixMode=computed(()=>!exitMode.value&&w.project.value==='service'&&serviceView.value==='services')
 const chosen=m.chosen
 const exitRows=computed(()=>Object.fromEntries(m.pageNodes.value.map(n=>[key(n),exitLanding(n,[...(m.qualityData.value[key(n)]?.services||[]),...(w.services.value[key(n)]||[])])])) )
 function selectExit(){exitMode.value=true;m.qualityGate.value='all';m.qualitySort.value='existing';if(['latency','download','service'].includes(w.sort.value))w.sort.value='region'}
@@ -173,7 +175,9 @@ function keyNav(e:KeyboardEvent){
     </div>
     <div v-if="w.busy.value" class="hd-live"><span class="spinner"/>检测进行中{{w.queue.value.length?` · ${w.done.value}/${w.queue.value.length}`:''}}<button class="hd-link" @click="w.queueOpen.value=true">查看进度</button><button class="hd-link bad" @click="w.cancelTests()">{{w.cancelRequested.value?'正在取消…':'取消'}}</button></div>
 
-    <div class="hd-body" :class="{'exit-mode':exitMode,comparing:m.compareOpen.value,'compare-wide':m.compareOpen.value&&m.compareNodes.value.length>2}" :style="{'--hd-side-w':sideWidth+'px'}">
+    <nav v-if="!exitMode&&w.project.value==='service'" class="hd-seg matrix-switch" aria-label="解锁结果视图"><button :aria-pressed="serviceView==='nodes'" @click="serviceView='nodes'">按节点</button><button :aria-pressed="serviceView==='services'" @click="serviceView='services'">按服务</button></nav>
+    <UnlockServiceMatrix v-if="matrixMode"/>
+    <div v-else class="hd-body" :class="{'exit-mode':exitMode,comparing:m.compareOpen.value,'compare-wide':m.compareOpen.value&&m.compareNodes.value.length>2}" :style="{'--hd-side-w':sideWidth+'px'}">
       <div ref="table" class="hd-table" role="table" aria-label="节点列表" tabindex="0" :style="{'--hd-cols':columns}" @keydown="keyNav">
         <div class="hd-tr hd-th" role="row">
           <span role="columnheader"><input type="checkbox" :checked="allOnPage" aria-label="选择本页全部节点" @change="w.toggleAll(m.pageNodes.value)"></span>
@@ -203,7 +207,7 @@ function keyNav(e:KeyboardEvent){
       <NodeInspector v-else-if="focusNode" :key="key(focusNode)" class="hd-side" :node="focusNode" :exit-only="exitMode"/>
     </div>
 
-    <footer class="hd-foot">
+    <footer v-if="!matrixMode" class="hd-foot">
       <span>{{m.visibleNodes.value.length}} 个节点<template v-if="w.selectedKeys.value.length"> · 已选 {{w.selectedKeys.value.length}}</template> · ↑↓ 切换节点 <button class="hd-link hd-select-range" :disabled="m.qualityFiltersPending.value||!m.visibleNodes.value.length" @click="w.toggleAll(m.visibleNodes.value)">{{m.visibleNodes.value.length&&m.visibleNodes.value.every(selected)?'取消范围选择':'全选筛选范围'}}</button></span>
       <span class="hd-legend"><span class="good">正常</span><span class="warn">部分</span><span class="bad">失败</span><span class="empty">未测</span></span>
       <span class="hd-pages"><button class="hd-btn ghost icon" :disabled="m.currentPage.value<=1" aria-label="上一页" @click="m.currentPage.value--">‹</button>{{m.currentPage.value}} / {{m.totalPages.value}}<button class="hd-btn ghost icon" :disabled="m.currentPage.value>=m.totalPages.value" aria-label="下一页" @click="m.currentPage.value++">›</button></span>
@@ -215,3 +219,5 @@ function keyNav(e:KeyboardEvent){
 .hd-body.exit-mode .hd-node strong{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}.hd-body.exit-mode .hd-node small{white-space:normal}.hd-body.exit-mode .hd-tr{padding-top:9px;padding-bottom:9px}.hd-body.exit-mode .hd-exit-cell.good{color:var(--hd-good)}.hd-source{display:block}.hd-exit-cell{font-size:11px;white-space:normal;line-height:1.4}.hd-exit-cell.bad{color:#c6343e;font-weight:600}.hd-exit-cell.warn{color:#ad680b}
 .hd .hd-svc-cell.empty{color:var(--hd-empty);font-weight:400}.hd .hd-svc-cell.warn{color:var(--hd-warn)}
 </style>
+
+<style scoped>.matrix-switch{display:inline-flex;margin:0 0 12px}</style>
