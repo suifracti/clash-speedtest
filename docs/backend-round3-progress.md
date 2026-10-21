@@ -345,3 +345,12 @@
 - 节点：新加坡 04、日本 01、美国 04、香港 01；只跑 Netflix、YouTube Premium、Gemini，Disney+ 仅新加坡 04 一次，TUN 全程开启。
 - 结果：Netflix 新／日／美均完整且地区与节点一致，香港 01 经节点 DoH 超时未出结论；YouTube 无节点判 CN；Gemini 四节点都“需人机验证”。
 - 检查：`go vet`、`go test ./...`（20 包）、前端 396 项与构建通过；截图 `.ui-preview/round4-unlock-20261021/round4-matrix.png`、`round4-sg04-unlock.png`。
+
+### 2026-10-21 解锁收尾：Fast.com 提前
+- 预检挪到节点 DoH 之前，出结论就跳过固定 IPv4；DoH 超时不再吞掉结论。
+- 香港 01 只复测 Netflix 一项（TUN 开启）：1 个请求得完整片库（HK），details 记 `target_dns_skipped=fast_api_decided`。
+- 新增一条主路径断言（先 Fast.com、后不解析）；go test 全量通过，别项未动。
+
+### 2026-10-21 解锁收尾：YouTube 文案与配色
+- 非 CN 的“not available”改成“不向该 IP 提供 Premium（常见于机房/代理 IP）”，橙色；只有判定 CN 才红。
+- 服务端 summary 同步，前端对旧记录也改用新文案；补橙/红两态测试，前端 397 项通过。
