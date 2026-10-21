@@ -322,3 +322,26 @@
 - 检查器四个指标下加一行“当前配置：N 轮 · 响应率 X%”，当前配置没测过时写“当前配置还没测过”。
 - 配置变化虚线悬停：旧配置与新配置的 node_key 服务器段不同时，追加“服务器地址也变了，旧记录可能不是同一台机器”（只加提示，匹配逻辑不变）。
 - 验证：SG04 副本日本06／01／08 文案与灰标签正确，排序把全旧节点排到末尾；48 节点切延迟标签首个数字 234 ms、全部出数 1.46 s；`npm test` 395 项、类型检查与构建通过，未发起真实检测。
+
+### 2026-10-21 解锁判定对照 subs-check：Netflix
+- 照 `checkNetflixCDN` 先请求 Fast.com 测速接口，403 判封禁，拿到地区即“完整片库”；失败才走两部片目（自制 70143836／非自制 81280792），任一 403 判封禁。
+- 地区优先取 `client.location.country`，`targets[0]` 只作后备：上游只读后者，新加坡 04 实测报 JP，与同节点片目页的 SG 不一致；两处来源都记进 details。
+- 待办：Fast.com 现在排在节点 DoH 之后，DoH 超时会连带跳过预检（香港 01 本轮即如此），下一轮把预检提前。
+
+### 2026-10-21 解锁判定对照 subs-check：YouTube Premium
+- 请求 `youtube.com/premium?hl=en`，请求头与地区字段顺序照 `CheckYoutube`；有 Premium 标记才读地区，读不到写“无法判断”，不默认 US。
+- `www.google.cn` 只在非 pagead 遥测时算送中；首轮四节点全判 CN 正是页面自带 `google.cn/pagead` 遥测，已修并补测试。
+- 复测：新加坡／日本／美国均“该地区不可用”（页面头图原文 not available in your country），香港 01 TLS 握手 EOF 无结论；无节点判 CN。
+
+### 2026-10-21 解锁判定对照 subs-check：Gemini
+- 不可用国家表照 `CheckGemini`：CHN、RUS、BLR、CUB、IRN、PRK、SYR、HKG、MAC；CHN 写“Google 判定为中国大陆”，其余“Gemini 在该地区不可用（XX）”。
+- 验证页仍是橙色“需人机验证”；美国 04 从旧的 CN 记录变为 302 → `google.com/sorry/index`，页面不再出现 CN。
+
+### 2026-10-21 解锁判定对照 subs-check：Disney+
+- 照 `CheckDisney` 补完 devices → token → GraphQL 地区流程（含 JP 特判与主页兜底），仅在授权范围内用新加坡 04 试一次。
+- 仍为 TLS 握手 EOF、没有任何 HTTP 响应，维持“暂不支持”，进度里写原因，不再追加尝试。
+
+### 2026-10-21 四节点真实验证
+- 节点：新加坡 04、日本 01、美国 04、香港 01；只跑 Netflix、YouTube Premium、Gemini，Disney+ 仅新加坡 04 一次，TUN 全程开启。
+- 结果：Netflix 新／日／美均完整且地区与节点一致，香港 01 经节点 DoH 超时未出结论；YouTube 无节点判 CN；Gemini 四节点都“需人机验证”。
+- 检查：`go vet`、`go test ./...`（20 包）、前端 396 项与构建通过；截图 `.ui-preview/round4-unlock-20261021/round4-matrix.png`、`round4-sg04-unlock.png`。
