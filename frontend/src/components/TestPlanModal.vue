@@ -42,7 +42,7 @@ const extras=computed(()=>{const p=w.plan.value;if(!p)return [];return [...p.pro
 // 只有 Antigravity 会用已绑定账号发真实模型请求；其余 AI 项是网页/资源可达性检查。
 const modelServices=computed(()=>selectedServiceIds.value.filter(id=>id==='antigravity'))
 const latencySamples=computed(()=>{const p=w.plan.value;return p&&p.projects.includes('latency')?p.nodes.length*p.repeats*(p.target==='all'?targets.length:1)*p.samples:0})
-const serviceObservations=computed(()=>{const p=w.plan.value;return p?p.nodes.length*p.repeats*selectedServiceIds.value.length*(p.serviceSamples??4):0})
+const serviceObservations=computed(()=>{const p=w.plan.value;return p?p.nodes.reduce((sum,n)=>sum+w.allowedUnlockServices(n,selectedServiceIds.value).length,0)*p.repeats*(p.serviceSamples??4):0})
 async function submit(){
   validation.value=''
   const p=w.plan.value

@@ -14,23 +14,27 @@ export function unlockResult(a?:Attempt){
  const reasons:Record<string,string>={challenge:'验证挑战',suspected_challenge:'疑似验证挑战',rate_limited:'网站限流',credentials_required:'需要凭据',auth_failed:'凭据失效',permission_denied:'账号权限不足',transport_error:'连接或读取失败',connection_failed:'连接失败',timed_out:'连接超时'}
  return {state:'unknown',tone:'empty',label:'无法判断',reason:reasons[o||'']||r.summary||r.error_message||'未取得明确结论',region}
 }
-export function unlockGroupSummary(groupId:string,catalog:Pick<ServiceRule,'service_id'|'name'>[],lookup:(id:string)=>Attempt|undefined,region?:string,japanOnly=true){
- const skip=region===undefined?'':unlockGroupSkipReason(groupId,region,japanOnly)
- if(skip)return {available:0,total:0,tone:'empty',label:'—',reason:'',title:skip}
- const list=catalog.filter(s=>unlockGroup(s.service_id)===groupId).map(s=>({...s,result:unlockResult(lookup(s.service_id))})),available=list.filter(s=>s.result.state==='available').length,unavailable=list.filter(s=>s.result.state==='unavailable')
+export type ServiceRegions=Record<string,string[]>
+export function applicableRegions(id:string,rules:ServiceRegions={}){return rules[id]??unlockGroups.find(g=>(g.ids as string[]).includes(id))?.regions??[]}
+export function unlockServiceSkipReason(id:string,region:string,enabled=true,rules:ServiceRegions={}){
+ const regions=applicableRegions(id,rules)
+ if(!enabled||!regions.length||regions.includes(region))return ''
+ return regions.length===1&&regions[0]==='JP'?'非日本节点，不检测':'不适用于此地区，不检测'
+}
+export const unlockServiceAllowed=(id:string,region:string,enabled=true,rules:ServiceRegions={})=>!unlockServiceSkipReason(id,region,enabled,rules)
+export function unlockGroupSkipReason(groupId:string,region:string,enabled=true,rules:ServiceRegions={}){
+ const ids=unlockGroups.find(g=>g.id===groupId)?.ids||[]
+ return ids.length&&ids.every(id=>!unlockServiceAllowed(id,region,enabled,rules))?unlockServiceSkipReason(ids[0]!,region,enabled,rules):''
+}
+export function unlockGroupSummary(groupId:string,catalog:Pick<ServiceRule,'service_id'|'name'>[],lookup:(id:string)=>Attempt|undefined,region?:string,enabled=true,rules:ServiceRegions={}){
+ const services=catalog.filter(s=>unlockGroup(s.service_id)===groupId),eligible=services.filter(s=>region===undefined||unlockServiceAllowed(s.service_id,region,enabled,rules))
+ if((services.length&&!eligible.length)||(!services.length&&region!==undefined&&unlockGroupSkipReason(groupId,region,enabled,rules)))return {available:0,total:0,tone:'empty',label:'—',reason:'',title:services.length?unlockServiceSkipReason(services[0]!.service_id,region!,enabled,rules):unlockGroupSkipReason(groupId,region!,enabled,rules)}
+ const list=eligible.map(s=>({...s,result:unlockResult(lookup(s.service_id))})),available=list.filter(s=>s.result.state==='available').length,unavailable=list.filter(s=>s.result.state==='unavailable')
  const total=available+unavailable.length
  return {available,total,tone:unavailable.length?'warn':available?'good':'empty',label:total?available+'/'+total:'未测',reason:unavailable.map(s=>s.name+'：'+s.result.reason).join('；'),title:list.map(s=>s.name+'：'+s.result.label+' · '+s.result.reason).join('\n')}
 }
-
-export function unlockSummary(catalog:Pick<ServiceRule,'service_id'|'name'>[],lookup:(id:string)=>Attempt|undefined,region?:string,japanOnly=true){
- const groups=unlockGroups.map(g=>({...g,...unlockGroupSummary(g.id,catalog,lookup,region,japanOnly)}))
+export function unlockSummary(catalog:Pick<ServiceRule,'service_id'|'name'>[],lookup:(id:string)=>Attempt|undefined,region?:string,enabled=true,rules:ServiceRegions={}){
+ const groups=unlockGroups.map(g=>({...g,...unlockGroupSummary(g.id,catalog,lookup,region,enabled,rules)}))
  const measured=groups.some(g=>g.total)
  return {tone:groups.some(g=>g.reason)?'warn':measured?'good':'empty',label:measured?groups.map(g=>g.name+' '+g.label+(g.total?' 可用':'')).join(' · '):'还没做解锁检测',detail:groups.find(g=>g.reason)?.reason||(measured?'依据当前时间范围内已确认的结果':'无法判断与尚未检测不计入统计')}
 }
-
-export function unlockGroupSkipReason(groupId:string,region:string,japanOnly=true){
- const group=unlockGroups.find(g=>g.id===groupId)
- if(!group?.regions.length||groupId==='japan'&&!japanOnly||group.regions.includes(region))return ''
- return '非'+group.name+'节点，不检测'
-}
-export const unlockServiceAllowed=(id:string,region:string,japanOnly=true)=>!unlockGroupSkipReason(unlockGroup(id),region,japanOnly)

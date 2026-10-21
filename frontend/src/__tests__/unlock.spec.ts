@@ -1,5 +1,5 @@
 import {expect,it} from 'vitest'
-import {unlockGroupSummary,unlockResult} from '../unlock'
+import {unlockGroupSummary,unlockResult,unlockServiceAllowed} from '../unlock'
 import type {Attempt} from '../domain'
 const attempt=(outcome:string)=>({service_id:'chatgpt_unlock',execution_state:'completed',rule:{service_id:'chatgpt_unlock',target_url:''},result:{outcome,details:{service_region:'SG'},summary:'地区不支持'}} as unknown as Attempt)
 it('shares available counts and explicit region refusal reasons',()=>{
@@ -15,4 +15,12 @@ it('separates untested from inconclusive and keeps old Netflix restrictions inde
  expect(unlockResult(old)).toMatchObject({state:'unknown',tone:'empty',label:'仅自制剧或不可用（旧检测）'})
  const current={...old,result:{...old.result!,outcome:'originals_only',details:{service_region:'SG',title_check_version:'dual_title_v1'}}}
  expect(unlockResult(current)).toMatchObject({state:'available',tone:'warn',label:'仅自制剧（SG）'})
+})
+
+it('uses saved service regions, empty overrides and disabled skipping',()=>{
+ const rules={chatgpt_unlock:['HK','TW'],abema_unlock:[]}
+ expect(unlockServiceAllowed('chatgpt_unlock','HK',true,rules)).toBe(true)
+ expect(unlockServiceAllowed('chatgpt_unlock','US',true,rules)).toBe(false)
+ expect(unlockServiceAllowed('abema_unlock','US',true,rules)).toBe(true)
+ expect(unlockServiceAllowed('chatgpt_unlock','US',false,rules)).toBe(true)
 })

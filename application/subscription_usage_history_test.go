@@ -176,6 +176,9 @@ func TestSaveSettingsAtomicPersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.PreferredBrowser = "firefox"
+	enabled := false
+	s.SkipByApplicableRegions = &enabled
+	s.UnlockServiceRegions = map[string][]string{"chatgpt_unlock": {"HK", "TW"}, "abema_unlock": {}}
 	if err := svc.SaveSettings(s); err != nil {
 		t.Fatalf("SaveSettings failed: %v", err)
 	}
@@ -202,6 +205,9 @@ func TestSaveSettingsAtomicPersistence(t *testing.T) {
 	got, err := reopened.GetSettings()
 	if err != nil {
 		t.Fatalf("GetSettings failed: %v", err)
+	}
+	if got.SkipByApplicableRegions == nil || *got.SkipByApplicableRegions || len(got.UnlockServiceRegions["chatgpt_unlock"]) != 2 || got.UnlockServiceRegions["abema_unlock"] == nil {
+		t.Fatal("saved service regions or explicit disabled setting were lost")
 	}
 	if got.PreferredBrowser != "firefox" {
 		t.Fatalf("expected PreferredBrowser firefox, got: %s", got.PreferredBrowser)

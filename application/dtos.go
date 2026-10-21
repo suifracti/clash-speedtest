@@ -354,6 +354,8 @@ type LocalNotificationSettings struct {
 
 // AppSettings represents user-configurable persistent settings.
 type AppSettings struct {
+	UnlockServiceRegions           map[string][]string        `json:"unlock_service_regions,omitempty"`
+	SkipByApplicableRegions        *bool                      `json:"skip_by_applicable_regions,omitempty"`
 	LocalNotifications             *LocalNotificationSettings `json:"local_notifications,omitempty"`
 	AirportMonthlyPrices           map[string]float64         `json:"airport_monthly_prices,omitempty"`
 	SubscriptionDailyUpdateEnabled *bool                      `json:"subscription_daily_update_enabled,omitempty"`

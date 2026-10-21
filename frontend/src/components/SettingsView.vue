@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import UnlockRegionEditor from './UnlockRegionEditor.vue'
+import {unlockGroups,applicableRegions} from '../unlock'
 import UiSelect from './UiSelect.vue'
 import {nextTick,onMounted,ref} from 'vue'
 import {api,desktop,request} from '../api'
@@ -20,7 +22,7 @@ function rememberFocus(){dialogTrigger=document.activeElement instanceof HTMLEle
 function restoreFocus(){void nextTick(()=>dialogTrigger?.isConnected&&dialogTrigger.focus())}
 function openToken(){if(busy.value)return;rememberFocus();error.value='';feedback.value='';tokenForm.value=true}
 async function perform(label:string,fn:()=>Promise<void>){if(busy.value)return;busy.value=true;error.value='';feedback.value='';operation.value=label;try{await fn()}catch(e){error.value=e instanceof Error?e.message:String(e)}finally{busy.value=false;operation.value=''}}
-async function load(){loading.value=true;await perform('加载设置',async()=>{settings.value=await api.settings();settings.value.local_notifications??={enabled:false,failure_percent:50,remaining_percent:10,expiry_days:7};warningGiB.value=settings.value.monitor_storage_warning_bytes==null?null:settings.value.monitor_storage_warning_bytes/1073741824;hardGiB.value=settings.value.monitor_storage_hard_bytes==null?null:settings.value.monitor_storage_hard_bytes/1073741824;responseKiB.value=settings.value.monitor_budget_response_bytes==null?null:settings.value.monitor_budget_response_bytes/1024});loading.value=false}
+async function load(){loading.value=true;await perform('加载设置',async()=>{settings.value=await api.settings();settings.value.unlock_service_regions=Object.fromEntries(unlockGroups.flatMap(g=>g.ids.map(id=>[id,applicableRegions(id,settings.value?.unlock_service_regions)])));settings.value.skip_by_applicable_regions??=true;settings.value.local_notifications??={enabled:false,failure_percent:50,remaining_percent:10,expiry_days:7};warningGiB.value=settings.value.monitor_storage_warning_bytes==null?null:settings.value.monitor_storage_warning_bytes/1073741824;hardGiB.value=settings.value.monitor_storage_hard_bytes==null?null:settings.value.monitor_storage_hard_bytes/1073741824;responseKiB.value=settings.value.monitor_budget_response_bytes==null?null:settings.value.monitor_budget_response_bytes/1024});loading.value=false}
 async function setTheme(value:ThemePreference){await perform('切换外观',async()=>{try{await applyTheme(value);feedback.value='外观已更新，无需另行保存'}finally{theme.value=savedThemePreference()}})}
 function validSettings(){
   if(!settings.value)return false
@@ -63,6 +65,8 @@ onMounted(load)
         <section v-if="settings" class="settings-section"><h2>打开链接<span class="cst-effect">保存后生效</span></h2><label class="form-stack">首选浏览器<UiSelect v-model="settings.preferred_browser"><option value="auto">自动</option><option value="default">系统默认</option><option value="chrome">Chrome</option><option value="edge">Edge</option></UiSelect></label><p class="section-note">{{desktop()?'由桌面端按可用浏览器打开链接。':'Web 模式由当前浏览器处理链接；此偏好供桌面端使用。'}}</p></section>
       </div>
       <template v-if="settings">
+        <UnlockRegionEditor v-model="settings.unlock_service_regions!" :catalog="w.catalog.value"/>
+        <label class="notification-toggle"><input v-model="settings.skip_by_applicable_regions" type="checkbox">按适用地区跳过</label>
         <div class="settings-control-grid">
         <section class="settings-section"><div class="section-heading"><h2>监测请求<span class="cst-effect">保存后 · 影响下一轮</span></h2><span>配置请求预算</span></div><div class="form-grid"><label>最大并发请求<input v-model.number="settings.monitor_budget_max_concurrent" type="number" min="1" max="64" step="1"></label><label>单次响应读取上限 · KiB<input v-model.number="responseKiB" type="number" min="1" placeholder="尚未读取"></label></div><p class="section-note">保存仅更新请求预算；监测任务的启动与恢复由监测页操作。</p></section>
         <section class="settings-section"><div class="section-heading"><h2>历史容量与保留<span class="cst-effect">保存后生效</span></h2><span>清理前先预览</span></div><div class="form-grid"><label>告警阈值 · GiB<input v-model.number="warningGiB" type="number" min="0.01" step="0.1" placeholder="尚未读取"></label><label>保护阈值 · GiB<input v-model.number="hardGiB" type="number" min="0.01" step="0.1" placeholder="尚未读取"></label><label>监测原始样本保存<UiSelect v-model="settings.monitor_retention_policy"><option value="keep_all">全部保留</option><option value="30d">最近 30 天</option><option value="90d">最近 90 天</option><option value="180d">最近 180 天</option><option value="custom">自定义天数</option></UiSelect></label><label v-if="settings.monitor_retention_policy==='custom'">保存天数<input v-model.number="settings.monitor_retention_custom_days" type="number" min="1" max="36500" step="1"></label></div><div class="retention-actions"><p class="section-note">告警阈值须小于保护阈值。清理旧采样是独立操作，删除后无法从应用恢复，建议先导出备份。</p><button v-if="settings.monitor_retention_policy!=='keep_all'" class="button" @click="retentionPreview">预览旧采样清理</button></div></section>
@@ -82,4 +86,4 @@ onMounted(load)
 </style>
 <style src="./secondary-observatory.css" scoped></style>
 
-<style scoped>.settings-section .notification-toggle{display:inline-flex;align-items:center;gap:8px}.settings-section .notification-toggle input[type=checkbox]{width:16px;height:16px;min-height:0;padding:0;margin:0;flex:none}.notification-denied{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:12px 0;color:var(--cst-muted)}</style>
+<style scoped>.preferences-view .notification-toggle{display:inline-flex;align-items:center;gap:8px}.preferences-view .notification-toggle input[type=checkbox]{width:16px;height:16px;min-height:0;padding:0;margin:0;flex:none}.notification-denied{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:12px 0;color:var(--cst-muted)}</style>

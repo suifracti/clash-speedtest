@@ -27,7 +27,7 @@ const project=computed(()=>w.project.value)
 const shows=(p:Project)=>!props.exitOnly&&(project.value==='combined'||project.value===p)
 const landing=computed(()=>exitLanding(props.node,attempts.value))
 const latencyVerdictValue=computed(()=>latencyVerdict(sites.value.map(s=>m.metricPoint(props.node,s.id)),stableLatency(latencySeries.value)))
-const serviceVerdict=computed(()=>unlockSummary(w.catalog.value,id=>m.shownService(props.node,id),w.nodeUnlockRegion(props.node),w.japanOnly.value))
+const serviceVerdict=computed(()=>unlockSummary(w.catalog.value,id=>m.shownService(props.node,id),w.nodeUnlockRegion(props.node),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions))
 const downloadVerdict=computed(()=>({tone:m.downloadMetricTone(props.node)||'empty',label:m.downloadMetric(props.node),detail:m.downloadMetricContext(props.node)}))
 const verdict=computed(()=>props.exitOnly?{tone:landing.value.tone,label:landing.value.label,detail:landing.value.detail}:project.value==='download'?downloadVerdict.value:project.value==='service'?serviceVerdict.value:latencyVerdictValue.value)
 const others=computed(()=>props.exitOnly||project.value==='combined'?[]:([

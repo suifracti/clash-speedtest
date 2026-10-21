@@ -85,8 +85,8 @@ watch(()=>w.viewRequest.value,n=>{
 function isFocus(n:NodeOption){return !!focusNode.value&&key(focusNode.value)===key(n)}
 function selected(n:NodeOption){return w.selectedKeys.value.includes(key(n))}
 const verdicts=computed<Record<string,Verdict>>(()=>Object.fromEntries(m.pageNodes.value.map(n=>[key(n),latencyVerdict(sites.value.map(s=>m.metricPoint(n,s.id)))])))
-function groupSummary(n:NodeOption,id:string){return unlockGroupSummary(id,catalog.value,serviceId=>m.shownService(n,serviceId),w.nodeUnlockRegion(n),w.japanOnly.value)}
-function services(n:NodeOption){const summary=unlockSummary(catalog.value,id=>m.shownService(n,id),w.nodeUnlockRegion(n),w.japanOnly.value);return {...summary,label:summary.tone==='empty'?'未测':summary.label}}
+function groupSummary(n:NodeOption,id:string){return unlockGroupSummary(id,catalog.value,serviceId=>m.shownService(n,serviceId),w.nodeUnlockRegion(n),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions)}
+function services(n:NodeOption){const summary=unlockSummary(catalog.value,id=>m.shownService(n,id),w.nodeUnlockRegion(n),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions);return {...summary,label:summary.tone==='empty'?'未测':summary.label}}
 function run(){if(exitMode.value){m.closeHover();w.openReputationPlan([...m.runNodes.value]);return}if(w.project.value==='combined')m.openCombinedPlan();else{m.closeHover();w.openPlan([...m.runNodes.value])}}
 const showVerdict=computed(()=>!exitMode.value&&['combined','latency'].includes(w.project.value))
 const showSites=showVerdict
