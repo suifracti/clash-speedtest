@@ -33,9 +33,9 @@ const (
 
 // Defaults for the two selection rules.
 const (
-	DefaultMinResponseRate = 90.0
-	DefaultMaxLatencyMS    = 800
-	DefaultSampleCount     = 6
+	DefaultMinResponseRate  = 90.0
+	DefaultMaxLatencyMS     = 800
+	DefaultSampleCount      = 6
 	RequestWarningThreshold = 500
 )
 
@@ -213,10 +213,10 @@ type Scope struct {
 
 // Rules records the two selection rules actually applied.
 type Rules struct {
-	MinResponseRate  float64  `json:"min_response_rate"`
-	MaxLatencyMS     int      `json:"max_latency_ms"`
-	Groups           []string `json:"groups,omitempty"`
-	SampleCount      int      `json:"sample_count"`
+	MinResponseRate float64  `json:"min_response_rate"`
+	MaxLatencyMS    int      `json:"max_latency_ms"`
+	Groups          []string `json:"groups,omitempty"`
+	SampleCount     int      `json:"sample_count"`
 }
 
 // ReportMeta is the list projection used by 检测记录 → 报告.
