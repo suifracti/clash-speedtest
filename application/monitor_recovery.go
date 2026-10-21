@@ -19,6 +19,7 @@ func (s *AppService) RecoverMonitorJobs(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	s.startAutoPick()
 	s.monitorRecoveryMu.Lock()
 	defer s.monitorRecoveryMu.Unlock()
 	if s.monitorRecoveryStarted {

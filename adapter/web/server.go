@@ -240,6 +240,12 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("POST /api/periodic-sampling/sample", s.handlePeriodicSample)
 	mux.HandleFunc("POST /api/periodic-sampling/pause-measurements", s.handlePausePeriodicMeasurements)
 	mux.HandleFunc("GET /api/periodic-sampling/checks", s.handlePeriodicChecks)
+
+	mux.HandleFunc("GET /api/auto-pick", s.handleGetAutoPick)
+	mux.HandleFunc("PUT /api/auto-pick", s.handleSaveAutoPick)
+	mux.HandleFunc("POST /api/auto-pick/run", s.handleRunAutoPick)
+	mux.HandleFunc("GET /api/auto-pick/reports", s.handleListAutoPickReports)
+	mux.HandleFunc("GET /api/auto-pick/reports/{id}", s.handleGetAutoPickReport)
 	mux.HandleFunc("POST /api/monitor/jobs", s.handleCreateMonitorJob)
 	mux.HandleFunc("GET /api/monitor/jobs", s.handleListMonitorJobs)
 	mux.HandleFunc("GET /api/monitor/jobs/{id}", s.handleGetMonitorJob)

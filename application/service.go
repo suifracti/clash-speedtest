@@ -43,6 +43,7 @@ type Options struct {
 type AppService struct {
 	probeActivity       probeActivity
 	periodic            *periodicSampling
+	autoPickState       *autoPickState
 	profileWriteMu      sync.Mutex
 	refreshMu           sync.Mutex
 	refreshLoaded       bool
@@ -162,6 +163,7 @@ func newAppService(hStore *history.Store, appPaths appdata.AppPaths, profilePath
 		decisionEngine:      policy.NewDecisionEngine(),
 		policy:              policy.DefaultSwitchPolicy(),
 		monitorSchedulers:   make(map[string]*monitor.Scheduler),
+		autoPickState:       &autoPickState{},
 		publicServiceActive: make(map[string]*publicServiceRuntime),
 		controllerCfg: ControllerConfigDTO{
 			Endpoint: "http://127.0.0.1:9090",
@@ -279,6 +281,7 @@ func (s *AppService) Close() error {
 		return nil
 	}
 	s.closeSubscriptionRefreshJobs()
+	s.stopAutoPick()
 	if s.periodic != nil {
 		s.periodic.close()
 	}
