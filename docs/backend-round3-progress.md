@@ -203,3 +203,9 @@
 - 格子只计可用/不可用，未知不入分母；服务适用地区规则同第二件，右侧列节点结论/原因及最近时间。
 - “检测未测”复用单服务计划；“导出可用节点”复用 Clash 配置组，仅读现有接口，无后端改动。
 - 验证：矩阵范围/计划/导出主路径与导出失败、Go vet/test、前端测试与构建；SG04 副本看图，不新增真实检测。
+
+## YouTube / Google 地区修复（2026-10-21）
+- 旧三节点均 HTTP 200、未截断、保存 US；历史未保存最终 URL/HTML，不能复原 consent；先读记录后才发限定复测。
+- 新结果保留 `final_url`、`region_field`/`region_raw` 和页面提示；拒绝把 INNERTUBE_CONTEXT_GL 当地区，consent/无明确地区均未知。
+- Premium 读取 ytInitialData 实际内容，保留浏览器 UA/Accept-Language；真实页面确有地区拒绝标题，不能硬判美国节点可用。
+- 验证：主路径/consent及默认字段失败路径、Go vet/test；限原三节点+一个 HK，只复测 YouTube/Google，TUN 保持开。

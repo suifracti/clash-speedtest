@@ -310,28 +310,87 @@ func checkYouTubePremium(ctx context.Context, client *http.Client, rule Rule, st
 		return finish(result, started)
 	}
 	text := string(page.body)
-	lower := strings.ToLower(text)
-	region := strings.ToUpper(firstRegexGroup(regexp.MustCompile(`(?i)"INNERTUBE_CONTEXT_GL"\s*:\s*"([a-z]{2})"`), text))
-	result.Details = map[string]string{"document_read_limit": strconv.Itoa(rule.MaximumBodyBytes), "document_truncated": strconv.FormatBool(page.truncated), "account_verified": "false", "playback_verified": "false"}
-	if region != "" {
-		result.Details["service_region"] = region
+	result.Details = map[string]string{"final_url": page.finalURL, "document_read_limit": strconv.Itoa(rule.MaximumBodyBytes), "document_truncated": strconv.FormatBool(page.truncated), "account_verified": "false", "playback_verified": "false"}
+	host := ""
+	if u, err := url.Parse(page.finalURL); err == nil {
+		host = u.Hostname()
 	}
-	if page.truncated {
-		result.Outcome, result.FailurePhase, result.ErrorMessage = "unknown", "response_evidence_limit", "网页超过本规则读取上限；已取得的地区保留，Premium方案未确认"
+	if strings.HasPrefix(host, "consent.") || strings.Contains(strings.ToLower(text), "before you continue to youtube") {
+		result.Outcome, result.Summary = "unknown", "YouTube 要求隐私确认，无法判断地区与 Premium"
 		return finish(result, started)
 	}
+	for _, field := range []string{"locationCountryCode", "countryCode", "INNERTUBE_CONTEXT_GL"} {
+		pattern := regexp.MustCompile(`"` + field + `"\s*:\s*"([A-Za-z]{2})"`)
+		match := pattern.FindStringSubmatch(text)
+		if len(match) == 2 {
+			result.Details[field] = match[1]
+			if field != "INNERTUBE_CONTEXT_GL" && result.Details["service_region"] == "" {
+				result.Details["service_region"] = strings.ToUpper(match[1])
+				result.Details["region_field"] = field
+				result.Details["region_raw"] = match[0]
+			}
+		}
+	}
+	region := result.Details["service_region"]
+	if page.truncated {
+		result.Outcome, result.FailurePhase, result.ErrorMessage = "unknown", "response_evidence_limit", "网页超过读取上限，无法确认 Premium"
+		return finish(result, started)
+	}
+	visible := youtubePageText(page.body)
+	result.Details["premium_page_text"] = visible
 	offers := youtubePublicOfferCount(page.body)
+	if region == "" {
+		result.Outcome, result.Summary = "unknown", "页面未返回明确地区，无法判断"
+		return finish(result, started)
+	}
 	switch {
-	case strings.Contains(lower, "premium is not available in your country") || region == "CN":
+	case region == "CN":
 		result.Outcome, result.Summary = "region_blocked", "YouTube Premium 在该地区不可用"
 	case region != "" && offers > 0:
-		result.Outcome, result.Summary = "matched", region+" 公开Premium订阅方案可见；未验证账号、购买或播放"
+		result.Outcome, result.Summary = "matched", region+" 公开 Premium 方案可见；未验证账号或播放"
 		result.Details["public_offer_count"] = strconv.Itoa(offers)
 		result.Details["premium_evidence"] = "public_offer_page_only"
+	case strings.Contains(strings.ToLower(visible), "premium is not available in your country") || region == "CN":
+		result.Outcome, result.Summary = "region_blocked", "YouTube Premium 在该地区不可用"
 	default:
-		result.Outcome, result.FailurePhase, result.ErrorMessage = "unknown", "page_document", "YouTube Premium 页面未包含稳定的可用性标记"
+		result.Outcome, result.Summary = "unknown", "未取得明确的地区或 Premium 方案，无法判断"
 	}
 	return finish(result, started)
+}
+
+// Read rendered text from ytInitialData, rather than translated messages in ytcfg.
+func youtubePageText(body []byte) string {
+	start := regexp.MustCompile(`\bytInitialData\s*=\s*`).FindIndex(body)
+	if start == nil {
+		return ""
+	}
+	var data any
+	if json.NewDecoder(strings.NewReader(string(body[start[1]:]))).Decode(&data) != nil {
+		return ""
+	}
+	var texts []string
+	var walk func(any)
+	walk = func(v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			for k, value := range x {
+				if k == "text" || k == "simpleText" || k == "content" {
+					if t, ok := value.(string); ok {
+						texts = append(texts, t)
+					}
+				}
+				walk(value)
+			}
+		case []any:
+			for _, value := range x {
+				walk(value)
+			}
+		}
+	}
+	if root, ok := data.(map[string]any); ok {
+		walk(root["contents"])
+	}
+	return strings.Join(texts, " · ")
 }
 
 func youtubePublicOfferCount(body []byte) int {

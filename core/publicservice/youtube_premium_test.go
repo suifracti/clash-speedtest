@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/faceair/clash-speedtest/core/monitor"
 )
@@ -23,7 +24,7 @@ func TestYouTubePremiumUsesOfferEvidenceInsteadOfMarketingText(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rule, _ := RuleFor("youtube_premium")
-			body := `<script>var cfg={"INNERTUBE_CONTEXT_GL":"` + tc.region + `"};</script>` + tc.body
+			body := `<script>var cfg={"countryCode":"` + tc.region + `"};</script>` + tc.body
 			checker := Checker{ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
 				return fixtureResponse(req, 200, "text/html", body), nil
 			})}
@@ -41,12 +42,32 @@ func TestYouTubePremiumUsesOfferEvidenceInsteadOfMarketingText(t *testing.T) {
 func TestYouTubePremiumOversizeRemainsUnconfirmed(t *testing.T) {
 	rule, _ := RuleFor("youtube_premium")
 	const limit = 2 * 1024 * 1024
-	body := `{"INNERTUBE_CONTEXT_GL":"SG"}` + premiumOfferFixture + strings.Repeat(" ", limit)
+	body := `{"countryCode":"SG"}` + premiumOfferFixture + strings.Repeat(" ", limit)
 	checker := Checker{ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
 		return fixtureResponse(req, 200, "text/html", body), nil
 	})}
 	r := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
 	if r.Outcome != "unknown" || r.FailurePhase != "response_evidence_limit" || r.BytesRead != limit {
 		t.Fatalf("oversize became a verdict or used wrong bound: %+v", r)
+	}
+}
+
+func TestYouTubeConsentAndConfigTextDoNotBecomeVerdicts(t *testing.T) {
+	for _, tc := range []struct{ body, want string }{
+		{`<script>var cfg={"INNERTUBE_CONTEXT_GL":"US"};var ytInitialData={"contents":{"title":{"content":"YouTube Premium is not available in your country"}}};</script>`, "unknown"},
+		{`<h1>Before you continue to YouTube</h1>{"countryCode":"US"}` + premiumOfferFixture, "unknown"},
+		{`<script>var cfg={"countryCode":"JP","unavailable":"Premium is not available in your country"};</script>` + premiumOfferFixture, "matched"},
+	} {
+		r, _ := RuleFor("youtube_premium")
+		client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.Header.Get("Accept-Language") == "" || req.Header.Get("User-Agent") == "" {
+				t.Fatal("missing browser headers")
+			}
+			return fixtureResponse(req, 200, "text/html", tc.body), nil
+		})}
+		got := checkYouTubePremium(context.Background(), client, r, time.Now())
+		if got.Outcome != tc.want {
+			t.Fatalf("got %+v", got)
+		}
 	}
 }
