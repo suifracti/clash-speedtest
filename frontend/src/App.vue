@@ -16,6 +16,7 @@ import DataView from './components/DataView.vue'
 import TestPlanModal from './components/TestPlanModal.vue'
 import MonitorCreateModal from './components/MonitorCreateModal.vue'
 import NodeDetailModal from './components/NodeDetailModal.vue'
+import {latencyReportText} from './latencyReport'
 import QueueModal from './components/QueueModal.vue'
 import CommandPalette from './components/CommandPalette.vue'
 import {projectNames} from './domain'
@@ -37,6 +38,7 @@ const task=computed(()=>{
  const attention=[unsaved?`${unsaved} 项未保存`:'',errors?`${errors} 项出错`:''].filter(Boolean).join(' · ')
  if(w.pendingStart.value&&!w.activeBatch.value&&!w.activeAttempt.value)return {state:'pending',title:'正在确认启动状态',detail:'等待后台回应，不会重复启动',progress:null,attention}
  if(w.busy.value)return {state:'running',title:kinds?`正在${kinds}`:'检测进行中',detail:total?`已处理 ${done}/${total}`:'',progress:total?done/total:null,attention}
+ if(w.latestReportBatch.value)return {state:'idle',title:'延迟检测报告',detail:latencyReportText(w.latestReportBatch.value),progress:null,attention:unsaved?`${unsaved} 项未保存`:''}
  if(total)return {state:attention||done<total?'attention':'idle',title:done<total?'检测已停止，部分项目没有运行完':attention?'检测已结束，部分结果需注意':'上一轮检测已结束',detail:`已处理 ${done}/${total}`,progress:null,attention}
  return {state:'empty',title:'没有进行中的检测',detail:'',progress:null,attention:''}
 })
@@ -62,7 +64,7 @@ onBeforeUnmount(()=>{document.removeEventListener('visibilitychange',visibilityC
       </nav>
       <AirportSidebar @select="id=>{w.viewAirport(id);navigate('home')}"/>
       <div class="cst-side-foot">
-        <button class="cst-task" type="button" :class="task.state" :disabled="!w.queue.value.length&&!w.busy.value" :aria-label="'检测任务：'+task.title+(task.detail?'，'+task.detail:'')+(task.attention?'，'+task.attention:'')" @click="w.queueOpen.value=true">
+        <button class="cst-task" type="button" :class="task.state" :disabled="!w.queue.value.length&&!w.busy.value&&!w.latestReportBatch.value" :aria-label="'检测任务：'+task.title+(task.detail?'，'+task.detail:'')+(task.attention?'，'+task.attention:'')" @click="w.latestReportBatch.value&&!w.busy.value?w.openLatencyReport(w.latestReportBatch.value):w.queueOpen.value=true">
           <span class="cst-task-title"><span v-if="task.state==='running'||task.state==='pending'" class="spinner"/>{{task.title}}</span>
           <span v-if="task.detail" class="cst-task-detail">{{task.detail}}</span>
           <span v-if="task.progress!==null" class="cst-task-bar"><i :style="{width:Math.round(task.progress*100)+'%'}"/></span>

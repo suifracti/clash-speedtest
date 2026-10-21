@@ -10,7 +10,7 @@ let w:Workspace,wrapper:VueWrapper
 const sample=(id:string,hours=1):MonitorSample=>({sample_id:id,profile_id:'deleted-profile',node_key:'old-key',node_identity_key:'old-identity',config_revision_key:'old-revision',display_name_snapshot:'Deleted Node',target:'site',probe_type:'rtt',success:true,latency:20e6,ttfb:0,sampling_tier:'regular',run_id:'one-round',timestamp:new Date(Date.now()-hours*3600000).toISOString()})
 const facets={nodes:[{profile_id:'deleted-profile',node_identity_key:'old-identity',node_key:'old-key',display_name:'Deleted Node'}],profiles:['deleted-profile'],targets:['site'],truncated:true}
 function deferred<T>(){let resolve!:(v:T)=>void;const promise=new Promise<T>(r=>resolve=r);return {promise,resolve}}
-async function monitor(){wrapper=mount(HistoryView,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises();await wrapper.findAll('.project-tabs button')[2]!.trigger('click');await flushPromises()}
+async function monitor(){wrapper=mount(HistoryView,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises();await wrapper.findAll('.project-tabs button').find(b=>b.text()==='持续监测')!.trigger('click');await flushPromises()}
 function button(label:string){return wrapper.findAll('button').find(b=>b.text()===label)!}
 beforeEach(()=>{w=createWorkspace();vi.mocked(api.batches).mockResolvedValue([]);vi.mocked(api.monitorFacets).mockResolvedValue(facets);vi.mocked(api.monitorSamples).mockResolvedValue({items:[sample('new'),sample('older',3)],has_more:true,next_cursor:'cursor-1'});HTMLDialogElement.prototype.showModal=vi.fn();HTMLDialogElement.prototype.close=vi.fn()})
 afterEach(()=>{wrapper?.unmount();w.dispose();document.body.innerHTML='';vi.resetAllMocks()})
@@ -42,7 +42,7 @@ it('discards late samples and facets after changing scope or tab',async()=>{
  late.resolve({items:[sample('stale')],has_more:false,next_cursor:''});await flushPromises()
  expect(wrapper.find('.history-analytics').text()).not.toContain('stale')
  const lateFacets=deferred<typeof facets>();vi.mocked(api.monitorFacets).mockReturnValueOnce(lateFacets.promise)
- await button('刷新').trigger('click');await wrapper.findAll('.project-tabs button')[0]!.trigger('click')
+ await button('刷新').trigger('click');await wrapper.findAll('.project-tabs button').find(b=>b.text()==='批量检测')!.trigger('click')
  lateFacets.resolve({...facets,targets:['stale-target']});await flushPromises()
  expect(wrapper.find('.history-analytics').exists()).toBe(false)
 })

@@ -1933,6 +1933,7 @@ func (s *Server) handleQueryMonitorSamples(w http.ResponseWriter, r *http.Reques
 			filter.Limit = limit
 		}
 	}
+	filter.Offset, _ = strconv.Atoi(r.URL.Query().Get("offset"))
 	if successStr := r.URL.Query().Get("success"); successStr != "" {
 		val := successStr == "true" || successStr == "1"
 		filter.Success = &val

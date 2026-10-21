@@ -37,6 +37,7 @@ type PhysicalDownloadEgress struct {
 	nodeIPVersion    string
 	nodeIPs          []netip.Addr
 	multiAddressTCP  bool
+	preferredNodeIP  netip.Addr
 	dnsDial          func(context.Context, string) (net.Conn, error)
 	dnsRequests      *physicalRequestBudget
 	dnsDials         *physicalRequestBudget
@@ -439,7 +440,12 @@ func (e *PhysicalDownloadEgress) dialPhysicalTCP(ctx context.Context, network, a
 	}
 	ips := []netip.Addr{ip}
 	if e.multiAddressTCP && (host == e.host || host == e.nodeIP.String()) && strings.HasPrefix(network, "tcp") {
-		ips = e.nodeIPs
+		e.mu.Lock()
+		ips = append([]netip.Addr(nil), e.nodeIPs...)
+		if len(ips) == 2 && e.preferredNodeIP == ips[1] {
+			ips[0], ips[1] = ips[1], ips[0]
+		}
+		e.mu.Unlock()
 	}
 	dialCtx, cancel := context.WithTimeout(ctx, dialer.DefaultTCPTimeout)
 	defer cancel()
@@ -462,6 +468,11 @@ func (e *PhysicalDownloadEgress) dialPhysicalTCP(ctx context.Context, network, a
 		}
 		stop()
 		if dialErr == nil && conn != nil {
+			if e.multiAddressTCP {
+				e.mu.Lock()
+				e.preferredNodeIP = candidate
+				e.mu.Unlock()
+			}
 			return conn, nil
 		}
 		if conn != nil {

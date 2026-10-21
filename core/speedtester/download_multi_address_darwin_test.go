@@ -297,3 +297,23 @@ func TestPhysicalMultiAddressPathRetainsPlannedBindingMethod(t *testing.T) {
 		t.Fatalf("multi-address DNS policy cannot be distinguished from old results: %s", actual.AddressSource)
 	}
 }
+
+func TestPhysicalMultiAddressRemembersConnectedIP(t *testing.T) {
+	e := preparedMultiAddressFixture(t, "vless", 6)
+	var calls []string
+	dial := func(_ context.Context, _, address string) (net.Conn, error) {
+		calls = append(calls, address)
+		if address == "203.0.113.9:443" {
+			return nil, syscall.ECONNREFUSED
+		}
+		return &multiAddressFixtureConn{}, nil
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := e.dialPhysicalTCP(context.Background(), "tcp", "node.example:443", dial); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(calls) != 3 || calls[2] != "203.0.113.10:443" {
+		t.Fatalf("repeated the known failed first address: %v", calls)
+	}
+}
