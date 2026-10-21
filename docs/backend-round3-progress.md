@@ -354,3 +354,22 @@
 ### 2026-10-21 解锁收尾：YouTube 文案与配色
 - 非 CN 的“not available”改成“不向该 IP 提供 Premium（常见于机房/代理 IP）”，橙色；只有判定 CN 才红。
 - 服务端 summary 同步，前端对旧记录也改用新文案；补橙/红两态测试，前端 397 项通过。
+
+### 2026-10-21 第四轮第2项：定时精选任务（后端）
+- 新增 `core/autopick`（配置／报告模型、三档时间网格、请求估算、分组常量，无网络 IO）与 `application/auto_pick.go`：复用 `StartWorkbenchLatencyBatch` 测延迟、`publicservice.Checker.Check` 测解锁、`prepareExportProxies` 导出 Clash。
+- 判据：本轮响应率 ≥ 90%（默认）且中位延迟 ≤ 上限（默认 800 ms）进“日常”；勾选解锁组时组内服务须全通过才追加“流媒体”／“AI”，一组都没过则排除。
+- 报告写 `auto-pick/reports/*.json`（保留 50 份，不动 `history.db` schema），标签“自动精选”，不弹窗；本轮全空或失败时沿用上一份成功结果并在 notes 写明，订阅文件不写空。
+- 接口：`GetAutoPickStatus`／`SaveAutoPickConfig`／`RunAutoPickNow`／`ListAutoPickReports`／`GetAutoPickReport`，Web 与桌面双通道；默认关闭。
+- 验证：`go build ./...`、`go test ./application/ ./core/autopick/ ./adapter/...` 通过；新增主路径（选中写入）与失败路径（没选中保留上次）两条测试。
+
+### 2026-10-21 第四轮第2项：本地订阅地址
+- `application/auto_pick_subscription.go`：`net.Listen` 绑 `127.0.0.1`，端口默认 17891，占用时回退随机；令牌 16 字节 hex 与端口写入数据目录，重启复用。
+- 路由 `/sub/{token}.yaml`，只认 GET／HEAD，令牌不符、路径穿越、扩展名不对一律 404；`Cache-Control: no-store`；仅有订阅文件时才启动监听。
+- 文件同时存 `<数据目录>/auto-pick/subscription.yaml`（含节点凭据，已在 `.gitignore` 覆盖的数据目录内，不进 Git、不上传）。
+- 验证：真机 curl `200`／`text/yaml`／2622 字节，错误令牌与 `/sub/../config.json` 均 `404`，`cmp` 与落盘文件逐字节一致。
+
+### 2026-10-21 第四轮第2项：自动精选卡片与报告入口
+- “持续监测”页新增 `AutoPickCard.vue`：开关、运行时间（6 小时／12 小时／每天几点）、范围（机场 + 地区筛选）、检测项目、两条规则；估算“节点数 × 项目”，超 500 标橙。
+- 显示下次运行、上一轮摘要（如“选中 4 个 · 日常 4 · 10/21 23:35”，沿用上次时标橙）、订阅地址 + 复制 + 一句 Clash Verge 说明；运行前弹确认层写明节点数与请求数。
+- 新增 `AutoPickReportModal.vue`；`LatencyReports.vue` 并行读取自动精选报告，以“自动精选”徽章排在前列。
+- 验证：真实手动运行一次（良心云 · 新加坡 · 只测延迟）选中 4 个并写入订阅；`npm test` 397 项、`npm run build` 通过；截图 `.ui-preview/round4-autopick-20261021/`。
