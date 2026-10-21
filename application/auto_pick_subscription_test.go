@@ -3,8 +3,10 @@ package application
 import (
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -60,5 +62,42 @@ func TestAutoPickSubscriptionServesOnlyTheTokenPath(t *testing.T) {
 	}
 	if _, err := os.Stat(status.Path); err != nil {
 		t.Fatalf("fixed subscription path missing: %v", err)
+	}
+}
+
+// 首选端口被别的进程占着时本轮换端口，但不能把已存端口改掉，
+// 否则用户填进 Clash Verge 的订阅地址下次启动就变了。
+func TestAutoPickSubscriptionKeepsTheStoredPortWhenItIsBusy(t *testing.T) {
+	svc := autoPickFixture(t)
+	if err := writeAutoPickFileAtomic(svc.autoPickSubscriptionPath(), []byte("proxies: []\n")); err != nil {
+		t.Fatalf("write subscription: %v", err)
+	}
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("occupy port: %v", err)
+	}
+	defer busy.Close()
+	stored := busy.Addr().(*net.TCPAddr).Port
+	portFile := filepath.Join(svc.autoPickRoot(), autoPickPortFile)
+	if err := writeAutoPickFileAtomic(portFile, []byte(fmt.Sprintf("%d", stored))); err != nil {
+		t.Fatalf("write port: %v", err)
+	}
+
+	svc.startAutoPickSubscriptionServer()
+	defer svc.stopAutoPick()
+
+	state := svc.autoPick()
+	state.mu.Lock()
+	port := state.port
+	state.mu.Unlock()
+	if port == 0 || port == stored {
+		t.Fatalf("port=%d, want a fallback port other than %d", port, stored)
+	}
+	raw, err := os.ReadFile(portFile)
+	if err != nil {
+		t.Fatalf("read port: %v", err)
+	}
+	if strings.TrimSpace(string(raw)) != fmt.Sprintf("%d", stored) {
+		t.Fatalf("stored port overwritten: %q, want %d", raw, stored)
 	}
 }

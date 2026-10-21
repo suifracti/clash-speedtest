@@ -100,7 +100,11 @@ func (s *AppService) startAutoPickSubscriptionServer() {
 		return
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
-	_ = writeAutoPickFileAtomic(filepath.Join(s.autoPickRoot(), autoPickPortFile), []byte(strconv.Itoa(port)))
+	// 首选端口被占用时本轮临时换端口，但不覆盖已存端口：
+	// 否则上一次写进 Clash Verge 的订阅地址会在重启后失效。
+	if preferred == 0 || port == preferred {
+		_ = writeAutoPickFileAtomic(filepath.Join(s.autoPickRoot(), autoPickPortFile), []byte(strconv.Itoa(port)))
+	}
 	subscriptionPath := s.autoPickSubscriptionPath()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sub/{name}", func(w http.ResponseWriter, r *http.Request) {

@@ -163,7 +163,9 @@ onBeforeUnmount(stopPolling)
 .auto-pick-scope legend,.auto-pick-projects legend{padding:0 6px;font-size:13px;color:var(--cst-muted)}
 .auto-pick-airports{display:grid;gap:6px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
 .auto-pick-airports small{margin-left:6px}
-.auto-pick-rules{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:14px;align-items:end}
+.auto-pick-rules{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:14px;align-items:center}
+.auto-pick-rules .auto-pick-field{display:flex;align-items:center;gap:6px;white-space:nowrap}
+.auto-pick-rules input[type=number]{width:84px}
 .auto-pick-estimate{margin:0;padding:10px 12px;border-radius:8px;background:var(--cst-panel);border:1px solid var(--cst-line);font-size:13px}
 .auto-pick-estimate.auto-pick-warn{border-color:var(--cst-warn);color:var(--cst-warn)}
 .auto-pick-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
