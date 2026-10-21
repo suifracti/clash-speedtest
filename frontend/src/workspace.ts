@@ -13,7 +13,7 @@ const delay=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms))
 const uid=()=>crypto.randomUUID?.()||`request-${Date.now()}-${Math.random().toString(16).slice(2)}`
 function savedSources():string[]|null{try{const value=JSON.parse(window.localStorage.getItem('speedtest.circle-airports')||'null');return Array.isArray(value)?value:null}catch{return null}}
 function savedDisplaySites():string[]{try{const ids=JSON.parse(window.localStorage.getItem('speedtest.display-sites')||'null');if(Array.isArray(ids)){const valid=[...new Set(ids.filter((id):id is string=>typeof id==='string'&&targets.some(t=>t.id===id)))];if(valid.length)return valid}}catch{}return targets.map(t=>t.id)}
-const selectedServicesKey='speedtest.selected-unlocks'
+const selectedServicesKey='speedtest.selected-unlocks-v2'
 function savedServices():string[]{try{
  // Old display-only choices were often automatic; they must not become detection defaults.
  const ids=JSON.parse(window.localStorage.getItem(selectedServicesKey)||'null')
@@ -127,7 +127,7 @@ export function createWorkspace(){
     if(ids.length!==serviceIds.value.length||ids.some((id,i)=>id!==serviceIds.value[i])){serviceIds.value=ids;return}
     try{window.localStorage.setItem(selectedServicesKey,JSON.stringify(ids))}catch{}
   }
-  watch(catalog,()=>{if(catalog.value.length){if(catalog.value.some(s=>s.service_id==='chatgpt_unlock')&&(window.localStorage.getItem(selectedServicesKey)===null||serviceIds.value.some(id=>!catalog.value.some(s=>s.service_id===id))))serviceIds.value=catalog.value.filter(s=>['ai','streaming'].includes(unlockGroup(s.service_id))).map(s=>s.service_id);saveServices()}},{deep:true,flush:'sync'})
+  watch(catalog,()=>{if(catalog.value.length){if(catalog.value.some(s=>s.service_id==='chatgpt_unlock')&&(window.localStorage.getItem(selectedServicesKey)===null||serviceIds.value.some(id=>!catalog.value.some(s=>s.service_id===id))))serviceIds.value=catalog.value.filter(s=>unlockGroup(s.service_id)!=='legacy').map(s=>s.service_id);saveServices()}},{deep:true,flush:'sync'})
   watch(serviceIds,saveServices,{deep:true,flush:'sync'})
   watch(hours,()=>{historyVersion++;loaded.clear();historyStarted.clear();historyCursors.clear();historyWindows.clear();historyHasMore.value={};latency.value={};downloads.value={};services.value={};readErrors.value={};historyErrors.clear()})
   function mergeLatency(test:LatencyTest){

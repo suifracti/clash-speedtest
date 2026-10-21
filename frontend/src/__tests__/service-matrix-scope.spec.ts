@@ -14,10 +14,11 @@ it('uses one remembered selection for columns, overview and detection without st
  const saved:Attempt={...node,attempt_id:'saved',request_id:'saved',requested_at:new Date().toISOString(),service_id:'svc20',execution_state:'completed',persistence_state:'saved',rule:{service_id:'svc20',target_url:'https://example.test'},result:{outcome:'matched',bytes_read:0,finished_at:new Date().toISOString()}}
  vi.mocked(api.attemptHistory).mockImplementation(async kind=>({attempts:kind==='service'?[saved]:[],has_more:false,complete:true}))
  wrapper=mount(HomeView,{global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
- expect(w.serviceIds.value).toEqual(['chatgpt_unlock','netflix_unlock']);expect(wrapper.findAll('.hd-svc-cell')).toHaveLength(3)
+ expect(w.serviceIds.value).toEqual(['chatgpt_unlock','netflix_unlock','abema_unlock']);expect(wrapper.findAll('.hd-svc-cell')).toHaveLength(3)
  expect(wrapper.findAll('[role="columnheader"]').slice(-3).map(x=>x.text())).toEqual(['AI','流媒体','日本'])
  await wrapper.get('.hd-services summary').trigger('click')
  const japan=wrapper.findAll('.unlock-group-options label').find(x=>x.text().includes('日本'))!
+ await japan.get('input').setValue(false);await flushPromises();expect(w.serviceIds.value).toEqual(['chatgpt_unlock','netflix_unlock'])
  await japan.get('input').setValue(true);await flushPromises()
  expect(w.serviceIds.value).toEqual(['chatgpt_unlock','netflix_unlock','abema_unlock'])
  await wrapper.get('.hd-run').trigger('click');expect(w.plan.value?.serviceIds).toEqual(w.serviceIds.value);w.plan.value=null

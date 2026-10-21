@@ -185,3 +185,8 @@
 - 作品 ID 配置：`core/publicservice/netflix_titles.json`；新结果标记 `title_check_version=dual_title_v1`；地区配置：`frontend/src/unlock-config.json` 的 `regions`。
 - 默认日本项只测 JP：优先落地地区、再名称；批量/组合创建队列前跳过，表格“—”与检查器说明同步；出口表四列，风险取 IPPure/机器占比较高者。
 - 验证：主路径及关键失败离线测试、Go vet/test、前端测试与构建；换包后用 SG04 已有记录截图，不发起真实检测。
+
+## 三节点 TUN 对照（2026-10-21）
+- 日本组纳入默认选择；默认选择键升为 `speedtest.selected-unlocks-v2`，此后保留用户选择。
+- 仅 SG04 专线、一个日本节点、一个美国节点；延迟、三组解锁、出口信誉各一轮，不做下载或持续监测。
+- 对照与截图保存在本机 `.ui-preview/three-node-tun-20261021/`；TUN 关闭后第二轮等待用户确认。
