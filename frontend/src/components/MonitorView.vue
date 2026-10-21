@@ -7,6 +7,7 @@ import {bytes,date,stateLabel,type MonitorJob,type NodeOption} from '../domain'
 import Icon from './Icon.vue'
 import MonitorTimeBand from './MonitorTimeBand.vue'
 import PeriodicSamplingPanel from './PeriodicSamplingPanel.vue'
+import AutoPickCard from './AutoPickCard.vue'
 import Modal from './Modal.vue'
 
 type ReadState={value:Record<string,any>|null;readAt:string;error:string}
@@ -172,6 +173,7 @@ onBeforeUnmount(()=>{mounted=false;reloadGeneration++;runsGeneration++;clearInte
       任务列表刷新失败{{jobsReadAt?`；显示上次成功读取于 ${jobsReadAt}`:'；尚未确认是否存在任务'}}：{{jobsError}}
     </p>
     <div class="monitor-sampling-panel"><PeriodicSamplingPanel/></div>
+    <div class="monitor-sampling-panel"><AutoPickCard/></div>
     <div class="monitor-resource monitor-resource-ledger" :aria-busy="refreshing" aria-live="polite">
       <div class="monitor-resource-values">
         <div class="monitor-resource-item">

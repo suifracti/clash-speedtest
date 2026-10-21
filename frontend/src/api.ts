@@ -1,4 +1,5 @@
 import type {PeriodicSamplingConfig,PeriodicSamplingStatus,PeriodicChecks} from './periodicSampling'
+import type {AutoPickConfig,AutoPickReport,AutoPickReportMeta,AutoPickStatus} from './autoPick'
 import type {MeasurementRound,Airport,Attempt,HistoryPage,LatencyBatch,LatencyTest,MonitorCreate,MonitorJob,MonitorSample,NodeOption,NodeScope,ServiceRule,Settings,Setup,TokenStatus} from './domain'
 import {scope} from './domain'
 declare global {interface Window {go?:{desktop?:{App?:Record<string,(...args:any[])=>Promise<any>>}};runtime?:{EventsOn:(name:string,callback:(payload:any)=>void)=>()=>void}}}
@@ -25,6 +26,11 @@ export const api={
  createRound:(body:unknown)=>request('/api/measurement-rounds','POST',body,'CreateManualMeasurementRound',[body]),
  finishRound:(id:string,state='finished')=>request(`/api/measurement-rounds/${encodeURIComponent(id)}/finish`,'POST',{state},'FinishManualMeasurementRound',[id,state]),
  periodicChecks:(profile='',node='')=>request<PeriodicChecks>(`/api/periodic-sampling/checks?${query({profile_id:profile,node_key:node})}`,'GET',undefined,'GetPeriodicServiceChecks',[profile,node]),
+ autoPick:()=>request<AutoPickStatus>('/api/auto-pick','GET',undefined,'GetAutoPick'),
+ saveAutoPick:(body:AutoPickConfig)=>request<AutoPickStatus>('/api/auto-pick','PUT',body,'SaveAutoPickConfig',[body]),
+ runAutoPick:()=>request<AutoPickStatus>('/api/auto-pick/run','POST',undefined,'RunAutoPickNow'),
+ autoPickReports:(limit=50)=>request<AutoPickReportMeta[]>(`/api/auto-pick/reports?limit=${limit}`,'GET',undefined,'ListAutoPickReports',[limit]),
+ autoPickReport:(id:string)=>request<AutoPickReport>(`/api/auto-pick/reports/${encodeURIComponent(id)}`,'GET',undefined,'GetAutoPickReport',[id]),
  periodicSampling:()=>request<PeriodicSamplingStatus>('/api/periodic-sampling','GET',undefined,'GetPeriodicSampling'),
  configurePeriodicSampling:(body:PeriodicSamplingConfig)=>request<PeriodicSamplingStatus>('/api/periodic-sampling','PUT',body,'ConfigurePeriodicSampling',[body]),
   auth:()=>desktop()?Promise.resolve({auth_required:false,authenticated:true}):request<{auth_required:boolean;authenticated:boolean}>('/api/auth/status'),

@@ -7,8 +7,9 @@ import {api,request} from '../api'
 import type {MonitorJob,NodeOption} from '../domain'
 
 vi.hoisted(()=>{const items=new Map<string,string>();Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:(k:string)=>items.get(k)||null,setItem:(k:string,v:string)=>items.set(k,v),removeItem:(k:string)=>items.delete(k),clear:()=>items.clear()}})})
-vi.mock('../api',()=>({api:{jobs:vi.fn(),budget:vi.fn(),storage:vi.fn(),jobAction:vi.fn(),deleteJob:vi.fn()},request:vi.fn(),events:vi.fn(),mapLimited:vi.fn(),saveFile:vi.fn()}))
+vi.mock('../api',()=>({api:{jobs:vi.fn(),budget:vi.fn(),storage:vi.fn(),jobAction:vi.fn(),deleteJob:vi.fn(),autoPick:vi.fn(async()=>({config:{enabled:false,schedule:'6h',daily_hour:6,airport_ids:[],include_ai:false,include_streaming:false,min_response_rate:90,max_latency_ms:800,sample_count:6},running:false,estimate:{nodes:0,projects:1,requests:0,warn:false},subscription:{url:'http://127.0.0.1:17891/sub/test.yaml',path:'',exists:false,node_count:0}})),saveAutoPick:vi.fn(),runAutoPick:vi.fn(),autoPickReports:vi.fn(async()=>[])},request:vi.fn(),events:vi.fn(),mapLimited:vi.fn(),saveFile:vi.fn()}))
 
+const autoPickStatus:any={config:{enabled:false,schedule:'6h',daily_hour:6,airport_ids:[],include_ai:false,include_streaming:false,min_response_rate:90,max_latency_ms:800,sample_count:6},running:false,estimate:{nodes:0,projects:1,requests:0,warn:false},subscription:{url:'http://127.0.0.1:17891/sub/test.yaml',path:'',exists:false,node_count:0}}
 const node:NodeOption={profile_id:'profile-a',node_key:'node-a',node_identity_key:'identity-a',config_revision_key:'revision-a',profile_name:'Airport A',display_name:'Node A',type:'ss',country_code:'HK',country_flag:''}
 const job=(state='running',id='job-a'):MonitorJob=>({id,name:id==='job-a'?'Job A':'Job B',profile_id:'profile-a',profile_name:'Airport A',nodes:[node],node_keys:['node-a'],probe_set:'latency_six_v1',sampling_tier:'normal',interval_seconds:900,timeout_seconds:8,state,resume_on_launch:false,updated_at:'2026-10-11T02:00:00Z'})
 const run={run_id:'run-a',started_at:'2026-10-11T02:00:00Z',status:'completed',success_nodes:1,total_nodes:1,failed_nodes:0}
@@ -30,6 +31,7 @@ function mountMonitorView(initialJobs:MonitorJob[]=[]){
 beforeEach(()=>{
   window.localStorage.clear();window.sessionStorage.clear();document.documentElement.dataset.theme='light';setViewport(1440,900)
   vi.resetAllMocks()
+  vi.mocked(api.autoPick).mockResolvedValue(autoPickStatus)
   vi.mocked(api.jobs).mockResolvedValue([])
   vi.mocked(api.budget).mockResolvedValue({usage:{requests_used:0,bytes_used:0},blocked_reason:''})
   vi.mocked(api.storage).mockResolvedValue({total_bytes:0,protected:false})
@@ -169,10 +171,10 @@ describe('MonitorView truthful read state and async interactions',()=>{
   it('writes startup-resume selection through the API and reflects only the reread value',async()=>{
     vi.mocked(api.jobs).mockResolvedValueOnce([job('running')]).mockResolvedValueOnce([{...job('running'),resume_on_launch:true}])
     mountMonitorView();await flushPromises()
-    const checkbox=document.querySelector<HTMLInputElement>('input[type="checkbox"]')!
+    const checkbox=document.querySelector<HTMLInputElement>('.monitor-card input[type="checkbox"]')!
     checkbox.checked=true;checkbox.dispatchEvent(new Event('change',{bubbles:true}));await flushPromises()
     expect(api.jobAction).toHaveBeenCalledWith('job-a','resume-on-launch',{enabled:true})
-    expect(document.querySelector<HTMLInputElement>('input[type="checkbox"]')?.checked).toBe(true)
+    expect(document.querySelector<HTMLInputElement>('.monitor-card input[type="checkbox"]')?.checked).toBe(true)
   })
 
   it('keeps invalid frozen scope visible and prevents starting a blocked job',async()=>{
