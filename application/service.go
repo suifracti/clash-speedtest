@@ -172,6 +172,7 @@ func newAppService(hStore *history.Store, appPaths appdata.AppPaths, profilePath
 	if hStore != nil {
 		svc.monitorBudget = monitor.NewBudgetController(hStore, svc.monitorBudgetLimits, nil)
 		svc.monitorRunner = monitor.NewRunner(monitor.RunnerConfig{
+			Dialer:        physicalMonitorDialer{},
 			Store:         hStore,
 			Budget:        svc.monitorBudget,
 			ProbeActivity: svc.probeActivity.begin,
@@ -2533,6 +2534,7 @@ func (s *AppService) CreateMonitorJob(job monitor.MonitorJob) (*monitor.MonitorJ
 	if runner == nil {
 		if s.historyStore != nil {
 			runner = monitor.NewRunner(monitor.RunnerConfig{
+				Dialer: physicalMonitorDialer{},
 				Store:  s.historyStore,
 				Budget: s.monitorBudget,
 			})

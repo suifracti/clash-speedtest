@@ -142,8 +142,11 @@
 - 新规则 ID：`chatgpt_unlock/claude_unlock/gemini_unlock/disney_unlock/spotify_unlock/tiktok_unlock/unext_unlock/dmm_unlock/radiko_unlock`；复用其余 7 项及原历史 details。
 - 验证：Go vet/test、380 项前端测试与构建通过；SG04 副本只查看旧记录，未发真实解锁请求，新增规则的站点实测留待用户正常检测。
 
-## DNS 核对（只读）
-- Mac 工作台已有绑定物理网卡的节点 DNS，过滤假 IP；无需新增 DoH。旧持续监测未接该路径，暂不把它标为已绕过。
+## DNS 核对与接线
+- Mac 工作台已使用物理网卡 DNS 并过滤假 IP；SG04 10/20 的 YouTube US 旧记录确认 DNS/socket 都绑定 en1，10/18 同路径曾返回 SG，不能据此归因于当前 TUN。
+- 旧持续监测改用现有物理 DNS/socket 客户端，检测后关闭连接与代理；不新增 DoH、重试或数据库迁移。
+- 新样本元数据 `tun_bypass_interface` 仅在 DNS/socket 均已核验时保存；记录页显示“已绕开本机 TUN（网卡）”，旧记录不补写。
+- 验证：主路径与 DNS 未核验路径；Go vet/test、382 项前端测试及构建通过，未新建监测任务或实网检测。
 
 ## 待定
 - 暂无新增保护或扩展项。

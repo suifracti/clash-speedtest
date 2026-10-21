@@ -148,7 +148,7 @@ func (s *AppService) resetMonitorRuntime() {
 	s.monitorLoadErr = nil
 	if s.historyStore != nil {
 		s.monitorBudget = monitor.NewBudgetController(s.historyStore, s.monitorBudgetLimits, nil)
-		s.monitorRunner = monitor.NewRunner(monitor.RunnerConfig{Store: s.historyStore, Budget: s.monitorBudget})
+		s.monitorRunner = monitor.NewRunner(monitor.RunnerConfig{Dialer: physicalMonitorDialer{}, Store: s.historyStore, Budget: s.monitorBudget})
 	}
 	s.monitorMu.Unlock()
 	s.monitorRecoveryMu.Lock()

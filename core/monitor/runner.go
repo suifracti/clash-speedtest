@@ -411,6 +411,8 @@ func (r *Runner) probeNode(ctx context.Context, profileID string, node Monitored
 		}
 		return []*MonitorSample{sample}, false, nil
 	}
+	defer client.CloseIdleConnections()
+	path, _ := client.Transport.(interface{ TUNBypassInterface() string })
 	if budget := r.budget.Load(); budget != nil {
 		client = budgetedClient(client, budget, heavy, priority)
 	}
@@ -435,6 +437,14 @@ func (r *Runner) probeNode(ctx context.Context, profileID string, node Monitored
 				}
 			}
 			return samples, anySuccess, err
+		}
+		if path != nil {
+			if iface := path.TUNBypassInterface(); iface != "" {
+				if sample.Metadata == nil {
+					sample.Metadata = map[string]any{}
+				}
+				sample.Metadata["tun_bypass_interface"] = iface
+			}
 		}
 		samples = append(samples, sample)
 		if sample.Success {
