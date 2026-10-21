@@ -8,6 +8,7 @@ import Icon from '../Icon.vue'
 import HealthBars from '../HealthBars.vue'
 import RecordedBars from '../RecordedBars.vue'
 import InspectorLatency from './InspectorLatency.vue'
+import {stableLatency} from '../../inspectorLatency'
 import NodeExitSummary from '../NodeExitSummary.vue'
 import MeasurementResults from '../MeasurementResults.vue'
 import InlineHistory from '../InlineHistory.vue'
@@ -22,7 +23,7 @@ const sites=computed(()=>targets.filter(t=>w.displayTargets.value.includes(t.id)
 // 检查器跟着项目标签变化：只展开当前项目，其余项目收成底部一行摘要，点一下就切过去。
 const project=computed(()=>w.project.value)
 const shows=(p:Project)=>project.value==='combined'||project.value===p
-const latencyVerdictValue=computed(()=>latencyVerdict(sites.value.map(s=>m.metricPoint(props.node,s.id))))
+const latencyVerdictValue=computed(()=>latencyVerdict(sites.value.map(s=>m.metricPoint(props.node,s.id)),stableLatency(latencySeries.value)))
 const serviceVerdict=computed(()=>{
  const list=m.displayServices.value
  if(!list.length)return {tone:'empty',label:'未选服务',detail:'在上方「选择服务」里挑想测的服务'}
@@ -49,7 +50,7 @@ const downloadFailure=computed(()=>{
  const a=downloadLatest.value,r=a?.result
  if(readError.value)return '已保存记录读取失败'
  if(!a)return '尚无测速记录'
- if(r?.http_status===429)return '测速网站嫌太频繁，拒绝了（429）。不是节点的问题。'
+ if(r?.http_status===429)return '测速网站限流（429），不是节点问题'
  if(r?.http_status===403)return '测速网站拒绝了请求（403）。不是节点的问题。'
  return attemptStatus(a,true)+((r?.error_message||a.not_executed_reason)?'：'+(r?.error_message||a.not_executed_reason):'')
 })
@@ -155,5 +156,7 @@ function run(){m.closeHover();w.openPlan([props.node])}
 </template>
 
 <style scoped>
-.hd-service-row :deep(.recorded-bars){align-self:center}.hd-service-row{grid-template-columns:minmax(0,1fr) 65px minmax(0,177px)}.hd-service-row .hd-site-name{white-space:normal;overflow:visible;text-overflow:clip}.download-success strong{font-size:25px;font-weight:600;font-variant-numeric:tabular-nums}.download-success small{font-size:12px;font-weight:400;color:var(--hd-muted)}.download-failure{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fff0d3;color:#805211;border-radius:8px;font-size:12px;line-height:1.55}.download-failure .hd-btn{flex-shrink:0;background:transparent;border-color:#cfad72;color:inherit}.download-failure.empty{padding:0;background:none;color:var(--hd-muted)}.hd-saved-download{display:block;margin-top:7px;color:var(--hd-muted);font-size:10px}.download-spark{display:block;width:100%;height:34px;margin-top:8px}
+.hd-ins-head{order:-3}.hd-ins-verdict{order:-2}.hd-inspector[data-project="latency"] .hd-latency,.hd-inspector[data-project="download"] .hd-download,.hd-inspector[data-project="service"] .hd-services-block{order:-1}
+
+.hd-service-row :deep(.recorded-bars){align-self:center}.hd-service-row{grid-template-columns:minmax(0,1fr) 65px minmax(0,177px)}.hd-service-row .hd-site-name{white-space:normal;overflow:visible;text-overflow:clip}.download-success strong{font-size:25px;font-weight:600;font-variant-numeric:tabular-nums}.download-success small{font-size:12px;font-weight:400;color:var(--hd-muted)}.download-failure{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:10px 12px;background:#fff0d3;color:#805211;border-radius:8px;font-size:12px;line-height:1.55}.download-failure span{white-space:nowrap;font-size:11px}.download-failure .hd-btn{margin-left:auto;flex-shrink:0;background:transparent;border-color:#cfad72;color:inherit}.download-failure.empty{padding:0;background:none;color:var(--hd-muted)}.hd-saved-download{display:block;margin-top:7px;color:var(--hd-muted);font-size:10px}.download-spark{display:block;width:100%;height:34px;margin-top:8px}
 </style>

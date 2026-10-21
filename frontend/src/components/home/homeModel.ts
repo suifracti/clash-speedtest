@@ -89,11 +89,11 @@ export interface Verdict {tone:HealthTone;label:string;detail:string}
 // Plain-language summary of the latest latency round across the shown sites.
 // It only counts the tones the existing presentation already assigned, so it
 // adds no new thresholds: success first, a nice median never hides failures.
-export function latencyVerdict(points:(TrendPoint|undefined)[]):Verdict{
+export function latencyVerdict(points:(TrendPoint|undefined)[],stableMs?:number|null):Verdict{
  const measured=points.filter((p):p is TrendPoint=>!!p&&p.tone!=='empty')
  if(!measured.length)return {tone:'empty',label:'还没测',detail:'这个时间范围内没有延迟记录'}
  const ok=measured.filter(p=>p.tone==='good'||p.tone==='warn'),values=ok.map(p=>p.value).filter((v):v is number=>v!==null).sort((a,b)=>a-b)
- const mid=values.length?Math.round(values[Math.floor((values.length-1)/2)]):null
+ const mid=stableMs===undefined?(values.length?Math.round(values[Math.floor((values.length-1)/2)]):null):stableMs===null?null:Math.round(stableMs)
  if(!ok.length)return {tone:'bad',label:'连不上',detail:`${measured.length} 个站点全部失败`}
  if(ok.length<measured.length)return {tone:'warn',label:'不稳定',detail:`${ok.length}/${measured.length} 个站点能连上${mid!==null?` · 通的约 ${mid} ms`:''}`}
  if(ok.some(p=>p.tone==='warn'))return {tone:'warn',label:'偶有失败',detail:`${ok.length} 个站点能连上，部分样本失败${mid!==null?` · 约 ${mid} ms`:''}`}

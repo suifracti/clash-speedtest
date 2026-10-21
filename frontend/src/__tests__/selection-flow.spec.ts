@@ -231,7 +231,7 @@ describe('shared node selection',()=>{
     const w=workspace(),at=new Date().toISOString();w.project.value='download'
     w.downloads.value[key(a)]=[{...a,attempt_id:'limited',request_id:'limited',requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://speed.cloudflare.com/__down'},result:{outcome:'http_error',http_status:429,bytes_read:0,finished_at:at}}]
     const wrapper=attach(HomeView,w);await flushPromises()
-    expect(wrapper.get('.download-failure').text()).toContain('不是节点的问题')
+    expect(wrapper.get('.download-failure').text()).toContain('不是节点问题')
     await wrapper.get('.download-failure button').trigger('click')
     expect(w.plan.value?.downloadSource).toBe('cachefly')
     expect(w.plan.value?.projects).toEqual(['download']);expect(w.plan.value?.includeReputation).toBe(false)

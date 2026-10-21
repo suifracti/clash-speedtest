@@ -1,20 +1,18 @@
 <script setup lang="ts">
 import {computed} from 'vue'
 import {date} from '../../domain'
-import {latencyTargetId} from '../../latencyTargets'
-import type {SamplePoint,TrendPoint} from '../../presentation'
+import {inspectorMedian as median,inspectorSamples as samples,stableLatency} from '../../inspectorLatency'
+import type {TrendPoint} from '../../presentation'
 const props=defineProps<{series:{id:string;name:string;points:TrendPoint[];context:string}[]}>()
 const colors=['#378ADD','#1D9E75','#7F77DD','#D85A30','#BB8C24','#427C91']
 const fixed:Record<string,string>={cloudflare:colors[0],google:colors[1],github:colors[2],apple:colors[3]}
-function median(values:number[]){const a=values.slice().sort((a,b)=>a-b),i=Math.floor(a.length/2);return a.length?a.length%2?a[i]:(a[i-1]+a[i])/2:null}
-function samples(point:TrendPoint,id:string):SamplePoint[]{return (point.sampleGroups?.filter(g=>latencyTargetId(g.target)===id).flatMap(g=>g.samples)||point.samples||[]).filter(s=>!s.executionState&&!(s.tone==='empty'&&s.value===null))}
 const data=computed(()=>props.series.map((s,i)=>{
  const rounds=s.points.filter(p=>!p.id.startsWith('planned:')).map(p=>({...p,actual:samples(p,s.id)})).filter(p=>p.actual.length)
  const latest=rounds.at(-1),values=(latest?.actual||[]).flatMap(p=>p.value===null?[]:[p.value])
  return {...s,color:fixed[s.id]||colors[i%colors.length],rounds,latest,values,median:median(values),stable:median((latest?.actual.slice(1)||[]).flatMap(p=>p.value===null?[]:[p.value])),first:latest?.actual[0]?.value??null}
 }))
 const rounds=computed(()=>[...new Map(data.value.flatMap(s=>s.rounds.map(p=>[p.id,p.time] as const))).entries()].sort((a,b)=>Date.parse(a[1])-Date.parse(b[1])))
-const stable=computed(()=>median(data.value.flatMap(s=>s.stable===null?[]:[s.stable])))
+const stable=computed(()=>stableLatency(props.series))
 const first=computed(()=>median(data.value.flatMap(s=>s.first===null?[]:[s.first])))
 const total=computed(()=>data.value.reduce((n,s)=>n+(s.latest?.actual.length||0),0))
 const responses=computed(()=>data.value.reduce((n,s)=>n+s.values.length,0))
@@ -61,9 +59,9 @@ const ms=(v:number|null)=>v===null?'—':Math.round(v).toLocaleString()+' ms'
    <div class="range-track"><template v-if="s.values.length"><i :style="{left:pct(Math.min(...s.values)),right:pct(1500-Math.max(...s.values)),background:s.color}"/><b :style="{left:pct(s.median!),background:s.color}"/></template></div>
    <span class="hd-site-value" :title="s.context">{{ms(s.median)}}</span>
   </div>
-  <div class="range-scale"><span>0</span><span>500</span><span>1000</span><span>1500 ms</span></div>
+  <div class="range-scale"><div class="range-axis"><span v-for="v in [0,500,1000,1500]" :key="v" :style="{left:pct(v)}">{{v}}{{v===1500?' ms':''}}</span></div></div>
  </section>
 </template>
 <style scoped>
-.ins-latency header{display:flex;align-items:baseline;justify-content:space-between;gap:8px}.ins-latency header strong{font-size:13px}.ins-latency header small{font-size:10px;color:var(--hd-muted)}.latency-metrics{display:grid;grid-template-columns:1fr 1fr .8fr;gap:10px;margin:12px 0 4px}.latency-metrics span{display:block;font-size:11px;color:var(--hd-muted);margin-bottom:4px}.latency-metrics strong{font-size:23px;line-height:1.25;font-weight:600;white-space:nowrap;letter-spacing:-.4px;font-variant-numeric:tabular-nums}.latency-metrics .first{color:#9a640d}.latency-metrics .responded{color:var(--green)}.latency-combined{display:block;width:100%;height:120px;overflow:visible}.latency-combined text{fill:var(--hd-muted);font-size:9px}.latency-combined .failed{fill:var(--red);font-size:13px;font-weight:700}.latency-legend{display:flex;justify-content:space-between;gap:6px;font-size:10px;color:var(--hd-muted);margin:4px 0 12px}.latency-legend span{display:flex;align-items:center;gap:4px}.latency-legend i{width:10px;height:3px}.latency-range.hd-site{display:grid;grid-template-columns:70px minmax(0,1fr) 62px;gap:8px;height:28px;margin:0}.latency-range .hd-site-name{font-size:12px;font-weight:500}.latency-range .hd-site-value{font-size:12px;text-align:right;font-weight:500;white-space:nowrap}.range-track{height:10px;position:relative;border-radius:5px;background:var(--hd-soft)}.range-track i{position:absolute;top:3px;height:4px;opacity:.35;border-radius:2px}.range-track b{position:absolute;top:0;width:10px;height:10px;transform:translateX(-50%);border-radius:50%}.range-scale{margin:3px 70px 0 78px;display:flex;justify-content:space-between;font-size:9px;color:var(--hd-muted);white-space:nowrap}
+.ins-latency header{display:flex;align-items:baseline;justify-content:space-between;gap:8px}.ins-latency header strong{font-size:13px}.ins-latency header small{font-size:10px;color:var(--hd-muted)}.latency-metrics{display:grid;grid-template-columns:1fr 1fr .8fr;gap:10px;margin:12px 0 4px}.latency-metrics span{display:block;font-size:11px;color:var(--hd-muted);margin-bottom:4px}.latency-metrics strong{font-size:23px;line-height:1.25;font-weight:600;white-space:nowrap;letter-spacing:-.4px;font-variant-numeric:tabular-nums}.latency-metrics .first{color:#9a640d}.latency-metrics .responded{color:var(--green)}.latency-combined{display:block;width:100%;height:120px;overflow:visible}.latency-combined text{fill:var(--hd-muted);font-size:9px}.latency-combined .failed{fill:var(--red);font-size:13px;font-weight:700}.latency-legend{display:flex;justify-content:space-between;gap:6px;font-size:10px;color:var(--hd-muted);margin:4px 0 12px}.latency-legend span{display:flex;align-items:center;gap:4px}.latency-legend i{width:10px;height:3px}.latency-range.hd-site{display:grid;grid-template-columns:70px minmax(0,1fr) 62px;gap:8px;height:28px;margin:0}.latency-range .hd-site-name{font-size:12px;font-weight:500}.latency-range .hd-site-value{font-size:12px;text-align:right;font-weight:500;white-space:nowrap}.range-track{height:10px;position:relative;border-radius:5px;background:var(--hd-soft)}.range-track i{position:absolute;top:3px;height:4px;opacity:.35;border-radius:2px}.range-track b{position:absolute;top:0;width:10px;height:10px;transform:translateX(-50%);border-radius:50%}.range-scale{display:grid;grid-template-columns:70px minmax(0,1fr) 62px;gap:8px;margin-top:3px;font-size:9px;color:var(--hd-muted);white-space:nowrap}.range-axis{grid-column:2;position:relative;height:12px}.range-axis span{position:absolute;transform:translateX(-50%)}
 </style>
