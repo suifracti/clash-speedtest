@@ -8,6 +8,11 @@ import type {HealthTone,TrendPoint} from '../../presentation'
 // HomeView keeps all state, loading and history logic; the redesigned layers
 // only read it through this model so behaviour stays identical across designs.
 export interface HomeModel {
+ weeklyStats:Ref<Record<string,{availability:number|null;volatility:number|null;total:number}>>
+ weeklyErrors:Ref<Record<string,string>>
+ weeklySort:Ref<string>
+ weeklyDescending:Ref<boolean>
+ sortWeekly:(metric:string)=>void
  hiddenSelectedCount:ComputedRef<number>
  qualityFiltersPending:ComputedRef<boolean>
  monitorData:Ref<Record<string,MonitorSample[]>>

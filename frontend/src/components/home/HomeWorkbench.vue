@@ -36,7 +36,7 @@ const sorts=computed(()=>[{id:'region',label:'地区 → 机场'},{id:'airport',
  ...(!exitMode.value&&['latency','combined'].includes(w.project.value)?[{id:'latency',label:'已保存延迟 / 监测'}]:[]),
  ...(!exitMode.value&&['download','combined'].includes(w.project.value)?[{id:'download',label:'最近下载速度'}]:[]),
  ...(!exitMode.value&&['service','combined'].includes(w.project.value)?[{id:'service',label:'自选服务通过'}]:[])])
-const gates=[{id:'all',label:'全部节点',short:'全部'},{id:'samples',label:'测得够多的（成功样本 ≥5 次）',short:'测得够多的'},{id:'response',label:'稳定能连的（≥5 次且成功率 ≥90%）',short:'稳定能连的'},{id:'fresh',label:'最近 24 小时测过的',short:'最近 24 小时测过的'},{id:'download',label:'有过有效下载速度的',short:'有过有效下载速度的节点'},{id:'service',label:'已选服务检测通过的',short:'已选服务检测通过的节点'}]
+const gates=[{id:'all',label:'全部节点',short:'全部'},{id:'samples',label:'测得够多的（成功样本 ≥5 次）',short:'测得够多的'},{id:'response',label:'稳定能连的（近 7 天可用率 ≥90%）',short:'稳定能连的'},{id:'fresh',label:'最近 24 小时测过的',short:'最近 24 小时测过的'},{id:'download',label:'有过有效下载速度的',short:'有过有效下载速度的节点'},{id:'service',label:'已选服务检测通过的',short:'已选服务检测通过的节点'}]
 // 每个标签只给和它相关的条件；综合标签保留全部。
 const tabGateIds:Record<Project,string[]>={combined:['all','samples','response','fresh','download','service'],latency:['all','samples','response','fresh'],download:['all','download'],service:['all','service']}
 const tabGates=computed(()=>gates.filter(g=>(exitMode.value?['all']:tabGateIds[w.project.value]).includes(g.id)))
@@ -95,7 +95,7 @@ const showVerdict=computed(()=>!exitMode.value&&['combined','latency'].includes(
 const showSites=showVerdict
 const showDownload=computed(()=>!exitMode.value&&['combined','download'].includes(w.project.value))
 // Grid tracks follow the active project so each tab shows its own columns.
-const columns=computed(()=>exitMode.value?['28px','minmax(0,2.2fr)','82px','minmax(0,1.3fr)','72px'].join(' '):['36px','minmax(220px,2.2fr)',...(showVerdict.value?['92px']:[]),...(showSites.value?sites.value.map(()=>'minmax(74px,.8fr)'):[]),...(showDownload.value?['minmax(110px,1fr)']:[]),...(w.project.value==='download'?['minmax(160px,1.4fr)']:[]),...(w.project.value==='combined'?['minmax(80px,.8fr)']:[]),...(w.project.value==='service'?unlockGroups.map(()=>'minmax(90px,1fr)'):[])].join(' '))
+const columns=computed(()=>exitMode.value?['28px','minmax(0,2.2fr)','82px','minmax(0,1.3fr)','72px'].join(' '):['36px','minmax(220px,2.2fr)',...(showVerdict.value?['92px']:[]),...(!exitMode.value&&w.project.value==='latency'?['106px','82px']:[]),...(showSites.value?sites.value.map(()=>'minmax(74px,.8fr)'):[]),...(showDownload.value?['minmax(110px,1fr)']:[]),...(w.project.value==='download'?['minmax(160px,1.4fr)']:[]),...(w.project.value==='combined'?['minmax(80px,.8fr)']:[]),...(w.project.value==='service'?unlockGroups.map(()=>'minmax(90px,1fr)'):[])].join(' '))
 const allOnPage=computed(()=>m.pageNodes.value.length>0&&m.pageNodes.value.every(selected))
 function keyNav(e:KeyboardEvent){
  const list=m.pageNodes.value,i=list.findIndex(isFocus)
@@ -184,6 +184,7 @@ function keyNav(e:KeyboardEvent){
           <span role="columnheader"><input type="checkbox" :checked="allOnPage" aria-label="选择本页全部节点" @change="w.toggleAll(m.pageNodes.value)"></span>
           <span role="columnheader">节点</span><template v-if="exitMode"><span v-for="label in exitColumns" :key="label" role="columnheader">{{label}}</span></template>
           <span v-if="showVerdict" role="columnheader">结论</span>
+          <template v-if="!exitMode&&w.project.value==='latency'"><span v-for="[metric,label] in [['availability','7 天可用率'],['volatility','波动']]" :key="metric" role="columnheader" :aria-sort="m.weeklySort.value===metric?(m.weeklyDescending.value?'descending':'ascending'):'none'"><button class="hd-link history-sort" @click="m.sortWeekly(metric)">{{label}} {{m.weeklySort.value===metric?(m.weeklyDescending.value?'↓':'↑'):''}}</button></span></template>
           <template v-if="showSites"><span v-for="s in sites" :key="s.id" role="columnheader">{{s.name}}</span></template>
           <span v-if="showDownload" role="columnheader">下载</span>
           <span v-if="!exitMode&&w.project.value==='download'" role="columnheader">测量时间</span>
@@ -195,6 +196,7 @@ function keyNav(e:KeyboardEvent){
           <span role="cell" class="hd-node" :title="n.display_name+' · '+m.sourceLabel(n)+' · '+n.type"><span class="hd-flag">{{n.country_code||'—'}}</span><span><strong>{{nodeDisplayName(n)}}</strong><small>{{m.sourceLabel(n)}} · {{n.type}}</small></span><NodeActivity :state="m.nodeActivities.value[key(n)]?.state" :label="m.nodeActivities.value[key(n)]?.label"/></span>
           <template v-if="exitMode"><span v-for="field in exitFields" :key="field" role="cell" class="hd-num hd-exit-cell" :class="field==='label'?exitRows[key(n)].tone:field==='riskLabel'?exitRows[key(n)].riskTone:''" :title="field==='label'?exitRows[key(n)].detail:field==='riskLabel'?'IPPure 与机器流量占比取较高值':''">{{exitRows[key(n)][field]}}</span></template>
           <span v-if="showVerdict" role="cell"><b class="hd-pill" :class="verdicts[key(n)].tone">{{verdicts[key(n)].label}}</b></span>
+          <template v-if="!exitMode&&w.project.value==='latency'"><span role="cell" class="hd-num hd-history-cell" :class="m.weeklyStats.value[key(n)]?.availability!=null?(m.weeklyStats.value[key(n)].availability!>=90?'good':'warn'):'empty'" :title="m.weeklyErrors.value[key(n)]||('近 7 天 · '+(m.weeklyStats.value[key(n)]?.total??0)+' 轮')">{{m.weeklyStats.value[key(n)]?.availability!=null?m.weeklyStats.value[key(n)].availability!.toFixed(0)+'%':m.weeklyErrors.value[key(n)]?'读取失败':m.weeklyStats.value[key(n)]?'未测':'读取中'}}</span><span role="cell" class="hd-num hd-history-cell" title="近 7 天各轮稳定延迟的 P90 − P10">{{m.weeklyStats.value[key(n)]?.volatility!=null?Math.round(m.weeklyStats.value[key(n)].volatility!)+' ms':'—'}}</span></template>
           <template v-if="showSites"><span v-for="s in sites" :key="s.id" role="cell" class="hd-num" :class="m.metricPoint(n,s.id)?.tone||'empty'" :title="m.siteContext(n,s.id)">{{m.siteMetric(n,s.id)}}</span></template>
           <span v-if="showDownload" role="cell" class="hd-num" :class="m.downloadMetricTone(n)" :title="m.downloadMetricContext(n)">{{m.downloadMetric(n)}}</span>
           <span v-if="!exitMode&&w.project.value==='download'" role="cell" class="hd-num empty">{{m.downloadMetricContext(n)}}</span>
@@ -217,8 +219,10 @@ function keyNav(e:KeyboardEvent){
 </template>
 
 <style scoped>
+.history-sort{font-size:11px;white-space:nowrap;text-align:left}
 .hd-body.exit-mode .hd-node strong{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}.hd-body.exit-mode .hd-node small{white-space:normal}.hd-body.exit-mode .hd-tr{padding-top:9px;padding-bottom:9px}.hd-body.exit-mode .hd-exit-cell.good{color:var(--hd-good)}.hd-source{display:block}.hd-exit-cell{font-size:11px;white-space:normal;line-height:1.4}.hd-exit-cell.bad{color:#c6343e;font-weight:600}.hd-exit-cell.warn{color:#ad680b}
 .hd .hd-svc-cell.empty{color:var(--hd-empty);font-weight:400}.hd .hd-svc-cell.warn{color:var(--hd-warn)}
 </style>
 
-<style scoped>.matrix-switch{display:inline-flex;margin:0 0 12px}</style>
+<style scoped>
+.history-sort{font-size:11px;white-space:nowrap;text-align:left}.matrix-switch{display:inline-flex;margin:0 0 12px}</style>

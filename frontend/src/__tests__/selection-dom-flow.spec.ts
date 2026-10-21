@@ -24,7 +24,7 @@ function dialog(){return new DOMWrapper(document.querySelector('dialog')!)}
 function airportInput(name:string){const label=Array.from(document.querySelectorAll('.airport-pick-list label')).find(e=>e.querySelector('strong')?.textContent===name)!;return new DOMWrapper(label.querySelector('input')!)}
 function nodeInput(view:VueWrapper,name:string){return view.get(`.hd-tr input[aria-label="选择 ${name}"]`)}
 const rows='.hd-tr:not(.hd-th)'
-function cells(view:VueWrapper){return view.findAll(`${rows} .hd-num`).map(m=>m.text())}
+function cells(view:VueWrapper){return view.findAll(`${rows} .hd-num:not(.hd-history-cell)`).map(m=>m.text())}
 
 beforeEach(()=>{window.localStorage.clear();window.sessionStorage.clear();vi.clearAllMocks();HTMLDialogElement.prototype.showModal=vi.fn();HTMLDialogElement.prototype.close=vi.fn();vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}});vi.stubGlobal('fetch',vi.fn().mockRejectedValue(new Error('Unexpected network request in isolated DOM selection test')))})
 afterEach(()=>{expect(fetch).not.toHaveBeenCalled();wrapper?.unmount();w?.dispose();wrapper=undefined;w=undefined;document.body.innerHTML='';vi.unstubAllGlobals()})
