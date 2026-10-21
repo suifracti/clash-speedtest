@@ -13,7 +13,12 @@ export function unlockResult(a?:Attempt){
 }
 export function unlockGroupSummary(groupId:string,catalog:Pick<ServiceRule,'service_id'|'name'>[],lookup:(id:string)=>Attempt|undefined){
  const list=catalog.filter(s=>unlockGroup(s.service_id)===groupId).map(s=>({...s,result:unlockResult(lookup(s.service_id))})),available=list.filter(s=>s.result.state==='available').length,unavailable=list.filter(s=>s.result.state==='unavailable')
- return {available,total:list.length,tone:unavailable.length?'warn':available?'good':'empty',label:list.length?available+'/'+list.length:'—',reason:unavailable.map(s=>s.name+'：'+s.result.reason).join('；'),title:list.map(s=>s.name+'：'+s.result.label+' · '+s.result.reason).join('\n')}
+ const total=available+unavailable.length
+ return {available,total,tone:unavailable.length?'warn':available?'good':'empty',label:total?available+'/'+total:'未测',reason:unavailable.map(s=>s.name+'：'+s.result.reason).join('；'),title:list.map(s=>s.name+'：'+s.result.label+' · '+s.result.reason).join('\n')}
 }
 
-export function unlockSummary(catalog:Pick<ServiceRule,'service_id'|'name'>[],lookup:(id:string)=>Attempt|undefined){const groups=unlockGroups.map(g=>({...g,...unlockGroupSummary(g.id,catalog,lookup)})).filter(g=>g.total);return {tone:groups.some(g=>g.reason)?'warn':groups.some(g=>g.available)?'good':'empty',label:groups.map(g=>g.name+' '+g.label+' 可用').join(' · ')||'未选解锁项目',detail:groups.find(g=>g.reason)?.reason||'依据当前时间范围内最近检测记录'}}
+export function unlockSummary(catalog:Pick<ServiceRule,'service_id'|'name'>[],lookup:(id:string)=>Attempt|undefined){
+ const groups=unlockGroups.map(g=>({...g,...unlockGroupSummary(g.id,catalog,lookup)}))
+ const measured=groups.some(g=>g.total)
+ return {tone:groups.some(g=>g.reason)?'warn':measured?'good':'empty',label:measured?groups.map(g=>g.name+' '+g.label+(g.total?' 可用':'')).join(' · '):'还没做解锁检测',detail:groups.find(g=>g.reason)?.reason||(measured?'依据当前时间范围内已确认的结果':'无法判断与尚未检测不计入统计')}
+}

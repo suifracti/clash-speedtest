@@ -15,7 +15,7 @@ import NodeInspector from './NodeInspector.vue'
 import NodeCompare from './NodeCompare.vue'
 import {homeModelKey,latencyVerdict,type Verdict} from './homeModel'
 import {exitLanding} from '../../exitLanding'
-import {unlockGroups,unlockGroupSummary} from '../../unlock'
+import {unlockGroups,unlockGroupSummary,unlockSummary} from '../../unlock'
 const w=useWorkspace(),m=inject(homeModelKey)!
 const exitMode=ref(false)
 const chosen=m.chosen
@@ -86,7 +86,7 @@ function isFocus(n:NodeOption){return !!focusNode.value&&key(focusNode.value)===
 function selected(n:NodeOption){return w.selectedKeys.value.includes(key(n))}
 const verdicts=computed<Record<string,Verdict>>(()=>Object.fromEntries(m.pageNodes.value.map(n=>[key(n),latencyVerdict(sites.value.map(s=>m.metricPoint(n,s.id)))])))
 function groupSummary(n:NodeOption,id:string){return unlockGroupSummary(id,catalog.value,serviceId=>m.shownService(n,serviceId))}
-function services(n:NodeOption){const counts=unlockGroups.map(g=>({...g,...groupSummary(n,g.id)}));return {tone:counts.some(g=>g.reason)?'warn':counts.some(g=>g.available)?'good':'empty',label:counts.filter(g=>g.total).map(g=>g.name+' '+g.label).join(' · ')||'未选解锁项目'}}
+function services(n:NodeOption){const summary=unlockSummary(catalog.value,id=>m.shownService(n,id));return {...summary,label:summary.tone==='empty'?'未测':summary.label}}
 function run(){if(exitMode.value){m.closeHover();w.openReputationPlan([...m.runNodes.value]);return}if(w.project.value==='combined')m.openCombinedPlan();else{m.closeHover();w.openPlan([...m.runNodes.value])}}
 const showVerdict=computed(()=>!exitMode.value&&['combined','latency'].includes(w.project.value))
 const showSites=showVerdict
@@ -173,7 +173,7 @@ function keyNav(e:KeyboardEvent){
     </div>
     <div v-if="w.busy.value" class="hd-live"><span class="spinner"/>检测进行中{{w.queue.value.length?` · ${w.done.value}/${w.queue.value.length}`:''}}<button class="hd-link" @click="w.queueOpen.value=true">查看进度</button><button class="hd-link bad" @click="w.cancelTests()">{{w.cancelRequested.value?'正在取消…':'取消'}}</button></div>
 
-    <div class="hd-body" :class="{'exit-mode':exitMode,comparing:m.compareOpen.value,'compare-wide':m.compareOpen.value&&m.compareNodes.value.length>2}" :style="{'--hd-side-w':sideWidth+'px'}">
+    <div class="hd-body" :class="{comparing:m.compareOpen.value,'compare-wide':m.compareOpen.value&&m.compareNodes.value.length>2}" :style="{'--hd-side-w':sideWidth+'px'}">
       <div ref="table" class="hd-table" role="table" aria-label="节点列表" tabindex="0" :style="{'--hd-cols':columns}" @keydown="keyNav">
         <div class="hd-tr hd-th" role="row">
           <span role="columnheader"><input type="checkbox" :checked="allOnPage" aria-label="选择本页全部节点" @change="w.toggleAll(m.pageNodes.value)"></span>
@@ -212,5 +212,5 @@ function keyNav(e:KeyboardEvent){
 </template>
 
 <style scoped>
-.hd-source{display:block}.hd-body.exit-mode{grid-template-columns:minmax(0,1fr)}.exit-mode>.hd-resize{display:none}.exit-mode>.hd-side{width:100%;max-height:none}.hd-exit-cell{font-size:11px;white-space:normal;line-height:1.4}.hd-exit-cell.bad{color:#c6343e;font-weight:600}.hd-exit-cell.warn{color:#ad680b}
+.hd-source{display:block}.hd-exit-cell{font-size:11px;white-space:normal;line-height:1.4}.hd-exit-cell.bad{color:#c6343e;font-weight:600}.hd-exit-cell.warn{color:#ad680b}
 </style>
