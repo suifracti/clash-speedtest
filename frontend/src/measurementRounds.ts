@@ -1,8 +1,8 @@
 import {bytes,date,downloadTarget,downloadSpeed,downloadTone,key,median,sampleFor,outcomeLabel,outcomeTone,stateLabel,type Attempt,type MeasurementRound,type NodeOption,type Project} from './domain'
 import {downloadGroup,servicePassed,serviceExecuted,serviceAvailability,serviceAvailabilitySummary} from './sharedResults'
 import {groupSamples,latencySampleState,type TrendPoint,type SamplePoint,type HealthTone} from './presentation'
-export type Trigger='manual'|'scheduled'|'diagnostic'|'unknown'
-export const triggerLabel=(trigger?:string)=>({manual:'手动',scheduled:'定时',diagnostic:'有限诊断',unknown:'来源未知'}[trigger||'unknown']||'来源未知')
+export type Trigger='manual'|'scheduled'|'diagnostic'|'auto_pick'|'unknown'
+export const triggerLabel=(trigger?:string)=>({manual:'手动',scheduled:'定时',diagnostic:'有限诊断',auto_pick:'自动精选',unknown:'来源未知'}[trigger||'unknown']||'来源未知')
 export function downloadCondition(a:Attempt){return JSON.stringify([downloadTarget(a),a.rule.method||'GET',a.rule.rule_version??'unknown',a.rule.maximum_bytes??'unknown',a.rule.maximum_duration_ns??'unknown',a.rule.sample_every_bytes??'unknown',a.rule.sample_every_ns??'unknown',a.rule.network_path_method??'unverified',a.rule.physical_interface??'unknown',a.rule.dns_mode??'unknown',a.result?.network_path?.method??'unknown',a.result?.network_path?.interface??'unknown',a.result?.network_path?.dns_mode??'unknown',a.result?.network_path?.dns_bind_verified??'unknown',a.result?.network_path?.socket_bind_verified??'unknown',a.result?.network_path?.address_family??'unknown',a.result?.network_path?.address_source??'unknown',a.node_type??'unknown'])}
 export function downloadConditionLabel(a:Attempt){
  const p=a.result?.network_path,method=p?.method||a.rule.network_path_method,physical=['physical_socket_v1','physical_socket_auto_family_v1'].includes(method||'')

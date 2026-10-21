@@ -55,7 +55,7 @@ func (d *DB) CreateMeasurementRound(ctx context.Context, r MeasurementRound) err
 	if strings.TrimSpace(r.RoundID) == "" || len(r.RoundID) > 96 || r.StartedAt.IsZero() || len(r.Items) == 0 || len(r.Items) > 25000 {
 		return fmt.Errorf("invalid round identity or bounded plan")
 	}
-	if r.TriggerType != "manual" && r.TriggerType != "scheduled" && r.TriggerType != "diagnostic" {
+	if r.TriggerType != "manual" && r.TriggerType != "scheduled" && r.TriggerType != "diagnostic" && r.TriggerType != "auto_pick" {
 		return fmt.Errorf("invalid round trigger")
 	}
 	for _, i := range r.Items {

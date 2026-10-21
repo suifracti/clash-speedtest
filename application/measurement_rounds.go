@@ -68,9 +68,14 @@ func (s *AppService) validateMeasurementRequest(ctx context.Context, requestID, 
 	if err != nil {
 		return err
 	}
-	if trigger == "scheduled" || trigger == "diagnostic" {
+	switch trigger {
+	case "scheduled", "diagnostic":
 		if ctx.Value(scheduledRoundContextKey{}) != trigger {
 			return monitor.NewValidationError("定时/诊断计划项只能由对应后台任务执行")
+		}
+	case autoPickRoundTrigger:
+		if ctx.Value(autoPickRoundContextKey{}) != autoPickRoundTrigger {
+			return monitor.NewValidationError("自动精选计划项只能由自动精选任务执行")
 		}
 	}
 	if trigger == "" && project != "latency" {
@@ -124,7 +129,12 @@ func (s *AppService) ensureManualLatencyRound(ctx context.Context, req Workbench
 		return nil
 	}
 	sum := sha256.Sum256([]byte(req.RequestID))
-	r := history.MeasurementRound{RoundID: fmt.Sprintf("manual-%x", sum[:16]), TriggerType: "manual", StartedAt: time.Now().UTC()}
+	triggerType, roundID := "manual", fmt.Sprintf("manual-%x", sum[:16])
+	if ctx.Value(autoPickRoundContextKey{}) == autoPickRoundTrigger {
+		// 自动精选的延迟项进历史时带自己的来源，节点历史区显示“自动精选”。
+		triggerType, roundID = autoPickRoundTrigger, fmt.Sprintf("auto-pick-latency-%x", sum[:16])
+	}
+	r := history.MeasurementRound{RoundID: roundID, TriggerType: triggerType, StartedAt: time.Now().UTC()}
 	for _, n := range selections {
 		r.Items = append(r.Items, history.MeasurementRoundItem{RequestID: req.RequestID, Project: "latency", ProfileID: n.ProfileID, NodeKey: n.NodeKey, NodeIdentityKey: n.NodeIdentityKey, ConfigRevisionKey: n.ConfigRevisionKey, DisplayName: n.DisplayName})
 	}

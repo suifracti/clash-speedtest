@@ -281,6 +281,12 @@ func (s *AppService) runAutoPickRound(trigger string) {
 	if cfg.IncludeStreaming {
 		report.Rules.Groups = append(report.Rules.Groups, autopick.PurposeStreaming)
 	}
+	if len(report.Rules.Groups) > 0 {
+		report.Rules.RequiredServices = map[string][]string{}
+		for _, purpose := range report.Rules.Groups {
+			report.Rules.RequiredServices[purpose] = cfg.RequiredServices(purpose)
+		}
+	}
 
 	nodes, err := s.autoPickResolve(cfg)
 	if err != nil {
@@ -310,9 +316,11 @@ func (s *AppService) runAutoPickRound(trigger string) {
 	for _, rule := range publicservice.Catalog() {
 		rules[rule.ServiceID] = rule
 	}
+	// 第一遍只看延迟：通过即进“日常”，解锁结果只决定是否再进用途组。
 	var selected []autoPickScopedNode
 	groups := map[string][]autoPickScopedNode{}
 	groupCounts := map[string]int{}
+	plans := make([]autoPickServicePlan, 0, len(nodes))
 	for _, node := range nodes {
 		entry := autopick.Node{
 			DisplayName: node.Node.DisplayName, ProfileID: node.ProfileID, AirportID: node.AirportID, AirportName: node.AirportName,
@@ -336,6 +344,11 @@ func (s *AppService) runAutoPickRound(trigger string) {
 			report.Nodes = append(report.Nodes, entry)
 			continue
 		}
+		if measure.LatencyMS <= 0 {
+			entry.ExcludedReason = "没有稳定延迟样本（去掉首次后全部失败）"
+			report.Nodes = append(report.Nodes, entry)
+			continue
+		}
 		if measure.LatencyMS > int64(cfg.MaxLatencyMS) {
 			entry.ExcludedReason = fmt.Sprintf("稳定延迟 %d ms 高于上限 %d ms", measure.LatencyMS, cfg.MaxLatencyMS)
 			report.Nodes = append(report.Nodes, entry)
@@ -343,46 +356,49 @@ func (s *AppService) runAutoPickRound(trigger string) {
 		}
 		report.LatencyPassed++
 		entry.Purposes = append(entry.Purposes, autopick.PurposeDaily)
+		report.Nodes = append(report.Nodes, entry)
+		index := len(report.Nodes) - 1
+		selected = append(selected, node)
+		for _, purpose := range report.Rules.Groups {
+			plans = append(plans, autoPickServicePlan{
+				entry: &report.Nodes[index], node: node, purpose: purpose,
+				services: cfg.RequiredServices(purpose),
+			})
+		}
+	}
 
-		passedGroup := false
-		for _, purpose := range []string{autopick.PurposeStreaming, autopick.PurposeAI} {
-			if purpose == autopick.PurposeStreaming && !cfg.IncludeStreaming {
-				continue
-			}
-			if purpose == autopick.PurposeAI && !cfg.IncludeAI {
-				continue
-			}
-			allPassed := true
-			for _, serviceID := range autopick.GroupServices[purpose] {
+	// 解锁只测必需服务；结论“需人机验证／无法判断”算没通过，但不影响日常组。
+	if len(plans) > 0 {
+		serviceRound := s.autoPickStartServiceRound(report, plans)
+		for i := range plans {
+			plan := &plans[i]
+			passed := true
+			for _, serviceID := range plan.services {
 				rule, ok := rules[serviceID]
 				if !ok {
-					allPassed = false
-					entry.Services[serviceID] = "rule_missing"
+					plan.entry.Services[serviceID] = "rule_missing"
+					passed = false
 					continue
 				}
-				result := s.autoPickCheckService(ctx, node.Node, rule)
-				entry.Services[serviceID] = result.Outcome
+				result := s.autoPickCheckService(ctx, plan.node.Node, rule)
+				plan.entry.Services[serviceID] = result.Outcome
+				if serviceRound != nil {
+					s.autoPickSaveServiceAttempt(ctx, report, serviceRound, plan.node, serviceID, rule, result)
+				}
 				if !autoPickServiceUsable(result.Outcome) {
-					allPassed = false
+					passed = false
 				}
 			}
-			if allPassed {
-				entry.Purposes = append(entry.Purposes, purpose)
-				passedGroup = true
+			if passed {
+				plan.entry.Purposes = append(plan.entry.Purposes, plan.purpose)
+				groups[plan.purpose] = append(groups[plan.purpose], plan.node)
+				groupCounts[plan.purpose]++
 			}
 		}
-		if len(report.Rules.Groups) > 0 && !passedGroup {
-			entry.ExcludedReason = "未通过所选解锁组"
-			report.Nodes = append(report.Nodes, entry)
-			continue
-		}
-		selected = append(selected, node)
-		for _, purpose := range entry.Purposes {
-			groups[purpose] = append(groups[purpose], node)
-			groupCounts[purpose]++
-		}
-		report.Nodes = append(report.Nodes, entry)
+		s.autoPickFinishServiceRound(serviceRound)
 	}
+	groups[autopick.PurposeDaily] = selected
+	groupCounts[autopick.PurposeDaily] = len(selected)
 
 	report.SelectedCount = len(selected)
 	report.GroupCounts = groupCounts
@@ -697,7 +713,7 @@ func (s *AppService) runAutoPickLatencyBatch(ctx context.Context, reportID strin
 			ConfigRevisionKey: node.Node.ConfigRevisionKey, DisplayName: node.Node.DisplayName, NodeType: node.Node.Type,
 		})
 	}
-	batch, err := s.StartWorkbenchLatencyBatch(ctx, WorkbenchLatencyBatchRequest{
+	batch, err := s.StartWorkbenchLatencyBatch(context.WithValue(ctx, autoPickRoundContextKey{}, autoPickRoundTrigger), WorkbenchLatencyBatchRequest{
 		TargetID: "cloudflare", RequestID: "auto-pick:" + reportID, TestProject: WorkbenchLatencyProject,
 		TimeoutSeconds: 5, SampleCount: cfg.SampleCount, Selections: selections,
 	})
@@ -738,20 +754,37 @@ func autoPickLatencyFromBatch(batch *WorkbenchLatencyBatchDTO) map[string]autoPi
 		if measure.Samples > 0 {
 			measure.ResponseRate = float64(measure.Success) * 100 / float64(measure.Samples)
 		}
-		var successes []int64
-		for _, sample := range item.Result.Samples {
-			if sample.Success {
-				successes = append(successes, sample.LatencyMs)
-			}
-		}
-		if len(successes) > 0 {
-			sort.Slice(successes, func(i, j int) bool { return successes[i] < successes[j] })
-			measure.LatencyMS = successes[len(successes)/2]
+		if stable, ok := autoPickStableLatency(item.Result.Samples); ok {
+			measure.LatencyMS = stable
+		} else if len(item.Result.Samples) > 0 {
+			// 只有首次采样成功时没有稳定值，不拿首次当稳定延迟。
+			measure.LatencyMS = 0
 		}
 		key := item.ProfileID + "\x00" + item.NodeKey + "\x00" + item.NodeIdentityKey + "\x00" + item.ConfigRevisionKey
 		result[key] = measure
 	}
 	return result
+}
+
+// autoPickStableLatency mirrors the inspector's 稳定延迟: drop the first sample
+// (connection warm-up), then take the median of the successful ones.
+func autoPickStableLatency(samples []WorkbenchLatencySampleDTO) (int64, bool) {
+	if len(samples) < 2 {
+		return 0, false
+	}
+	ordered := append([]WorkbenchLatencySampleDTO(nil), samples...)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Seq < ordered[j].Seq })
+	values := make([]int64, 0, len(ordered)-1)
+	for _, sample := range ordered[1:] {
+		if sample.Success {
+			values = append(values, sample.LatencyMs)
+		}
+	}
+	if len(values) == 0 {
+		return 0, false
+	}
+	sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
+	return values[len(values)/2], true
 }
 
 // --- export ---

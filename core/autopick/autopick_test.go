@@ -38,12 +38,18 @@ func TestConfigDefaultsAndEstimate(t *testing.T) {
 		t.Fatalf("latency-only estimate: %d", got)
 	}
 	cfg.IncludeAI = true
-	if got := cfg.EstimateRequests(10); got != 40 {
+	if got := cfg.EstimateRequests(10); got != 30 {
 		t.Fatalf("ai estimate: %d", got)
 	}
+	if got := cfg.RequiredServices(PurposeAI); len(got) != 2 || got[0] != "chatgpt_unlock" || got[1] != "claude_unlock" {
+		t.Fatalf("ai defaults: %+v", got)
+	}
 	cfg.IncludeStreaming = true
-	if got := cfg.EstimateRequests(10); got != 70 {
+	if got := cfg.EstimateRequests(10); got != 40 {
 		t.Fatalf("ai+streaming estimate: %d", got)
+	}
+	if got := cfg.RequiredServices(PurposeStreaming); len(got) != 1 || got[0] != "netflix_unlock" {
+		t.Fatalf("streaming defaults: %+v", got)
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("validate: %v", err)
@@ -51,6 +57,32 @@ func TestConfigDefaultsAndEstimate(t *testing.T) {
 	cfg.AirportIDs = nil
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("empty scope must be rejected")
+	}
+}
+
+func TestRequiredServicesAreTheOnlyOnesProbed(t *testing.T) {
+	cfg := Config{AirportIDs: []string{"a"}, Schedule: Schedule6h, IncludeAI: true, IncludeStreaming: true}
+	cfg.Normalize()
+	if got := cfg.Projects(); got != 4 {
+		t.Fatalf("projects: %d, want 1 latency + 2 ai + 1 streaming", got)
+	}
+	cfg.AIRequired = []string{"chatgpt_unlock", "gemini_unlock", "claude_unlock", "nope"}
+	cfg.StreamingRequired = []string{"youtube_premium"}
+	cfg.Normalize()
+	if got := cfg.AIRequired; len(got) != 3 || got[2] != "claude_unlock" {
+		t.Fatalf("unknown service not dropped: %+v", got)
+	}
+	if got := cfg.Projects(); got != 5 {
+		t.Fatalf("projects after edit: %d", got)
+	}
+	// 显式清空必需服务不能默默退回默认值。
+	cfg.AIRequired = []string{}
+	cfg.Normalize()
+	if len(cfg.AIRequired) != 0 {
+		t.Fatalf("explicit empty list must stay empty: %+v", cfg.AIRequired)
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("empty required services must be rejected")
 	}
 }
 

@@ -2,7 +2,7 @@
 import {computed,onMounted,ref} from 'vue'
 import {api} from '../api'
 import {date} from '../domain'
-import {reportStatusLabels,type AutoPickReport} from '../autoPick'
+import {reportStatusLabels,groupServices,type AutoPickReport} from '../autoPick'
 import Modal from './Modal.vue'
 
 const props=defineProps<{reportId:string}>()
@@ -14,12 +14,20 @@ const groups=computed(()=>{
   return ['日常','流媒体','AI'].filter(name=>counts[name]!==undefined).map(name=>`${name} ${counts[name]}`).join('／')
 })
 const tone=computed(()=>report.value?.kept_previous?'warn':report.value?.status==='selected'?'good':'')
+const requiredText=computed(()=>{
+  const required=report.value?.rules?.required_services
+  if(!required)return ''
+  return Object.entries(required).map(([group,ids])=>`${group}（必需 ${ids.map(serviceLabel).join('、')}）`).join(' + ')
+})
+const serviceLabels:Record<string,string>={}
+for(const group of Object.values(groupServices))for(const service of group)serviceLabels[service.id]=service.label
+function serviceLabel(id:string){return serviceLabels[id]||id}
 onMounted(async()=>{
   try{report.value=await api.autoPickReport(props.reportId)}catch(e){error.value=e instanceof Error?e.message:String(e)}finally{loading.value=false}
 })
 function serviceText(services?:Record<string,string>){
   if(!services)return ''
-  return Object.entries(services).map(([id,outcome])=>`${id}:${outcome}`).join(' · ')
+  return Object.entries(services).map(([id,outcome])=>`${serviceLabel(id)}:${outcome}`).join(' · ')
 }
 </script>
 
@@ -35,8 +43,8 @@ function serviceText(services?:Record<string,string>){
     <p class="muted small">{{date(report.created_at)}} · {{report.trigger==='manual'?'手动运行':'定时运行'}} · 范围 {{report.scope.airport_names?.join('、')||report.scope.airport_ids.join('、')}}<template v-if="report.scope.region_filter"> · 地区“{{report.scope.region_filter }}”</template></p>
     <ul class="auto-report-rules">
       <li>响应率 ≥ {{report.rules.min_response_rate}}%</li>
-      <li>稳定延迟（中位）≤ {{report.rules.max_latency_ms}} ms</li>
-      <li>检测项目：延迟<template v-if="report.rules.groups?.length"> + {{report.rules.groups.join('、')}} 组</template></li>
+      <li>稳定延迟（去掉首次采样后的中位数）≤ {{report.rules.max_latency_ms}} ms</li>
+      <li>检测项目：延迟<template v-if="requiredText"> + {{requiredText}}</template><template v-else-if="report.rules.groups?.length"> + {{report.rules.groups.join('、')}} 组</template></li>
       <li>测量 {{report.measured}} 个 · 延迟合格 {{report.latency_passed}} 个 · 选中 {{report.selected_count}} 个</li>
     </ul>
     <p v-if="groups" class="muted small">分组：{{groups}}</p>

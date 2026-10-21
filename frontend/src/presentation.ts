@@ -8,7 +8,7 @@ import type {Workspace} from './workspace'
 export type HealthTone='good'|'warn'|'bad'|'empty'
 export interface SamplePoint {id:string;time:string;value:number|null;tone:HealthTone;description:string;label:string;error?:string;note?:string;executionState?:'cancelled'|'not_executed'}
 export interface SampleGroup {id:string;name:string;target:string;value:number|null;samples:SamplePoint[]}
-export interface TrendPoint {id:string;time:string;value:number|null;tone:HealthTone;description:string;samples?:SamplePoint[];sampleGroups?:SampleGroup[];attempts?:Attempt[];trigger?:'manual'|'scheduled'|'diagnostic'|'unknown';planned?:number;conditionKey?:string;source?:'manual'|'monitor';monitorSamples?:MonitorSample[];latencyTests?:LatencyTest[];oldConfig?:boolean}
+export interface TrendPoint {id:string;time:string;value:number|null;tone:HealthTone;description:string;samples?:SamplePoint[];sampleGroups?:SampleGroup[];attempts?:Attempt[];trigger?:'manual'|'scheduled'|'diagnostic'|'auto_pick'|'unknown';planned?:number;conditionKey?:string;source?:'manual'|'monitor';monitorSamples?:MonitorSample[];latencyTests?:LatencyTest[];oldConfig?:boolean}
 export function latencySampleState(sample:LatencyTest['samples'][number]):{tone:HealthTone;executionState?:'cancelled'|'not_executed'} {
  if(!sample.success&&sample.error?.includes('context canceled'))return {tone:'empty',executionState:'cancelled'}
  if(!sample.success&&(sample.error?.startsWith('未执行：物理出口')||/(?:^|:\s)ip version error$/i.test(sample.error||'')))return {tone:'empty',executionState:'not_executed'}

@@ -39,28 +39,53 @@ const (
 	RequestWarningThreshold = 500
 )
 
-// GroupServices are the representative unlock services of each optional group.
-// A node must pass every service in a group to be listed in that group.
+// GroupServices lists every unlock service a group can require. The user picks
+// the required subset per group; the rest are never probed.
 var GroupServices = map[string][]string{
-	PurposeAI:        {"chatgpt_unlock", "claude_unlock", "gemini_unlock"},
+	PurposeAI:        {"chatgpt_unlock", "claude_unlock", "gemini_unlock", "antigravity"},
 	PurposeStreaming: {"netflix_unlock", "youtube_premium", "disney_unlock"},
+}
+
+// DefaultRequiredServices is the required subset used until the user edits it.
+// Gemini and Antigravity stay optional: the human-verification page and the
+// bound Google credential make them fail on almost every node.
+var DefaultRequiredServices = map[string][]string{
+	PurposeAI:        {"chatgpt_unlock", "claude_unlock"},
+	PurposeStreaming: {"netflix_unlock"},
+}
+
+// GroupServicesOf returns the selectable services of a group in display order.
+func GroupServicesOf(purpose string) []string {
+	return append([]string(nil), GroupServices[purpose]...)
+}
+
+// ServiceBelongsToGroup reports whether the service is selectable in the group.
+func ServiceBelongsToGroup(purpose, serviceID string) bool {
+	for _, id := range GroupServices[purpose] {
+		if id == serviceID {
+			return true
+		}
+	}
+	return false
 }
 
 // Config is the user-visible definition of the auto-pick task.
 type Config struct {
-	Enabled          bool       `json:"enabled"`
-	Schedule         string     `json:"schedule"`
-	DailyHour        int        `json:"daily_hour"`
-	AirportIDs       []string   `json:"airport_ids"`
-	RegionFilter     string     `json:"region_filter,omitempty"`
-	IncludeAI        bool       `json:"include_ai"`
-	IncludeStreaming bool       `json:"include_streaming"`
-	MinResponseRate  float64    `json:"min_response_rate"`
-	MaxLatencyMS     int        `json:"max_latency_ms"`
-	SampleCount      int        `json:"sample_count"`
-	LastRunAt        *time.Time `json:"last_run_at,omitempty"`
-	NextRunAt        *time.Time `json:"next_run_at,omitempty"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	Enabled           bool       `json:"enabled"`
+	Schedule          string     `json:"schedule"`
+	DailyHour         int        `json:"daily_hour"`
+	AirportIDs        []string   `json:"airport_ids"`
+	RegionFilter      string     `json:"region_filter,omitempty"`
+	IncludeAI         bool       `json:"include_ai"`
+	IncludeStreaming  bool       `json:"include_streaming"`
+	AIRequired        []string   `json:"ai_required"`
+	StreamingRequired []string   `json:"streaming_required"`
+	MinResponseRate   float64    `json:"min_response_rate"`
+	MaxLatencyMS      int        `json:"max_latency_ms"`
+	SampleCount       int        `json:"sample_count"`
+	LastRunAt         *time.Time `json:"last_run_at,omitempty"`
+	NextRunAt         *time.Time `json:"next_run_at,omitempty"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
 // Normalize fills defaults and canonicalizes fields without validating scope.
@@ -95,6 +120,43 @@ func (c *Config) Normalize() {
 	}
 	c.AirportIDs = ids
 	c.RegionFilter = strings.TrimSpace(c.RegionFilter)
+	c.AIRequired = normalizeRequired(c.AIRequired, PurposeAI)
+	c.StreamingRequired = normalizeRequired(c.StreamingRequired, PurposeStreaming)
+}
+
+// normalizeRequired keeps only known services of the group. A nil list means
+// "not configured yet" and falls back to the defaults; an explicit empty list
+// is preserved so Validate can reject it.
+func normalizeRequired(current []string, purpose string) []string {
+	if current == nil {
+		return append([]string(nil), DefaultRequiredServices[purpose]...)
+	}
+	seen := make(map[string]bool, len(current))
+	out := make([]string, 0, len(current))
+	for _, id := range current {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] || !ServiceBelongsToGroup(purpose, id) {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
+// RequiredServices returns the services a node must pass to join the group.
+func (c Config) RequiredServices(purpose string) []string {
+	switch purpose {
+	case PurposeAI:
+		if len(c.AIRequired) > 0 {
+			return append([]string(nil), c.AIRequired...)
+		}
+	case PurposeStreaming:
+		if len(c.StreamingRequired) > 0 {
+			return append([]string(nil), c.StreamingRequired...)
+		}
+	}
+	return append([]string(nil), DefaultRequiredServices[purpose]...)
 }
 
 // Validate rejects configurations that cannot run.
@@ -114,8 +176,14 @@ func (c Config) Validate() error {
 	if c.MaxLatencyMS < 100 || c.MaxLatencyMS > 5000 {
 		return errors.New("稳定延迟上限必须在 100 ms 到 5000 ms 之间")
 	}
-	if c.SampleCount < 1 || c.SampleCount > 20 {
-		return errors.New("每个节点的采样次数必须在 1 到 20 之间")
+	if c.SampleCount < 2 || c.SampleCount > 20 {
+		return errors.New("每个节点的采样次数必须在 2 到 20 之间（首次采样不计入稳定延迟）")
+	}
+	if c.IncludeAI && len(c.AIRequired) == 0 {
+		return errors.New("AI 组至少要选一个必需服务")
+	}
+	if c.IncludeStreaming && len(c.StreamingRequired) == 0 {
+		return errors.New("流媒体组至少要选一个必需服务")
 	}
 	return nil
 }
@@ -124,10 +192,10 @@ func (c Config) Validate() error {
 func (c Config) Projects() int {
 	projects := 1 // latency is mandatory
 	if c.IncludeAI {
-		projects += len(GroupServices[PurposeAI])
+		projects += len(c.RequiredServices(PurposeAI))
 	}
 	if c.IncludeStreaming {
-		projects += len(GroupServices[PurposeStreaming])
+		projects += len(c.RequiredServices(PurposeStreaming))
 	}
 	return projects
 }
@@ -213,10 +281,11 @@ type Scope struct {
 
 // Rules records the two selection rules actually applied.
 type Rules struct {
-	MinResponseRate float64  `json:"min_response_rate"`
-	MaxLatencyMS    int      `json:"max_latency_ms"`
-	Groups          []string `json:"groups,omitempty"`
-	SampleCount     int      `json:"sample_count"`
+	MinResponseRate  float64             `json:"min_response_rate"`
+	MaxLatencyMS     int                 `json:"max_latency_ms"`
+	Groups           []string            `json:"groups,omitempty"`
+	RequiredServices map[string][]string `json:"required_services,omitempty"`
+	SampleCount      int                 `json:"sample_count"`
 }
 
 // ReportMeta is the list projection used by 检测记录 → 报告.

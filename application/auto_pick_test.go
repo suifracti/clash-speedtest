@@ -6,11 +6,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/faceair/clash-speedtest/core/appdata"
 	"github.com/faceair/clash-speedtest/core/autopick"
+	"github.com/faceair/clash-speedtest/core/history"
 	"github.com/faceair/clash-speedtest/core/monitor"
 	"github.com/faceair/clash-speedtest/core/profiles"
+	"github.com/faceair/clash-speedtest/core/publicservice"
 	"gopkg.in/yaml.v3"
 )
 
@@ -34,6 +37,18 @@ func autoPickFakeNodes() []autoPickScopedNode {
 		{Node: monitor.MonitoredNode{DisplayName: "新加坡 01", NodeKey: "k1", NodeIdentityKey: "i1", ConfigRevisionKey: "r1", Type: "ss", RawConfig: map[string]any{"name": "新加坡 01", "type": "ss", "server": "1.1.1.1", "port": 8388, "cipher": "aes-128-gcm", "password": "pw"}}, ProfileID: "p1", AirportID: "airport-1", AirportName: "良心云"},
 		{Node: monitor.MonitoredNode{DisplayName: "新加坡 02", NodeKey: "k2", NodeIdentityKey: "i2", ConfigRevisionKey: "r2", Type: "ss", RawConfig: map[string]any{"name": "新加坡 02", "type": "ss", "server": "1.1.1.2", "port": 8388, "cipher": "aes-128-gcm", "password": "pw"}}, ProfileID: "p1", AirportID: "airport-1", AirportName: "良心云"},
 	}
+}
+
+func autoPickFixtureWithHistory(t *testing.T) *AppService {
+	t.Helper()
+	svc := autoPickFixture(t)
+	store, err := history.NewStore(filepath.Join(t.TempDir(), "history"))
+	if err != nil {
+		t.Fatalf("history store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	svc.historyStore = store
+	return svc
 }
 
 func TestAutoPickWritesSelectedNodesAndSubscription(t *testing.T) {
@@ -127,5 +142,167 @@ func TestAutoPickKeepsPreviousSubscriptionWhenNothingSelected(t *testing.T) {
 	}
 	if string(after) != string(before) {
 		t.Fatal("failed round must not rewrite the subscription file")
+	}
+}
+
+// 解锁没通过只影响用途组：节点仍然留在“日常”。
+func TestAutoPickKeepsUnlockFailuresInDailyGroup(t *testing.T) {
+	svc := autoPickFixture(t)
+	cfg, err := svc.LoadAutoPickConfig()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.IncludeAI = true
+	cfg.Normalize()
+	if err := svc.saveAutoPickConfig(cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	nodes := autoPickFakeNodes()
+	svc.autoPick().hooks.resolveNodes = func(autopick.Config) ([]autoPickScopedNode, error) { return nodes, nil }
+	svc.autoPick().hooks.measureLatency = func(_ context.Context, _ string, _ []autoPickScopedNode, _ autopick.Config) (string, map[string]autoPickLatency, error) {
+		return "batch-1", map[string]autoPickLatency{
+			autoPickNodeKey(nodes[0]): {LatencyMS: 120, ResponseRate: 100, Samples: 6, Success: 6},
+			autoPickNodeKey(nodes[1]): {LatencyMS: 240, ResponseRate: 100, Samples: 6, Success: 6},
+		}, nil
+	}
+	// 01 两项都通；02 的 Claude 结论是“需人机验证”，按新规则算没通过。
+	svc.autoPick().hooks.checkService = func(_ context.Context, node monitor.MonitoredNode, rule publicservice.Rule) publicservice.Result {
+		if node.NodeKey == "k1" {
+			return publicservice.Result{Outcome: "unlocked", RequestCount: 1, Summary: "可用"}
+		}
+		if rule.ServiceID == "claude_unlock" {
+			return publicservice.Result{Outcome: "verification_required", RequestCount: 1, Summary: "需人机验证"}
+		}
+		return publicservice.Result{Outcome: "unlocked", RequestCount: 1, Summary: "可用"}
+	}
+
+	svc.runAutoPickRound("manual")
+
+	report := svc.latestAutoPickReport()
+	if report == nil {
+		t.Fatal("no report")
+	}
+	if report.SelectedCount != 2 || report.GroupCounts[autopick.PurposeDaily] != 2 {
+		t.Fatalf("daily must keep both nodes: %+v", report.GroupCounts)
+	}
+	if report.GroupCounts[autopick.PurposeAI] != 1 {
+		t.Fatalf("ai group must only take the fully passing node: %+v", report.GroupCounts)
+	}
+	for _, node := range report.Nodes {
+		if node.NodeKey == "k2" && len(node.Purposes) != 1 {
+			t.Fatalf("failed unlock must not exclude the node: %+v", node)
+		}
+	}
+	raw, err := os.ReadFile(svc.autoPickSubscriptionPath())
+	if err != nil {
+		t.Fatalf("subscription: %v", err)
+	}
+	if !strings.Contains(string(raw), "name: "+autopick.PurposeAI) {
+		t.Fatalf("ai group missing from subscription:\n%s", raw)
+	}
+}
+
+func TestAutoPickStableLatencyDropsTheFirstSample(t *testing.T) {
+	samples := []WorkbenchLatencySampleDTO{
+		{Seq: 0, LatencyMs: 900, Success: true},
+		{Seq: 1, LatencyMs: 100, Success: true},
+		{Seq: 2, LatencyMs: 120, Success: true},
+		{Seq: 3, LatencyMs: 110, Success: true},
+	}
+	value, ok := autoPickStableLatency(samples)
+	if !ok || value != 110 {
+		t.Fatalf("stable latency: %d ok=%v, want 110", value, ok)
+	}
+	if _, ok := autoPickStableLatency(samples[:1]); ok {
+		t.Fatal("a single sample must not produce a stable latency")
+	}
+	onlyFirst := []WorkbenchLatencySampleDTO{{Seq: 0, LatencyMs: 80, Success: true}, {Seq: 1, LatencyMs: 0, Success: false}}
+	if _, ok := autoPickStableLatency(onlyFirst); ok {
+		t.Fatal("when only the first sample succeeded there is no stable value")
+	}
+	measure := autoPickLatencyFromBatch(&WorkbenchLatencyBatchDTO{Items: []WorkbenchLatencyBatchItemDTO{{
+		ProfileID: "p1", NodeKey: "k1", NodeIdentityKey: "i1", ConfigRevisionKey: "r1",
+		Result: &WorkbenchLatencyTestDTO{TotalSamples: 4, SuccessSamples: 4, LatencyMs: 900, Samples: samples},
+	}}})
+	if got := measure["p1\x00k1\x00i1\x00r1"]; got.LatencyMS != 110 || got.ResponseRate != 100 {
+		t.Fatalf("batch projection: %+v", got)
+	}
+}
+
+// 每轮的延迟与解锁结果都进历史库，轮次来源是“自动精选”。
+func TestAutoPickWritesRoundsWithAutoPickTrigger(t *testing.T) {
+	svc := autoPickFixtureWithHistory(t)
+	cfg, err := svc.LoadAutoPickConfig()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.IncludeAI = true
+	cfg.Normalize()
+	if err := svc.saveAutoPickConfig(cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	nodes := autoPickFakeNodes()
+	svc.autoPick().hooks.resolveNodes = func(autopick.Config) ([]autoPickScopedNode, error) { return nodes, nil }
+	svc.autoPick().hooks.measureLatency = func(_ context.Context, _ string, _ []autoPickScopedNode, _ autopick.Config) (string, map[string]autoPickLatency, error) {
+		return "batch-1", map[string]autoPickLatency{
+			autoPickNodeKey(nodes[0]): {LatencyMS: 120, ResponseRate: 100, Samples: 6, Success: 6},
+		}, nil
+	}
+	svc.autoPick().hooks.checkService = func(_ context.Context, _ monitor.MonitoredNode, _ publicservice.Rule) publicservice.Result {
+		return publicservice.Result{Outcome: "unlocked", RequestCount: 1, Summary: "可用", StartedAt: time.Now().UTC(), FinishedAt: time.Now().UTC()}
+	}
+
+	svc.runAutoPickRound("manual")
+
+	report := svc.latestAutoPickReport()
+	if report == nil {
+		t.Fatal("no report")
+	}
+	rounds, err := svc.ListMeasurementRoundNodes(context.Background(), nodes[0].ProfileID, nodes[0].Node.NodeKey, nodes[0].Node.NodeIdentityKey, nodes[0].Node.ConfigRevisionKey, 10)
+	if err != nil {
+		t.Fatalf("rounds: %v", err)
+	}
+	var serviceRound *history.MeasurementRound
+	for i := range rounds {
+		if rounds[i].TriggerType != autoPickRoundTrigger {
+			t.Fatalf("round trigger: %q", rounds[i].TriggerType)
+		}
+		for _, item := range rounds[i].Items {
+			if item.Project == "service" {
+				serviceRound = &rounds[i]
+			}
+		}
+	}
+	if serviceRound == nil {
+		t.Fatalf("no service round in history: %+v", rounds)
+	}
+	if serviceRound.State != "finished" {
+		t.Fatalf("round state: %q", serviceRound.State)
+	}
+	for _, item := range serviceRound.Items {
+		if item.Service == nil || item.Service.Result == nil || item.Service.Result.Outcome != "unlocked" {
+			t.Fatalf("service result not committed: %+v", item.Service)
+		}
+		if item.Service.PersistenceState != "saved" {
+			t.Fatalf("service persistence: %q", item.Service.PersistenceState)
+		}
+	}
+
+	// 延迟批次走的是冻结计划：带自动精选标记时才允许执行自己的项。
+	ctx := context.WithValue(context.Background(), autoPickRoundContextKey{}, autoPickRoundTrigger)
+	req := WorkbenchLatencyBatchRequest{RequestID: "auto-pick:round-1", TestProject: WorkbenchLatencyProject}
+	selections := []WorkbenchLatencyBatchSelection{{ProfileID: nodes[0].ProfileID, NodeKey: nodes[0].Node.NodeKey, NodeIdentityKey: nodes[0].Node.NodeIdentityKey, ConfigRevisionKey: nodes[0].Node.ConfigRevisionKey}}
+	if err := svc.ensureManualLatencyRound(ctx, req, selections); err != nil {
+		t.Fatalf("ensure round: %v", err)
+	}
+	trigger, err := svc.historyStore.DB().MeasurementRequestTrigger(context.Background(), req.RequestID, nodes[0].ProfileID, nodes[0].Node.NodeIdentityKey, nodes[0].Node.ConfigRevisionKey, "latency", "")
+	if err != nil || trigger != autoPickRoundTrigger {
+		t.Fatalf("latency round trigger: %q err=%v", trigger, err)
+	}
+	if err := svc.validateMeasurementRequest(ctx, req.RequestID, nodes[0].ProfileID, nodes[0].Node.NodeKey, nodes[0].Node.NodeIdentityKey, nodes[0].Node.ConfigRevisionKey, "latency", ""); err != nil {
+		t.Fatalf("auto-pick ctx must execute its own plan: %v", err)
+	}
+	if err := svc.validateMeasurementRequest(context.Background(), req.RequestID, nodes[0].ProfileID, nodes[0].Node.NodeKey, nodes[0].Node.NodeIdentityKey, nodes[0].Node.ConfigRevisionKey, "latency", ""); err == nil {
+		t.Fatal("a plain context must not execute an auto-pick item")
 	}
 }

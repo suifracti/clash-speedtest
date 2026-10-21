@@ -3,17 +3,19 @@ import {computed,onBeforeUnmount,onMounted,reactive,ref} from 'vue'
 import {api} from '../api'
 import {useWorkspace} from '../workspace'
 import {date} from '../domain'
-import {scheduleLabels,reportStatusLabels,type AutoPickConfig,type AutoPickSchedule,type AutoPickStatus} from '../autoPick'
+import {scheduleLabels,reportStatusLabels,groupServices,defaultRequiredServices,type AutoPickConfig,type AutoPickSchedule,type AutoPickStatus} from '../autoPick'
 import Icon from './Icon.vue'
 
 const w=useWorkspace()
 const status=ref<AutoPickStatus|null>(null)
 const loading=ref(true),saving=ref(false),error=ref(''),notice=ref('')
 const confirmRun=ref(false),polling=ref<ReturnType<typeof setInterval>|null>(null)
-const form=reactive<AutoPickConfig>({enabled:false,schedule:'6h',daily_hour:6,airport_ids:[],region_filter:'',include_ai:false,include_streaming:false,min_response_rate:90,max_latency_ms:800,sample_count:6})
+const expanded=reactive({ai:false,streaming:false})
+const form=reactive<AutoPickConfig>({enabled:false,schedule:'6h',daily_hour:6,airport_ids:[],region_filter:'',include_ai:false,include_streaming:false,ai_required:[...defaultRequiredServices.ai],streaming_required:[...defaultRequiredServices.streaming],min_response_rate:90,max_latency_ms:800,sample_count:6})
 
 const airports=computed(()=>w.airports.value)
-const projects=computed(()=>1+(form.include_ai?3:0)+(form.include_streaming?3:0))
+const projects=computed(()=>1+(form.include_ai?form.ai_required.length:0)+(form.include_streaming?form.streaming_required.length:0))
+const missingRequired=computed(()=>(form.include_ai&&!form.ai_required.length)||(form.include_streaming&&!form.streaming_required.length))
 const estimatedNodes=computed(()=>airports.value.filter(a=>form.airport_ids.includes(a.id)).reduce((sum,a)=>sum+(a.node_count||0),0))
 const estimatedRequests=computed(()=>estimatedNodes.value*projects.value)
 const estimateWarn=computed(()=>estimatedRequests.value>500)
@@ -21,7 +23,7 @@ const canRun=computed(()=>!status.value?.running&&!saving.value&&form.airport_id
 
 function apply(next:AutoPickStatus){
   status.value=next
-  Object.assign(form,{...next.config,airport_ids:[...(next.config.airport_ids||[])]})
+  Object.assign(form,{...next.config,airport_ids:[...(next.config.airport_ids||[])],ai_required:[...(next.config.ai_required||defaultRequiredServices.ai)],streaming_required:[...(next.config.streaming_required||defaultRequiredServices.streaming)]})
 }
 function errorMessage(e:unknown){return e instanceof Error?e.message:String(e)}
 async function load(){
@@ -30,9 +32,10 @@ async function load(){
 }
 async function save(){
   if(saving.value)return
+  if(missingRequired.value){error.value='勾选的组至少要选一个必需服务';return}
   saving.value=true;error.value='';notice.value=''
   try{
-    const next=await api.saveAutoPick({...form,airport_ids:[...form.airport_ids],region_filter:form.region_filter||''})
+    const next=await api.saveAutoPick({...form,airport_ids:[...form.airport_ids],ai_required:[...form.ai_required],streaming_required:[...form.streaming_required],region_filter:form.region_filter||''})
     apply(next);notice.value=next.config.enabled?'设置已保存，将按时间自动运行':'设置已保存，自动运行保持关闭'
   }catch(e){error.value=errorMessage(e)}finally{saving.value=false}
 }
@@ -109,13 +112,36 @@ onBeforeUnmount(stopPolling)
     <fieldset class="auto-pick-projects">
       <legend>检测项目</legend>
       <label class="check-field"><input type="checkbox" checked disabled>延迟（必选）</label>
-      <label class="check-field"><input v-model="form.include_ai" type="checkbox">AI 组（ChatGPT／Claude／Gemini）</label>
-      <label class="check-field"><input v-model="form.include_streaming" type="checkbox">流媒体组（Netflix／YouTube／Disney+）</label>
+      <div class="auto-pick-group-head">
+        <label class="check-field"><input v-model="form.include_ai" type="checkbox">AI 组</label>
+        <button v-if="form.include_ai" type="button" class="text-button" @click="expanded.ai=!expanded.ai">
+          必需 {{form.ai_required.length}} 项{{expanded.ai?' · 收起':' · 展开'}}
+        </button>
+      </div>
+      <div v-if="form.include_ai&&expanded.ai" class="auto-pick-services">
+        <label v-for="service in groupServices.ai" :key="service.id" class="check-field">
+          <input v-model="form.ai_required" type="checkbox" :value="service.id">{{service.label}}
+        </label>
+        <p class="muted small">只检测勾上的必需服务。Gemini 和 Antigravity 常卡在验证页或凭据上，默认不要求。</p>
+      </div>
+      <div class="auto-pick-group-head">
+        <label class="check-field"><input v-model="form.include_streaming" type="checkbox">流媒体组</label>
+        <button v-if="form.include_streaming" type="button" class="text-button" @click="expanded.streaming=!expanded.streaming">
+          必需 {{form.streaming_required.length}} 项{{expanded.streaming?' · 收起':' · 展开'}}
+        </button>
+      </div>
+      <div v-if="form.include_streaming&&expanded.streaming" class="auto-pick-services">
+        <label v-for="service in groupServices.streaming" :key="service.id" class="check-field">
+          <input v-model="form.streaming_required" type="checkbox" :value="service.id">{{service.label}}
+        </label>
+        <p class="muted small">只检测勾上的必需服务。默认只要求 Netflix 完整片库，“仅自制剧”算没通过。</p>
+      </div>
+      <p v-if="missingRequired" class="inline-warning">勾选的组至少要保留一个必需服务。</p>
     </fieldset>
     <div class="auto-pick-rules">
       <label class="auto-pick-field">响应率 ≥ <input v-model.number="form.min_response_rate" type="number" min="50" max="100" step="1"> %</label>
       <label class="auto-pick-field">稳定延迟 ≤ <input v-model.number="form.max_latency_ms" type="number" min="100" max="5000" step="50"> ms</label>
-      <small class="muted">稳定延迟取中位数；勾选解锁组后，节点还须通过所选组的全部服务。</small>
+      <small class="muted">稳定延迟取去掉首次采样后的中位数；解锁没通过只影响用途组，节点仍可进日常组。</small>
     </div>
   </div>
 
@@ -150,6 +176,7 @@ onBeforeUnmount(stopPolling)
     <p v-if="status&&!status.subscription.exists" class="muted small">首次成功运行后才会生成订阅文件。</p>
     <p v-else-if="status?.subscription.updated_at" class="muted small">文件更新于 {{date(status.subscription.updated_at)}} · {{status.subscription.node_count}} 个节点</p>
   </div>
+  <p class="muted small auto-pick-lifetime">定时任务和订阅地址只在 CST 运行时有效。</p>
 </section>
 </template>
 
@@ -161,6 +188,10 @@ onBeforeUnmount(stopPolling)
 .auto-pick-field select,.auto-pick-field input[type=text],.auto-pick-field input[type=number]{min-height:34px;padding:6px 10px;border:1px solid var(--cst-line);border-radius:8px;background:var(--cst-panel);color:var(--cst-text)}
 .auto-pick-scope,.auto-pick-projects{grid-column:1/-1;display:grid;gap:8px;border:1px solid var(--cst-line);border-radius:10px;padding:12px}
 .auto-pick-scope legend,.auto-pick-projects legend{padding:0 6px;font-size:13px;color:var(--cst-muted)}
+.auto-pick-group-head{display:flex;align-items:center;gap:14px}
+.auto-pick-services{display:flex;flex-wrap:wrap;gap:8px 16px;padding:8px 10px;border:1px dashed var(--cst-line);border-radius:8px}
+.auto-pick-services p{flex:1 0 100%;margin:0}
+.auto-pick-lifetime{margin:0}
 .auto-pick-airports{display:grid;gap:6px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
 .auto-pick-airports small{margin-left:6px}
 .auto-pick-rules{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:14px;align-items:center}
