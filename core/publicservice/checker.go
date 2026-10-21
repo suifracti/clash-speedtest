@@ -343,18 +343,39 @@ func ping0FamilyRule(family string) Rule {
 // The current selector contains unlock checks and the independent exit tools only.
 // RuleFor retains legacy IDs so existing snapshots and history remain readable.
 func Catalog() []Rule {
- result := append(append([]Rule{}, aiUnlockRules()...), regionUnlockRules()...)
- keep := map[string]string{"antigravity":"Google Antigravity", "netflix_unlock":"Netflix", "youtube_premium":"YouTube Premium", "prime_video":"Prime Video", "abema_unlock":"ABEMA", "hulu_jp_unlock":"Hulu Japan", "fod_unlock":"FOD"}
- for _, rule := range catalog {
-  if name, ok := keep[rule.ServiceID]; ok { rule.Name=name; if rule.ServiceID=="antigravity" {rule.Category="AI"} else if rule.ServiceID=="abema_unlock"||rule.ServiceID=="hulu_jp_unlock"||rule.ServiceID=="fod_unlock" {rule.Category="日本"} else {rule.Category="流媒体"}; result=append(result,rule) }
-  if rule.ResultKind=="exit_profile"||rule.ResultKind=="ip_quality" { if !strings.HasPrefix(rule.ServiceID,"ipok_")&&rule.ServiceID!="ping0_ip_quality" {result=append(result,rule)} }
- }
- return append(result,ping0FamilyRule("IPv4"),ping0FamilyRule("IPv6"))
+	result := append(append([]Rule{}, aiUnlockRules()...), regionUnlockRules()...)
+	keep := map[string]string{"antigravity": "Google Antigravity", "netflix_unlock": "Netflix", "youtube_premium": "YouTube Premium", "prime_video": "Prime Video", "abema_unlock": "ABEMA", "hulu_jp_unlock": "Hulu Japan", "fod_unlock": "FOD"}
+	for _, rule := range catalog {
+		if name, ok := keep[rule.ServiceID]; ok {
+			rule.Name = name
+			if rule.ServiceID == "antigravity" {
+				rule.Category = "AI"
+			} else if rule.ServiceID == "abema_unlock" || rule.ServiceID == "hulu_jp_unlock" || rule.ServiceID == "fod_unlock" {
+				rule.Category = "日本"
+			} else {
+				rule.Category = "流媒体"
+			}
+			result = append(result, rule)
+		}
+		if rule.ResultKind == "exit_profile" || rule.ResultKind == "ip_quality" {
+			if !strings.HasPrefix(rule.ServiceID, "ipok_") && rule.ServiceID != "ping0_ip_quality" {
+				result = append(result, rule)
+			}
+		}
+	}
+	return append(result, ping0FamilyRule("IPv4"), ping0FamilyRule("IPv6"), googleRegionRule())
 }
 
 func RuleFor(serviceID string) (Rule, bool) {
 	serviceID = strings.TrimSpace(serviceID)
- for _, rule := range append(aiUnlockRules(),regionUnlockRules()...) {if rule.ServiceID==serviceID {return rule,true}}
+	if serviceID == "google_region" {
+		return googleRegionRule(), true
+	}
+	for _, rule := range append(aiUnlockRules(), regionUnlockRules()...) {
+		if rule.ServiceID == serviceID {
+			return rule, true
+		}
+	}
 	if serviceID == "ping0_ipv4" {
 		return ping0FamilyRule("IPv4"), true
 	}
@@ -832,11 +853,11 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 		return checkAntigravityObserved(ctx, client, c.AntigravityToken, startedAt)
 	}
 	switch rule.ServiceID {
- case "chatgpt_unlock", "claude_unlock", "gemini_unlock":
-  return checkAIUnlock(ctx,client,rule,startedAt)
- case "disney_unlock", "spotify_unlock", "tiktok_unlock", "unext_unlock", "dmm_unlock", "radiko_unlock":
-  return checkRegionUnlock(ctx,client,rule,startedAt)
- case "ipok_ipv4", "ipok_ipv6":
+	case "chatgpt_unlock", "claude_unlock", "gemini_unlock":
+		return checkAIUnlock(ctx, client, rule, startedAt)
+	case "disney_unlock", "spotify_unlock", "tiktok_unlock", "unext_unlock", "dmm_unlock", "radiko_unlock":
+		return checkRegionUnlock(ctx, client, rule, startedAt)
+	case "ipok_ipv4", "ipok_ipv6":
 		return c.checkIPOK(ctx, client, rule, startedAt)
 	case "exit_ipv4", "exit_ipv6":
 		return checkExitAddress(ctx, client, rule, startedAt)
@@ -852,6 +873,8 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 		return checkAbema(ctx, client, rule, startedAt)
 	case "fod_unlock":
 		return checkFOD(ctx, client, rule, startedAt)
+	case "google_region":
+		return checkGoogleRegion(ctx, client, rule, startedAt)
 	case "youtube_premium":
 		return checkYouTubePremium(ctx, client, rule, startedAt)
 	case "prime_video":

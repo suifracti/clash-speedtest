@@ -9,6 +9,7 @@ import HealthBars from '../HealthBars.vue'
 import UnlockInspector from './UnlockInspector.vue'
 import {unlockSummary} from '../../unlock'
 import InspectorLatency from './InspectorLatency.vue'
+import {exitLanding} from '../../exitLanding'
 import {stableLatency} from '../../inspectorLatency'
 import NodeExitSummary from '../NodeExitSummary.vue'
 import MeasurementResults from '../MeasurementResults.vue'
@@ -18,23 +19,24 @@ import {homeModelKey,latencyVerdict,toneLabel} from './homeModel'
 import {attemptObservedAt,downloadEvidence} from '../../nodeQuality'
 import {attemptStatus} from '../../measurementRounds'
 import {downloadSpeed} from '../../domain'
-const props=defineProps<{node:NodeOption}>()
+const props=defineProps<{node:NodeOption;exitOnly?:boolean}>()
 const w=useWorkspace(),m=inject(homeModelKey)!
 const sites=computed(()=>targets.filter(t=>w.displayTargets.value.includes(t.id)))
 // 检查器跟着项目标签变化：只展开当前项目，其余项目收成底部一行摘要，点一下就切过去。
 const project=computed(()=>w.project.value)
-const shows=(p:Project)=>project.value==='combined'||project.value===p
+const shows=(p:Project)=>!props.exitOnly&&(project.value==='combined'||project.value===p)
+const landing=computed(()=>exitLanding(props.node,attempts.value))
 const latencyVerdictValue=computed(()=>latencyVerdict(sites.value.map(s=>m.metricPoint(props.node,s.id)),stableLatency(latencySeries.value)))
 const serviceVerdict=computed(()=>unlockSummary(w.catalog.value,id=>m.shownService(props.node,id)))
 const downloadVerdict=computed(()=>({tone:m.downloadMetricTone(props.node)||'empty',label:m.downloadMetric(props.node),detail:m.downloadMetricContext(props.node)}))
-const verdict=computed(()=>project.value==='download'?downloadVerdict.value:project.value==='service'?serviceVerdict.value:latencyVerdictValue.value)
-const others=computed(()=>project.value==='combined'?[]:([
+const verdict=computed(()=>props.exitOnly?{tone:landing.value.tone,label:landing.value.label,detail:landing.value.detail}:project.value==='download'?downloadVerdict.value:project.value==='service'?serviceVerdict.value:latencyVerdictValue.value)
+const others=computed(()=>props.exitOnly||project.value==='combined'?[]:([
  {id:'latency' as const,name:'延迟',v:latencyVerdictValue.value},
  {id:'download' as const,name:'下载',v:downloadVerdict.value},
  {id:'service' as const,name:'服务',v:serviceVerdict.value},
 ]).filter(o=>o.id!==project.value).map(o=>({...o,at:m.rowPoints(props.node,o.id).reduce((at,p)=>Date.parse(p.time)>Date.parse(at||'1970-01-01')?p.time:at,'')})))
-const runText=computed(()=>project.value==='combined'?'检测这个节点':m.runLabel(project.value))
-const attempts=computed(()=>m.qualityData.value[key(props.node)]?.services||w.services.value[key(props.node)]||[])
+const runText=computed(()=>props.exitOnly?'检测出口与信誉':project.value==='combined'?'检测这个节点':m.runLabel(project.value))
+const attempts=computed(()=>[...new Map([...(m.qualityData.value[key(props.node)]?.services||[]),...(w.services.value[key(props.node)]||[])].map(a=>[a.attempt_id,a])).values()])
 const readError=computed(()=>m.qualityErrors.value[key(props.node)])
 const downloadRecords=computed(()=>[...new Map([...(w.downloads.value[key(props.node)]||[]),...(m.qualityData.value[key(props.node)]?.downloads||[])].map(a=>[a.attempt_id,a])).values()])
 const downloadHistoryContext=computed(()=>{const {latest,valid}=downloadEvidence(downloadRecords.value),speed=downloadSpeed(valid);return valid&&speed!==null?`${valid.attempt_id===latest?.attempt_id?'最近有效速度':'历史有效速度'} ${speed.toFixed(2)} MiB/s（${date(attemptObservedAt(valid))}）`:''})
@@ -77,10 +79,10 @@ function open(p:Project,point:TrendPoint,target?:string,serviceId?:string){m.ope
 const httpError=computed(()=>monitorHTTPServices.some(s=>m.monitorHTTPErrors.value[key(props.node)+':'+s.probeType]))
 const hasHTTP=computed(()=>m.httpPoints(props.node).length>0||httpError.value)
 function httpMetric(id:string){const p=m.httpPoints(props.node,id).at(-1);return p?p.tone==='good'?'HTTP 可达':'失败':'未测'}
-function run(){m.closeHover();w.openPlan([props.node])}
+function run(){m.closeHover();props.exitOnly?w.openReputationPlan([props.node]):w.openPlan([props.node])}
 </script>
 <template>
-  <section class="hd-inspector" :data-project="project" :aria-label="nodeDisplayName(node)+' 详情'">
+  <section class="hd-inspector" :data-project="exitOnly?'exit':project" :aria-label="nodeDisplayName(node)+' 详情'">
     <header class="hd-ins-head">
       <div class="hd-ins-name">
         <span class="hd-flag">{{node.country_code||'—'}}</span>
@@ -94,7 +96,7 @@ function run(){m.closeHover();w.openPlan([props.node])}
 
     <div class="hd-ins-block hd-exit">
       <h3>出口与 IP 信誉</h3>
-      <NodeExitSummary compact :attempts="attempts"/>
+      <p class="landing-result" :class="landing.tone" :title="landing.detail">{{landing.label}}</p><small class="hd-muted">{{landing.detail}}</small><NodeExitSummary compact :attempts="attempts"/>
     </div>
 
     <div v-if="shows('latency')" class="hd-ins-block hd-latency">
@@ -124,7 +126,7 @@ function run(){m.closeHover();w.openPlan([props.node])}
       <h3>解锁检测</h3><UnlockInspector :node="node"/>
     </div>
 
-    <div v-if="(showRound||showHistory)&&m.hoverMode.value!=='latency'" class="hd-ins-detail" @mouseenter="m.keepRound" @mouseleave="m.leaveRound" @keydown.esc.stop="m.closeHover">
+    <div v-if="!exitOnly&&(showRound||showHistory)&&m.hoverMode.value!=='latency'" class="hd-ins-detail" @mouseenter="m.keepRound" @mouseleave="m.leaveRound" @keydown.esc.stop="m.closeHover">
       <header><strong>{{showRound?'这一轮的数据':detailTitle}}</strong>
         <span>
           <button v-if="showRound" class="hd-link" @click="m.expandHistory">看完整走势</button>
