@@ -221,7 +221,7 @@ export function createWorkspace(){
     a=activeAttempt.value?.attempt.attempt_id===a.attempt_id?activeAttempt.value.attempt:a;if(terminal(a.execution_state)&&a.persistence_state!=='saving')break
     try{if(cancelRequested.value&&!terminal(a.execution_state)){const updated=await api.attemptAction(kind,a.attempt_id,serviceScope(node,a.service_id),'cancel');if(!alive(version))break;mergeAttempt(kind,updated)}
       await delay(1000);if(!alive(version))break;a=activeAttempt.value?.attempt.attempt_id===a.attempt_id?activeAttempt.value.attempt:a;if(terminal(a.execution_state)&&a.persistence_state!=='saving')break
-      const updated=await api.attempt(kind,a.attempt_id,serviceScope(node,a.service_id));if(!alive(version))break;mergeAttempt(kind,updated);if(error.value===readError)error.value=''
+      const updated=await api.attempt(kind,a.attempt_id,serviceScope(node,a.service_id));if(!alive(version))break;a=updated;mergeAttempt(kind,a);if(error.value===readError)error.value=''
     }catch(e){if(!alive(version))break;fail(e);readError=error.value;await delay(1000)}
   }if(alive(version)&&error.value===readError)error.value='';return activeAttempt.value?.attempt.attempt_id===a.attempt_id?activeAttempt.value.attempt:a}finally{if(version===lifetime)polling--}}
   function resumePolling(){if(disposed||running.value||polling||pendingStart.value)return;if(activeBatch.value&&!terminal(activeBatch.value.state))void pollBatch(activeBatch.value).catch(fail);else if(activeAttempt.value&&(!terminal(activeAttempt.value.attempt.execution_state)||activeAttempt.value.attempt.persistence_state==='saving')){const a=activeAttempt.value;void pollAttempt(a.kind,a.node,a.attempt).catch(fail)}}
