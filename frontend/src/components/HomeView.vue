@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import {inspectorSamples,stableLatency} from '../inspectorLatency'
 import {sortSiteRows} from '../siteQualityView'
 import {latestServices,readQuality,multiSiteQuality,qualityGroups,downloadEvidence,latencyReadComplete,qualityMatchesGate,type QualityEvidence,type SiteQualityMetric} from '../nodeQuality'
 import {mapLimited} from '../api'
@@ -122,8 +123,8 @@ function openCombinedPlan(){const nodes=[...runNodes.value];closeHover();w.proje
 function runLabel(p:Project){return p==='latency'?'测延迟':p==='download'?'测速':p==='service'?'解锁检测':'组合检测'}
 function toggleAirport(id:string){const selected=w.selectedAirportIds.value||[];w.setAirports(selected.includes(id)?selected.filter(s=>s!==id):[...selected,id])}
 function metricPoint(n:NodeOption,target:string){if(w.sort.value==='latency'&&target===w.displayTarget.value&&w.sortSnapshots.value[key(n)])return w.sortSnapshots.value[key(n)].latency;return sitePoints(n,target).at(-1)}
-function siteMetric(n:NodeOption,target:string){const point=metricPoint(n,target);return latencyPointLabel(point,target)}
-function siteContext(n:NodeOption,target:string){const p=metricPoint(n,target);return p?date(p.time)+(p.source==='monitor'?' · 监测':' · 手动'):'未测'}
+function siteMetric(n:NodeOption,target:string){const point=metricPoint(n,target);const stable=stableLatency([{id:target,points:point?[point]:[]}]);return stable===null?(point?.value!=null?'—':latencyPointLabel(point,target)):Math.round(stable)+' ms'}
+function siteContext(n:NodeOption,target:string){const p=metricPoint(n,target);const first=p?inspectorSamples(p,target)[0]?.value:null;return p?date(p.time)+(p.source==='monitor'?' · 监测':' · 手动')+(first!=null?' · 首次连接 '+Math.round(first)+' ms':''):'未测'}
 function siteReason(n:NodeOption,target:string){return [...new Set(metricPoint(n,target)?.sampleGroups?.find(g=>latencyTargetId(g.target)===target)?.samples.map(s=>s.note||s.error).filter(Boolean)||[])].join('；')}
 function expanded(n:NodeOption){return !!hoverNode.value&&key(hoverNode.value)===key(n)&&!!(activeRound.value||inlineTab.value==='history')}
 function httpPoints(n:NodeOption,id=''){return presentation.http(n,id)}

@@ -56,8 +56,8 @@ const ms=(v:number|null)=>v===null?'—':Math.round(v).toLocaleString()+' ms'
   </template>
   <div v-for="s in data" :key="s.id" class="hd-site latency-range" :title="s.context">
    <span class="hd-site-name">{{s.name}}</span>
-   <div class="range-track"><template v-if="s.values.length"><i :style="{left:pct(Math.min(...s.values)),right:pct(1500-Math.max(...s.values)),background:s.color}"/><b :style="{left:pct(s.median!),background:s.color}"/></template></div>
-   <span class="hd-site-value" :title="s.context">{{ms(s.median)}}</span>
+   <div class="range-track"><template v-if="s.values.length"><i :style="{left:pct(Math.min(...s.values)),right:pct(1500-Math.max(...s.values)),background:s.color}"/><b v-if="s.stable!==null" :style="{left:pct(s.stable!),background:s.color}"/></template></div>
+   <span class="hd-site-value" :title="s.context">{{ms(s.stable)}}</span>
   </div>
   <div class="range-scale"><div class="range-axis"><span v-for="v in [0,500,1000,1500]" :key="v" :style="{left:pct(v)}">{{v}}{{v===1500?' ms':''}}</span></div></div>
  </section>

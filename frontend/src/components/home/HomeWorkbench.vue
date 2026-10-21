@@ -14,6 +14,7 @@ import SiteDisplayPicker from '../SiteDisplayPicker.vue'
 import UnlockServiceMatrix from './UnlockServiceMatrix.vue'
 import NodeInspector from './NodeInspector.vue'
 import NodeCompare from './NodeCompare.vue'
+import {stableLatency} from '../../inspectorLatency'
 import {homeModelKey,latencyVerdict,type Verdict} from './homeModel'
 import {exitLanding} from '../../exitLanding'
 import {unlockGroups,unlockGroupSummary,unlockSummary} from '../../unlock'
@@ -86,7 +87,7 @@ watch(()=>w.viewRequest.value,n=>{
 },{immediate:true})
 function isFocus(n:NodeOption){return !!focusNode.value&&key(focusNode.value)===key(n)}
 function selected(n:NodeOption){return w.selectedKeys.value.includes(key(n))}
-const verdicts=computed<Record<string,Verdict>>(()=>Object.fromEntries(m.pageNodes.value.map(n=>[key(n),latencyVerdict(sites.value.map(s=>m.metricPoint(n,s.id)))])))
+const verdicts=computed<Record<string,Verdict>>(()=>Object.fromEntries(m.pageNodes.value.map(n=>[key(n),latencyVerdict(sites.value.map(s=>m.metricPoint(n,s.id)),stableLatency(sites.value.map(s=>({id:s.id,points:[m.metricPoint(n,s.id)].filter((p):p is NonNullable<typeof p>=>!!p)}))))])))
 function groupSummary(n:NodeOption,id:string){return unlockGroupSummary(id,catalog.value,serviceId=>m.shownService(n,serviceId),w.nodeUnlockRegion(n),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions)}
 function services(n:NodeOption){const summary=unlockSummary(catalog.value,id=>m.shownService(n,id),w.nodeUnlockRegion(n),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions);return {...summary,label:summary.tone==='empty'?'未测':summary.label}}
 function run(){if(exitMode.value){m.closeHover();w.openReputationPlan([...m.runNodes.value]);return}if(w.project.value==='combined')m.openCombinedPlan();else{m.closeHover();w.openPlan([...m.runNodes.value])}}
