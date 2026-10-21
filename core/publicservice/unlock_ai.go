@@ -1,3 +1,5 @@
+// Gemini 的地区码与不可用国家表参考／移植自 beck-8/subs-check
+// check/platform/gemini.go（GPL-3.0）；验证页与请求预算沿用 CST 现有实现。
 package publicservice
 
 import (
@@ -15,6 +17,27 @@ import (
 
 type aiUnlockEndpoint struct {
 	allowedHosts []string
+}
+
+// Gemini blocked list aligned with subs-check check/platform/gemini.go.
+var geminiBlockedCodes = map[string]bool{
+	"CHN": true, "RUS": true, "BLR": true, "CUB": true,
+	"IRN": true, "PRK": true, "SYR": true, "HKG": true, "MAC": true,
+}
+
+func normalizeRegionCode(raw string) string {
+	code := strings.ToUpper(strings.TrimSpace(raw))
+	if validRegionCode(code) {
+		return code
+	}
+	if len(code) == 3 {
+		if region, err := language.ParseRegion(code); err == nil {
+			if value := region.String(); validRegionCode(value) {
+				return value
+			}
+		}
+	}
+	return ""
 }
 
 func aiUnlockRules() []Rule {
@@ -36,10 +59,10 @@ func aiUnlockRules() []Rule {
 			Accept: "text/html,application/xhtml+xml",
 		},
 		{
-			ServiceID: "gemini_unlock", Name: "Gemini（Google）网页解锁", Category: "AI 服务", Region: "全球", ResultKind: "unlock", RuleVersion: 3,
-			Description: "读取 Gemini 页面明确的地区可用标记；不登录或发送消息。",
+			ServiceID: "gemini_unlock", Name: "Gemini（Google）网页解锁", Category: "AI 服务", Region: "全球", ResultKind: "unlock", RuleVersion: 4,
+			Description: "读取 Gemini 页面地区码，对照 Google 不可用国家表；中国香港、中国澳门等按地区不可用处理，不登录或发送消息。",
 			TargetURL:   "https://gemini.google.com/", Method: http.MethodGet,
-			SuccessCriterion: "Gemini 页面出现地区可用标记 45631641,null,true；缺失时未知，不验证账号或消息发送。",
+			SuccessCriterion: "页面 bootstrap 出现 ,2,1,200,\"ISO3\"；CHN 记 Google 判定为中国大陆，RUS/BLR/CUB/IRN/PRK/SYR/HKG/MAC 记地区不可用；其余地区仍须 45631641,null,true 标记；不验证账号或消息发送。",
 			RedirectPolicy:   "probe_specific", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumWebDocumentBytes,
 			Accept: "text/html,application/xhtml+xml",
 		},
@@ -94,17 +117,25 @@ func checkAIUnlock(ctx context.Context, client *http.Client, rule Rule, started 
 	}
 	if rule.ServiceID == "gemini_unlock" {
 		pattern := regexp.MustCompile(`,2,1,200,"([A-Z]{3})"`)
-		region := firstRegexGroup(pattern, body)
+		raw := firstRegexGroup(pattern, body)
 		result.Details["region_field"] = `Gemini bootstrap [,2,1,200,"ISO3"]`
 		result.Details["region_raw"] = pattern.FindString(body)
-		if region != "" {
-			if code, err := language.ParseRegion(region); err == nil {
-				result.Details["service_region"] = code.String()
+		if raw != "" {
+			result.Details["region_alpha3"] = raw
+			if code := normalizeRegionCode(raw); code != "" {
+				result.Details["service_region"] = code
 			}
 		}
+		region := result.Details["service_region"]
 		switch {
-		case result.Details["service_region"] == "CN":
+		case raw == "CHN" || region == "CN":
 			result.Outcome, result.Summary = "region_blocked", "Google 判定为中国大陆"
+		case geminiBlockedCodes[raw]:
+			label := region
+			if label == "" {
+				label = raw
+			}
+			result.Outcome, result.Summary = "region_blocked", "Gemini 在该地区不可用（"+label+"）"
 		case page.status == 200 && !page.truncated && regexp.MustCompile(`45631641,\s*null,\s*true`).MatchString(body):
 			result.Outcome, result.Summary = "unlocked", "Gemini 地区可用标记通过；未验证账号或对话"
 		default:

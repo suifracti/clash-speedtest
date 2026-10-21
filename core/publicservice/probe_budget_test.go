@@ -19,7 +19,7 @@ func TestServiceSocketBudgetFollowsExistingCompositeAndSamplePlan(t *testing.T) 
 		samples, want int
 	}{
 		{"exit_ipv4", 1, 4}, {"exit_ipv6", 4, 5},
-		{"netflix_unlock", 1, 12}, {"netflix_unlock", 4, 42}, {"netflix_unlock", 10, 102},
+		{"netflix_unlock", 1, 13}, {"netflix_unlock", 4, 46}, {"netflix_unlock", 10, 112},
 		{"ippure_ip_quality", 4, 89}, {"youtube_premium", 4, 21},
 		{"paramount_web", 4, 17}, {"abema_unlock", 4, 6}, {"ipok_ipv4", 10, 4},
 	}

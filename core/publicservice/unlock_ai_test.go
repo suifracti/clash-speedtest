@@ -39,6 +39,23 @@ func TestAIUnlockOfficialRegionEvidence(t *testing.T) {
 		})
 	}
 }
+func TestGeminiBlockedCountriesFollowSubsCheckTable(t *testing.T) {
+	rule, _ := RuleFor("gemini_unlock")
+	for _, tc := range []struct{ code, region, summary string }{
+		{"CHN", "CN", "Google 判定为中国大陆"},
+		{"RUS", "RU", "不可用（RU）"},
+		{"HKG", "HK", "不可用（HK）"},
+		{"MAC", "MO", "不可用（MO）"},
+		{"BLR", "BY", "不可用（BY）"},
+	} {
+		body := `<script>,2,1,200,"` + tc.code + `",45631641,null,true</script>`
+		result := checkAIUnlock(context.Background(), aiUnlockFixtureClient(200, body), rule, time.Now())
+		if result.Outcome != "region_blocked" || result.Details["service_region"] != tc.region || !strings.Contains(result.Summary, tc.summary) {
+			t.Fatalf("%s: %+v", tc.code, result)
+		}
+	}
+}
+
 func TestAIUnlockDoesNotTreatMissingEvidenceAsSupported(t *testing.T) {
 	for _, rule := range aiUnlockRules() {
 		result := checkAIUnlock(context.Background(), aiUnlockFixtureClient(200, `<html>Welcome</html>`), rule, time.Now())

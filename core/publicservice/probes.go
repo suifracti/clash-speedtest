@@ -1,3 +1,6 @@
+// Netflix 与 YouTube Premium 的判定流程参考／移植自 beck-8/subs-check
+// check/platform/netflix.go、check/platform/youtube.go（GPL-3.0）。只移植判定
+// 路径、请求头与地区字段读取顺序；节点隔离、证据记录与预算沿用 CST 现有实现。
 package publicservice
 
 import (
@@ -304,130 +307,101 @@ func checkFOD(ctx context.Context, client *http.Client, rule Rule, started time.
 	return finish(result, started)
 }
 
+// Region fields are tried in the same order as subs-check; INNERTUBE_CONTEXT_GL
+// is only read after a Premium marker proves this is the public Premium page.
+var youtubeRegionPatterns = []struct {
+	field   string
+	pattern *regexp.Regexp
+}{
+	{"INNERTUBE_CONTEXT_GL", regexp.MustCompile(`"INNERTUBE_CONTEXT_GL"\s*:\s*"([^"]+)"`)},
+	{"country-code", regexp.MustCompile(`(?i)id=["']country-code["'][^>]*>\s*([A-Za-z]{2,3})\s*<`)},
+	{"GL", regexp.MustCompile(`"GL"\s*:\s*"([A-Za-z]{2})"`)},
+	{"countryCode", regexp.MustCompile(`"countryCode"\s*:\s*"([A-Za-z]{2})"`)},
+	{"country_code", regexp.MustCompile(`"country_code"\s*:\s*"([A-Za-z]{2})"`)},
+}
+
 func checkYouTubePremium(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
-	result, page, ok := readPage(ctx, client, rule.TargetURL, []string{"youtube.com", "google.com"}, map[string]string{"Accept-Language": "en-US,en;q=0.9"}, rule.MaximumBodyBytes)
+	// Browser headers follow subs-check's check/platform/youtube.go request.
+	headers := map[string]string{
+		"User-Agent":         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+		"Accept":             "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+		"Accept-Language":    "en-US,en;q=0.9",
+		"Sec-Ch-Ua":          `"Chromium";v="131", "Not_A Brand";v="24", "Google Chrome";v="131"`,
+		"Sec-Ch-Ua-Platform": `"Windows"`,
+		"Sec-Fetch-Dest":     "document",
+		"Sec-Fetch-Mode":     "navigate",
+		"Sec-Fetch-Site":     "none",
+	}
+	result, page, ok := readPage(ctx, client, rule.TargetURL, []string{"youtube.com", "google.com"}, headers, rule.MaximumBodyBytes)
 	if !ok {
 		return finish(result, started)
 	}
 	text := string(page.body)
+	lower := strings.ToLower(text)
 	result.Details = map[string]string{"final_url": page.finalURL, "document_read_limit": strconv.Itoa(rule.MaximumBodyBytes), "document_truncated": strconv.FormatBool(page.truncated), "account_verified": "false", "playback_verified": "false"}
 	host := ""
 	if u, err := url.Parse(page.finalURL); err == nil {
 		host = u.Hostname()
 	}
-	if strings.HasPrefix(host, "consent.") || strings.Contains(strings.ToLower(text), "before you continue to youtube") {
+	if strings.HasPrefix(host, "consent.") || strings.Contains(lower, "before you continue to youtube") {
 		result.Outcome, result.Summary = "unknown", "YouTube 要求隐私确认，无法判断地区与 Premium"
 		return finish(result, started)
 	}
-	for _, field := range []string{"locationCountryCode", "countryCode", "INNERTUBE_CONTEXT_GL"} {
-		pattern := regexp.MustCompile(`"` + field + `"\s*:\s*"([A-Za-z]{2})"`)
-		match := pattern.FindStringSubmatch(text)
-		if len(match) == 2 {
-			result.Details[field] = match[1]
-			if field != "INNERTUBE_CONTEXT_GL" && result.Details["service_region"] == "" {
-				result.Details["service_region"] = strings.ToUpper(match[1])
-				result.Details["region_field"] = field
-				result.Details["region_raw"] = match[0]
-			}
-		}
+	// www.google.cn is the same CN signal subs-check uses; it also feeds the
+	// Google source of the real-landing comparison through service_region.
+	if strings.Contains(lower, "www.google.cn") {
+		result.Outcome, result.Summary = "region_blocked", "Google 判定为中国大陆（YouTube 页面出现 www.google.cn）"
+		result.Details["service_region"] = "CN"
+		result.Details["region_field"] = "www.google.cn"
+		result.Details["region_raw"] = "www.google.cn"
+		return finish(result, started)
 	}
-	region := result.Details["service_region"]
+	if strings.Contains(lower, "premium is not available in your country") || strings.Contains(lower, "premium is not available in your region") {
+		result.Outcome, result.Summary = "region_blocked", "YouTube Premium 在该地区不可用"
+		return finish(result, started)
+	}
 	if page.truncated {
 		result.Outcome, result.FailurePhase, result.ErrorMessage = "unknown", "response_evidence_limit", "网页超过读取上限，无法确认 Premium"
 		return finish(result, started)
 	}
-	visible := youtubePageText(page.body)
-	result.Details["premium_page_text"] = visible
-	offers := youtubePublicOfferCount(page.body)
+	if page.status < http.StatusOK || page.status >= http.StatusMultipleChoices {
+		result.Outcome, result.Summary = "unknown", "页面未返回正常网页，无法判断"
+		return finish(result, started)
+	}
+	// A positive Premium marker is required before reading any region field.
+	marker := strings.Contains(lower, "youtube premium") || strings.Contains(lower, "ad-free") || strings.Contains(lower, `"browseid":"spunlimited"`)
+	result.Details["premium_marker"] = strconv.FormatBool(marker)
+	if !marker {
+		result.Outcome, result.Summary = "unknown", "页面没有 Premium 标记，无法判断"
+		return finish(result, started)
+	}
+	region, field, raw := youtubePageRegion(text)
 	if region == "" {
 		result.Outcome, result.Summary = "unknown", "页面未返回明确地区，无法判断"
 		return finish(result, started)
 	}
-	switch {
-	case region == "CN":
-		result.Outcome, result.Summary = "region_blocked", "YouTube Premium 在该地区不可用"
-	case region != "" && offers > 0:
-		result.Outcome, result.Summary = "matched", region+" 公开 Premium 方案可见；未验证账号或播放"
-		result.Details["public_offer_count"] = strconv.Itoa(offers)
-		result.Details["premium_evidence"] = "public_offer_page_only"
-	case strings.Contains(strings.ToLower(visible), "premium is not available in your country") || region == "CN":
-		result.Outcome, result.Summary = "region_blocked", "YouTube Premium 在该地区不可用"
-	default:
-		result.Outcome, result.Summary = "unknown", "未取得明确的地区或 Premium 方案，无法判断"
+	result.Details["service_region"] = region
+	result.Details["region_field"] = field
+	result.Details["region_raw"] = raw
+	if region == "CN" {
+		result.Outcome, result.Summary = "region_blocked", "Google 判定为中国大陆"
+		return finish(result, started)
 	}
+	result.Outcome, result.Summary = "matched", region+" 公开 Premium 方案可见；未验证账号或播放"
 	return finish(result, started)
 }
 
-// Read rendered text from ytInitialData, rather than translated messages in ytcfg.
-func youtubePageText(body []byte) string {
-	start := regexp.MustCompile(`\bytInitialData\s*=\s*`).FindIndex(body)
-	if start == nil {
-		return ""
-	}
-	var data any
-	if json.NewDecoder(strings.NewReader(string(body[start[1]:]))).Decode(&data) != nil {
-		return ""
-	}
-	var texts []string
-	var walk func(any)
-	walk = func(v any) {
-		switch x := v.(type) {
-		case map[string]any:
-			for k, value := range x {
-				if k == "text" || k == "simpleText" || k == "content" {
-					if t, ok := value.(string); ok {
-						texts = append(texts, t)
-					}
-				}
-				walk(value)
-			}
-		case []any:
-			for _, value := range x {
-				walk(value)
-			}
+func youtubePageRegion(text string) (region, field, raw string) {
+	for _, candidate := range youtubeRegionPatterns {
+		match := candidate.pattern.FindStringSubmatch(text)
+		if len(match) != 2 {
+			continue
+		}
+		if code := normalizeRegionCode(match[1]); code != "" {
+			return code, candidate.field, match[0]
 		}
 	}
-	if root, ok := data.(map[string]any); ok {
-		walk(root["contents"])
-	}
-	return strings.Join(texts, " · ")
-}
-
-func youtubePublicOfferCount(body []byte) int {
-	start := regexp.MustCompile(`\bytInitialData\s*=\s*`).FindIndex(body)
-	if start == nil {
-		return 0
-	}
-	var data any
-	if json.NewDecoder(strings.NewReader(string(body[start[1]:]))).Decode(&data) != nil {
-		return 0
-	}
-	var count func(any) int
-	count = func(value any) int {
-		total := 0
-		switch v := value.(type) {
-		case map[string]any:
-			if offer, ok := v["lpOfferCardOptionViewModel"].(map[string]any); ok {
-				title, _ := offer["title"].(map[string]any)
-				label, _ := title["content"].(string)
-				button, _ := offer["purchaseButtonOverride"].(map[string]any)
-				view, _ := button["buttonViewModel"].(map[string]any)
-				action, _ := view["onTap"].(map[string]any)
-				if label != "" && len(action) > 0 && view["disabled"] != true {
-					total++
-				}
-			}
-			for _, child := range v {
-				total += count(child)
-			}
-		case []any:
-			for _, child := range v {
-				total += count(child)
-			}
-		}
-		return total
-	}
-	return count(data)
+	return "", "", ""
 }
 
 func checkPrimeVideo(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
@@ -632,6 +606,21 @@ type netflixPage struct {
 
 func checkNetflix(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
 	result := Result{RequestCount: 0, Details: map[string]string{}}
+	if rule.ServiceID == "netflix_unlock" && rule.RuleVersion >= 5 {
+		if region, banned, decided := checkNetflixFast(ctx, client, &result); decided {
+			result.Details["netflix_check_version"] = "fast_api_v1"
+			if banned {
+				result.Outcome, result.FailurePhase = "banned", "netflix_banned"
+				result.Summary = "Netflix 封禁该 IP（Fast.com 返回 403）；未验证账号播放"
+				result.ErrorMessage = "Fast.com 的 Netflix 测速接口直接拒绝该出口，按封禁处理；不是地区片库差异"
+			} else {
+				result.Outcome = "unlocked"
+				result.Details["service_region"] = region
+				result.Summary = "Netflix 完整片库（Fast.com 地区 " + region + "）；未验证账号播放"
+			}
+			return finish(result, started)
+		}
+	}
 	clone := *client
 	clone.CheckRedirect = func(request *http.Request, via []*http.Request) error {
 		host := strings.ToLower(request.URL.Hostname())
@@ -649,6 +638,9 @@ func checkNetflix(ctx context.Context, client *http.Client, rule Rule, started t
 		appendNetflixUnverifiedPlayback(&result)
 		return finish(result, started)
 	}
+	if global.status == http.StatusForbidden && !global.challenge && !global.suspectedChallenge {
+		return netflixBanned(result, started, "自制片目")
+	}
 	globalAvailable, globalBlocked := netflixPageEvidence(&result, "global_title", global, rule)
 	if netflixPageChallenge(&result, global) {
 		return finish(result, started)
@@ -657,6 +649,9 @@ func checkNetflix(ctx context.Context, client *http.Client, rule Rule, started t
 	if !ok {
 		appendNetflixUnverifiedPlayback(&result)
 		return finish(result, started)
+	}
+	if licensed.status == http.StatusForbidden && !licensed.challenge && !licensed.suspectedChallenge {
+		return netflixBanned(result, started, "非自制片目")
 	}
 	licensedAvailable, licensedBlocked := netflixPageEvidence(&result, "licensed_title", licensed, rule)
 	result.HTTPStatus = intPointer(licensed.status)
@@ -693,6 +688,78 @@ func checkNetflix(ctx context.Context, client *http.Client, rule Rule, started t
 		result.Summary = "片目结果不足以判断解锁档位" + regionSummary + "；未验证账号播放"
 		result.ErrorMessage = "两部测试片目均未给出可确认结果；Netflix 片库或页面结构可能已变化"
 	}
+	return finish(result, started)
+}
+
+// checkNetflixFast follows subs-check's checkNetflixCDN: one Fast.com request
+// either yields the region, proves a 403 ban, or gives no conclusion.
+func checkNetflixFast(ctx context.Context, client *http.Client, result *Result) (region string, banned, decided bool) {
+	const target = "https://api.fast.com/netflix/speedtest/v2?https=true&token=YXNkZmFzZGxmbnNkYWZoYXNkZmhrYWxm&urlCount=1"
+	fast := *client
+	fast.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		result.Details["fast_api"] = "request_setup_failed"
+		return "", false, false
+	}
+	request.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+	request.Header.Set("Accept", "application/json")
+	result.RequestCount++
+	response, err := fast.Do(request)
+	if err != nil {
+		// Fast.com is only a shortcut; its failure must not replace the title
+		// evidence that follows.
+		result.Details["fast_api"] = "request_failed"
+		return "", false, false
+	}
+	defer response.Body.Close()
+	status := response.StatusCode
+	result.HTTPStatus = intPointer(status)
+	result.Details["fast_api_http_status"] = strconv.Itoa(status)
+	if strings.EqualFold(strings.TrimSpace(response.Header.Get("cf-mitigated")), "challenge") {
+		result.Details["fast_api"] = "challenge"
+		return "", false, false
+	}
+	if status == http.StatusForbidden {
+		result.Details["fast_api"] = "http_403"
+		return "", true, true
+	}
+	if status != http.StatusOK {
+		result.Details["fast_api"] = "no_conclusion"
+		return "", false, false
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, 64*1024))
+	result.BytesRead += int64(len(body))
+	if err != nil {
+		result.Details["fast_api"] = "read_failed"
+		return "", false, false
+	}
+	var payload struct {
+		Targets []struct {
+			Location struct {
+				Country string `json:"country"`
+			} `json:"location"`
+		} `json:"targets"`
+	}
+	if json.Unmarshal(body, &payload) != nil || len(payload.Targets) == 0 {
+		result.Details["fast_api"] = "no_conclusion"
+		return "", false, false
+	}
+	code := strings.ToUpper(strings.TrimSpace(payload.Targets[0].Location.Country))
+	if !validRegionCode(code) {
+		result.Details["fast_api"] = "no_conclusion"
+		return "", false, false
+	}
+	result.Details["fast_api"] = "region"
+	result.Details["fast_api_region"] = code
+	return code, false, true
+}
+
+func netflixBanned(result Result, started time.Time, title string) Result {
+	result.Outcome, result.FailurePhase = "banned", "netflix_banned"
+	result.Details["netflix_banned_by"] = title
+	result.Summary = "Netflix 封禁该 IP（" + title + "返回 403）；未验证账号播放"
+	result.ErrorMessage = "任一测试片目返回 HTTP 403，按 IP 封禁处理；不是地区片库差异"
 	return finish(result, started)
 }
 

@@ -165,10 +165,10 @@ var catalog = []Rule{
 		RedirectPolicy:   "do_not_follow", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
 	},
 	{
-		ServiceID: "netflix_unlock", Name: "Netflix 片目与地区检查", RuleVersion: 4,
-		Category: "流媒体解锁", Region: "全球", ResultKind: "streaming_unlock", Description: "自动经被测节点查询目标IPv4，分别检查一部Netflix自制片目和一部授权片目；不登录账号，不代表播放。",
-		TargetURL: "https://www.netflix.com/title/" + netflixTitles.OriginalID + " + /title/" + netflixTitles.LicensedID, Method: http.MethodGet,
-		SuccessCriterion: "经同一节点DoH查询一次并固定本轮IPv4；每部片目请求一次，每页最多1MiB；保留TTL、原域名与证书校验；只把自制片目的明确国家提示视为地区封锁，不读取播放分片",
+		ServiceID: "netflix_unlock", Name: "Netflix 片目与地区检查", RuleVersion: 5,
+		Category: "流媒体解锁", Region: "全球", ResultKind: "streaming_unlock", Description: "先经 Fast.com 的 Netflix 测速接口一次取地区，未给出结论时再查自制与非自制两部片目；不登录账号，不代表播放。",
+		TargetURL: "https://api.fast.com/netflix/speedtest/v2 + /title/" + netflixTitles.OriginalID + " + /title/" + netflixTitles.LicensedID, Method: http.MethodGet,
+		SuccessCriterion: "经同一节点DoH查询一次并固定本轮IPv4；Fast.com 200 且返回国家即完整，403 为封禁；未给出结论时每部片目请求一次，任一 403 为封禁，自制片目明确国家提示或404为不可用，仅非自制可访问为仅自制剧；不读取播放分片",
 		RedirectPolicy:   "follow_same_host", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: 1024 * 1024,
 	},
 	{
@@ -217,10 +217,10 @@ var catalog = []Rule{
 	streamingRule("fod_unlock", "FOD 日本地区判定", "日本", "https://geocontrol1.stream.ne.jp/fod-geo/check.xml?time=1624504256", "读取 FOD 地区控制端点，不下载视频。", "XML FLAG TYPE=true 判定地区允许"),
 	streamingRule("hulu_jp_unlock", "Hulu Japan 入口限制检查", "日本", "https://id.hulu.jp/", "识别明确的 restrict 跳转；首页可达不代表地区或播放解锁。", "明确 restrict 跳转记为受限；200 仅记网页可达；403 不推断为地区封锁"),
 	{
-		ServiceID: "youtube_premium", Name: "YouTube Premium 地区判定", Category: "流媒体解锁", Region: "全球", ResultKind: "streaming_unlock", RuleVersion: 5,
-		TargetURL: "https://www.youtube.com/premium", Method: http.MethodGet,
-		Description:      "读取公开地区及订阅方案；仅此规则每请求最多读取2MiB网页，不验证账号或播放。",
-		SuccessCriterion: "可识别地区且页面实际订阅方案及按钮存在，才记公开方案判据通过；广告文案不算；不验证购买或播放",
+		ServiceID: "youtube_premium", Name: "YouTube Premium 地区判定", Category: "流媒体解锁", Region: "全球", ResultKind: "streaming_unlock", RuleVersion: 6,
+		TargetURL: "https://www.youtube.com/premium?hl=en", Method: http.MethodGet,
+		Description:      "浏览器请求头读取公开页面：出现 www.google.cn 判中国大陆，出现地区不可用提示判不可用，有 Premium 标记时按字段顺序读地区；不验证账号或播放。",
+		SuccessCriterion: "页面含 www.google.cn 判 CN；含 premium is not available in your country/region 判不可用；否则须有 Premium 标记且读到地区，读不到记无法判断，不默认 US；不验证购买或播放",
 		RedirectPolicy:   "probe_specific", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumWebDocumentBytes,
 	},
 	streamingRule("prime_video", "Prime Video 地区判定", "全球", "https://www.primevideo.com/", "读取 Prime Video 首页公开的 territory 与限制标记。", "currentTerritory 存在且 isServiceRestricted 明确为 false 才通过地区判据，不代表播放"),
@@ -502,9 +502,6 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	if c.DriftSamples < 0 || c.DriftSamples > 10 {
 		return finish(Result{Outcome: "not_executed", FailurePhase: "request_setup", ErrorMessage: "服务观察次数必须在 1–10 次范围内；未发出请求"}, startedAt)
 	}
-	if rule.ServiceID == "disney_unlock" {
-		return checkDisneyRegion(ctx, nil, rule, startedAt)
-	}
 	if rule.ServiceID == "kktv_tw" {
 		return finish(Result{Outcome: "not_executed", FailurePhase: "service_retired", Summary: "KKTV 已结束营运", ErrorMessage: "官方已结束营运；保留历史，不发起节点检测请求", Details: map[string]string{"not_executed_reason": "service_retired", "reference_url": "https://events.kktv.me/tw/faq-card-177"}}, startedAt)
 	}
@@ -562,7 +559,7 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	}
 	defer phases.attach(&final)
 	if host := selectedNodeIPv4Host(rule); host != "" {
-		resolved, evidence, failure := prepareTargetIPv4(ctx, client, phases, host)
+		resolved, evidence, failure := prepareTargetIPv4(ctx, client, phases, host, targetPassthroughHosts(rule))
 		defer func() { evidence.attach(&final) }()
 		if failure != nil {
 			return finish(*failure, startedAt)
@@ -1147,7 +1144,7 @@ func isSuccessOutcome(outcome string) bool {
 // Keep this evidence boundary aligned with frontend serviceAvailability.
 func isFailureOutcome(r Result) bool {
 	switch r.Outcome {
-	case "region_blocked", "region_limited", "originals_only", "service_rejected", "challenge":
+	case "region_blocked", "region_limited", "originals_only", "banned", "service_rejected", "challenge":
 		return true
 	case "http_rejected":
 		return r.HTTPStatus != nil && *r.HTTPStatus >= 400 && *r.HTTPStatus < 500 && *r.HTTPStatus != 401 && *r.HTTPStatus != 429

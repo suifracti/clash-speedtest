@@ -39,6 +39,13 @@ it('counts verification in 2/3 and shows Spotify registration restriction in ora
  expect(unlockResult({...attempt('service_rejected'),service_id:'spotify_unlock',result:{...attempt('service_rejected').result!,summary:'Spotify 拒绝代理 IP 注册'}})).toMatchObject({state:'partial',tone:'warn',label:'限注册',reason:'识别为代理 IP，已有账号通常不受影响'})
 })
 
+it('marks an IP ban red and a blocked Gemini region amber',()=>{
+ const banned={...attempt('banned'),service_id:'netflix_unlock',result:{...attempt('banned').result!,summary:'Netflix 封禁该 IP'}}
+ expect(unlockResult(banned)).toMatchObject({state:'unavailable',tone:'bad',label:'封禁'})
+ const gemini={...attempt('region_blocked'),service_id:'gemini_unlock',result:{...attempt('region_blocked').result!,details:{service_region:'HK'},summary:'Gemini 在该地区不可用（HK）'}}
+ expect(unlockResult(gemini)).toMatchObject({state:'unavailable',tone:'warn',label:'不可用（HK）'})
+})
+
 it('disables new Disney checks while preserving successful old results',()=>{
  expect(unlockSupported('disney_unlock')).toBe(false)
  expect(unlockResult(undefined,'disney_unlock')).toMatchObject({label:'暂不支持',tone:'empty'})

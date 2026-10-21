@@ -6,34 +6,41 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/faceair/clash-speedtest/core/monitor"
 )
 
-// Synthetic public-page shapes; no provider tokens, account data or copied page.
-const premiumOfferFixture = `<script>var ytInitialData = {"contents":{"lpOfferCardOptionViewModel":{"title":{"content":"fixture plan"},"purchaseButtonOverride":{"buttonViewModel":{"onTap":{"innertubeCommand":{"fixture":true}}}}}}};</script>`
+// Synthetic page shapes mirror subs-check's verdicts; no provider tokens or copied page.
+func youtubeFixture(t *testing.T, body string) *http.Client {
+	t.Helper()
+	return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Query().Get("hl") != "en" {
+			t.Error("missing hl=en")
+		}
+		if req.Header.Get("Sec-Ch-Ua") == "" || req.Header.Get("Sec-Fetch-Mode") != "navigate" || !strings.Contains(req.Header.Get("User-Agent"), "Windows") {
+			t.Error("missing browser headers")
+		}
+		return fixtureResponse(req, 200, "text/html", body), nil
+	})}
+}
 
-func TestYouTubePremiumUsesOfferEvidenceInsteadOfMarketingText(t *testing.T) {
-	for _, tc := range []struct{ name, region, body, want string }{
-		{"offer after old read limit", "SG", strings.Repeat(" ", MaximumResponseBytes+128) + premiumOfferFixture, "matched"},
-		{"generic marketing is not an offer", "SG", `<meta name="description" content="ad-free videos">`, "unknown"},
-		{"unrelated Google CN link is not a region", "SG", `<a href="https://www.google.cn/">link</a>` + premiumOfferFixture, "matched"},
-		{"explicit CN stays restricted", "CN", premiumOfferFixture, "region_blocked"},
-		{"lowercase country code", "cn", premiumOfferFixture, "region_blocked"},
-		{"offer title without actionable button", "SG", `<script>var ytInitialData={"lpOfferCardOptionViewModel":{"title":{"content":"fixture plan"}}};</script>`, "unknown"},
+func TestYouTubePremiumVerdicts(t *testing.T) {
+	for _, tc := range []struct{ name, body, want, region string }{
+		{"google cn means mainland", `<html>YouTube <a href="https://www.google.cn/">link</a></html>`, "region_blocked", "CN"},
+		{"country unavailable", `<html><h1>YouTube Premium is not available in your country</h1></html>`, "region_blocked", ""},
+		{"region unavailable", `<html>premium is not available in your region</html>`, "region_blocked", ""},
+		{"innertube context region", `<script>var ytcfg={"INNERTUBE_CONTEXT_GL":"SG"};</script><title>YouTube Premium</title>`, "matched", "SG"},
+		{"innertube wins over country code", `<script>{"INNERTUBE_CONTEXT_GL":"JP","countryCode":"US"}</script><title>YouTube Premium</title>`, "matched", "JP"},
+		{"country-code element", `<title>YouTube Premium</title><span id="country-code">HK</span>`, "matched", "HK"},
+		{"premium marker without region", `<html>YouTube Premium</html>`, "unknown", ""},
+		{"marketing text is not a premium marker", `<meta name="description" content="videos">`, "unknown", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rule, _ := RuleFor("youtube_premium")
-			body := `<script>var cfg={"countryCode":"` + tc.region + `"};</script>` + tc.body
-			checker := Checker{ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
-				return fixtureResponse(req, 200, "text/html", body), nil
-			})}
-			r := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
-			if r.Outcome != tc.want {
-				t.Fatalf("outcome=%s want=%s result=%+v", r.Outcome, tc.want, r)
+			result := checkYouTubePremium(context.Background(), youtubeFixture(t, tc.body), rule, time.Now())
+			if result.Outcome != tc.want {
+				t.Fatalf("outcome=%s want=%s result=%+v", result.Outcome, tc.want, result)
 			}
-			if r.Details["service_region"] != strings.ToUpper(tc.region) {
-				t.Fatalf("region lost: %+v", r)
+			if tc.region != "" && result.Details["service_region"] != tc.region {
+				t.Fatalf("region=%q want=%q details=%v", result.Details["service_region"], tc.region, result.Details)
 			}
 		})
 	}
@@ -42,32 +49,20 @@ func TestYouTubePremiumUsesOfferEvidenceInsteadOfMarketingText(t *testing.T) {
 func TestYouTubePremiumOversizeRemainsUnconfirmed(t *testing.T) {
 	rule, _ := RuleFor("youtube_premium")
 	const limit = 2 * 1024 * 1024
-	body := `{"countryCode":"SG"}` + premiumOfferFixture + strings.Repeat(" ", limit)
-	checker := Checker{ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+	body := `<title>YouTube Premium</title>` + strings.Repeat(" ", limit)
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return fixtureResponse(req, 200, "text/html", body), nil
 	})}
-	r := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
-	if r.Outcome != "unknown" || r.FailurePhase != "response_evidence_limit" || r.BytesRead != limit {
-		t.Fatalf("oversize became a verdict or used wrong bound: %+v", r)
+	result := checkYouTubePremium(context.Background(), client, rule, time.Now())
+	if result.Outcome != "unknown" || result.FailurePhase != "response_evidence_limit" || result.BytesRead != limit {
+		t.Fatalf("oversize became a verdict or used wrong bound: %+v", result)
 	}
 }
 
-func TestYouTubeConsentAndConfigTextDoNotBecomeVerdicts(t *testing.T) {
-	for _, tc := range []struct{ body, want string }{
-		{`<script>var cfg={"INNERTUBE_CONTEXT_GL":"US"};var ytInitialData={"contents":{"title":{"content":"YouTube Premium is not available in your country"}}};</script>`, "unknown"},
-		{`<h1>Before you continue to YouTube</h1>{"countryCode":"US"}` + premiumOfferFixture, "unknown"},
-		{`<script>var cfg={"countryCode":"JP","unavailable":"Premium is not available in your country"};</script>` + premiumOfferFixture, "matched"},
-	} {
-		r, _ := RuleFor("youtube_premium")
-		client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			if req.Header.Get("Accept-Language") == "" || req.Header.Get("User-Agent") == "" {
-				t.Fatal("missing browser headers")
-			}
-			return fixtureResponse(req, 200, "text/html", tc.body), nil
-		})}
-		got := checkYouTubePremium(context.Background(), client, r, time.Now())
-		if got.Outcome != tc.want {
-			t.Fatalf("got %+v", got)
-		}
+func TestYouTubeConsentPageStaysUnknown(t *testing.T) {
+	rule, _ := RuleFor("youtube_premium")
+	result := checkYouTubePremium(context.Background(), youtubeFixture(t, `<h1>Before you continue to YouTube</h1>{"countryCode":"US"}`), rule, time.Now())
+	if result.Outcome != "unknown" {
+		t.Fatalf("consent page became a verdict: %+v", result)
 	}
 }

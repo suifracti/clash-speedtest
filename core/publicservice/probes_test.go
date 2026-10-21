@@ -27,7 +27,7 @@ func TestServiceEvidenceDoesNotConfuseAccessWithAvailability(t *testing.T) {
 		{"netflix login is not a title", "netflix_unlock", 200, `<html>Sign in</html>`, "unknown"},
 		{"netflix login heading is not a title", "netflix_unlock", 200, `<html><h1>Sign in</h1></html>`, "unknown"},
 		{"netflix maintenance heading is not a title", "netflix_unlock", 200, `<html><h1>Service temporarily unavailable</h1></html>`, "unknown"},
-		{"netflix HTTP rejection is not a region block", "netflix_unlock", 403, `Forbidden`, "unknown"},
+		{"netflix HTTP rejection is banned", "netflix_unlock", 403, `Forbidden`, "banned"},
 		{"empty DNS document", "cloudflare_doh", 200, `{}`, "criteria_mismatch"},
 		{"soft challenge is not access", "grok_web", 200, `<title>Just a moment...</title><script src="/cdn-cgi/challenge-platform/x"></script>`, "challenge"},
 	} {

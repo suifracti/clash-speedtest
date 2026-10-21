@@ -12,6 +12,8 @@ export function unlockResult(a?:Attempt,serviceId?:string){
  const google=['gemini_unlock','youtube_premium','google_region'].includes(a?.service_id||a?.rule.service_id||'')
  if(o==='verification_required'||(google&&/https:\/\/(?:[^/]+\.)?google\.com\/(?:sorry|recaptcha)/i.test(String(details.final_url||''))))return {state:'verification',tone:'warn',label:'需人机验证',reason:'Google 对该 IP 要求验证，实际使用时也会遇到',region}
  if(google&&region==='CN'&&o==='region_blocked')return {state:'unavailable',tone:'bad',label:'Google 判定为中国大陆',reason:r.summary||'Google 判定为中国大陆',region}
+ if((a?.service_id||a?.rule.service_id)==='gemini_unlock'&&o==='region_blocked'&&region)return {state:'unavailable',tone:'warn',label:'不可用（'+region+'）',reason:r.summary||'该地区不可用',region}
+ if(o==='banned')return {state:'unavailable',tone:'bad',label:'封禁',reason:r.summary||r.error_message||'服务封禁该 IP',region}
  const spotify=(a?.service_id||a?.rule.service_id)==='spotify_unlock'
  if(spotify&&o==='service_rejected'&&/代理|proxy/i.test(r.summary||r.error_message||''))return {state:'partial',tone:'warn',label:'限注册',reason:'识别为代理 IP，已有账号通常不受影响',region}
  const netflix=['netflix_unlock','netflix_unlock_ipv4'].includes(a?.service_id||a?.rule.service_id||'')

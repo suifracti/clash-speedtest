@@ -22,9 +22,20 @@ func TestCompositeFailureDoesNotReusePreviousHTTPStatus(t *testing.T) {
 				if service == "antigravity" {
 					firstBody = `{"cloudaicompanionProject":"fixture-project"}`
 				}
+				fastBytes := 0
+				if service == "netflix_unlock" {
+					fastBytes = len(`{"targets":[]}`)
+				}
 				client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 					calls++
-					if calls == 1 {
+					firstCall := 1
+					if service == "netflix_unlock" {
+						firstCall = 2
+						if calls == 1 {
+							return fixtureResponse(req, 200, "application/json", `{"targets":[]}`), nil
+						}
+					}
+					if calls == firstCall {
 						return fixtureResponse(req, 200, "", firstBody), nil
 					}
 					if !afterHeaders {
@@ -45,7 +56,11 @@ func TestCompositeFailureDoesNotReusePreviousHTTPStatus(t *testing.T) {
 				} else {
 					got = (Checker{}).checkOnce(context.Background(), client, monitor.MonitoredNode{}, rule, time.Now())
 				}
-				if calls != 2 || got.BytesRead != int64(len(firstBody)) {
+				wantCalls := 2
+				if service == "netflix_unlock" {
+					wantCalls = 3
+				}
+				if calls != wantCalls || got.BytesRead != int64(len(firstBody)+fastBytes) {
 					t.Fatalf("prior request evidence lost: calls=%d result=%+v", calls, got)
 				}
 				if !afterHeaders && (got.HTTPStatus != nil || got.Outcome != "transport_error") {

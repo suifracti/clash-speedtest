@@ -11,7 +11,7 @@ function incompleteServiceSamples(a?:Attempt){
  const d=a?.result?.details
  return !!d&&(d.sample_completion==='partial'||['sample_unknown','sample_cancelled','sample_not_executed','sample_unstarted'].some(k=>Number(d[k])>0))
 }
-const evidencedServiceFailures=['region_blocked','region_limited','originals_only','service_rejected','challenge']
+const evidencedServiceFailures=['region_blocked','region_limited','originals_only','banned','service_rejected','challenge']
 export function servicePassed(a?:Attempt){return serviceExecuted(a)&&!serviceIsProfile(a)&&!incompleteServiceSamples(a)&&['matched','unlocked'].includes(a!.result!.outcome)}
 // 0 requires observed rejection/criterion evidence; unknown/transport/quota is not 0.
 export function serviceAvailability(a?:Attempt):0|1|null {

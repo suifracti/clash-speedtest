@@ -144,7 +144,7 @@ func TestNetflixIPv4OptionPreservesIdentityAndOriginalRule(t *testing.T) {
 		t.Fatal("missing separate opt-in Netflix IPv4 rule")
 	}
 	original, _ := RuleFor("netflix_unlock")
-	if rule.ServiceID == original.ServiceID || original.RuleVersion != 4 || rule.BatchDefault {
+	if rule.ServiceID == original.ServiceID || original.RuleVersion != 5 || rule.BatchDefault {
 		t.Fatal("new mode replaced the original or became default")
 	}
 	f := newNetflixDNSFixture(t)
@@ -290,8 +290,37 @@ func TestDefaultNetflixAutomaticallyUsesSelectedNodeIPv4(t *testing.T) {
 	r := c.Check(context.Background(), monitor.MonitoredNode{}, rule, 2*time.Second)
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.dnsCalls != 1 || f.titleCalls != 2 || r.RequestCount != 3 || rule.RuleVersion != 4 || r.Details["target_dns_mode"] != "selected_node_doh_ipv4_v1" {
+	if f.dnsCalls != 1 || f.titleCalls != 2 || r.RequestCount != 4 || rule.RuleVersion != 5 || r.Details["target_dns_mode"] != "selected_node_doh_ipv4_v1" {
 		t.Fatalf("default rule did not resolve through selected node: dns=%d title=%d version=%d details=%v", f.dnsCalls, f.titleCalls, rule.RuleVersion, r.Details)
+	}
+}
+
+func TestNetflixFastAPIHasTheFinalSay(t *testing.T) {
+	rule, _ := RuleFor("netflix_unlock")
+	for _, tc := range []struct {
+		name, body, want, region string
+		status                   int
+	}{
+		{"region decides full", `{"targets":[{"location":{"country":"sg"}}]}`, "unlocked", "SG", 200},
+		{"403 decides ban", `{}`, "banned", "", 403},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				calls++
+				if req.URL.Host != "api.fast.com" {
+					t.Fatalf("Fast.com verdict did not stop the title chain: %s", req.URL)
+				}
+				return fixtureResponse(req, tc.status, "application/json", tc.body), nil
+			})}
+			result := checkNetflix(context.Background(), client, rule, time.Now())
+			if result.Outcome != tc.want || calls != 1 || result.Details["netflix_check_version"] != "fast_api_v1" {
+				t.Fatalf("calls=%d result=%+v", calls, result)
+			}
+			if tc.region != "" && result.Details["service_region"] != tc.region {
+				t.Fatalf("region=%q details=%v", result.Details["service_region"], result.Details)
+			}
+		})
 	}
 }
 
@@ -299,6 +328,9 @@ func TestNetflixDefaultLicensedRestrictionMeansOriginalsOnly(t *testing.T) {
 	rule, _ := RuleFor("netflix_unlock")
 	calls := map[string]int{}
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Host == "api.fast.com" {
+			return fixtureResponse(req, 200, "application/json", `{"targets":[]}`), nil
+		}
 		if strings.Contains(req.URL.Path, netflixTitles.OriginalID) {
 			calls["original"]++
 			return fixtureResponse(req, http.StatusOK, "text/html", `<h1 class="title-title">Stranger Things</h1>`), nil
@@ -334,7 +366,7 @@ func TestDefaultNetflixTitleRateLimitStopsWithoutRetry(t *testing.T) {
 	r := c.Check(context.Background(), monitor.MonitoredNode{}, rule, 2*time.Second)
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if r.Outcome != "rate_limited" || f.dnsCalls != 1 || f.titleCalls != 1 || r.RequestCount != 2 {
+	if r.Outcome != "rate_limited" || f.dnsCalls != 1 || f.titleCalls != 1 || r.RequestCount != 3 {
 		t.Fatalf("rate limit was retried: dns=%d title=%d result=%+v", f.dnsCalls, f.titleCalls, r)
 	}
 }

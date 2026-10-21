@@ -26,7 +26,10 @@ func TestNetflixStopsOnChallengeHeadersBeforeReadingBody(t *testing.T) {
 			calls := 0
 			client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 				calls++
-				if title == "second" && calls == 1 {
+				if req.URL.Host == "api.fast.com" {
+					return fixtureResponse(req, 200, "application/json", `{"targets":[]}`), nil
+				}
+				if title == "second" && calls == 2 {
 					return fixtureResponse(req, 200, "text/html", `<html>nflx://www.netflix.com/title/fixture</html>`), nil
 				}
 				response := fixtureResponse(req, 403, "text/html", "")
@@ -37,9 +40,9 @@ func TestNetflixStopsOnChallengeHeadersBeforeReadingBody(t *testing.T) {
 			// Exercise the current rule's title chain after DNS preparation; the
 			// selected-node DNS/TLS path has separate local-server coverage.
 			got := (Checker{}).checkOnce(context.Background(), client, monitor.MonitoredNode{}, rule, time.Now())
-			wantCalls := 1
+			wantCalls := 2
 			if title == "second" {
-				wantCalls = 2
+				wantCalls = 3
 			}
 			if got.Outcome != "challenge" || got.HTTPStatus == nil || *got.HTTPStatus != 403 || got.RequestCount != wantCalls || calls != wantCalls || body.reads != 0 || !body.closed {
 				t.Fatalf("challenge became body/connection failure: reads=%d closed=%v calls=%d result=%+v", body.reads, body.closed, calls, got)
@@ -58,13 +61,16 @@ func TestNetflixFirstPageBarrierIsNotHiddenByLaterConnectionFailure(t *testing.T
 			calls := 0
 			client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 				calls++
-				if calls == 1 {
+				if req.URL.Host == "api.fast.com" {
+					return fixtureResponse(req, 200, "application/json", `{"targets":[]}`), nil
+				}
+				if calls == 2 {
 					return fixtureResponse(req, 200, "text/html", tc.body), nil
 				}
 				return nil, io.EOF
 			})}
 			got := (Checker{}).checkOnce(context.Background(), client, monitor.MonitoredNode{}, rule, time.Now())
-			if got.Outcome != tc.outcome || calls != 1 || got.RequestCount != 1 || got.HTTPStatus == nil || *got.HTTPStatus != 200 || got.BytesRead != int64(len(tc.body)) {
+			if got.Outcome != tc.outcome || calls != 2 || got.RequestCount != 2 || got.HTTPStatus == nil || *got.HTTPStatus != 200 || got.BytesRead != int64(len(tc.body))+int64(len(`{"targets":[]}`)) {
 				t.Fatalf("first page evidence discarded or extra request made: calls=%d result=%+v", calls, got)
 			}
 			if tc.outcome == "suspected_challenge" && isFailureOutcome(got) {

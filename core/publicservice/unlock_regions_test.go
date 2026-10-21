@@ -2,7 +2,6 @@ package publicservice
 
 import (
 	"context"
-	"github.com/faceair/clash-speedtest/core/monitor"
 	"net/http"
 	"strings"
 	"testing"
@@ -39,14 +38,35 @@ func TestRegionUnlockAPIs(t *testing.T) {
 	}
 }
 
-func TestDisneyUnsupportedDoesNotCreateClient(t *testing.T) {
+func TestDisneyRegionFlow(t *testing.T) {
 	rule, _ := RuleFor("disney_unlock")
-	checker := Checker{ClientFactory: func(monitor.MonitoredNode, time.Duration) (*http.Client, error) {
-		t.Fatal("unsupported service must not open a node client")
+	calls := 0
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		if req.URL.Host != "disney.api.edge.bamgrid.com" {
+			t.Fatalf("unexpected Disney target %s", req.URL)
+		}
+		switch req.URL.Path {
+		case "/devices":
+			return fixtureResponse(req, 200, "application/json", `{"assertion":"fixture-assertion"}`), nil
+		case "/token":
+			return fixtureResponse(req, 200, "application/json", `{"refresh_token":"fixture-refresh"}`), nil
+		case "/graph/v1/device/graphql":
+			return fixtureResponse(req, 200, "application/json", `{"data":{"countryCode":"SG","inSupportedLocation":true}}`), nil
+		}
+		t.Fatalf("unexpected Disney path %s", req.URL.Path)
 		return nil, nil
-	}}
-	got := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, time.Second)
-	if got.Outcome != "not_executed" || got.Summary != "暂不支持" || got.RequestCount != 0 {
-		t.Fatalf("%+v", got)
+	})}
+	got := checkDisneyRegion(context.Background(), client, rule, time.Now())
+	if got.Outcome != "unlocked" || got.Details["service_region"] != "SG" || calls != 3 || rule.RuleVersion != 4 {
+		t.Fatalf("Disney flow did not reach a region: calls=%d result=%+v", calls, got)
+	}
+
+	banned := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return fixtureResponse(req, http.StatusForbidden, "application/json", `{}`), nil
+	})}
+	blocked := checkDisneyRegion(context.Background(), banned, rule, time.Now())
+	if blocked.Outcome != "banned" || blocked.Details["service_region"] != "" {
+		t.Fatalf("Disney 403 was not treated as a ban: %+v", blocked)
 	}
 }

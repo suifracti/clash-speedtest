@@ -9,8 +9,13 @@ func serviceSocketBudget(rule Rule, observations int) int {
 	switch rule.ServiceID {
 	case "netflix_unlock", netflixIPv4Service:
 		perSample = 10 // two titles, each initial request plus at most four redirects
+		if rule.ServiceID == "netflix_unlock" && rule.RuleVersion >= 5 {
+			perSample = 11 // plus one Fast.com pre-check
+		}
 	case "fod_unlock", "youtube_premium", "google_region", "prime_video", "hulu_jp_unlock", "google_search":
 		perSample = 5 // readPage's initial request plus at most four redirects
+	case "disney_unlock":
+		perSample = 4 // devices, token, graphql, and the home-page fallback
 	case "ippure_ip_quality":
 		if rule.RuleVersion >= 3 {
 			perSample = 4

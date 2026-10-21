@@ -31,6 +31,16 @@ func netflixUsesResolvedIPv4(rule Rule) bool {
 	return rule.ServiceID == netflixIPv4Service || (rule.ServiceID == "netflix_unlock" && rule.RuleVersion >= 3)
 }
 
+// targetPassthroughHosts lists hosts that may use the node's normal resolver
+// while the Netflix title host stays pinned to one IPv4. Fast.com is only a
+// pre-check and is not part of the saved title evidence.
+func targetPassthroughHosts(rule Rule) []string {
+	if rule.ServiceID == "netflix_unlock" && rule.RuleVersion >= 5 {
+		return []string{"api.fast.com"}
+	}
+	return nil
+}
+
 var errTargetDNSHost = errors.New("当前解析结果只适用于本次固定服务主机443端口；不回退到其它解析方式")
 
 // One lookup belongs to one checker/selected node. It is never a global DNS
@@ -38,6 +48,7 @@ var errTargetDNSHost = errors.New("当前解析结果只适用于本次固定服
 type targetIPv4Evidence struct {
 	host                               string
 	phases                             *requestPhases
+	passthrough                        []string
 	ip                                 string
 	ttl                                uint32
 	expires                            time.Time
@@ -51,6 +62,20 @@ func (e *targetIPv4Evidence) address(address string) (string, error) {
 		return "", errTargetDNSHost
 	}
 	return net.JoinHostPort(e.ip, port), nil
+}
+
+func (e *targetIPv4Evidence) passthroughAddress(address string) bool {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil || port != "443" {
+		return false
+	}
+	host = strings.ToLower(host)
+	for _, allowed := range e.passthrough {
+		if host == allowed {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *targetIPv4Evidence) attach(result *Result) {
@@ -84,6 +109,10 @@ func (e *targetIPv4Evidence) attach(result *Result) {
 	e.phases.mu.Unlock()
 	d["target_http_attempts"] = strconv.Itoa(max(0, attempts-e.dnsAttempts))
 	d["target_http_requests_written"] = strconv.Itoa(max(0, written-e.dnsWritten))
+	if len(e.passthrough) > 0 {
+		d["target_dns_passthrough_hosts"] = strings.Join(e.passthrough, ",")
+		d["target_dns_passthrough_note"] = "预检请求使用节点自身解析，不进入固定 IPv4 的片目证据"
+	}
 	result.BytesRead += e.dnsBytes
 }
 
@@ -108,10 +137,13 @@ func (e *targetIPv4Evidence) transport(original http.RoundTripper) (http.RoundTr
 				return nil, err
 			}
 			target, err := e.address(address)
-			if err != nil {
-				return nil, err
+			if err == nil {
+				return dial(ctx, network, target)
 			}
-			return dial(ctx, network, target)
+			if e.passthroughAddress(address) {
+				return dial(ctx, network, address)
+			}
+			return nil, err
 		}
 		return clone, true
 	default:
@@ -119,8 +151,8 @@ func (e *targetIPv4Evidence) transport(original http.RoundTripper) (http.RoundTr
 	}
 }
 
-func prepareTargetIPv4(ctx context.Context, client *http.Client, phases *requestPhases, host string) (*http.Client, *targetIPv4Evidence, *Result) {
-	evidence := &targetIPv4Evidence{phases: phases, host: host}
+func prepareTargetIPv4(ctx context.Context, client *http.Client, phases *requestPhases, host string, passthrough []string) (*http.Client, *targetIPv4Evidence, *Result) {
+	evidence := &targetIPv4Evidence{phases: phases, host: host, passthrough: passthrough}
 	transport, ok := evidence.transport(client.Transport)
 	if !ok {
 		r := Result{Outcome: "not_executed", FailurePhase: "target_dns_setup", ErrorMessage: "当前客户端无法保持所选节点及 TLS 语义；未发起 IPv4 解析或片目请求"}

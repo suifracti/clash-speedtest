@@ -342,7 +342,7 @@ func (s *AppService) executeWorkbenchPublicServiceTest(ctx context.Context, runt
 		executionState = "not_executed"
 	}
 	switch result.Outcome {
-	case "matched", "profiled", "reachable", "challenge", "unlocked", "originals_only", "region_limited", "service_rejected", "region_blocked", "unknown", "auth_failed", "permission_denied", "setup_required", "rate_limited", "flapping":
+	case "matched", "profiled", "reachable", "challenge", "unlocked", "originals_only", "banned", "region_limited", "service_rejected", "region_blocked", "unknown", "auth_failed", "permission_denied", "setup_required", "rate_limited", "flapping":
 		executionState = "completed"
 	case "cancelled":
 		executionState = "cancelled"
