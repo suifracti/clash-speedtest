@@ -20,6 +20,7 @@ var errWorkbenchAdmissionBusy = errors.New("主动检测通道繁忙")
 type publicServiceRuntime struct {
 	timingNS     map[string]int64
 	networkDone  chan struct{}
+	profileID    string
 	attemptID    string
 	requestID    string
 	cancel       context.CancelFunc
@@ -143,7 +144,18 @@ func (s *AppService) startWorkbenchPublicServiceTest(ctx context.Context, req Wo
 	if s.publicServiceActive == nil {
 		s.publicServiceActive = make(map[string]*publicServiceRuntime)
 	}
-	blocked := len(s.publicServiceActive) > 0
+	blocked := false
+	manualRunning := 0
+	for _, active := range s.publicServiceActive {
+		if !probeNetworkRunning(active.networkDone) {
+			continue
+		}
+		if active.periodic || active.profileID != profileID || active.node.NodeIdentityKey != identityKey || active.node.ConfigRevisionKey != revisionKey {
+			blocked = true
+		}
+		manualRunning++
+	}
+	blocked = blocked || manualRunning >= 6
 	if periodicLimit > 0 {
 		blocked = false
 		measuring := 0
@@ -236,6 +248,7 @@ func (s *AppService) startWorkbenchPublicServiceTest(ctx context.Context, req Wo
 		ctx, cancel = context.WithCancel(context.Background())
 	}
 	runtime := &publicServiceRuntime{
+		profileID:    profileID,
 		timingNS:     timings,
 		networkDone:  make(chan struct{}),
 		attemptID:    attempt.AttemptID,

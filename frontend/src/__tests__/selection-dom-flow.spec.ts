@@ -55,7 +55,7 @@ describe('node selection through DOM controls',()=>{
     const {w,wrapper}=attach([a],['airport-a']);w.catalog.value=[{service_id:'google_204',name:'Google 204 连通性',category:'基础网络',description:'',result_kind:'connectivity',success_criterion:'exact 204',timeout_seconds:10}];w.displayServiceIds.value=['google_204'];w.project.value='service';await flushPromises()
     expect(w.jobs.value).toEqual([])
     expect(wrapper.findAll('.hd-http .hd-site-value').map(m=>m.text())).toEqual(['失败','HTTP 可达'])
-    expect(wrapper.findAll('.hd-svc-cell').map(m=>m.text())).toEqual(['未测'])
+    expect(wrapper.findAll('.hd-svc-cell').map(m=>m.text())).toEqual(['—','—','—'])
     expect(wrapper.findAll('.health-cell.has-record')).toHaveLength(3)
     const googleBars=wrapper.get('.health-bars[aria-label="Google 基础 HTTP历史状态，悬停查看本轮数据"]')
     await googleBars.findAll('.has-record').at(-1)!.trigger('click');await flushPromises()
@@ -91,7 +91,7 @@ describe('node selection through DOM controls',()=>{
     expect(wrapper.get('.hd-node strong').text()).toBe('日本 · Node A Two')
     expect(wrapper.get('.hd-selection strong').text()).toBe('已选 2 个节点')
 
-    for(const [label,projects] of [['延迟检测',['latency']],['下载测速',['download']],['服务可用性',['service']],['综合',['latency','download','service']]] as const){
+    for(const [label,projects] of [['延迟检测',['latency']],['下载测速',['download']],['解锁检测',['service']],['综合',['latency','download','service']]] as const){
       await button(wrapper,'.hd-seg button',label)
       expect(nodeInput(wrapper,'日本 · Node A Two').element).toHaveProperty('checked',true)
       await wrapper.get('.hd-selection .primary').trigger('click')

@@ -7,13 +7,14 @@ import {nodeDisplayName,nodeRegionLabel} from '../../nodePresentation'
 import {airportNodeCount} from '../../airportViewing'
 import Icon from '../Icon.vue'
 import UiSelect from '../UiSelect.vue'
-import ServicePicker from '../ServicePicker.vue'
+import UnlockPicker from '../UnlockPicker.vue'
 import SubscriptionOverview from '../SubscriptionOverview.vue'
 import NodeActivity from '../NodeActivity.vue'
 import SiteDisplayPicker from '../SiteDisplayPicker.vue'
 import NodeInspector from './NodeInspector.vue'
 import NodeCompare from './NodeCompare.vue'
 import {homeModelKey,latencyVerdict,type Verdict} from './homeModel'
+import {unlockGroups,unlockGroupSummary} from '../../unlock'
 const w=useWorkspace(),m=inject(homeModelKey)!
 const chosen=m.chosen
 const sites=computed(()=>targets.filter(t=>w.displayTargets.value.includes(t.id)))
@@ -78,19 +79,14 @@ watch(()=>w.viewRequest.value,n=>{
 function isFocus(n:NodeOption){return !!focusNode.value&&key(focusNode.value)===key(n)}
 function selected(n:NodeOption){return w.selectedKeys.value.includes(key(n))}
 const verdicts=computed<Record<string,Verdict>>(()=>Object.fromEntries(m.pageNodes.value.map(n=>[key(n),latencyVerdict(sites.value.map(s=>m.metricPoint(n,s.id)))])))
-function services(n:NodeOption){
- const list=m.displayServices.value
- if(!list.length)return {tone:'empty',label:'未选服务'}
- const tones=list.map(s=>m.serviceTone(n,s.service_id)),measured=tones.filter(t=>t!=='empty').length,pass=tones.filter(t=>t==='good').length
- if(!measured)return {tone:'empty',label:'未测'}
- return {tone:pass===list.length?'good':pass||tones.some(t=>t==='reachable'||t==='warn')?'warn':'bad',label:`${pass}/${list.length} 通过`}
-}
+function groupSummary(n:NodeOption,id:string){return unlockGroupSummary(id,catalog.value,serviceId=>m.shownService(n,serviceId))}
+function services(n:NodeOption){const counts=unlockGroups.map(g=>({...g,...groupSummary(n,g.id)}));return {tone:counts.some(g=>g.reason)?'warn':counts.some(g=>g.available)?'good':'empty',label:counts.filter(g=>g.total).map(g=>g.name+' '+g.label).join(' · ')||'未选解锁项目'}}
 function run(){if(w.project.value==='combined')m.openCombinedPlan();else{m.closeHover();w.openPlan([...m.runNodes.value])}}
 const showVerdict=computed(()=>['combined','latency'].includes(w.project.value))
 const showSites=showVerdict
 const showDownload=computed(()=>['combined','download'].includes(w.project.value))
 // Grid tracks follow the active project so each tab shows its own columns.
-const columns=computed(()=>['36px','minmax(220px,2.2fr)',...(showVerdict.value?['92px']:[]),...(showSites.value?sites.value.map(()=>'minmax(74px,.8fr)'):[]),...(showDownload.value?['minmax(110px,1fr)']:[]),...(w.project.value==='download'?['minmax(160px,1.4fr)']:[]),...(w.project.value==='combined'?['minmax(80px,.8fr)']:[]),...(w.project.value==='service'?(m.visibleServices.value.length?m.visibleServices.value.map(()=>'minmax(86px,1fr)'):['1fr']):[])].join(' '))
+const columns=computed(()=>['36px','minmax(220px,2.2fr)',...(showVerdict.value?['92px']:[]),...(showSites.value?sites.value.map(()=>'minmax(74px,.8fr)'):[]),...(showDownload.value?['minmax(110px,1fr)']:[]),...(w.project.value==='download'?['minmax(160px,1.4fr)']:[]),...(w.project.value==='combined'?['minmax(80px,.8fr)']:[]),...(w.project.value==='service'?unlockGroups.map(()=>'minmax(90px,1fr)'):[])].join(' '))
 const allOnPage=computed(()=>m.pageNodes.value.length>0&&m.pageNodes.value.every(selected))
 function keyNav(e:KeyboardEvent){
  const list=m.pageNodes.value,i=list.findIndex(isFocus)
@@ -158,7 +154,7 @@ function keyNav(e:KeyboardEvent){
       </div>
     </details>
     <p v-if="['latency','download','service'].includes(w.sort.value)" class="hd-muted hd-sort-status" role="status">{{w.sortLoading.value?`读取全部节点 ${w.sortReadCount.value}/${w.proxyNodes.value.length}…`:w.sortError.value||(w.sortAt.value?'排序截止 '+date(w.sortAt.value)+' · 翻页不改变排名':'尚未读取全部节点，仅按已读记录排序')}}<button class="hd-link" :disabled="w.sortLoading.value" @click="w.refreshSort()">更新排序</button></p>
-    <details v-if="w.project.value==='service'||w.project.value==='combined'" class="hd-services"><summary>选择服务<small>{{m.displayServices.value.length?m.displayServices.value.map(s=>s.name).join(' · '):'还没选'}}</small><span v-if="w.project.value==='service'&&m.servicePages.value>1" class="hd-svc-pages" aria-label="服务列分页" @click.prevent><button class="hd-link" :disabled="m.servicePage.value<=1" aria-label="上一组服务" @click="m.servicePage.value--">‹</button>{{(m.servicePage.value-1)*m.servicesPerPage.value+1}}–{{Math.min(m.servicePage.value*m.servicesPerPage.value,m.displayServices.value.length)}} / {{m.displayServices.value.length}}<button class="hd-link" :disabled="m.servicePage.value>=m.servicePages.value" aria-label="下一组服务" @click="m.servicePage.value++">›</button></span></summary><ServicePicker v-model="w.serviceIds.value" :catalog="catalog"/></details>
+    <details v-if="w.project.value==='service'||w.project.value==='combined'" class="hd-services"><summary>选择解锁项目<small>{{m.displayServices.value.length?'已选 '+m.displayServices.value.length+' 项':'还没选'}}</small></summary><UnlockPicker v-model="w.serviceIds.value" :catalog="catalog"/></details>
 
     <div v-if="w.selectedKeys.value.length" class="hd-selection" aria-live="polite">
       <strong>已选 {{w.selectedNodes.value.length}} 个节点</strong><small v-if="m.hiddenSelectedCount.value" class="hd-muted">含 {{m.hiddenSelectedCount.value}} 个筛选外节点</small>
@@ -181,10 +177,7 @@ function keyNav(e:KeyboardEvent){
           <span v-if="showDownload" role="columnheader">下载</span>
           <span v-if="w.project.value==='download'" role="columnheader">测量时间</span>
           <span v-if="w.project.value==='combined'" role="columnheader">服务</span>
-          <template v-if="w.project.value==='service'">
-            <span v-for="s in m.visibleServices.value" :key="s.service_id" role="columnheader" class="hd-svc-head" :title="s.name">{{s.name}}</span>
-            <span v-if="!m.visibleServices.value.length" role="columnheader">服务</span>
-          </template>
+          <template v-if="w.project.value==='service'"><span v-for="g in unlockGroups" :key="g.id" role="columnheader">{{g.name}}</span></template>
         </div>
         <div v-for="n in m.pageNodes.value" :key="key(n)" class="hd-tr" role="row" :class="{focus:isFocus(n),selected:selected(n)}" :aria-selected="isFocus(n)" @click="focus(n)">
           <span role="cell" @click.stop><input type="checkbox" :checked="selected(n)" :aria-label="'选择 '+nodeDisplayName(n)" @change="w.toggleNode(n)"></span>
@@ -194,10 +187,7 @@ function keyNav(e:KeyboardEvent){
           <span v-if="showDownload" role="cell" class="hd-num" :class="m.downloadMetricTone(n)" :title="m.downloadMetricContext(n)">{{m.downloadMetric(n)}}</span>
           <span v-if="w.project.value==='download'" role="cell" class="hd-num empty">{{m.downloadMetricContext(n)}}</span>
           <span v-if="w.project.value==='combined'" role="cell" class="hd-num" :class="services(n).tone">{{services(n).label}}</span>
-          <template v-if="w.project.value==='service'">
-            <button v-for="s in m.visibleServices.value" :key="s.service_id" role="cell" class="hd-svc-cell hd-num" :class="m.serviceTone(n,s.service_id)" :title="s.name" @click.stop="m.showService(n,s.service_id)">{{m.serviceMetric(n,s.service_id)}}</button>
-            <span v-if="!m.visibleServices.value.length" role="cell" class="hd-num empty">未选服务</span>
-          </template>
+          <template v-if="w.project.value==='service'"><button v-for="g in unlockGroups" :key="g.id" role="cell" class="hd-svc-cell hd-num" :class="groupSummary(n,g.id).tone" :title="groupSummary(n,g.id).title" @click.stop="focus(n)">{{groupSummary(n,g.id).label}}</button></template>
         </div>
         <div v-if="!m.pageNodes.value.length" class="hd-empty"><Icon name="layers"/><strong>{{!chosen.length?'先选择一个机场':hasSourceNodes?'节点被筛选条件隐藏了':'这个机场还没有节点'}}</strong><button class="hd-btn" @click="!chosen.length?m.picker.value=true:hasSourceNodes?clearFilters():w.page.value='airports'">{{!chosen.length?'选择机场':hasSourceNodes?'清除筛选':'管理订阅'}}</button></div>
       </div>

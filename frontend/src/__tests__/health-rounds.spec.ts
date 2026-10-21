@@ -69,7 +69,7 @@ describe('one health column per round',()=>{
     expect(round.samples?.map(s=>[s.label,s.tone])).toEqual([['Netflix','good'],['YouTube','warn'],['ChatGPT','bad']])
     const details=mount(MeasurementResults,{props:{point:round,project:'service'}})
     expect(details.findAll('.measurement-result')).toHaveLength(3)
-    expect(details.text()).toContain('解锁规则通过（播放未验证）');expect(details.text()).toContain('部分地区受限');expect(details.text()).toContain('connection refused')
+    expect(details.text()).toContain('可用 · 地区未返回');expect(details.text()).toContain('不可用');expect(details.text()).toContain('connection refused')
     details.unmount()
     const w=createWorkspace();w.serviceIds.value=['chatgpt'];w.catalog.value=['netflix','youtube','chatgpt','apple'].map(service_id=>({service_id,name:service_id,category:'服务',description:'',result_kind:'availability',success_criterion:'',timeout_seconds:15}))
     expect(w.displayServiceIds).toBe(w.serviceIds);expect(w.displayServiceIds.value).toEqual(['chatgpt'])

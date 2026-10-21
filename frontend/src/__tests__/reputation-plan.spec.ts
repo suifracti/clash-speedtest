@@ -72,7 +72,7 @@ it('keeps the IP reputation checkbox and its filtered picker independent from no
  expect(pickers).toHaveLength(2)
  const regularNames=pickers[0].findAll('.service-picker-list strong').map(item=>item.text())
  const reputationNames=pickers[1].findAll('.service-picker-list strong').map(item=>item.text())
- expect(regularNames).toEqual(['Cloudflare 204','Netflix','Antigravity'])
+ expect(regularNames).toEqual(['Netflix','Antigravity'])
  expect(reputationNames).toEqual(['IPv4 出口','IPv6 出口','Ping0 IPv4','Ping0 IPv6','IPPure','Quality optional'])
  expect(pickers[1].findAll('.service-picker-list input').every(input=>(input.element as HTMLInputElement).checked)).toBe(true)
  for(const input of pickers[1].findAll('.service-picker-list input'))await input.setValue(false)

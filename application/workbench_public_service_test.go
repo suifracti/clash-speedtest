@@ -255,8 +255,13 @@ func TestWorkbenchPublicServiceCancelStopsTheActiveRequestAndRejectsStaleRevisio
 	}
 	<-enteredRequest
 	concurrent := publicServiceRequest("request-concurrent", "profile-a", "current-identity", "current-revision", "cloudflare_204")
-	if _, err := app.StartWorkbenchPublicServiceTest(context.Background(), concurrent); err == nil || !strings.Contains(err.Error(), "正在运行") {
-		t.Fatalf("concurrent public-service start err = %v", err)
+	second, err := app.StartWorkbenchPublicServiceTest(context.Background(), concurrent)
+	if err != nil {
+		t.Fatalf("same-node parallel public-service start err = %v", err)
+	}
+	<-enteredRequest
+	if _, err := app.CancelWorkbenchPublicServiceTest(context.Background(), second.AttemptID, publicServiceQueryForTest(second)); err != nil {
+		t.Fatal(err)
 	}
 	query := publicServiceQueryForTest(started)
 	if _, err := app.CancelWorkbenchPublicServiceTest(context.Background(), started.AttemptID, query); err != nil {
@@ -267,8 +272,8 @@ func TestWorkbenchPublicServiceCancelStopsTheActiveRequestAndRejectsStaleRevisio
 	if err != nil || finished.ExecutionState != "cancelled" || finished.Result == nil || finished.Result.Outcome != "cancelled" || finished.PersistenceState != "saved" {
 		t.Fatalf("cancelled attempt = %+v, err=%v", finished, err)
 	}
-	if calls.Load() != 1 {
-		t.Fatalf("HTTP request count = %d, want 1", calls.Load())
+	if calls.Load() != 2 {
+		t.Fatalf("HTTP request count = %d, want 2", calls.Load())
 	}
 }
 

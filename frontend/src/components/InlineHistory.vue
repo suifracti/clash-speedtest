@@ -33,7 +33,7 @@ function monitorNodePoints(n:NodeOption){
   const rounds=key(n)===key(props.node)?props.anchorPoints||[]:monitorHistory.value[key(n)]||[]
   return props.project==='latency'&&props.targetIds?.length&&!props.targetIds.includes('all')?monitorLatencyRoundPoints(rounds,displayTargets.value[0].id):rounds
 }
-const context=computed(()=>props.source==='monitor'?(props.project==='service'?'持续监测 · '+(monitorHTTPServices.find(s=>s.id===props.monitorServiceId)?.name||'基础 HTTP'):'持续监测 · '+(props.targetIds?.includes('all')?'延迟轮次汇总':displayTargets.value.map(target=>target.name).join('、'))):props.project==='latency'?displayTargets.value.map(target=>target.name).join('、'):props.project==='download'?'下载速度':chosenServices.value.map(rule=>rule.name).join('、')||'服务可用性')
+const context=computed(()=>props.source==='monitor'?(props.project==='service'?'持续监测 · '+(monitorHTTPServices.find(s=>s.id===props.monitorServiceId)?.name||'基础 HTTP'):'持续监测 · '+(props.targetIds?.includes('all')?'延迟轮次汇总':displayTargets.value.map(target=>target.name).join('、'))):props.project==='latency'?displayTargets.value.map(target=>target.name).join('、'):props.project==='download'?'下载速度':chosenServices.value.map(rule=>rule.name).join('、')||'解锁检测')
 const historyError=computed(()=>[error.value,...(props.source==='monitor'?[]:comparisonNodes.value.flatMap(n=>{const message=w.historyReadError(n,props.project);return message?[`${nodeDisplayName(n)} · ${airportLabel(n)}：${message}`]:[]}))].filter(Boolean).join('；'))
 const hasRecords=computed(()=>series.value.some(s=>s.points.some(p=>p.tone!=='empty')))
 let generation=0

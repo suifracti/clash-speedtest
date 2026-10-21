@@ -6,7 +6,8 @@ import {nodeDisplayName} from '../../nodePresentation'
 import {monitorHTTPServices,type TrendPoint} from '../../presentation'
 import Icon from '../Icon.vue'
 import HealthBars from '../HealthBars.vue'
-import RecordedBars from '../RecordedBars.vue'
+import UnlockInspector from './UnlockInspector.vue'
+import {unlockSummary} from '../../unlock'
 import InspectorLatency from './InspectorLatency.vue'
 import {stableLatency} from '../../inspectorLatency'
 import NodeExitSummary from '../NodeExitSummary.vue'
@@ -24,13 +25,7 @@ const sites=computed(()=>targets.filter(t=>w.displayTargets.value.includes(t.id)
 const project=computed(()=>w.project.value)
 const shows=(p:Project)=>project.value==='combined'||project.value===p
 const latencyVerdictValue=computed(()=>latencyVerdict(sites.value.map(s=>m.metricPoint(props.node,s.id)),stableLatency(latencySeries.value)))
-const serviceVerdict=computed(()=>{
- const list=m.displayServices.value
- if(!list.length)return {tone:'empty',label:'未选服务',detail:'在上方「选择服务」里挑想测的服务'}
- const tones=list.map(s=>m.serviceTone(props.node,s.service_id)),measured=tones.filter(t=>t!=='empty').length,pass=tones.filter(t=>t==='good').length
- if(!measured)return {tone:'empty',label:'还没测',detail:`已选 ${list.length} 项服务，这个节点都没有记录`}
- return {tone:pass===list.length?'good':pass||tones.some(t=>t==='reachable'||t==='warn')?'warn':'bad',label:`${pass}/${list.length} 通过`,detail:measured<list.length?`${list.length-measured} 项还没测`:'已选服务都有记录'}
-})
+const serviceVerdict=computed(()=>unlockSummary(w.catalog.value,id=>m.shownService(props.node,id)))
 const downloadVerdict=computed(()=>({tone:m.downloadMetricTone(props.node)||'empty',label:m.downloadMetric(props.node),detail:m.downloadMetricContext(props.node)}))
 const verdict=computed(()=>project.value==='download'?downloadVerdict.value:project.value==='service'?serviceVerdict.value:latencyVerdictValue.value)
 const others=computed(()=>project.value==='combined'?[]:([
@@ -126,13 +121,7 @@ function run(){m.closeHover();w.openPlan([props.node])}
     </div>
 
     <div v-if="shows('service')" class="hd-ins-block hd-services-block">
-      <h3>服务 <small v-if="m.displayServices.value.length">点名称或结论看判断依据</small></h3>
-      <p v-if="!m.displayServices.value.length&&project==='combined'" class="hd-muted">还没选服务。在上方「选择服务」里挑想测的服务。</p>
-      <div v-for="s in m.displayServices.value" :key="s.service_id" class="hd-site hd-service-row">
-        <button class="hd-site-name" :title="s.name" @click="m.showService(node,s.service_id)">{{s.name}}</button>
-        <button class="hd-site-value" :class="m.serviceTone(node,s.service_id)" @click="m.showService(node,s.service_id)">{{m.serviceMetric(node,s.service_id)}}</button>
-        <RecordedBars :service-id="s.service_id" :points="m.servicePoints(node,s.service_id).filter(point=>!point.id.startsWith('planned:')).slice(-12)" :label="s.name+' 实际检测记录'"/>
-      </div>
+      <h3>解锁检测</h3><UnlockInspector :node="node"/>
     </div>
 
     <div v-if="(showRound||showHistory)&&m.hoverMode.value!=='latency'" class="hd-ins-detail" @mouseenter="m.keepRound" @mouseleave="m.leaveRound" @keydown.esc.stop="m.closeHover">
@@ -158,5 +147,5 @@ function run(){m.closeHover();w.openPlan([props.node])}
 <style scoped>
 .hd-ins-head{order:-3}.hd-ins-verdict{order:-2}.hd-inspector[data-project="latency"] .hd-latency,.hd-inspector[data-project="download"] .hd-download,.hd-inspector[data-project="service"] .hd-services-block{order:-1}
 
-.hd-service-row :deep(.recorded-bars){align-self:center}.hd-service-row{grid-template-columns:minmax(0,1fr) 65px minmax(0,177px)}.hd-service-row .hd-site-name{white-space:normal;overflow:visible;text-overflow:clip}.download-success strong{font-size:25px;font-weight:600;font-variant-numeric:tabular-nums}.download-success small{font-size:12px;font-weight:400;color:var(--hd-muted)}.download-failure{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:10px 12px;background:#fff0d3;color:#805211;border-radius:8px;font-size:12px;line-height:1.55}.download-failure span{white-space:nowrap;font-size:11px}.download-failure .hd-btn{margin-left:auto;flex-shrink:0;background:transparent;border-color:#cfad72;color:inherit}.download-failure.empty{padding:0;background:none;color:var(--hd-muted)}.hd-saved-download{display:block;margin-top:7px;color:var(--hd-muted);font-size:10px}.download-spark{display:block;width:100%;height:34px;margin-top:8px}
+.hd-inspector[data-project="service"] .hd-ins-verdict{display:block}.hd-inspector[data-project="service"] .hd-ins-verdict strong{display:block;font-size:13px;line-height:1.5}.hd-inspector[data-project="service"] .hd-ins-verdict span{display:block;margin-top:4px;font-size:11px}.download-success strong{font-size:25px;font-weight:600;font-variant-numeric:tabular-nums}.download-success small{font-size:12px;font-weight:400;color:var(--hd-muted)}.download-failure{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:10px 12px;background:#fff0d3;color:#805211;border-radius:8px;font-size:12px;line-height:1.55}.download-failure span{white-space:nowrap;font-size:11px}.download-failure .hd-btn{margin-left:auto;flex-shrink:0;background:transparent;border-color:#cfad72;color:inherit}.download-failure.empty{padding:0;background:none;color:var(--hd-muted)}.hd-saved-download{display:block;margin-top:7px;color:var(--hd-muted);font-size:10px}.download-spark{display:block;width:100%;height:34px;margin-top:8px}
 </style>

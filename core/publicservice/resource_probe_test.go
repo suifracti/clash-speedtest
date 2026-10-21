@@ -47,18 +47,23 @@ type resourceTestTransport func(*http.Request) (*http.Response, error)
 
 func (f resourceTestTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func TestResourceCatalogIsSelectableWithoutChangingExistingAI(t *testing.T) {
+func TestUnlockCatalogReplacesReachabilityButKeepsLegacyRules(t *testing.T) {
 	seen := map[string]bool{}
 	for _, r := range Catalog() {
 		seen[r.ServiceID] = true
 	}
-	for _, id := range []string{"resource_wechat", "resource_qq", "resource_telegram", "resource_deepseek", "resource_qwen", "resource_kimi", "resource_perplexity", "resource_chatgpt", "resource_claude", "resource_grok", "resource_gemini", "resource_bilibili", "resource_douyin", "resource_xiaohongshu", "chatgpt_web", "claude_web", "grok_web", "gemini_web"} {
+	for _, id := range []string{"chatgpt_unlock", "claude_unlock", "gemini_unlock", "antigravity", "netflix_unlock", "youtube_premium", "disney_unlock", "prime_video", "spotify_unlock", "tiktok_unlock", "abema_unlock", "unext_unlock", "dmm_unlock", "radiko_unlock", "hulu_jp_unlock", "fod_unlock"} {
 		if !seen[id] {
 			t.Errorf("missing %s", id)
 		}
 	}
-	if seen["microsoft_connect"] || seen["firefox_portal"] {
-		t.Fatal("retired targets in active picker")
+	for _, id := range []string{"resource_chatgpt", "resource_grok", "chatgpt_web", "grok_web", "google_connect", "cloudflare_doh"} {
+		if seen[id] {
+			t.Errorf("retired target %s in picker", id)
+		}
+	}
+	if _, ok := RuleFor("chatgpt_web"); !ok {
+		t.Fatal("legacy rule is no longer readable")
 	}
 }
 

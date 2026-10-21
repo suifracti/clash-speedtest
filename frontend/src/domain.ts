@@ -31,7 +31,7 @@ export interface Settings {local_notifications?:NotificationSettings;airport_mon
 export interface TokenStatus {has_token:boolean;source:string;preview:string}
 export interface Plan {nodes:NodeOption[];projects:Exclude<Project,'combined'>[];target:string;samples:number;timeout:number;concurrency:number;downloadMiB:number;downloadSeconds:number;downloadSource?:string;serviceIds:string[];serviceSamples?:number;repeats:number;includeReputation?:boolean;reputationServiceIds?:string[]}
 export interface QueueItem {id:string;node:NodeOption;project:Exclude<Project,'combined'>;serviceId?:string;state:string;error?:string;batchId?:string;itemId?:string;attempt?:Attempt}
-export const projectNames:Record<Project,string>={latency:'延迟检测',download:'下载测速',service:'服务可用性',combined:'综合'}
+export const projectNames:Record<Project,string>={latency:'延迟检测',download:'下载测速',service:'解锁检测',combined:'综合'}
 export const targets=activeLatencyTargets
 export function key(n:NodeScope){return `${n.profile_id}\u0000${n.node_identity_key}\u0000${n.config_revision_key}`}
 export function scope(n:NodeScope):NodeScope{return {profile_id:n.profile_id,node_key:n.node_key,node_identity_key:n.node_identity_key,config_revision_key:n.config_revision_key}}

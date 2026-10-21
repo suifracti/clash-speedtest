@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {servicePassed} from '../sharedResults'
+import {unlockGroups,unlockGroup,unlockResult} from '../unlock'
 import UiSelect from './UiSelect.vue'
 import {computed,ref,watch} from 'vue'
 import {bytes,date,downloadSpeed,downloadTone,outcomeLabel,outcomeTone,stateLabel} from '../domain'
@@ -9,9 +9,10 @@ const phaseLabels:Record<string,string>={request_setup:'请求准备',address_re
 const props=defineProps<{point:TrendPoint;project:'download'|'service'}>()
 const search=ref(''),status=ref('all'),page=ref(1),pageSize=12
 const attempts=computed(()=>props.point.attempts||[])
-const counts=computed(()=>({good:attempts.value.filter(servicePassed).length,warn:attempts.value.filter(a=>!servicePassed(a)&&attemptTone(a)==='warn').length,bad:attempts.value.filter(a=>a.result&&attemptTone(a)==='bad').length,empty:attempts.value.filter(a=>attemptTone(a)==='empty').length}))
-const filtered=computed(()=>attempts.value.filter(a=>(status.value==='all'||(status.value==='good'?servicePassed(a):status.value==='warn'?!servicePassed(a)&&attemptTone(a)==='warn':attemptTone(a)===status.value))&&(!search.value||(a.rule.name+' '+a.service_id+' '+(a.result?.summary||'')+' '+(a.result?.error_message||'')).toLowerCase().includes(search.value.trim().toLowerCase()))))
+const counts=computed(()=>({good:attempts.value.filter(a=>unlockResult(a).state==='available').length,warn:attempts.value.filter(a=>unlockResult(a).state==='unavailable').length,empty:attempts.value.filter(a=>unlockResult(a).state==='unknown').length}))
+const filtered=computed(()=>attempts.value.filter(a=>(status.value==='all'||unlockResult(a).tone===status.value)&&(!search.value||(a.rule.name+' '+a.service_id+' '+(a.result?.summary||'')+' '+(a.result?.error_message||'')).toLowerCase().includes(search.value.trim().toLowerCase()))))
 const pageCount=computed(()=>Math.max(1,Math.ceil(filtered.value.length/pageSize))),visible=computed(()=>filtered.value.slice((page.value-1)*pageSize,page.value*pageSize))
+const resultGroups=computed(()=>props.project==='download'?[{id:'download',name:'',items:visible.value}]:[...unlockGroups,{id:'legacy',name:'其他（旧检测项）'}].map(g=>({...g,items:visible.value.filter(a=>unlockGroup(a.service_id||'')===g.id).sort((a,b)=>Number(unlockResult(b).state==='unavailable')-Number(unlockResult(a).state==='unavailable'))})).filter(g=>g.items.length))
 watch([search,status],()=>page.value=1)
 watch(()=>props.point.id,()=>{search.value='';status.value='all';page.value=1})
 watch(pageCount,count=>page.value=Math.min(page.value,count))
@@ -20,9 +21,11 @@ watch(pageCount,count=>page.value=Math.min(page.value,count))
 <section class="measurement-results" :aria-label="project==='service'?'本轮服务结果':'本次测速数据'">
   <header><strong>{{project==='service'?'本轮服务结果':'本次测速数据'}}</strong><small>{{date(point.time)}} · {{triggerLabel(point.trigger)}} · {{point.trigger==='unknown'||!point.trigger?'轮次关联未知':point.id}}</small></header>
   <template v-if="point.source==='monitor'&&point.monitorSamples?.length"><p class="small muted">持续监测 · 基础 HTTP：响应 2xx／3xx 记为成功，不代表解锁或工作台的严格服务规则通过。</p><details v-for="s in point.monitorSamples" :key="s.sample_id" class="measurement-result" open><summary><strong>{{monitorHTTPServices.find(p=>p.probeType===s.probe_type)?.name||s.probe_type}}</strong><span :class="s.success?'good':'bad'">{{s.success?'HTTP 可达':'失败'}}</span></summary><p v-if="!s.success" class="bad">{{s.error_detail||s.error_class||'失败'}}</p><p class="small muted">{{date(s.timestamp)}} · 持续监测</p><p class="small muted break-text">目标：{{s.target}}</p></details></template>
-  <p class="small muted">{{point.description}}</p><template v-if="project==='service'&&point.source!=='monitor'"><p class="service-round-counts"><span class="good">规则通过 {{counts.good}}</span><span class="warn">待确认／受限 {{counts.warn}}</span><span class="bad">探针未通过 {{counts.bad}}</span><span v-if="counts.empty" class="muted">未完成 {{counts.empty}}</span><span class="muted">共 {{attempts.length}} 项</span></p><div v-if="attempts.length>8" class="service-result-tools"><input v-model="search" type="search" aria-label="搜索本轮服务结果" placeholder="搜索服务或失败原因"><UiSelect v-model="status" aria-label="筛选本轮服务状态"><option value="all">全部结果</option><option value="good">只看规则通过</option><option value="warn">只看待确认／受限</option><option value="bad">只看探针未通过</option><option value="empty">未完成</option></UiSelect></div></template>
-  <details v-for="a in visible" :key="a.attempt_id" class="measurement-result" :open="project==='download'||attempts.length<=8">
-    <summary><strong>{{project==='service'?a.rule.name||a.service_id:'下载测速'}}</strong><span :class="project==='download'?downloadTone(a):a.result?attemptTone(a):'empty'">{{attemptStatus(a,project==='download')}}</span></summary>
+  <p class="small muted">{{point.description}}</p><template v-if="project==='service'&&point.source!=='monitor'"><p class="service-round-counts"><span class="good">可用 {{counts.good}}</span><span class="warn">不可用 {{counts.warn}}</span><span v-if="counts.empty" class="muted">无法判断 {{counts.empty}}</span><span class="muted">共 {{attempts.length}} 项</span></p><div v-if="attempts.length>8" class="service-result-tools"><input v-model="search" type="search" aria-label="搜索本轮服务结果" placeholder="搜索服务或失败原因"><UiSelect v-model="status" aria-label="筛选本轮服务状态"><option value="all">全部结果</option><option value="good">只看可用</option><option value="warn">只看不可用</option><option value="empty">无法判断</option></UiSelect></div></template>
+  <component :is="project==='download'?'div':'details'" v-for="group in resultGroups" :key="group.id" :open="group.id!=='legacy'" class="unlock-history-group"><summary v-if="group.name">{{group.name}} · {{group.items.length}} 项</summary>
+  <details v-for="a in group.items" :key="a.attempt_id" class="measurement-result" :open="project==='download'||attempts.length<=8">
+    <summary><strong>{{project==='service'?a.rule.name||a.service_id:'下载测速'}}</strong><span :class="project==='download'?downloadTone(a):unlockResult(a).tone">{{project==='download'?attemptStatus(a,true):unlockResult(a).label}}</span></summary>
+    <p v-if="project==='service'" class="small muted">{{unlockResult(a).reason}} · {{date(a.finished_at||point.time)}}</p>
     <dl v-if="project==='download'"><div><dt>平均速度</dt><dd>{{downloadSpeed(a)===null?'—':downloadSpeed(a)?.toFixed(2)+' MiB/s'}}</dd></div><div><dt>读取数据</dt><dd>{{bytes(a.result?.bytes_read)}}</dd></div><div><dt>持续时间</dt><dd>{{a.result?.duration_ns?(a.result.duration_ns/1e9).toFixed(2)+' 秒':'—'}}</dd></div></dl>
     <p v-if="a.result?.network_path?.socket_bind_verified&&(a.result.network_path.dns_bind_verified||a.result.network_path.dns_mode==='node_literal_no_dns')" class="small muted">已绕开本机 TUN（{{a.result.network_path.interface}}）</p>
     <p v-if="project==='download'&&a.result?.network_path" class="small muted">物理出口：{{a.result.network_path.interface||'未知'}} · 节点 socket {{a.result.network_path.socket_bind_verified?'绑定已核验':'未确认'}}（TCP {{a.result.network_path.tcp_bindings}}／UDP {{a.result.network_path.udp_bindings}}） · DNS {{a.result.network_path.dns_bind_verified?'物理网卡绑定已核验':'无已核验的查询'}} · 出口准备 {{((a.result.network_path.preparation_duration_ns||0)/1e9).toFixed(2)}} 秒（不计入下载时间）。</p>
@@ -41,6 +44,7 @@ watch(pageCount,count=>page.value=Math.min(page.value,count))
     <details v-if="a.result?.samples?.length"><summary>下载采样 · {{a.result.samples.length}} 次</summary><div class="table-scroll"><table><thead><tr><th>已持续</th><th>瞬时速度</th><th>累计数据</th></tr></thead><tbody><tr v-for="(s,i) in a.result.samples" :key="i"><td>{{(s.elapsed_ns/1e9).toFixed(1)}} 秒</td><td>{{s.speed_mbps===undefined?'—':(s.speed_mbps/8).toFixed(2)+' MB/s'}}</td><td>{{bytes(s.cumulative_bytes)}}</td></tr></tbody></table></div></details>
     <details v-if="a.result?.details"><summary>服务详细返回</summary><pre>{{JSON.stringify(a.result.details,null,2)}}</pre></details>
   </details>
+  </component>
   <p v-if="!point.monitorSamples?.length&&!filtered.length" class="small muted">没有匹配的结果。</p><footer v-if="pageCount>1" class="result-pagination"><span>{{filtered.length}} 项 · 每页 {{pageSize}} 项</span><button class="button ghost" :disabled="page===1" @click="page--">上一页</button><span>{{page}} / {{pageCount}}</span><button class="button ghost" :disabled="page===pageCount" @click="page++">下一页</button></footer>
 </section>
 </template>

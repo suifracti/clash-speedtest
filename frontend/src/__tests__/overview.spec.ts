@@ -32,7 +32,7 @@ describe('global charts and large service rounds',()=>{
   it('compresses a large service bar by outcome while keeping all results searchable after pagination',async()=>{
     const attempts:Attempt[]=Array.from({length:20},(_,i)=>({profile_id:'p',node_key:'n',node_identity_key:'identity',config_revision_key:'revision',attempt_id:'service-'+i,request_id:'round:r:item-'+i,display_name:'Node',service_id:'s'+i,requested_at:'2026-10-01T00:00:00Z',execution_state:'completed',persistence_state:'saved',rule:{name:'Service '+i,target_url:'https://example.test'},result:{outcome:i<8?'unlocked':i<14?'region_limited':'transport_error',bytes_read:0,finished_at:'2026-10-01T00:00:01Z',error_message:i>=14?'connection refused':undefined}}))
     const point:TrendPoint={id:'round-r',time:'2026-10-01T00:00:01Z',value:.4,tone:'warn',description:'8/20 项服务通过',attempts,samples:attempts.map((a,i)=>({id:a.attempt_id,time:a.requested_at,value:i<8?1:0,tone:i<8?'good':i<14?'warn':'bad',description:a.rule.name!,label:a.rule.name!}))}
-    const bar=mount(HealthBars,{props:{points:[point],label:'服务可用性',aggregate:true}})
+    const bar=mount(HealthBars,{props:{points:[point],label:'解锁检测',aggregate:true}})
     const bands=bar.find('.health-cell.has-record').findAll('.health-segment')
     expect(bands.map(b=>b.attributes('title'))).toEqual(['8 项通过','6 项受限','6 项失败'])
     await bar.find('.health-cell.has-record').trigger('mouseenter')
@@ -40,12 +40,12 @@ describe('global charts and large service rounds',()=>{
     const results=mount(MeasurementResults,{props:{point,project:'service'}})
     expect(results.findAll('.measurement-result')).toHaveLength(12)
     expect(results.find('.service-round-counts').text()).toContain('共 20 项')
-    await results.find('select[aria-label="筛选本轮服务状态"]').setValue('bad')
+    await results.find('select[aria-label="筛选本轮服务状态"]').setValue('empty')
     expect(results.findAll('.measurement-result')).toHaveLength(6)
     await results.find('input[aria-label="搜索本轮服务结果"]').setValue('Service 19')
     expect(results.findAll('.measurement-result')).toHaveLength(1)
     expect(results.find('.measurement-result').text()).toContain('Service 19')
-    expect(results.find('.service-round-counts').text()).toContain('探针未通过 6')
+    expect(results.find('.service-round-counts').text()).toContain('无法判断 6')
     results.unmount();bar.unmount()
   })
 })

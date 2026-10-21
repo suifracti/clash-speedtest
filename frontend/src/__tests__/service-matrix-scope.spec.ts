@@ -10,26 +10,20 @@ afterEach(()=>{wrapper?.unmount();w?.dispose();window.localStorage.clear()})
 it('uses one remembered selection for columns, overview and detection without starting requests',async()=>{
  window.localStorage.clear();vi.clearAllMocks();vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}})
  const node:NodeOption={profile_id:'p',node_key:'n',node_identity_key:'i',config_revision_key:'r',profile_name:'fixture',display_name:'fixture',type:'ss',country_code:'SG',country_flag:''}
- w=createWorkspace();w.project.value='service';w.nodes.value=[node];w.airports.value=[{id:'a',name:'fixture',has_cache:true,url_display:'',node_count:1,subscriptions:[{id:'p',airport_id:'a',name:'account',url_display:'',url_configured:false,node_count:1,has_cache:true}]}];w.setAirports(['a']);w.catalog.value=Array.from({length:82},(_,i)=>({service_id:'svc'+i,name:'服务'+i,category:i%2?'网页':'连接',description:'',result_kind:'connectivity',success_criterion:'fixture',timeout_seconds:10}));
+ w=createWorkspace();w.project.value='service';w.nodes.value=[node];w.airports.value=[{id:'a',name:'fixture',has_cache:true,url_display:'',node_count:1,subscriptions:[{id:'p',airport_id:'a',name:'account',url_display:'',url_configured:false,node_count:1,has_cache:true}]}];w.setAirports(['a']);w.catalog.value=['chatgpt_unlock','netflix_unlock','abema_unlock'].map((id,i)=>({service_id:id,name:['ChatGPT','Netflix','ABEMA'][i],category:'fixture',description:'',result_kind:'unlock',success_criterion:'fixture',timeout_seconds:10}));
  const saved:Attempt={...node,attempt_id:'saved',request_id:'saved',requested_at:new Date().toISOString(),service_id:'svc20',execution_state:'completed',persistence_state:'saved',rule:{service_id:'svc20',target_url:'https://example.test'},result:{outcome:'matched',bytes_read:0,finished_at:new Date().toISOString()}}
  vi.mocked(api.attemptHistory).mockImplementation(async kind=>({attempts:kind==='service'?[saved]:[],has_more:false,complete:true}))
  wrapper=mount(HomeView,{global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
- expect(w.serviceIds.value).toEqual([]);expect(wrapper.findAll('.hd-svc-cell')).toHaveLength(0)
- expect(wrapper.find('[aria-label="服务显示模式"]').exists()).toBe(false)
+ expect(w.serviceIds.value).toEqual(['chatgpt_unlock','netflix_unlock']);expect(wrapper.findAll('.hd-svc-cell')).toHaveLength(3)
+ expect(wrapper.findAll('[role="columnheader"]').slice(-3).map(x=>x.text())).toEqual(['AI','流媒体','日本'])
  await wrapper.get('.hd-services summary').trigger('click')
- await wrapper.get('input[aria-label="搜索检测服务"]').setValue('服务80')
- await wrapper.get('.service-picker-list input').setValue(true);await flushPromises()
- expect(w.serviceIds.value).toEqual(['svc80']);expect(w.displayServiceIds.value).toEqual(['svc80'])
- expect(wrapper.get('.hd-svc-head').text()).toBe('服务80');expect(wrapper.findAll('.hd-svc-cell')).toHaveLength(1)
- expect(wrapper.get('.hd-svc-cell').text()).toContain('未测')
- await wrapper.get('.hd-run').trigger('click');expect(w.plan.value?.serviceIds).toEqual(['svc80']);w.plan.value=null
- w.project.value='combined';await flushPromises();expect(wrapper.get('.hd-services summary').text()).toContain('服务80');expect(wrapper.text()).not.toContain('精选服务')
- const reopened=createWorkspace();expect(reopened.serviceIds.value).toEqual(['svc80']);reopened.catalog.value=w.catalog.value;expect(reopened.displayServiceIds.value).toEqual(['svc80']);reopened.dispose()
- await wrapper.get('.service-picker-list input').setValue(false);await flushPromises();expect(w.serviceIds.value).toEqual([])
- const emptyReopened=createWorkspace();emptyReopened.catalog.value=w.catalog.value;expect(emptyReopened.serviceIds.value).toEqual([]);emptyReopened.dispose()
- w.project.value='service';w.serviceIds.value=w.catalog.value.slice(0,14).map(s=>s.service_id);await flushPromises()
- expect(wrapper.findAll('.hd-svc-cell')).toHaveLength(12);expect(wrapper.get('[aria-label="服务列分页"]').text()).toContain('1–12 / 14')
- await wrapper.get('button[aria-label="下一组服务"]').trigger('click');expect(wrapper.findAll('.hd-svc-cell')).toHaveLength(2)
+ const japan=wrapper.findAll('.unlock-group-options label').find(x=>x.text().includes('日本'))!
+ await japan.get('input').setValue(true);await flushPromises()
+ expect(w.serviceIds.value).toEqual(['chatgpt_unlock','netflix_unlock','abema_unlock'])
+ await wrapper.get('.hd-run').trigger('click');expect(w.plan.value?.serviceIds).toEqual(w.serviceIds.value);w.plan.value=null
+ const reopened=createWorkspace();expect(reopened.serviceIds.value).toEqual(w.serviceIds.value);reopened.dispose()
+ expect(wrapper.get('.unlock-group.legacy summary').text()).toContain('其他（旧检测项）')
+ expect(wrapper.get('.unlock-group.legacy').attributes('open')).toBeUndefined()
  expect(api.startAttempt).not.toHaveBeenCalled();expect(api.startLatency).not.toHaveBeenCalled();vi.unstubAllGlobals()
 })
 it('does not preserve an automatic three-service recommendation as a user choice',()=>{

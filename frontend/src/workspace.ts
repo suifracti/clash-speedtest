@@ -1,3 +1,4 @@
+import {unlockGroup} from './unlock'
 import {computed,inject,reactive,ref,watch,type InjectionKey} from 'vue'
 import {api,events,mapLimited,saveFile} from './api'
 import {key,scope,isNotice,isReputationRule,sameHistoryRecords,latencyFor,sampleFor,downloadSpeed,downloadTone,outcomeTone,monitorGroups,targets,type MeasurementRound,type Airport,type Attempt,type HistoryPage,type LatencyBatch,type LatencyTest,type MonitorJob,type NodeOption,type Page,type Plan,type Project,type QueueItem,type ServiceRule,type Settings,type Setup,type TokenStatus} from './domain'
@@ -123,7 +124,7 @@ export function createWorkspace(){
     if(ids.length!==serviceIds.value.length||ids.some((id,i)=>id!==serviceIds.value[i])){serviceIds.value=ids;return}
     try{window.localStorage.setItem(selectedServicesKey,JSON.stringify(ids))}catch{}
   }
-  watch(catalog,()=>{if(catalog.value.length)saveServices()},{deep:true,flush:'sync'})
+  watch(catalog,()=>{if(catalog.value.length){if(catalog.value.some(s=>s.service_id==='chatgpt_unlock')&&(window.localStorage.getItem(selectedServicesKey)===null||serviceIds.value.some(id=>!catalog.value.some(s=>s.service_id===id))))serviceIds.value=catalog.value.filter(s=>['ai','streaming'].includes(unlockGroup(s.service_id))).map(s=>s.service_id);saveServices()}},{deep:true,flush:'sync'})
   watch(serviceIds,saveServices,{deep:true,flush:'sync'})
   watch(hours,()=>{historyVersion++;loaded.clear();historyStarted.clear();historyCursors.clear();historyWindows.clear();historyHasMore.value={};latency.value={};downloads.value={};services.value={};readErrors.value={};historyErrors.clear()})
   function mergeLatency(test:LatencyTest){
@@ -240,13 +241,18 @@ export function createWorkspace(){
         starting=[];await pollBatch(batch)
       }}else{
         const entries=queue.value.filter(q=>q.project===p&&q.state==='queued').slice(0,frozen.nodes.length*(p==='service'?serviceList.length:1))
-        for(const q of entries){
-          if(cancelRequested.value||!alive(version))break
-          starting=[q];q.state='running'
+        const runEntry=async(q:QueueItem)=>{
+          if(cancelRequested.value||!alive(version))return
+          starting.push(q);q.state='running'
           const body={...scope(q.node),request_id:q.id,...(p==='download'?{maximum_bytes:frozen.downloadMiB*1048576,timeout_seconds:frozen.downloadSeconds,...(frozen.downloadSource?{source_id:frozen.downloadSource}:{})}:{service_id:q.serviceId,timeout_seconds:15,drift_samples:frozen.serviceSamples??4})}
           pendingStart.value={kind:p,requestId:q.id,node:q.node,body,serviceId:q.serviceId};remember(pendingStart.value)
-          try{const a=await api.startAttempt(p,body);if(!alive(version))return;q.attempt=a;starting=[];await pollAttempt(p,q.node,a)}catch(e){if(!alive(version))return;if(!startRejected(e))throw e;q.state='not_executed';q.error=e instanceof Error?e.message:String(e);pendingStart.value=null;forget(q.id);starting=[]}
+          try{const a=await api.startAttempt(p,body);if(!alive(version))return;q.attempt=a;starting=starting.filter(item=>item!==q);await pollAttempt(p,q.node,a)}catch(e){if(!alive(version))return;if(!startRejected(e))throw e;q.state='not_executed';q.error=e instanceof Error?e.message:String(e);if(pendingStart.value?.requestId===q.id)pendingStart.value=null;forget(q.id);starting=starting.filter(item=>item!==q)}
         }
+        if(p==='service')for(const node of frozen.nodes){
+          const list=entries.filter(q=>key(q.node)===key(node));let next=0;const failures:unknown[]=[]
+          await Promise.all(Array.from({length:Math.min(6,list.length)},async()=>{while(next<list.length&&!cancelRequested.value&&alive(version)){const q=list[next++];try{await runEntry(q)}catch(e){failures.push(e)}}}))
+          if(failures.length)throw failures[0]
+        }else for(const q of entries)await runEntry(q)
       }
     }}if(alive(version))notify(cancelRequested.value?'检测已取消，已完成结果保留':'检测队列已结束，查看结果与未执行原因')
     }catch(e){if(!alive(version))return;fail(e);const rejected=startRejected(e);if(rejected){pendingStart.value=null;forget()}for(const q of starting)if(!q.attempt&&!q.batchId){q.state=rejected?'not_executed':'running';q.error=rejected?error.value:`启动结果尚未确认：${error.value}。请刷新进度继续查询；暂不启动新测试。`};if(pendingStart.value)error.value=`启动结果尚未确认：${error.value}。请刷新进度继续查询；暂不启动新测试。`

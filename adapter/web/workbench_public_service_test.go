@@ -34,7 +34,7 @@ func TestWebPublicServiceCatalogUsesSharedApplicationDirectory(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &rules); err != nil {
 		t.Fatal(err)
 	}
-	if len(rules) < 16 || rules[0].ServiceID != "cloudflare_204" || rules[1].ServiceID != "google_204" || rules[2].ServiceID != "github_api_root" || rules[3].ServiceID != "antigravity" {
+	if len(rules) < 16 || rules[0].ServiceID != "chatgpt_unlock" || rules[1].ServiceID != "claude_unlock" || rules[2].ServiceID != "gemini_unlock" {
 		t.Fatalf("unexpected public-service directory: %+v", rules)
 	}
 	if !reflect.DeepEqual(rules, publicservice.Catalog()) {
@@ -49,15 +49,12 @@ func TestWebPublicServiceCatalogUsesSharedApplicationDirectory(t *testing.T) {
 			t.Errorf("retired service %s reappeared in new plans", retired)
 		}
 	}
-	for _, id := range []string{"ping0_ipv4", "ping0_ipv6", "resource_wechat", "resource_chatgpt"} {
+	for _, id := range []string{"ping0_ipv4", "ping0_ipv6", "chatgpt_unlock", "claude_unlock"} {
 		if _, exists := byID[id]; !exists {
 			t.Errorf("current service %s is missing from the Web catalog", id)
 		}
 	}
-	alias := byID["netflix_unlock_ipv4"]
-	if alias.ServiceID == "" || alias.SupersededBy != "netflix_unlock" || alias.BatchDefault {
-		t.Fatal("temporary Netflix alias must be appended and marked history-only")
-	}
+
 	if rules[4].Category == "" || rules[4].ResultKind == "" {
 		t.Fatalf("expanded catalog metadata is missing: %+v", rules[4])
 	}

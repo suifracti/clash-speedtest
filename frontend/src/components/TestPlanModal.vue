@@ -6,6 +6,7 @@ import {useWorkspace} from '../workspace'
 import UiSelect from './UiSelect.vue'
 import Modal from './Modal.vue'
 import ServicePicker from './ServicePicker.vue'
+import UnlockPicker from './UnlockPicker.vue'
 
 const w=useWorkspace(),submitting=ref(false),validation=ref('')
 const isReputationId=(id:string)=>isReputationRule(w.catalog.value.find(rule=>rule.service_id===id)||{service_id:id})
@@ -96,10 +97,10 @@ async function submit(){
         <p class="muted small">逐个下载，避免抢占带宽。</p>
       </div>
       <div v-if="w.plan.value.projects.includes('service')" class="plan-section">
-        <h4>服务可用性</h4>
+        <h4>解锁检测</h4>
         <label class="inline-field">每服务采样次数<UiSelect v-model.number="w.plan.value.serviceSamples"><option v-for="n in [1,2,4]" :key="n" :value="n">{{n}} 次</option></UiSelect></label>
         <p class="muted small">每项共用15秒总时限；1次只代表本次观察，多次未完成会保留已取得的样本。</p>
-        <ServicePicker v-model="standardServiceIds" :catalog="standardCatalog"/>
+        <UnlockPicker v-model="standardServiceIds" :catalog="standardCatalog"/>
         <p v-if="standardServiceIds.includes('antigravity')" class="inline-warning">Antigravity 会用已绑定账号发起真实模型请求，可能消耗额度。</p>
         <p class="muted small">连接复用按实际观测记录。关闭 HTTP 空闲连接不等于节点重连，也不能保证出口稳定。</p>
       </div>

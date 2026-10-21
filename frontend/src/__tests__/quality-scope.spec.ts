@@ -132,10 +132,10 @@ it('replaces a previous service success with the newly saved failure and rejects
  attachSavedSnapshot();w!.catalog.value=[{service_id:'cloudflare_204',name:'Cloudflare 204',category:'基础网络',description:'',result_kind:'connectivity',success_criterion:'exact 204',timeout_seconds:10}];w!.displayServiceIds.value=['cloudflare_204'];w!.project.value='service';await flushPromises()
  latest=true;vi.setSystemTime(new Date('2026-10-10T00:01:02Z'))
  w!.mergeAttempt('service',{...service,attempt_id:'new-service',requested_at:'2026-10-10T00:01:00Z',execution_state:'failed',result:{outcome:'failed',bytes_read:0,finished_at:'2026-10-10T00:01:01Z'}});await flushPromises()
- expect(wrapper!.get('.hd-svc-cell').text()).toContain('失败')
+ expect(wrapper!.get('.hd-service-row .unlock-state').text()).toContain('无法判断')
  resolveOld(old);await flushPromises()
- expect(wrapper!.get('.hd-svc-cell').text()).toContain('失败')
- expect(wrapper!.get('.hd-svc-cell').text()).not.toContain('命中')
+ expect(wrapper!.get('.hd-service-row .unlock-state').text()).toContain('无法判断')
+ expect(wrapper!.get('.hd-service-row .unlock-state').text()).not.toContain('可用')
  expect(api.startAttempt).not.toHaveBeenCalled()
 })
 
