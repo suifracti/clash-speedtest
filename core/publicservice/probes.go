@@ -347,9 +347,10 @@ func checkYouTubePremium(ctx context.Context, client *http.Client, rule Rule, st
 		result.Outcome, result.Summary = "unknown", "YouTube 要求隐私确认，无法判断地区与 Premium"
 		return finish(result, started)
 	}
-	// www.google.cn is the same CN signal subs-check uses; it also feeds the
-	// Google source of the real-landing comparison through service_region.
-	if strings.Contains(lower, "www.google.cn") {
+	// www.google.cn is the same CN signal subs-check uses. Current YouTube
+	// pages also carry a pagead telemetry URL on google.cn for every region, so
+	// that URL is not evidence of a mainland exit.
+	if youtubeMainlandSignal(lower) {
 		result.Outcome, result.Summary = "region_blocked", "Google 判定为中国大陆（YouTube 页面出现 www.google.cn）"
 		result.Details["service_region"] = "CN"
 		result.Details["region_field"] = "www.google.cn"
@@ -402,6 +403,18 @@ func youtubePageRegion(text string) (region, field, raw string) {
 		}
 	}
 	return "", "", ""
+}
+
+var youtubeGoogleCNPattern = regexp.MustCompile(`(?i)(?:https?:)?//(?:www\.)?google\.cn(?:/[^\s"'\\<>]*)?`)
+
+func youtubeMainlandSignal(lowerBody string) bool {
+	for _, match := range youtubeGoogleCNPattern.FindAllString(lowerBody, -1) {
+		if strings.Contains(match, "google.cn/pagead/") {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func checkPrimeVideo(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
@@ -735,23 +748,50 @@ func checkNetflixFast(ctx context.Context, client *http.Client, result *Result) 
 		return "", false, false
 	}
 	var payload struct {
+		Client struct {
+			Location struct {
+				Country string `json:"country"`
+			} `json:"location"`
+		} `json:"client"`
 		Targets []struct {
 			Location struct {
 				Country string `json:"country"`
 			} `json:"location"`
 		} `json:"targets"`
 	}
-	if json.Unmarshal(body, &payload) != nil || len(payload.Targets) == 0 {
+	if json.Unmarshal(body, &payload) != nil {
 		result.Details["fast_api"] = "no_conclusion"
 		return "", false, false
 	}
-	code := strings.ToUpper(strings.TrimSpace(payload.Targets[0].Location.Country))
-	if !validRegionCode(code) {
+	// subs-check returns targets[0].location.country, which is the country of
+	// the speed-test server it was handed. That server can sit in another
+	// country than the exit IP (a Singapore node was handed a JP target while
+	// its Netflix pages said SG), so the client's own location wins when the
+	// API provides it; the target country stays as the portable fallback.
+	clientCode := strings.ToUpper(strings.TrimSpace(payload.Client.Location.Country))
+	targetCode := ""
+	if len(payload.Targets) > 0 {
+		targetCode = strings.ToUpper(strings.TrimSpace(payload.Targets[0].Location.Country))
+	}
+	if validRegionCode(clientCode) {
+		result.Details["fast_api_client_region"] = clientCode
+	}
+	if validRegionCode(targetCode) {
+		result.Details["fast_api_target_region"] = targetCode
+	}
+	code, source := "", ""
+	if validRegionCode(clientCode) {
+		code, source = clientCode, "client"
+	} else if validRegionCode(targetCode) {
+		code, source = targetCode, "target"
+	}
+	if code == "" {
 		result.Details["fast_api"] = "no_conclusion"
 		return "", false, false
 	}
 	result.Details["fast_api"] = "region"
 	result.Details["fast_api_region"] = code
+	result.Details["fast_api_region_source"] = source
 	return code, false, true
 }
 

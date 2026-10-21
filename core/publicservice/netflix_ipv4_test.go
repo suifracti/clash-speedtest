@@ -298,11 +298,12 @@ func TestDefaultNetflixAutomaticallyUsesSelectedNodeIPv4(t *testing.T) {
 func TestNetflixFastAPIHasTheFinalSay(t *testing.T) {
 	rule, _ := RuleFor("netflix_unlock")
 	for _, tc := range []struct {
-		name, body, want, region string
-		status                   int
+		name, body, want, region, source string
+		status                           int
 	}{
-		{"region decides full", `{"targets":[{"location":{"country":"sg"}}]}`, "unlocked", "SG", 200},
-		{"403 decides ban", `{}`, "banned", "", 403},
+		{"client region beats speed-test target", `{"client":{"location":{"country":"sg"}},"targets":[{"location":{"country":"jp"}}]}`, "unlocked", "SG", "client", 200},
+		{"target region is the fallback", `{"targets":[{"location":{"country":"sg"}}]}`, "unlocked", "SG", "target", 200},
+		{"403 decides ban", `{}`, "banned", "", "", 403},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
@@ -319,6 +320,9 @@ func TestNetflixFastAPIHasTheFinalSay(t *testing.T) {
 			}
 			if tc.region != "" && result.Details["service_region"] != tc.region {
 				t.Fatalf("region=%q details=%v", result.Details["service_region"], result.Details)
+			}
+			if tc.source != "" && result.Details["fast_api_region_source"] != tc.source {
+				t.Fatalf("source=%q details=%v", result.Details["fast_api_region_source"], result.Details)
 			}
 		})
 	}

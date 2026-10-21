@@ -25,6 +25,7 @@ func youtubeFixture(t *testing.T, body string) *http.Client {
 func TestYouTubePremiumVerdicts(t *testing.T) {
 	for _, tc := range []struct{ name, body, want, region string }{
 		{"google cn means mainland", `<html>YouTube <a href="https://www.google.cn/">link</a></html>`, "region_blocked", "CN"},
+		{"pagead telemetry is not mainland", `<script>{"URLS":["https://www.google.com/pagead/lvz?x","https://www.google.cn/pagead/lvz?x"],"INNERTUBE_CONTEXT_GL":"US"}</script><title>YouTube Premium</title>`, "matched", "US"},
 		{"country unavailable", `<html><h1>YouTube Premium is not available in your country</h1></html>`, "region_blocked", ""},
 		{"region unavailable", `<html>premium is not available in your region</html>`, "region_blocked", ""},
 		{"innertube context region", `<script>var ytcfg={"INNERTUBE_CONTEXT_GL":"SG"};</script><title>YouTube Premium</title>`, "matched", "SG"},
