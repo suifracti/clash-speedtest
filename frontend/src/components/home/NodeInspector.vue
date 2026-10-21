@@ -22,6 +22,7 @@ import {downloadSpeed,downloadTarget} from '../../domain'
 const props=defineProps<{node:NodeOption;exitOnly?:boolean}>()
 const emit=defineEmits<{(e:'select-project',id:Project|'exit'):void}>()
 const w=useWorkspace(),m=inject(homeModelKey)!
+const reportFocus=computed(()=>w.latencyReportFocus.value?.nodeKey===key(props.node)?w.latencyReportFocus.value:undefined)
 const latencyFocus=ref<import('../../latencyHistory').LatencySeries[]|null>(null)
 const sites=computed(()=>targets.filter(t=>w.displayTargets.value.includes(t.id)))
 // 检查器跟着项目标签变化：只展开当前项目，其余项目收成底部一行摘要，点一下就切过去。
@@ -104,7 +105,7 @@ function run(){m.closeHover();props.exitOnly?w.openReputationPlan([props.node]):
     </div>
 
     <div v-if="shows('latency')" class="hd-ins-block hd-latency">
-      <InspectorLatency :series="latencySeries" :node="node" @round-change="latencyFocus=$event"/>
+      <InspectorLatency :series="latencySeries" :node="node" :focus="reportFocus" @round-change="latencyFocus=$event" @return-latest="w.latencyReportFocus.value=null"/>
       <small v-if="m.monitorErrors.value[key(node)]" class="bad">监测记录读取失败</small>
     </div>
 

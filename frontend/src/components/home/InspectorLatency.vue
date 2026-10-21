@@ -1,17 +1,18 @@
 <script setup lang="ts">
 import {computed,ref,watch} from 'vue'
 import {manualLatencyPoint} from '../../presentation'
-import {date,key,type NodeOption} from '../../domain'
+import {date,key,type NodeOption,type LatencyTest} from '../../domain'
 import {inspectorMedian as median,inspectorSamples as samples} from '../../inspectorLatency'
 import {latencyRounds,latencyHistoryStats,readLatencyHistory,type LatencySeries} from '../../latencyHistory'
 import LatencyChart from './LatencyChart.vue'
-const props=defineProps<{series:LatencySeries[];node?:NodeOption}>()
-const emit=defineEmits<{(e:'round-change',series:LatencySeries[]):void}>()
+const props=defineProps<{series:LatencySeries[];node?:NodeOption;focus?:{id:string;test:LatencyTest}}>()
+const emit=defineEmits<{(e:'round-change',series:LatencySeries[]):void;(e:'return-latest'):void}>()
 const hours=ref(168),saved=ref<LatencySeries[]|null>(null),loading=ref(false),error=ref(''),selectedId=ref(''),expanded=ref(false)
+watch(()=>props.focus,focus=>selectedId.value=focus?.id||'',{immediate:true})
 let generation=0
 watch([()=>props.node&&key(props.node),hours,()=>props.series.flatMap(s=>s.points.map(p=>p.id)).join('|')],async()=>{if(!props.node)return;const token=++generation;loading.value=true;error.value='';try{const result=await readLatencyHistory(props.node,hours.value);if(token===generation)saved.value=result}catch(e){if(token===generation)error.value=e instanceof Error?e.message:String(e)}finally{if(token===generation)loading.value=false}},{immediate:true})
 const historySeries=computed(()=>{const since=Date.now()-hours.value*3600000;return (saved.value||props.series).map(s=>({...s,points:s.points.filter(p=>Date.parse(p.time)>=since)}))})
-const combined=computed(()=>props.series.map(s=>({...s,points:[...new Map([...(saved.value?.find(v=>v.id===s.id)?.points||[]),...s.points.flatMap(p=>p.latencyTests?.length?p.latencyTests.map(t=>manualLatencyPoint(t,s.id)):[p])].map(p=>[p.id,p])).values()]})))
+const combined=computed(()=>props.series.map(s=>({...s,points:[...new Map([...(saved.value?.find(v=>v.id===s.id)?.points||[]),...s.points.flatMap(p=>p.latencyTests?.length?p.latencyTests.map(t=>manualLatencyPoint(t,s.id)):[p]),...(props.focus?[{...manualLatencyPoint(props.focus.test,s.id),id:props.focus.id,source:props.focus.test.source==='monitor'?'monitor' as const:'manual' as const}]:[])].map(p=>[p.id,p])).values()]})))
 const rounds=computed(()=>latencyRounds(combined.value)),latest=computed(()=>rounds.value.at(-1)),current=computed(()=>rounds.value.find(r=>r.id===selectedId.value)||latest.value)
 const currentSeries=computed(()=>current.value?.series||props.series.map(s=>({...s,points:[]})))
 watch(currentSeries,value=>emit('round-change',value),{immediate:true})
@@ -24,7 +25,7 @@ const ms=(v:number|null|undefined)=>v==null?'—':Math.round(v).toLocaleString()
 </script>
 <template>
  <section class="ins-latency" aria-label="延迟统计与合并走势">
-  <div v-if="historical" class="round-banner">正在看 {{date(current?.time)}} <button class="hd-link" @click="selectedId=''">回到最新</button></div>
+  <div v-if="historical" class="round-banner">正在看 {{date(current?.time)}} <button class="hd-link" @click="selectedId='';emit('return-latest')">回到最新</button></div>
   <header><strong>本次 · {{current?date(current.time):'暂无采样'}}</strong><small>每站 {{Math.max(0,...data.map(s=>s.total))}} 次</small></header>
   <div class="latency-metrics">
    <div><span>稳定延迟</span><strong title="各站去掉首次采样后的中位数，再取四站中位数">{{ms(current?.stable)}}</strong></div>

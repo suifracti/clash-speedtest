@@ -63,7 +63,7 @@ const filteredAirportNodes=computed(()=>airportNodeCount(w.airports.value.find(a
 const qualityFiltering=computed(()=>m.qualityGate.value!=='all'||m.qualitySort.value!=='existing')
 const focusKey=ref<string|null>(null)
 const focusNode=computed(()=>m.pageNodes.value.find(n=>key(n)===focusKey.value)||m.pageNodes.value[0])
-function focus(n:NodeOption){if(focusNode.value&&key(focusNode.value)===key(n))return;m.closeHover();focusKey.value=key(n)}
+function focus(n:NodeOption){w.latencyReportFocus.value=null;if(focusNode.value&&key(focusNode.value)===key(n))return;m.closeHover();focusKey.value=key(n)}
 // 检查器宽度可拖动（或用 ←→），记在本机。
 const SIDE_MIN=340,SIDE_MAX=680
 function savedSide(){try{const v=Number(window.localStorage.getItem('cst.inspector-width'));return v>=SIDE_MIN&&v<=SIDE_MAX?v:420}catch{return 420}}
@@ -78,12 +78,13 @@ function startResize(e:PointerEvent){
 }
 // ⌘K「查看节点」：只改查看中的节点和页码，不勾选、不动筛选；被筛掉的节点改用详情弹窗查看。
 const table=ref<HTMLElement>()
-watch(()=>w.viewRequest.value,n=>{
+watch(()=>w.viewRequest.value,async n=>{
  if(!n)return
  w.viewRequest.value=null
+ if(w.latencyReportFocus.value?.nodeKey===key(n)){exitMode.value=false;m.qualityGate.value='all';m.protocolFilter.value='all';m.qualitySort.value='existing';m.weeklySort.value='';await nextTick()}
  const k=key(n),i=m.visibleNodes.value.findIndex(v=>key(v)===k)
  if(i<0){w.inspectNode.value=n;return}
- m.currentPage.value=Math.floor(i/m.pageSize.value)+1;m.closeHover();focusKey.value=k
+ m.currentPage.value=m.pageSize.value>0?Math.floor(i/m.pageSize.value)+1:1;m.closeHover();focusKey.value=k
  void nextTick(()=>table.value?.querySelector<HTMLElement>('.hd-tr.focus')?.scrollIntoView?.({block:'nearest'}))
 },{immediate:true})
 function isFocus(n:NodeOption){return !!focusNode.value&&key(focusNode.value)===key(n)}

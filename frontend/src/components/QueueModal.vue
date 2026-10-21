@@ -17,7 +17,11 @@ watch(report,async selected=>{previous.value=selected?.previous||[];if(selected&
 function currentNodes(items:BatchItem[]){return items.flatMap(i=>{const n=w.nodes.value.find(n=>key(n)===key(i));return n?[n]:[]})}
 function retryReport(items:BatchItem[]){const nodes=currentNodes(items);if(!nodes.length){w.notify('这些历史节点的配置已变化，请重新选择');return}w.openPlan(nodes);if(w.plan.value){w.plan.value.projects=['latency'];w.plan.value.includeReputation=false;w.plan.value.target=report.value?.batch.target_id||'all';w.plan.value.samples=report.value?.batch.sample_count||6;w.plan.value.timeout=report.value?.batch.timeout_seconds||5}w.queueOpen.value=false}
 async function exportReport(items:BatchItem[]){try{const nodes=currentNodes(items);if(!nodes.length){w.notify('这些历史节点已不在当前订阅中');return}const result=await api.exportClash(nodes);await saveFile(result.yaml_content,'cst-usable.yaml','application/x-yaml')}catch(e){w.fail(e)}}
-async function inspectReport(item:BatchItem){const n=currentNodes([item])[0];if(!n){w.notify('这个历史节点已不在当前订阅中');return}w.queueOpen.value=false;w.project.value='latency';w.viewAirport(w.nodeAirportId(n));w.search.value='';w.page.value='home';await nextTick();w.viewRequest.value=n}
+async function inspectReport(item:BatchItem){
+ const n=currentNodes([item])[0];if(!n){w.notify('这个历史节点已不在当前订阅中');return}if(!item.result?.samples?.length){w.notify('这项未执行，没有采样轮次');return}
+ w.latencyReportFocus.value={nodeKey:key(n),id:report.value?.monitor?report.value.batch.batch_id:item.result.attempt_id,test:item.result}
+ w.queueOpen.value=false;w.project.value='latency';const airport=w.nodeAirportId(n);if(w.airportFilter.value!==airport)w.viewAirport(airport);w.search.value='';w.region.value='all';w.excludeRegion.value=false;w.subscription.value='all';w.downloadFullOnly.value=false;w.page.value='home';await nextTick();w.viewRequest.value=n
+}
 const counts=computed(()=>{
  const rows=w.queue.value,unknown=w.pendingStart.value?rows.filter(q=>q.id===w.pendingStart.value?.requestId||w.pendingStart.value?.kind==='latency'&&q.project==='latency'&&q.state==='running'&&!q.batchId).length:0
  return {queued:rows.filter(q=>q.state==='queued').length,running:Math.max(0,rows.filter(q=>['running','cancelling'].includes(q.state)).length-unknown),unknown,notRun:rows.filter(q=>['not_executed','cancelled'].includes(q.state)||resultStatus(q)?.notExecuted).length,saveFailed:rows.filter(q=>q.attempt?.persistence_state==='failed'||q.error?.startsWith('保存失败')).length}
