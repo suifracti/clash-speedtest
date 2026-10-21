@@ -39,7 +39,7 @@ describe('node selection through DOM controls',()=>{
     expect(cells(wrapper)).toEqual(['失败','未测'])
     expect(wrapper.findAll('.hd-latency .health-cell')).toHaveLength(0)
     expect(wrapper.find('.latency-spark').exists()).toBe(false)
-    expect(wrapper.get('.latency-combined').attributes('aria-label')).toContain('稳定延迟随时间')
+    expect(wrapper.get('.latency-combined').attributes('aria-label')).toContain('本轮实际采样')
     expect(wrapper.findAll('.latency-combined .failed')).toHaveLength(1)
     w.latency.value={[key(a)]:[{...a,attempt_id:'new-manual',node_type:'trojan',requested_at:'2026-10-03T07:00:00Z',finished_at:'2026-10-03T07:00:01Z',status:'completed',latency_ms:55,total_samples:1,success_samples:1,failure_samples:0,persistence_state:'saved',samples:[{seq:1,target:'https://speed.cloudflare.com/__down?bytes=1',timestamp:'2026-10-03T07:00:01Z',latency_ms:55,success:true}]}]}
     await flushPromises();expect(cells(wrapper)).toEqual(['—','未测'])

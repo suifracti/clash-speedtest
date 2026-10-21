@@ -1,16 +1,16 @@
 <script setup lang="ts">
-import {computed,inject} from 'vue'
+import {computed,inject,ref} from 'vue'
 import {useWorkspace} from '../../workspace'
 import {date,key,targets,type NodeOption,type Project} from '../../domain'
 import {nodeDisplayName} from '../../nodePresentation'
-import {monitorHTTPServices,type TrendPoint} from '../../presentation'
+import {manualLatencyPoint,monitorLatencyPoints,monitorHTTPServices,type TrendPoint} from '../../presentation'
 import Icon from '../Icon.vue'
 import HealthBars from '../HealthBars.vue'
 import UnlockInspector from './UnlockInspector.vue'
 import {unlockSummary} from '../../unlock'
 import InspectorLatency from './InspectorLatency.vue'
 import {exitLanding} from '../../exitLanding'
-import {stableLatency} from '../../inspectorLatency'
+import {stableLatency,inspectorMedian} from '../../inspectorLatency'
 import NodeExitSummary from '../NodeExitSummary.vue'
 import MeasurementResults from '../MeasurementResults.vue'
 import InlineHistory from '../InlineHistory.vue'
@@ -21,12 +21,13 @@ import {attemptStatus} from '../../measurementRounds'
 import {downloadSpeed,downloadTarget} from '../../domain'
 const props=defineProps<{node:NodeOption;exitOnly?:boolean}>()
 const w=useWorkspace(),m=inject(homeModelKey)!
+const latencyFocus=ref<import('../../latencyHistory').LatencySeries[]|null>(null)
 const sites=computed(()=>targets.filter(t=>w.displayTargets.value.includes(t.id)))
 // 检查器跟着项目标签变化：只展开当前项目，其余项目收成底部一行摘要，点一下就切过去。
 const project=computed(()=>w.project.value)
 const shows=(p:Project)=>!props.exitOnly&&(project.value==='combined'||project.value===p)
 const landing=computed(()=>exitLanding(props.node,attempts.value))
-const latencyVerdictValue=computed(()=>latencyVerdict(sites.value.map(s=>m.metricPoint(props.node,s.id)),stableLatency(latencySeries.value)))
+const latencyVerdictValue=computed(()=>latencyVerdict((latencyFocus.value||latencySeries.value).map(s=>s.points.at(-1)),stableLatency(latencyFocus.value||latencySeries.value)))
 const serviceVerdict=computed(()=>unlockSummary(w.catalog.value,id=>m.shownService(props.node,id),w.nodeUnlockRegion(props.node),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions))
 const downloadVerdict=computed(()=>({tone:m.downloadMetricTone(props.node)||'empty',label:m.downloadMetric(props.node),detail:m.downloadMetricContext(props.node)}))
 const verdict=computed(()=>props.exitOnly?{tone:landing.value.tone,label:landing.value.label,detail:landing.value.detail}:project.value==='download'?downloadVerdict.value:project.value==='service'?serviceVerdict.value:latencyVerdictValue.value)
@@ -65,7 +66,7 @@ function windowText(id:string){
  const s=m.siteSummaries.value[key(props.node)]?.find(x=>x.targetId===id)
  if(!s?.total)return ''
  const range=({6:'6 小时',24:'24 小时',168:'7 天',720:'30 天'} as Record<number,string>)[w.hours.value]||w.hours.value+' 小时'
- return `${range}内 ${s.success}/${s.total} 次响应`+(s.p50!=null?` · 中位 ${Math.round(s.p50)} ms`:'')+(s.p95!=null&&s.success>=20?` · 尾部 P95 ${Math.round(s.p95)} ms`:'')
+ const e=m.qualityData.value[key(props.node)],points=[...(e?.tests||[]).map(t=>manualLatencyPoint(t,id)),...monitorLatencyPoints(e?.monitor||[],id)],stable=inspectorMedian(points.flatMap(p=>{const v=stableLatency([{id,points:[p]}]);return v===null?[]:[v]}));return `${range}内 ${s.success}/${s.total} 次响应`+(stable!==null?` · 稳定中位 ${Math.round(stable)} ms`:'')
 }
 const latencySeries=computed(()=>sites.value.map(s=>({...s,points:m.sitePoints(props.node,s.id),context:(windowText(s.id)||m.siteContext(props.node,s.id))+(m.siteReason(props.node,s.id)?' · '+m.siteReason(props.node,s.id):'')})))
 const mine=computed(()=>!!m.hoverNode.value&&key(m.hoverNode.value)===key(props.node))
@@ -101,7 +102,7 @@ function run(){m.closeHover();props.exitOnly?w.openReputationPlan([props.node]):
     </div>
 
     <div v-if="shows('latency')" class="hd-ins-block hd-latency">
-      <InspectorLatency :series="latencySeries"/>
+      <InspectorLatency :series="latencySeries" :node="node" @round-change="latencyFocus=$event"/>
       <small v-if="m.monitorErrors.value[key(node)]" class="bad">监测记录读取失败</small>
     </div>
 

@@ -45,9 +45,9 @@ it('refreshes the completed saved round without a manual click, but not while th
  w!.running.value=true;vi.setSystemTime(new Date('2026-10-10T00:01:00Z'));saved=true
  const test={...evidence(fresh[0],980).tests[0],finished_at:'2026-10-10T00:01:00Z'}
  w!.mergeLatency(test);await flushPromises()
- expect(windowStats()).not.toContain('982 ms')
+ expect(windowStats()).not.toContain('983 ms')
  w!.running.value=false;await flushPromises()
- expect(windowStats()).toContain('982 ms')
+ expect(windowStats()).toContain('983 ms')
  expect(windowStats()).not.toContain('P95')
  expect(w!.sortSnapshots.value).toEqual(snapshot)
  expect(api.startLatency).not.toHaveBeenCalled();expect(api.startAttempt).not.toHaveBeenCalled()
@@ -81,7 +81,7 @@ it('refreshes after real runPlan polling and raw measurement-round readback befo
  expect(w!.busy.value).toBe(false)
  expect(api.batch).toHaveBeenCalledTimes(1);expect(api.measurementRounds).toHaveBeenCalled()
  expect(windowStats()).toContain('1/1 次响应')
- expect(windowStats()).toContain('5118 ms')
+ expect(windowStats()).not.toContain('稳定中位') // 每站仅一次，不能把首次连接当稳定值
  expect(windowStats()).not.toContain('P95')
  expect(readQualityMock.mock.calls.length).toBeGreaterThan(previousReads)
  expect(Date.parse(readQualityMock.mock.calls.at(-1)![2])).toBeGreaterThanOrEqual(Date.parse(finished))
@@ -109,17 +109,17 @@ it('reads the invalidated snapshot on returning home after a background save, wi
  attachSavedSnapshot();await flushPromises();w!.page.value='history';await flushPromises()
  vi.setSystemTime(new Date('2026-10-10T00:01:00Z'));saved=true;w!.mergeLatency(evidence(fresh[0],50).tests[0]);await flushPromises()
  w!.page.value='home';await flushPromises()
- expect(windowStats()).toContain('52 ms')
+ expect(windowStats()).toContain('53 ms')
  expect(api.startLatency).not.toHaveBeenCalled();expect(api.startAttempt).not.toHaveBeenCalled()
 })
 
 it('shows a refresh read error instead of reusing an old successful value after a new saved result',async()=>{
  readQualityMock.mockImplementation(async(node:NodeOption)=>evidence(node,40))
- attachSavedSnapshot();await flushPromises();expect(windowStats()).toContain('42 ms')
+ attachSavedSnapshot();await flushPromises();expect(windowStats()).toContain('43 ms')
  readQualityMock.mockRejectedValue(new Error('history unavailable'))
  vi.setSystemTime(new Date('2026-10-10T00:01:00Z'));w!.mergeLatency(evidence(fresh[0],100).tests[0]);await flushPromises()
  expect(windowStats()).toContain('读取失败')
- expect(windowStats()).not.toContain('42 ms')
+ expect(windowStats()).not.toContain('43 ms')
  expect(api.startLatency).not.toHaveBeenCalled()
 })
 
@@ -161,8 +161,8 @@ it('automatically reads both saved S5 nodes through the real projection with a n
  await flushPromises();expect(windowStats()).not.toContain('ms')
  vi.setSystemTime(new Date('2026-10-12T14:55:11Z'));w.running.value=false;await flushPromises()
  const saved=await perNode()
- expect(saved).toContain('979 ms')
- expect(saved).toContain('992 ms')
+ expect(saved).not.toContain('稳定中位')
+ expect(saved).toContain('1/1 次响应')
  expect(saved).not.toContain('P95')
  expect(saved).toContain('1.55 MiB/s')
  expect(saved).toContain('1.91 MiB/s')
