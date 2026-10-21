@@ -502,6 +502,9 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	if c.DriftSamples < 0 || c.DriftSamples > 10 {
 		return finish(Result{Outcome: "not_executed", FailurePhase: "request_setup", ErrorMessage: "服务观察次数必须在 1–10 次范围内；未发出请求"}, startedAt)
 	}
+	if rule.ServiceID == "disney_unlock" {
+		return checkDisneyRegion(ctx, nil, rule, startedAt)
+	}
 	if rule.ServiceID == "kktv_tw" {
 		return finish(Result{Outcome: "not_executed", FailurePhase: "service_retired", Summary: "KKTV 已结束营运", ErrorMessage: "官方已结束营运；保留历史，不发起节点检测请求", Details: map[string]string{"not_executed_reason": "service_retired", "reference_url": "https://events.kktv.me/tw/faq-card-177"}}, startedAt)
 	}

@@ -3,14 +3,14 @@ import {computed,inject} from 'vue'
 import {useWorkspace} from '../../workspace'
 import {date,isReputationRule,key,type NodeOption} from '../../domain'
 import {attemptObservedAt} from '../../nodeQuality'
-import {unlockGroups,unlockGroup,unlockResult,unlockServiceSkipReason} from '../../unlock'
+import {unlockGroups,unlockGroup,unlockResult,unlockMeasured,unlockServiceSkipReason} from '../../unlock'
 import {homeModelKey} from './homeModel'
 import RecordedBars from '../RecordedBars.vue'
 const props=defineProps<{node:NodeOption}>(),w=useWorkspace(),m=inject(homeModelKey)!
 const items=computed(()=>{
  const records=[...(m.qualityData.value[key(props.node)]?.services||[]),...(w.services.value[key(props.node)]||[])],names=new Map(w.catalog.value.filter(s=>!isReputationRule(s)).map(s=>[s.service_id,s.name]))
  for(const a of records)if(a.service_id&&!isReputationRule({service_id:a.service_id})&&!names.has(a.service_id))names.set(a.service_id,a.rule.name||a.service_id)
- return [...names].map(([id,name])=>{const attempt=m.shownService(props.node,id);return {id,name,attempt,result:unlockResult(attempt),at:attempt?date(attemptObservedAt(attempt)):''}}).sort((a,b)=>(a.result.state==='unavailable'?0:1)-(b.result.state==='unavailable'?0:1))
+ return [...names].map(([id,name])=>{const attempt=m.shownService(props.node,id);return {id,name,attempt,result:unlockResult(attempt,id),at:attempt?date(attemptObservedAt(attempt)):''}}).sort((a,b)=>(a.result.state==='unavailable'?0:1)-(b.result.state==='unavailable'?0:1))
 })
 const groups=computed(()=>[...unlockGroups,{id:'legacy',name:'其他（旧检测项）'}].map(g=>{
  const list=items.value.filter(s=>unlockGroup(s.id)===g.id).map(s=>({...s,skip:unlockServiceSkipReason(s.id,w.nodeUnlockRegion(props.node),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions)}))
@@ -20,7 +20,7 @@ function records(id:string){return m.servicePoints(props.node,id).filter(p=>!p.i
 </script>
 <template><div class="unlock-inspector" aria-label="解锁检测明细">
  <template v-for="group in groups" :key="group.id"><p v-if="group.skip" class="unlock-skipped">{{group.name}} · {{group.skip}}</p><component v-else :is="group.id==='legacy'?'details':'section'" class="unlock-group" :class="{legacy:group.id==='legacy'}">
-  <component :is="group.id==='legacy'?'summary':'h4'">{{group.name}}<small>{{group.items.some(s=>!s.skip&&['available','unavailable','partial'].includes(s.result.state))?group.items.filter(s=>!s.skip&&s.result.state==='available').length+'/'+group.items.filter(s=>!s.skip&&['available','unavailable','partial'].includes(s.result.state)).length+' 可用':group.items.some(s=>!s.skip&&s.result.state==='verification')?'需人机验证':'未测'}}</small></component>
+  <component :is="group.id==='legacy'?'summary':'h4'">{{group.name}}<small>{{group.items.some(s=>!s.skip&&unlockMeasured(s.result.state))?group.items.filter(s=>!s.skip&&s.result.state==='available').length+'/'+group.items.filter(s=>!s.skip&&unlockMeasured(s.result.state)).length+' 可用':'未测'}}</small></component>
   <div v-for="s in group.items" :key="s.id" class="hd-service-row unlock-row">
    <button class="hd-site-name unlock-name" @click="m.showService(node,s.id)">{{s.name}}</button>
    <button class="hd-site-value unlock-state" :class="s.result.tone" :title="s.result.reason" @click="m.showService(node,s.id)">{{s.skip?'—':s.result.label}}<small v-if="s.attempt?.result&&(s.id==='netflix_unlock'||s.id==='netflix_unlock_ipv4')">未验证账号播放</small></button>

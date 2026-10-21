@@ -1,4 +1,4 @@
-import {unlockGroup,unlockServiceAllowed} from './unlock'
+import {unlockGroup,unlockServiceAllowed,unlockSupported} from './unlock'
 import {exitLanding} from './exitLanding'
 import {computed,inject,reactive,ref,watch,type InjectionKey} from 'vue'
 import {api,events,mapLimited,saveFile} from './api'
@@ -17,7 +17,7 @@ const selectedServicesKey='speedtest.selected-unlocks-v2'
 function savedServices():string[]{try{
  // Old display-only choices were often automatic; they must not become detection defaults.
  const ids=JSON.parse(window.localStorage.getItem(selectedServicesKey)||'null')
- return Array.isArray(ids)?[...new Set(ids.filter((id):id is string=>typeof id==='string'&&!!id))]:[]
+ return Array.isArray(ids)?[...new Set(ids.filter((id):id is string=>typeof id==='string'&&!!id&&unlockSupported(id)))]:[]
 }catch{return []}}
 
 type ActiveWork=({kind:'latency';requestId:string;batchId?:string}|{kind:'download'|'service';requestId:string;node:NodeOption;attemptId?:string;serviceId?:string})&{body?:Record<string,unknown>}
@@ -124,7 +124,7 @@ export function createWorkspace(){
   watch(displayTargets,ids=>{const valid=[...new Set(ids.filter(id=>targetIds.has(id)))];if(!valid.length)valid.push('cloudflare');if(valid.length!==ids.length||valid.some((id,i)=>id!==ids[i]))displayTargets.value=valid;try{window.localStorage.setItem('speedtest.display-sites',JSON.stringify(valid))}catch{};},{deep:true,flush:'sync'})
   watch(displayTarget,id=>{if(!targetIds.has(id)){displayTarget.value=displayTargets.value[0]||'cloudflare';return}},{flush:'sync'})
   function isReputationServiceId(id:string){return isReputationRule(catalog.value.find(rule=>rule.service_id===id)||{service_id:id})}
-  function normalizeServices(ids:string[]){return [...new Set(ids.filter(id=>!isReputationServiceId(id)&&(!catalog.value.length||catalog.value.some(rule=>rule.service_id===id&&!rule.superseded_by))))]}
+  function normalizeServices(ids:string[]){return [...new Set(ids.filter(id=>unlockSupported(id)&&!isReputationServiceId(id)&&(!catalog.value.length||catalog.value.some(rule=>rule.service_id===id&&!rule.superseded_by))))]}
   function saveServices(){
     const ids=normalizeServices(serviceIds.value)
     if(ids.length!==serviceIds.value.length||ids.some((id,i)=>id!==serviceIds.value[i])){serviceIds.value=ids;return}

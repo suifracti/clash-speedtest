@@ -13,11 +13,7 @@ import (
 )
 
 const (
-	// Public browser SDK identifier used by Disney’s no-account device flow; not a user credential.
-	disneyRegionAuth = "Bearer ZGlzbmV5JmJyb3dzZXImMS4wLjA.Cu56AgSfBTDag5NiRA81oLHkDZfu5L3CKadnefEAY84"
 	disneyDeviceURL  = "https://disney.api.edge.bamgrid.com/devices"
-	disneyTokenURL   = "https://disney.api.edge.bamgrid.com/token"
-	disneyGraphURL   = "https://disney.api.edge.bamgrid.com/graph/v1/device/graphql"
 	spotifyRegionURL = "https://spclient.wg.spotify.com/signup/public/v1/account"
 	tiktokRegionURL  = "https://www.tiktok.com/"
 	unextRegionURL   = "https://cc.unext.jp/?zxuid=1b64984ecc23&zxemp=29854391&operationName=cosmo_getPlaylistUrl&variables=%7B%22code%22%3A%22ED00440417%22%2C%22playMode%22%3A%22caption%22%2C%22bitrateLow%22%3A192%2C%22bitrateHigh%22%3Anull%2C%22validationOnly%22%3Atrue%7D&extensions=%7B%22persistedQuery%22%3A%7B%22version%22%3A1%2C%22sha256Hash%22%3A%22a2309e22a6819ff747cf9a389dd78db35fa3c386fac1d53461061ba20fa44e34%22%7D%7D"
@@ -51,10 +47,15 @@ func regionUnlockRule(id, name, category, region, target, method, criterion stri
 		TargetURL: target, Method: method, SuccessCriterion: criterion, RedirectPolicy: "probe_specific",
 		TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
 	}
+	if id == "disney_unlock" {
+		rule.RuleVersion = 3
+		rule.Description = "暂不支持自动地区检测；旧记录保留，不发出新请求"
+		rule.SuccessCriterion = "暂不支持"
+	}
 	if id == "tiktok_unlock" {
 		rule.MaximumBodyBytes = MaximumWebDocumentBytes
 	}
-	if id == "disney_unlock" || id == "spotify_unlock" || id == "tiktok_unlock" {
+	if id == "spotify_unlock" || id == "tiktok_unlock" {
 		rule.RuleVersion = 2
 	}
 	return rule
@@ -79,73 +80,8 @@ func checkRegionUnlock(ctx context.Context, client *http.Client, rule Rule, star
 	}
 }
 
-func checkDisneyRegion(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
-	result := Result{Details: map[string]string{}}
-	device, err := json.Marshal(map[string]any{
-		"deviceFamily": "browser", "applicationRuntime": "chrome", "deviceProfile": "windows", "attributes": map[string]any{},
-	})
-	if err != nil {
-		return finish(Result{Outcome: "unknown", FailurePhase: "request_setup", ErrorMessage: "无法准备 Disney+ 地区请求"}, started)
-	}
-	body, part, ok := regionRequest(ctx, client, http.MethodPost, rule.TargetURL, "application/json", device, rule.MaximumBodyBytes)
-	addRegionRequest(&result, part)
-	if !ok {
-		return finishRegionFailure(result, body, "forbidden-location", "Disney+ 当前地区不受支持", started)
-	}
-	var deviceData struct {
-		Assertion string `json:"assertion"`
-	}
-	if json.Unmarshal(body, &deviceData) != nil || deviceData.Assertion == "" {
-		return regionUnknown(result, "region_device", "Disney+ 未返回设备地区令牌", started)
-	}
-	form := url.Values{
-		"grant_type":         {"urn:ietf:params:oauth:grant-type:token-exchange"},
-		"latitude":           {"0"},
-		"longitude":          {"0"},
-		"platform":           {"browser"},
-		"subject_token":      {deviceData.Assertion},
-		"subject_token_type": {"urn:bamtech:params:oauth:token-type:device"},
-	}
-	body, part, ok = regionRequest(ctx, client, http.MethodPost, disneyTokenURL, "application/x-www-form-urlencoded", []byte(form.Encode()), rule.MaximumBodyBytes)
-	addRegionRequest(&result, part)
-	if !ok {
-		return finishRegionFailure(result, body, "forbidden-location", "Disney+ 当前地区不受支持", started)
-	}
-	var tokenData struct {
-		RefreshToken string `json:"refresh_token"`
-	}
-	if json.Unmarshal(body, &tokenData) != nil || tokenData.RefreshToken == "" {
-		return regionUnknown(result, "region_token", "Disney+ 未返回地区会话", started)
-	}
-	query, _ := json.Marshal(map[string]any{
-		"query":     "mutation refreshToken($input: RefreshTokenInput!) { refreshToken(refreshToken: $input) { activeSession { sessionId } } }",
-		"variables": map[string]any{"input": map[string]string{"refreshToken": tokenData.RefreshToken}},
-	})
-	body, part, ok = regionRequest(ctx, client, http.MethodPost, disneyGraphURL, "application/json", query, rule.MaximumBodyBytes)
-	addRegionRequest(&result, part)
-	if !ok {
-		return finishRegionFailure(result, body, "forbidden-location", "Disney+ 当前地区不受支持", started)
-	}
-	var session map[string]any
-	if json.Unmarshal(body, &session) != nil {
-		return regionUnknown(result, "region_session", "Disney+ 地区会话无法识别", started)
-	}
-	region := jsonStringField(session, "countryCode")
-	supported, hasSupport := jsonBoolField(session, "inSupportedLocation")
-	if validRegionCode(region) {
-		region = strings.ToUpper(region)
-		result.Details["service_region"] = region
-	}
-	if !validRegionCode(region) || !hasSupport {
-		return regionUnknown(result, "region_session", "Disney+ 未提供完整地区判据", started)
-	}
-	if supported {
-		result.Outcome, result.Summary = "unlocked", "Disney+ 服务地区判定通过；未验证账号或播放"
-		return finish(result, started)
-	}
-	result.Outcome, result.Summary = "region_blocked", "Disney+ 当前地区暂不支持"
-	result.ErrorMessage = result.Summary
-	return finish(result, started)
+func checkDisneyRegion(_ context.Context, _ *http.Client, _ Rule, started time.Time) Result {
+	return finish(Result{Outcome: "not_executed", FailurePhase: "service_unsupported", Summary: "暂不支持", ErrorMessage: "Disney+ 地区检测当前不可用；旧记录保留"}, started)
 }
 
 func checkSpotifyRegion(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
@@ -167,7 +103,7 @@ func checkSpotifyRegion(ctx context.Context, client *http.Client, rule Rule, sta
 	result.Details = map[string]string{"service_region": strings.ToUpper(data.Country)}
 	switch {
 	case data.Status == 320 && strings.Contains(strings.ToLower(data.Errors["generic_error"]), "proxy"):
-		result.Outcome, result.Summary = "service_rejected", "Spotify 拒绝代理 IP 注册"
+		result.Outcome, result.Summary = "service_rejected", "识别为代理 IP，已有账号通常不受影响"
 	case data.Status == 320 || data.Status == 120 || (data.Launched != nil && !*data.Launched):
 		result.Outcome, result.Summary = "region_blocked", "Spotify 当前国家未开放注册"
 	case data.Status == 311 && validRegionCode(data.Country) && data.Launched != nil && *data.Launched:
@@ -292,13 +228,7 @@ func regionRequest(ctx context.Context, client *http.Client, method, target, con
 	request.Header.Set("User-Agent", browserUserAgent)
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	if strings.Contains(target, "disney.api.edge.bamgrid.com") {
-		auth := disneyRegionAuth
-		if target == disneyGraphURL {
-			auth = strings.TrimPrefix(auth, "Bearer ")
-		}
-		request.Header.Set("Authorization", auth)
-	}
+
 	if contentType != "" {
 		request.Header.Set("Content-Type", contentType)
 	}

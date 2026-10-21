@@ -5,7 +5,7 @@ import {api,saveFile} from '../../api'
 import {date,key} from '../../domain'
 import {nodeDisplayName,nodeRegionLabel} from '../../nodePresentation'
 import {attemptObservedAt} from '../../nodeQuality'
-import {unlockGroups,unlockResult,unlockServiceAllowed,unlockServiceSkipReason} from '../../unlock'
+import {unlockGroups,unlockResult,unlockMeasured,unlockServiceAllowed,unlockServiceSkipReason} from '../../unlock'
 import {exitLanding} from '../../exitLanding'
 import {homeModelKey} from './homeModel'
 const w=useWorkspace(),m=inject(homeModelKey)!,selected=ref({service:'chatgpt_unlock',region:''}),exporting=ref(false)
@@ -20,14 +20,14 @@ watch([regions,groups],()=>{
 function allowed(id:string,region:string){return unlockServiceAllowed(id,region,w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions)}
 const entries=computed(()=>{
  const id=selected.value.service
- return nodes.value.filter(n=>w.nodeUnlockRegion(n)===selected.value.region).map(node=>{const attempt=m.shownService(node,id);return {node,attempt,result:unlockResult(attempt),at:attempt?attemptObservedAt(attempt):'',error:m.qualityErrors.value[key(node)],googleNote:exitLanding(node,[...(m.qualityData.value[key(node)]?.services||[]),...(w.services.value[key(node)]||[])]).googleNote}}).sort((a,b)=>(Date.parse(b.at)||0)-(Date.parse(a.at)||0))
+ return nodes.value.filter(n=>w.nodeUnlockRegion(n)===selected.value.region).map(node=>{const attempt=m.shownService(node,id);return {node,attempt,result:unlockResult(attempt,id),at:attempt?attemptObservedAt(attempt):'',error:m.qualityErrors.value[key(node)],googleNote:exitLanding(node,[...(m.qualityData.value[key(node)]?.services||[]),...(w.services.value[key(node)]||[])]).googleNote}}).sort((a,b)=>(Date.parse(b.at)||0)-(Date.parse(a.at)||0))
 })
 function cell(id:string,region:string){
  if(!allowed(id,region))return {label:'—',tone:'empty',title:unlockServiceSkipReason(id,region,w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions),available:0,total:0}
- const scope=nodes.value.filter(n=>w.nodeUnlockRegion(n)===region),results=scope.map(n=>unlockResult(m.shownService(n,id))),available=results.filter(r=>r.state==='available').length,total=results.filter(r=>['available','unavailable','partial'].includes(r.state)).length
+ const scope=nodes.value.filter(n=>w.nodeUnlockRegion(n)===region),results=scope.map(n=>unlockResult(m.shownService(n,id),id)),available=results.filter(r=>r.state==='available').length,total=results.filter(r=>unlockMeasured(r.state)).length
  const partial=results.some(r=>r.state==='partial'),verification=results.some(r=>r.state==='verification')
  const error=scope.some(n=>m.qualityErrors.value[key(n)])
- return {label:total?`${available}/${total}`:error?'读取失败':verification?'需人机验证':'未测',tone:!total?(verification?'warn':'empty'):available===total?'good':available||partial?'warn':'bad',title:`${available} 可用 / ${total} 已测 · ${scope.length} 个节点`,available,total}
+ return {label:total?`${available}/${total}`:error?'读取失败':'未测',tone:!total?'empty':available===total?'good':available||partial||verification?'warn':'bad',title:`${available} 可用 / ${total} 已测 · ${scope.length} 个节点`,available,total}
 }
 const current=computed(()=>cell(selected.value.service,selected.value.region)),service=computed(()=>m.displayServices.value.find(s=>s.service_id===selected.value.service)),latest=computed(()=>entries.value.find(e=>e.at)?.at)
 const untested=computed(()=>entries.value.filter(e=>!e.attempt?.result&&!e.attempt?.started_at&&!e.error).map(e=>e.node))

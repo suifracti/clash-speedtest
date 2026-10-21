@@ -1,5 +1,5 @@
 import {expect,it} from 'vitest'
-import {unlockGroupSummary,unlockResult,unlockServiceAllowed} from '../unlock'
+import {unlockGroupSummary,unlockResult,unlockServiceAllowed,unlockSupported} from '../unlock'
 import type {Attempt} from '../domain'
 const attempt=(outcome:string)=>({service_id:'chatgpt_unlock',execution_state:'completed',rule:{service_id:'chatgpt_unlock',target_url:''},result:{outcome,details:{service_region:'SG'},summary:'地区不支持'}} as unknown as Attempt)
 it('shares available counts and explicit region refusal reasons',()=>{
@@ -28,7 +28,19 @@ it('uses saved service regions, empty overrides and disabled skipping',()=>{
 it('shows Google verification separately without counting it as unavailable',()=>{
  const a={...attempt('verification_required'),service_id:'gemini_unlock'}
  expect(unlockResult(a)).toMatchObject({state:'verification',tone:'warn',label:'需人机验证'})
- expect(unlockGroupSummary('ai',[{service_id:'gemini_unlock',name:'Gemini'}],()=>a)).toMatchObject({total:0,label:'需人机验证',tone:'warn'})
+ expect(unlockGroupSummary('ai',[{service_id:'gemini_unlock',name:'Gemini'}],()=>a)).toMatchObject({total:1,label:'0/1',tone:'warn'})
  const cn={...a,result:{...a.result!,outcome:'region_blocked',details:{service_region:'CN'}}}
  expect(unlockResult(cn)).toMatchObject({label:'Google 判定为中国大陆',tone:'bad'})
+})
+
+it('counts verification in 2/3 and shows Spotify registration restriction in orange',()=>{
+ const catalog=['chatgpt_unlock','claude_unlock','gemini_unlock'].map(service_id=>({service_id,name:service_id}))
+ expect(unlockGroupSummary('ai',catalog,id=>({...attempt(id==='gemini_unlock'?'verification_required':'unlocked'),service_id:id}))).toMatchObject({label:'2/3',tone:'warn'})
+ expect(unlockResult({...attempt('service_rejected'),service_id:'spotify_unlock',result:{...attempt('service_rejected').result!,summary:'Spotify 拒绝代理 IP 注册'}})).toMatchObject({state:'partial',tone:'warn',label:'限注册',reason:'识别为代理 IP，已有账号通常不受影响'})
+})
+
+it('disables new Disney checks while preserving successful old results',()=>{
+ expect(unlockSupported('disney_unlock')).toBe(false)
+ expect(unlockResult(undefined,'disney_unlock')).toMatchObject({label:'暂不支持',tone:'empty'})
+ expect(unlockResult({...attempt('unlocked'),service_id:'disney_unlock'}).state).toBe('available')
 })

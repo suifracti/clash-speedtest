@@ -4,7 +4,7 @@ import {unlockResult} from '../unlock'
 import type {TrendPoint} from '../presentation'
 const props=defineProps<{points:TrendPoint[];label:string;serviceId:string}>()
 const value=(point:TrendPoint)=>{const attempt=point.attempts?.find(a=>(a.service_id||a.rule.service_id)===props.serviceId);const state=unlockResult(attempt).state;return state==='available'?1:state==='unavailable'?0:state==='partial'?2:state==='verification'?3:null}
-const conclusion=(point:TrendPoint)=>value(point)===1?'可用':value(point)===0?'不可用':value(point)===2?'仅自制剧':value(point)===3?'需人机验证':'无法判断'
+const conclusion=(point:TrendPoint)=>{const result=unlockResult(point.attempts?.find(a=>(a.service_id||a.rule.service_id)===props.serviceId));return result.state==='available'?'可用':result.label}
 </script>
 <template>
  <span class="recorded-bars" :aria-label="label"><span v-for="point in points" :key="point.id" class="recorded-mark" :class="value(point)===1?'good':value(point)===0?'bad':value(point)===2||value(point)===3?'partial':'unknown'" :title="date(point.time)+' · '+conclusion(point)+' · '+point.description"/></span>
