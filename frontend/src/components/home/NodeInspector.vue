@@ -20,6 +20,7 @@ import {attemptObservedAt,downloadEvidence} from '../../nodeQuality'
 import {attemptStatus} from '../../measurementRounds'
 import {downloadSpeed,downloadTarget} from '../../domain'
 const props=defineProps<{node:NodeOption;exitOnly?:boolean}>()
+const emit=defineEmits<{(e:'select-project',id:Project|'exit'):void}>()
 const w=useWorkspace(),m=inject(homeModelKey)!
 const latencyFocus=ref<import('../../latencyHistory').LatencySeries[]|null>(null)
 const sites=computed(()=>targets.filter(t=>w.displayTargets.value.includes(t.id)))
@@ -31,11 +32,12 @@ const latencyVerdictValue=computed(()=>latencyVerdict((latencyFocus.value||laten
 const serviceVerdict=computed(()=>unlockSummary(w.catalog.value,id=>m.shownService(props.node,id),w.nodeUnlockRegion(props.node),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions))
 const downloadVerdict=computed(()=>({tone:m.downloadMetricTone(props.node)||'empty',label:m.downloadMetric(props.node),detail:m.downloadMetricContext(props.node)}))
 const verdict=computed(()=>props.exitOnly?{tone:landing.value.tone,label:landing.value.label,detail:landing.value.detail}:project.value==='download'?downloadVerdict.value:project.value==='service'?serviceVerdict.value:latencyVerdictValue.value)
-const others=computed(()=>props.exitOnly||project.value==='combined'?[]:([
+const others=computed(()=>!props.exitOnly&&project.value==='combined'?[]:([
  {id:'latency' as const,name:'延迟',v:latencyVerdictValue.value},
  {id:'download' as const,name:'下载',v:downloadVerdict.value},
- {id:'service' as const,name:'服务',v:serviceVerdict.value},
-]).filter(o=>o.id!==project.value).map(o=>({...o,at:m.rowPoints(props.node,o.id).reduce((at,p)=>Date.parse(p.time)>Date.parse(at||'1970-01-01')?p.time:at,'')})))
+ {id:'service' as const,name:'解锁',v:serviceVerdict.value},
+ {id:'exit' as const,name:'出口与信誉',v:{tone:landing.value.tone,label:landing.value.label,detail:landing.value.detail}},
+]).filter(o=>o.id!==(props.exitOnly?'exit':project.value)))
 const runText=computed(()=>props.exitOnly?'检测出口与信誉':project.value==='combined'?'检测这个节点':m.runLabel(project.value))
 const attempts=computed(()=>[...new Map([...(m.qualityData.value[key(props.node)]?.services||[]),...(w.services.value[key(props.node)]||[])].map(a=>[a.attempt_id,a])).values()])
 const readError=computed(()=>m.qualityErrors.value[key(props.node)])
@@ -96,7 +98,7 @@ function run(){m.closeHover();props.exitOnly?w.openReputationPlan([props.node]):
     </header>
     <div class="hd-ins-verdict" :class="verdict.tone"><strong>{{verdict.label}}</strong><div v-if="exitOnly" class="landing-sources"><span v-for="tag in landing.tags" :key="tag">{{tag}}</span></div><span v-else>{{verdict.detail}}</span></div>
 
-    <div class="hd-ins-block hd-exit">
+    <div v-if="exitOnly||project==='combined'" class="hd-ins-block hd-exit">
       <h3>出口与 IP 信誉</h3>
       <template v-if="!exitOnly"><p class="landing-result" :class="landing.tone">{{landing.label}}</p><div class="landing-sources"><span v-for="tag in landing.tags" :key="tag">{{tag}}</span></div></template><NodeExitSummary compact :attempts="attempts"/>
     </div>
@@ -143,7 +145,7 @@ function run(){m.closeHover();props.exitOnly?w.openReputationPlan([props.node]):
       </template>
       <InlineHistory v-else :node="node" :nodes="m.visibleNodes.value" :project="m.hoverMode.value" :source="m.inlineHistorySource.value" :monitor-service-id="m.hoverService.value" :anchor-points="m.hoverPoints.value" :target-ids="w.displayTargets.value" :service-ids="m.displayServices.value.map(s=>s.service_id)"/>
     </div>
-    <nav v-if="others.length" class="hd-ins-others" aria-label="其他项目摘要"><span>其他项目</span><button v-for="o in others" :key="o.id" type="button" :title="'切到'+o.name+'：'+o.v.detail+' · '+date(o.at)" @click="w.project.value=o.id"><small>{{o.name}}</small><strong :class="o.v.tone">{{o.v.label}}</strong><time v-if="o.at" :datetime="o.at">{{date(o.at)}}</time><small v-else>尚未测量</small></button></nav>
+    <nav v-if="others.length" class="hd-ins-others" aria-label="其他项目摘要"><span>其他项目</span><button v-for="o in others" :key="o.id" type="button" :title="'切到'+o.name+'：'+o.v.detail" @click="emit('select-project',o.id)"><small>{{o.name}}</small><strong :class="o.v.tone">{{o.v.label}}</strong></button></nav>
     <p class="hd-legend"><span class="good">{{toneLabel('good')}}</span><span class="warn">{{toneLabel('warn')}}</span><span class="bad">{{toneLabel('bad')}}</span><span class="empty">{{toneLabel('empty')}}</span></p>
   </section>
 </template>

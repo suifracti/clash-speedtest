@@ -348,7 +348,7 @@ it('adapts the inspector to the project tab and keeps other projects as a one-li
  expect(ui.find('.hd-inspector .hd-services-block').exists()).toBe(true)
  expect(ui.get('.hd-ins-actions .primary').text()).toContain('解锁检测')
  const others=ui.findAll('.hd-ins-others button')
- expect(others.map(b=>b.find('small').text())).toEqual(['延迟','下载'])
+ expect(others.map(b=>b.find('small').text())).toEqual(['延迟','下载','出口与信誉'])
  await others[0].trigger('click');await flushPromises()
  expect(w.project.value).toBe('latency')
  expect(ui.find('.hd-inspector .hd-latency').exists()).toBe(true)
