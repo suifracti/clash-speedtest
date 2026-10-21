@@ -213,4 +213,5 @@ function keyNav(e:KeyboardEvent){
 
 <style scoped>
 .hd-source{display:block}.hd-exit-cell{font-size:11px;white-space:normal;line-height:1.4}.hd-exit-cell.bad{color:#c6343e;font-weight:600}.hd-exit-cell.warn{color:#ad680b}
+.hd .hd-svc-cell.empty{color:var(--hd-empty);font-weight:400}.hd .hd-svc-cell.warn{color:var(--hd-warn)}
 </style>
