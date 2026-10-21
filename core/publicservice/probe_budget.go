@@ -21,6 +21,10 @@ func serviceSocketBudget(rule Rule, observations int) int {
 		if rule.RuleVersion >= 7 {
 			perSample = 22
 		} // primary + CF summary + four API exchanges with at most five normal nonce requests each
+	case "chatgpt_unlock":
+		perSample = 10 // trace and official region endpoint, including existing redirects
+	case "claude_unlock", "gemini_unlock":
+		perSample = 5
 	case "antigravity":
 		perSample = 4 // existing account/catalog/model requests plus independent trace
 	case "ipok_ipv4", "ipok_ipv6":

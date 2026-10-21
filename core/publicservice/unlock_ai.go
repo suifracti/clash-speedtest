@@ -2,9 +2,13 @@ package publicservice
 
 import (
 	"context"
-	"fmt"
+	_ "embed"
+	"encoding/json"
+	"golang.org/x/text/language"
 	"io"
 	"net/http"
+	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -16,26 +20,26 @@ type aiUnlockEndpoint struct {
 func aiUnlockRules() []Rule {
 	return []Rule{
 		{
-			ServiceID: "chatgpt_unlock", Name: "ChatGPT（OpenAI）网页解锁", Category: "AI 服务", Region: "全球", ResultKind: "unlock", RuleVersion: 1,
-			Description: "检查 ChatGPT 官方网页是否返回对话输入界面；不使用账号或发送消息。",
-			TargetURL:   "https://chatgpt.com/", Method: http.MethodGet,
-			SuccessCriterion: "单次访问官方网页；只有出现 ChatGPT 对话输入界面才记为解锁。地区拒绝、登录、挑战、限流或证据不足均不判为解锁；不代表账号或消息发送可用。",
+			ServiceID: "chatgpt_unlock", Name: "ChatGPT（OpenAI）网页解锁", Category: "AI 服务", Region: "全球", ResultKind: "unlock", RuleVersion: 2,
+			Description: "读取 ChatGPT trace 地区，配合官方地区可用接口判断；不登录或发送消息。",
+			TargetURL:   "https://chatgpt.com/cdn-cgi/trace", Method: http.MethodGet,
+			SuccessCriterion: "trace 提供 loc，官方 compliance/cookie_requirements 接口返回有效 JSON 且无地区拒绝；不验证账号或消息发送。",
 			RedirectPolicy:   "probe_specific", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumWebDocumentBytes,
 			Accept: "text/html,application/xhtml+xml",
 		},
 		{
-			ServiceID: "claude_unlock", Name: "Claude（Anthropic）网页解锁", Category: "AI 服务", Region: "全球", ResultKind: "unlock", RuleVersion: 1,
-			Description: "检查 Claude 官方网页是否返回对话输入界面；不使用账号或发送消息。",
-			TargetURL:   "https://claude.ai/new", Method: http.MethodGet,
-			SuccessCriterion: "单次访问官方网页；只有出现 Claude 对话输入界面才记为解锁。地区拒绝、登录、挑战、限流或证据不足均不判为解锁；不代表账号或消息发送可用。",
+			ServiceID: "claude_unlock", Name: "Claude（Anthropic）网页解锁", Category: "AI 服务", Region: "全球", ResultKind: "unlock", RuleVersion: 2,
+			Description: "读取 Claude trace 的 loc，对照官方支持地区；不登录或发送消息。",
+			TargetURL:   "https://claude.ai/cdn-cgi/trace", Method: http.MethodGet,
+			SuccessCriterion: "trace 返回 loc 且在官方支持地区列表中；不验证账号或消息发送。",
 			RedirectPolicy:   "probe_specific", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumWebDocumentBytes,
 			Accept: "text/html,application/xhtml+xml",
 		},
 		{
-			ServiceID: "gemini_unlock", Name: "Gemini（Google）网页解锁", Category: "AI 服务", Region: "全球", ResultKind: "unlock", RuleVersion: 1,
-			Description: "检查 Gemini 官方网页是否返回对话输入界面；不使用账号或发送消息。",
-			TargetURL:   "https://gemini.google.com/app", Method: http.MethodGet,
-			SuccessCriterion: "单次访问官方网页；只有出现 Gemini 对话输入界面才记为解锁。地区拒绝、登录、挑战、限流或证据不足均不判为解锁；不代表账号或消息发送可用。",
+			ServiceID: "gemini_unlock", Name: "Gemini（Google）网页解锁", Category: "AI 服务", Region: "全球", ResultKind: "unlock", RuleVersion: 2,
+			Description: "读取 Gemini 页面明确的地区可用标记；不登录或发送消息。",
+			TargetURL:   "https://gemini.google.com/", Method: http.MethodGet,
+			SuccessCriterion: "Gemini 页面出现地区可用标记 45631641,null,true；缺失时未知，不验证账号或消息发送。",
 			RedirectPolicy:   "probe_specific", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumWebDocumentBytes,
 			Accept: "text/html,application/xhtml+xml",
 		},
@@ -55,52 +59,89 @@ func aiUnlockEndpointFor(serviceID string) (aiUnlockEndpoint, bool) {
 	}
 }
 
+//go:embed claude_regions.json
+var claudeRegionsJSON []byte
+var claudeRegions = func() struct {
+	CountryCodes []string `json:"country_codes"`
+} {
+	var v struct {
+		CountryCodes []string `json:"country_codes"`
+	}
+	if err := json.Unmarshal(claudeRegionsJSON, &v); err != nil {
+		panic(err)
+	}
+	return v
+}()
+
 func checkAIUnlock(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
 	result := Result{Details: map[string]string{}}
-	endpoint, ok := aiUnlockEndpointFor(rule.ServiceID)
+	endpoint, _ := aiUnlockEndpointFor(rule.ServiceID)
+	page, ok := fetchAIUnlockPage(ctx, client, rule, endpoint, &result)
 	if !ok {
-		result.Outcome, result.Summary, result.FailurePhase = "unknown", "无法识别 AI 服务规则", "rule_config"
 		return finish(result, started)
 	}
-	page, fetched := fetchAIUnlockPage(ctx, client, rule, endpoint, &result)
-	if !fetched {
-		return finish(result, started)
-	}
-
-	body := strings.ToLower(string(page.body))
+	result.Details["final_url"] = page.finalURL
 	if result.Outcome == "challenge" || result.Outcome == "suspected_challenge" {
 		return finish(result, started)
 	}
-	if aiUnlockRegionRefusal(rule.ServiceID, page.finalURL, body) {
-		result.Outcome, result.Summary = "region_blocked", "厂商明确拒绝当前地区访问"
-		result.ErrorMessage = "服务页面明确提示当前地区不可用"
+	body := string(page.body)
+	if aiUnlockRegionRefusal(rule.ServiceID, page.finalURL, strings.ToLower(body)) {
+		result.Outcome, result.Summary = "region_blocked", "服务明确提示当前地区不可用"
 		return finish(result, started)
 	}
-	if page.status == http.StatusUnauthorized || page.status == http.StatusProxyAuthRequired {
-		result.Outcome, result.Summary = "auth_failed", "网页要求登录；未验证服务可用"
-		result.ErrorMessage = "未使用账号凭据，无法确认该节点的 AI 服务可用性"
-		return finish(result, started)
-	}
-	if page.status < 200 || page.status >= 300 {
-		result.Outcome, result.Summary = "unknown", "网页未提供足够的服务可用性证据"
-		result.FailurePhase = "http_status"
-		result.ErrorMessage = fmt.Sprintf("HTTP %d 未能确认地区或对话入口可用", page.status)
-		return finish(result, started)
-	}
-	if !aiUnlockComposerVisible(rule.ServiceID, body) {
-		if aiUnlockAuthRequired(body) {
-			result.Outcome, result.Summary = "auth_failed", "网页要求登录；未验证服务可用"
-			result.ErrorMessage = "未使用账号凭据，无法确认该节点的 AI 服务可用性"
-			return finish(result, started)
+	if rule.ServiceID == "gemini_unlock" {
+		region := firstRegexGroup(regexp.MustCompile(`,2,1,200,"([A-Z]{3})"`), body)
+		if region != "" {
+			if code, err := language.ParseRegion(region); err == nil {
+				result.Details["service_region"] = code.String()
+			}
 		}
-		result.Outcome, result.Summary = "unknown", "网页未出现可确认的 AI 对话输入界面"
-		result.FailurePhase = "service_evidence"
-		result.ErrorMessage = "仅有网页响应不足以确认 AI 服务入口可用"
+		switch {
+		case page.status == 200 && !page.truncated && regexp.MustCompile(`45631641,\s*null,\s*true`).MatchString(body):
+			result.Outcome, result.Summary = "unlocked", "Gemini 地区可用标记通过；未验证账号或对话"
+		default:
+			result.Outcome, result.Summary = "unknown", "未取得 Gemini 明确可用标记，无法判断"
+		}
 		return finish(result, started)
 	}
-
-	result.Outcome, result.Summary = "unlocked", "官方 AI 对话输入界面可用；未验证账号或消息发送"
-	return finish(result, started)
+	loc := firstRegexGroup(regexp.MustCompile(`(?m)^loc=([A-Z]{2})\s*$`), body)
+	if page.status != 200 || loc == "" {
+		result.Outcome, result.Summary = "unknown", "未取得服务 trace 的 loc，无法判断"
+		return finish(result, started)
+	}
+	result.Details["service_region"] = loc
+	result.Details["region_raw"] = "loc=" + loc
+	if rule.ServiceID == "claude_unlock" {
+		if slices.Contains(claudeRegions.CountryCodes, loc) {
+			result.Outcome, result.Summary = "unlocked", "Claude 官方支持该地区；未验证账号或对话"
+		} else {
+			result.Outcome, result.Summary = "region_blocked", "Claude 官方尚不支持该地区"
+		}
+		return finish(result, started)
+	}
+	apiRule := rule
+	apiRule.TargetURL = "https://api.openai.com/compliance/cookie_requirements"
+	apiRule.Accept = "application/json"
+	apiResult := Result{Details: map[string]string{}}
+	apiPage, fetched := fetchAIUnlockPage(ctx, client, apiRule, endpoint, &apiResult)
+	apiResult.RequestCount += result.RequestCount
+	apiResult.BytesRead += result.BytesRead
+	apiResult.Details = result.Details
+	if !fetched {
+		return finish(apiResult, started)
+	}
+	apiResult.Details["availability_url"] = apiPage.finalURL
+	var payload map[string]json.RawMessage
+	valid := json.Unmarshal(apiPage.body, &payload) == nil && len(payload) > 0
+	switch {
+	case valid && strings.Contains(strings.ToLower(string(apiPage.body)), "unsupported_country"):
+		apiResult.Outcome, apiResult.Summary = "region_blocked", "OpenAI 官方地区接口拒绝该地区"
+	case valid && apiPage.status == 200 && !apiPage.truncated && payload["error"] == nil:
+		apiResult.Outcome, apiResult.Summary = "unlocked", "OpenAI 官方地区接口允许访问；未验证账号或对话"
+	default:
+		apiResult.Outcome, apiResult.Summary = "unknown", "官方地区接口未返回明确结论，无法判断"
+	}
+	return finish(apiResult, started)
 }
 
 func fetchAIUnlockPage(ctx context.Context, client *http.Client, rule Rule, endpoint aiUnlockEndpoint, result *Result) (fetchedPage, bool) {
@@ -126,6 +167,7 @@ func fetchAIUnlockPage(ctx context.Context, client *http.Client, rule Rule, endp
 	}
 	request.Header.Set("User-Agent", browserUserAgent)
 	request.Header.Set("Accept", rule.Accept)
+	request.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	response, err := clone.Do(request)
 	if err != nil {
 		classifyRequestError(result, ctx, err)
@@ -192,25 +234,4 @@ func aiUnlockRegionRefusal(serviceID, finalURL, body string) bool {
 		}
 	}
 	return false
-}
-
-func aiUnlockComposerVisible(serviceID, body string) bool {
-	hasComposer := strings.Contains(body, "<textarea") || strings.Contains(body, "contenteditable") || strings.Contains(body, `role="textbox"`)
-	if !hasComposer {
-		return false
-	}
-	switch serviceID {
-	case "chatgpt_unlock":
-		return strings.Contains(body, "chat with chatgpt")
-	case "claude_unlock":
-		return strings.Contains(body, "claude") && strings.Contains(body, "how can i help you today?")
-	case "gemini_unlock":
-		return strings.Contains(body, "gemini") && strings.Contains(body, "ask gemini")
-	default:
-		return false
-	}
-}
-
-func aiUnlockAuthRequired(body string) bool {
-	return strings.Contains(body, "sign in") || strings.Contains(body, "log in") || strings.Contains(body, "login") || strings.Contains(body, "authentication required")
 }

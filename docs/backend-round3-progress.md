@@ -209,3 +209,9 @@
 - 新结果保留 `final_url`、`region_field`/`region_raw` 和页面提示；拒绝把 INNERTUBE_CONTEXT_GL 当地区，consent/无明确地区均未知。
 - Premium 读取 ytInitialData 实际内容，保留浏览器 UA/Accept-Language；真实页面确有地区拒绝标题，不能硬判美国节点可用。
 - 验证：主路径/consent及默认字段失败路径、Go vet/test；限原三节点+一个 HK，只复测 YouTube/Google，TUN 保持开。
+
+## AI 地区判法（2026-10-21）
+- ChatGPT 改为 trace loc + 官方 compliance/cookie_requirements；Claude 为 trace loc + 官方支持地区表；Gemini 读取明确可用标记。
+- 规则版本升为 2；官方列表 `core/publicservice/claude_regions.json`，旧记录不迁移、不删除；不登录、不发送聊天或调用 Antigravity。
+- 保留浏览器 UA/Accept-Language、既有超时和站点限流；缺证据、挑战与限流均无法判断。
+- 验证：主路径/缺证据及地区拒绝、Go vet/test；原 SG04/JP/US 三节点仅复测三项，TUN 开启。

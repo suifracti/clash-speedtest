@@ -11,52 +11,44 @@ import (
 
 type aiUnlockRoundTripper func(*http.Request) (*http.Response, error)
 
-func (f aiUnlockRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
-	return f(request)
-}
-
+func (f aiUnlockRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 func aiUnlockFixtureClient(status int, body string) *http.Client {
-	return &http.Client{Transport: aiUnlockRoundTripper(func(request *http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: status,
-			Header:     http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
-			Body:       io.NopCloser(strings.NewReader(body)),
-			Request:    request,
-		}, nil
+	return &http.Client{Transport: aiUnlockRoundTripper(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{"text/html"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 	})}
 }
-
-func TestAIUnlockProviderPageEvidence(t *testing.T) {
-	markers := map[string]string{
-		"chatgpt_unlock": `<h1>What are you working on?</h1><textarea id="prompt-textarea"></textarea><button>Chat with ChatGPT</button>`,
-		"claude_unlock":  `<main>Claude<textarea placeholder="How can I help you today?"></textarea></main>`,
-		"gemini_unlock":  `<main>Google Gemini<textarea placeholder="Ask Gemini"></textarea></main>`,
-	}
+func TestAIUnlockOfficialRegionEvidence(t *testing.T) {
 	for _, rule := range aiUnlockRules() {
 		t.Run(rule.ServiceID, func(t *testing.T) {
-			rule.TargetURL = "https://fixture.example/"
-			result := checkAIUnlock(context.Background(), aiUnlockFixtureClient(http.StatusOK, markers[rule.ServiceID]), rule, time.Now())
-			if result.Outcome != "unlocked" {
-				t.Fatalf("expected provider page evidence to unlock, got %+v", result)
+			client := &http.Client{Transport: aiUnlockRoundTripper(func(req *http.Request) (*http.Response, error) {
+				if req.Header.Get("User-Agent") == "" || req.Header.Get("Accept-Language") == "" {
+					t.Fatal("missing browser headers")
+				}
+				body := "loc=JP\nip=203.0.113.1\n"
+				if req.URL.Host == "api.openai.com" {
+					body = `{"cookie_consent_required":false}`
+				} else if rule.ServiceID == "gemini_unlock" {
+					body = `<script>45631641,null,true,2,1,200,"JPN"</script>`
+				}
+				return fixtureResponse(req, 200, "text/html", body), nil
+			})}
+			result := checkAIUnlock(context.Background(), client, rule, time.Now())
+			if result.Outcome != "unlocked" || result.Details["service_region"] != "JP" {
+				t.Fatalf("%+v", result)
 			}
 		})
 	}
 }
-
-func TestAIUnlockNeedsProviderEvidence(t *testing.T) {
-	rule := aiUnlockRules()[0]
-	rule.TargetURL = "https://fixture.example/"
-	for _, tc := range []struct {
-		name, body, outcome string
-	}{
-		{"generic 200", `<html><title>Welcome</title></html>`, "unknown"},
-		{"explicit region refusal", `<main>ChatGPT is not available in your country.</main>`, "region_blocked"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			result := checkAIUnlock(context.Background(), aiUnlockFixtureClient(http.StatusOK, tc.body), rule, time.Now())
-			if result.Outcome != tc.outcome {
-				t.Fatalf("expected %s, got %+v", tc.outcome, result)
-			}
-		})
+func TestAIUnlockDoesNotTreatMissingEvidenceAsSupported(t *testing.T) {
+	for _, rule := range aiUnlockRules() {
+		result := checkAIUnlock(context.Background(), aiUnlockFixtureClient(200, `<html>Welcome</html>`), rule, time.Now())
+		if result.Outcome != "unknown" {
+			t.Fatalf("%s: %+v", rule.ServiceID, result)
+		}
+	}
+	rule := aiUnlockRules()[1]
+	result := checkAIUnlock(context.Background(), aiUnlockFixtureClient(200, "loc=HK\n"), rule, time.Now())
+	if result.Outcome != "region_blocked" {
+		t.Fatalf("%+v", result)
 	}
 }
