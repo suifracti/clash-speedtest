@@ -18,7 +18,7 @@ import TrendChart from '../TrendChart.vue'
 import {homeModelKey,latencyVerdict,toneLabel} from './homeModel'
 import {attemptObservedAt,downloadEvidence} from '../../nodeQuality'
 import {attemptStatus} from '../../measurementRounds'
-import {downloadSpeed} from '../../domain'
+import {downloadSpeed,downloadTarget} from '../../domain'
 const props=defineProps<{node:NodeOption;exitOnly?:boolean}>()
 const w=useWorkspace(),m=inject(homeModelKey)!
 const sites=computed(()=>targets.filter(t=>w.displayTargets.value.includes(t.id)))
@@ -42,11 +42,12 @@ const downloadRecords=computed(()=>[...new Map([...(w.downloads.value[key(props.
 const downloadHistoryContext=computed(()=>{const {latest,valid}=downloadEvidence(downloadRecords.value),speed=downloadSpeed(valid);return valid&&speed!==null?`${valid.attempt_id===latest?.attempt_id?'最近有效速度':'历史有效速度'} ${speed.toFixed(2)} MiB/s（${date(attemptObservedAt(valid))}）`:''})
 const downloadLatest=computed(()=>downloadEvidence(downloadRecords.value).latest)
 const downloadValue=computed(()=>downloadSpeed(downloadLatest.value))
-const downloadSource=computed(()=>{const url=downloadLatest.value?.rule.target_url||'';return url.includes('cachefly')?'Cachefly':url.includes('cloudflare')?'Cloudflare':url?new URL(url).hostname:'测速源未记录'})
+const downloadSource=computed(()=>{const url=downloadTarget(downloadLatest.value);return url.includes('cachefly')?'Cachefly':url.includes('cloudflare')?'Cloudflare':url?new URL(url).hostname:'测速源未记录'})
 const downloadFailure=computed(()=>{
  const a=downloadLatest.value,r=a?.result
  if(readError.value)return '已保存记录读取失败'
  if(!a)return '尚无测速记录'
+ if(r?.error_message==='测速源都限流')return '测速源都限流'
  if(r?.http_status===429)return '测速网站限流（429），不是节点问题'
  if(r?.http_status===403)return '测速网站拒绝了请求（403）。不是节点的问题。'
  return attemptStatus(a,true)+((r?.error_message||a.not_executed_reason)?'：'+(r?.error_message||a.not_executed_reason):'')

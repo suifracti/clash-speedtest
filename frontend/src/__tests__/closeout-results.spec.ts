@@ -14,6 +14,7 @@ it('retains staged effective partial speed and separates it from full and invali
  expect(downloadGroup({...a,result:{...a.result!,http_status:429,outcome:'source_rate_limited'}}).kind).toBe('invalid')
  expect(downloadGroup({...a,result:{...a.result!,bytes_read:0}}).kind).toBe('invalid')
  expect(downloadGroup({...a,rule:{...a.rule,target_url:'https://other.test/data'}}).key).not.toBe(downloadGroup(a).key)
+ expect(downloadGroup({...a,result:{...a.result!,target_url:'https://other.test/data'}}).key).toBe(downloadGroup({...a,rule:{...a.rule,target_url:'https://other.test/data'}}).key)
 })
 it('counts endpoint profiles and explicitly skipped records separately from strict rule passes',()=>{
  expect(servicePassed({...a,result:{...a.result!,outcome:'profiled'}})).toBe(false)

@@ -4,7 +4,7 @@ import {exitField} from './exitSummaryPresentation'
 import {nodeRegionLabel} from './nodePresentation'
 const codes='CN HK MO TW JP SG US KR GB DE FR NL AU CA RU TH MY VN PH ID IN TR AE AR BR IT ES SE CH PL ZA KH EG NG PK'.split(' ')
 const english=new Intl.DisplayNames(['en'],{type:'region'})
-function country(value:string){const v=value.trim().toUpperCase();if(/^[A-Z]{2}$/.test(v))return v==='UK'?'GB':v;return codes.find(c=>[nodeRegionLabel(c),english.of(c)].some(name=>name?.toUpperCase()===v))||(/中国大陆|中国|MAINLAND CHINA/i.test(value)?'CN':'')}
+function country(value:string){const v=value.trim().toUpperCase();if(['XX','ZZ'].includes(v))return '';if(/香港|HONG\s*KONG/i.test(value))return 'HK';if(/澳门|MACAU|MACAO/i.test(value))return 'MO';if(/台湾|TAIWAN/i.test(value))return 'TW';if(/^[A-Z]{2}$/.test(v))return v==='UK'?'GB':v;return codes.find(c=>[nodeRegionLabel(c),english.of(c)].some(name=>name?.toUpperCase()===v))||(/中国大陆|中国|MAINLAND CHINA/i.test(value)?'CN':'')}
 export function maskedIP(value:string){if(value.includes(':')){const p=value.split(':');return p[0]+':…:'+p.at(-1)}const p=value.split('.');return p.length===4?`${p[0]}.*.*.${p[3]}`:value||'—'}
 export function exitLanding(node:Pick<NodeOption,'country_code'>,attempts:Attempt[]){
  const latest=latestServices(attempts),find=(id:string)=>latest.find(a=>(a.service_id||a.rule.service_id)===id),pure=find('ippure_ip_quality'),ping=find('ping0_ipv4')||find('ping0_ip_quality'),cf=find('cloudflare_trace')

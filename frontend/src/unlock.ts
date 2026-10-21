@@ -6,7 +6,7 @@ export function unlockResult(a?:Attempt){
  const r=a?.result,details=r?.details||{},region=String(details.service_region||details.country_code||details.region||'').toUpperCase(),o=r?.outcome
  if(!r)return {state:'unknown',tone:'empty',label:'无法判断',reason:a?'检测未完成':'尚未检测',region}
  if(o==='originals_only')return {state:'available',tone:'good',label:'可用 · 仅自制'+(region?' · '+region:''),reason:'仅 Netflix 自制内容',region}
- if(servicePassed(a))return {state:'available',tone:'good',label:'可用 · '+(region||'地区未返回'),reason:r.summary||'检测规则通过',region}
+ if(servicePassed(a))return {state:'available',tone:'good',label:'可用 · '+((a?.service_id||a?.rule.service_id)==='netflix_unlock'?'完整 · ':'')+(region||'地区未返回'),reason:r.summary||'检测规则通过',region}
  if(['region_blocked','region_limited','service_rejected'].includes(o||''))return {state:'unavailable',tone:'warn',label:'不可用',reason:r.summary||r.error_message||'地区不支持',region}
  const reasons:Record<string,string>={challenge:'验证挑战',suspected_challenge:'疑似验证挑战',rate_limited:'网站限流',credentials_required:'需要凭据',auth_failed:'凭据失效',permission_denied:'账号权限不足',transport_error:'连接或读取失败',connection_failed:'连接失败',timed_out:'连接超时'}
  return {state:'unknown',tone:'empty',label:'无法判断',reason:reasons[o||'']||r.summary||r.error_message||'未取得明确结论',region}

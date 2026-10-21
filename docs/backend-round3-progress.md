@@ -142,9 +142,6 @@
 - 新规则 ID：`chatgpt_unlock/claude_unlock/gemini_unlock/disney_unlock/spotify_unlock/tiktok_unlock/unext_unlock/dmm_unlock/radiko_unlock`；复用其余 7 项及原历史 details。
 - 验证：Go vet/test、380 项前端测试与构建通过；SG04 副本只查看旧记录，未发真实解锁请求，新增规则的站点实测留待用户正常检测。
 
-## 用户实测后续批次（已授权，尚未实施）
-- 第 4 批：2–3 下载源，仅 403/429 换下一源重试一次，记录最终源；全部限流才显示源都限流，不加重试/冷却。
-
 ## DNS 核对（只读）
 - Mac 工作台已有绑定物理网卡的节点 DNS，过滤假 IP；无需新增 DoH。旧持续监测未接该路径，暂不把它标为已绕过。
 
@@ -167,3 +164,9 @@
 - 汇总最新 IP 库、CF loc、Google 地区，与名称地区比；差异橙色、任一大陆来源红色，缺来源如实提示。此标签表格占满一行，详情放下面以容纳 7 列。
 - 新规则 `google_region` 复用 YouTube 地区抓取，写原有 `details.service_region`；复用已保存 YouTube/Gemini 地区，无库迁移。
 - 验证：Go vet/test、382 项前端测试与构建；新增一致/错配及大陆路径，SG04 副本只查看，不发真实请求。
+
+## 用户实测第 4 批：下载换源
+- Cloudflare / Cachefly 两源，只有 403/429 换另一源一次；复用节点客户端和原总时限，取消旧下载 admission 冷却，服务站点限流不变。
+- 结果 JSON 新增可选 `target_url`，显示、趋势和“和上次比”按实际源；两源均受限才显示“测速源都限流”，无数据库迁移。
+- 界面说明首选源及自动换源；收尾 Netflix 完整档位文案、出口表列宽与香港/澳门/台湾国家文字识别。
+- 验证：换源成功/两源限流两个离线路径；Go vet/test、382 项前端测试和构建通过，未发真实下载请求。

@@ -2,61 +2,58 @@ package application
 
 import (
 	"context"
-	"github.com/faceair/clash-speedtest/core/speedtester"
 	"io"
 	"net/http"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/faceair/clash-speedtest/core/history"
 )
 
-func TestDownloadRespectsPersistedRetryAfterWithoutAnotherNetworkRequest(t *testing.T) {
-	for _, header := range []string{"3100", ""} {
-		t.Run("header-"+header, func(t *testing.T) {
-			app, _, _ := newWorkbenchDownloadApplication(t)
-			var calls atomic.Int32
-			app.workbenchDownloadClientFactory = func(*speedtester.SpeedTester, *speedtester.CProxy, time.Duration) (*http.Client, error) {
-				return &http.Client{Transport: workbenchDownloadRT(func(req *http.Request) (*http.Response, error) {
-					calls.Add(1)
-					return &http.Response{StatusCode: 429, Header: http.Header{"Retry-After": []string{header}}, Body: io.NopCloser(strings.NewReader("")), Request: req}, nil
-				})}, nil
-			}
-			req := WorkbenchDownloadTestRequest{RequestID: "rate-first", ProfileID: "profile-a", NodeKey: "node-a", NodeIdentityKey: "identity-a", ConfigRevisionKey: "revision-a", MaximumBytes: 10485760, TimeoutSeconds: 10}
-			if _, err := app.StartWorkbenchDownloadTest(context.Background(), req); err != nil {
-				t.Fatal(err)
-			}
-			app.workbenchWG.Wait()
-			req.RequestID = "rate-second"
-			req.MaximumBytes = 1024
-			if _, err := app.StartWorkbenchDownloadTest(context.Background(), req); err == nil || !strings.Contains(err.Error(), "测速源要求等待") {
-				t.Fatalf("cooldown not applied: %v", err)
-			}
-			if calls.Load() != 1 {
-				t.Fatalf("sent %d requests during Retry-After", calls.Load())
-			}
-		})
-	}
-
-}
-
-func TestExcessiveSourceCooldownDoesNotCreateUnboundedAutomaticWait(t *testing.T) {
-	app, _, _ := newWorkbenchDownloadApplication(t)
-	var calls atomic.Int32
-	app.workbenchDownloadClientFactory = func(*speedtester.SpeedTester, *speedtester.CProxy, time.Duration) (*http.Client, error) {
-		return &http.Client{Transport: workbenchDownloadRT(func(r *http.Request) (*http.Response, error) {
-			calls.Add(1)
-			return &http.Response{StatusCode: 429, Header: http.Header{"Retry-After": []string{"7200"}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
-		})}, nil
-	}
-	req := WorkbenchDownloadTestRequest{RequestID: "long-first", ProfileID: "profile-a", NodeKey: "node-a", NodeIdentityKey: "identity-a", ConfigRevisionKey: "revision-a", MaximumBytes: 10485760, TimeoutSeconds: 10}
-	if _, err := app.StartWorkbenchDownloadTest(context.Background(), req); err != nil {
+func runDownloadSources(t *testing.T, statuses ...int) (*history.WorkbenchDownloadAttempt, []string, *history.Store) {
+	t.Helper()
+	app, store, _ := newWorkbenchDownloadApplication(t)
+	t.Cleanup(func() { _ = store.Close() })
+	var targets []string
+	configureDownloadResponse(app, func(r *http.Request) (*http.Response, error) {
+		targets = append(targets, r.URL.String())
+		status, body := statuses[len(targets)-1], "payload"
+		if status != http.StatusOK {
+			body = ""
+		}
+		return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+	})
+	started, err := app.StartWorkbenchDownloadTest(context.Background(), downloadRequest("source-retry"))
+	if err != nil {
 		t.Fatal(err)
 	}
 	app.workbenchWG.Wait()
-	req.RequestID = "long-second"
-	_, err := app.StartWorkbenchDownloadTest(context.Background(), req)
-	if err == nil || !strings.Contains(err.Error(), "超过 3600 秒冷却预算") || calls.Load() != 1 {
-		t.Fatalf("unbounded wait or extra request: %v count=%d", err, calls.Load())
+	got, err := app.GetWorkbenchDownloadAttempt(context.Background(), started.AttemptID, downloadQuery())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got, targets, store
+}
+
+func TestWorkbenchDownloadSwitchesAfter429AndComparesActualTarget(t *testing.T) {
+	got, targets, store := runDownloadSources(t, http.StatusTooManyRequests, http.StatusOK)
+	if len(targets) != 2 || targets[0] != "https://speed.cloudflare.com/__down?bytes=1001" || targets[1] != "https://cachefly.cachefly.net/100mb.test" || got.Result.TargetURL != targets[1] || got.Result.Outcome != "completed" {
+		t.Fatalf("fallback result mismatch: requests=%v result=%+v", targets, got.Result)
+	}
+	next := *got
+	next.AttemptID, next.RequestedAt = "next", got.RequestedAt.Add(time.Minute)
+	next.FinishedAt = &next.RequestedAt
+	next.Result = &history.WorkbenchDownloadMeasurement{TargetURL: "https://speed.cloudflare.com/__down?bytes=1001"}
+	previous, err := store.DB().PreviousWorkbenchDownloadAttempt(context.Background(), &next)
+	if err != nil || previous != nil {
+		t.Fatalf("different actual target matched prior attempt: %+v %v", previous, err)
+	}
+}
+
+func TestWorkbenchDownloadReportsBothSourcesLimited(t *testing.T) {
+	got, targets, _ := runDownloadSources(t, http.StatusForbidden, http.StatusTooManyRequests)
+	if len(targets) != 2 || got.Result.TargetURL != targets[1] || got.Result.Outcome != "source_rate_limited" || got.Result.ErrorMessage != "测速源都限流" {
+		t.Fatalf("both-source limit mismatch: requests=%v result=%+v", targets, got.Result)
 	}
 }

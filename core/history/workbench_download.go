@@ -47,6 +47,7 @@ type WorkbenchDownloadMeasurement struct {
 	RetryAfterSeconds  int64                            `json:"retry_after_seconds,omitempty"`
 	CompetingProbes    []string                         `json:"competing_probes,omitempty"`
 	Outcome            string                           `json:"outcome"`
+	TargetURL          string                           `json:"target_url,omitempty"`
 	HTTPStatus         *int                             `json:"http_status,omitempty"`
 	BytesRead          int64                            `json:"bytes_read"`
 	StartedAt          time.Time                        `json:"started_at"`

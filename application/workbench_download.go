@@ -34,6 +34,7 @@ type workbenchDownloadRuntime struct {
 	proxy           *speedtester.CProxy
 	engine          *speedtester.SpeedTester
 	rule            history.WorkbenchDownloadRuleSnapshot
+	fallbackTarget  string
 }
 
 func (s *AppService) StartWorkbenchDownloadTest(ctx context.Context, req WorkbenchDownloadTestRequest) (returnedAttempt *history.WorkbenchDownloadAttempt, startErr error) {
@@ -121,11 +122,9 @@ func (s *AppService) StartWorkbenchDownloadTest(ctx context.Context, req Workben
 	if err != nil {
 		return nil, fmt.Errorf("初始化固定下载目标失败；未发出请求: %w", err)
 	}
+	fallbackTarget := "https://cachefly.cachefly.net/100mb.test"
 	if req.SourceID == "cachefly" {
-		target = "https://cachefly.cachefly.net/100mb.test"
-	}
-	if err := s.checkDownloadRetryAfter(ctx, req, target); err != nil {
-		return nil, err
+		target, fallbackTarget = fallbackTarget, target
 	}
 	now := time.Now().UTC()
 	rule := history.WorkbenchDownloadRuleSnapshot{
@@ -136,7 +135,7 @@ func (s *AppService) StartWorkbenchDownloadTest(ctx context.Context, req Workben
 	runCtx, cancel := newWorkbenchDownloadLifecycleContext(ctx, time.Duration(timeoutSeconds)*time.Second)
 	runtime := &workbenchDownloadRuntime{timingNS: probeTiming(ctx), networkDone: make(chan struct{}),
 		attemptID: newWorkbenchLatencyID("workbench_download_attempt_"), requestID: requestID,
-		ctx: runCtx, cancel: cancel, ready: make(chan struct{}), node: node, proxy: proxy, engine: engine, rule: rule,
+		ctx: runCtx, cancel: cancel, ready: make(chan struct{}), node: node, proxy: proxy, engine: engine, rule: rule, fallbackTarget: fallbackTarget,
 	}
 	if s.workbenchDownloadResolveHook == nil {
 		runtime.preparePhysical = func(ctx context.Context, p *speedtester.CProxy) (*speedtester.CProxy, *speedtester.PhysicalDownloadEgress, error) {
@@ -330,18 +329,28 @@ func (s *AppService) executeWorkbenchDownload(runtime *workbenchDownloadRuntime)
 			now := time.Now().UTC()
 			result = speedtester.DownloadStreamResult{Outcome: "connection_failed", TargetURL: runtime.rule.TargetURL, StartedAt: now, FinishedAt: now, Phase: "proxy_setup", ErrorClass: "proxy_setup", EndReason: "connection_failed", FailurePhase: "proxy_setup", ErrorMessage: "无法建立节点隔离下载连接", Samples: []speedtester.DownloadStreamSample{}}
 		} else {
-			options := speedtester.DownloadStreamOptions{
-				TargetURL:    runtime.rule.TargetURL,
-				MaximumBytes: runtime.rule.MaximumBytes, MaximumDuration: time.Duration(runtime.rule.MaximumDurationNS),
-				SampleEveryBytes: runtime.rule.SampleEveryBytes, SampleEveryDuration: time.Duration(runtime.rule.SampleEveryNS),
-			}
-			result = runtime.engine.MeasureDownloadStream(runtime.ctx, client, options, func(sample speedtester.DownloadStreamSample, bytesRead int64) {
-				if s.emitter != nil {
-					s.emitter.Emit(Event{Type: "workbench_download_progress", Payload: map[string]any{
-						"attempt_id": runtime.attemptID, "bytes_read": bytesRead, "sample": sample,
-					}})
+			measure := func(target string) speedtester.DownloadStreamResult {
+				options := speedtester.DownloadStreamOptions{
+					TargetURL: target, MaximumBytes: runtime.rule.MaximumBytes,
+					MaximumDuration:  time.Duration(runtime.rule.MaximumDurationNS),
+					SampleEveryBytes: runtime.rule.SampleEveryBytes, SampleEveryDuration: time.Duration(runtime.rule.SampleEveryNS),
 				}
-			})
+				return runtime.engine.MeasureDownloadStream(runtime.ctx, client, options, func(sample speedtester.DownloadStreamSample, bytesRead int64) {
+					if s.emitter != nil {
+						s.emitter.Emit(Event{Type: "workbench_download_progress", Payload: map[string]any{
+							"attempt_id": runtime.attemptID, "bytes_read": bytesRead, "sample": sample,
+						}})
+					}
+				})
+			}
+			result = measure(runtime.rule.TargetURL)
+			if downloadSourceLimited(result) && runtime.fallbackTarget != "" && runtime.ctx.Err() == nil {
+				result = measure(runtime.fallbackTarget)
+				if downloadSourceLimited(result) {
+					result.Outcome, result.EndReason, result.ErrorClass = "source_rate_limited", "source_rate_limited", "source_rate_limit"
+					result.ErrorMessage = "测速源都限流"
+				}
+			}
 		}
 	}
 	runtime.closeNetwork()
@@ -471,10 +480,14 @@ func workbenchDownloadMeasurement(result speedtester.DownloadStreamResult) histo
 	}
 	return history.WorkbenchDownloadMeasurement{
 		Phase: result.Phase, ErrorClass: result.ErrorClass, EndReason: result.EndReason, PartialMeasurement: result.PartialMeasurement, RetryAfterSeconds: result.RetryAfterSeconds,
-		Outcome: result.Outcome, HTTPStatus: result.HTTPStatus, BytesRead: result.BytesRead,
+		Outcome: result.Outcome, TargetURL: result.TargetURL, HTTPStatus: result.HTTPStatus, BytesRead: result.BytesRead,
 		StartedAt: result.StartedAt.UTC(), FinishedAt: result.FinishedAt.UTC(), DurationNS: result.DurationNS,
 		FailurePhase: result.FailurePhase, ErrorMessage: safeDownloadError(result.ErrorMessage), Samples: samples,
 	}
+}
+
+func downloadSourceLimited(result speedtester.DownloadStreamResult) bool {
+	return result.HTTPStatus != nil && (*result.HTTPStatus == http.StatusForbidden || *result.HTTPStatus == http.StatusTooManyRequests)
 }
 
 func safeDownloadError(message string) string {
