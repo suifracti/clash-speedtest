@@ -26,6 +26,10 @@
 | AirportR/FullTClash | Telegram 机器人，测机场的延迟、解锁、入口出口拓扑，生成图片报告 | 报告图片的版式；入口和出口的拓扑分析，用来识别中转线路 | 3、5 |
 | Sub-Store | 订阅管理：合并、改名、按检测结果筛选节点 | 节点改名和筛选规则的写法；和 CST 导出的配置组怎么衔接 | 4 |
 | Uptime Kuma | 通用的在线状态监控，有长期历史和可用率 | 历史怎么展示：90 天可用率条、故障时间线、响应时间图 | 2 |
+| sinspired/subs-check-pro | subs-check 的增强分支：检测节点、测速、解锁，自动生成 mihomo/sing-box 订阅，有 WebUI，集成 Sub-Store | 和 subs-check 一起对照，看它补强了哪些 | 1、4 |
+| kutovoys/xray-checker | 持续监测 VLESS/VMess/Trojan/SS 节点的可用性，提供 Prometheus 指标和 API | 长期监测的数据怎么组织，指标怎么设计 | 2 |
+| Gatus | 通用的在线状态监控，记录响应时间和健康状态 | 和 Uptime Kuma 一起参考历史展示 | 2 |
+| SSRSpeedN | 多线程测速，同时测流媒体解锁 | 并发测速和解锁的编排 | 1 |
 | xxf098/LiteSpeedTest、tindy2013/stairspeedtest-reborn | 较早的、带界面的测速工具，能导出结果图片 | 结果图片版式，只作参考（多半已不维护） | 3 |
 
 ## 第四轮开始时的做法
