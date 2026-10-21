@@ -46,4 +46,4 @@ export interface AutoPickStatus {
   reports?:AutoPickReportMeta[]
 }
 export const scheduleLabels:Record<AutoPickSchedule,string>={ '6h':'每 6 小时','12h':'每 12 小时',daily:'每天固定时间'}
-export const reportStatusLabels:Record<string,string>={selected:'已选中',kept_previous:'沿用上次结果',failed:'本轮失败'}
+export const reportStatusLabels:Record<string,string>={selected:'成功',kept_previous:'沿用上次结果',failed:'本轮失败'}
