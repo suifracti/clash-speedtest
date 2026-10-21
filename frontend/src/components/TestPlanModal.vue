@@ -26,7 +26,7 @@ const selectedServiceIds=computed(()=>{
   if(!p)return []
   return [...new Set([...(p.projects.includes('service')?p.serviceIds.filter(id=>!isReputationId(id)):[]),...(p.includeReputation?(p.reputationServiceIds||[]).filter(isReputationId):[])])]
 })
-const plannedRequests=computed(()=>{const p=w.plan.value;if(!p)return 0;return p.nodes.length*p.repeats*((p.projects.includes('latency')?(p.target==='all'?targets.length:1)*p.samples:0)+(p.projects.includes('download')?1:0)+selectedServiceIds.value.length*(p.serviceSamples??4))})
+const plannedRequests=computed(()=>{const p=w.plan.value;if(!p)return 0;return p.nodes.length*p.repeats*((p.projects.includes('latency')?(p.target==='all'?targets.length:1)*p.samples:0)+(p.projects.includes('download')?1:0))+p.nodes.reduce((sum,n)=>sum+w.allowedUnlockServices(n,selectedServiceIds.value).length,0)*p.repeats*(p.serviceSamples??4)})
 const groups=computed(()=>[...new Map(w.plan.value?.nodes.map(n=>[n.profile_id,{id:n.profile_id,name:n.profile_name,count:w.plan.value!.nodes.filter(x=>x.profile_id===n.profile_id).length}])||[]).values()])
 
 // 预设只设置延迟参数和轮数（并确保勾上延迟），不动用户已勾的下载/服务/信誉项；这些项仍在名称旁列出。

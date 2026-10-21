@@ -3,6 +3,7 @@ package publicservice
 import (
 	"context"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +25,22 @@ const (
 	MaximumWebDocumentBytes = 2 * 1024 * 1024
 	RuleVersion             = 1
 )
+
+type netflixTitleConfig struct {
+	OriginalID string `json:"original_title_id"`
+	LicensedID string `json:"licensed_title_id"`
+}
+
+//go:embed netflix_titles.json
+var netflixTitleConfigJSON string
+
+var netflixTitles = func() netflixTitleConfig {
+	var titles netflixTitleConfig
+	if err := json.Unmarshal([]byte(netflixTitleConfigJSON), &titles); err != nil {
+		panic(err)
+	}
+	return titles
+}()
 
 // Rule is an immutable entry in the public-service catalog. The catalog is
 // deliberately code-owned; callers cannot supply an arbitrary target URL.
@@ -148,10 +165,10 @@ var catalog = []Rule{
 		RedirectPolicy:   "do_not_follow", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
 	},
 	{
-		ServiceID: "netflix_unlock", Name: "Netflix 片目与地区检查", RuleVersion: 3,
-		Category: "流媒体解锁", Region: "全球", ResultKind: "streaming_unlock", Description: "自动经被测节点查询目标IPv4，保留原Host与证书校验；比较两部片目及明确国家限制，不代表播放。",
-		TargetURL: "https://www.netflix.com/title/81280792 + /title/70143836", Method: http.MethodGet,
-		SuccessCriterion: "经同一节点DoH查询一次并固定本轮IPv4；每片目最多1MiB，保留TTL、原域名与证书校验；片目可访问/地区提示分开，不读取播放分片",
+		ServiceID: "netflix_unlock", Name: "Netflix 片目与地区检查", RuleVersion: 4,
+		Category: "流媒体解锁", Region: "全球", ResultKind: "streaming_unlock", Description: "自动经被测节点查询目标IPv4，分别检查一部Netflix自制片目和一部授权片目；不登录账号，不代表播放。",
+		TargetURL: "https://www.netflix.com/title/" + netflixTitles.OriginalID + " + /title/" + netflixTitles.LicensedID, Method: http.MethodGet,
+		SuccessCriterion: "经同一节点DoH查询一次并固定本轮IPv4；每部片目请求一次，每页最多1MiB；保留TTL、原域名与证书校验；只把自制片目的明确国家提示视为地区封锁，不读取播放分片",
 		RedirectPolicy:   "follow_same_host", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: 1024 * 1024,
 	},
 	{
@@ -295,11 +312,11 @@ var catalog = []Rule{
 	ipokRule("ipok_ipv4", "IPv4"),
 	ipokRule("ipok_ipv6", "IPv6"),
 	{
-		ServiceID: netflixIPv4Service, SupersededBy: "netflix_unlock", Name: "Netflix 片目检查（经节点 DNS · IPv4）", RuleVersion: 2,
+		ServiceID: netflixIPv4Service, SupersededBy: "netflix_unlock", Name: "Netflix 片目检查（经节点 DNS · IPv4）", RuleVersion: 3,
 		Category: "流媒体解锁", Region: "全球", ResultKind: "streaming_unlock",
 		Description: "可选：经同一被测节点向Cloudflare查询一次IPv4，再检查片目；额外DNS响应最多16KiB，原域名和证书校验保留，不代表播放。",
-		TargetURL:   "https://www.netflix.com/title/81280792 + /title/70143836", Method: http.MethodGet,
-		SuccessCriterion: "单次经节点DoH A查询，本轮固定同一IPv4并记录TTL，不跨轮缓存；原Host/SNI校验两部片目，仅同主机HTTPS跳转；不同于节点默认解析，不混为同一方法，每片目最多1MiB；识别明确国家限制提示，不验证播放",
+		TargetURL:   "https://www.netflix.com/title/" + netflixTitles.OriginalID + " + /title/" + netflixTitles.LicensedID, Method: http.MethodGet,
+		SuccessCriterion: "单次经节点DoH A查询，本轮固定同一IPv4并记录TTL，不跨轮缓存；原Host/SNI校验两部片目，仅同主机HTTPS跳转；不同于节点默认解析，不混为同一方法，每片目最多1MiB；仅自制片目的明确国家提示视为地区封锁，不验证播放",
 		RedirectPolicy:   "follow_same_host", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: 1024 * 1024,
 	},
 }

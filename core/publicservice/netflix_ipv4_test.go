@@ -144,7 +144,7 @@ func TestNetflixIPv4OptionPreservesIdentityAndOriginalRule(t *testing.T) {
 		t.Fatal("missing separate opt-in Netflix IPv4 rule")
 	}
 	original, _ := RuleFor("netflix_unlock")
-	if rule.ServiceID == original.ServiceID || original.RuleVersion != 3 || rule.BatchDefault {
+	if rule.ServiceID == original.ServiceID || original.RuleVersion != 4 || rule.BatchDefault {
 		t.Fatal("new mode replaced the original or became default")
 	}
 	f := newNetflixDNSFixture(t)
@@ -260,7 +260,7 @@ func TestNetflixIPv4BoundedPageCannotClaimAvailabilityFromPrefix(t *testing.T) {
 func TestNetflixIPv4RetainsFirstPageWhenSecondRequestFails(t *testing.T) {
 	rule, _ := RuleFor(netflixIPv4Service)
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		if strings.Contains(req.URL.Path, "70143836") {
+		if strings.Contains(req.URL.Path, netflixTitles.LicensedID) {
 			return nil, context.DeadlineExceeded
 		}
 		return fixtureResponse(req, 200, "text/html", `<html><body>Oh no! This title isn’t currently available to watch in your country.</body></html>`), nil
@@ -290,8 +290,39 @@ func TestDefaultNetflixAutomaticallyUsesSelectedNodeIPv4(t *testing.T) {
 	r := c.Check(context.Background(), monitor.MonitoredNode{}, rule, 2*time.Second)
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.dnsCalls != 1 || f.titleCalls != 2 || r.RequestCount != 3 || rule.RuleVersion != 3 || r.Details["target_dns_mode"] != "selected_node_doh_ipv4_v1" {
+	if f.dnsCalls != 1 || f.titleCalls != 2 || r.RequestCount != 3 || rule.RuleVersion != 4 || r.Details["target_dns_mode"] != "selected_node_doh_ipv4_v1" {
 		t.Fatalf("default rule did not resolve through selected node: dns=%d title=%d version=%d details=%v", f.dnsCalls, f.titleCalls, rule.RuleVersion, r.Details)
+	}
+}
+
+func TestNetflixDefaultLicensedRestrictionMeansOriginalsOnly(t *testing.T) {
+	rule, _ := RuleFor("netflix_unlock")
+	calls := map[string]int{}
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if strings.Contains(req.URL.Path, netflixTitles.OriginalID) {
+			calls["original"]++
+			return fixtureResponse(req, http.StatusOK, "text/html", `<h1 class="title-title">Stranger Things</h1>`), nil
+		}
+		calls["licensed"]++
+		return fixtureResponse(req, http.StatusOK, "text/html", `<body>This title isn't currently available to watch in your country.</body>`), nil
+	})}
+	result := checkNetflix(context.Background(), client, rule, time.Now())
+	if result.Outcome != "originals_only" || calls["original"] != 1 || calls["licensed"] != 1 || result.Details["title_check_version"] != "dual_title_v1" {
+		t.Fatalf("licensed title restriction was misclassified: calls=%v result=%+v", calls, result)
+	}
+	if !strings.Contains(result.Summary, "未验证账号播放") {
+		t.Fatalf("summary overstates playback: %q", result.Summary)
+	}
+}
+
+func TestNetflixOriginalAndLicensedHTTP404AreRegionBlocked(t *testing.T) {
+	rule, _ := RuleFor("netflix_unlock")
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return fixtureResponse(req, http.StatusNotFound, "text/html", "Oh no!"), nil
+	})}
+	result := checkNetflix(context.Background(), client, rule, time.Now())
+	if result.Outcome != "region_blocked" {
+		t.Fatalf("both missing test titles should be blocked: %+v", result)
 	}
 }
 

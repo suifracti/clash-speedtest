@@ -123,7 +123,7 @@ func TestCheckerSeparatesCloudflareChallengeAndNetflixUnlockTier(t *testing.T) {
 
 	netflix, _ := RuleFor("netflix_unlock")
 	netflixChecker := Checker{ClientFactory: fixtureClient(func(request *http.Request) (*http.Response, error) {
-		if strings.HasSuffix(request.URL.Path, "/81280792") {
+		if strings.HasSuffix(request.URL.Path, "/"+netflixTitles.OriginalID) {
 			return fixtureResponse(request, http.StatusOK, "text/html", `<h1 class="title-title">LEGO Ninjago</h1>`), nil
 		}
 		return fixtureResponse(request, http.StatusNotFound, "text/html", "Oh no!"), nil

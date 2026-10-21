@@ -27,6 +27,7 @@ func TestServiceEvidenceDoesNotConfuseAccessWithAvailability(t *testing.T) {
 		{"netflix login is not a title", "netflix_unlock", 200, `<html>Sign in</html>`, "unknown"},
 		{"netflix login heading is not a title", "netflix_unlock", 200, `<html><h1>Sign in</h1></html>`, "unknown"},
 		{"netflix maintenance heading is not a title", "netflix_unlock", 200, `<html><h1>Service temporarily unavailable</h1></html>`, "unknown"},
+		{"netflix HTTP rejection is not a region block", "netflix_unlock", 403, `Forbidden`, "unknown"},
 		{"empty DNS document", "cloudflare_doh", 200, `{}`, "criteria_mismatch"},
 		{"soft challenge is not access", "grok_web", 200, `<title>Just a moment...</title><script src="/cdn-cgi/challenge-platform/x"></script>`, "challenge"},
 	} {
@@ -243,16 +244,16 @@ func TestModernNetflixTitleDetection(t *testing.T) {
 	}
 
 	checker := Checker{ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
-		if strings.Contains(req.URL.Path, "81280792") {
-			body := `<!doctype html><html><head><meta property="al:ios:url" content="nflx://www.netflix.com/title/81280792?locale=en-SG"/></head><body><h1>LEGO Ninjago</h1></body></html>`
+		if strings.Contains(req.URL.Path, netflixTitles.OriginalID) {
+			body := `<!doctype html><html><head><meta property="al:ios:url" content="nflx://www.netflix.com/title/` + netflixTitles.OriginalID + `?locale=en-SG"/></head><body><h1>Stranger Things</h1></body></html>`
 			resp := fixtureResponse(req, http.StatusOK, "text/html", body)
-			resp.Request.URL, _ = req.URL.Parse("https://www.netflix.com/sg/title/81280792")
+			resp.Request.URL, _ = req.URL.Parse("https://www.netflix.com/sg/title/" + netflixTitles.OriginalID)
 			return resp, nil
 		}
-		if strings.Contains(req.URL.Path, "70143836") {
-			body := `<!doctype html><html><head><meta property="al:ios:url" content="nflx://www.netflix.com/title/70143836?locale=en-SG"/></head><body><h1>Breaking Bad</h1></body></html>`
+		if strings.Contains(req.URL.Path, netflixTitles.LicensedID) {
+			body := `<!doctype html><html><head><meta property="al:ios:url" content="nflx://www.netflix.com/title/` + netflixTitles.LicensedID + `?locale=en-SG"/></head><body><h1>Breaking Bad</h1></body></html>`
 			resp := fixtureResponse(req, http.StatusOK, "text/html", body)
-			resp.Request.URL, _ = req.URL.Parse("https://www.netflix.com/sg/title/70143836")
+			resp.Request.URL, _ = req.URL.Parse("https://www.netflix.com/sg/title/" + netflixTitles.LicensedID)
 			return resp, nil
 		}
 		return fixtureResponse(req, http.StatusNotFound, "text/html", "Not found"), nil
@@ -265,6 +266,9 @@ func TestModernNetflixTitleDetection(t *testing.T) {
 	}
 	if result.Details["service_region"] != "SG" {
 		t.Fatalf("expected region SG, got %q", result.Details["service_region"])
+	}
+	if result.Details["title_check_version"] != "dual_title_v1" || result.Details["global_title_http_status"] != "200" || result.Details["licensed_title_http_status"] != "200" {
+		t.Fatalf("missing complete dual-title evidence: %v", result.Details)
 	}
 }
 

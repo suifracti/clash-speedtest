@@ -208,3 +208,14 @@ it('does not pre-select IP reputation when the catalog offers no reputation item
   w.catalog.value=[];w.project.value='latency';w.openPlan([node])
   expect(w.plan.value).toMatchObject({includeReputation:false,reputationServiceIds:[]})
 })
+
+it('omits off-region unlock items from both the round plan and progress',async()=>{
+ const jp={...node,node_key:'jp',node_identity_key:'jp',country_code:'JP'},overseas={...node,node_key:'us',node_identity_key:'us',country_code:'JP'}
+ w.nodes.value=[jp,overseas];w.services.value[key(overseas)]=[{...overseas,attempt_id:'geo',service_id:'google_region',rule:{service_id:'google_region'},result:{outcome:'profiled',details:{service_region:'US'}}} as unknown as Attempt]
+ w.project.value='service';w.serviceIds.value=['chatgpt_unlock','abema_unlock'];w.openPlan([jp,overseas]);w.plan.value!.includeReputation=false
+ vi.mocked(api.startAttempt).mockImplementation(async(_kind,body:any)=>savedDownload(body))
+ await w.runPlan()
+ expect(w.queue.value.map(q=>[q.node.node_key,q.serviceId])).toEqual([['jp','chatgpt_unlock'],['jp','abema_unlock'],['us','chatgpt_unlock']])
+ expect((vi.mocked(api.createRound).mock.calls[0][0] as {items:unknown[]}).items).toHaveLength(3)
+ w.japanOnly.value=false;expect(w.allowedUnlockServices(overseas,['chatgpt_unlock','abema_unlock'])).toEqual(['chatgpt_unlock','abema_unlock'])
+})

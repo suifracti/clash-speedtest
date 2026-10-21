@@ -579,16 +579,18 @@ func checkNetflix(ctx context.Context, client *http.Client, rule Rule, started t
 		result.RequestCount++
 		return nil
 	}
-	global, ok := netflixGET(ctx, &clone, "https://www.netflix.com/title/81280792", &result, rule.MaximumBodyBytes)
+	global, ok := netflixGET(ctx, &clone, "https://www.netflix.com/title/"+netflixTitles.OriginalID, &result, rule.MaximumBodyBytes)
 	if !ok {
+		appendNetflixUnverifiedPlayback(&result)
 		return finish(result, started)
 	}
 	globalAvailable, globalBlocked := netflixPageEvidence(&result, "global_title", global, rule)
 	if netflixPageChallenge(&result, global) {
 		return finish(result, started)
 	}
-	licensed, ok := netflixGET(ctx, &clone, "https://www.netflix.com/title/70143836", &result, rule.MaximumBodyBytes)
+	licensed, ok := netflixGET(ctx, &clone, "https://www.netflix.com/title/"+netflixTitles.LicensedID, &result, rule.MaximumBodyBytes)
 	if !ok {
+		appendNetflixUnverifiedPlayback(&result)
 		return finish(result, started)
 	}
 	licensedAvailable, licensedBlocked := netflixPageEvidence(&result, "licensed_title", licensed, rule)
@@ -596,30 +598,45 @@ func checkNetflix(ctx context.Context, client *http.Client, rule Rule, started t
 	if netflixPageChallenge(&result, licensed) {
 		return finish(result, started)
 	}
-	if region := netflixRegion(licensed.finalURL + "\n" + string(licensed.body)); region != "" {
-		result.Details["service_region"] = strings.ToUpper(region)
+	for _, page := range []netflixPage{global, licensed} {
+		if region := netflixRegion(page.finalURL + "\n" + string(page.body)); region != "" {
+			result.Details["service_region"] = strings.ToUpper(region)
+		}
+	}
+	result.Details["title_check_version"] = "dual_title_v1"
+	regionSummary := ""
+	if region := result.Details["service_region"]; region != "" {
+		regionSummary = "（页面地区 " + region + "）"
 	}
 	switch {
-	case globalBlocked || licensedBlocked:
+	case globalBlocked || global.status == http.StatusNotFound:
 		result.Outcome, result.FailurePhase = "region_blocked", "title_country_restriction"
-		result.Summary = "Netflix 测试片目明确提示当前国家不可观看；不代表全部片库或账号播放状态"
-		result.ErrorMessage = "网页已响应，片目页面含明确国家限制提示；不是节点连接故障"
+		result.Summary = "Netflix 自制测试片目在当前地区不可用" + regionSummary + "；未验证账号播放"
+		result.ErrorMessage = "自制片目页面含明确国家限制提示或返回HTTP 404；不是节点连接故障"
 	case licensedAvailable && globalAvailable:
 		result.Outcome = "unlocked"
-		result.Summary = "测试片目页面可访问；不代表账号播放已解锁"
-	case globalAvailable && licensed.status == http.StatusNotFound:
+		result.Summary = "两部测试片目页面均可访问" + regionSummary + "；未验证账号播放"
+	case globalAvailable && (licensedBlocked || licensed.status == http.StatusNotFound):
 		result.Outcome = "originals_only"
-		result.Summary = "宽松片目可访问、版权片目不存在；可能是片库差异，未验证播放"
-	case global.status == http.StatusForbidden || licensed.status == http.StatusForbidden:
-		result.Outcome = "service_rejected"
-		result.Summary = "Netflix 拒绝测试请求"
-		result.ErrorMessage = "HTTP 403 只能说明请求被拒绝，不能单独断定是地区限制"
+		result.Summary = "仅自制测试片目可访问" + regionSummary + "；可能受片库差异影响，未验证账号播放"
+	case global.status == http.StatusUnauthorized || global.status == http.StatusForbidden || licensed.status == http.StatusUnauthorized || licensed.status == http.StatusForbidden:
+		result.Outcome = "unknown"
+		result.Summary = "Netflix 要求身份验证或拒绝请求" + regionSummary + "；未验证账号播放"
+		result.ErrorMessage = "HTTP 401/403 不能单独证明片目地区限制或账号可用"
 	default:
 		result.Outcome = "unknown"
-		result.Summary = "片目结果不足以判断解锁档位"
+		result.Summary = "片目结果不足以判断解锁档位" + regionSummary + "；未验证账号播放"
 		result.ErrorMessage = "两部测试片目均未给出可确认结果；Netflix 片库或页面结构可能已变化"
 	}
 	return finish(result, started)
+}
+
+func appendNetflixUnverifiedPlayback(result *Result) {
+	if result.Summary == "" {
+		result.Summary = "未验证账号播放"
+		return
+	}
+	result.Summary += "；未验证账号播放"
 }
 
 func netflixGET(ctx context.Context, client *http.Client, target string, result *Result, maximum int) (netflixPage, bool) {
@@ -677,14 +694,18 @@ func netflixGET(ctx context.Context, client *http.Client, target string, result 
 func netflixPageChallenge(result *Result, page netflixPage) bool {
 	if page.challenge {
 		result.Outcome = "challenge"
-		result.Summary = "Netflix 要求网页验证"
+		result.Summary = "Netflix 要求网页验证；未验证账号播放"
 		result.ErrorMessage = "已连通 Netflix，但测试请求遇到挑战页"
 		if result.Details["challenge_evidence"] == "" {
 			result.Details["challenge_evidence"] = "challenge platform marker"
 		}
 		return true
 	}
-	return page.suspectedChallenge && classifyPageChallenge(result, page.body)
+	if page.suspectedChallenge && classifyPageChallenge(result, page.body) {
+		appendNetflixUnverifiedPlayback(result)
+		return true
+	}
+	return false
 }
 
 // Store each completed page before the next request so partial failures do not

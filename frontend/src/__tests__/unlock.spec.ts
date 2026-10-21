@@ -8,3 +8,11 @@ it('shares available counts and explicit region refusal reasons',()=>{
  expect(summary.label).toBe('1/2');expect(summary.tone).toBe('warn');expect(summary.reason).toContain('Claude：地区不支持');expect(unlockResult(attempt('unlocked')).label).toBe('可用 · SG')
 })
 it('keeps a browser challenge indeterminate',()=>{expect(unlockResult(attempt('challenge'))).toMatchObject({state:'unknown',tone:'empty',reason:'验证挑战'})})
+
+it('separates untested from inconclusive and keeps old Netflix restrictions indeterminate',()=>{
+ expect(unlockResult()).toMatchObject({label:'未测',reason:'',tone:'empty'})
+ const old={...attempt('region_blocked'),service_id:'netflix_unlock'}
+ expect(unlockResult(old)).toMatchObject({state:'unknown',tone:'empty',label:'仅自制剧或不可用（旧检测）'})
+ const current={...old,result:{...old.result!,outcome:'originals_only',details:{service_region:'SG',title_check_version:'dual_title_v1'}}}
+ expect(unlockResult(current)).toMatchObject({state:'available',tone:'warn',label:'仅自制剧（SG）'})
+})

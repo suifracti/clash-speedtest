@@ -1,0 +1,43 @@
+{
+  "groups": [
+    {
+      "id": "ai",
+      "name": "AI",
+      "regions": [],
+      "ids": [
+        "chatgpt_unlock",
+        "claude_unlock",
+        "gemini_unlock",
+        "antigravity"
+      ]
+    },
+    {
+      "id": "streaming",
+      "name": "流媒体",
+      "regions": [],
+      "ids": [
+        "netflix_unlock",
+        "youtube_premium",
+        "disney_unlock",
+        "prime_video",
+        "spotify_unlock",
+        "tiktok_unlock"
+      ]
+    },
+    {
+      "id": "japan",
+      "name": "日本",
+      "regions": [
+        "JP"
+      ],
+      "ids": [
+        "abema_unlock",
+        "unext_unlock",
+        "dmm_unlock",
+        "radiko_unlock",
+        "hulu_jp_unlock",
+        "fod_unlock"
+      ]
+    }
+  ]
+}

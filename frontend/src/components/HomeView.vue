@@ -33,7 +33,7 @@ const qualityCompareNodes=computed(()=>w.selectedNodes.value)
 async function readQualityNodes(nodes:NodeOption[],refresh=false){
  if(refresh){qualityGeneration++;qualityData.value={};qualityErrors.value={};qualityCutoff.value=new Date().toISOString()}
  const active=qualityGeneration,until=qualityCutoff.value,since=new Date(Date.parse(until)-w.hours.value*3600000).toISOString();qualityLoading.value=true
- await mapLimited(nodes.filter(n=>!qualityData.value[key(n)]),4,async n=>{const id=active+'|'+key(n);if(qualityInflight.has(id))return qualityInflight.get(id);const task=(async()=>{try{const e=await readQuality(n,since,until);if(active===qualityGeneration){qualityData.value[key(n)]=e;delete qualityErrors.value[key(n)]}}catch(e){if(active===qualityGeneration)qualityErrors.value[key(n)]=e instanceof Error?e.message:String(e)}finally{qualityInflight.delete(id)}})();qualityInflight.set(id,task);await task})
+ await mapLimited(nodes.filter(n=>!qualityData.value[key(n)]),4,async n=>{const id=active+'|'+key(n);if(qualityInflight.has(id))return qualityInflight.get(id);const task=(async()=>{try{const e=await readQuality(n,since,until);if(active===qualityGeneration){qualityData.value[key(n)]=e;w.landingEvidence.value[key(n)]=e.services;delete qualityErrors.value[key(n)]}}catch(e){if(active===qualityGeneration)qualityErrors.value[key(n)]=e instanceof Error?e.message:String(e)}finally{qualityInflight.delete(id)}})();qualityInflight.set(id,task);await task})
  if(active===qualityGeneration)qualityLoading.value=false
 }
 // Only persisted terminal results invalidate the saved-history snapshot. Defer

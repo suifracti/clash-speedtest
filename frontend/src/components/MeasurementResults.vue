@@ -10,7 +10,7 @@ const props=defineProps<{point:TrendPoint;project:'download'|'service'}>()
 const search=ref(''),status=ref('all'),page=ref(1),pageSize=12
 const attempts=computed(()=>props.point.attempts||[])
 const counts=computed(()=>({good:attempts.value.filter(a=>unlockResult(a).state==='available').length,warn:attempts.value.filter(a=>unlockResult(a).state==='unavailable').length,empty:attempts.value.filter(a=>unlockResult(a).state==='unknown').length}))
-const filtered=computed(()=>attempts.value.filter(a=>(status.value==='all'||unlockResult(a).tone===status.value)&&(!search.value||(a.rule.name+' '+a.service_id+' '+(a.result?.summary||'')+' '+(a.result?.error_message||'')).toLowerCase().includes(search.value.trim().toLowerCase()))))
+const filtered=computed(()=>attempts.value.filter(a=>(status.value==='all'||unlockResult(a).state===({good:'available',warn:'unavailable',empty:'unknown'} as Record<string,string>)[status.value])&&(!search.value||(a.rule.name+' '+a.service_id+' '+(a.result?.summary||'')+' '+(a.result?.error_message||'')).toLowerCase().includes(search.value.trim().toLowerCase()))))
 const pageCount=computed(()=>Math.max(1,Math.ceil(filtered.value.length/pageSize))),visible=computed(()=>filtered.value.slice((page.value-1)*pageSize,page.value*pageSize))
 const resultGroups=computed(()=>props.project==='download'?[{id:'download',name:'',items:visible.value}]:[...unlockGroups,{id:'legacy',name:'其他（旧检测项）'}].map(g=>({...g,items:visible.value.filter(a=>unlockGroup(a.service_id||'')===g.id).sort((a,b)=>Number(unlockResult(b).state==='unavailable')-Number(unlockResult(a).state==='unavailable'))})).filter(g=>g.items.length))
 watch([search,status],()=>page.value=1)
