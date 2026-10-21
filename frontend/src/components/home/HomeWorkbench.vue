@@ -28,6 +28,27 @@ function selectExit(){exitMode.value=true;m.qualityGate.value='all';m.qualitySor
 const exitColumns=['出口 IP','真实落地','风险']
 const exitFields=['ip','label','riskLabel'] as const
 const sites=computed(()=>targets.filter(t=>w.displayTargets.value.includes(t.id)))
+// 旧配置轮次不能代表现在：只由旧配置撑起的节点，数字置灰并标“旧”，不参与这两列排序和“稳定能连的”筛选。
+function weeklyStat(n:NodeOption){return m.weeklyStats.value[key(n)]}
+function weeklyOld(n:NodeOption){return !!weeklyStat(n)?.allOld}
+function weeklyText(n:NodeOption,metric:'responseRate'|'volatility'){
+ const s=weeklyStat(n)
+ if(!s)return m.weeklyErrors.value[key(n)]?'读取失败':'读取中'
+ const value=s.all[metric]
+ if(metric==='responseRate')return value!=null?Math.round(value)+'%':'未测'
+ return value!=null?Math.round(value)+' ms':s.all.total?'轮数太少':'—'
+}
+function weeklyTone(n:NodeOption){const s=weeklyStat(n);return !s||s.allOld||s.all.responseRate==null?'empty':s.all.responseRate>=90?'good':'warn'}
+function weeklyTitle(n:NodeOption,metric:'responseRate'|'volatility'){
+ const s=weeklyStat(n),error=m.weeklyErrors.value[key(n)]
+ if(error)return error
+ if(!s)return '近 7 天 · 0 轮'
+ const show=(v:number|null)=>v==null?'—':metric==='responseRate'?Math.round(v)+'%':Math.round(v)+' ms'
+ const base=metric==='responseRate'?'近 7 天':'慢的时候比快的时候多多少（P90−P10）'
+ if(s.allOld)return '近 7 天只有旧配置记录 · 当前配置还没测过'
+ if(s.old.total)return `当前配置 ${s.current.total} 轮 ${show(s.current[metric])} · 旧配置 ${s.old.total} 轮 ${show(s.old[metric])}`
+ return metric==='responseRate'?`近 7 天 · ${s.all.total} 轮`:base
+}
 const catalog=computed(()=>w.catalog.value.filter(r=>!isReputationRule(r)))
 const projects:Project[]=['combined','latency','download','service']
 const chosenNodeCount=computed(()=>chosen.value.reduce((count,airport)=>count+airportNodeCount(airport),0))
@@ -198,7 +219,7 @@ function keyNav(e:KeyboardEvent){
           <span role="cell" class="hd-node" :title="n.display_name+' · '+m.sourceLabel(n)+' · '+n.type"><span class="hd-flag">{{n.country_code||'—'}}</span><span><strong>{{nodeDisplayName(n)}}</strong><small>{{m.sourceLabel(n)}} · {{n.type}}</small></span><NodeActivity :state="m.nodeActivities.value[key(n)]?.state" :label="m.nodeActivities.value[key(n)]?.label"/></span>
           <template v-if="exitMode"><span v-for="field in exitFields" :key="field" role="cell" class="hd-num hd-exit-cell" :class="field==='label'?exitRows[key(n)].tone:field==='riskLabel'?exitRows[key(n)].riskTone:''" :title="field==='label'?exitRows[key(n)].detail:field==='riskLabel'?'IPPure 与机器流量占比取较高值':''">{{exitRows[key(n)][field]}}</span></template>
           <span v-if="showVerdict" role="cell"><b class="hd-pill" :class="verdicts[key(n)].tone">{{verdicts[key(n)].label}}</b></span>
-          <template v-if="!exitMode&&w.project.value==='latency'"><span role="cell" class="hd-num hd-history-cell" :class="m.weeklyStats.value[key(n)]?.responseRate!=null?(m.weeklyStats.value[key(n)].responseRate!>=90?'good':'warn'):'empty'" :title="m.weeklyErrors.value[key(n)]||('近 7 天 · '+(m.weeklyStats.value[key(n)]?.total??0)+' 轮')">{{m.weeklyStats.value[key(n)]?.responseRate!=null?m.weeklyStats.value[key(n)].responseRate!.toFixed(0)+'%':m.weeklyErrors.value[key(n)]?'读取失败':m.weeklyStats.value[key(n)]?'未测':'读取中'}}</span><span role="cell" class="hd-num hd-history-cell" title="慢的时候比快的时候多多少（P90−P10）；少于 5 轮暂不计算">{{m.weeklyStats.value[key(n)]?.volatility!=null?Math.round(m.weeklyStats.value[key(n)].volatility!)+' ms':m.weeklyStats.value[key(n)]?.total?'轮数太少':'—'}}</span></template>
+          <template v-if="!exitMode&&w.project.value==='latency'"><span role="cell" class="hd-num hd-history-cell" :class="weeklyTone(n)" :title="weeklyTitle(n,'responseRate')">{{weeklyText(n,'responseRate')}}<small v-if="weeklyOld(n)" class="old-tag">旧</small></span><span role="cell" class="hd-num hd-history-cell" :class="weeklyTone(n)" :title="weeklyTitle(n,'volatility')">{{weeklyText(n,'volatility')}}<small v-if="weeklyOld(n)" class="old-tag">旧</small></span></template>
           <template v-if="showSites"><span v-for="s in sites" :key="s.id" role="cell" class="hd-num" :class="m.metricPoint(n,s.id)?.tone||'empty'" :title="m.siteContext(n,s.id)">{{m.siteMetric(n,s.id)}}</span></template>
           <span v-if="showDownload" role="cell" class="hd-num" :class="m.downloadMetricTone(n)" :title="m.downloadMetricContext(n)">{{m.downloadMetric(n)}}</span>
           <span v-if="!exitMode&&w.project.value==='download'" role="cell" class="hd-num empty">{{m.downloadMetricContext(n)}}</span>
@@ -222,6 +243,7 @@ function keyNav(e:KeyboardEvent){
 
 <style scoped>
 .history-sort{font-size:11px;white-space:nowrap;text-align:left}
+.old-tag{margin-left:2px;padding:0 2px;border-radius:2px;background:var(--hd-soft);color:var(--hd-muted);font-size:9px;font-weight:600}
 .hd-body.exit-mode .hd-node strong{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}.hd-body.exit-mode .hd-node small{white-space:normal}.hd-body.exit-mode .hd-tr{padding-top:9px;padding-bottom:9px}.hd-body.exit-mode .hd-exit-cell.good{color:var(--hd-good)}.hd-source{display:block}.hd-exit-cell{font-size:11px;white-space:normal;line-height:1.4}.hd-exit-cell.bad{color:#c6343e;font-weight:600}.hd-exit-cell.warn{color:#ad680b}
 .hd .hd-svc-cell.empty{color:var(--hd-empty);font-weight:400}.hd .hd-svc-cell.warn{color:var(--hd-warn)}
 </style>

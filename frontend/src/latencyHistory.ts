@@ -4,7 +4,7 @@ import {manualLatencyPoint,monitorLatencyPoints,type TrendPoint} from './present
 import {inspectorMedian,inspectorSamples,stableLatency} from './inspectorLatency'
 import {date,scope,type NodeOption,type LatencyTest,type MonitorSample,type NodeScope} from './domain'
 export interface LatencySeries {id:string;name:string;points:TrendPoint[];context:string}
-export interface LatencyConfigChange {time:string;label:string}
+export interface LatencyConfigChange {time:string;label:string;serverChanged?:boolean}
 export function latencyRounds(series:LatencySeries[]){
  const rounds=new Map<string,{id:string;time:string}>()
  for(const s of series)for(const p of s.points)if(!p.id.startsWith('planned:')&&inspectorSamples(p,s.id).length)rounds.set(p.id,{id:p.id,time:p.time})
@@ -19,6 +19,20 @@ export function latencyHistoryStats(series:LatencySeries[]){
  const percentile=(p:number)=>{const x=(values.length-1)*p,i=Math.floor(x);return values[i]+(values[Math.ceil(x)]-values[i])*(x-i)}
  const responses=rounds.reduce((n,r)=>n+r.responses,0),samples=rounds.reduce((n,r)=>n+r.total,0),failed=rounds.filter(r=>r.responses<r.total),last=failed.at(-1)
  return {rounds,responses,samples,total:rounds.length,failedRounds:failed.length,responseRate:samples?responses/samples*100:null,median:inspectorMedian(values),volatility:rounds.length>=5&&values.length?percentile(.9)-percentile(.1):null,lastFailure:last?{time:last.time,detail:last.failedSites.map(s=>s.name+' '+s.failures+' 次无响应').join(' · ')}:null}
+}
+export type LatencyHistoryStats=ReturnType<typeof latencyHistoryStats>
+// Current-config numbers never inherit old-config rounds: an old config may be a
+// different machine, so it can only describe the past, not how the node is now.
+export function latencyHistorySplit(series:LatencySeries[]){
+ const pick=(keep:(point:TrendPoint)=>boolean)=>series.map(s=>({...s,points:s.points.filter(keep)}))
+ const all=latencyHistoryStats(series),current=latencyHistoryStats(pick(p=>!p.oldConfig)),old=latencyHistoryStats(pick(p=>!!p.oldConfig))
+ return {all,current,old,allOld:all.total>0&&current.total===0}
+}
+export interface LatencyHistorySplit {all:LatencyHistoryStats;current:LatencyHistoryStats;old:LatencyHistoryStats;allOld:boolean}
+// Node keys embed the sanitized server host between the type and port segments.
+function serverTagFromKey(nodeKey:string){
+ const parts=(nodeKey||'').split('_')
+ return parts.length>3?parts.slice(2,-2).join('_'):''
 }
 // Batch items keep the exact scope every saved test ran with, so an identity that
 // a subscription update replaced is still discoverable by the node's display name.
@@ -56,7 +70,11 @@ export async function readLatencyHistoryWithConfig(node:NodeOption,hours:number)
  identityList.forEach((identity,index)=>revisionLists[index].forEach(revision=>{scopes.set(revision.config_revision_key,{...identity,node_key:revision.node_key,config_revision_key:revision.config_revision_key});if(revision.last_observed_at)observedAt.set(revision.config_revision_key,revision.last_observed_at)}))
  const loaded=await Promise.all([...scopes].map(async([revision,item])=>({old:revision!==node.config_revision_key,...await readScope(item,since,until)})))
  const series=activeLatencyTargets.map(target=>({...target,context:'',points:loaded.flatMap(batch=>[...batch.tests.map(test=>({...manualLatencyPoint(test,target.id),...(batch.old?{oldConfig:true}:{})})),...monitorLatencyPoints(batch.monitor,target.id).map(point=>batch.old?{...point,oldConfig:true}:point)]).sort((a,b)=>Date.parse(a.time)-Date.parse(b.time))}))
- const changes:LatencyConfigChange[]=[...observedAt].filter(([revision])=>revision!==node.config_revision_key).map(([,time])=>({time,label:date(time)+' 订阅更新了这个节点的配置'})).sort((a,b)=>Date.parse(a.time)-Date.parse(b.time))
+ const currentServer=serverTagFromKey(node.node_key)
+ const changes:LatencyConfigChange[]=[...observedAt].filter(([revision])=>revision!==node.config_revision_key).map(([revision,time])=>{
+  const oldServer=serverTagFromKey(scopes.get(revision)?.node_key||''),serverChanged=!!currentServer&&!!oldServer&&oldServer!==currentServer
+  return {time,serverChanged,label:date(time)+' 订阅更新了这个节点的配置'+(serverChanged?'；服务器地址也变了，旧记录可能不是同一台机器':'')}
+ }).sort((a,b)=>Date.parse(a.time)-Date.parse(b.time))
  return {series,changes}
 }
 export async function readLatencyHistory(node:NodeOption,hours:number):Promise<LatencySeries[]>{return (await readLatencyHistoryWithConfig(node,hours)).series}

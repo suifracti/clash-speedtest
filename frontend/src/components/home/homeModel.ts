@@ -1,4 +1,5 @@
 import {inspectorMedian} from '../../inspectorLatency'
+import type {LatencyHistorySplit} from '../../latencyHistory'
 import type {ComputedRef,InjectionKey,Ref} from 'vue'
 import type {Attempt,MonitorSample,NodeOption,Project} from '../../domain'
 import type {QualityEvidence,SiteQualitySummary} from '../../nodeQuality'
@@ -9,7 +10,7 @@ import type {HealthTone,TrendPoint} from '../../presentation'
 // only read it through this model so behaviour stays identical across designs.
 export interface HomeModel {
  readWeekly:(refresh?:boolean)=>Promise<void>
- weeklyStats:Ref<Record<string,{responseRate:number|null;volatility:number|null;total:number}>>
+ weeklyStats:Ref<Record<string,LatencyHistorySplit>>
  weeklyErrors:Ref<Record<string,string>>
  weeklySort:Ref<string>
  weeklyDescending:Ref<boolean>
