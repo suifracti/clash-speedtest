@@ -12,7 +12,7 @@ const delay=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms))
 const uid=()=>crypto.randomUUID?.()||`request-${Date.now()}-${Math.random().toString(16).slice(2)}`
 function savedSources():string[]|null{try{const value=JSON.parse(window.localStorage.getItem('speedtest.circle-airports')||'null');return Array.isArray(value)?value:null}catch{return null}}
 function savedDisplaySites():string[]{try{const ids=JSON.parse(window.localStorage.getItem('speedtest.display-sites')||'null');if(Array.isArray(ids)){const valid=[...new Set(ids.filter((id):id is string=>typeof id==='string'&&targets.some(t=>t.id===id)))];if(valid.length)return valid}}catch{}return targets.map(t=>t.id)}
-const selectedServicesKey='speedtest.selected-services'
+const selectedServicesKey='speedtest.selected-unlocks'
 function savedServices():string[]{try{
  // Old display-only choices were often automatic; they must not become detection defaults.
  const ids=JSON.parse(window.localStorage.getItem(selectedServicesKey)||'null')
