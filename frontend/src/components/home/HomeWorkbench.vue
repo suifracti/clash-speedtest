@@ -152,8 +152,8 @@ function keyNav(e:KeyboardEvent){
               <label>延迟按哪个站点算<UiSelect v-model="w.displayTarget.value" aria-label="质量统计站点"><option v-for="s in targets" :key="s.id" :value="s.id">{{s.name}}</option></UiSelect></label>
             </template>
           </div>
-          <p class="hd-muted hd-more-note">数据截止 {{date(m.qualityCutoff.value)}} · 各项分别测量，不作综合打分<button class="hd-link" :disabled="m.qualityLoading.value" @click="m.readQualityNodes(qualityFiltering?w.proxyNodes.value:m.pageNodes.value,true)">{{m.qualityLoading.value?'读取中…':'更新质量记录'}}</button></p>
-          <p v-if="qualityFiltering" class="hd-muted" role="status">{{m.allQualityReady.value?`已读固定范围 ${w.proxyNodes.value.length} 个节点 · 当前符合 ${m.visibleNodes.value.length} 个 · 读取失败 ${Object.keys(m.qualityErrors.value).length} 个 · 存在缺页/读取错误 ${Object.values(m.qualityData.value).filter(e=>!e.complete).length} 个（只限制对应类型的证据）`:`正在读取全部 ${w.proxyNodes.value.length} 个节点的历史记录（已读 ${Object.keys(m.qualityData.value).length}）；读取完成后应用条件筛选与排序`}}</p>
+          <p class="hd-muted hd-more-note">数据截止 {{date(m.qualityCutoff.value)}} · 各项分别测量，不作综合打分<button class="hd-link" :disabled="m.qualityLoading.value" @click="m.qualityGate.value==='response'?m.readWeekly(true):m.readQualityNodes(qualityFiltering?w.proxyNodes.value:m.pageNodes.value,true)">{{m.qualityLoading.value?'读取中…':'更新质量记录'}}</button></p>
+          <p v-if="qualityFiltering" class="hd-muted" role="status">{{m.qualityGate.value==='response'?(m.qualityFiltersPending.value?'正在读取近 7 天延迟历史…':`按近 7 天采样响应率 ≥90% 筛选 · 当前符合 ${m.visibleNodes.value.length} 个`):m.allQualityReady.value?`已读固定范围 ${w.proxyNodes.value.length} 个节点 · 当前符合 ${m.visibleNodes.value.length} 个 · 读取失败 ${Object.keys(m.qualityErrors.value).length} 个 · 存在缺页/读取错误 ${Object.values(m.qualityData.value).filter(e=>!e.complete).length} 个（只限制对应类型的证据）`:`正在读取全部 ${w.proxyNodes.value.length} 个节点的历史记录（已读 ${Object.keys(m.qualityData.value).length}）；读取完成后应用条件筛选与排序`}}</p>
         </section>
         <section class="hd-more-group" aria-labelledby="more-view">
           <h4 id="more-view">怎么显示</h4>

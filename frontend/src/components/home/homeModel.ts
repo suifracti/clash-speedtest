@@ -8,6 +8,7 @@ import type {HealthTone,TrendPoint} from '../../presentation'
 // HomeView keeps all state, loading and history logic; the redesigned layers
 // only read it through this model so behaviour stays identical across designs.
 export interface HomeModel {
+ readWeekly:(refresh?:boolean)=>Promise<void>
  weeklyStats:Ref<Record<string,{responseRate:number|null;volatility:number|null;total:number}>>
  weeklyErrors:Ref<Record<string,string>>
  weeklySort:Ref<string>
