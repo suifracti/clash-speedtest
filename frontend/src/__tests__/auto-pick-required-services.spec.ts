@@ -63,3 +63,11 @@ describe('auto-pick required services',()=>{
     expect(wrapper.text()).toContain('解锁没通过只影响用途组，节点仍可进日常组。')
   })
 })
+
+describe('auto-pick rounds in node history',()=>{
+  it('labels auto_pick rounds as 自动精选',async()=>{
+    const {triggerLabel}=await import('../measurementRounds')
+    expect(triggerLabel('auto_pick')).toBe('自动精选')
+    expect(triggerLabel('manual')).toBe('手动')
+  })
+})
