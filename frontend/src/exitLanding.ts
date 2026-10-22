@@ -1,6 +1,7 @@
 import {type Attempt,type NodeOption} from './domain'
 import {attemptObservedAt,latestServices} from './nodeQuality'
 import {exitField} from './exitSummaryPresentation'
+import {ipKindFromLatest} from './ipKind'
 import {nodeRegionLabel} from './nodePresentation'
 const codes='CN HK MO TW JP SG US KR GB DE FR NL AU CA RU TH MY VN PH ID IN TR AE AR BR IT ES SE CH PL ZA KH EG NG PK'.split(' ')
 const english=new Intl.DisplayNames(['en'],{type:'region'})
@@ -22,5 +23,5 @@ export function exitLanding(node:Pick<NodeOption,'country_code'>,attempts:Attemp
  const tags=[`名称 ${expected||'未识别'}`,`IP 库 ${library.join(' / ')||'未取得'}`,`Cloudflare ${cfRegion||'未取得'}`,`Google ${google||'未取得'}`]
  const field=(a:Attempt|undefined,...keys:string[])=>a&&valid(a)?exitField(a,...keys)||'—':'—'
  const riskOptions=[{label:'IPPure',value:field(pure,'risk_score','fraud_score')},{label:'机器',value:field(pure,'asn_bot_percent')}].filter(s=>s.value!=='—'&&Number.isFinite(Number(s.value))).sort((a,b)=>Number(b.value)-Number(a.value)),risk=riskOptions[0],riskValue=risk?Number(risk.value):undefined
- return {consensusRegion,googleNote,region:mainland?.region||google||cfRegion||library[0]||expected,org:ipRecord?exitField(ipRecord,'organization','org','isp'):'',exitKnown:!!library.length||!!cfRegion||!!google,riskLabel:risk?risk.label+' '+Math.round(riskValue!)+(risk.label==='机器'?'%':''):'未测',riskTone:riskValue===undefined?'empty':riskValue>=70?'bad':riskValue>=30?'warn':'good',ip:maskedIP(ipRecord?exitField(ipRecord,'ip'):''),country:library.join(' / ')||'—',label,tone:mainland?'bad':mismatch?'warn':count===3&&expected?'good':'empty',tags,detail:tags.join(' · '),pure:field(pure,'risk_score','fraud_score'),ping:[field(ping,'risk_score'),field(find('ping0_ipv6'),'risk_score')].join(' / '),cf:field(pure,'cf_risk_score'),traffic:valid(pure)&&exitField(pure!,'asn_human_percent')&&exitField(pure!,'asn_bot_percent')?`${exitField(pure!,'asn_human_percent')}% / ${exitField(pure!,'asn_bot_percent')}%`:'—'}
+ return {consensusRegion,googleNote,region:mainland?.region||google||cfRegion||library[0]||expected,org:ipRecord?exitField(ipRecord,'organization','org','isp'):'',exitKnown:!!library.length||!!cfRegion||!!google,riskLabel:risk?risk.label+' '+Math.round(riskValue!)+(risk.label==='机器'?'%':''):'未测',riskTone:riskValue===undefined?'empty':riskValue>=70?'bad':riskValue>=30?'warn':'good',ip:maskedIP(ipRecord?exitField(ipRecord,'ip'):''),country:library.join(' / ')||'—',label,tone:mainland?'bad':mismatch?'warn':count===3&&expected?'good':'empty',tags,detail:tags.join(' · '),pure:field(pure,'risk_score','fraud_score'),ping:[field(ping,'risk_score'),field(find('ping0_ipv6'),'risk_score')].join(' / '),cf:field(pure,'cf_risk_score'),traffic:valid(pure)&&exitField(pure!,'asn_human_percent')&&exitField(pure!,'asn_bot_percent')?`${exitField(pure!,'asn_human_percent')}% / ${exitField(pure!,'asn_bot_percent')}%`:'—',ipKind:ipKindFromLatest(latest)}
 }

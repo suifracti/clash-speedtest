@@ -28,14 +28,14 @@ const exitRows=computed(()=>Object.fromEntries(m.pageNodes.value.map(n=>{
  const entry=w.entryFor(n),kind=routeKind(entryCountry(entry),landing.consensusRegion,isAnycast(entry),w.localPosition.value?.country_code)
  // 出口没测过时线路是按节点名称推的，标签置灰并在悬停里说明，别让人当成实测结论。
  const guessed=!landing.exitKnown&&kind!=='anycast'
- return [key(n),{...landing,route:routeLabel(kind),routeTone:guessed?'empty':routeTone(kind),routeTitle:guessed?'出口还没检测，线路按节点名称推断':routeLabel(kind)==='任播'?'入口是 Cloudflare 任播地址，不代表真实机房':'入口与出口国家相同为直连（本机在大陆、入口在境外时为跨境直连），不同为中转，入口在中国大陆为国内中转',line:lineLabel(entry,landing.consensusRegion,landing.org)}]
+ return [key(n),{...landing,ipTag:landing.ipKind.tag,route:routeLabel(kind),routeTone:guessed?'empty':routeTone(kind),routeTitle:guessed?'出口还没检测，线路按节点名称推断':routeLabel(kind)==='任播'?'入口是 Cloudflare 任播地址，不代表真实机房':'入口与出口国家相同为直连（本机在大陆、入口在境外时为跨境直连），不同为中转，入口在中国大陆为国内中转',line:lineLabel(entry,landing.consensusRegion,landing.org)}]
 })))
 function selectInspectorProject(id:Project|'exit'){if(id==='exit')selectExit();else{exitMode.value=false;w.project.value=id}}
 function selectExit(){exitMode.value=true;m.qualityGate.value='all';m.qualitySort.value='existing';if(['latency','download','service'].includes(w.sort.value))w.sort.value='region'}
 // 出口表只读缓存；真要解析要按“解析入口”或跑一次出口检测。
 watch([exitMode,()=>m.pageNodes.value],()=>{if(exitMode.value)void w.readEntries(m.pageNodes.value,false).catch(()=>{})},{immediate:true})
-const exitColumns=['线路','出口 IP','真实落地','风险']
-const exitFields=['line','ip','label','riskLabel'] as const
+const exitColumns=['线路','出口 IP','真实落地','IP 类型','风险']
+const exitFields=['line','ip','label','ipTag','riskLabel'] as const
 const sites=computed(()=>targets.filter(t=>w.displayTargets.value.includes(t.id)))
 // 旧配置轮次不能代表现在：只由旧配置撑起的节点，数字置灰并标“旧”，不参与这两列排序和“稳定能连的”筛选。
 function weeklyStat(n:NodeOption){return m.weeklyStats.value[key(n)]}
@@ -120,14 +120,14 @@ watch(()=>w.viewRequest.value,async n=>{
 function isFocus(n:NodeOption){return !!focusNode.value&&key(focusNode.value)===key(n)}
 function selected(n:NodeOption){return w.selectedKeys.value.includes(key(n))}
 const verdicts=computed<Record<string,Verdict>>(()=>Object.fromEntries(m.pageNodes.value.map(n=>[key(n),latencyVerdict(sites.value.map(s=>m.metricPoint(n,s.id)),stableLatency(sites.value.map(s=>({id:s.id,points:[m.metricPoint(n,s.id)].filter((p):p is NonNullable<typeof p>=>!!p)}))))])))
-function groupSummary(n:NodeOption,id:string){return unlockGroupSummary(id,catalog.value,serviceId=>m.shownService(n,serviceId),w.nodeUnlockRegion(n),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions)}
-function services(n:NodeOption){const summary=unlockSummary(catalog.value,id=>m.shownService(n,id),w.nodeUnlockRegion(n),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions);return {...summary,label:summary.tone==='empty'?'未测':summary.label}}
+function groupSummary(n:NodeOption,id:string){return unlockGroupSummary(id,catalog.value,serviceId=>m.shownService(n,serviceId),w.nodeUnlockRegion(n),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions,exitRows.value[key(n)]?.ipKind.type)}
+function services(n:NodeOption){const summary=unlockSummary(catalog.value,id=>m.shownService(n,id),w.nodeUnlockRegion(n),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions,exitRows.value[key(n)]?.ipKind.type);return {...summary,label:summary.tone==='empty'?'未测':summary.label}}
 function run(){if(exitMode.value){m.closeHover();w.openReputationPlan([...m.runNodes.value]);return}if(w.project.value==='combined')m.openCombinedPlan();else{m.closeHover();w.openPlan([...m.runNodes.value])}}
 const showVerdict=computed(()=>!exitMode.value&&['combined','latency'].includes(w.project.value))
 const showSites=showVerdict
 const showDownload=computed(()=>!exitMode.value&&['combined','download'].includes(w.project.value))
 // Grid tracks follow the active project so each tab shows its own columns.
-const columns=computed(()=>exitMode.value?['28px','minmax(0,1.6fr)','minmax(0,1.9fr)','82px','minmax(0,1.2fr)','72px'].join(' '):['36px','minmax(220px,2.2fr)',...(showVerdict.value?['92px']:[]),...(!exitMode.value&&w.project.value==='latency'?['106px','82px']:[]),...(showSites.value?sites.value.map(()=>'minmax(74px,.8fr)'):[]),...(showDownload.value?['minmax(110px,1fr)']:[]),...(w.project.value==='download'?['minmax(160px,1.4fr)']:[]),...(w.project.value==='combined'?['minmax(80px,.8fr)']:[]),...(w.project.value==='service'?unlockGroups.map(()=>'minmax(90px,1fr)'):[])].join(' '))
+const columns=computed(()=>exitMode.value?['28px','minmax(0,1.45fr)','minmax(0,1.6fr)','78px','minmax(0,1.05fr)','88px','66px'].join(' '):['36px','minmax(220px,2.2fr)',...(showVerdict.value?['92px']:[]),...(!exitMode.value&&w.project.value==='latency'?['106px','82px']:[]),...(showSites.value?sites.value.map(()=>'minmax(74px,.8fr)'):[]),...(showDownload.value?['minmax(110px,1fr)']:[]),...(w.project.value==='download'?['minmax(160px,1.4fr)']:[]),...(w.project.value==='combined'?['minmax(80px,.8fr)']:[]),...(w.project.value==='service'?unlockGroups.map(()=>'minmax(90px,1fr)'):[])].join(' '))
 const allOnPage=computed(()=>m.pageNodes.value.length>0&&m.pageNodes.value.every(selected))
 function keyNav(e:KeyboardEvent){
  const list=m.pageNodes.value,i=list.findIndex(isFocus)
@@ -227,7 +227,7 @@ function keyNav(e:KeyboardEvent){
         <div v-for="n in m.pageNodes.value" :key="key(n)" class="hd-tr" role="row" :class="{focus:isFocus(n),selected:selected(n)}" :aria-selected="isFocus(n)" @click="focus(n)">
           <span role="cell" @click.stop><input type="checkbox" :checked="selected(n)" :aria-label="'选择 '+nodeDisplayName(n)" @change="w.toggleNode(n)"></span>
           <span role="cell" class="hd-node" :title="n.display_name+' · '+m.sourceLabel(n)+' · '+n.type"><span class="hd-flag">{{n.country_code||'—'}}</span><span><strong>{{nodeDisplayName(n)}}</strong><small>{{m.sourceLabel(n)}} · {{n.type}}</small></span><NodeActivity :state="m.nodeActivities.value[key(n)]?.state" :label="m.nodeActivities.value[key(n)]?.label"/></span>
-          <template v-if="exitMode"><template v-for="field in exitFields" :key="field"><span v-if="field==='line'" role="cell" class="hd-exit-cell hd-line-cell"><span class="hd-line-text" :title="exitRows[key(n)].line">{{exitRows[key(n)].line}}</span><span v-if="exitRows[key(n)].route" class="hd-route-tag" :class="exitRows[key(n)].routeTone" :title="exitRows[key(n)].routeTitle">{{exitRows[key(n)].route}}</span></span><span v-else role="cell" class="hd-num hd-exit-cell" :class="field==='label'?exitRows[key(n)].tone:field==='riskLabel'?exitRows[key(n)].riskTone:''" :title="field==='label'?exitRows[key(n)].detail:field==='riskLabel'?'IPPure 与机器流量占比取较高值':''">{{exitRows[key(n)][field]}}</span></template></template>
+          <template v-if="exitMode"><template v-for="field in exitFields" :key="field"><span v-if="field==='line'" role="cell" class="hd-exit-cell hd-line-cell"><span class="hd-line-text" :title="exitRows[key(n)].line">{{exitRows[key(n)].line}}</span><span v-if="exitRows[key(n)].route" class="hd-route-tag" :class="exitRows[key(n)].routeTone" :title="exitRows[key(n)].routeTitle">{{exitRows[key(n)].route}}</span></span><span v-else-if="field==='ipTag'" role="cell" class="hd-exit-cell hd-ip-cell"><span class="hd-ip-tag" :class="exitRows[key(n)].ipKind.tone" :title="'IP 类型：'+exitRows[key(n)].ipKind.detail">{{exitRows[key(n)].ipTag}}</span></span><span v-else role="cell" class="hd-num hd-exit-cell" :class="field==='label'?exitRows[key(n)].tone:field==='riskLabel'?exitRows[key(n)].riskTone:''" :title="field==='label'?exitRows[key(n)].detail:field==='riskLabel'?'IPPure 与机器流量占比取较高值':''">{{exitRows[key(n)][field]}}</span></template></template>
           <span v-if="showVerdict" role="cell"><b class="hd-pill" :class="verdicts[key(n)].tone">{{verdicts[key(n)].label}}</b></span>
           <template v-if="!exitMode&&w.project.value==='latency'"><span role="cell" class="hd-num hd-history-cell" :class="weeklyTone(n)" :title="weeklyTitle(n,'responseRate')">{{weeklyText(n,'responseRate')}}<small v-if="weeklyOld(n)" class="old-tag">旧</small></span><span role="cell" class="hd-num hd-history-cell" :class="weeklyTone(n)" :title="weeklyTitle(n,'volatility')">{{weeklyText(n,'volatility')}}<small v-if="weeklyOld(n)" class="old-tag">旧</small></span></template>
           <template v-if="showSites"><span v-for="s in sites" :key="s.id" role="cell" class="hd-num" :class="m.metricPoint(n,s.id)?.tone||'empty'" :title="m.siteContext(n,s.id)">{{m.siteMetric(n,s.id)}}</span></template>
@@ -265,4 +265,9 @@ function keyNav(e:KeyboardEvent){
 .hd-route-tag{flex:none;margin-top:1px;padding:0 5px;border-radius:4px;border:1px solid var(--hd-line);color:var(--hd-muted);background:var(--hd-panel);font-size:10px;line-height:1.5;white-space:nowrap}
 .hd-route-tag.good{color:var(--hd-good);border-color:color-mix(in srgb,var(--hd-good) 35%,var(--hd-line))}
 .hd-route-tag.warn{color:#ad680b;border-color:#e3c184;background:#fff6e5}
+.hd-ip-cell{display:flex;align-items:center}
+.hd-ip-tag{display:inline-block;padding:0 5px;border-radius:4px;border:1px solid var(--hd-line);background:var(--hd-panel-2);color:var(--hd-muted);font-size:10px;line-height:1.6;white-space:nowrap}
+.hd-ip-tag.good{color:var(--hd-good);background:var(--hd-good-bg);border-color:color-mix(in srgb,var(--hd-good) 30%,var(--hd-line))}
+.hd-ip-tag.warn{color:var(--hd-warn);background:var(--hd-warn-bg);border-color:color-mix(in srgb,var(--hd-warn) 30%,var(--hd-line))}
+.hd-ip-tag.empty{background:transparent;border-style:dashed}
 </style>

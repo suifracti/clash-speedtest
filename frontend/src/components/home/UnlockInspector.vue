@@ -5,12 +5,13 @@ import {date,isReputationRule,key,type NodeOption} from '../../domain'
 import {attemptObservedAt} from '../../nodeQuality'
 import {unlockGroups,unlockGroup,unlockResult,unlockMeasured,unlockServiceSkipReason} from '../../unlock'
 import {homeModelKey} from './homeModel'
+import type {IpType} from '../../ipKind'
 import RecordedBars from '../RecordedBars.vue'
-const props=defineProps<{node:NodeOption}>(),w=useWorkspace(),m=inject(homeModelKey)!
+const props=defineProps<{node:NodeOption;ipType?:IpType}>(),w=useWorkspace(),m=inject(homeModelKey)!
 const items=computed(()=>{
  const records=[...(m.qualityData.value[key(props.node)]?.services||[]),...(w.services.value[key(props.node)]||[])],names=new Map(w.catalog.value.filter(s=>!isReputationRule(s)).map(s=>[s.service_id,s.name]))
  for(const a of records)if(a.service_id&&!isReputationRule({service_id:a.service_id})&&!names.has(a.service_id))names.set(a.service_id,a.rule.name||a.service_id)
- return [...names].map(([id,name])=>{const attempt=m.shownService(props.node,id);return {id,name,attempt,result:unlockResult(attempt,id),at:attempt?date(attemptObservedAt(attempt)):''}}).sort((a,b)=>(a.result.state==='unavailable'?0:1)-(b.result.state==='unavailable'?0:1))
+ return [...names].map(([id,name])=>{const attempt=m.shownService(props.node,id);return {id,name,attempt,result:unlockResult(attempt,id,props.ipType),at:attempt?date(attemptObservedAt(attempt)):''}}).sort((a,b)=>(a.result.state==='unavailable'?0:1)-(b.result.state==='unavailable'?0:1))
 })
 const groups=computed(()=>[...unlockGroups,{id:'legacy',name:'其他（旧检测项）'}].map(g=>{
  const list=items.value.filter(s=>unlockGroup(s.id)===g.id).map(s=>({...s,skip:unlockServiceSkipReason(s.id,w.nodeUnlockRegion(props.node),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions)}))

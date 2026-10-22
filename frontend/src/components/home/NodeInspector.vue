@@ -36,7 +36,7 @@ const pathNotice=computed(()=>mainlandNotice(entryCountry(nodeEntry.value),w.loc
 // 出口模式一打开就补一次入口解析；缓存命中时不会发 DNS。组合视图只用已有缓存。
 watch(()=>[key(props.node),props.exitOnly],()=>{if(props.exitOnly)void w.ensureEntry(props.node).catch(()=>{})},{immediate:true})
 const latencyVerdictValue=computed(()=>latencyVerdict((latencyFocus.value||latencySeries.value).map(s=>s.points.at(-1)),stableLatency(latencyFocus.value||latencySeries.value)))
-const serviceVerdict=computed(()=>unlockSummary(w.catalog.value,id=>m.shownService(props.node,id),w.nodeUnlockRegion(props.node),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions))
+const serviceVerdict=computed(()=>unlockSummary(w.catalog.value,id=>m.shownService(props.node,id),w.nodeUnlockRegion(props.node),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions,landing.value.ipKind.type))
 const downloadVerdict=computed(()=>({tone:m.downloadMetricTone(props.node)||'empty',label:m.downloadMetric(props.node),detail:m.downloadMetricContext(props.node)}))
 const verdict=computed(()=>props.exitOnly?{tone:landing.value.tone,label:landing.value.label,detail:landing.value.detail}:project.value==='download'?downloadVerdict.value:project.value==='service'?serviceVerdict.value:latencyVerdictValue.value)
 const others=computed(()=>!props.exitOnly&&project.value==='combined'?[]:([
@@ -111,6 +111,7 @@ function run(){m.closeHover();props.exitOnly?w.openReputationPlan([props.node]):
         <li v-for="(step,index) in exitPath" :key="step.id"><small>{{step.label}}</small><span :title="step.id==='exit'&&!landing.exitKnown?'出口还没检测，这里按节点名称推断':''">{{step.value}}</span><i v-if="index<exitPath.length-1" aria-hidden="true">→</i></li>
       </ol>
       <p v-if="pathNotice" class="exit-path-notice">{{pathNotice}}</p>
+      <p class="exit-ipkind" :class="{empty:!landing.ipKind.measured}">IP 类型：{{landing.ipKind.detail}}</p>
       <template v-if="!exitOnly"><p class="landing-result" :class="landing.tone">{{landing.label}}</p><div class="landing-sources"><span v-for="tag in landing.tags" :key="tag">{{tag}}</span></div></template><NodeExitSummary compact :attempts="attempts"/>
     </div>
 
@@ -138,7 +139,7 @@ function run(){m.closeHover();props.exitOnly?w.openReputationPlan([props.node]):
     </div>
 
     <div v-if="shows('service')" class="hd-ins-block hd-services-block">
-      <h3>解锁检测</h3><UnlockInspector :node="node"/>
+      <h3>解锁检测</h3><UnlockInspector :node="node" :ip-type="landing.ipKind.type"/>
     </div>
 
     <div v-if="!exitOnly&&(showRound||showHistory)&&m.hoverMode.value!=='latency'" class="hd-ins-detail" @mouseenter="m.keepRound" @mouseleave="m.leaveRound" @keydown.esc.stop="m.closeHover">
@@ -169,6 +170,7 @@ function run(){m.closeHover();props.exitOnly?w.openReputationPlan([props.node]):
 .exit-path span{color:var(--hd-text,inherit);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:128px}
 .exit-path i{font-style:normal;color:var(--hd-muted);margin:0 2px}
 .exit-path-notice{margin:0 0 8px;padding:6px 8px;border-radius:6px;background:#fff6e5;border:1px solid #e3c184;color:#805211;font-size:10px;line-height:1.55}
+.exit-ipkind{margin:0 0 8px;font-size:11px;line-height:1.6;color:var(--hd-text)}.exit-ipkind.empty{color:var(--hd-muted)}
 .hd-ins-head{order:-3}.hd-ins-verdict{order:-2}.hd-inspector[data-project="latency"] .hd-latency,.hd-inspector[data-project="download"] .hd-download,.hd-inspector[data-project="service"] .hd-services-block{order:-1}
 
 .hd-inspector[data-project="service"] .hd-ins-verdict{display:block}.hd-inspector[data-project="service"] .hd-ins-verdict strong{display:block;font-size:13px;line-height:1.5}.hd-inspector[data-project="service"] .hd-ins-verdict span{display:block;margin-top:4px;font-size:11px}.download-success strong{font-size:25px;font-weight:600;font-variant-numeric:tabular-nums}.download-success small{font-size:12px;font-weight:400;color:var(--hd-muted)}.download-failure{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:10px 12px;background:#fff0d3;color:#805211;border-radius:8px;font-size:12px;line-height:1.55}.download-failure span{white-space:nowrap;font-size:11px}.download-failure .hd-btn{margin-left:auto;flex-shrink:0;background:transparent;border-color:#cfad72;color:inherit}.download-failure.empty{padding:0;background:none;color:var(--hd-muted)}.hd-saved-download{display:block;margin-top:7px;color:var(--hd-muted);font-size:10px}.download-spark{display:block;width:100%;height:34px;margin-top:8px}

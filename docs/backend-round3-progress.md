@@ -411,3 +411,12 @@
 - 四站全部无响应时合并文案：轮次列表写“0/24 · 四站全失败”，“最近一次失败”写“10/21 19:00 · 四站全部无响应”；只有部分站失败才逐站列“某站 N 次无响应”。判定条件是这一轮响应数为 0 且四个站都有失败样本。
 - 体检页“可用率（节点轮次）”改为按采样的“响应率”：`84%（3,004/3,583 次）`，下面一行“131 轮中 37 轮有失败”；删掉“一轮任一采样有响应即记可用”的旧说明。心跳条下面补图例“绿＝全部节点有响应 · 橙＝部分节点无响应 · 红＝超过一半无响应”。
 - 验证：`npm run build` 通过，前端 409 项通过；截图 `.ui-preview/round4-history-20261022/inspector-jp01-hour-strip.png`（日本 01，16／22 点有数据）与 `airport-health-liangxin.png`（良心云，10 格心跳、2 条节点连续离线）。
+
+### 2026-10-22 第四轮第5项：出口 IP 类型（机房／家宽／移动 · 原生／广播）
+- 先查已保存记录，不新增来源。IPPure 的 `ippure_ip_quality` 里有 `ip_type`（`住宅（第三方判断）`／`非住宅`／`未提供`）、`origin_type`（`原生 IP`／`广播 IP`／`未提供`）、`asn`、`organization`、`fraud_score`；Ping0 的 `ping0_ipv4`／`ping0_ipv6`／`ping0_ip_quality` 里有 `ip_type`（`机房 IDC`／`非 IDC（不等于家宽）`）、`asn`、`organization`、`risk_score`。两边都没有“移动”字段，也没有 ASN 类型；IPPure 的 `origin_type` 是唯一能判原生／广播的字段。另发现现有 IPOK（`ipok_ipv4`／`ipok_ipv6`）也保存了 `ip_type`（`hosting`／`residential`）与 `isp`，但四个目标节点的 IPOK 记录都在旧的 `config_revision_key` 下（如新加坡 04 专线是 `rev_fff61959…`，当前 `rev_64e3839e…`），不会进入当前配置的判定；美国 04 没有 IPOK 记录。因此没有补来源、没有发新请求。
+- 判定口径：每个来源一票（IPPure、Ping0、IPOK；同一来源的 IPv4／IPv6 只算一票，IPv4 优先）。`机房 IDC`／`hosting` 记机房，`住宅`／`residential` 记家宽，`移动`／`mobile` 记移动；`非住宅`、`非 IDC`、`未提供` 明确不当作机房或家宽，记未知。多数票胜出，平票写未知。原生：`origin_type` 为广播／原生；`isBroadcast`、`is_native` 布尔值；或同时有 `registered_country_code` 与 `country_code` 且不同时记广播；没有信号就写未知。类型和原生分别投票，互不牵连。
+- 显示：出口表在“风险”前新增“IP 类型”列，标签如 `机房·原生`、`机房·广播`、`机房·未知`、`未知`；机房灰、家宽绿、广播橙（广播优先于类型着色），未知虚线上灰。检查器出口区新增一行“IP 类型：机房（AWS）· 原生 · 来源 IPPure、Ping0”；缺字段时写“原生未知”或“未测（IPPure / Ping0 / IPOK 没有类型记录）”，不补 0、不猜。
+- 解锁联动只加提示、不改判定：Gemini“需人机验证”、YouTube“不向该 IP 提供 Premium”、Spotify“限注册”三条原因，在出口为机房时追加“出口是机房 IP，这类服务常拒绝或要求验证”。判定状态、可用数和自动精选规则都没动；三处都走新的可选 `ipType` 参数，没传时行为与原来一致。
+- 离线验证（30 天范围、当前配置）：新加坡 04 专线 Ping0 IPv4／IPv6 都是机房、IPPure 两次都返回“未提供”，所以是 `机房·未知`，来源只写 Ping0；美国 04 流媒体 IPPure 非住宅＋原生、Ping0 机房，是 `机房·原生`，来源 IPPure、Ping0；日本专线 04 IPPure 广播、Ping0 机房，是 `机房·广播`；日本专线 01、香港专线 01、日本专线 02 当前配置没有 IPPure／Ping0 类型记录，保持 `未知`。没有为这四个节点额外发请求。
+- 测试：新增 `ip-kind.spec.ts` 2 项（两票机房压过一票、冲突平票未知、原生按注册国与实际使用国判定）；`npm run build` 通过，前端 67 个文件 411 项通过。
+- 截图：`.ui-preview/round5-iptype-20261022/`（`exit-table-ip-type.png` 专线列表、`exit-table-us04.png` 美国 04 机房·原生、`inspector-sg04-exit.png` 新加坡 04 检查器）。
