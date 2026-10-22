@@ -2,7 +2,9 @@
 import {computed,onMounted,ref,watch} from 'vue'
 import {api} from '../api'
 import {useWorkspace} from '../workspace'
-import {bytes,isNotice,type Settings} from '../domain'
+import {bytes,date,isNotice,key,type Settings} from '../domain'
+import {nodeDisplayName} from '../nodePresentation'
+import {airportBeats,airportFaults,beatTone,type AirportBeat} from '../airportPulse'
 import type {QualityEvidence} from '../nodeQuality'
 import {readQualityBatch} from '../qualityBatch'
 import {airportReport} from '../airportReport'
@@ -11,6 +13,13 @@ import TrendChart from './TrendChart.vue'
 import UiSelect from './UiSelect.vue'
 const w=useWorkspace(),airport=ref(w.airports.value[0]?.id||''),data=ref<Record<string,QualityEvidence>>({}),usage=ref<UsageReport|null>(null),settings=ref<Settings|null>(null),price=ref(0),busy=ref(false),error=ref('')
 const nodes=computed(()=>w.nodes.value.filter(n=>!isNotice(n)&&w.nodeAirportId(n)===airport.value)),report=computed(()=>airportReport(nodes.value,data.value))
+// 心跳和故障都用已读到的历史记录拼：轮次是同一段时间内保存的节点测试，
+// 单节点检查不算一轮；故障事件也只看这些轮次。
+const pulse=computed(()=>{
+ const beats=airportBeats(nodes.value.map(n=>({key:key(n),name:nodeDisplayName(n),tests:data.value[key(n)]?.tests||[]})))
+ return {beats:beats.slice(-60),faults:airportFaults(beats)}
+})
+function beatTitle(b:AirportBeat){return date(b.start)+' · '+b.responded+'/'+b.total+' 个节点有响应'}
 const traffic=computed(()=>{const accounts=new Set(usage.value?.accounts.filter(a=>a.airport_id===airport.value).map(a=>a.account_key));const values=usage.value?.intervals.filter(i=>accounts.has(i.account_key)&&i.bytes!==null).map(i=>i.bytes!)||[];return values.length?values.reduce((a,b)=>a+b,0):null})
 const cost=computed(()=>price.value>0&&traffic.value!==null&&traffic.value>0?price.value/(traffic.value/1e9):null)
 watch(airport,()=>void refresh())
@@ -31,8 +40,14 @@ onMounted(()=>void refresh())
     <div><small>每 GB 成本估算</small><strong>{{cost===null?'—':'¥'+cost.toFixed(2)}}</strong><small>月费 ÷ 已观测 GB，记录不足时会偏高</small><div class="report-price"><label>月费（元）<input v-model.number="price" type="number" min="0" step="0.01" aria-label="机场月费"></label><button class="button" :disabled="!airport" @click="savePrice">保存月费</button></div></div>
    </div>
    <h3>平均响应延迟走势</h3><p class="muted small">按天汇总有响应样本，站点和检测条件可能不同。</p><TrendChart :points="report.trend" unit="ms" label="近30日平均响应延迟"/>
+   <h3>节点心跳</h3><p class="muted small">同一轮里先后保存的节点测试算一轮（间隔不超过 10 分钟，至少 2 个节点）；每格一轮，颜色是这轮有响应的节点比例。</p>
+   <div v-if="pulse.beats.length" class="airport-beats" role="img" :aria-label="'近 30 天 '+pulse.beats.length+' 轮节点响应比例'"><i v-for="b in pulse.beats" :key="b.id" :class="beatTone(b)" :title="beatTitle(b)"/></div>
+   <p v-else class="muted small">近 30 天没有成批的检测轮次，心跳条留空。</p>
+   <h3>故障记录</h3><p class="muted small">只记两类：某一轮超过一半节点无响应；单个节点连续 3 轮无响应。</p>
+   <p v-if="!pulse.faults.length" class="muted">已读取的记录里没有这两类故障。</p>
+   <div v-else class="fault-list"><div v-for="(f,index) in pulse.faults" :key="index" class="fault-row"><span class="fault-kind" :class="f.kind">{{f.kind==='round'?'整轮故障':'节点连续离线'}}</span><span class="fault-time">{{date(f.start)}} – {{f.end?date(f.end):'仍在持续'}}</span><strong>{{f.nodes}} 个节点</strong><small>{{f.detail}}<template v-if="f.names.length"> · {{f.names.slice(0,3).join('、')}}{{f.names.length>3?' 等':''}}</template></small></div></div>
    <h3>失败类型</h3><p v-if="!report.failures.length" class="muted">已读取记录没有失败样本</p><div v-for="[kind,count] in report.failures" :key="kind" class="compact-row"><span>{{kind}}</span><strong>{{count}} 次</strong></div>
   </template>
  </section>
 </template>
-<style scoped>.report-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:16px 0}.report-metrics>div{display:flex;flex-direction:column;gap:5px}.report-metrics strong{font-size:22px}.report-metrics small{color:var(--cst-muted)}.report-price{display:flex;align-items:end;gap:8px;margin-top:10px}.report-price label{font-size:12px}.report-price input{width:100px;display:block;margin-top:5px}.report-empty{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:16px 0}@media(max-width:800px){.report-metrics{grid-template-columns:1fr}}</style>
+<style scoped>.report-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:16px 0}.report-metrics>div{display:flex;flex-direction:column;gap:5px}.report-metrics strong{font-size:22px}.report-metrics small{color:var(--cst-muted)}.report-price{display:flex;align-items:end;gap:8px;margin-top:10px}.report-price label{font-size:12px}.report-price input{width:100px;display:block;margin-top:5px}.report-empty{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:16px 0}.airport-beats{display:flex;gap:2px;height:18px;margin:8px 0 14px}.airport-beats i{flex:1 1 0;min-width:2px;border-radius:2px;background:var(--surface-soft)}.airport-beats i.good{background:var(--green)}.airport-beats i.warn{background:var(--amber)}.airport-beats i.bad{background:var(--red)}.fault-list{display:flex;flex-direction:column;margin:6px 0 16px}.fault-row{display:grid;grid-template-columns:80px 156px 62px minmax(0,1fr);gap:8px;align-items:baseline;padding:7px 0;border-top:1px solid var(--line);font-size:11px}.fault-kind{display:inline-block;padding:1px 5px;border-radius:4px;font-size:10px;text-align:center;white-space:nowrap}.fault-kind.round{background:var(--red-soft);color:var(--red)}.fault-kind.node{background:var(--amber-soft);color:var(--amber)}.fault-time{color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}.fault-row strong{font-weight:600;font-variant-numeric:tabular-nums}.fault-row small{color:var(--muted);line-height:1.5}@media(max-width:800px){.report-metrics{grid-template-columns:1fr}.fault-row{grid-template-columns:76px minmax(0,1fr) 56px}.fault-row small{grid-column:1/-1}}</style>

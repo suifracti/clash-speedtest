@@ -7,7 +7,7 @@ export interface EntryAddress {ip:string;country_code?:string;country?:string;ci
 export interface NodeEntry {profile_id:string;node_key:string;node_identity_key:string;config_revision_key:string;host:string;source:string;addresses?:EntryAddress[];resolved_at?:string;error?:string}
 export interface LocalPosition {country_code?:string;country?:string;isp?:string;ip_masked?:string;queried_at?:string;error?:string}
 export interface EntryResult {local?:LocalPosition;nodes:NodeEntry[]}
-export type RouteKind='direct'|'transit'|'domestic'|'anycast'
+export type RouteKind='direct'|'cross'|'transit'|'domestic'|'anycast'
 
 const cityNames:Record<string,string>={
  Shanghai:'上海',Beijing:'北京',Guangzhou:'广州',Shenzhen:'深圳',Hangzhou:'杭州',Chengdu:'成都',Chongqing:'重庆',Nanjing:'南京',Wuhan:'武汉',"Xi'an":'西安',Xian:'西安',Tianjin:'天津',Qingdao:'青岛',Suzhou:'苏州',Xiamen:'厦门',Changsha:'长沙',Zhengzhou:'郑州',Jinan:'济南',Hefei:'合肥',Fuzhou:'福州',Nanning:'南宁',Liuzhou:'柳州',Guilin:'桂林',Kunming:'昆明',Dalian:'大连',Shenyang:'沈阳',Harbin:'哈尔滨',Shijiazhuang:'石家庄',Taiyuan:'太原',Changchun:'长春',Nanchang:'南昌',Guiyang:'贵阳',Lanzhou:'兰州',Haikou:'海口',Urumqi:'乌鲁木齐',
@@ -55,18 +55,19 @@ export function exitPlace(countryCode?:string,org?:string){
  const isp=shortOrg(org)
  return [where,isp].filter(Boolean).join(' ')
 }
-// The one rule set: same country is direct; a mainland entry is a domestic
-// relay; everything else is a relay.
-export function routeKind(entry?:string,exit?:string,anycast=false):RouteKind|''{
+// The one rule set: same country is direct; a mainland local reaching an
+// overseas entry in the exit's country is cross-border direct; a mainland entry
+// is a domestic relay; everything else is a relay.
+export function routeKind(entry?:string,exit?:string,anycast=false,local?:string):RouteKind|''{
  if(anycast)return 'anycast'
- const from=(entry||'').toUpperCase(),to=(exit||'').toUpperCase()
+ const from=(entry||'').toUpperCase(),to=(exit||'').toUpperCase(),home=(local||'').toUpperCase()
  if(!from||!to)return ''
- if(from===to)return 'direct'
+ if(from===to)return home==='CN'&&from!=='CN'?'cross':'direct'
  if(from==='CN')return 'domestic'
  return 'transit'
 }
-export function routeLabel(kind:RouteKind|''){return kind==='direct'?'直连':kind==='transit'?'中转':kind==='domestic'?'国内中转':kind==='anycast'?'任播':''}
-export function routeTone(kind:RouteKind|''){return kind==='direct'?'good':kind==='domestic'?'warn':'empty'}
+export function routeLabel(kind:RouteKind|''){return kind==='direct'?'直连':kind==='cross'?'跨境直连':kind==='transit'?'中转':kind==='domestic'?'国内中转':kind==='anycast'?'任播':''}
+export function routeTone(kind:RouteKind|''){return kind==='direct'||kind==='cross'?'good':kind==='domestic'?'warn':'empty'}
 export function lineLabel(entry?:NodeEntry,exitCountry?:string,exitOrg?:string){
  const from=entryPlace(entry)||'入口未解析'
  const to=exitPlace(exitCountry,exitOrg)||'出口未测'
