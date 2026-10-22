@@ -108,7 +108,7 @@ function run(){m.closeHover();props.exitOnly?w.openReputationPlan([props.node]):
     <div v-if="exitOnly||project==='combined'" class="hd-ins-block hd-exit">
       <h3>出口与 IP 信誉</h3>
       <ol v-if="exitOnly||nodeEntry" class="exit-path" aria-label="线路路径">
-        <li v-for="(step,index) in exitPath" :key="step.id"><small>{{step.label}}</small><span>{{step.value}}</span><i v-if="index<exitPath.length-1" aria-hidden="true">→</i></li>
+        <li v-for="(step,index) in exitPath" :key="step.id"><small>{{step.label}}</small><span :title="step.id==='exit'&&!landing.exitKnown?'出口还没检测，这里按节点名称推断':''">{{step.value}}</span><i v-if="index<exitPath.length-1" aria-hidden="true">→</i></li>
       </ol>
       <p v-if="pathNotice" class="exit-path-notice">{{pathNotice}}</p>
       <template v-if="!exitOnly"><p class="landing-result" :class="landing.tone">{{landing.label}}</p><div class="landing-sources"><span v-for="tag in landing.tags" :key="tag">{{tag}}</span></div></template><NodeExitSummary compact :attempts="attempts"/>

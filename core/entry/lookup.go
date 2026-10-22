@@ -47,8 +47,9 @@ func (item lookupItem) address(ip string) Address {
 	}
 }
 
-// Lookup resolves up to 100 addresses in one request. A per-address failure is
-// returned in failed instead of discarding the whole batch.
+// Lookup resolves every address the caller passes, in batches of batchLimit.
+// A per-address failure is returned in failed instead of discarding the whole
+// answer, so one unlucky address never blanks out a node's entry.
 func Lookup(ctx context.Context, client *http.Client, ips []string) (map[string]Address, map[string]string, error) {
 	addressed := make([]string, 0, len(ips))
 	seen := map[string]bool{}
@@ -59,9 +60,6 @@ func Lookup(ctx context.Context, client *http.Client, ips []string) (map[string]
 		}
 		seen[ip] = true
 		addressed = append(addressed, ip)
-		if len(addressed) == batchLimit {
-			break
-		}
 	}
 	if len(addressed) == 0 {
 		return map[string]Address{}, map[string]string{}, nil
@@ -69,6 +67,34 @@ func Lookup(ctx context.Context, client *http.Client, ips []string) (map[string]
 	if client == nil {
 		return nil, nil, fmt.Errorf("no physical HTTP client")
 	}
+	addresses := make(map[string]Address, len(addressed))
+	failed := map[string]string{}
+	for start := 0; start < len(addressed); start += batchLimit {
+		end := min(start+batchLimit, len(addressed))
+		chunk := addressed[start:end]
+		chunkAddresses, chunkFailed, err := lookupBatch(ctx, client, chunk)
+		if err != nil {
+			// The first batch failing means the source is unusable; a later
+			// batch failing only costs its own addresses.
+			if start == 0 {
+				return nil, nil, err
+			}
+			for _, ip := range chunk {
+				failed[ip] = err.Error()
+			}
+			continue
+		}
+		for ip, address := range chunkAddresses {
+			addresses[ip] = address
+		}
+		for ip, reason := range chunkFailed {
+			failed[ip] = reason
+		}
+	}
+	return addresses, failed, nil
+}
+
+func lookupBatch(ctx context.Context, client *http.Client, addressed []string) (map[string]Address, map[string]string, error) {
 	payload, err := json.Marshal(addressed)
 	if err != nil {
 		return nil, nil, err

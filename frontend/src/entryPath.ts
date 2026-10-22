@@ -11,7 +11,7 @@ export type RouteKind='direct'|'transit'|'domestic'|'anycast'
 
 const cityNames:Record<string,string>={
  Shanghai:'上海',Beijing:'北京',Guangzhou:'广州',Shenzhen:'深圳',Hangzhou:'杭州',Chengdu:'成都',Chongqing:'重庆',Nanjing:'南京',Wuhan:'武汉',"Xi'an":'西安',Xian:'西安',Tianjin:'天津',Qingdao:'青岛',Suzhou:'苏州',Xiamen:'厦门',Changsha:'长沙',Zhengzhou:'郑州',Jinan:'济南',Hefei:'合肥',Fuzhou:'福州',Nanning:'南宁',Liuzhou:'柳州',Guilin:'桂林',Kunming:'昆明',Dalian:'大连',Shenyang:'沈阳',Harbin:'哈尔滨',Shijiazhuang:'石家庄',Taiyuan:'太原',Changchun:'长春',Nanchang:'南昌',Guiyang:'贵阳',Lanzhou:'兰州',Haikou:'海口',Urumqi:'乌鲁木齐',
- 'Hong Kong':'香港',Kowloon:'九龙',Taipei:'台北','New Taipei':'新北',Taichung:'台中',Kaohsiung:'高雄',Hsinchu:'新竹',
+ 'Hong Kong':'香港',Kowloon:'九龙','New Territories':'新界',Central:'中环','Kwun Tong':'观塘','Tseung Kwan O':'将军澳','Sha Tin':'沙田','Chai Wan':'柴湾',Taipei:'台北','New Taipei':'新北',Taichung:'台中',Kaohsiung:'高雄',Hsinchu:'新竹',
  Tokyo:'东京',Osaka:'大阪',Yokohama:'横滨',Nagoya:'名古屋',Fukuoka:'福冈',Sapporo:'札幌',Kobe:'神户',
  Seoul:'首尔',Busan:'釜山',Singapore:'新加坡',Bangkok:'曼谷','Kuala Lumpur':'吉隆坡',Jakarta:'雅加达',Manila:'马尼拉',Hanoi:'河内','Ho Chi Minh City':'胡志明市',
  Mumbai:'孟买',Dubai:'迪拜',London:'伦敦',Frankfurt:'法兰克福',Amsterdam:'阿姆斯特丹',Paris:'巴黎',Moscow:'莫斯科',
@@ -21,7 +21,7 @@ const ispNames:Record<string,string>={
  'china unicom':'联通','china telecom':'电信','chinanet':'电信','china mobile':'移动','china education and research network':'教育网','cernet':'教育网',
  alibaba:'阿里云',aliyun:'阿里云',tencent:'腾讯云',huawei:'华为云',baidu:'百度云',ucloud:'UCloud',
  amazon:'AWS','amazon.com':'AWS','amazon technologies':'AWS','amazon web services':'AWS',aws:'AWS',google:'Google','google llc':'Google',microsoft:'Azure',oracle:'Oracle',cloudflare:'Cloudflare',digitalocean:'DigitalOcean',vultr:'Vultr','the constant company':'Vultr',linode:'Linode',akamai:'Akamai','choopa':'Vultr','it7 networks':'搬瓦工',bandwagonhost:'搬瓦工',
- 'chunghwa telecom':'中华电信','taiwan mobile':'台湾大哥大','far east tone':'远传电信','fareastone':'远传电信',hkbn:'HKBN','hkt limited':'HKT',pccw:'HKT',hutchison:'3HK',
+ 'chunghwa telecom':'中华电信','taiwan mobile':'台湾大哥大','far east tone':'远传电信','fareastone':'远传电信',hkbn:'HKBN',hkt:'HKT',pccw:'HKT',netvigator:'Netvigator',hutchison:'3HK',
  ntt:'NTT',kddi:'KDDI','softbank':'SoftBank',iij:'IIJ','singtel':'Singtel','starhub':'StarHub','m1 limited':'M1',
 }
 function tidy(value?:string){return (value||'').trim().replace(/[,.]+$/,'')}
