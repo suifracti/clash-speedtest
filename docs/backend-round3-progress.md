@@ -420,3 +420,9 @@
 - 离线验证（30 天范围、当前配置）：新加坡 04 专线 Ping0 IPv4／IPv6 都是机房、IPPure 两次都返回“未提供”，所以是 `机房·未知`，来源只写 Ping0；美国 04 流媒体 IPPure 非住宅＋原生、Ping0 机房，是 `机房·原生`，来源 IPPure、Ping0；日本专线 04 IPPure 广播、Ping0 机房，是 `机房·广播`；日本专线 01、香港专线 01、日本专线 02 当前配置没有 IPPure／Ping0 类型记录，保持 `未知`。没有为这四个节点额外发请求。
 - 测试：新增 `ip-kind.spec.ts` 2 项（两票机房压过一票、冲突平票未知、原生按注册国与实际使用国判定）；`npm run build` 通过，前端 67 个文件 411 项通过。
 - 截图：`.ui-preview/round5-iptype-20261022/`（`exit-table-ip-type.png` 专线列表、`exit-table-us04.png` 美国 04 机房·原生、`inspector-sg04-exit.png` 新加坡 04 检查器）。
+
+### 2026-10-22 根证书弹窗溯源（结案：无证据指向本应用）
+- 包内只有两个二进制：`CST-Candidate`（只用 `execv`／`getenv`，仅链 libSystem）与 `cst-core`（无 `SecTrustSettings*` 符号、无 `Authorization*`／`SecItemAdd` 引用，字符串里也没有 `add-trusted-cert`）；入口脚本只有 `open -n` 加参数，打包只有 ad-hoc `codesign --sign -`。
+- 系统侧：14:26:48 启动时只有 LaunchServices／RunningBoard 注册；cst-core 前 5 分钟的 XPC 对端没有 `trustd`／`securityd`／`authd`；14:00–15:30 全库没有 `SetTrustSettings`／`trust-settings` 授权记录，`trustd` 在 14:20–15:00 零日志。
+- `SecurityAgent`（渲染“修改系统根证书”密码弹窗的进程）当天全天未启动，最后一次是 10-21 23:53；该时段唯一授权请求来自周期性 `mdmclient`（14:20、14:21 也在跑）与 `systemmigrationd`，与 CST 无关。
+- 结论与缺口：不支持“CST 触发根证书弹窗”，没有可归因的调用，故不改代码、不打包；原截图未留存、统一日志不含 UI 文本，无法回看署名，以后遇弹窗按“点不允许＋截图（带标题与按钮）”记录。
