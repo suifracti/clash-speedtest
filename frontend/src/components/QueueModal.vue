@@ -7,12 +7,24 @@ import {key,type BatchItem,type LatencyBatch} from '../domain'
 import LatencyReport from './LatencyReport.vue'
 import {latencySampleState} from '../presentation'
 import {downloadNoDataReason} from '../measurementRounds'
+import {entryCountry,mainlandNotice} from '../entryPath'
 import {useWorkspace} from '../workspace'
 import {projectNames,stateLabel,outcomeLabel,outcomeTone,downloadSpeed,downloadTone,type QueueItem} from '../domain'
 import Modal from './Modal.vue'
 const w=useWorkspace(),retrying=ref('')
 const report=computed(()=>w.reportSelection.value),previous=ref<LatencyBatch[]>([])
 const airportNames=computed(()=>Object.fromEntries(w.nodes.value.map(n=>[n.profile_id,w.nodeAirportName(n)])))
+// 只有本机在境外、且本轮确实有大陆入口的节点时，才在“偏慢”里解释绕路。
+const entryNotice=computed(()=>{
+ const local=w.localPosition.value?.country_code
+ if(!local||local==='CN')return ''
+ for(const item of report.value?.batch.items||[]){
+  const node=w.nodes.value.find(n=>key(n)===key(item))
+  const notice=mainlandNotice(entryCountry(node?w.entryFor(node):undefined),local)
+  if(notice)return notice
+ }
+ return ''
+})
 watch(report,async selected=>{previous.value=selected?.previous||[];if(selected&&!selected.monitor&&!selected.previous.length){try{const all=await readLatencyBatches();if(report.value===selected)previous.value=all}catch(e){w.fail(e)}}},{immediate:true})
 function currentNodes(items:BatchItem[]){return items.flatMap(i=>{const n=w.nodes.value.find(n=>key(n)===key(i));return n?[n]:[]})}
 function retryReport(items:BatchItem[]){const nodes=currentNodes(items);if(!nodes.length){w.notify('这些历史节点的配置已变化，请重新选择');return}w.openPlan(nodes);if(w.plan.value){w.plan.value.projects=['latency'];w.plan.value.includeReputation=false;w.plan.value.target=report.value?.batch.target_id||'all';w.plan.value.samples=report.value?.batch.sample_count||6;w.plan.value.timeout=report.value?.batch.timeout_seconds||5}w.queueOpen.value=false}
@@ -89,7 +101,7 @@ const retryable=(q:QueueItem)=>!!(q.batchId&&q.itemId||q.project!=='latency'&&q.
 async function retry(q:QueueItem){retrying.value=q.id;try{if(q.batchId&&q.itemId)w.absorbBatch(await api.retryBatch(q.batchId,q.itemId));else if(q.attempt&&q.project!=='latency'){const a=await api.attemptAction(q.project,q.attempt.attempt_id,q.node,'retry-save',q.attempt.service_id||q.serviceId);q.attempt=a;q.error=a.persistence_error;w.mergeAttempt(q.project,a)}}catch(e){w.fail(e)}finally{retrying.value=''}}
 </script>
 <template><Modal :title="report?'延迟检测报告':'检测进度'" wide variant="cst-queue" @close="w.queueOpen.value=false;w.reportSelection.value=null">
-<LatencyReport v-if="report" :batch="report.batch" :previous="previous" :airport-names="airportNames" :monitor="report.monitor" @retry="retryReport" @export="exportReport" @inspect="inspectReport"/>
+<LatencyReport v-if="report" :batch="report.batch" :previous="previous" :airport-names="airportNames" :monitor="report.monitor" :entry-notice="entryNotice" @retry="retryReport" @export="exportReport" @inspect="inspectReport"/>
 <template v-else>
   <div class="queue-summary cst-queue-head">
     <div><strong>{{w.queue.value.length?`已处理 ${w.done.value}/${w.queue.value.length}`:'后台任务'}}</strong><span :class="{warn:!!w.pendingStart.value||finished&&counts.saveFailed>0}">{{headline}}</span></div>

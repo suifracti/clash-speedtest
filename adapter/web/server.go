@@ -280,6 +280,7 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("POST /api/workbench/latency-batches/{batch_id}/cancel", s.handleCancelWorkbenchLatencyBatch)
 	mux.HandleFunc("POST /api/workbench/latency-batches/{batch_id}/items/{item_id}/retry-save", s.handleRetryWorkbenchLatencyBatchItem)
 	mux.HandleFunc("GET /api/workbench/public-service-catalog", s.handleListWorkbenchPublicServiceCatalog)
+	mux.HandleFunc("POST /api/workbench/entries", s.handleResolveWorkbenchEntries)
 	mux.HandleFunc("POST /api/workbench/public-service-tests", s.handleStartWorkbenchPublicServiceTest)
 	mux.HandleFunc("GET /api/workbench/public-service-tests", s.handleListWorkbenchPublicServiceTests)
 	mux.HandleFunc("GET /api/workbench/public-service-tests/{attempt_id}", s.handleGetWorkbenchPublicServiceAttempt)
@@ -1514,6 +1515,24 @@ func (s *Server) handleRetryWorkbenchLatencyBatchItem(w http.ResponseWriter, r *
 
 func (s *Server) handleListWorkbenchPublicServiceCatalog(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.app.ListWorkbenchPublicServiceCatalog())
+}
+
+func (s *Server) handleResolveWorkbenchEntries(w http.ResponseWriter, r *http.Request) {
+	var req application.WorkbenchEntryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body: "+err.Error())
+		return
+	}
+	result, err := s.app.ResolveWorkbenchEntries(r.Context(), req)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if monitor.IsValidationError(err) {
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) handleStartWorkbenchPublicServiceTest(w http.ResponseWriter, r *http.Request) {

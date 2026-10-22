@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {computed,inject,ref} from 'vue'
+import {computed,inject,ref,watch} from 'vue'
 import {useWorkspace} from '../../workspace'
 import {date,key,targets,type NodeOption,type Project} from '../../domain'
 import {nodeDisplayName} from '../../nodePresentation'
@@ -10,6 +10,7 @@ import UnlockInspector from './UnlockInspector.vue'
 import {unlockSummary} from '../../unlock'
 import InspectorLatency from './InspectorLatency.vue'
 import {exitLanding} from '../../exitLanding'
+import {entryCountry,mainlandNotice,pathSteps} from '../../entryPath'
 import {stableLatency,inspectorMedian} from '../../inspectorLatency'
 import NodeExitSummary from '../NodeExitSummary.vue'
 import MeasurementResults from '../MeasurementResults.vue'
@@ -29,6 +30,11 @@ const sites=computed(()=>targets.filter(t=>w.displayTargets.value.includes(t.id)
 const project=computed(()=>w.project.value)
 const shows=(p:Project)=>!props.exitOnly&&(project.value==='combined'||project.value===p)
 const landing=computed(()=>exitLanding(props.node,attempts.value))
+const nodeEntry=computed(()=>w.entryFor(props.node))
+const exitPath=computed(()=>pathSteps(w.localPosition.value||undefined,nodeEntry.value,landing.value.consensusRegion,landing.value.org))
+const pathNotice=computed(()=>mainlandNotice(entryCountry(nodeEntry.value),w.localPosition.value?.country_code))
+// 出口模式一打开就补一次入口解析；缓存命中时不会发 DNS。组合视图只用已有缓存。
+watch(()=>[key(props.node),props.exitOnly],()=>{if(props.exitOnly)void w.ensureEntry(props.node).catch(()=>{})},{immediate:true})
 const latencyVerdictValue=computed(()=>latencyVerdict((latencyFocus.value||latencySeries.value).map(s=>s.points.at(-1)),stableLatency(latencyFocus.value||latencySeries.value)))
 const serviceVerdict=computed(()=>unlockSummary(w.catalog.value,id=>m.shownService(props.node,id),w.nodeUnlockRegion(props.node),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions))
 const downloadVerdict=computed(()=>({tone:m.downloadMetricTone(props.node)||'empty',label:m.downloadMetric(props.node),detail:m.downloadMetricContext(props.node)}))
@@ -101,6 +107,10 @@ function run(){m.closeHover();props.exitOnly?w.openReputationPlan([props.node]):
 
     <div v-if="exitOnly||project==='combined'" class="hd-ins-block hd-exit">
       <h3>出口与 IP 信誉</h3>
+      <ol v-if="exitOnly||nodeEntry" class="exit-path" aria-label="线路路径">
+        <li v-for="(step,index) in exitPath" :key="step.id"><small>{{step.label}}</small><span>{{step.value}}</span><i v-if="index<exitPath.length-1" aria-hidden="true">→</i></li>
+      </ol>
+      <p v-if="pathNotice" class="exit-path-notice">{{pathNotice}}</p>
       <template v-if="!exitOnly"><p class="landing-result" :class="landing.tone">{{landing.label}}</p><div class="landing-sources"><span v-for="tag in landing.tags" :key="tag">{{tag}}</span></div></template><NodeExitSummary compact :attempts="attempts"/>
     </div>
 
@@ -153,6 +163,12 @@ function run(){m.closeHover();props.exitOnly?w.openReputationPlan([props.node]):
 
 <style scoped>
 .hd-inspector[data-project="exit"] .hd-ins-verdict{display:block}.hd-inspector[data-project="exit"] .hd-ins-verdict strong{font-size:14px}.landing-sources{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:6px}.landing-sources span{font-size:10px;line-height:1.5;padding:2px 5px;border:1px solid var(--hd-line);border-radius:4px;color:var(--hd-muted);background:var(--hd-panel);white-space:nowrap}
+.exit-path{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:2px 0 8px;padding:0;list-style:none}
+.exit-path li{display:inline-flex;align-items:center;gap:4px;min-width:0;font-size:11px;line-height:1.5}
+.exit-path small{color:var(--hd-muted);font-size:10px}
+.exit-path span{color:var(--hd-text,inherit);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:128px}
+.exit-path i{font-style:normal;color:var(--hd-muted);margin:0 2px}
+.exit-path-notice{margin:0 0 8px;padding:6px 8px;border-radius:6px;background:#fff6e5;border:1px solid #e3c184;color:#805211;font-size:10px;line-height:1.55}
 .hd-ins-head{order:-3}.hd-ins-verdict{order:-2}.hd-inspector[data-project="latency"] .hd-latency,.hd-inspector[data-project="download"] .hd-download,.hd-inspector[data-project="service"] .hd-services-block{order:-1}
 
 .hd-inspector[data-project="service"] .hd-ins-verdict{display:block}.hd-inspector[data-project="service"] .hd-ins-verdict strong{display:block;font-size:13px;line-height:1.5}.hd-inspector[data-project="service"] .hd-ins-verdict span{display:block;margin-top:4px;font-size:11px}.download-success strong{font-size:25px;font-weight:600;font-variant-numeric:tabular-nums}.download-success small{font-size:12px;font-weight:400;color:var(--hd-muted)}.download-failure{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:10px 12px;background:#fff0d3;color:#805211;border-radius:8px;font-size:12px;line-height:1.55}.download-failure span{white-space:nowrap;font-size:11px}.download-failure .hd-btn{margin-left:auto;flex-shrink:0;background:transparent;border-color:#cfad72;color:inherit}.download-failure.empty{padding:0;background:none;color:var(--hd-muted)}.hd-saved-download{display:block;margin-top:7px;color:var(--hd-muted);font-size:10px}.download-spark{display:block;width:100%;height:34px;margin-top:8px}

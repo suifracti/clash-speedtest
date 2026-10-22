@@ -1,5 +1,6 @@
 import type {PeriodicSamplingConfig,PeriodicSamplingStatus,PeriodicChecks} from './periodicSampling'
 import type {AutoPickConfig,AutoPickReport,AutoPickReportMeta,AutoPickStatus} from './autoPick'
+import type {EntryResult,NodeEntry} from './entryPath'
 import type {MeasurementRound,Airport,Attempt,HistoryPage,LatencyBatch,LatencyTest,MonitorCreate,MonitorJob,MonitorSample,NodeOption,NodeScope,ServiceRule,Settings,Setup,TokenStatus} from './domain'
 import {scope} from './domain'
 declare global {interface Window {go?:{desktop?:{App?:Record<string,(...args:any[])=>Promise<any>>}};runtime?:{EventsOn:(name:string,callback:(payload:any)=>void)=>()=>void}}}
@@ -36,6 +37,7 @@ export const api={
   auth:()=>desktop()?Promise.resolve({auth_required:false,authenticated:true}):request<{auth_required:boolean;authenticated:boolean}>('/api/auth/status'),
   async login(password:string){const data=await request<{token:string}>('/api/auth/login','POST',{password});token=data.token;window.localStorage.setItem('cst_auth_token',token)},
   setup:()=>request<Setup>('/api/profile/setup','GET',undefined,'GetProfileSetup'),airports:()=>request<Airport[]>('/api/airports','GET',undefined,'ListAirports'),nodes:()=>request<NodeOption[]>('/api/monitor/nodes','GET',undefined,'ListMonitorNodeOptions'),catalog:()=>request<ServiceRule[]>('/api/workbench/public-service-catalog','GET',undefined,'ListWorkbenchPublicServiceCatalog'),jobs:()=>request<MonitorJob[]>('/api/monitor/jobs','GET',undefined,'ListMonitorJobs'),
+  entries:(nodes:NodeScope[],refresh=false,includeLocal=true)=>request<EntryResult>('/api/workbench/entries','POST',{nodes:nodes.map(scope),refresh,include_local:includeLocal},'ResolveWorkbenchEntries',[{nodes:nodes.map(scope),refresh,include_local:includeLocal}]),
   refreshJobs:()=>request<SubscriptionRefreshJob[]>('/api/subscription-refresh-jobs','GET',undefined,'ListSubscriptionRefreshJobs'),
   startRefresh:(body:SubscriptionRefreshRequest)=>request<SubscriptionRefreshJob>('/api/subscription-refresh-jobs','POST',body,'StartSubscriptionRefreshJob',[body]),
   refreshJob:(id:string)=>request<SubscriptionRefreshJob>(`/api/subscription-refresh-jobs/${encodeURIComponent(id)}`,'GET',undefined,'GetSubscriptionRefreshJob',[id]),

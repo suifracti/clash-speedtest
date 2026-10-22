@@ -135,6 +135,13 @@ func (a *App) ListWorkbenchPublicServiceCatalog() []publicservice.Rule {
 	return a.app.ListWorkbenchPublicServiceCatalog()
 }
 
+func (a *App) ResolveWorkbenchEntries(req application.WorkbenchEntryRequest) (application.WorkbenchEntryResult, error) {
+	if a == nil || a.app == nil {
+		return application.WorkbenchEntryResult{}, errAppNotInitialized
+	}
+	return a.app.ResolveWorkbenchEntries(a.context(), req)
+}
+
 func (a *App) StartWorkbenchPublicServiceTest(req application.WorkbenchPublicServiceTestRequest) (*history.PublicServiceAttempt, error) {
 	if a == nil || a.app == nil {
 		return nil, errAppNotInitialized

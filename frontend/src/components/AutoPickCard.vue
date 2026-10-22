@@ -176,6 +176,7 @@ onBeforeUnmount(stopPolling)
     <p v-if="status&&!status.subscription.exists" class="muted small">首次成功运行后才会生成订阅文件。</p>
     <p v-else-if="status?.subscription.updated_at" class="muted small">文件更新于 {{date(status.subscription.updated_at)}} · {{status.subscription.node_count}} 个节点</p>
   </div>
+  <p class="muted small auto-pick-lifetime">自动精选的延迟只测 Cloudflare 一站，所以数字可能和工作台四站的稳定延迟略有不同。</p>
   <p class="muted small auto-pick-lifetime">定时任务和订阅地址只在 CST 运行时有效。</p>
 </section>
 </template>

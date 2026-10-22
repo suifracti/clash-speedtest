@@ -385,3 +385,10 @@
 - 稳定延迟改为“去掉首次采样后的中位数”，与检查器口径一致；每轮延迟与解锁结果都写进 `measurement_rounds`（trigger=auto_pick），节点历史区标“自动精选”，解锁结果按 attempt→staged→committed 落库。
 - 重挑：用上一轮报告（ap-1792596937-4da5e3，10 个新加坡节点）重放新规则，仍选中 4 个（285／563／740／786 ms），订阅逐字节一致；新报告 ap-1792599658-repick 注明“未发起新检测”。
 - 卡片说明补一句“定时任务和订阅地址只在 CST 运行时有效。”
+
+### 2026-10-22 第四轮第3项：入口与出口
+- 新增 `core/entry`（`<数据目录>/entries.json`：按主机缓存解析结果、按 IP 缓存画像 30 天、本机位置 1 小时）与 `speedtester.ResolvePhysicalHost`／`NewPhysicalHTTPClient`：DNS 与 HTTP 都绑物理网卡，绕开 TUN 的 fake-IP；`POST /api/workbench/entries`＋桌面 `ResolveWorkbenchEntries`，`refresh=false` 只读缓存、不发请求。
+- 出口表新增“线路”列（如“上海 联通 → 新加坡 AWS”＋直连／中转／国内中转；Cloudflare 任播单列为“任播”），检查器出口区顶部一行“本机 → 入口 → 出口”；本机在境外且入口在大陆时，出口区与延迟报告“偏慢”组带绕路说明。
+- 出口检测计划开始前顺带解析入口；出口标签多选栏新增“解析入口”（不走节点、不写检测历史）。自动精选卡片补一句“延迟只测 Cloudflare 一站”。
+- 实测（只解析入口）：良心云 50 个节点入口全在境外——AWS 香港／东京／新加坡、Cloudflare 任播、台湾中华电信、英国 Only Servers、美国 FDCservers；无大陆入口。本机 中国·联通（182.*.*.176）。
+- 验证：`go test ./application/ ./core/entry/ ./core/speedtester/ ./adapter/...`、前端 403 项、`npm run build` 通过。

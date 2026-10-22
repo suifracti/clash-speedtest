@@ -9,7 +9,8 @@ const props=withDefaults(defineProps<{
  previous?:LatencyBatch[]
  airportNames?:Record<string,string>
  monitor?:boolean
-}>(),{previous:()=>[],airportNames:()=>({}),monitor:false})
+ entryNotice?:string
+}>(),{previous:()=>[],airportNames:()=>({}),monitor:false,entryNotice:''})
 const emit=defineEmits<{
  (event:'retry',items:BatchItem[]):void
  (event:'export',items:BatchItem[]):void
@@ -113,6 +114,7 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
        <div><h4>{{group.reason}} <span>· {{group.rows.length}} 个</span></h4><small v-if="group.kind==='skipped'">未执行项目单列，不计为无响应</small></div>
        <button v-if="group.rows.length&&group.kind!=='skipped'" class="button ghost latency-report-retry" @click="emit('retry',uniqueItems(group.rows))">重测</button>
       </header>
+      <p v-if="group.kind==='slow'&&props.entryNotice" class="latency-report-group-note">{{props.entryNotice}}</p>
       <ul>
        <li v-for="row in group.rows" :key="row.key">
         <button class="text-button" @click="emit('inspect',row.item)">{{nodeDisplayName(row.item)}}</button>
@@ -178,8 +180,7 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
 .latency-report-groups{display:flex;flex-direction:column;gap:7px;margin-top:8px}
 .latency-report-group{border:1px solid var(--cst-line);border-radius:8px;padding:8px 9px}
 .latency-report-group>header h4{font-size:12px;font-weight:600}.latency-report-group>header h4 span{color:var(--cst-muted);font-weight:400}
-.latency-report-group>header small{display:block;margin-top:2px;color:var(--cst-muted)}
-.latency-report-group ul{display:flex;flex-direction:column;gap:4px;list-style:none;padding:0;margin:7px 0 0}
+.latency-report-group>header small{display:block;margin-top:2px;color:var(--cst-muted)}.latency-report-group-note{margin:7px 0 0;padding:6px 8px;border-radius:6px;background:#fff6e5;border:1px solid #e3c184;color:#805211;font-size:10px;line-height:1.55}.latency-report-group ul{display:flex;flex-direction:column;gap:4px;list-style:none;padding:0;margin:7px 0 0}
 .latency-report-group li{display:flex;align-items:baseline;justify-content:space-between;gap:8px;min-width:0}
 .latency-report-group li small{min-width:0;color:var(--cst-muted);font-size:10px;text-align:right}
 .latency-report-group.suspected{border-color:color-mix(in srgb,var(--cst-accent) 35%,var(--cst-line))}

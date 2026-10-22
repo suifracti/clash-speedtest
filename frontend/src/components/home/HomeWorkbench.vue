@@ -17,16 +17,23 @@ import NodeCompare from './NodeCompare.vue'
 import {stableLatency} from '../../inspectorLatency'
 import {homeModelKey,latencyVerdict,type Verdict} from './homeModel'
 import {exitLanding} from '../../exitLanding'
+import {entryCountry,isAnycast,lineLabel,routeKind,routeLabel,routeTone} from '../../entryPath'
 import {unlockGroups,unlockGroupSummary,unlockSummary} from '../../unlock'
 const w=useWorkspace(),m=inject(homeModelKey)!
 const exitMode=ref(false),serviceView=ref('nodes')
 const matrixMode=computed(()=>!exitMode.value&&w.project.value==='service'&&serviceView.value==='services')
 const chosen=m.chosen
-const exitRows=computed(()=>Object.fromEntries(m.pageNodes.value.map(n=>[key(n),exitLanding(n,[...(m.qualityData.value[key(n)]?.services||[]),...(w.services.value[key(n)]||[])])])) )
+const exitRows=computed(()=>Object.fromEntries(m.pageNodes.value.map(n=>{
+ const landing=exitLanding(n,[...(m.qualityData.value[key(n)]?.services||[]),...(w.services.value[key(n)]||[])])
+ const entry=w.entryFor(n),kind=routeKind(entryCountry(entry),landing.consensusRegion,isAnycast(entry))
+ return [key(n),{...landing,route:routeLabel(kind),routeTone:routeTone(kind),line:lineLabel(entry,landing.consensusRegion,landing.org)}]
+})))
 function selectInspectorProject(id:Project|'exit'){if(id==='exit')selectExit();else{exitMode.value=false;w.project.value=id}}
 function selectExit(){exitMode.value=true;m.qualityGate.value='all';m.qualitySort.value='existing';if(['latency','download','service'].includes(w.sort.value))w.sort.value='region'}
-const exitColumns=['出口 IP','真实落地','风险']
-const exitFields=['ip','label','riskLabel'] as const
+// 出口表只读缓存；真要解析要按“解析入口”或跑一次出口检测。
+watch([exitMode,()=>m.pageNodes.value],()=>{if(exitMode.value)void w.readEntries(m.pageNodes.value,false).catch(()=>{})},{immediate:true})
+const exitColumns=['线路','出口 IP','真实落地','风险']
+const exitFields=['line','ip','label','riskLabel'] as const
 const sites=computed(()=>targets.filter(t=>w.displayTargets.value.includes(t.id)))
 // 旧配置轮次不能代表现在：只由旧配置撑起的节点，数字置灰并标“旧”，不参与这两列排序和“稳定能连的”筛选。
 function weeklyStat(n:NodeOption){return m.weeklyStats.value[key(n)]}
@@ -118,7 +125,7 @@ const showVerdict=computed(()=>!exitMode.value&&['combined','latency'].includes(
 const showSites=showVerdict
 const showDownload=computed(()=>!exitMode.value&&['combined','download'].includes(w.project.value))
 // Grid tracks follow the active project so each tab shows its own columns.
-const columns=computed(()=>exitMode.value?['28px','minmax(0,2.2fr)','82px','minmax(0,1.3fr)','72px'].join(' '):['36px','minmax(220px,2.2fr)',...(showVerdict.value?['92px']:[]),...(!exitMode.value&&w.project.value==='latency'?['106px','82px']:[]),...(showSites.value?sites.value.map(()=>'minmax(74px,.8fr)'):[]),...(showDownload.value?['minmax(110px,1fr)']:[]),...(w.project.value==='download'?['minmax(160px,1.4fr)']:[]),...(w.project.value==='combined'?['minmax(80px,.8fr)']:[]),...(w.project.value==='service'?unlockGroups.map(()=>'minmax(90px,1fr)'):[])].join(' '))
+const columns=computed(()=>exitMode.value?['28px','minmax(0,1.6fr)','minmax(0,1.9fr)','82px','minmax(0,1.2fr)','72px'].join(' '):['36px','minmax(220px,2.2fr)',...(showVerdict.value?['92px']:[]),...(!exitMode.value&&w.project.value==='latency'?['106px','82px']:[]),...(showSites.value?sites.value.map(()=>'minmax(74px,.8fr)'):[]),...(showDownload.value?['minmax(110px,1fr)']:[]),...(w.project.value==='download'?['minmax(160px,1.4fr)']:[]),...(w.project.value==='combined'?['minmax(80px,.8fr)']:[]),...(w.project.value==='service'?unlockGroups.map(()=>'minmax(90px,1fr)'):[])].join(' '))
 const allOnPage=computed(()=>m.pageNodes.value.length>0&&m.pageNodes.value.every(selected))
 function keyNav(e:KeyboardEvent){
  const list=m.pageNodes.value,i=list.findIndex(isFocus)
@@ -193,6 +200,7 @@ function keyNav(e:KeyboardEvent){
       <button class="hd-link" :disabled="m.qualityFiltersPending.value" @click="w.toggleAll(m.visibleNodes.value)">{{m.visibleNodes.value.length&&m.visibleNodes.value.every(selected)?'取消范围选择':'全选筛选范围'}}</button>
       <button class="hd-btn" :disabled="w.selectedNodes.value.length<2" @click="m.openComparison()">比较已选 {{w.selectedNodes.value.length}} 个节点</button>
       <button class="hd-btn primary" :disabled="w.busy.value" @click="exitMode?w.openReputationPlan():w.openPlan()"><Icon name="play"/>检测已选</button>
+      <button v-if="exitMode" class="hd-btn" :disabled="w.busy.value||!w.selectedNodes.value.length" title="只解析节点入口地址，不经过节点，不算一次真实检测" @click="w.resolveEntries(w.selectedNodes.value)">解析入口</button>
       <button class="hd-btn" @click="w.monitorNodes.value=w.selectedNodes.value.map(n=>({...n}))"><Icon name="monitor"/>持续监测延迟</button>
       <button class="hd-btn" @click="w.exportSelection().catch(w.fail)">导出配置</button>
       <button class="hd-link" @click="w.selectedKeys.value=[]">清空已选</button>
@@ -217,7 +225,7 @@ function keyNav(e:KeyboardEvent){
         <div v-for="n in m.pageNodes.value" :key="key(n)" class="hd-tr" role="row" :class="{focus:isFocus(n),selected:selected(n)}" :aria-selected="isFocus(n)" @click="focus(n)">
           <span role="cell" @click.stop><input type="checkbox" :checked="selected(n)" :aria-label="'选择 '+nodeDisplayName(n)" @change="w.toggleNode(n)"></span>
           <span role="cell" class="hd-node" :title="n.display_name+' · '+m.sourceLabel(n)+' · '+n.type"><span class="hd-flag">{{n.country_code||'—'}}</span><span><strong>{{nodeDisplayName(n)}}</strong><small>{{m.sourceLabel(n)}} · {{n.type}}</small></span><NodeActivity :state="m.nodeActivities.value[key(n)]?.state" :label="m.nodeActivities.value[key(n)]?.label"/></span>
-          <template v-if="exitMode"><span v-for="field in exitFields" :key="field" role="cell" class="hd-num hd-exit-cell" :class="field==='label'?exitRows[key(n)].tone:field==='riskLabel'?exitRows[key(n)].riskTone:''" :title="field==='label'?exitRows[key(n)].detail:field==='riskLabel'?'IPPure 与机器流量占比取较高值':''">{{exitRows[key(n)][field]}}</span></template>
+          <template v-if="exitMode"><template v-for="field in exitFields" :key="field"><span v-if="field==='line'" role="cell" class="hd-exit-cell hd-line-cell"><span class="hd-line-text" :title="exitRows[key(n)].line">{{exitRows[key(n)].line}}</span><span v-if="exitRows[key(n)].route" class="hd-route-tag" :class="exitRows[key(n)].routeTone">{{exitRows[key(n)].route}}</span></span><span v-else role="cell" class="hd-num hd-exit-cell" :class="field==='label'?exitRows[key(n)].tone:field==='riskLabel'?exitRows[key(n)].riskTone:''" :title="field==='label'?exitRows[key(n)].detail:field==='riskLabel'?'IPPure 与机器流量占比取较高值':''">{{exitRows[key(n)][field]}}</span></template></template>
           <span v-if="showVerdict" role="cell"><b class="hd-pill" :class="verdicts[key(n)].tone">{{verdicts[key(n)].label}}</b></span>
           <template v-if="!exitMode&&w.project.value==='latency'"><span role="cell" class="hd-num hd-history-cell" :class="weeklyTone(n)" :title="weeklyTitle(n,'responseRate')">{{weeklyText(n,'responseRate')}}<small v-if="weeklyOld(n)" class="old-tag">旧</small></span><span role="cell" class="hd-num hd-history-cell" :class="weeklyTone(n)" :title="weeklyTitle(n,'volatility')">{{weeklyText(n,'volatility')}}<small v-if="weeklyOld(n)" class="old-tag">旧</small></span></template>
           <template v-if="showSites"><span v-for="s in sites" :key="s.id" role="cell" class="hd-num" :class="m.metricPoint(n,s.id)?.tone||'empty'" :title="m.siteContext(n,s.id)">{{m.siteMetric(n,s.id)}}</span></template>
@@ -249,4 +257,10 @@ function keyNav(e:KeyboardEvent){
 </style>
 
 <style scoped>
-.history-sort{font-size:11px;white-space:nowrap;text-align:left}.matrix-switch{display:inline-flex;margin:0 0 12px}</style>
+.history-sort{font-size:11px;white-space:nowrap;text-align:left}.matrix-switch{display:inline-flex;margin:0 0 12px}
+.hd-line-cell{display:flex;align-items:flex-start;gap:6px;font-size:11px;line-height:1.45;white-space:normal}
+.hd-line-text{min-width:0;color:var(--hd-text,inherit)}
+.hd-route-tag{flex:none;margin-top:1px;padding:0 5px;border-radius:4px;border:1px solid var(--hd-line);color:var(--hd-muted);background:var(--hd-panel);font-size:10px;line-height:1.5;white-space:nowrap}
+.hd-route-tag.good{color:var(--hd-good);border-color:color-mix(in srgb,var(--hd-good) 35%,var(--hd-line))}
+.hd-route-tag.warn{color:#ad680b;border-color:#e3c184;background:#fff6e5}
+</style>

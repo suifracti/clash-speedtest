@@ -20,6 +20,7 @@ import (
 	"github.com/faceair/clash-speedtest/core/appdata"
 	"github.com/faceair/clash-speedtest/core/auth"
 	"github.com/faceair/clash-speedtest/core/controller"
+	"github.com/faceair/clash-speedtest/core/entry"
 	"github.com/faceair/clash-speedtest/core/history"
 	"github.com/faceair/clash-speedtest/core/monitor"
 	"github.com/faceair/clash-speedtest/core/policy"
@@ -118,6 +119,10 @@ type AppService struct {
 	// verification. Production uses historyStore.SaveLatencyTest directly.
 	latencySaveHook    func(context.Context, *history.LatencyTest) error
 	latencyMeasureHook func(context.Context, monitor.MonitoredNode, time.Duration) (*speedtester.Result, string, error)
+	// entryCacheRef holds the entry/address cache shared by every exit view. It
+	// is opened lazily so services created without a data root still work.
+	entryMu       sync.Mutex
+	entryCacheRef *entry.Cache
 	// Subscription refresh hooks provide deterministic persistence fault injection
 	// for recovery-path tests. Production leaves them nil.
 	subscriptionRefreshStoreSaveHook func(string, *profiles.Store) error
