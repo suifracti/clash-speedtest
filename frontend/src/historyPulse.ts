@@ -60,9 +60,18 @@ export function hourBuckets(rounds: PulseRound[], minRounds = 2): HourBucket[] {
 }
 
 export function hourTitle(bucket: HourBucket) {
- if (bucket.median === null) return `${bucket.hour} 点 · ${bucket.rounds} 轮，不足 2 轮，时段数据留空`
+ if (bucket.median === null) return `${bucket.hour} 点 · ${bucket.rounds} 轮，不足 2 轮，不显示数字`
  const failure = bucket.failureRate === null ? '失败率 —' : '失败率 ' + bucket.failureRate.toFixed(0) + '%'
  return `${bucket.hour} 点 · ${bucket.rounds} 轮 · 稳定延迟 ${Math.round(bucket.median)} ms · ${failure}`
+}
+
+// Rank the hours that actually have enough rounds for a median. One bucket is
+// not a ranking, so the line stays empty until two hours qualify.
+export function slowestHours(buckets: HourBucket[], limit = 2) {
+ const ranked = buckets.filter(bucket => bucket.median !== null).sort((a, b) => (b.median as number) - (a.median as number))
+ if (ranked.length < limit) return ''
+ const parts = ranked.slice(0, limit).map(bucket => `${bucket.hour} 点 ${Math.round(bucket.median as number).toLocaleString()} ms`)
+ return '最慢：' + parts.join(' · ')
 }
 
 const blocks = [0, 4, 8, 12, 16, 20]

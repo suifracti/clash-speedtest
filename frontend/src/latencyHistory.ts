@@ -5,20 +5,29 @@ import {inspectorMedian,inspectorSamples,stableLatency} from './inspectorLatency
 import {date,scope,type NodeOption,type LatencyTest,type MonitorSample,type NodeScope} from './domain'
 export interface LatencySeries {id:string;name:string;points:TrendPoint[];context:string}
 export interface LatencyConfigChange {time:string;label:string;serverChanged?:boolean}
+export interface FailedSite {name:string;failures:number;total:number}
+// Four identical "site failed" clauses read worse than one sentence. Only a
+// round where every site failed outright gets the merged wording; partial
+// failures still name each site.
+export function failureText(failedSites:FailedSite[],responses:number,style:'summary'|'detail'){
+ if(responses===0&&failedSites.length>=4)return style==='summary'?'四站全失败':'四站全部无响应'
+ return failedSites.map(s=>style==='summary'&&s.failures===s.total?s.name+' 全失败':s.name+' '+s.failures+' 次无响应').join(' · ')
+}
 export function latencyRounds(series:LatencySeries[]){
  const rounds=new Map<string,{id:string;time:string}>()
  for(const s of series)for(const p of s.points)if(!p.id.startsWith('planned:')&&inspectorSamples(p,s.id).length)rounds.set(p.id,{id:p.id,time:p.time})
  return [...rounds.values()].map(r=>{
   const selected=series.map(s=>({...s,points:s.points.filter(p=>p.id===r.id)})),samples=selected.flatMap(s=>s.points.flatMap(p=>inspectorSamples(p,s.id)))
-  const failedSites=selected.flatMap(s=>{const list=s.points.flatMap(p=>inspectorSamples(p,s.id)),failures=list.filter(p=>p.value===null).length;return failures?[{name:s.name,failures,total:list.length}]:[]})
-  return {...r,series:selected,stable:stableLatency(selected),first:inspectorMedian(selected.flatMap(s=>{const v=s.points[0]?inspectorSamples(s.points[0],s.id)[0]?.value:null;return v==null?[]:[v]})),responses:samples.filter(s=>s.value!==null).length,total:samples.length,failedSites,failureSummary:failedSites.map(s=>s.failures===s.total?s.name+' 全失败':s.name+' '+s.failures+' 次无响应').join(' · '),oldConfig:selected.some(s=>s.points.some(p=>p.oldConfig))}
+  const failedSites:FailedSite[]=selected.flatMap(s=>{const list=s.points.flatMap(p=>inspectorSamples(p,s.id)),failures=list.filter(p=>p.value===null).length;return failures?[{name:s.name,failures,total:list.length}]:[]})
+  const responses=samples.filter(s=>s.value!==null).length
+  return {...r,series:selected,stable:stableLatency(selected),first:inspectorMedian(selected.flatMap(s=>{const v=s.points[0]?inspectorSamples(s.points[0],s.id)[0]?.value:null;return v==null?[]:[v]})),responses,total:samples.length,failedSites,failureSummary:failureText(failedSites,responses,'summary'),failureDetail:failureText(failedSites,responses,'detail'),oldConfig:selected.some(s=>s.points.some(p=>p.oldConfig))}
  }).sort((a,b)=>Date.parse(a.time)-Date.parse(b.time))
 }
 export function latencyHistoryStats(series:LatencySeries[]){
  const rounds=latencyRounds(series),values=rounds.flatMap(r=>r.stable===null?[]:[r.stable]).sort((a,b)=>a-b)
  const percentile=(p:number)=>{const x=(values.length-1)*p,i=Math.floor(x);return values[i]+(values[Math.ceil(x)]-values[i])*(x-i)}
  const responses=rounds.reduce((n,r)=>n+r.responses,0),samples=rounds.reduce((n,r)=>n+r.total,0),failed=rounds.filter(r=>r.responses<r.total),last=failed.at(-1)
- return {rounds,responses,samples,total:rounds.length,failedRounds:failed.length,responseRate:samples?responses/samples*100:null,median:inspectorMedian(values),volatility:rounds.length>=5&&values.length?percentile(.9)-percentile(.1):null,lastFailure:last?{time:last.time,detail:last.failedSites.map(s=>s.name+' '+s.failures+' 次无响应').join(' · ')}:null}
+ return {rounds,responses,samples,total:rounds.length,failedRounds:failed.length,responseRate:samples?responses/samples*100:null,median:inspectorMedian(values),volatility:rounds.length>=5&&values.length?percentile(.9)-percentile(.1):null,lastFailure:last?{time:last.time,detail:last.failureDetail}:null}
 }
 export type LatencyHistoryStats=ReturnType<typeof latencyHistoryStats>
 // Current-config numbers never inherit old-config rounds: an old config may be a
