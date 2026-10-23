@@ -95,18 +95,17 @@ export const homeModelKey:InjectionKey<HomeModel>=Symbol('homeModel')
 export interface Verdict {tone:HealthTone;label:string;detail:string}
 
 // Plain-language summary of the latest latency round across the shown sites.
-// It only counts the tones the existing presentation already assigned, so it
-// adds no new thresholds: success first, a nice median never hides failures.
-export function latencyVerdict(points:(TrendPoint|undefined)[],stableMs?:number|null):Verdict{
+// A failed latest round is distinguished from sustained failure by its 7-day response rate.
+export function latencyVerdict(points:(TrendPoint|undefined)[],stableMs?:number|null,weeklyResponseRate?:number|null):Verdict{
  const measured=points.filter((p):p is TrendPoint=>!!p&&p.tone!=='empty')
  if(!measured.length)return {tone:'empty',label:'还没测',detail:'这个时间范围内没有延迟记录'}
  const ok=measured.filter(p=>p.tone==='good'||p.tone==='warn')
  const raw=stableMs===undefined?inspectorMedian(ok.flatMap(p=>{const v=inspectorMedian((p.samples||[]).slice(1).flatMap(s=>s.value===null?[]:[s.value]));return v===null?[]:[v]})):stableMs===null?null:Math.round(stableMs)
  const mid=raw===null?null:Math.round(raw)
- if(!ok.length)return {tone:'bad',label:'连不上',detail:`${measured.length} 个站点全部失败`}
+ if(!ok.length)return {tone:weeklyResponseRate!=null&&weeklyResponseRate>=90?'warn':'bad',label:weeklyResponseRate!=null&&weeklyResponseRate>=90?'刚失败一次':'连不上',detail:`${measured.length} 个站点全部失败`}
  if(ok.length<measured.length)return {tone:'warn',label:'不稳定',detail:`${ok.length}/${measured.length} 个站点能连上${mid!==null?` · 通的约 ${mid} ms`:''}`}
  if(ok.some(p=>p.tone==='warn'))return {tone:'warn',label:'偶有失败',detail:`${ok.length} 个站点能连上，部分样本失败${mid!==null?` · 约 ${mid} ms`:''}`}
- return {tone:'good',label:'能用',detail:`${ok.length} 个站点都能连上${mid!==null?` · 约 ${mid} ms`:''}`}
+ return {tone:'good',label:'能用',detail:`${ok.length} 个站点${ok.length===1?'':'都'}能连上${mid!==null?` · 约 ${mid} ms`:''}`}
 }
 
 export function toneLabel(tone:string){return ({good:'正常',warn:'部分',bad:'失败',reachable:'可达',empty:'未测'} as Record<string,string>)[tone]||tone}

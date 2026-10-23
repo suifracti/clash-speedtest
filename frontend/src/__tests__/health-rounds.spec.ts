@@ -187,3 +187,9 @@ it('counts HTTP responses as latency success and collapses identical HTTP notes'
  expect(latencyVerdict(points(w,node,'latency','cloudflare')).label).toBe('偶有失败')
  w.dispose()
 })
+
+it('marks a failed latest round orange when the seven-day response rate is at least 90%',()=>{
+ const failed={id:'failed',tone:'bad'} as any
+ expect(latencyVerdict([failed],null,95)).toMatchObject({label:'刚失败一次',tone:'warn'})
+ expect(latencyVerdict([failed],null,80)).toMatchObject({label:'连不上',tone:'bad'})
+})

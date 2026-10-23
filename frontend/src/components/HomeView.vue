@@ -88,9 +88,9 @@ const weeklyReady=computed(()=>w.proxyNodes.value.every(n=>weeklyStats.value[key
 let weeklyGeneration=0
 async function readWeekly(refresh=false){const token=++weeklyGeneration;if(refresh){weeklyStats.value={};weeklyErrors.value={}}await mapLimited(w.proxyNodes.value.filter(n=>!weeklyStats.value[key(n)]&&!weeklyErrors.value[key(n)]),6,async n=>{try{const history=await readLatencyHistoryWithConfig(n,168);if(token===weeklyGeneration)weeklyStats.value[key(n)]=latencyHistorySplit(history.series)}catch(e){if(token===weeklyGeneration)weeklyErrors.value[key(n)]=e instanceof Error?e.message:String(e)}})}
 function sortWeekly(metric:string){weeklyDescending.value=weeklySort.value===metric?!weeklyDescending.value:metric==='responseRate';weeklySort.value=metric;currentPage.value=1}
-watch([()=>w.project.value,qualityGate,qualityScopeKey],()=>{if(w.project.value==='latency'||qualityGate.value==='response')void readWeekly()},{immediate:true})
+watch([()=>w.project.value,qualityGate,qualityScopeKey],()=>{if(['latency','combined'].includes(w.project.value)||qualityGate.value==='response')void readWeekly()},{immediate:true})
 watch(()=>w.sort.value,()=>weeklySort.value='')
-watch(()=>w.busy.value,(busy,previous)=>{if(previous&&!busy&&(w.project.value==='latency'||qualityGate.value==='response'))void readWeekly(true)})
+watch(()=>w.busy.value,(busy,previous)=>{if(previous&&!busy&&(['latency','combined'].includes(w.project.value)||qualityGate.value==='response'))void readWeekly(true)})
 const visibleNodes=computed(()=>{let list=w.filteredNodes.value;if(!qualityView.value)return (siteSort.value!=='existing'&&allQualityReady.value?siteSortResult.value.rows:siteRows.value).map(r=>r.node);list=list.filter(n=>protocolFilter.value==='all'||n.type===protocolFilter.value)
  if(qualityGate.value==='response'&&weeklyReady.value)list=list.filter(n=>{const s=weeklyStats.value[key(n)];return !!s&&!s.allOld&&(s.all.responseRate??-1)>=90})
  else if(qualityGate.value!=='all'&&qualityGate.value!=='response'&&allQualityReady.value)list=list.filter(n=>qualityMatchesGate(qualityData.value[key(n)],qualitySummaries.value[key(n)],qualityGate.value,qualityCutoff.value))

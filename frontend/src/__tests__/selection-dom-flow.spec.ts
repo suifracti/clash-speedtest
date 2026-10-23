@@ -72,7 +72,7 @@ describe('node selection through DOM controls',()=>{
     vi.mocked(api.monitorSamples).mockRejectedValue(new Error('HTTP history unavailable'));w.hours.value=6;await flushPromises()
     expect(wrapper.findAll('.hd-http .hd-site-value').map(m=>m.text())).toEqual(['未测','未测'])
     expect(wrapper.findAll('.health-cell.has-record')).toHaveLength(0)
-    expect(wrapper.get('[role=alert]').text()).toContain('监测 HTTP 记录读取失败')
+    expect(wrapper.findAll('[role=alert]').some(alert=>alert.text().includes('监测 HTTP 记录读取失败'))).toBe(true)
     vi.mocked(api.monitorSamples).mockResolvedValue({items:[],has_more:false,next_cursor:''})
     w.nodes.value=[{...a,config_revision_key:'revision-new'}];await flushPromises()
     expect(wrapper.find('.hd-http').exists()).toBe(false)
