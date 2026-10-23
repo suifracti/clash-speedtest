@@ -514,3 +514,9 @@
 - 无新接口；新增一条 DOM 主路径验证跳转、空状态且不发检测。前端原 416 项及新增所在文件 5 项、构建、Go vet/test 通过。
 - 已换 `CST Mac de7324a5.app`，沿用 SG04、保留旧包；原生图 `native-active-jump.png`、`native-bordered-compare.png` 位于 `.ui-preview/clash-integration-20261023/`。
 - 原生实际点在用标签验证，未点查询/对照，未切任何代理组。
+
+### 2026-10-23 第四轮第6项：检测报告导出 PNG
+- `457b551`：报告新增“导出图片”，前端 html2canvas 截取专用报告区域；机场/时间、四个计数、对比、最快5个、问题分组、节点表及 CST 构建版本齐全。
+- 桌面新增 `SavePNGFile(base64, filename)` 仅选路径并保存前端 PNG，不后端渲染；不导出订阅、server、IP 或原始错误，名称里的 URL/IP 也遮去。
+- 验证：Go vet/test、前端 71 文件 418 项及构建通过；仅新增导出主路径含取消保存断言，没有真实检测或代理组切换。
+- 已换 `CST Mac 457b5512.app`（干净提交），单实例沿用 SG04、保留旧包；原生导出10/21 23:35十节点报告2000×2644，图片与 `native-report-export.png` 均在 `.ui-preview/clash-integration-20261023/`，成图已自检。
