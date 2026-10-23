@@ -6,6 +6,8 @@ export const unlockGroups=config.groups
 export const unlockGroup=(id:string)=>unlockGroups.find(g=>(g.ids as readonly string[]).includes(id))?.id||'legacy'
 export const unlockSupported=(id:string)=>id!=='disney_unlock'
 const datacenterHint=(ipType?:IpType)=>ipType==='idc'?'。出口是机房 IP，这类服务常拒绝或要求验证':''
+// 报告只保存 outcome，这里的中文原因表供报告复用，口径与解锁检测一致。
+export const outcomeReasons:Record<string,string>={challenge:'验证挑战',suspected_challenge:'疑似验证挑战',rate_limited:'网站限流',credentials_required:'需要凭据',auth_failed:'凭据失效',permission_denied:'账号权限不足',transport_error:'连接或读取失败',connection_failed:'连接失败',timed_out:'连接超时'}
 export function unlockResult(a?:Attempt,serviceId?:string,ipType?:IpType){
  const id=a?.service_id||a?.rule.service_id||serviceId
  const r=a?.result,details=r?.details||{},region=String(details.service_region||details.country_code||details.region||'').toUpperCase(),o=r?.outcome
@@ -24,8 +26,7 @@ export function unlockResult(a?:Attempt,serviceId?:string,ipType?:IpType){
  if(o==='originals_only')return {state:'partial',tone:'warn',label:'仅自制剧'+(region?'（'+region+'）':''),reason:'未验证账号播放',region}
  if(servicePassed(a))return {state:'available',tone:'good',label:netflix?'完整'+(region?'（'+region+'）':''):'可用 · '+(region||'地区未返回'),reason:netflix?'未验证账号播放':r.summary||'检测规则通过',region}
  if(['region_blocked','region_limited','service_rejected'].includes(o||''))return {state:'unavailable',tone:netflix?'bad':'warn',label:'不可用',reason:r.summary||r.error_message||'地区不支持',region}
- const reasons:Record<string,string>={challenge:'验证挑战',suspected_challenge:'疑似验证挑战',rate_limited:'网站限流',credentials_required:'需要凭据',auth_failed:'凭据失效',permission_denied:'账号权限不足',transport_error:'连接或读取失败',connection_failed:'连接失败',timed_out:'连接超时'}
- return {state:'unknown',tone:'empty',label:'无法判断',reason:reasons[o||'']||r.summary||r.error_message||'未取得明确结论',region}
+ return {state:'unknown',tone:'empty',label:'无法判断',reason:outcomeReasons[o||'']||r.summary||r.error_message||'未取得明确结论',region}
 }
 export const unlockMeasured=(state:string)=>['available','unavailable','partial','verification'].includes(state)
 export type ServiceRegions=Record<string,string[]>

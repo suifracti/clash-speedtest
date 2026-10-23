@@ -2,17 +2,14 @@
 import {computed,onMounted,ref} from 'vue'
 import {api} from '../api'
 import {date} from '../domain'
-import {reportStatusLabels,groupServices,type AutoPickReport} from '../autoPick'
+import {reportStatusLabels,groupServices,type AutoPickNode,type AutoPickReport} from '../autoPick'
+import {reportPurposeText,reportServiceText} from '../autoPickReportText'
 import Modal from './Modal.vue'
 
 const props=defineProps<{reportId:string}>()
 const emit=defineEmits<{close:[]}>()
 const report=ref<AutoPickReport|null>(null),loading=ref(true),error=ref('')
 const nodes=computed(()=>report.value?.nodes||[])
-const groups=computed(()=>{
-  const counts=report.value?.group_counts||{}
-  return ['日常','流媒体','AI'].filter(name=>counts[name]!==undefined).map(name=>`${name} ${counts[name]}`).join('／')
-})
 const tone=computed(()=>report.value?.kept_previous?'warn':report.value?.status==='selected'?'good':'')
 const requiredText=computed(()=>{
   const required=report.value?.rules?.required_services
@@ -25,10 +22,7 @@ function serviceLabel(id:string){return serviceLabels[id]||id}
 onMounted(async()=>{
   try{report.value=await api.autoPickReport(props.reportId)}catch(e){error.value=e instanceof Error?e.message:String(e)}finally{loading.value=false}
 })
-function serviceText(services?:Record<string,string>){
-  if(!services)return ''
-  return Object.entries(services).map(([id,outcome])=>`${serviceLabel(id)}:${outcome}`).join(' · ')
-}
+function purposeText(node:AutoPickNode){return reportPurposeText(node,report.value?.rules)}
 </script>
 
 <template>
@@ -47,7 +41,6 @@ function serviceText(services?:Record<string,string>){
       <li>检测项目：延迟<template v-if="requiredText"> + {{requiredText}}</template><template v-else-if="report.rules.groups?.length"> + {{report.rules.groups.join('、')}} 组</template></li>
       <li>测量 {{report.measured}} 个 · 延迟合格 {{report.latency_passed}} 个 · 选中 {{report.selected_count}} 个</li>
     </ul>
-    <p v-if="groups" class="muted small">分组：{{groups}}</p>
     <div v-for="note in report.notes||[]" :key="note" class="auto-report-note" :class="{'inline-warning':report.kept_previous}">{{note}}</div>
     <table class="auto-report-table">
       <thead><tr><th>节点</th><th>延迟</th><th>响应率</th><th>分组</th><th>说明</th></tr></thead>
@@ -59,7 +52,10 @@ function serviceText(services?:Record<string,string>){
           <td>{{node.purposes?.join('、')||'—'}}</td>
           <td class="auto-report-reason">
             <span v-if="node.excluded_reason">{{node.excluded_reason}}</span>
-            <span v-else-if="node.services&&Object.keys(node.services).length" class="muted">{{serviceText(node.services)}}</span>
+            <template v-else-if="node.services&&Object.keys(node.services).length">
+              <span class="auto-reason-line">{{reportServiceText(node.services)}}</span>
+              <span v-if="purposeText(node)" class="auto-reason-line auto-reason-gap">{{purposeText(node)}}</span>
+            </template>
             <span v-else class="muted">通过延迟规则</span>
           </td>
         </tr>
@@ -79,5 +75,7 @@ function serviceText(services?:Record<string,string>){
 .auto-report-table th{text-align:left;color:var(--cst-muted);font-weight:500;border-bottom:1px solid var(--cst-line);padding:6px 8px}
 .auto-report-table td{border-bottom:1px solid var(--cst-line);padding:6px 8px;vertical-align:top}
 .auto-report-table small{display:block;color:var(--cst-muted);font-size:11px}
-.auto-report-reason{max-width:320px;word-break:break-word}
+.auto-report-reason{max-width:340px;word-break:break-word}
+.auto-reason-line{display:block}
+.auto-reason-gap{margin-top:3px;color:var(--cst-muted)}
 </style>
