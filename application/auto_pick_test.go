@@ -2,8 +2,10 @@ package application
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -193,12 +195,87 @@ func TestAutoPickKeepsUnlockFailuresInDailyGroup(t *testing.T) {
 			t.Fatalf("failed unlock must not exclude the node: %+v", node)
 		}
 	}
+	// 落盘报告里的用途必须和分组一致：检测计划持有 report.Nodes 元素的指针，
+	// 追加节点若发生扩容，前面节点的 AI 用途会写进旧数组而丢失。
+	rawReport, err := os.ReadFile(filepath.Join(svc.autoPickReportsPath(), autoPickReportFileName(report)))
+	if err != nil {
+		t.Fatalf("report file: %v", err)
+	}
+	var saved autopick.Report
+	if err := json.Unmarshal(rawReport, &saved); err != nil {
+		t.Fatalf("report json: %v", err)
+	}
+	if len(saved.Nodes) != 2 || saved.Nodes[0].NodeKey != "k1" {
+		t.Fatalf("report nodes: %+v", saved.Nodes)
+	}
+	if !slices.Contains(saved.Nodes[0].Purposes, autopick.PurposeAI) {
+		t.Fatalf("first node must carry the AI purpose on disk: %+v", saved.Nodes[0])
+	}
 	raw, err := os.ReadFile(svc.autoPickSubscriptionPath())
 	if err != nil {
 		t.Fatalf("subscription: %v", err)
 	}
 	if !strings.Contains(string(raw), "name: "+autopick.PurposeAI) {
 		t.Fatalf("ai group missing from subscription:\n%s", raw)
+	}
+}
+
+// 运行期间保存的新设置不能被结束时的旧配置覆盖；本轮报告仍按启动时的规则记录。
+func TestAutoPickKeepsSettingsSavedDuringRun(t *testing.T) {
+	svc := autoPickFixture(t)
+	cfg, err := svc.LoadAutoPickConfig()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.Enabled = true
+	cfg.RegionFilter = "新加坡"
+	cfg.Normalize()
+	if err := svc.saveAutoPickConfig(cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+	nodes := autoPickFakeNodes()
+	svc.autoPick().hooks.resolveNodes = func(autopick.Config) ([]autoPickScopedNode, error) { return nodes, nil }
+	svc.autoPick().hooks.measureLatency = func(_ context.Context, _ string, _ []autoPickScopedNode, _ autopick.Config) (string, map[string]autoPickLatency, error) {
+		// 模拟用户在运行中保存：关闭自动运行、换地区、提高阈值。
+		next, err := svc.LoadAutoPickConfig()
+		if err != nil {
+			t.Fatalf("reload config: %v", err)
+		}
+		next.Enabled = false
+		next.RegionFilter = "日本"
+		next.MinResponseRate = 95
+		next.MaxLatencyMS = 500
+		next.NextRunAt = nil
+		if err := svc.saveAutoPickConfig(next); err != nil {
+			t.Fatalf("save config during run: %v", err)
+		}
+		return "batch-1", map[string]autoPickLatency{
+			autoPickNodeKey(nodes[0]): {LatencyMS: 120, ResponseRate: 100, Samples: 6, Success: 6},
+			autoPickNodeKey(nodes[1]): {LatencyMS: 240, ResponseRate: 100, Samples: 6, Success: 6},
+		}, nil
+	}
+
+	svc.runAutoPickRound("manual")
+
+	latest, err := svc.LoadAutoPickConfig()
+	if err != nil {
+		t.Fatalf("load latest config: %v", err)
+	}
+	if latest.Enabled || latest.NextRunAt != nil {
+		t.Fatalf("turning auto pick off during the run must stick: %+v", latest)
+	}
+	if latest.RegionFilter != "日本" || latest.MinResponseRate != 95 || latest.MaxLatencyMS != 500 {
+		t.Fatalf("settings saved during the run were overwritten: %+v", latest)
+	}
+	if latest.LastRunAt == nil {
+		t.Fatal("last run time must still be recorded")
+	}
+	report := svc.latestAutoPickReport()
+	if report == nil {
+		t.Fatal("no report")
+	}
+	if report.Rules.MinResponseRate != 90 || report.Rules.MaxLatencyMS != 800 || report.Scope.RegionFilter != "新加坡" {
+		t.Fatalf("report must keep the rules of the running round: rules=%+v scope=%+v", report.Rules, report.Scope)
 	}
 }
 

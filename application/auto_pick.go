@@ -297,7 +297,7 @@ func (s *AppService) runAutoPickRound(trigger string) {
 	report.Measured = len(nodes)
 	if len(nodes) == 0 {
 		report.Notes = append(report.Notes, "范围内没有匹配的节点；未写入订阅文件")
-		s.finishAutoPickReport(report, cfg)
+		s.finishAutoPickReport(report)
 		return
 	}
 	if len(nodes) > autoPickMaxNodes {
@@ -320,6 +320,9 @@ func (s *AppService) runAutoPickRound(trigger string) {
 	var selected []autoPickScopedNode
 	groups := map[string][]autoPickScopedNode{}
 	groupCounts := map[string]int{}
+	// 检测计划里存的是 report.Nodes 元素的指针；容量不足时 append 会换底层数组，
+	// 指针就指到旧数组去了（解锁结果和用途会丢）。这里一次给够，循环内只 append len(nodes) 次。
+	report.Nodes = make([]autopick.Node, 0, len(nodes))
 	plans := make([]autoPickServicePlan, 0, len(nodes))
 	for _, node := range nodes {
 		entry := autopick.Node{
@@ -404,7 +407,7 @@ func (s *AppService) runAutoPickRound(trigger string) {
 	report.GroupCounts = groupCounts
 	if len(selected) == 0 {
 		report.Notes = append(report.Notes, "本轮没有节点满足规则；未写入订阅文件")
-		s.finishAutoPickReport(report, cfg)
+		s.finishAutoPickReport(report)
 		return
 	}
 
@@ -419,7 +422,7 @@ func (s *AppService) runAutoPickRound(trigger string) {
 	}
 	report.Subscription = s.autoPickSubscriptionPath()
 	report.Notes = append(report.Notes, fmt.Sprintf("订阅文件已写入 %d 个节点", count))
-	s.finishAutoPickReport(report, cfg)
+	s.finishAutoPickReport(report)
 }
 
 func (s *AppService) finishAutoPickFailure(reportID string, startedAt time.Time, trigger string, cfg autopick.Config, runErr error) {
@@ -431,12 +434,12 @@ func (s *AppService) finishAutoPickFailure(reportID string, startedAt time.Time,
 		Scope: autopick.Scope{AirportIDs: cfg.AirportIDs, RegionFilter: cfg.RegionFilter},
 		Rules: autopick.Rules{MinResponseRate: cfg.MinResponseRate, MaxLatencyMS: cfg.MaxLatencyMS, SampleCount: cfg.SampleCount},
 		Notes: []string{"本轮失败：" + runErr.Error()}}
-	s.finishAutoPickReport(report, cfg)
+	s.finishAutoPickReport(report)
 }
 
 // finishAutoPickReport applies the keep-previous rule, persists the report and
-// advances the schedule.
-func (s *AppService) finishAutoPickReport(report *autopick.Report, cfg autopick.Config) {
+// advances the schedule from the latest saved config (not the one the round started with).
+func (s *AppService) finishAutoPickReport(report *autopick.Report) {
 	if report.Status == "" {
 		report.Status = autopick.StatusSelected
 	}
@@ -469,13 +472,20 @@ func (s *AppService) finishAutoPickReport(report *autopick.Report, cfg autopick.
 		state.mu.Unlock()
 	}
 	s.pruneAutoPickReports()
-	now := time.Now().UTC()
-	cfg.LastRunAt = &now
-	if cfg.Enabled {
-		next := autopick.NextRunAfter(time.Now(), cfg)
-		cfg.NextRunAt = &next
+	// 本轮检测与报告用启动时的 cfg；但结束写运行时间时必须用磁盘上的最新设置，
+	// 否则运行期间保存的地区、阈值、开关会被旧配置覆盖。读不到就不写回，避免反向覆盖。
+	latest, err := s.LoadAutoPickConfig()
+	if err != nil {
+		return
 	}
-	_ = s.saveAutoPickConfig(cfg)
+	now := time.Now().UTC()
+	latest.LastRunAt = &now
+	latest.NextRunAt = nil
+	if latest.Enabled {
+		next := autopick.NextRunAfter(time.Now(), latest)
+		latest.NextRunAt = &next
+	}
+	_ = s.saveAutoPickConfig(latest)
 }
 
 func autoPickReportFileName(report *autopick.Report) string {
