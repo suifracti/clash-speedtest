@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
@@ -65,6 +66,28 @@ func (a *App) SaveTextFile(contents, filename string) (bool, error) {
 		return err
 	}); err != nil {
 		return false, fmt.Errorf("保存导出文件失败: %w", err)
+	}
+	return true, nil
+}
+
+// SavePNGFile only saves the PNG rendered by the frontend; no backend rendering.
+func (a *App) SavePNGFile(contents, filename string) (bool, error) {
+	if a == nil || a.ctx == nil {
+		return false, fmt.Errorf("桌面窗口尚未就绪")
+	}
+	data, err := base64.StdEncoding.DecodeString(contents)
+	if err != nil {
+		return false, fmt.Errorf("图片数据无效: %w", err)
+	}
+	path, err := wailsruntime.SaveFileDialog(a.ctx, wailsruntime.SaveDialogOptions{
+		Title: "保存报告图片", DefaultFilename: filepath.Base(filename),
+		Filters: []wailsruntime.FileFilter{{DisplayName: "PNG 图片 (*.png)", Pattern: "*.png"}}, CanCreateDirectories: true,
+	})
+	if err != nil || path == "" {
+		return false, err
+	}
+	if err := writeExportFile(path, func(w io.Writer) error { _, err := w.Write(data); return err }); err != nil {
+		return false, fmt.Errorf("保存报告图片失败: %w", err)
 	}
 	return true, nil
 }

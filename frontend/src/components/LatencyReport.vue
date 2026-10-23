@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import {computed} from 'vue'
+import {computed,nextTick,ref} from 'vue'
+import LatencyReportImage from './LatencyReportImage.vue'
+import {saveReportImage} from '../reportImage'
 import {nodeDisplayName} from '../nodePresentation'
 import type {BatchItem,LatencyBatch} from '../domain'
 import {buildLatencyReport,compareLatencyReports,type LatencyReportGroup,type LatencyReportRow} from '../latencyReport'
@@ -16,6 +18,16 @@ const emit=defineEmits<{
  (event:'export',items:BatchItem[]):void
  (event:'inspect',item:BatchItem):void
 }>()
+const imageBusy=ref(false),imageMessage=ref(''),imageError=ref(false),imageRoot=ref<HTMLElement>()
+async function exportImage(){
+ imageBusy.value=true;imageMessage.value='';imageError.value=false
+ try{
+  await nextTick()
+  const saved=await saveReportImage(imageRoot.value!.firstElementChild as HTMLElement,'CST-report-'+props.batch.requested_at.replace(/[^0-9]/g,'').slice(0,14)+'.png')
+  imageMessage.value=saved?'图片已保存':'已取消保存'
+ }catch(error){imageError.value=true;imageMessage.value='导出图片失败：'+(error instanceof Error?error.message:String(error))}
+ finally{imageBusy.value=false}
+}
 const report=computed(()=>buildLatencyReport(props.batch,props.airportNames))
 const comparison=computed(()=>compareLatencyReports(props.batch,report.value,props.previous))
 const issueItems=computed(()=>{
@@ -128,10 +140,13 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
   </div>
 
   <footer class="latency-report-actions">
+   <button class="button" :disabled="imageBusy" @click="exportImage">{{imageBusy?'正在导出…':'导出图片'}}</button>
    <button v-if="issueItems.length" class="button" @click="emit('retry',issueItems)">重测问题（{{issueItems.length}}）</button>
    <button class="button primary" :disabled="!report.usableItems.length" @click="emit('export',report.usableItems)">导出能用的 {{report.usableItems.length}} 个</button>
   </footer>
 
+  <p v-if="imageMessage" :role="imageError?'alert':'status'">{{imageMessage}}</p>
+  <Teleport to="body"><div v-if="imageBusy" ref="imageRoot" class="report-image-stage" aria-hidden="true"><LatencyReportImage :report="report" :summary="summaryLine" :comparison="comparisonLine" :monitor="monitor"/></div></Teleport>
   <details class="latency-report-details">
    <summary>查看逐个明细（{{report.rows.length}}）</summary>
    <div class="latency-report-table-wrap">
@@ -152,6 +167,7 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
 </template>
 
 <style scoped>
+.report-image-stage{position:fixed;left:-12000px;top:0;width:1000px;pointer-events:none}
 .latency-report{display:flex;flex-direction:column;gap:14px;color:var(--cst-text)}
 .latency-report-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
 .latency-report-kicker{color:var(--cst-muted);font-size:11px;line-height:1.3}

@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
+import {execFileSync} from 'node:child_process'
 import { fileURLToPath, URL } from 'node:url'
 
 // https://vitejs.dev/config/
@@ -10,6 +11,7 @@ import { fileURLToPath, URL } from 'node:url'
 // explicitly (`vitest run --config vite.config.ts`) rather than relying on resolution order.
 export default defineConfig({
   plugins: [vue()],
+  define: {'__CST_VERSION__': JSON.stringify('build-'+execFileSync('git',['rev-parse','--short=8','HEAD'],{encoding:'utf8'}).trim())},
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
