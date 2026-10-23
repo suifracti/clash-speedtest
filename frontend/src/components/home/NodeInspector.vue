@@ -10,6 +10,7 @@ import HealthBars from '../HealthBars.vue'
 import UnlockInspector from './UnlockInspector.vue'
 import {unlockSummary} from '../../unlock'
 import InspectorLatency from './InspectorLatency.vue'
+import {serviceIsProfile} from '../../sharedResults'
 import {exitLanding} from '../../exitLanding'
 import {entryCountry,mainlandNotice,pathSteps} from '../../entryPath'
 import {stableLatency,inspectorMedian} from '../../inspectorLatency'
@@ -67,6 +68,7 @@ const others=computed(()=>!props.exitOnly&&project.value==='combined'?[]:([
 ]).filter(o=>o.id!==(props.exitOnly?'exit':project.value)))
 const runText=computed(()=>props.exitOnly?'检测出口与信誉':project.value==='combined'?'检测这个节点':m.runLabel(project.value))
 const attempts=computed(()=>[...new Map([...(m.qualityData.value[key(props.node)]?.services||[]),...(w.services.value[key(props.node)]||[])].map(a=>[a.attempt_id,a])).values()])
+const hasExitData=computed(()=>landing.value.exitKnown||landing.value.ipKind.measured||attempts.value.some(a=>serviceIsProfile(a)&&!!a.result))
 const readError=computed(()=>m.qualityErrors.value[key(props.node)])
 const downloadRecords=computed(()=>[...new Map([...(w.downloads.value[key(props.node)]||[]),...(m.qualityData.value[key(props.node)]?.downloads||[])].map(a=>[a.attempt_id,a])).values()])
 const downloadHistoryContext=computed(()=>{const {latest,valid}=downloadEvidence(downloadRecords.value),speed=downloadSpeed(valid);return valid&&speed!==null?`${valid.attempt_id===latest?.attempt_id?'最近有效速度':'历史有效速度'} ${speed.toFixed(2)} MiB/s（${date(attemptObservedAt(valid))}）`:''})
@@ -127,9 +129,11 @@ function run(){m.closeHover();props.exitOnly?w.openReputationPlan([props.node]):
       <span v-if="isClashUsing" class="hd-ins-clash-active"><i aria-hidden="true"></i>正在使用</span>
       <button class="hd-btn" :disabled="clashStatusLoading||!clashStatus?.loaded" :title="clashStatusLoading?'正在读取 Clash 状态…':clashStatus?.loaded?'选择 Clash 代理组路径':'Clash 当前没有加载这个节点'" @click="openClashDialog">{{clashStatusLoading?'读取 Clash…':'在 Clash 中使用'}}</button>
     </div>
-    <div class="hd-ins-verdict" :class="verdict.tone"><strong>{{verdict.label}}</strong><div v-if="exitOnly" class="landing-sources"><span v-for="tag in landing.tags" :key="tag">{{tag}}</span></div><span v-else>{{verdict.detail}}</span></div>
+    <div class="hd-ins-verdict" :class="verdict.tone"><strong>{{verdict.label}}</strong><div v-if="exitOnly&&hasExitData" class="landing-sources"><span v-for="tag in landing.tags" :key="tag">{{tag}}</span></div><span v-else>{{verdict.detail}}</span></div>
 
     <div v-if="exitOnly||project==='combined'" class="hd-ins-block hd-exit">
+      <p v-if="!hasExitData" class="exit-unqueried">出口与信誉：未查询 <button class="hd-btn" @click="w.openReputationPlan([node])">查询</button></p>
+      <template v-else>
       <h3>出口与 IP 信誉</h3>
       <ol v-if="exitOnly||nodeEntry" class="exit-path" aria-label="线路路径">
         <li v-for="(step,index) in exitPath" :key="step.id"><small>{{step.label}}</small><span :title="step.id==='exit'&&!landing.exitKnown?'出口还没检测，这里按节点名称推断':''">{{step.value}}</span><i v-if="index<exitPath.length-1" aria-hidden="true">→</i></li>
@@ -137,6 +141,7 @@ function run(){m.closeHover();props.exitOnly?w.openReputationPlan([props.node]):
       <p v-if="pathNotice" class="exit-path-notice">{{pathNotice}}</p>
       <p class="exit-ipkind" :class="{empty:!landing.ipKind.measured}">IP 类型：{{landing.ipKind.detail}}</p>
       <template v-if="!exitOnly"><p class="landing-result" :class="landing.tone">{{landing.label}}</p><div class="landing-sources"><span v-for="tag in landing.tags" :key="tag">{{tag}}</span></div></template><NodeExitSummary compact :attempts="attempts"/>
+      </template>
     </div>
 
     <div v-if="shows('latency')" class="hd-ins-block hd-latency">
@@ -214,6 +219,7 @@ function run(){m.closeHover();props.exitOnly?w.openReputationPlan([props.node]):
 </template>
 
 <style scoped>
+.exit-unqueried{display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--hd-muted);font-size:12px}
 .hd-inspector[data-project="exit"] .hd-ins-verdict{display:block}.hd-inspector[data-project="exit"] .hd-ins-verdict strong{font-size:14px}.landing-sources{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:6px}.landing-sources span{font-size:10px;line-height:1.5;padding:2px 5px;border:1px solid var(--hd-line);border-radius:4px;color:var(--hd-muted);background:var(--hd-panel);white-space:nowrap}
 .exit-path{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:2px 0 8px;padding:0;list-style:none}
 .exit-path li{display:inline-flex;align-items:center;gap:4px;min-width:0;font-size:11px;line-height:1.5}

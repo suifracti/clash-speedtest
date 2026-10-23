@@ -30,6 +30,16 @@ beforeEach(()=>{window.localStorage.clear();window.sessionStorage.clear();vi.cle
 afterEach(()=>{expect(vi.mocked(fetch).mock.calls.filter(([url,options])=>!((String(url)==='/api/clash/node-status'&&options?.method==='POST')||(String(url)==='/api/clash/usage'&&options?.method==='GET')))).toEqual([]);wrapper?.unmount();w?.dispose();wrapper=undefined;w=undefined;document.body.innerHTML='';vi.unstubAllGlobals()})
 
 describe('node selection through DOM controls',()=>{
+  it('opens the Clash active node after clearing the workbench scope and keeps unqueried exit compact',async()=>{
+    const usage=vi.spyOn(api,'clashUsage').mockResolvedValue([{name:b.display_name,bytes:100,chains:['AI','Airport B']}])
+    const {w,wrapper}=attach([a,aTwo,b],['airport-a']);w.search.value='missing';w.region.value='JP';w.airportFilter.value='airport-a';w.subscription.value='sub-a-one';w.project.value='combined'
+    await flushPromises();await wrapper.get('button.hd-clash-usage').trigger('click');await flushPromises()
+    expect([w.search.value,w.region.value,w.airportFilter.value,w.subscription.value]).toEqual(['','all','all','all'])
+    expect(wrapper.get('.hd-inspector h2').text()).toContain(b.display_name)
+    expect(wrapper.get('.exit-unqueried').text()).toBe('出口与信誉：未查询 查询')
+    expect(wrapper.find('.exit-ipkind').exists()).toBe(false);expect(wrapper.find('.landing-sources').exists()).toBe(false)
+    expect(api.startLatency).not.toHaveBeenCalled();expect(api.startAttempt).not.toHaveBeenCalled();usage.mockRestore()
+  })
   it('retains stopped monitor history in metrics, bars and node trends without mixing sites or revisions',async()=>{
     const sample:MonitorSample={...a,sample_id:'monitor-ok',run_id:'run-ok',display_name_snapshot:a.display_name,timestamp:'2026-10-03T06:30:00Z',probe_type:'rtt',target:'https://cp.cloudflare.com/generate_204',success:true,latency:80000000,ttfb:0,sampling_tier:'regular'}
     vi.mocked(api.monitorSamples).mockImplementation(async q=>({items:q.node_identity_key==='identity-a'&&q.config_revision_key==='revision-a'?[{...sample,sample_id:'monitor-fail',run_id:'run-fail',timestamp:'2026-10-03T06:35:00Z',success:false,error_class:'timeout'},sample]:[],has_more:false,next_cursor:''}))

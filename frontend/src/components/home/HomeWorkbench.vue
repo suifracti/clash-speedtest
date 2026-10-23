@@ -24,6 +24,7 @@ const w=useWorkspace(),m=inject(homeModelKey)!
 const exitMode=ref(false),serviceView=ref('nodes')
 const clashUsage=ref<ClashUsage[]>([])
 const dominantClashUsage=computed(()=>clashUsage.value[0])
+const dominantClashNode=computed(()=>w.nodes.value.find(n=>n.display_name===dominantClashUsage.value?.name))
 const dominantClashName=computed(()=>{const usage=dominantClashUsage.value;if(!usage)return '';const node=w.nodes.value.find(n=>n.display_name===usage.name);return node?nodeDisplayName(node):usage.name})
 const dominantClashChains=computed(()=>dominantClashUsage.value?.chains.join(' → ')||'')
 function isClashUsing(n:NodeOption){return clashUsage.value.some(usage=>usage.name===n.display_name)}
@@ -84,6 +85,12 @@ const projects:Project[]=['combined','latency','download','service']
 const chosenNodeCount=computed(()=>chosen.value.reduce((count,airport)=>count+airportNodeCount(airport),0))
 const hasSourceNodes=computed(()=>w.proxyNodes.value.some(n=>w.airportFilter.value==='all'||w.nodeAirportId(n)===w.airportFilter.value))
 function clearFilters(){w.search.value='';w.region.value='all';w.excludeRegion.value=false;w.subscription.value='all';w.downloadFullOnly.value=false;m.protocolFilter.value='all';m.qualityGate.value='all';m.currentPage.value=1}
+async function inspectClashUsage(){
+ const node=dominantClashNode.value;if(!node)return
+ clearFilters();w.viewAirport('all');m.qualitySort.value='existing';m.weeklySort.value='';m.compareOpen.value=false
+ exitMode.value=false;serviceView.value='nodes';w.latencyReportFocus.value=null
+ await nextTick();w.viewRequest.value=node
+}
 const sorts=computed(()=>[{id:'region',label:'地区 → 机场'},{id:'airport',label:'机场 → 地区'},{id:'name',label:'名称'},
  ...(!exitMode.value&&['latency','combined'].includes(w.project.value)?[{id:'latency',label:'已保存延迟 / 监测'}]:[]),
  ...(!exitMode.value&&['download','combined'].includes(w.project.value)?[{id:'download',label:'最近下载速度'}]:[]),
@@ -163,7 +170,7 @@ function keyNav(e:KeyboardEvent){
         <h1>线路工作台</h1>
         <p v-if="filteredAirport"><strong class="hd-head-airport">{{filteredAirport.name}}</strong> · {{filteredAirportNodes}} 个节点 · <button class="hd-link" @click="w.viewAirport('all')">看全部 {{chosen.length}} 个机场</button></p>
         <p v-else><button class="hd-link" @click="m.picker.value=true">{{chosen.length?m.chosenNames.value:'选择机场'}}</button> · {{chosenNodeCount}} 个节点</p>
-        <p v-if="dominantClashUsage" class="hd-clash-usage" title="按当前连接累计流量排序，每 30 秒更新"><span class="hd-clash-usage-dot" aria-hidden="true"></span>Clash 正在用：<strong>{{dominantClashName}}</strong><template v-if="dominantClashChains">（经 {{dominantClashChains}}）</template></p>
+        <button v-if="dominantClashUsage" class="hd-clash-usage" :disabled="!dominantClashNode" title="查看正在用的节点；按当前连接累计流量排序，每 30 秒更新" @click="inspectClashUsage"><span class="hd-clash-usage-dot" aria-hidden="true"></span>Clash 正在用：<strong>{{dominantClashName}}</strong><template v-if="dominantClashChains">（经 {{dominantClashChains}}）</template></button>
       </div>
     </header>
 
@@ -276,7 +283,7 @@ function keyNav(e:KeyboardEvent){
 <style scoped>
 .history-sort{font-size:11px;white-space:nowrap;text-align:left}
 .old-tag{margin-left:2px;padding:0 2px;border-radius:2px;background:var(--hd-soft);color:var(--hd-muted);font-size:9px;font-weight:600}
-.hd-clash-usage{display:inline-flex;align-items:center;gap:5px;margin-top:5px;padding:3px 7px;border:1px solid var(--hd-line);border-radius:999px;background:var(--hd-panel);font-size:11px;line-height:1.4;color:var(--hd-muted)}.hd-clash-usage strong{color:var(--hd-text)}.hd-clash-usage-dot,.hd-clash-node-dot{display:inline-block;flex:none;width:7px;height:7px;border-radius:50%;background:var(--hd-good)}.hd-clash-node-dot{width:6px;height:6px;margin-right:5px;vertical-align:middle}
+.hd-clash-usage{display:inline-flex;align-items:center;gap:5px;margin-top:5px;padding:3px 7px;border:1px solid var(--hd-line);border-radius:999px;background:var(--hd-panel);font-size:11px;line-height:1.4;color:var(--hd-muted)}.hd-clash-usage{cursor:pointer}.hd-clash-usage:hover{border-color:var(--hd-accent)}.hd-clash-usage strong{color:var(--hd-text)}.hd-clash-usage-dot,.hd-clash-node-dot{display:inline-block;flex:none;width:7px;height:7px;border-radius:50%;background:var(--hd-good)}.hd-clash-node-dot{width:6px;height:6px;margin-right:5px;vertical-align:middle}
 .hd-body.exit-mode .hd-node strong{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}.hd-body.exit-mode .hd-node small{white-space:normal}.hd-body.exit-mode .hd-tr{padding-top:9px;padding-bottom:9px}.hd-body.exit-mode .hd-exit-cell.good{color:var(--hd-good)}.hd-source{display:block}.hd-exit-cell{font-size:11px;white-space:normal;line-height:1.4}.hd-exit-cell.bad{color:#c6343e;font-weight:600}.hd-exit-cell.warn{color:#ad680b}
 .hd .hd-svc-cell.empty{color:var(--hd-empty);font-weight:400}.hd .hd-svc-cell.warn{color:var(--hd-warn)}
 </style>
