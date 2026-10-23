@@ -456,3 +456,16 @@
 - 删掉页头下方重复的“分组：…”一行；用途说明移出“服务列表非空”判断：无 `excluded_reason` 的节点都显示用途说明，服务为空时仍先写“通过延迟规则”，延迟排除仍只显示原 `excluded_reason`；布局、后端、报告格式与精选规则未动。
 - 验证：离线示例覆盖全部通过／部分用途未入选／延迟排除（香港 01、日本 02、新加坡 03、美国 04）；副本里把新加坡 03 的 `services` 临时清空后显示“通过延迟规则”＋“未入 AI：未记录”，原报告未改、不计失败；截图 `round10-report-zh-20261023/auto-pick-report-zh.png` 与 `round11-report-empty-services-20261023/auto-pick-report-empty-services.png`；未加测试，前端 69 文件 414 项与 `npm run build` 通过。
 - 提交 `ffe9ab2`；`scripts/build-mac-candidate.sh` 构建 `CST Mac ffe9ab26.app`（core `8a5fbb2e…`、内嵌 `ffe9ab2…`、`vcs.modified=false`），入口切新包、回滚指 `3140fc9e`；验收单实例 PID 24329、窗口 1360×900、订阅 200／2622、无系统弹窗。
+
+### 2026-10-23 Verge 内核只读研究：当前节点与四次对照检测
+- 入口：PID 2123 参数指定 Unix socket `/var/run/clash-verge-service/users/501/verge-mihomo.sock`（当前用户权限 0600）；`curl --unix-socket <路径> http://localhost/version` 无 Authorization 即 200，mihomo v1.19.32；用户配置虽有 secret，本次未使用或输出；TCP 控制地址为空，7897 是代理端口，配置中的临时 socket 被进程参数覆盖。
+- 对应：`/proxies` 不返回 server/port，结合唯一读取的 Verge `clash-verge.yaml` 与 CST 当前 SG04 缓存按名称+server+port 比对；55/55 配置条目一致，去掉两条公告为 53/53 真实节点（100%，无歧义）；CST 两机场去重共 84 个，对应 53/84=63.1%，其余 31 个飞鸟云节点未加载进 Verge（两个订阅各 31 条）；服务 runtime/config.yaml 权限不可读，server/port 依据为用户侧生成配置，API 核对全部加载名称。
+- 组→当前选择：GLOBAL→香港高速01 BGP CMCU；良心云→美国01流媒体；AI服务、视频音乐、开发服务、Telegram、Google、DNS出口六组→良心云；自动选择→新加坡专线03；故障转移→日本高速01 CTCU（共10组，组选择不等于实际连接）。
+- `/connections` 仅读一次：1316 条连接，1163 条代理链终点均为美国01流媒体，153 条 DIRECT；原始 chains 为终点在前，例如 `[美国01流媒体, 良心云, AI服务]`，按路由方向为 AI服务→良心云→美国01流媒体；不输出访问域名或连接明细。
+- 日本01高速CUCM：10/23 19:18:07（UTC+8）Verge 单次 /delay，10秒后 HTTP 504 `Timeout`；CST 最近 10/21 19:00，四站 0/24，Cloudflare 0/6，原因为 `context deadline exceeded`。
+- 日本02高速CUCM：10/23 19:18:17 Verge 单次 /delay，10秒后 HTTP 504 `Timeout`；CST 最近 10/21 19:00，四站 0/24，Cloudflare 0/6，同为 `context deadline exceeded`；两节点本次在 Verge 也未测通；按用户本次裁定关闭“待用户对照”，作为节点本身不通处理，不再列为 CST 问题（历史测试地址不同的事实保留）。
+- 新加坡04专线：10/23 19:18:27 Verge 单次 /delay，约5.06秒返回 HTTP 503 `An error occurred in the delay test`，无更细原因；CST 最近 10/21 23:35，Cloudflare 6/6，去首次后的稳定中位 552 ms（首次969 ms）。
+- 香港01专线：10/23 19:18:32 Verge 单次 /delay 返回 HTTP 200、956 ms；CST 最近 10/21 19:00，Cloudflare 6/6，稳定中位275 ms（首次601 ms），四站稳定汇总267 ms。
+- 条件与取舍：仅4次授权 /delay、timeout=10000，无重试/切节点/设置修改/新CST检测，TUN保持开启，数据库 mode=ro；本次目标按用户要求为 `https://cp.cloudflare.com/generate_204`，CST历史实际为 `https://speed.cloudflare.com/__down?bytes=1`，时间、URL及单次/多采样口径不同，不能据延迟差判性能优劣；接入可行，但现有CST客户端只有TCP HTTP传输，需另行批准Unix socket接入；“当前节点”应读连接链，不能只取GLOBAL.now。
+
+后续对照统一使用 CST 实际目标 `https://speed.cloudflare.com/__down?bytes=1`，CST 与 Verge 紧接着各测一次；不再使用 cp.cloudflare.com。
