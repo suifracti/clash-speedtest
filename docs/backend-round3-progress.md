@@ -508,3 +508,9 @@
 - 验证：Go vet/test、前端 416 项通过，日常脚本构建 `CST Mac a21400d0.app`（内嵌提交一致、干净）；沿用 SG04，旧包保留。
 - 原生截图：ScreenCaptureKit 报 -3811，改用 `screencapture -l 34067` 成功；`.ui-preview/clash-integration-20261023/native-current-use.png` 与 `native-latency-header.png`。对照结果仅在内存，换包后无小表，未回填模拟数据。
 - 第四轮第5项已于 `3d0bd9f` 完成；本次核对 `ipKind.ts`、出口表与已有文档，仍按保存来源投票，缺失未知；等用户看图，不重复实施。
+
+### 2026-10-23 工作台最后三处收尾
+- `de7324a`：对照复用带边框 hd-btn；在用标签清空筛选、翻页定位检查器；出口未查询收成一行，查询复用现有确认计划。
+- 无新接口；新增一条 DOM 主路径验证跳转、空状态且不发检测。前端原 416 项及新增所在文件 5 项、构建、Go vet/test 通过。
+- 已换 `CST Mac de7324a5.app`，沿用 SG04、保留旧包；原生图 `native-active-jump.png`、`native-bordered-compare.png` 位于 `.ui-preview/clash-integration-20261023/`。
+- 原生实际点在用标签验证，未点查询/对照，未切任何代理组。
