@@ -452,8 +452,7 @@
 - 处置：不改应用、不打包；交付说明改为“99×117 是台前调度缩略图，不是过渡小窗”，被收进左条时点 Dock 图标一次即可。
 
 ### 2026-10-23 第五轮第5项：自动精选报告中文化（只改前端）
-- 说明列改成“完整服务名 + 中文结论”（如“ChatGPT 需人机验证”“Netflix 地区受限”），未通过项排前、长文正常换行；复用 `unlock.ts` 抽出的 `outcomeReasons` 兜底，只翻译报告已存的 outcome，不补查记录、不推断地区或账号播放能力。
-- 新增 `frontend/src/autoPickReportText.ts`：`reportServiceText` 失败在前排序；`reportPurposeText` 按该份报告的 `rules.required_services` 与节点 `services`／`purposes` 生成“未入 AI：ChatGPT 需人机验证”，全通过写“所选用途条件均通过”，缺依据写“未记录”，未选用途不解释。
-- 删掉页头下方重复的“分组：日常 …／流媒体 …／AI …”一行（summary 已含），布局、后端、报告格式、精选规则与订阅均未动；延迟排除仍只显示原 `excluded_reason`。
-- 验证：离线示例覆盖全部通过／部分用途未入选／延迟排除三种（香港 01、日本 02、新加坡 03、美国 04），截图 `.ui-preview/round10-report-zh-20261023/auto-pick-report-zh.png`；新增 `auto-pick-report-text.spec.ts` 1 项，前端 69 文件 414 项与 `npm run build` 通过，未发真实检测。
-- 提交 `3140fc9`；`scripts/build-mac-candidate.sh` 构建 `CST Mac 3140fc9e.app`（core `5be35f96…`、内嵌 `3140fc9e…`），入口切新包、回滚指 `52d66ee8`；验收单实例 PID 21041、窗口 1360×900、订阅 200／2622、无系统弹窗。
+- 说明列改成“完整服务名 + 中文结论”（如“ChatGPT 需人机验证”“Netflix 地区受限”），未通过项排前、长文正常换行；新增 `frontend/src/autoPickReportText.ts`：`reportServiceText` 失败在前排序，`reportPurposeText` 按该份报告的 `rules.required_services` 与节点 `services`／`purposes` 生成“未入 AI：ChatGPT 需人机验证”，全通过写“所选用途条件均通过”、缺依据写“未记录”；复用 `unlock.ts` 的 `outcomeReasons`，只翻译已存 outcome。
+- 删掉页头下方重复的“分组：…”一行；用途说明移出“服务列表非空”判断：无 `excluded_reason` 的节点都显示用途说明，服务为空时仍先写“通过延迟规则”，延迟排除仍只显示原 `excluded_reason`；布局、后端、报告格式与精选规则未动。
+- 验证：离线示例覆盖全部通过／部分用途未入选／延迟排除（香港 01、日本 02、新加坡 03、美国 04）；副本里把新加坡 03 的 `services` 临时清空后显示“通过延迟规则”＋“未入 AI：未记录”，原报告未改、不计失败；截图 `round10-report-zh-20261023/auto-pick-report-zh.png` 与 `round11-report-empty-services-20261023/auto-pick-report-empty-services.png`；未加测试，前端 69 文件 414 项与 `npm run build` 通过。
+- 提交 `ffe9ab2`；`scripts/build-mac-candidate.sh` 构建 `CST Mac ffe9ab26.app`（core `8a5fbb2e…`、内嵌 `ffe9ab2…`、`vcs.modified=false`），入口切新包、回滚指 `3140fc9e`；验收单实例 PID 24329、窗口 1360×900、订阅 200／2622、无系统弹窗。
