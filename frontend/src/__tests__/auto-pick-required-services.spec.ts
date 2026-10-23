@@ -29,14 +29,18 @@ afterEach(()=>{document.body.innerHTML=''})
 
 describe('auto-pick required services',()=>{
   it('only counts and saves the services the user keeps as required',async()=>{
+    vi.mocked(api.saveAutoPick).mockImplementation(async(cfg:any)=>{
+      const projects=1+(cfg.include_ai?cfg.ai_required.length:0)+(cfg.include_streaming?cfg.streaming_required.length:0)
+      return {...status,config:{...status.config,...cfg},estimate:{nodes:10,projects,requests:10*projects,warn:false}} as any
+    })
     const wrapper=mountCard()
     await flushPromises()
-    expect(wrapper.get('.auto-pick-estimate').text()).toContain('10 个节点 × 1 个项目')
+    expect(wrapper.get('.auto-pick-estimate').text()).toContain('本轮 10 个节点 · 每节点 1 项检测 · 共 10 项检测')
 
     const aiToggle=wrapper.findAll('label.check-field').find(label=>label.text().includes('AI 组'))!
     await aiToggle.get('input').setValue(true)
     await flushPromises()
-    expect(wrapper.get('.auto-pick-estimate').text()).toContain('10 个节点 × 3 个项目')
+    expect(wrapper.get('.auto-pick-estimate').text()).toBe('保存后更新范围与数量')
 
     const expand=wrapper.findAll('button.text-button').find(button=>button.text().includes('必需'))!
     expect(expand.text()).toContain('必需 2 项')
@@ -44,7 +48,7 @@ describe('auto-pick required services',()=>{
     const claude=wrapper.findAll('label.check-field').find(label=>label.text().trim()==='Claude')!
     await claude.get('input').setValue(false)
     await flushPromises()
-    expect(wrapper.get('.auto-pick-estimate').text()).toContain('10 个节点 × 2 个项目')
+    expect(wrapper.get('.auto-pick-estimate').text()).toBe('保存后更新范围与数量')
 
     const save=wrapper.findAll('button.button').find(button=>button.text().includes('保存设置'))!
     await save.trigger('click')
@@ -54,6 +58,8 @@ describe('auto-pick required services',()=>{
     expect(payload.include_ai).toBe(true)
     expect(payload.ai_required).toEqual(['chatgpt_unlock'])
     expect(payload.streaming_required).toEqual(['netflix_unlock'])
+    expect(wrapper.get('.auto-pick-estimate').text()).toContain('每节点 2 项检测 · 共 20 项检测')
+    expect(wrapper.find('.auto-pick-dirty').exists()).toBe(false)
   })
 
   it('says the schedule and the subscription only live while CST runs',async()=>{

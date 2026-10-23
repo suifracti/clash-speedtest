@@ -12,23 +12,46 @@ const loading=ref(true),saving=ref(false),error=ref(''),notice=ref('')
 const confirmRun=ref(false),polling=ref<ReturnType<typeof setInterval>|null>(null)
 const expanded=reactive({ai:false,streaming:false})
 const form=reactive<AutoPickConfig>({enabled:false,schedule:'6h',daily_hour:6,airport_ids:[],region_filter:'',include_ai:false,include_streaming:false,ai_required:[...defaultRequiredServices.ai],streaming_required:[...defaultRequiredServices.streaming],min_response_rate:90,max_latency_ms:800,sample_count:6})
+const baseline=ref('')
 
 const airports=computed(()=>w.airports.value)
-const projects=computed(()=>1+(form.include_ai?form.ai_required.length:0)+(form.include_streaming?form.streaming_required.length:0))
 const missingRequired=computed(()=>(form.include_ai&&!form.ai_required.length)||(form.include_streaming&&!form.streaming_required.length))
-const estimatedNodes=computed(()=>airports.value.filter(a=>form.airport_ids.includes(a.id)).reduce((sum,a)=>sum+(a.node_count||0),0))
-const estimatedRequests=computed(()=>estimatedNodes.value*projects.value)
-const estimateWarn=computed(()=>estimatedRequests.value>500)
-const canRun=computed(()=>!status.value?.running&&!saving.value&&form.airport_ids.length>0&&estimatedNodes.value>0)
+const estimate=computed(()=>status.value?.estimate||null)
+const dirty=computed(()=>baseline.value!==''&&canonical(form)!==baseline.value)
+const canRun=computed(()=>!!status.value&&!status.value.running&&!saving.value&&!dirty.value&&(status.value.estimate?.nodes||0)>0)
 
-function apply(next:AutoPickStatus){
-  status.value=next
-  Object.assign(form,{...next.config,airport_ids:[...(next.config.airport_ids||[])],ai_required:[...(next.config.ai_required||defaultRequiredServices.ai)],streaming_required:[...(next.config.streaming_required||defaultRequiredServices.streaming)]})
+// 只比较用户可编辑的字段；数组排序后再比，避免勾选顺序被当成修改。
+function canonical(cfg:AutoPickConfig):string{
+  return JSON.stringify({
+    enabled:!!cfg.enabled,
+    schedule:cfg.schedule,
+    daily_hour:Number(cfg.daily_hour)||0,
+    airport_ids:[...(cfg.airport_ids||[])].sort(),
+    region_filter:(cfg.region_filter||'').trim(),
+    include_ai:!!cfg.include_ai,
+    include_streaming:!!cfg.include_streaming,
+    ai_required:[...(cfg.ai_required||[])].sort(),
+    streaming_required:[...(cfg.streaming_required||[])].sort(),
+    min_response_rate:Number(cfg.min_response_rate)||0,
+    max_latency_ms:Number(cfg.max_latency_ms)||0,
+    sample_count:Number(cfg.sample_count)||0
+  })
 }
+function fillForm(cfg:AutoPickConfig){
+  Object.assign(form,{...cfg,airport_ids:[...(cfg.airport_ids||[])],ai_required:[...(cfg.ai_required||defaultRequiredServices.ai)],streaming_required:[...(cfg.streaming_required||defaultRequiredServices.streaming)]})
+  baseline.value=canonical(form)
+}
+function apply(next:AutoPickStatus){status.value=next;fillForm(next.config)}
+// 轮询只刷新运行状态与结果；用户正在编辑时不碰表单。
+function applyStatus(next:AutoPickStatus){status.value=next;if(!dirty.value)fillForm(next.config)}
 function errorMessage(e:unknown){return e instanceof Error?e.message:String(e)}
 async function load(){
   loading.value=true;error.value=''
-  try{apply(await api.autoPick())}catch(e){error.value=errorMessage(e)}finally{loading.value=false}
+  try{
+    const next=await api.autoPick()
+    apply(next)
+    if(next.running)startPolling()
+  }catch(e){error.value=errorMessage(e)}finally{loading.value=false}
 }
 async function save(){
   if(saving.value)return
@@ -39,8 +62,10 @@ async function save(){
     apply(next);notice.value=next.config.enabled?'设置已保存，将按时间自动运行':'设置已保存，自动运行保持关闭'
   }catch(e){error.value=errorMessage(e)}finally{saving.value=false}
 }
-function askRun(){confirmRun.value=true}
+function askRun(){if(!canRun.value)return;confirmRun.value=true}
 async function run(){
+  if(dirty.value){error.value='设置有修改，请先保存';confirmRun.value=false;return}
+  if(!status.value||status.value.running){confirmRun.value=false;return}
   confirmRun.value=false
   error.value='';notice.value=''
   try{
@@ -50,11 +75,11 @@ async function run(){
   }catch(e){error.value=errorMessage(e)}
 }
 function startPolling(){
-  stopPolling()
+  if(polling.value)return
   polling.value=setInterval(async()=>{
     try{
       const next=await api.autoPick()
-      apply(next)
+      applyStatus(next)
       if(!next.running){stopPolling();notice.value='本轮已结束，可查看报告'}
     }catch{/* 下一次轮询继续 */}
   },3000)
@@ -145,18 +170,23 @@ onBeforeUnmount(stopPolling)
     </div>
   </div>
 
-  <p class="auto-pick-estimate" :class="{'auto-pick-warn':estimateWarn}" role="status">
-    本轮约 {{estimatedNodes}} 个节点 × {{projects}} 个项目 ≈ <strong>{{estimatedRequests}}</strong> 个请求
-    <span v-if="estimateWarn">，超过 500，建议缩小机场或地区范围</span>
-  </p>
+  <div class="auto-pick-estimate-wrap">
+    <p class="auto-pick-estimate" :class="{'auto-pick-warn':!dirty&&estimate?.warn}" role="status">
+      <template v-if="!dirty&&estimate">本轮 {{estimate.nodes}} 个节点 · 每节点 {{estimate.projects}} 项检测 · 共 <strong>{{estimate.requests}}</strong> 项检测<span v-if="estimate.warn">，超过 500 项，建议缩小机场或地区范围</span></template>
+      <template v-else>保存后更新范围与数量</template>
+    </p>
+    <p v-if="!dirty&&status" class="muted small auto-pick-sample">延迟每节点采样 {{status.config.sample_count}} 次；解锁项目可能包含多次请求。</p>
+  </div>
+
+  <p v-if="dirty" class="inline-warning auto-pick-dirty" role="status">设置有修改，请先保存</p>
 
   <div class="auto-pick-actions">
     <button class="button primary" :disabled="saving" @click="save">{{saving?'保存中…':'保存设置'}}</button>
-    <button class="button" :disabled="!canRun" @click="askRun">立即运行一次</button>
+    <button class="button" :disabled="!canRun" :title="dirty?'先保存设置':''" @click="askRun">立即运行一次</button>
     <span class="muted small">下次运行：{{status?.config.next_run_at?date(status.config.next_run_at):(form.enabled?'保存后计算':'未开启')}}</span>
   </div>
-  <div v-if="confirmRun" class="auto-pick-confirm">
-    <p>将检测 {{estimatedNodes}} 个节点、约 {{estimatedRequests}} 个请求，可能持续数分钟。</p>
+  <div v-if="confirmRun&&estimate" class="auto-pick-confirm">
+    <p>将检测 {{estimate.nodes}} 个节点、共 {{estimate.requests}} 项检测，可能持续数分钟。</p>
     <div class="button-group"><button class="button primary" @click="run">确认运行</button><button class="button ghost" @click="confirmRun=false">取消</button></div>
   </div>
   <p v-if="status?.running" class="auto-pick-running" role="status"><Icon name="refresh"/>正在运行本轮精选…</p>
@@ -198,8 +228,10 @@ onBeforeUnmount(stopPolling)
 .auto-pick-rules{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:14px;align-items:center}
 .auto-pick-rules .auto-pick-field{display:flex;align-items:center;gap:6px;white-space:nowrap}
 .auto-pick-rules input[type=number]{width:84px}
+.auto-pick-estimate-wrap{display:grid;gap:6px}
 .auto-pick-estimate{margin:0;padding:10px 12px;border-radius:8px;background:var(--cst-panel);border:1px solid var(--cst-line);font-size:13px}
 .auto-pick-estimate.auto-pick-warn{border-color:var(--cst-warn);color:var(--cst-warn)}
+.auto-pick-sample,.auto-pick-dirty{margin:0}
 .auto-pick-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
 .auto-pick-confirm{padding:10px 12px;border:1px solid var(--cst-warn);border-radius:8px;background:var(--cst-panel)}
 .auto-pick-confirm p{margin:0 0 8px}
