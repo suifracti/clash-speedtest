@@ -491,3 +491,8 @@
 - CST锁定sing-quic 65d17608159e与Verge mihomo v1.19.32的1c242664697a源码对照：三项默认参数无差异（QUIC空闲30s、握手空闲5s/总握手10s、keepalive10s）；新版新增可配置HandshakeTimeout默认0仍跟随调用context，未发现CST更紧，不调整依赖或参数。
 - CompareClashNode改为CST连续2次→Clash连续2次，cst/clash返回数组，界面逐次并排写“第1次/第2次”；PhysicalSocketBudget=24与正常四站六次一致，允许IPv6备选而不增加目标采样；失败加协议名，QUIC错误标“QUIC 空闲超时”并保留原文。
 - go vet、go test ./...、前端70文件415项及build通过，未新增测试；已推64c8641并换包64c8641b（内嵌同提交、clean），原生窗口确认“各2次”，旧573b450b保留；不发新检测、不切代理组；后续仅新加坡04专线，等用户确认后再点对照。
+
+### 2026-10-23 新加坡04专线唯一一次对照验收
+- 原生界面仅点一次“和 Clash 对照”（20:05）：第1次 CST 645 ms / Clash 4275 ms，第2次 CST 499 ms / Clash 1302 ms，两次界面均显示“两边都正常”。
+- 未重测、未切换任何代理组；截图留本地 `.ui-preview/clash-integration-20261023/sg04-double-comparison.png`，没有修改源码或历史数据库。
+- 待办（现在不做）：以后统计VLESS失败率，先排除全部样本均失败的节点（例如日本CUCM），再统计剩余VLESS节点失败率，与原始43.83%区分。
