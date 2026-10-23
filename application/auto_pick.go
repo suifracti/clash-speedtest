@@ -321,7 +321,7 @@ func (s *AppService) runAutoPickRound(trigger string) {
 	groups := map[string][]autoPickScopedNode{}
 	groupCounts := map[string]int{}
 	// 检测计划里存的是 report.Nodes 元素的指针；容量不足时 append 会换底层数组，
-	// 指针就指到旧数组去了（解锁结果和用途会丢）。这里一次给够，循环内只 append len(nodes) 次。
+	// 指针就指到旧数组去了（追加的用途可能丢失）。这里一次给够，循环内只 append len(nodes) 次。
 	report.Nodes = make([]autopick.Node, 0, len(nodes))
 	plans := make([]autoPickServicePlan, 0, len(nodes))
 	for _, node := range nodes {

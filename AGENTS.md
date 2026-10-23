@@ -26,6 +26,12 @@
 5. **进度文档每项最多 5 行：** 改了什么、新接口/字段名、怎么验证。不写推理过程。
 6. **UI 改动先按 Claude 给的方案做。** 方案没覆盖的界面细节，选最简单的一种，做完在进度里写一句，由 Claude 看图再定。
 
+## 日常打包（2026-10-23 起）
+
+Mac 候选包只跑这一条命令：`scripts/build-mac-candidate.sh`。顺序固定为前端构建 → production core（macOS 12）→ `scripts/package-mac-candidate.py`，任一步失败即停，不会拿旧 core 打包；成功时打印包路径和 core 的内嵌提交号。不要再手工分步执行 `npm run build`、`go build` 和打包脚本——之前就是这样漏了 `go build`，把上一包的核心又打了一遍。
+
+`package-mac-candidate.py` 仍只负责打包已有核心，CI 用法不变。退出旧版、切入口脚本、保留回滚仍按原方式手工操作。
+
 ## 当前开发基线（2026-10-19 用户确认）
 
 以当前打开的 `CST Mac 068cc64f.app` 对应源码 `068cc64f20032974f16a10cc42cae5b3df4f04b0` 为业务基线，继续使用原开发分支。准确版本关系见 [版本与功能保留检查](docs/version-consistency.md)。后续文档提交不代表运行 App 被重建；旧工作树/旧 App 仅供追溯，不整包覆盖。用户明确本轮不再上传附件，新增截图、构建与长日志留本地；GitHub只同步源码与必要说明。
