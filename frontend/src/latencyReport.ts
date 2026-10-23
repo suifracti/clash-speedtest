@@ -2,8 +2,8 @@ import {inspectorMedian} from './inspectorLatency'
 import {activeLatencyTargets,latencyTargetId} from './latencyTargets'
 import type {BatchItem,LatencyBatch,LatencyTest} from './domain'
 
-export type LatencyReportStatus='usable'|'slow'|'no-response'|'skipped'
-export type LatencyReportIssueKind='slow'|'no-response'|'suspected'
+export type LatencyReportStatus='usable'|'slow'|'unstable'|'no-response'|'skipped'
+export type LatencyReportIssueKind='slow'|'unstable'|'no-response'|'suspected'
 
 export interface LatencyReportSite {
  id:string
@@ -37,6 +37,7 @@ export interface LatencyReportCounts {
  executed:number
  usable:number
  slow:number
+ unstable:number
  noResponse:number
  suspected:number
  skipped:number
@@ -161,7 +162,7 @@ function makeRow(item:BatchItem,airportNames:Record<string,string>,batchTarget?:
  const stableValues=sites.map(s=>s.stableMs).filter(finite)
  const firstMedianMs=inspectorMedian(firstValues)
  const stableMs=inspectorMedian(stableValues)
- const status:LatencyReportStatus=!executed?'skipped':responseSamples===0?'no-response':stableMs!==null&&stableMs>1500?'slow':'usable'
+ const status:LatencyReportStatus=!executed?'skipped':responseSamples===0?'no-response':responseSamples*6<attemptedSamples*5?'unstable':stableMs!==null&&stableMs>1500?'slow':'usable'
  const dynamicType=(item as ItemNodeType).node_type||result?.node_type||''
  return {
   key:identity(item),item,nodeName:item.display_name||result?.display_name||item.node_key,
@@ -215,12 +216,13 @@ function buildGroups(rows:LatencyReportRow[]):{groups:LatencyReportGroup[];issue
  }
  for(const row of rows){
   if(row.status==='slow')add(row,'slow','偏慢',`四站稳定中位 ${Math.round(row.stableMs!)} ms（阈值 1,500 ms）`)
+  if(row.status==='unstable')add(row,'unstable','不稳定',`响应 ${row.responseSamples}/${row.attemptedSamples}，少于 5/6`)
   if(row.status==='no-response')add(row,'no-response',failureReason(row),'已执行采样，但四站均未取得响应')
   if(row.suspected)add(row,'suspected','疑似检测问题',row.suspectedReasons.join('；'))
  }
  const skipped=rows.filter(row=>row.status==='skipped')
  if(skipped.length)groupsByKey.set('skipped\u0000未执行',{kind:'skipped',reason:'未执行',rows:skipped,issues:[]})
- const order:Record<LatencyReportGroup['kind'],number>={'no-response':0,suspected:1,slow:2,skipped:4}
+ const order:Record<LatencyReportGroup['kind'],number>={'no-response':0,suspected:1,unstable:2,slow:3,skipped:4}
  return {groups:[...groupsByKey.values()].sort((a,b)=>order[a.kind]-order[b.kind]||a.reason.localeCompare(b.reason,'zh-CN')),issues}
 }
 
@@ -232,10 +234,13 @@ function latestTimestamp(items:BatchItem[]):string|undefined{
 export function buildLatencyReport(batch:LatencyBatch,airportNames:Record<string,string>={}):LatencyReport{
  const rows=(batch.items||[]).map(item=>makeRow(item,airportNames,batch.target_id))
  markSuspected(rows)
+ const statusOrder:Record<LatencyReportStatus,number>={usable:0,slow:1,unstable:2,'no-response':3,skipped:4}
+ rows.sort((a,b)=>statusOrder[a.status]-statusOrder[b.status]||(a.stableMs??Infinity)-(b.stableMs??Infinity)||a.nodeName.localeCompare(b.nodeName,'zh-CN'))
  const counts:LatencyReportCounts={
   total:rows.length,executed:rows.filter(row=>row.executed).length,
   usable:rows.filter(row=>row.status==='usable').length,
   slow:rows.filter(row=>row.status==='slow').length,
+  unstable:rows.filter(row=>row.status==='unstable').length,
   noResponse:rows.filter(row=>row.status==='no-response').length,
   suspected:rows.filter(row=>row.suspected).length,
   skipped:rows.filter(row=>row.status==='skipped').length
@@ -307,6 +312,6 @@ export function compareLatencyReports(batch:LatencyBatch,current:LatencyReport,p
  return {comparableNodes,newlyFailed,recovered,stableMedianDeltaMs:currentMedian===null||previousMedian===null?null:currentMedian-previousMedian,latestPreviousAt}
 }
 
-export function latencyReportText(batch:LatencyBatch){const c=buildLatencyReport(batch).counts;return `${c.usable} 能用 · ${c.slow} 偏慢 · ${c.noResponse} 无响应${c.skipped?` · ${c.skipped} 未执行`:''}`}
+export function latencyReportText(batch:LatencyBatch){const c=buildLatencyReport(batch).counts;return `${c.usable} 能用 · ${c.slow} 偏慢 · ${c.unstable} 不稳定 · ${c.noResponse} 无响应${c.skipped?` · ${c.skipped} 未执行`:''}`}
 
 function observedSampleCount(batch:LatencyBatch){if(batch.sample_count)return batch.sample_count;return Math.max(0,...(batch.items||[]).flatMap(i=>{const counts=new Map<string,number>();for(const s of i.result?.samples||[])counts.set(s.target||'',1+(counts.get(s.target||'')||0));return [...counts.values()]}))}
