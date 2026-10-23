@@ -469,3 +469,9 @@
 - 条件与取舍：仅4次授权 /delay、timeout=10000，无重试/切节点/设置修改/新CST检测，TUN保持开启，数据库 mode=ro；本次目标按用户要求为 `https://cp.cloudflare.com/generate_204`，CST历史实际为 `https://speed.cloudflare.com/__down?bytes=1`，时间、URL及单次/多采样口径不同，不能据延迟差判性能优劣；接入可行，但现有CST客户端只有TCP HTTP传输，需另行批准Unix socket接入；“当前节点”应读连接链，不能只取GLOBAL.now。
 
 后续对照统一使用 CST 实际目标 `https://speed.cloudflare.com/__down?bytes=1`，CST 与 Verge 紧接着各测一次；不再使用 cp.cloudflare.com。
+
+### 2026-10-23 Clash 对照（第一项）
+- 新增 mihomo Unix socket 连接与本机 `clash_connection` 设置；默认 Verge socket，可手填 TCP/secret，secret 不记日志。
+- `GetClashNodeStatus` / `CompareClashNode`：仅点击时 CST→Clash 相邻各一次，统一 `speed.cloudflare.com/__down?bytes=1`，未加载节点禁用；四种结论并排显示，不写历史。
+- `go vet`、`go test ./...` 与前端 70 文件/415 项通过（原有短超时用例重跑通过）；仅新增结论判断主路径测试。
+- 已推 `0103591`、换包 `01035910`；香港01专线唯一一次对照：CST `timeout: no recent network activity`，Clash 533 ms，提示“可能是 CST 的检测问题”；TUN 未动、无追加复测，截图留本地。
