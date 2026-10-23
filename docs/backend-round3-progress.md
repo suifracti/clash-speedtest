@@ -450,3 +450,10 @@
 - 原因：入口经 Terminal 打开；`SETFRONT` 记录 CST 两次拿到前台（14:37:22.591／23.303），Terminal（pid 758）两次夺回（22.919／24.924，紧随其窗口关闭与重新激活），台前调度随即把非前台应用的主窗收进条带——触发条件是残留的多个 Terminal 窗口。
 - 同一入口再启动一次（验收）：`SETFRONT` 只切到 CST 一次（14:43:23.094）后保持前台，窗口 1360×900 连续 50 s 可见、`active=true`，订阅 200／2622、单实例 PID 18046。
 - 处置：不改应用、不打包；交付说明改为“99×117 是台前调度缩略图，不是过渡小窗”，被收进左条时点 Dock 图标一次即可。
+
+### 2026-10-23 第五轮第5项：自动精选报告中文化（只改前端）
+- 说明列改成“完整服务名 + 中文结论”（如“ChatGPT 需人机验证”“Netflix 地区受限”），未通过项排前、长文正常换行；复用 `unlock.ts` 抽出的 `outcomeReasons` 兜底，只翻译报告已存的 outcome，不补查记录、不推断地区或账号播放能力。
+- 新增 `frontend/src/autoPickReportText.ts`：`reportServiceText` 失败在前排序；`reportPurposeText` 按该份报告的 `rules.required_services` 与节点 `services`／`purposes` 生成“未入 AI：ChatGPT 需人机验证”，全通过写“所选用途条件均通过”，缺依据写“未记录”，未选用途不解释。
+- 删掉页头下方重复的“分组：日常 …／流媒体 …／AI …”一行（summary 已含），布局、后端、报告格式、精选规则与订阅均未动；延迟排除仍只显示原 `excluded_reason`。
+- 验证：离线示例覆盖全部通过／部分用途未入选／延迟排除三种（香港 01、日本 02、新加坡 03、美国 04），截图 `.ui-preview/round10-report-zh-20261023/auto-pick-report-zh.png`；新增 `auto-pick-report-text.spec.ts` 1 项，前端 69 文件 414 项与 `npm run build` 通过，未发真实检测。
+- 提交 `3140fc9`；`scripts/build-mac-candidate.sh` 构建 `CST Mac 3140fc9e.app`（core `5be35f96…`、内嵌 `3140fc9e…`），入口切新包、回滚指 `52d66ee8`；验收单实例 PID 21041、窗口 1360×900、订阅 200／2622、无系统弹窗。
