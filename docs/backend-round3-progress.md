@@ -432,3 +432,9 @@
 - 文案：改成“本轮 N 个节点 · 每节点 M 项检测 · 共 K 项检测”，N/M/K 取自 `status.estimate`（后端已按地区筛选并去重——同一机场 50 个节点、筛选“日本”后是 13 个），下面小字“延迟每节点采样 6 次；解锁项目可能包含多次请求。”，采样数读 `config.sample_count`；未保存时只写“保存后更新范围与数量”，500 提醒改称“项”。
 - 轮询：`load()` 首次读到 `running=true` 就复用原 3 秒轮询；轮询只更新状态（`applyStatus`），用户正在编辑时不覆盖表单；结束时刷新摘要、报告入口与订阅更新时间，离开页面停止。
 - 验证与换包：新增 `auto-pick-run-state.spec.ts` 2 项（未保存不能启动＋保存失败保留编辑；重进运行中任务轮询到完成并停止），旧 required-services 断言同步新文案，前端 68 文件 413 项与 `npm run build` 通过；截图 `.ui-preview/round6-autopick-20261023/`；包 `CST Mac 54714640.app`（core sha256 `c676076a…`），入口切新包、回滚指向 `3d0bd9fc`，验收单实例 PID 94667、窗口 1360×900、订阅 200／2622、无系统弹窗。
+
+### 2026-10-23 第五轮第2项：自动精选报告用途与运行期保存的设置
+- 用途丢失：检测计划存的是 `report.Nodes` 元素指针，后续 append 扩容后指针指向旧数组，解锁通过追加的 Purposes 写不进最终报告；改为进循环前 `make([]autopick.Node, 0, len(nodes))` 预分配，节点用途、分组计数与订阅一致，旧报告按原样保留不回填。
+- 设置覆盖：`finishAutoPickReport` 去掉本轮旧 `cfg` 参数，结束时重新 `LoadAutoPickConfig()` 只更新 `LastRunAt`／`NextRunAt`（用户已关闭就保持关闭）；本轮检测与报告仍用启动时配置，读不到配置就不写回。
+- 验证：多节点解锁用例补“落盘报告首个节点含 AI 用途”断言，新增 `TestAutoPickKeepsSettingsSavedDuringRun`（运行中关闭并改地区阈值，结束后新设置保留、报告仍记旧规则）；两条断言都先在旧代码上跑出失败。`go vet`、`go build ./...`、`go test ./...`（21 个包）通过，未发真实检测请求。
+- 截图 `.ui-preview/round7-report-20261023/auto-pick-report-offline.png`（临时数据，注明“离线示例”；日常 3／流媒体 2／AI 2 与各节点用途一致）；提交 `42d8c02`、包 `CST Mac 42d8c02e.app`（core `ce935258…`），入口切新包、回滚指 `54714640`，验收单实例 PID 2248、窗口 1360×900、订阅 200／2622。
