@@ -475,3 +475,13 @@
 - `GetClashNodeStatus` / `CompareClashNode`：仅点击时 CST→Clash 相邻各一次，统一 `speed.cloudflare.com/__down?bytes=1`，未加载节点禁用；四种结论并排显示，不写历史。
 - `go vet`、`go test ./...` 与前端 70 文件/415 项通过（原有短超时用例重跑通过）；仅新增结论判断主路径测试。
 - 已推 `0103591`、换包 `01035910`；香港01专线唯一一次对照：CST `timeout: no recent network activity`，Clash 533 ms，提示“可能是 CST 的检测问题”；TUN 未动、无追加复测，截图留本地。
+
+### 2026-10-23 GLOBAL 恢复与后续切换限制
+- 原选择 `🇭🇰香港高速01|BGP|CMCU` → 验证时 `🇭🇰香港专线01|BGP|流媒体` → 恢复后 `🇭🇰香港高速01|BGP|CMCU`；本轮仅 GET /proxies 再确认已恢复，良心云仍为 `🇺🇸美国01|流媒体|0.1x`。
+- 后续不切换任何代理组；仅用户再次明确允许时，才在全部工作最后用 Telegram 验证，并恢复原选择。
+
+### 2026-10-23 香港01专线对照超时只读调查
+- 错误原文：`Get "https://speed.cloudflare.com/__down?bytes=1": timeout: no recent network activity`，来自 Hysteria2 的 QUIC IdleTimeoutError；未保存当次阶段/路径，不能分辨建隧道、目标 TLS 或等 HTTP 响应，不能把它直接叫握手超时。
+- SG04 history/history.db 只读：香港01专线仅1轮（10/21 18:59:56，rev_405879ab19958033），无监测采样；Cloudflare首次601 ms，失败或>5秒0/1；四站首次601/555/698/540 ms，失败或>5秒0/4，全部24次成功，样本不足以证明首次通常慢或只是偶然。
+- 对照与正常测速共用 scoped proxy→TestSinglePhysicalContext→PreparePhysicalAutoProxy、物理网卡绑定与DNS（历史en1/IPv4）；区别为对照单站1次/10秒、socket预算1跳过IPv6备选，正常四站6次预算24允许备选（该历史AAAA超时，仍IPv4成功）；旧IPv4成功地址优先修复仍共用，但仅TCP适用，此节点Hysteria2固定一个IPv4，不走该重试路径。
+- 结论：单次QUIC超时原因未定，未证实CST bug、惯常冷启动慢或偶发；待定为单次预算跳过IPv6备选的口径差异，不能据此归因。本轮无新检测/切组/历史写入，不改代码、不加预热、不换包，后续实测等用户决定。
