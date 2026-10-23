@@ -354,6 +354,7 @@ type LocalNotificationSettings struct {
 
 // AppSettings represents user-configurable persistent settings.
 type AppSettings struct {
+	ClashConnection                *ClashConnectionSettings   `json:"clash_connection,omitempty"`
 	UnlockServiceRegions           map[string][]string        `json:"unlock_service_regions,omitempty"`
 	SkipByApplicableRegions        *bool                      `json:"skip_by_applicable_regions,omitempty"`
 	LocalNotifications             *LocalNotificationSettings `json:"local_notifications,omitempty"`

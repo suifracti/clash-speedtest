@@ -27,7 +27,7 @@ const rows='.hd-tr:not(.hd-th)'
 function cells(view:VueWrapper){return view.findAll(`${rows} .hd-num:not(.hd-history-cell)`).map(m=>m.text())}
 
 beforeEach(()=>{window.localStorage.clear();window.sessionStorage.clear();vi.clearAllMocks();HTMLDialogElement.prototype.showModal=vi.fn();HTMLDialogElement.prototype.close=vi.fn();vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}});vi.stubGlobal('fetch',vi.fn().mockRejectedValue(new Error('Unexpected network request in isolated DOM selection test')))})
-afterEach(()=>{expect(fetch).not.toHaveBeenCalled();wrapper?.unmount();w?.dispose();wrapper=undefined;w=undefined;document.body.innerHTML='';vi.unstubAllGlobals()})
+afterEach(()=>{expect(vi.mocked(fetch).mock.calls.filter(([url,options])=>String(url)!=='/api/clash/node-status'||options?.method!=='POST')).toEqual([]);wrapper?.unmount();w?.dispose();wrapper=undefined;w=undefined;document.body.innerHTML='';vi.unstubAllGlobals()})
 
 describe('node selection through DOM controls',()=>{
   it('retains stopped monitor history in metrics, bars and node trends without mixing sites or revisions',async()=>{

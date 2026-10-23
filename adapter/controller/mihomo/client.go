@@ -17,6 +17,7 @@ import (
 
 // Config configures the Mihomo External Controller REST client.
 type Config struct {
+	SocketPath string `json:"socket_path,omitempty"`
 	// Endpoint is the base URL of the External Controller, e.g. "http://127.0.0.1:9090" or "https://remote:9090".
 	Endpoint string `json:"endpoint"`
 	// Secret is the optional Bearer token configured in Mihomo external-controller-secret.
@@ -52,6 +53,16 @@ type Client struct {
 
 // NewClient creates a new Mihomo External Controller REST client with loopback and transport security enforcement.
 func NewClient(cfg Config) (*Client, error) {
+	if cfg.SocketPath != "" {
+		timeout := cfg.Timeout
+		if timeout <= 0 {
+			timeout = 5 * time.Second
+		}
+		transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", cfg.SocketPath)
+		}}
+		return &Client{endpoint: "http://localhost", secret: cfg.Secret, client: &http.Client{Timeout: timeout, Transport: transport}}, nil
+	}
 	endpoint := strings.TrimRight(cfg.Endpoint, "/")
 	if endpoint == "" {
 		endpoint = "http://127.0.0.1:9090"
@@ -202,10 +213,10 @@ func (c *Client) GetCurrentSelection(ctx context.Context, group string) (string,
 
 // SelectNode updates the active proxy selection for a Selector group in the external core.
 // Crucial Safety Boundaries:
-// 1. Only Selector groups are permitted to be updated; URLTest, Fallback, and LoadBalance groups
-//    are read-only to preserve core native automatic selection semantics.
-// 2. Updating the selection instructs Mihomo to route new connections via nodeName; existing active user
-//    connections are preserved by default (no DELETE /connections call).
+//  1. Only Selector groups are permitted to be updated; URLTest, Fallback, and LoadBalance groups
+//     are read-only to preserve core native automatic selection semantics.
+//  2. Updating the selection instructs Mihomo to route new connections via nodeName; existing active user
+//     connections are preserved by default (no DELETE /connections call).
 func (c *Client) SelectNode(ctx context.Context, group string, nodeName string) error {
 	if c == nil {
 		return fmt.Errorf("mihomo client is nil")
@@ -289,11 +300,11 @@ func (c *Client) TestDelay(ctx context.Context, proxyName string, testURL string
 // Internal helpers
 
 type rawProxy struct {
-	Name    string                  `json:"name"`
-	Type    string                  `json:"type"`
-	UDP     bool                    `json:"udp"`
-	Now     string                  `json:"now"`
-	All     []string                `json:"all"`
+	Name    string                   `json:"name"`
+	Type    string                   `json:"type"`
+	UDP     bool                     `json:"udp"`
+	Now     string                   `json:"now"`
+	All     []string                 `json:"all"`
 	History []controller.DelayRecord `json:"history"`
 }
 
@@ -400,3 +411,5 @@ func rawToNode(raw rawProxy) controller.Node {
 		History: raw.History,
 	}
 }
+
+func (c *Client) Close() { c.client.CloseIdleConnections() }
