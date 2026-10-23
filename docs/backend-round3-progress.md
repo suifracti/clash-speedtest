@@ -438,3 +438,9 @@
 - 设置覆盖：`finishAutoPickReport` 去掉本轮旧 `cfg` 参数，结束时重新 `LoadAutoPickConfig()` 只更新 `LastRunAt`／`NextRunAt`（用户已关闭就保持关闭）；本轮检测与报告仍用启动时配置，读不到配置就不写回。
 - 验证：多节点解锁用例补“落盘报告首个节点含 AI 用途”断言，新增 `TestAutoPickKeepsSettingsSavedDuringRun`（运行中关闭并改地区阈值，结束后新设置保留、报告仍记旧规则）；两条断言都先在旧代码上跑出失败。`go vet`、`go build ./...`、`go test ./...`（21 个包）通过，未发真实检测请求。
 - 截图 `.ui-preview/round7-report-20261023/auto-pick-report-offline.png`（临时数据，注明“离线示例”；日常 3／流媒体 2／AI 2 与各节点用途一致）；提交 `42d8c02`、包 `CST Mac 42d8c02e.app`（core `ce935258…`），入口切新包、回滚指 `54714640`，验收单实例 PID 2248、窗口 1360×900、订阅 200／2622。
+
+### 2026-10-23 第五轮第3项：一条命令构建 Mac 包
+- 新增 `scripts/build-mac-candidate.sh`：前端构建 → `go build -tags production -buildvcs=true -trimpath`（SDK 15.5／macOS 12／`-X main.commit`）→ 现有打包脚本；`set -euo pipefail`，任一步失败即停，`CANDIDATE_SHA` 与 HEAD 不符直接拒绝，成功后打印包路径与 core 内嵌提交（不符即报错，脏树警告）。
+- `package-mac-candidate.py` 职责与 CI 用法不变（仍只打包已有核心）；`AGENTS.md` 新增“日常打包”一节，日常只跑这一条命令，退出旧版／切入口／保留回滚仍按原方式手工操作。
+- 按用户要求把 `auto_pick.go` 注释里的“解锁结果和用途会丢”改成“追加的用途可能丢失”。
+- 验证：`bash -n` 通过；新入口完整构建两次（提交前脏树 `vcs.modified=true`、提交后 `false`），包 `CST Mac 52d66ee8.app`（core `aeb933f4…`、`vcs.revision=52d66ee…`、minos 12.0），入口切新包、回滚指 `42d8c02e`；验收单实例 PID 7879、窗口 1360×900、订阅 200／2622，未发节点检测。
