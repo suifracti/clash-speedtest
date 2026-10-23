@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import {computed,inject,nextTick,ref,watch} from 'vue'
+import {computed,inject,nextTick,onBeforeUnmount,onMounted,ref,watch} from 'vue'
 import '../../home-design.css'
 import {useWorkspace} from '../../workspace'
 import {date,isReputationRule,key,projectNames,targets,type NodeOption,type Project} from '../../domain'
+import {api,type ClashUsage} from '../../api'
 import {nodeDisplayName,nodeRegionLabel} from '../../nodePresentation'
 import {airportNodeCount} from '../../airportViewing'
 import Icon from '../Icon.vue'
@@ -21,6 +22,25 @@ import {entryCountry,isAnycast,lineLabel,routeKind,routeLabel,routeTone} from '.
 import {unlockGroups,unlockGroupSummary,unlockSummary} from '../../unlock'
 const w=useWorkspace(),m=inject(homeModelKey)!
 const exitMode=ref(false),serviceView=ref('nodes')
+const clashUsage=ref<ClashUsage[]>([])
+const dominantClashUsage=computed(()=>clashUsage.value[0])
+const dominantClashName=computed(()=>{const usage=dominantClashUsage.value;if(!usage)return '';const node=w.nodes.value.find(n=>n.display_name===usage.name);return node?nodeDisplayName(node):usage.name})
+const dominantClashChains=computed(()=>dominantClashUsage.value?.chains.join(' → ')||'')
+function isClashUsing(n:NodeOption){return clashUsage.value.some(usage=>usage.name===n.display_name)}
+async function refreshClashUsage(){try{clashUsage.value=await api.clashUsage()}catch{clashUsage.value=[]}}
+let clashUsageTimer:number|undefined
+function startClashUsagePolling(){
+ if(clashUsageTimer!==undefined)window.clearInterval(clashUsageTimer)
+ if(document.visibilityState!=='visible')return
+ void refreshClashUsage()
+ clashUsageTimer=window.setInterval(()=>{if(document.visibilityState==='visible')void refreshClashUsage()},30_000)
+}
+function onClashVisibilityChange(){
+ if(document.visibilityState==='visible')startClashUsagePolling()
+ else if(clashUsageTimer!==undefined){window.clearInterval(clashUsageTimer);clashUsageTimer=undefined}
+}
+onMounted(()=>{document.addEventListener('visibilitychange',onClashVisibilityChange);startClashUsagePolling()})
+onBeforeUnmount(()=>{document.removeEventListener('visibilitychange',onClashVisibilityChange);if(clashUsageTimer!==undefined)window.clearInterval(clashUsageTimer)})
 const matrixMode=computed(()=>!exitMode.value&&w.project.value==='service'&&serviceView.value==='services')
 const chosen=m.chosen
 const exitRows=computed(()=>Object.fromEntries(m.pageNodes.value.map(n=>{
@@ -142,6 +162,7 @@ function keyNav(e:KeyboardEvent){
         <h1>线路工作台</h1>
         <p v-if="filteredAirport"><strong class="hd-head-airport">{{filteredAirport.name}}</strong> · {{filteredAirportNodes}} 个节点 · <button class="hd-link" @click="w.viewAirport('all')">看全部 {{chosen.length}} 个机场</button></p>
         <p v-else><button class="hd-link" @click="m.picker.value=true">{{chosen.length?m.chosenNames.value:'选择机场'}}</button> · {{chosenNodeCount}} 个节点</p>
+        <p v-if="dominantClashUsage" class="hd-clash-usage" title="按当前连接累计流量排序，每 30 秒更新"><span class="hd-clash-usage-dot" aria-hidden="true"></span>Clash 正在用：<strong>{{dominantClashName}}</strong><template v-if="dominantClashChains">（经 {{dominantClashChains}}）</template></p>
       </div>
     </header>
 
@@ -226,7 +247,7 @@ function keyNav(e:KeyboardEvent){
         </div>
         <div v-for="n in m.pageNodes.value" :key="key(n)" class="hd-tr" role="row" :class="{focus:isFocus(n),selected:selected(n)}" :aria-selected="isFocus(n)" @click="focus(n)">
           <span role="cell" @click.stop><input type="checkbox" :checked="selected(n)" :aria-label="'选择 '+nodeDisplayName(n)" @change="w.toggleNode(n)"></span>
-          <span role="cell" class="hd-node" :title="n.display_name+' · '+m.sourceLabel(n)+' · '+n.type"><span class="hd-flag">{{n.country_code||'—'}}</span><span><strong>{{nodeDisplayName(n)}}</strong><small>{{m.sourceLabel(n)}} · {{n.type}}</small></span><NodeActivity :state="m.nodeActivities.value[key(n)]?.state" :label="m.nodeActivities.value[key(n)]?.label"/></span>
+          <span role="cell" class="hd-node" :title="n.display_name+' · '+m.sourceLabel(n)+' · '+n.type"><span class="hd-flag">{{n.country_code||'—'}}</span><span><strong><i v-if="isClashUsing(n)" class="hd-clash-node-dot" aria-label="Clash 正在使用" title="Clash 正在使用"></i>{{nodeDisplayName(n)}}</strong><small>{{m.sourceLabel(n)}} · {{n.type}}</small></span><NodeActivity :state="m.nodeActivities.value[key(n)]?.state" :label="m.nodeActivities.value[key(n)]?.label"/></span>
           <template v-if="exitMode"><template v-for="field in exitFields" :key="field"><span v-if="field==='line'" role="cell" class="hd-exit-cell hd-line-cell"><span class="hd-line-text" :title="exitRows[key(n)].line">{{exitRows[key(n)].line}}</span><span v-if="exitRows[key(n)].route" class="hd-route-tag" :class="exitRows[key(n)].routeTone" :title="exitRows[key(n)].routeTitle">{{exitRows[key(n)].route}}</span></span><span v-else-if="field==='ipTag'" role="cell" class="hd-exit-cell hd-ip-cell"><span class="hd-ip-tag" :class="exitRows[key(n)].ipKind.tone" :title="'IP 类型：'+exitRows[key(n)].ipKind.detail">{{exitRows[key(n)].ipTag}}</span></span><span v-else role="cell" class="hd-num hd-exit-cell" :class="field==='label'?exitRows[key(n)].tone:field==='riskLabel'?exitRows[key(n)].riskTone:''" :title="field==='label'?exitRows[key(n)].detail:field==='riskLabel'?'IPPure 与机器流量占比取较高值':''">{{exitRows[key(n)][field]}}</span></template></template>
           <span v-if="showVerdict" role="cell"><b class="hd-pill" :class="verdicts[key(n)].tone">{{verdicts[key(n)].label}}</b></span>
           <template v-if="!exitMode&&w.project.value==='latency'"><span role="cell" class="hd-num hd-history-cell" :class="weeklyTone(n)" :title="weeklyTitle(n,'responseRate')">{{weeklyText(n,'responseRate')}}<small v-if="weeklyOld(n)" class="old-tag">旧</small></span><span role="cell" class="hd-num hd-history-cell" :class="weeklyTone(n)" :title="weeklyTitle(n,'volatility')">{{weeklyText(n,'volatility')}}<small v-if="weeklyOld(n)" class="old-tag">旧</small></span></template>
@@ -240,7 +261,7 @@ function keyNav(e:KeyboardEvent){
       </div>
       <div class="hd-resize" role="separator" aria-orientation="vertical" aria-label="调整检查器宽度" :aria-valuenow="sideWidth" :aria-valuemin="SIDE_MIN" :aria-valuemax="SIDE_MAX" tabindex="0" @pointerdown="startResize" @keydown.left.prevent="setSide(sideWidth+24)" @keydown.right.prevent="setSide(sideWidth-24)" @dblclick="setSide(420)"/>
       <NodeCompare v-if="m.compareOpen.value" class="hd-side"/>
-      <NodeInspector v-else-if="focusNode" :key="key(focusNode)" class="hd-side" :node="focusNode" :exit-only="exitMode" @select-project="selectInspectorProject"/>
+      <NodeInspector v-else-if="focusNode" :key="key(focusNode)" class="hd-side" :node="focusNode" :exit-only="exitMode" :clash-usage="clashUsage" @select-project="selectInspectorProject" @refresh-clash-usage="refreshClashUsage"/>
     </div>
 
     <footer v-if="!matrixMode" class="hd-foot">
@@ -254,6 +275,7 @@ function keyNav(e:KeyboardEvent){
 <style scoped>
 .history-sort{font-size:11px;white-space:nowrap;text-align:left}
 .old-tag{margin-left:2px;padding:0 2px;border-radius:2px;background:var(--hd-soft);color:var(--hd-muted);font-size:9px;font-weight:600}
+.hd-clash-usage{display:inline-flex;align-items:center;gap:5px;margin-top:5px;padding:3px 7px;border:1px solid var(--hd-line);border-radius:999px;background:var(--hd-panel);font-size:11px;line-height:1.4;color:var(--hd-muted)}.hd-clash-usage strong{color:var(--hd-text)}.hd-clash-usage-dot,.hd-clash-node-dot{display:inline-block;flex:none;width:7px;height:7px;border-radius:50%;background:var(--hd-good)}.hd-clash-node-dot{width:6px;height:6px;margin-right:5px;vertical-align:middle}
 .hd-body.exit-mode .hd-node strong{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}.hd-body.exit-mode .hd-node small{white-space:normal}.hd-body.exit-mode .hd-tr{padding-top:9px;padding-bottom:9px}.hd-body.exit-mode .hd-exit-cell.good{color:var(--hd-good)}.hd-source{display:block}.hd-exit-cell{font-size:11px;white-space:normal;line-height:1.4}.hd-exit-cell.bad{color:#c6343e;font-weight:600}.hd-exit-cell.warn{color:#ad680b}
 .hd .hd-svc-cell.empty{color:var(--hd-empty);font-weight:400}.hd .hd-svc-cell.warn{color:var(--hd-warn)}
 </style>

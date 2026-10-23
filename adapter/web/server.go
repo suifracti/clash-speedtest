@@ -221,6 +221,9 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("GET /api/settings", s.handleGetSettings)
 	mux.HandleFunc("POST /api/clash/node-status", s.handleClashNodeStatus)
 	mux.HandleFunc("POST /api/clash/compare", s.handleClashCompare)
+	mux.HandleFunc("GET /api/clash/usage", s.handleClashUsage)
+	mux.HandleFunc("POST /api/clash/groups", s.handleClashGroups)
+	mux.HandleFunc("POST /api/clash/select", s.handleClashSelect)
 	mux.HandleFunc("POST /api/settings", s.handleSaveSettings)
 
 	// Controller & Policy REST routes

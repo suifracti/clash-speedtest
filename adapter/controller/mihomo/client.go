@@ -413,3 +413,25 @@ func rawToNode(raw rawProxy) controller.Node {
 }
 
 func (c *Client) Close() { c.client.CloseIdleConnections() }
+
+// ConnectionTraffic deliberately excludes metadata (hosts and addresses).
+// Mihomo reports chains from the final outbound back toward the policy group.
+type ConnectionTraffic struct {
+	Chains   []string `json:"chains"`
+	Upload   int64    `json:"upload"`
+	Download int64    `json:"download"`
+}
+
+func (c *Client) ReadConnectionTraffic(ctx context.Context) ([]ConnectionTraffic, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/connections", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		Connections []ConnectionTraffic `json:"connections"`
+	}
+	if err = c.doJSON(req, &result); err != nil {
+		return nil, err
+	}
+	return result.Connections, nil
+}

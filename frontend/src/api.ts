@@ -6,6 +6,10 @@ import {scope} from './domain'
 export interface ClashNodeStatus {connected:boolean;loaded:boolean;name:string;endpoint:string}
 export interface ClashCompareSide {success:boolean;latency_ms:number;error?:string}
 export interface ClashCompareResult {target:string;name:string;cst:ClashCompareSide;clash:ClashCompareSide;finished_at:string}
+export interface ClashUsage {name:string;bytes:number;chains:string[]}
+export interface ClashSelectionStep {group:string;before:string;after:string}
+export interface ClashGroupOption {group:string;path:string[];steps:ClashSelectionStep[]}
+export interface ClashSelectionResult {verified:boolean;steps:ClashSelectionStep[]}
 declare global {interface Window {go?:{desktop?:{App?:Record<string,(...args:any[])=>Promise<any>>}};runtime?:{EventsOn:(name:string,callback:(payload:any)=>void)=>()=>void}}}
 export const desktop=()=>!!window.go?.desktop?.App
 let token=window.localStorage.getItem('cst_auth_token')||''
@@ -59,6 +63,9 @@ export const api={
   monitorSamples:(q:Record<string,unknown>)=>request<{items:MonitorSample[];has_more:boolean;next_cursor:string}>(`/api/monitor/samples/cursor?${query(q)}`,'GET',undefined,'QueryMonitorSamplesCursor',[q]),monitorStats:(q:Record<string,unknown>)=>request<Record<string,any>>(`/api/monitor/stats?${query(q)}`,'GET',undefined,'GetMonitorStats',[q]),monitorFacets:(since:string,until:string)=>request<{nodes:{node_key:string;node_identity_key:string;profile_id:string;display_name:string}[];profiles:string[];targets:string[]}>(`/api/monitor/facets?${query({since,until})}`,'GET',undefined,'GetMonitorSampleFacets',[since,until]),
   settings:()=>request<Settings>('/api/settings','GET',undefined,'GetSettings'),saveSettings:(s:Settings)=>request('/api/settings','POST',s,'SaveSettings',[s]),token:()=>request<TokenStatus>('/api/antigravity/status','GET',undefined,'GetTokenStatus'),discoverToken:()=>request<TokenStatus>('/api/antigravity/discover','POST',undefined,'DiscoverToken'),setToken:(value:string)=>request('/api/antigravity/token','POST',{token:value},'SetToken',[value]),oauth:()=>request('/api/antigravity/login','POST',undefined,'StartOAuthLogin'),
   clashNodeStatus:(n:NodeScope)=>request<ClashNodeStatus>('/api/clash/node-status','POST',scope(n),'GetClashNodeStatus',[scope(n)]),compareClashNode:(n:NodeScope)=>request<ClashCompareResult>('/api/clash/compare','POST',scope(n),'CompareClashNode',[scope(n)]),
+  clashUsage:()=>request<ClashUsage[]>('/api/clash/usage','GET',undefined,'GetClashUsage'),
+  clashNodeGroups:(n:NodeScope)=>request<ClashGroupOption[]>('/api/clash/groups','POST',scope(n),'GetClashNodeGroups',[scope(n)]),
+  useClashNode:(n:NodeScope,group:string)=>{const body={...scope(n),group};return request<ClashSelectionResult>('/api/clash/select','POST',body,'UseClashNode',[body])},
   initialize:()=>request('/api/profile/setup/empty','POST',undefined,'InitializeEmptyProfileStore'),inspect:(path:string)=>request<Record<string,any>>('/api/profile/source/inspect','POST',{path},'InspectProfileSource',[path]),importSource:(path:string)=>request('/api/profile/import','POST',{path},'ImportProfileSource',[path]),migrate:()=>request('/api/data/migration','POST',undefined,'MigrateLegacyData'),discardImport:()=>request('/api/profile/import/discard','POST',undefined,'DiscardProfileImport'),storage:()=>request<Record<string,any>>('/api/monitor/storage','GET',undefined,'GetMonitorStorageUsage'),budget:()=>request<Record<string,any>>('/api/monitor/budget','GET',undefined,'GetMonitorBudgetStatus'),
   exportClash:(nodes:NodeScope[],groupName?:string)=>request<{yaml_content:string;node_count:number}>('/api/workbench/export-clash','POST',{selections:nodes.map(scope),...(groupName?{group_name:groupName}:{})},'ExportNodesClashConfig',[{selections:nodes.map(scope),...(groupName?{group_name:groupName}:{})}]),revisions:(n:NodeScope)=>request<{config_revision_key:string;node_key:string;display_name:string;last_observed_at:string}[]>(`/api/history/node-revisions?${query({profile_id:n.profile_id,node_identity_key:n.node_identity_key})}`,'GET',undefined,'ListNodeHistoryRevisions',[n.profile_id,n.node_identity_key]),
 }

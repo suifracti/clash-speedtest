@@ -2,6 +2,7 @@
 import {computed,inject,ref,watch} from 'vue'
 import {useWorkspace} from '../../workspace'
 import {date,key,targets,type NodeOption,type Project} from '../../domain'
+import {api,type ClashGroupOption,type ClashNodeStatus,type ClashSelectionResult,type ClashUsage} from '../../api'
 import {nodeDisplayName} from '../../nodePresentation'
 import {manualLatencyPoint,monitorLatencyPoints,monitorHTTPServices,type TrendPoint} from '../../presentation'
 import Icon from '../Icon.vue'
@@ -16,13 +17,32 @@ import NodeExitSummary from '../NodeExitSummary.vue'
 import MeasurementResults from '../MeasurementResults.vue'
 import InlineHistory from '../InlineHistory.vue'
 import TrendChart from '../TrendChart.vue'
+import Modal from '../Modal.vue'
 import {homeModelKey,latencyVerdict,toneLabel} from './homeModel'
 import {attemptObservedAt,downloadEvidence} from '../../nodeQuality'
 import {attemptStatus} from '../../measurementRounds'
 import {downloadSpeed,downloadTarget} from '../../domain'
-const props=defineProps<{node:NodeOption;exitOnly?:boolean}>()
-const emit=defineEmits<{(e:'select-project',id:Project|'exit'):void}>()
+const props=defineProps<{node:NodeOption;exitOnly?:boolean;clashUsage?:ClashUsage[]}>()
+const emit=defineEmits<{(e:'select-project',id:Project|'exit'):void;(e:'refresh-clash-usage'):void}>()
 const w=useWorkspace(),m=inject(homeModelKey)!
+const isClashUsing=computed(()=>props.clashUsage?.some(usage=>usage.name===props.node.display_name)||false)
+const clashStatus=ref<ClashNodeStatus|null>(null),clashStatusLoading=ref(false)
+const clashDialog=ref(false),clashGroups=ref<ClashGroupOption[]>([]),selectedClashGroup=ref('')
+const clashGroupsLoading=ref(false),clashSelectBusy=ref(false),clashError=ref('')
+const clashSelection=ref<ClashSelectionResult|null>(null)
+const selectedClashOption=computed(()=>clashGroups.value.find(option=>option.group===selectedClashGroup.value))
+async function readClashStatus(){clashStatusLoading.value=true;clashStatus.value=null;try{clashStatus.value=await api.clashNodeStatus(props.node)}catch{clashStatus.value=null}finally{clashStatusLoading.value=false}}
+watch(()=>key(props.node),()=>{void readClashStatus()},{immediate:true})
+async function openClashDialog(){
+ clashDialog.value=true;clashGroups.value=[];selectedClashGroup.value='';clashSelection.value=null;clashError.value='';clashGroupsLoading.value=true
+ try{clashGroups.value=await api.clashNodeGroups(props.node)}catch(error){clashError.value=error instanceof Error?error.message:String(error)}finally{clashGroupsLoading.value=false}
+}
+async function confirmClashSelection(){
+ if(!selectedClashGroup.value||clashSelectBusy.value||clashSelection.value?.verified)return
+ clashSelectBusy.value=true;clashError.value=''
+ try{clashSelection.value=await api.useClashNode(props.node,selectedClashGroup.value);if(clashSelection.value.verified)emit('refresh-clash-usage')}
+ catch(error){clashError.value=error instanceof Error?error.message:String(error)}finally{clashSelectBusy.value=false}
+}
 const reportFocus=computed(()=>w.latencyReportFocus.value?.nodeKey===key(props.node)?w.latencyReportFocus.value:undefined)
 const latencyFocus=ref<import('../../latencyHistory').LatencySeries[]|null>(null)
 const sites=computed(()=>targets.filter(t=>w.displayTargets.value.includes(t.id)))
@@ -103,6 +123,10 @@ function run(){m.closeHover();props.exitOnly?w.openReputationPlan([props.node]):
         <button class="hd-btn primary" :disabled="w.busy.value" :title="project==='combined'?'按组合检测配置这个节点':'只'+m.runLabel(project)+'，范围是这个节点'" @click="run"><Icon name="play"/>{{runText}}</button>
       </div>
     </header>
+    <div class="hd-ins-clash-row">
+      <span v-if="isClashUsing" class="hd-ins-clash-active"><i aria-hidden="true"></i>正在使用</span>
+      <button class="hd-btn" :disabled="clashStatusLoading||!clashStatus?.loaded" :title="clashStatusLoading?'正在读取 Clash 状态…':clashStatus?.loaded?'选择 Clash 代理组路径':'Clash 当前没有加载这个节点'" @click="openClashDialog">{{clashStatusLoading?'读取 Clash…':'在 Clash 中使用'}}</button>
+    </div>
     <div class="hd-ins-verdict" :class="verdict.tone"><strong>{{verdict.label}}</strong><div v-if="exitOnly" class="landing-sources"><span v-for="tag in landing.tags" :key="tag">{{tag}}</span></div><span v-else>{{verdict.detail}}</span></div>
 
     <div v-if="exitOnly||project==='combined'" class="hd-ins-block hd-exit">
@@ -159,6 +183,33 @@ function run(){m.closeHover();props.exitOnly?w.openReputationPlan([props.node]):
     </div>
     <nav v-if="others.length" class="hd-ins-others" aria-label="其他项目摘要"><span>其他项目</span><button v-for="o in others" :key="o.id" type="button" :title="'切到'+o.name+'：'+o.v.detail" @click="emit('select-project',o.id)"><small>{{o.name}}</small><strong :class="o.v.tone">{{o.v.label}}</strong></button></nav>
     <p class="hd-legend"><span class="good">{{toneLabel('good')}}</span><span class="warn">{{toneLabel('warn')}}</span><span class="bad">{{toneLabel('bad')}}</span><span class="empty">{{toneLabel('empty')}}</span></p>
+    <Modal v-if="clashDialog" title="在 Clash 中使用这个节点" wide @close="clashDialog=false">
+      <p class="clash-modal-note">切换只影响新连接；现有连接会继续使用原线路。</p>
+      <p v-if="clashGroupsLoading" class="hd-muted">正在读取可选路径…</p>
+      <p v-else-if="clashError" class="inline-error" role="alert">{{clashError}}</p>
+      <p v-else-if="!clashGroups.length" class="hd-muted">没有找到包含这个节点的可选代理组路径。</p>
+      <div v-else class="clash-options" role="radiogroup" aria-label="选择 Clash 代理组路径">
+        <label v-for="option in clashGroups" :key="option.path.join(' → ')+'|'+option.group" class="clash-option">
+          <input v-model="selectedClashGroup" type="radio" name="clash-group" :value="option.group" :disabled="clashSelectBusy||!!clashSelection?.verified">
+          <span>{{option.path.join(' → ')}}</span>
+        </label>
+      </div>
+      <div v-if="selectedClashOption&&!clashSelection?.verified" class="clash-steps" aria-label="选择将影响的代理组">
+        <strong>将改变的选择</strong>
+        <div v-for="step in selectedClashOption.steps" :key="step.group" class="clash-step"><span>{{step.group}}</span><b>{{step.before||'（未选择）'}} → {{step.after}}</b></div>
+      </div>
+      <p v-if="clashSelection?.verified" class="clash-select-result good" role="status">已在 Clash 中确认切换。</p>
+      <p v-else-if="clashSelection" class="clash-select-result warn" role="status">Clash 尚未确认所有代理组选择，请在 Clash 中查看。</p>
+      <div v-if="clashSelection?.verified" class="clash-steps" aria-label="Clash 已确认的选择">
+        <strong>Clash 已确认</strong>
+        <div v-for="step in clashSelection.steps" :key="step.group" class="clash-step"><span>{{step.group}}</span><b>{{step.before||'（未选择）'}} → {{step.after}}</b></div>
+      </div>
+      <template #footer>
+        <button v-if="clashSelection?.verified" class="button primary" @click="clashDialog=false">关闭</button>
+        <button v-if="!clashSelection?.verified" class="button" :disabled="clashSelectBusy" @click="clashDialog=false">取消</button>
+        <button v-if="!clashSelection?.verified" class="button primary" :disabled="!selectedClashOption||clashGroupsLoading||clashSelectBusy" @click="confirmClashSelection">{{clashSelectBusy?'切换中…':'确认使用'}}</button>
+      </template>
+    </Modal>
   </section>
 </template>
 
@@ -172,6 +223,7 @@ function run(){m.closeHover();props.exitOnly?w.openReputationPlan([props.node]):
 .exit-path-notice{margin:0 0 8px;padding:6px 8px;border-radius:6px;background:#fff6e5;border:1px solid #e3c184;color:#805211;font-size:10px;line-height:1.55}
 .exit-ipkind{margin:0 0 8px;font-size:11px;line-height:1.6;color:var(--hd-text)}.exit-ipkind.empty{color:var(--hd-muted)}
 .hd-ins-head{order:-3}.hd-ins-verdict{order:-2}.hd-inspector[data-project="latency"] .hd-latency,.hd-inspector[data-project="download"] .hd-download,.hd-inspector[data-project="service"] .hd-services-block{order:-1}
+.hd-ins-clash-row{display:flex;align-items:center;justify-content:flex-end;gap:7px;margin:-4px 0 8px}.hd-ins-clash-active{display:inline-flex;align-items:center;gap:5px;color:var(--hd-good);font-size:11px}.hd-ins-clash-active i{width:6px;height:6px;border-radius:50%;background:var(--hd-good)}.clash-modal-note{margin:0 0 12px;color:var(--hd-muted);font-size:12px}.clash-options{display:grid;gap:6px;max-height:36vh;overflow:auto}.clash-option{display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border:1px solid var(--hd-line);border-radius:7px;cursor:pointer}.clash-option:has(input:checked){border-color:var(--hd-accent);background:var(--hd-panel)}.clash-option input{margin-top:3px;flex:none}.clash-option span{min-width:0;overflow-wrap:anywhere;font-size:12px}.clash-steps{display:grid;gap:6px;margin-top:14px;padding-top:12px;border-top:1px solid var(--hd-line);font-size:12px}.clash-step{display:flex;justify-content:space-between;gap:12px}.clash-step span{color:var(--hd-muted)}.clash-step b{text-align:right;font-weight:500;overflow-wrap:anywhere}.clash-select-result{margin:12px 0 0;font-size:12px}.clash-select-result.good{color:var(--hd-good)}.clash-select-result.warn{color:var(--hd-warn)}
 
 .hd-inspector[data-project="service"] .hd-ins-verdict{display:block}.hd-inspector[data-project="service"] .hd-ins-verdict strong{display:block;font-size:13px;line-height:1.5}.hd-inspector[data-project="service"] .hd-ins-verdict span{display:block;margin-top:4px;font-size:11px}.download-success strong{font-size:25px;font-weight:600;font-variant-numeric:tabular-nums}.download-success small{font-size:12px;font-weight:400;color:var(--hd-muted)}.download-failure{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:10px 12px;background:#fff0d3;color:#805211;border-radius:8px;font-size:12px;line-height:1.55}.download-failure span{white-space:nowrap;font-size:11px}.download-failure .hd-btn{margin-left:auto;flex-shrink:0;background:transparent;border-color:#cfad72;color:inherit}.download-failure.empty{padding:0;background:none;color:var(--hd-muted)}.hd-saved-download{display:block;margin-top:7px;color:var(--hd-muted);font-size:10px}.download-spark{display:block;width:100%;height:34px;margin-top:8px}
 </style>
