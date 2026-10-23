@@ -52,11 +52,11 @@ function purposeText(node:AutoPickNode){return reportPurposeText(node,report.val
           <td>{{node.purposes?.join('、')||'—'}}</td>
           <td class="auto-report-reason">
             <span v-if="node.excluded_reason">{{node.excluded_reason}}</span>
-            <template v-else-if="node.services&&Object.keys(node.services).length">
-              <span class="auto-reason-line">{{reportServiceText(node.services)}}</span>
+            <template v-else>
+              <span v-if="node.services&&Object.keys(node.services).length" class="auto-reason-line">{{reportServiceText(node.services)}}</span>
+              <span v-else class="muted">通过延迟规则</span>
               <span v-if="purposeText(node)" class="auto-reason-line auto-reason-gap">{{purposeText(node)}}</span>
             </template>
-            <span v-else class="muted">通过延迟规则</span>
           </td>
         </tr>
       </tbody>
