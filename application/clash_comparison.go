@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/faceair/clash-speedtest/adapter/controller/mihomo"
@@ -27,11 +28,11 @@ type ClashMeasurement struct {
 	Error     string `json:"error,omitempty"`
 }
 type ClashComparison struct {
-	Name       string           `json:"name"`
-	Target     string           `json:"target"`
-	CST        ClashMeasurement `json:"cst"`
-	Clash      ClashMeasurement `json:"clash"`
-	FinishedAt time.Time        `json:"finished_at"`
+	Name       string             `json:"name"`
+	Target     string             `json:"target"`
+	CST        []ClashMeasurement `json:"cst"`
+	Clash      []ClashMeasurement `json:"clash"`
+	FinishedAt time.Time          `json:"finished_at"`
 }
 
 func (s *AppService) clashClient() (*mihomo.Client, string, error) {
@@ -80,7 +81,7 @@ func (s *AppService) GetClashNodeStatus(ctx context.Context, scope WorkbenchLate
 }
 
 // CompareClashNode runs only from an explicit user action. It does not save a
-// workbench round: these are two adjacent single samples, not a stability test.
+// workbench round: each side takes two samples, not a stability test.
 func (s *AppService) CompareClashNode(ctx context.Context, scope WorkbenchLatencyBatchSelection) (*ClashComparison, error) {
 	_, name, proxy, err := s.resolveWorkbenchScopedProxy(scope.ProfileID, scope.NodeKey, scope.NodeIdentityKey, scope.ConfigRevisionKey)
 	if err != nil {
@@ -108,25 +109,43 @@ func (s *AppService) CompareClashNode(ctx context.Context, scope WorkbenchLatenc
 	}
 	target, _ := speedtester.LatencyTargetURL("cloudflare")
 	result := &ClashComparison{Name: name, Target: target}
-	st, err := speedtester.New(&speedtester.Config{Mode: speedtester.SpeedModeFast, Metrics: speedtester.MetricSet{Latency: true}, Concurrent: 1, Timeout: 10 * time.Second, Rounds: 1, PingCount: 1, LatencyTargetURL: target})
+	st, err := speedtester.New(&speedtester.Config{Mode: speedtester.SpeedModeFast, Metrics: speedtester.MetricSet{Latency: true}, Concurrent: 1, Timeout: 10 * time.Second, Rounds: 1, PingCount: 2, PhysicalSocketBudget: 6 * 4, LatencyTargetURL: target})
 	if err != nil {
 		return nil, err
 	}
 	measured := st.TestSinglePhysicalContext(ctx, name, proxy, func(*speedtester.Result) bool { return ctx.Err() == nil })
-	if measured != nil && len(measured.LatencySamples) > 0 {
-		sample := measured.LatencySamples[0]
-		result.CST = ClashMeasurement{Success: sample.Success, LatencyMS: sample.LatencyMs, Error: sample.Error}
-	} else if measured != nil && measured.LatencyError != "" {
-		result.CST.Error = measured.LatencyError
-	} else {
-		result.CST.Error = "未取得测量结果"
+	protocol := proxy.Type().String()
+	for i := 0; i < 2; i++ {
+		item := ClashMeasurement{}
+		if measured != nil && i < len(measured.LatencySamples) {
+			sample := measured.LatencySamples[i]
+			item = ClashMeasurement{Success: sample.Success, LatencyMS: sample.LatencyMs, Error: sample.Error}
+		} else if measured != nil && measured.LatencyError != "" {
+			item.Error = measured.LatencyError
+		} else {
+			item.Error = "未取得测量结果"
+		}
+		if !item.Success {
+			if strings.Contains(item.Error, "no recent network activity") {
+				item.Error = "QUIC 空闲超时（" + item.Error + "）"
+			}
+			item.Error = protocol + " · " + item.Error
+		}
+		result.CST = append(result.CST, item)
 	}
-	delay, err := client.TestDelay(ctx, name, target, 10*time.Second)
-	if err != nil {
-		result.Clash.Error = err.Error()
-	} else {
-		result.Clash.Success = true
-		result.Clash.LatencyMS = delay.Milliseconds()
+	for i := 0; i < 2; i++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		delay, err := client.TestDelay(ctx, name, target, 10*time.Second)
+		item := ClashMeasurement{}
+		if err != nil {
+			item.Error = err.Error()
+		} else {
+			item.Success = true
+			item.LatencyMS = delay.Milliseconds()
+		}
+		result.Clash = append(result.Clash, item)
 	}
 	result.FinishedAt = time.Now().UTC()
 	return result, nil

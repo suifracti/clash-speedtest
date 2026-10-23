@@ -27,26 +27,27 @@ import (
 )
 
 type Config struct {
-	ConfigPaths      string
-	FilterRegex      string
-	BlockRegex       string
-	ServerURL        string
-	DownloadSize     int
-	UploadSize       int
-	Timeout          time.Duration
-	Concurrent       int
-	MaxLatency       time.Duration
-	MaxPacketLoss    float64
-	MinDownloadSpeed float64
-	MinUploadSpeed   float64
-	Mode             SpeedMode
-	Metrics          MetricSet
-	Duration         time.Duration
-	Rounds           int
-	PingCount        int
-	LatencyTargetURL string
-	OutputPath       string
-	UserAgent        string // optional; empty means use default (mihomo kernel UA)
+	ConfigPaths          string
+	FilterRegex          string
+	BlockRegex           string
+	ServerURL            string
+	DownloadSize         int
+	UploadSize           int
+	Timeout              time.Duration
+	Concurrent           int
+	MaxLatency           time.Duration
+	MaxPacketLoss        float64
+	MinDownloadSpeed     float64
+	MinUploadSpeed       float64
+	Mode                 SpeedMode
+	Metrics              MetricSet
+	Duration             time.Duration
+	Rounds               int
+	PingCount            int
+	PhysicalSocketBudget int // Optional connection budget; zero follows the sample plan.
+	LatencyTargetURL     string
+	OutputPath           string
+	UserAgent            string // optional; empty means use default (mihomo kernel UA)
 	// AntigravityToken is an OAuth access token used only by the Antigravity
 	// eligibility probe. Google applies the region gate after authentication, so
 	// without a token the probe can only report "unknown" - never a verdict.

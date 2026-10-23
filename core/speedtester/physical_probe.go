@@ -127,8 +127,12 @@ func (st *SpeedTester) testSinglePhysicalContext(ctx context.Context, name strin
 			timeout = st.config.Timeout
 		}
 	}
+	sockets := samples * len(LatencyProbeURLs(st.probeURL()))
+	if st.config != nil && st.config.PhysicalSocketBudget > 0 {
+		sockets = st.config.PhysicalSocketBudget
+	}
 	prepCtx, cancel := context.WithTimeout(ctx, timeout)
-	client, path, cleanup, err := openPhysicalProbeClient(prepCtx, proxy, timeout, samples*len(LatencyProbeURLs(st.probeURL())), prepare)
+	client, path, cleanup, err := openPhysicalProbeClient(prepCtx, proxy, timeout, sockets, prepare)
 	cancel()
 	defer cleanup()
 	if err != nil {

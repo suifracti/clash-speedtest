@@ -5,7 +5,7 @@ import type {MeasurementRound,Airport,Attempt,HistoryPage,LatencyBatch,LatencyTe
 import {scope} from './domain'
 export interface ClashNodeStatus {connected:boolean;loaded:boolean;name:string;endpoint:string}
 export interface ClashCompareSide {success:boolean;latency_ms:number;error?:string}
-export interface ClashCompareResult {target:string;name:string;cst:ClashCompareSide;clash:ClashCompareSide;finished_at:string}
+export interface ClashCompareResult {target:string;name:string;cst:ClashCompareSide[];clash:ClashCompareSide[];finished_at:string}
 export interface ClashUsage {name:string;bytes:number;chains:string[]}
 export interface ClashSelectionStep {group:string;before:string;after:string}
 export interface ClashGroupOption {group:string;path:string[];steps:ClashSelectionStep[]}

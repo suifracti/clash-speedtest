@@ -485,3 +485,9 @@
 - SG04 history/history.db 只读：香港01专线仅1轮（10/21 18:59:56，rev_405879ab19958033），无监测采样；Cloudflare首次601 ms，失败或>5秒0/1；四站首次601/555/698/540 ms，失败或>5秒0/4，全部24次成功，样本不足以证明首次通常慢或只是偶然。
 - 对照与正常测速共用 scoped proxy→TestSinglePhysicalContext→PreparePhysicalAutoProxy、物理网卡绑定与DNS（历史en1/IPv4）；区别为对照单站1次/10秒、socket预算1跳过IPv6备选，正常四站6次预算24允许备选（该历史AAAA超时，仍IPv4成功）；旧IPv4成功地址优先修复仍共用，但仅TCP适用，此节点Hysteria2固定一个IPv4，不走该重试路径。
 - 结论：单次QUIC超时原因未定，未证实CST bug、惯常冷启动慢或偶发；待定为单次预算跳过IPv6备选的口径差异，不能据此归因。本轮无新检测/切组/历史写入，不改代码、不加预热、不换包，后续实测等用户决定。
+
+### 2026-10-23 两次 Clash 对照与协议历史统计
+- SG04只读全量延迟样本（10/14–10/21）：Hysteria2失败494/2876=17.18%（97轮），VLESS失败2172/4955=43.83%（176轮）；QUIC空闲超时4/2876=0.14%，占Hysteria2失败0.81%；Trojan/SS及监测采样无记录，不支持Hysteria2更易失败，非同条件实验不推断协议优劣。
+- CST锁定sing-quic 65d17608159e与Verge mihomo v1.19.32的1c242664697a源码对照：三项默认参数无差异（QUIC空闲30s、握手空闲5s/总握手10s、keepalive10s）；新版新增可配置HandshakeTimeout默认0仍跟随调用context，未发现CST更紧，不调整依赖或参数。
+- CompareClashNode改为CST连续2次→Clash连续2次，cst/clash返回数组，界面逐次并排写“第1次/第2次”；PhysicalSocketBudget=24与正常四站六次一致，允许IPv6备选而不增加目标采样；失败加协议名，QUIC错误标“QUIC 空闲超时”并保留原文。
+- go vet、go test ./...、前端70文件415项及build通过，未新增测试；只构建换包，不发新检测、不切代理组；后续仅新加坡04专线，等用户确认后再点对照。
