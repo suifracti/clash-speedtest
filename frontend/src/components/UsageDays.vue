@@ -39,7 +39,7 @@ const caption=computed(()=>{
       </div>
     </div>
     <dl v-else class="cst-usage-days">
-      <div v-for="d in series.slice(0,3)" :key="d.date" :title="title(d)"><dt>{{d.label}}</dt><dd :class="{unknown:d.bytes==null}">{{text(d)}}</dd></div>
+      <div v-for="d in series.slice(0,3)" :key="d.date" :title="title(d)"><dt>{{d.label}}</dt><dd :class="{unknown:d.bytes==null}">{{valueText(d)}}<small v-if="d.lowerBound&&d.since" class="cst-usage-since">（{{hm(d.since)}} 起）</small></dd></div>
       <div v-if="!series.length" class="cst-usage-none"><dt>今天</dt><dd class="unknown">{{loading?'…':'未记录'}}</dd></div>
     </dl>
     <div v-if="chart&&series.length" class="cst-usage-bars" role="img" :aria-label="`近 ${series.length} 天账户用量；空白表示没有可归属的数据`">
@@ -54,6 +54,7 @@ const caption=computed(()=>{
 .cst-usage-days div{display:flex;flex-direction:column;min-width:0}
 .cst-usage-days dt{font-size:11px;color:var(--cst-muted)}
 .cst-usage-days dd{margin:0;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+.cst-usage-since{display:block;font-size:10px;font-weight:400;color:var(--cst-muted)}
 .cst-usage-days dd.unknown{font-weight:400;color:var(--cst-muted)}
 .cst-usage-bars{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:2px;height:28px;align-items:end}
 .cst-usage-bars span{height:100%;display:flex;align-items:flex-end}
