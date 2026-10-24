@@ -180,6 +180,7 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("GET /api/subscription-refresh-jobs/{id}", s.handleGetSubscriptionRefreshJob)
 	mux.HandleFunc("POST /api/subscription-refresh-jobs/{id}/cancel", s.handleCancelSubscriptionRefreshJob)
 	mux.HandleFunc("GET /api/subscription-usage", s.handleSubscriptionUsage)
+	mux.HandleFunc("GET /api/subscription-usage/state", s.handleSubscriptionUsageState)
 	mux.HandleFunc("POST /api/subscription-usage/refresh", s.handleRefreshSubscriptionUsage)
 	mux.HandleFunc("PUT /api/airports/{id}/maintenance", s.handleAirportMaintenance)
 	mux.HandleFunc("POST /api/airports", s.handleCreateAirport)

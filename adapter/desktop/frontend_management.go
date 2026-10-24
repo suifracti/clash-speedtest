@@ -111,6 +111,13 @@ func (a *App) GetSubscriptionUsage(from, until, period, account string) (*subscr
 	return a.app.GetSubscriptionUsage(a.context(), from, until, period, account)
 }
 
+func (a *App) GetSubscriptionRefreshState() (*subscriptionusage.RefreshState, error) {
+	if a == nil || a.app == nil {
+		return nil, fmt.Errorf("应用服务未初始化")
+	}
+	return a.app.GetSubscriptionRefreshState(a.context())
+}
+
 func (a *App) UpdateSubscriptionUsage() (*subscriptionusage.RefreshState, error) {
 	if a == nil || a.app == nil {
 		return nil, fmt.Errorf("应用服务未初始化")

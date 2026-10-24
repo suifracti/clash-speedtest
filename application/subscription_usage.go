@@ -419,6 +419,16 @@ func (s *AppService) refreshUsageSource(ctx context.Context, source usageRefresh
 	return err
 }
 
+// GetSubscriptionRefreshState reports the last usage run without reading any
+// counters; a page that opened mid-run waits on this instead of showing the
+// numbers from before it.
+func (s *AppService) GetSubscriptionRefreshState(ctx context.Context) (*subscriptionusage.RefreshState, error) {
+	if s == nil || s.historyStore == nil {
+		return nil, fmt.Errorf("用量历史存储尚未初始化")
+	}
+	return s.historyStore.SubscriptionRefreshState(ctx)
+}
+
 func (s *AppService) GetSubscriptionUsage(ctx context.Context, from, until, period, account string) (*subscriptionusage.Report, error) {
 	if s == nil {
 		return nil, fmt.Errorf("app service is not initialized")
