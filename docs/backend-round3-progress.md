@@ -562,4 +562,6 @@
 - 今日用量新口径：`subscriptionusage.TodayUsage` 取今天最后快照 − 昨天最后快照；没有昨天快照时取今天首末快照，标记 `lower_bound` 并带起点时间，前端显示“今日 ≥X（HH:MM 起）”。缺失日期仍为“未记录”。
 - 机场与账户页面挂载只读本地刷新记录，不再自动弹“订阅刷新进度”；打开页面不发订阅请求。
 - 前端文案：用量页改为“启动时更新一次，之后每 2 小时更新；同一机场 30 分钟内不重复请求”，按钮旁显示“30 分钟内已刷新”。
-- 验证：`vue-tsc -b`、前端 71 文件 425 项、Go `application`/`adapter/web`/`adapter/desktop`/`core/subscriptionusage` 全通过。
+- 桌面端从不走 HTTP `Server.Start()`，`Startup` 里补 `StartSubscriptionRefresh`，否则启动刷新与两小时循环都不会运行（旧包实测启动 8 秒后仍无新快照）。
+- 后台跑完没人通知页面：`collectSubscriptionUsage` 收尾发 `subscription_usage_updated` 事件，前端收到只重读机场与清日用量缓存；另外 `GET /api/subscription-usage/state` 给“窗口打开时这轮已在跑”的情况用，boot 里 `settleUsageRefresh` 轮询到终态再补一次重读，否则首屏会停在刷新前的数字（老包 16:45 启动时首屏仍显示 12:01 就是这个竞态）。
+- 验证：`vue-tsc -b`、前端 72 文件 428 项、Go `application`/`adapter/web`/`adapter/desktop`/`core/subscriptionusage` 全通过。
