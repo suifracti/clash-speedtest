@@ -51,7 +51,13 @@ const hourReady=computed(()=>stats.value.total>=20)
 function sitesFor(round:{id:string}){return siteDetails.value.get(round.id)||[]}
 function toggleRound(id:string){selectedId.value=id;expandedId.value=expandedId.value===id?'':id}
 function siteToneText(tone:RoundSiteDetail['tone']){return tone==='good'?'全部响应':tone==='warn'?'部分响应':tone==='bad'?'无响应':'未测'}
-function showSiteTip(event:MouseEvent,time:string,site:RoundSiteDetail){showHoverTip(event,`${date(time)} · ${site.name} ${siteToneText(site.tone)} · ${site.responses}/${site.total} 次成功${site.reason?' · '+site.reason:''}`)}
+// Saved errors start with the probe URL and the node's own address; the tooltip
+// only needs the cause, so drop that prefix and keep the head and tail readable.
+function shortReason(reason:string){
+ const at=reason.lastIndexOf('connect error: '),tail=(at>=0?reason.slice(at+'connect error: '.length):reason).replace(/\s+/g,' ').trim()
+ return tail.length>72?tail.slice(0,44)+'…'+tail.slice(-24):tail
+}
+function showSiteTip(event:MouseEvent,time:string,site:RoundSiteDetail){showHoverTip(event,`${date(time)} · ${site.name} ${siteToneText(site.tone)} · ${site.responses}/${site.total} 次成功${site.reason?' · '+shortReason(site.reason):''}`)}
 onBeforeUnmount(hideHoverTip)
 const hourData=computed(()=>hourBuckets(stats.value.rounds)),bandNote=computed(()=>hourConclusion(stats.value.rounds)),slowest=computed(()=>slowestHours(hourData.value))
 const heatRange=computed(()=>{const values=hourData.value.flatMap(b=>b.median===null?[]:[b.median]);return {min:Math.min(...values),max:Math.max(...values),count:values.length}})
