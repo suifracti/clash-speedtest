@@ -405,6 +405,7 @@ func TestRetryRefreshJobIncludesOnlyPriorFailedSelections(t *testing.T) {
 		t.Fatalf("unexpected first refresh result: %+v", first)
 	}
 	badFails.Store(false)
+	ageUsageAttempts(t, paths)
 	retry := startRefreshJob(t, handler, fmt.Sprintf(`{"request_id":"retry","retry_of":%q}`, first.ID))
 	retry = waitRefreshJob(t, handler, retry.ID)
 	if len(retry.Items) != 1 || retry.Items[0].SubscriptionID != "bad" || retry.Success != 1 {

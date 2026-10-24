@@ -85,7 +85,7 @@ describe('synthetic 256-node home first screen',()=>{
     const overview=wrapper.get('.subscription-overview')
     expect(wrapper.find('details.home-subscription-disclosure').exists()).toBe(false)
     expect(wrapper.findAll('.subscription-airport-row')).toHaveLength(2)
-    expect(overview.text()).toContain('刷新失败')
+    expect(overview.text()).toContain('缓存')
     expect(overview.text()).toContain('synthetic refresh failure')
     workspace.viewAirport('airport-3');await flushPromises()
     expect(wrapper.get('.subscription-airport-heading').text()).toContain('合成机场 3')
@@ -111,7 +111,9 @@ describe('synthetic 256-node home first screen',()=>{
   it('shows interrupted refreshes and replaces them with a newer success',async()=>{
     vi.mocked(api.refreshJobs).mockResolvedValueOnce([refreshJob('interrupted')])
     const interrupted=attachHome().wrapper;await flushPromises()
-    expect(interrupted.get('.airport-refresh-failed').text()).toBe('刷新失败')
+    // 失败只留灰色“上次刷新 HH:MM”，不再用红色“刷新失败”占据行内状态。
+    expect(interrupted.get('.airport-refresh-note').text()).toContain('上次刷新')
+    expect(interrupted.get('.subscription-airport-row').text()).toContain('缓存')
     expect(interrupted.get('.subscription-issues summary').text()).toBe('刷新异常 1 项')
 
     vi.mocked(api.refreshJobs).mockResolvedValueOnce([refreshJob('succeeded','2026-10-11T12:00:00Z'),refreshJob('interrupted')])

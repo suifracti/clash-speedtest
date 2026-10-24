@@ -554,3 +554,12 @@
 - 验证：`vue-tsc -b`、前端 71 文件 421 项、`scripts/build-mac-candidate.sh` 全通过；本轮未发节点检测，历史库仍是 273 轮（max 10/21 15:35）。
 - 包 `CST Mac 1e09fe4b.app`（core `52146688…`、内嵌 `1e09fe4`、`live_node_probes: 0`）；入口已切，回滚 `rollback-f2326b52.command`（同批上一包）与 `rollback-db43f58b.command`（本批之前）；原生图 11 张在 `.ui-preview/refine-batch1-20261024/`。
 - 意外（如实记录）：本想去“持续监测”，误点侧栏进“机场与账户”，该页挂载时自己触发一次订阅刷新（3 项：飞鸟云 2 成功，良心云 1 失败 HTTP 429 限流，旧缓存保留）；没点刷新按钮、没点“全部更新”，未运行任何节点检测，历史库无新增轮次。
+
+### 2026-10-24 精调反馈第二批：用量自动记录
+- 自动节奏改为“启动时刷新一次，运行中每 2 小时一次”，仍受“自动更新订阅”总开关控制；启动那次绕过 2 小时排期，但同样受每机场 30 分钟下限约束。
+- 新增每机场 30 分钟下限（`subscriptionUsageTooSoon`，存 `last_usage_attempt_at`/`last_usage_failed`）：自动采集、手动“全部刷新”、单订阅“刷新用量”都在下限内直接用缓存；刷新任务里被跳过的项写成 `not_executed` / `recently_refreshed`，不发请求。
+- 失败处理：沿用 `refresh_failed` 快照保留上一次成功计数；不再向前端弹失败提示，账户行只显示灰色“上次刷新 HH:MM”，总览行状态显示“缓存”。`SubscriptionDTO` 增加 `last_attempt_at`、`last_attempt_failed`。
+- 今日用量新口径：`subscriptionusage.TodayUsage` 取今天最后快照 − 昨天最后快照；没有昨天快照时取今天首末快照，标记 `lower_bound` 并带起点时间，前端显示“今日 ≥X（HH:MM 起）”。缺失日期仍为“未记录”。
+- 机场与账户页面挂载只读本地刷新记录，不再自动弹“订阅刷新进度”；打开页面不发订阅请求。
+- 前端文案：用量页改为“启动时更新一次，之后每 2 小时更新；同一机场 30 分钟内不重复请求”，按钮旁显示“30 分钟内已刷新”。
+- 验证：`vue-tsc -b`、前端 71 文件 425 项、Go `application`/`adapter/web`/`adapter/desktop`/`core/subscriptionusage` 全通过。

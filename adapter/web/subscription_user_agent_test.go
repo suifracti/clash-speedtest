@@ -70,6 +70,7 @@ func TestSubscriptionUserAgentSettingIsLocalAndIsolated(t *testing.T) {
 			t.Fatalf("UA for %s =%q want %q", test.id, got, test.want)
 		}
 	}
+	ageUsageAttempts(t, paths)
 	response = performRefreshRequest(handler, http.MethodPost, "/api/subscription-usage/refresh", "")
 	if response.Code != http.StatusOK {
 		t.Fatalf("daily collection: %d %s", response.Code, response.Body.String())

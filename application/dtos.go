@@ -275,9 +275,13 @@ type SubscriptionDTO struct {
 	URLConfigured bool                              `json:"url_configured"`
 	Note          string                            `json:"note,omitempty"`
 	UpdatedAt     time.Time                         `json:"updated_at,omitempty"`
-	NodeCount     int                               `json:"node_count"`
-	HasCache      bool                              `json:"has_cache"`
-	Status        string                            `json:"status"` // "normal", "error", "unfetched"
+	// LastAttemptAt is the last subscription/usage fetch for this account; the
+	// UI uses it for the 30-minute refresh gap and the row's last-refresh note.
+	LastAttemptAt     time.Time `json:"last_attempt_at,omitempty"`
+	LastAttemptFailed bool      `json:"last_attempt_failed,omitempty"`
+	NodeCount         int       `json:"node_count"`
+	HasCache          bool      `json:"has_cache"`
+	Status            string    `json:"status"` // "normal", "error", "unfetched"
 }
 
 // AirportDTO represents airport subscription status for GUI/API display.

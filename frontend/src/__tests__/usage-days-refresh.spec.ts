@@ -36,4 +36,17 @@ describe('UsageDays refresh',()=>{
     expect(wrapper!.find('.cst-usage-day.unknown').exists()).toBe(true)
     expect(wrapper!.get('[role="img"]').attributes('aria-label')).toContain('昨天 约 0 B')
   })
+
+  it('marks today as a lower bound with the first-snapshot time',async()=>{
+    mocks.accountDailyUsage.mockResolvedValueOnce({account:undefined,report:undefined,days:[
+      {date:'2026-10-20',label:'今天',bytes:2048,estimated:false,recorded:true,lowerBound:true,since:'2026-10-20T09:12:00+08:00'},
+      {date:'2026-10-19',label:'昨天',bytes:null,estimated:false,recorded:false},
+      {date:'2026-10-18',label:'前天',bytes:null,estimated:false,recorded:false},
+    ]})
+    wrapper=mount(UsageDays,{props:{airportId:'a',subscriptionId:'s',days:3}})
+    await flushPromises()
+    const days=wrapper!.get('.cst-usage-days')
+    expect(days.text()).toContain('≥2.0 KiB（09:12 起）')
+    expect(days.get('div').attributes('title')).toContain('今天从 09:12 开始记录')
+  })
 })

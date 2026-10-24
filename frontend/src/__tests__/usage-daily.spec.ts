@@ -19,4 +19,15 @@ describe('daily usage series (synthetic data)',()=>{
     r.intervals=[{account_key:'a',name:'机场 · 订阅',until:'2026-10-02T02:00:00Z',bytes:null,upload:null,download:null,status:'baseline',estimated:false}]
     expect(dailySeries(r,'2026-10-02',1)[0]).toMatchObject({bytes:null,recorded:true})
   })
+  it('uses the backend today delta instead of the unallocated day bucket',()=>{
+    const r=report([])
+    r.today=[{account_key:'a',bytes:4096,estimated:false,lower_bound:false}]
+    expect(dailySeries(r,'2026-10-02',2,'a')[0]).toMatchObject({date:'2026-10-02',bytes:4096,recorded:true,lowerBound:false})
+    expect(dailySeries(r,'2026-10-02',2,'a')[1]).toMatchObject({date:'2026-10-01',bytes:null,recorded:false})
+  })
+  it('keeps the lower bound and start time when yesterday has no snapshot',()=>{
+    const r=report([])
+    r.today=[{account_key:'a',bytes:2048,estimated:false,lower_bound:true,since:'2026-10-02T08:10:00+08:00'}]
+    expect(dailySeries(r,'2026-10-02',1,'a')[0]).toMatchObject({bytes:2048,lowerBound:true,since:'2026-10-02T08:10:00+08:00'})
+  })
 })

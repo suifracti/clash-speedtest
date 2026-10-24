@@ -10,8 +10,9 @@ import (
 )
 
 type SubscriptionUsageRefreshResult struct {
-	Subscription SubscriptionDTO            `json:"subscription"`
-	Observation  subscriptionusage.Snapshot `json:"observation"`
+	Subscription      SubscriptionDTO            `json:"subscription"`
+	Observation       subscriptionusage.Snapshot `json:"observation"`
+	RecentlyRefreshed bool                       `json:"recently_refreshed,omitempty"`
 }
 
 // RefreshAccountUsage reuses subscription acquisition and records one account.
@@ -43,6 +44,22 @@ func (s *AppService) RefreshAccountUsage(ctx context.Context, airportID, subID, 
 	if err == nil {
 		err = s.seedAccountUsageLocked(ctx, airport, sub)
 	}
+	if err == nil && subscriptionUsageTooSoon(subscriptionUsageLastAttempt(airport), time.Now()) {
+		status := "missing"
+		if sub.Usage != nil {
+			status = "ok"
+		}
+		cached := usageSnapshot(airport, sub, status, "cached_attempt", time.Now())
+		cached.Message = "30 分钟内已刷新；本次直接使用缓存"
+		hasCache := s.profilePaths.HasCache(sub.ID)
+		nodeCount := 0
+		if hasCache {
+			nodeCount = s.CountCachedNodes(sub.ID)
+		}
+		result := &SubscriptionUsageRefreshResult{Subscription: subscriptionDTO(airport.ID, sub, nodeCount, hasCache), Observation: cached, RecentlyRefreshed: true}
+		s.profileWriteMu.Unlock()
+		return result, nil
+	}
 	var source string
 	if err == nil {
 		source = sub.URL
@@ -54,6 +71,15 @@ func (s *AppService) RefreshAccountUsage(ctx context.Context, airportID, subID, 
 	}
 	body, usage, err := profiles.FetchSubscriptionWithUsageContext(ctx, source, userAgent)
 	if err != nil {
+		// A failed attempt still counts toward the per-airport gap; the last
+		// successful snapshot is untouched.
+		s.profileWriteMu.Lock()
+		if store, _, sub, loadErr := load(); loadErr == nil {
+			sub.LastUsageAttemptAt = time.Now()
+			sub.LastUsageFailed = true
+			_ = profiles.SaveStore(s.profilePaths.StoreFile(), store)
+		}
+		s.profileWriteMu.Unlock()
 		return nil, refreshFailure(err)
 	}
 	s.profileWriteMu.Lock()
@@ -63,6 +89,8 @@ func (s *AppService) RefreshAccountUsage(ctx context.Context, airportID, subID, 
 		return nil, err
 	}
 	sub.Usage = usage
+	sub.LastUsageAttemptAt = time.Now()
+	sub.LastUsageFailed = false
 	status := "ok"
 	if usage == nil {
 		status = "missing"

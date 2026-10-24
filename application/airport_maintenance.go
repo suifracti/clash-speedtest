@@ -77,9 +77,16 @@ func (s *AppService) StartSubscriptionRefresh(userAgent string) {
 			defer s.maintenanceWG.Done()
 			ticker := time.NewTicker(time.Minute)
 			defer ticker.Stop()
-			if s.historyStore != nil {
-				if _, err := s.collectSubscriptionUsage(ctx, time.Now(), userAgent, false); err != nil && ctx.Err() == nil {
-					log.Print("每日订阅更新或用量记录无法完成，请在用量监测中重试")
+			// App startup refreshes once even when the two-hour schedule is not
+			// due yet; the per-airport 30-minute gap still applies. The ticker
+			// below keeps the normal two-hour cadence while the app stays open.
+			enabled := true
+			if settings, err := s.GetSettings(); err == nil && settings != nil && settings.SubscriptionDailyUpdateEnabled != nil {
+				enabled = *settings.SubscriptionDailyUpdateEnabled
+			}
+			if s.historyStore != nil && enabled {
+				if _, err := s.collectSubscriptionUsage(ctx, time.Now(), userAgent, true); err != nil && ctx.Err() == nil {
+					log.Print("订阅更新或用量记录无法完成，请在用量监测中重试")
 				}
 			}
 			for {

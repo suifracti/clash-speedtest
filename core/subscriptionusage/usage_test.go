@@ -145,3 +145,58 @@ func TestAddNilPointerSafety(t *testing.T) {
 		t.Fatalf("expected *p to be 150, got %d", *p)
 	}
 }
+
+func TestTodayUsageUsesYesterdayCloseAndLowerBoundFallback(t *testing.T) {
+	now := time.Date(2026, 10, 24, 16, 0, 0, 0, Location)
+	remaining := func(n int64) *int64 { return &n }
+	notice := func(account, at string, n int64) Snapshot {
+		when, _ := time.Parse(time.RFC3339, at)
+		return Snapshot{AccountKey: account, CapturedAt: when, Status: "ok", CounterKind: "notice_remaining", Remaining: remaining(n)}
+	}
+	snapshots := []Snapshot{
+		// Yesterday's close is usable: the delta spans the day boundary.
+		fixture("a", "2026-10-23T23:00:00+08:00", 100, 900),
+		fixture("a", "2026-10-24T08:00:00+08:00", 110, 990),
+		fixture("a", "2026-10-24T12:00:00+08:00", 130, 1170),
+		// No yesterday snapshot: today's own window is a lower bound.
+		fixture("b", "2026-10-24T08:00:00+08:00", 0, 500),
+		fixture("b", "2026-10-24T12:00:00+08:00", 0, 560),
+		// A single observation cannot measure anything yet.
+		fixture("c", "2026-10-24T12:00:00+08:00", 0, 700),
+		// A counter reset falls back to today's first observation.
+		fixture("d", "2026-10-23T23:00:00+08:00", 0, 1000),
+		fixture("d", "2026-10-24T09:00:00+08:00", 0, 40),
+		fixture("d", "2026-10-24T11:00:00+08:00", 0, 60),
+		// Notice balances use the remaining amount, not upload/download.
+		notice("e", "2026-10-23T23:00:00+08:00", 100),
+		notice("e", "2026-10-24T12:00:00+08:00", 90),
+	}
+	got := map[string]TodayTotal{}
+	for _, today := range TodayUsage(snapshots, now) {
+		got[today.AccountKey] = today
+	}
+	a := got["a"]
+	if a.Bytes == nil || *a.Bytes != 300 || a.LowerBound || a.Estimated {
+		t.Fatalf("yesterday-close delta: %+v", a)
+	}
+	b := got["b"]
+	if b.Bytes == nil || *b.Bytes != 60 || !b.LowerBound || b.Since == nil || !b.Since.Equal(mustTime("2026-10-24T08:00:00+08:00")) {
+		t.Fatalf("lower-bound delta: %+v", b)
+	}
+	if _, exists := got["c"]; exists {
+		t.Fatalf("single observation became a daily total: %+v", got["c"])
+	}
+	d := got["d"]
+	if d.Bytes == nil || *d.Bytes != 20 || !d.LowerBound {
+		t.Fatalf("reset should use today's own window: %+v", d)
+	}
+	e := got["e"]
+	if e.Bytes == nil || *e.Bytes != 10 || !e.Estimated || e.LowerBound {
+		t.Fatalf("notice balance delta: %+v", e)
+	}
+}
+
+func mustTime(value string) time.Time {
+	at, _ := time.Parse(time.RFC3339, value)
+	return at
+}

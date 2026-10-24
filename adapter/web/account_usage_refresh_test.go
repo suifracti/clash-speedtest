@@ -106,6 +106,7 @@ func TestRefreshOneAccountUsageKeepsNodesAndOtherAccounts(t *testing.T) {
 		t.Fatalf("usage change not recorded once: %+v", report)
 	}
 	failed.Store(true)
+	ageUsageAttempts(t, paths)
 	response = performRefreshRequest(server.Handler(), http.MethodPost, "/api/airports/a/subscriptions/one/usage/refresh", "")
 	if response.Code == http.StatusOK {
 		t.Fatal("provider failure reported as success")

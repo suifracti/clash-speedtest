@@ -571,7 +571,7 @@ func (s *AppService) StartSubscriptionRefreshJob(req SubscriptionRefreshRequest,
 		if sub == nil {
 			return nil, fmt.Errorf("所选订阅已不存在")
 		}
-		job.Items = append(job.Items, SubscriptionRefreshItem{
+		item := SubscriptionRefreshItem{
 			RefreshSelection:  selection,
 			AirportName:       airport.Name,
 			SubscriptionName:  sub.Name,
@@ -579,11 +579,20 @@ func (s *AppService) StartSubscriptionRefreshJob(req SubscriptionRefreshRequest,
 			SourceVersion:     1,
 			State:             "queued",
 			Stages:            []RefreshStage{{State: "queued", At: job.CreatedAt}},
-		})
+		}
+		if subscriptionUsageTooSoon(subscriptionUsageLastAttempt(airport), time.Now()) {
+			item.State = "not_executed"
+			item.ErrorCode = "recently_refreshed"
+			item.ErrorMessage = "30 分钟内已刷新；使用缓存"
+			item.FinishedAt = job.CreatedAt
+			item.Stages = append(item.Stages, RefreshStage{State: "not_executed", At: job.CreatedAt})
+		}
+		job.Items = append(job.Items, item)
 	}
 	if len(job.Items) == 0 {
 		return nil, fmt.Errorf("没有可刷新的订阅")
 	}
+	summarizeRefresh(job)
 	s.refreshJobs = append(s.refreshJobs, job)
 	if err = s.saveRefreshLocked(); err != nil {
 		s.refreshJobs = s.refreshJobs[:len(s.refreshJobs)-1]
@@ -600,6 +609,10 @@ func (s *AppService) runSubscriptionRefresh(ctx context.Context, job *Subscripti
 	defer s.refreshWG.Done()
 	for index := range job.Items {
 		s.refreshMu.Lock()
+		if refreshTerminal(job.Items[index].State) {
+			s.refreshMu.Unlock()
+			continue
+		}
 		if ctx.Err() != nil {
 			code, message := "cancelled", "任务已取消；此订阅没有发出请求"
 			if job.PersistenceError != "" {
@@ -854,6 +867,8 @@ func (s *AppService) refreshSubscriptionWithFetchLocked(ctx context.Context, air
 		sub.LastFailureRetryAt = time.Time{}
 		sub.LastFailureCode = failure.Code
 		sub.LastFailureMessage = failure.Message
+		sub.LastUsageAttemptAt = now
+		sub.LastUsageFailed = true
 		var status *profiles.FetchHTTPError
 		if errors.As(cause, &status) && status.Status == http.StatusTooManyRequests {
 			sub.LastFailureRetryAt = status.RetryAfterUntil
@@ -948,6 +963,7 @@ func (s *AppService) refreshSubscriptionWithFetchLocked(ctx context.Context, air
 	}
 	oldUsage, oldUpdatedAt, oldAirportUpdatedAt := sub.Usage, sub.UpdatedAt, airport.UpdatedAt
 	oldFailureAt, oldRetryAt, oldFailureCode, oldFailureMessage := sub.LastFailureAt, sub.LastFailureRetryAt, sub.LastFailureCode, sub.LastFailureMessage
+	oldAttemptAt, oldAttemptFailed := sub.LastUsageAttemptAt, sub.LastUsageFailed
 	if err = s.profilePaths.WriteCache(sub.ID, body); err != nil {
 		cacheRecovery.discard()
 		return fail(&refreshError{Code: "cache_write", Message: "节点缓存写入失败；旧缓存保留"})
@@ -957,6 +973,8 @@ func (s *AppService) refreshSubscriptionWithFetchLocked(ctx context.Context, air
 	sub.Usage = usage
 	sub.UpdatedAt = now
 	airport.UpdatedAt = now
+	sub.LastUsageAttemptAt = now
+	sub.LastUsageFailed = false
 	sub.LastFailureRetryAt = time.Time{}
 	sub.LastFailureCode = ""
 	sub.LastFailureMessage = ""
@@ -966,6 +984,7 @@ func (s *AppService) refreshSubscriptionWithFetchLocked(ctx context.Context, air
 		sub.NodeVersions = oldNodeVersions
 		sub.Usage, sub.UpdatedAt, airport.UpdatedAt = oldUsage, oldUpdatedAt, oldAirportUpdatedAt
 		sub.LastFailureAt, sub.LastFailureRetryAt, sub.LastFailureCode, sub.LastFailureMessage = oldFailureAt, oldRetryAt, oldFailureCode, oldFailureMessage
+		sub.LastUsageAttemptAt, sub.LastUsageFailed = oldAttemptAt, oldAttemptFailed
 		return fail(refreshRollbackError("订阅更新保存失败；旧缓存和订阅状态已恢复", errors.Join(cacheRollbackErr, storeRollbackErr)))
 	}
 	status := "ok"
@@ -981,6 +1000,7 @@ func (s *AppService) refreshSubscriptionWithFetchLocked(ctx context.Context, air
 		sub.NodeVersions = oldNodeVersions
 		sub.Usage, sub.UpdatedAt, airport.UpdatedAt = oldUsage, oldUpdatedAt, oldAirportUpdatedAt
 		sub.LastFailureAt, sub.LastFailureRetryAt, sub.LastFailureCode, sub.LastFailureMessage = oldFailureAt, oldRetryAt, oldFailureCode, oldFailureMessage
+		sub.LastUsageAttemptAt, sub.LastUsageFailed = oldAttemptAt, oldAttemptFailed
 		return fail(refreshRollbackError("用量历史保存失败；旧缓存和订阅状态已恢复", errors.Join(cacheRollbackErr, storeRollbackErr)))
 	}
 	cacheRecovery.discard()

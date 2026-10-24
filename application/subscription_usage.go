@@ -22,6 +22,35 @@ var noticeRemainingValue = regexp.MustCompile(`(?i)(?:距离下次重置剩余|�
 
 var errUsageRefreshPanic = errors.New("订阅用量更新出现内部异常；请查看账户状态并重试")
 
+// Automatic usage collection runs at startup and then every two hours. Even a
+// manual refresh waits for the per-airport gap so a provider is never asked
+// twice inside half an hour; the cached counters stay usable meanwhile.
+const (
+	subscriptionUsageAutoInterval = 2 * time.Hour
+	subscriptionUsageMinGap       = 30 * time.Minute
+)
+
+func subscriptionUsageLastAttempt(ap *profiles.Airport) time.Time {
+	var last time.Time
+	if ap == nil {
+		return last
+	}
+	for _, sub := range ap.Subscriptions {
+		if sub != nil && sub.LastUsageAttemptAt.After(last) {
+			last = sub.LastUsageAttemptAt
+		}
+	}
+	return last
+}
+
+func subscriptionUsageTooSoon(last, now time.Time) bool {
+	if last.IsZero() {
+		return false
+	}
+	gap := now.Sub(last)
+	return gap >= 0 && gap < subscriptionUsageMinGap
+}
+
 func fillDefaultSubscriptionUsage(settings *AppSettings) {
 	if settings == nil {
 		return
@@ -214,7 +243,50 @@ func (s *AppService) collectSubscriptionUsage(ctx context.Context, now time.Time
 	if !force && !dailyEnabled {
 		return s.historyStore.SubscriptionRefreshState(ctx)
 	}
-	claimed, err := s.historyStore.ClaimSubscriptionRefresh(ctx, now, subscriptionusage.NextDaily(now), force)
+	s.profileWriteMu.Lock()
+	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
+	s.profileWriteMu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	// Airports refreshed within the gap keep the cached counters, including
+	// manual "refresh all" runs; failures already saved a snapshot.
+	groups := map[string][]usageRefreshSource{}
+	var origins []string
+	skipped := 0
+	for _, ap := range store.Airports {
+		if ap == nil {
+			continue
+		}
+		if subscriptionUsageTooSoon(subscriptionUsageLastAttempt(ap), now) {
+			skipped++
+			continue
+		}
+		for _, sub := range ap.Subscriptions {
+			if sub == nil {
+				continue
+			}
+			origin := profiles.SourceOrigin(sub.URL)
+			if _, exists := groups[origin]; !exists {
+				origins = append(origins, origin)
+			}
+			groups[origin] = append(groups[origin], usageRefreshSource{RefreshSelection: RefreshSelection{AirportID: ap.ID, SubscriptionID: sub.ID}, fingerprint: refreshSourceFingerprint(sub.URL)})
+		}
+	}
+	if len(origins) == 0 {
+		state, stateErr := s.historyStore.SubscriptionRefreshState(ctx)
+		if stateErr != nil {
+			return nil, stateErr
+		}
+		if state == nil {
+			state = &subscriptionusage.RefreshState{}
+		}
+		if force {
+			state.Message = "30 分钟内已刷新；本次直接使用缓存"
+		}
+		return state, nil
+	}
+	claimed, err := s.historyStore.ClaimSubscriptionRefresh(ctx, now, now.Add(subscriptionUsageAutoInterval), force)
 	if err != nil {
 		return nil, err
 	}
@@ -240,32 +312,8 @@ func (s *AppService) collectSubscriptionUsage(ctx context.Context, now time.Time
 		result, err = s.historyStore.SubscriptionRefreshState(finishCtx)
 		retErr = errors.Join(retErr, err)
 	}()
-	s.profileWriteMu.Lock()
-	store, err := profiles.LoadStore(s.profilePaths.StoreFile())
-	s.profileWriteMu.Unlock()
-	if err != nil {
-		message = "无法读取订阅来源，请手动重试"
-		return nil, err
-	}
 	// Serialize each origin (including its 429 cooldown), while allowing up to
 	// four independent providers to fetch concurrently. Only IDs/hashes queue.
-	groups := map[string][]usageRefreshSource{}
-	var origins []string
-	for _, ap := range store.Airports {
-		if ap == nil {
-			continue
-		}
-		for _, sub := range ap.Subscriptions {
-			if sub == nil {
-				continue
-			}
-			origin := profiles.SourceOrigin(sub.URL)
-			if _, exists := groups[origin]; !exists {
-				origins = append(origins, origin)
-			}
-			groups[origin] = append(groups[origin], usageRefreshSource{RefreshSelection: RefreshSelection{AirportID: ap.ID, SubscriptionID: sub.ID}, fingerprint: refreshSourceFingerprint(sub.URL)})
-		}
-	}
 	jobs := make(chan []usageRefreshSource, len(origins))
 	for _, origin := range origins {
 		jobs <- groups[origin]
@@ -303,10 +351,14 @@ func (s *AppService) collectSubscriptionUsage(ctx context.Context, now time.Time
 		message = errUsageRefreshPanic.Error()
 		return nil, errUsageRefreshPanic
 	}
-	state, message = "completed", fmt.Sprintf("已更新 %d 个订阅并记录用量；不提供用量的订阅保持未知", processed.Load())
+	cached := ""
+	if skipped > 0 {
+		cached = fmt.Sprintf("；%d 个机场 30 分钟内已刷新，使用缓存", skipped)
+	}
+	state, message = "completed", fmt.Sprintf("已更新 %d 个订阅并记录用量%s；不提供用量的订阅保持未知", processed.Load(), cached)
 	if failed.Load() > 0 {
 		state = "completed_with_issues"
-		message = fmt.Sprintf("已尝试 %d 个订阅，%d 个更新或保存异常；请查看观测记录并重试", processed.Load(), failed.Load())
+		message = fmt.Sprintf("已尝试 %d 个订阅，%d 个更新或保存异常%s；旧快照保留", processed.Load(), failed.Load(), cached)
 	}
 	return nil, nil
 }
@@ -388,6 +440,7 @@ func (s *AppService) GetSubscriptionUsage(ctx context.Context, from, until, peri
 		snapshots = filtered
 	}
 	report := subscriptionusage.Build(snapshots, a, b, period)
+	report.Today = subscriptionusage.TodayUsage(snapshots, time.Now())
 	report.Refresh, err = s.historyStore.SubscriptionRefreshState(ctx)
 	if err != nil {
 		return nil, err

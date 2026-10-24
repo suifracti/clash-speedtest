@@ -105,6 +105,24 @@ describe('SubscriptionOverview status strip',()=>{
     ]}))
   })
 
+  it('keeps a failed refresh in the row as a gray last-refresh note and reuses cache inside thirty minutes',async()=>{
+    const recent=new Date(Date.now()-5*60*1000).toISOString()
+    const single={...airportA,subscriptions:[{...airportA.subscriptions![0],last_attempt_at:recent,last_attempt_failed:true}]}
+    const workspace=createWorkspace()
+    workspace.airports.value=[single]
+    wrapper=mount(SubscriptionOverview,{props:{airports:[single],notices:[],airportId:'all'},global:{provide:{[workspaceKey as symbol]:workspace}}})
+    await flushPromises()
+
+    expect(wrapper!.get('.airport-refresh-note').text()).toContain('上次刷新')
+    expect(wrapper!.get('.subscription-airport-row').text()).toContain('缓存')
+    const refreshAll=wrapper!.findAll('button').find(button=>button.text().includes('全部刷新'))!
+    expect(refreshAll.attributes('disabled')).toBeDefined()
+    expect(wrapper!.text()).toContain('30 分钟内已刷新')
+    await refreshAll.trigger('click')
+    await flushPromises()
+    expect(refreshMocks.startRefresh).not.toHaveBeenCalled()
+  })
+
   it('sends selected and full workspace refresh scopes without changing measurement scope',async()=>{
     const workspace=createWorkspace()
     workspace.airports.value=[airportA,airportB]

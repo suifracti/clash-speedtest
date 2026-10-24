@@ -49,6 +49,17 @@ type Bucket struct {
 	EstimatedIntervals int    `json:"estimated_intervals"`
 }
 
+// TodayTotal is the account delta between the last snapshot today and the last
+// snapshot yesterday. LowerBound means there was no yesterday snapshot, so the
+// value only covers first-today to last-today and is not a full-day total.
+type TodayTotal struct {
+	AccountKey string     `json:"account_key"`
+	Bytes      *int64     `json:"bytes"`
+	Estimated  bool       `json:"estimated"`
+	LowerBound bool       `json:"lower_bound"`
+	Since      *time.Time `json:"since,omitempty"`
+}
+
 type Report struct {
 	From             string        `json:"from"`
 	Until            string        `json:"until"`
@@ -57,6 +68,7 @@ type Report struct {
 	Buckets          []Bucket      `json:"buckets"`
 	Intervals        []Interval    `json:"intervals"`
 	Accounts         []Snapshot    `json:"accounts"`
+	Today            []TodayTotal  `json:"today"`
 	ObservedBytes    *int64        `json:"observed_bytes"`
 	UnallocatedBytes *int64        `json:"unallocated_bytes"`
 	UnknownIntervals int           `json:"unknown_intervals"`
@@ -78,6 +90,104 @@ func NextDaily(now time.Time) time.Time {
 		next = next.AddDate(0, 0, 1)
 	}
 	return next.UTC()
+}
+
+// TodayUsage follows the explicit daily rule: today's last snapshot minus
+// yesterday's last snapshot. Without a yesterday snapshot the delta between
+// today's first and last observation is a lower bound and carries its start.
+func TodayUsage(snapshots []Snapshot, now time.Time) []TodayTotal {
+	local := now.In(Location)
+	todayStart := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, Location)
+	tomorrow, yesterday := todayStart.AddDate(0, 0, 1), todayStart.AddDate(0, 0, -1)
+	byAccount := map[string][]Snapshot{}
+	order := []string{}
+	for _, s := range snapshots {
+		kind := snapshotCounterKind(s)
+		if s.Status != "ok" || !validCounter(s, kind) {
+			continue
+		}
+		if _, exists := byAccount[s.AccountKey]; !exists {
+			order = append(order, s.AccountKey)
+		}
+		byAccount[s.AccountKey] = append(byAccount[s.AccountKey], s)
+	}
+	out := []TodayTotal{}
+	for _, key := range order {
+		list := byAccount[key]
+		sort.SliceStable(list, func(i, j int) bool { return list[i].CapturedAt.Before(list[j].CapturedAt) })
+		var firstToday, lastToday, lastYesterday *Snapshot
+		for index := range list {
+			s := &list[index]
+			at := s.CapturedAt.In(Location)
+			switch {
+			case !at.Before(todayStart) && at.Before(tomorrow):
+				if firstToday == nil {
+					firstToday = s
+				}
+				lastToday = s
+			case !at.Before(yesterday) && at.Before(todayStart):
+				lastYesterday = s
+			}
+		}
+		if firstToday == nil || lastToday == nil {
+			continue
+		}
+		kind := snapshotCounterKind(*lastToday)
+		if lastYesterday != nil && snapshotCounterKind(*lastYesterday) == kind {
+			if current, ok := counterValue(*lastToday, kind); ok {
+				if previous, ok := counterValue(*lastYesterday, kind); ok {
+					delta, measured := todayDelta(kind, previous, current)
+					if measured {
+						out = append(out, TodayTotal{AccountKey: key, Bytes: &delta, Estimated: kind == "notice_remaining"})
+						continue
+					}
+				}
+			}
+		}
+		// No usable yesterday snapshot (or a counter reset): only today's own
+		// observation window is known, so report its delta as a lower bound.
+		if lastToday.CapturedAt.After(firstToday.CapturedAt) {
+			current, currentOK := counterValue(*lastToday, kind)
+			first, firstOK := counterValue(*firstToday, kind)
+			if delta, measured := todayDelta(kind, first, current); currentOK && firstOK && measured {
+				since := firstToday.CapturedAt
+				out = append(out, TodayTotal{AccountKey: key, Bytes: &delta, Estimated: kind == "notice_remaining", LowerBound: true, Since: &since})
+			}
+		}
+	}
+	return out
+}
+
+// todayDelta returns upload+download growth or remaining-balance decrease.
+// Counters going the other way mean a reset; that window is not measurable.
+func todayDelta(kind string, earlier, later int64) (int64, bool) {
+	if kind == "notice_remaining" {
+		if later > earlier {
+			return 0, false
+		}
+		return earlier - later, true
+	}
+	if later < earlier {
+		return 0, false
+	}
+	return later - earlier, true
+}
+
+func counterValue(s Snapshot, kind string) (int64, bool) {
+	if !validCounter(s, kind) {
+		return 0, false
+	}
+	switch kind {
+	case "subscription_header":
+		if *s.Upload > (1<<62)-*s.Download {
+			return 0, false
+		}
+		return *s.Upload + *s.Download, true
+	case "notice_remaining":
+		return *s.Remaining, true
+	default:
+		return 0, false
+	}
 }
 
 func ParseRange(from, until, period string) (time.Time, time.Time, error) {

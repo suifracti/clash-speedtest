@@ -24,6 +24,8 @@ type Subscription struct {
 	LastFailureAt      time.Time                 `json:"last_failure_at,omitempty"`
 	LastFailureCode    string                    `json:"last_failure_code,omitempty"`
 	LastFailureMessage string                    `json:"last_failure_message,omitempty"`
+	LastUsageAttemptAt time.Time                 `json:"last_usage_attempt_at,omitempty"`
+	LastUsageFailed    bool                      `json:"last_usage_failed,omitempty"`
 	Usage              *SubscriptionUsage        `json:"usage,omitempty"`
 	ID                 string                    `json:"id"`
 	Name               string                    `json:"name"`

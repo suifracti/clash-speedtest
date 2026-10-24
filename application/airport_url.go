@@ -40,19 +40,21 @@ func subscriptionDTO(airportID string, sub *profiles.Subscription, nodeCount int
 		}
 	}
 	return SubscriptionDTO{
-		NodeChanges:   sub.NodeVersions.Changes(),
-		UserAgent:     sub.UserAgent,
-		Usage:         sub.Usage,
-		ID:            sub.ID,
-		AirportID:     airportID,
-		Name:          sub.Name,
-		URLDisplay:    safeAirportURLDisplay(sub.URL),
-		URLConfigured: strings.TrimSpace(sub.URL) != "",
-		Note:          sub.Note,
-		UpdatedAt:     sub.UpdatedAt,
-		NodeCount:     nodeCount,
-		HasCache:      hasCache,
-		Status:        status,
+		NodeChanges:       sub.NodeVersions.Changes(),
+		UserAgent:         sub.UserAgent,
+		Usage:             sub.Usage,
+		ID:                sub.ID,
+		AirportID:         airportID,
+		Name:              sub.Name,
+		URLDisplay:        safeAirportURLDisplay(sub.URL),
+		URLConfigured:     strings.TrimSpace(sub.URL) != "",
+		Note:              sub.Note,
+		UpdatedAt:         sub.UpdatedAt,
+		LastAttemptAt:     sub.LastUsageAttemptAt,
+		LastAttemptFailed: sub.LastUsageFailed,
+		NodeCount:         nodeCount,
+		HasCache:          hasCache,
+		Status:            status,
 	}
 }
 

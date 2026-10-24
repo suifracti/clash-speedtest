@@ -53,7 +53,9 @@ describe('AirportsView manual refresh jobs',()=>{
     expect(mocks.workspace.notify).toHaveBeenCalledWith('账户用量已刷新')
     const error=new Error('fixture failure');mocks.request.mockRejectedValueOnce(error)
     await wrapper.findAll('[aria-label="刷新用量"]')[0].trigger('click');await flushPromises()
-    expect(mocks.workspace.fail).toHaveBeenCalledWith(error)
+    // 失败不弹窗：只重新读取缓存，行内显示上一次刷新时间。
+    expect(mocks.workspace.fail).not.toHaveBeenCalled()
+    expect(mocks.workspace.refreshNodes).toHaveBeenCalled()
   })
   it('starts a selected subscription job and exposes progress and cancellation',async()=>{
     const running=job('refresh-running','running',[{airport_id:'airport-a',subscription_id:'account-a2',airport_name:'A',subscription_name:'A2',state:'fetching',stages:[{state:'fetching',at:'2026-10-11T00:00:01Z'}]}])
