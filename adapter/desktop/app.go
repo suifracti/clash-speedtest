@@ -67,6 +67,9 @@ func (a *App) Startup(ctx context.Context) {
 		a.emitter.SetContext(ctx)
 	}
 	if a.app != nil {
+		// The desktop build never goes through the HTTP server's Start(), so
+		// kick the same startup usage refresh and two-hour ticker here.
+		a.app.StartSubscriptionRefresh(a.userAgent)
 		if err := a.app.RecoverMonitorJobs(ctx); err != nil {
 			log.Printf("Monitor startup recovery did not run: %v", err)
 		}
