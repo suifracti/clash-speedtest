@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import {date} from '../domain'
 import {unlockResult} from '../unlock'
-import {hideHoverTip,showHoverTip} from '../hoverTip'
+import {hideHoverTip,shortReason,showHoverTip} from '../hoverTip'
 import type {TrendPoint} from '../presentation'
 const props=defineProps<{points:TrendPoint[];label:string;serviceId:string}>(),emit=defineEmits<{(e:'open',point:TrendPoint):void}>()
 const value=(point:TrendPoint)=>{const attempt=point.attempts?.find(a=>(a.service_id||a.rule.service_id)===props.serviceId);const state=unlockResult(attempt).state;return state==='available'?1:state==='unavailable'?0:state==='partial'?2:state==='verification'?3:null}
 const conclusion=(point:TrendPoint)=>{const result=unlockResult(point.attempts?.find(a=>(a.service_id||a.rule.service_id)===props.serviceId));return result.state==='available'?'可用':result.label}
-const tip=(point:TrendPoint)=>date(point.time)+' · '+conclusion(point)+' · '+(point.description||'没有说明')
+// The service verdict carries the real cause; the round summary only adds telemetry.
+const reason=(point:TrendPoint)=>shortReason(unlockResult(point.attempts?.find(a=>(a.service_id||a.rule.service_id)===props.serviceId)).reason||point.description||'')
+const tip=(point:TrendPoint)=>date(point.time)+' · '+conclusion(point)+(reason(point)?' · '+reason(point):'')
 </script>
 <template>
  <span class="recorded-bars" :aria-label="label"><button v-for="point in points" :key="point.id" type="button" class="recorded-mark" :class="value(point)===1?'good':value(point)===0?'bad':value(point)===2||value(point)===3?'partial':'unknown'" :aria-label="tip(point)" @mouseenter="showHoverTip($event,tip(point))" @mouseleave="hideHoverTip" @click="hideHoverTip();emit('open',point)"/></span>

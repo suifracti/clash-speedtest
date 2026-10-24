@@ -7,7 +7,7 @@ import {inspectorMedian as median,inspectorSamples as samples} from '../../inspe
 import {clashSampleVerdict} from '../../clashComparison'
 import {latencyRounds,latencyHistorySplit,readLatencyHistoryWithConfig,roundSiteDetails,type LatencySeries,type LatencyConfigChange,type RoundSiteDetail} from '../../latencyHistory'
 import {hourBuckets,hourConclusion,hourTitle,slowestHours} from '../../historyPulse'
-import {hideHoverTip,showHoverTip} from '../../hoverTip'
+import {hideHoverTip,shortReason,showHoverTip} from '../../hoverTip'
 import LatencyChart from './LatencyChart.vue'
 const props=defineProps<{series:LatencySeries[];node?:NodeOption;focus?:{id:string;test:LatencyTest}}>()
 const emit=defineEmits<{(e:'round-change',series:LatencySeries[]):void;(e:'return-latest'):void}>()
@@ -51,12 +51,6 @@ const hourReady=computed(()=>stats.value.total>=20)
 function sitesFor(round:{id:string}){return siteDetails.value.get(round.id)||[]}
 function toggleRound(id:string){selectedId.value=id;expandedId.value=expandedId.value===id?'':id}
 function siteToneText(tone:RoundSiteDetail['tone']){return tone==='good'?'全部响应':tone==='warn'?'部分响应':tone==='bad'?'无响应':'未测'}
-// Saved errors start with the probe URL and the node's own address; the tooltip
-// only needs the cause, so drop that prefix and keep the head and tail readable.
-function shortReason(reason:string){
- const at=reason.lastIndexOf('connect error: '),tail=(at>=0?reason.slice(at+'connect error: '.length):reason).replace(/\s+/g,' ').trim()
- return tail.length>72?tail.slice(0,44)+' … '+tail.slice(-24):tail
-}
 function showSiteTip(event:MouseEvent,time:string,site:RoundSiteDetail){showHoverTip(event,`${date(time)} · ${site.name} ${siteToneText(site.tone)} · ${site.responses}/${site.total} 次成功${site.reason?' · '+shortReason(site.reason):''}`)}
 onBeforeUnmount(hideHoverTip)
 const hourData=computed(()=>hourBuckets(stats.value.rounds)),bandNote=computed(()=>hourConclusion(stats.value.rounds)),slowest=computed(()=>slowestHours(hourData.value))

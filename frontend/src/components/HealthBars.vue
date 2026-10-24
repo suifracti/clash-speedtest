@@ -4,7 +4,7 @@ import {latencyTargetId} from '../latencyTargets'
 import {attemptTone,triggerLabel} from '../measurementRounds'
 import {observeVisibleArea} from '../visibleArea'
 import {date} from '../domain'
-import {hideHoverTip,showHoverTip} from '../hoverTip'
+import {hideHoverTip,shortReason,showHoverTip} from '../hoverTip'
 import type {TrendPoint} from '../presentation'
 const props=defineProps<{points:TrendPoint[];label:string;selectedId?:string;aggregate?:boolean;defer?:boolean;sites?:{id:string;name:string;match:string}[];serviceIds?:string[]}>(),emit=defineEmits<{open:[point:TrendPoint];inspect:[point:TrendPoint];leave:[]}>()
 const holder=ref<HTMLElement>(),capacity=ref(16),inView=ref(!props.defer||typeof IntersectionObserver==='undefined'),focused=ref(false)
@@ -27,8 +27,8 @@ const columns=computed(()=>visible.value.map((point,i)=>({point,i,layers:layers(
 function focusIn(e:FocusEvent){focused.value=true;if(e.target===holder.value)void nextTick(()=>{if(document.activeElement===holder.value)holder.value?.querySelector<HTMLButtonElement>('button.has-record')?.focus({preventScroll:true})})}
 function blur(e:FocusEvent){if(!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node|null)){focused.value=false;leaveGroup()}}
 const toneText={good:'全部通过',warn:'部分失败',bad:'全部失败',empty:'未完成'} as const
-function pointTip(point:TrendPoint){return date(point.time)+' · '+triggerLabel(point.trigger)+' · '+toneText[point.tone]+' · '+(point.description||'没有补充说明')}
-function segmentTip(point:TrendPoint|null,sample:{description:string}){return (point?date(point.time)+' · ':'')+sample.description+' · '+(point?.description||'没有补充说明')}
+function pointTip(point:TrendPoint){return date(point.time)+' · '+triggerLabel(point.trigger)+' · '+toneText[point.tone]+' · '+shortReason(point.description||'没有补充说明')}
+function segmentTip(point:TrendPoint|null,sample:{description:string}){return (point?date(point.time)+' · ':'')+shortReason(sample.description)+' · '+shortReason(point?.description||'没有补充说明')}
 function enterPoint(event:MouseEvent,point:TrendPoint|null){if(!recorded(point)){hideHoverTip();emit('leave');return}showHoverTip(event,pointTip(point));emit('inspect',point)}
 function leaveGroup(){hideHoverTip();emit('leave')}
 </script>
