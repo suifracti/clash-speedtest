@@ -4,7 +4,7 @@ import {api,type ClashCompareResult,type ClashNodeStatus} from '../../api'
 import {manualLatencyPoint} from '../../presentation'
 import {date,key,type NodeOption,type LatencyTest} from '../../domain'
 import {inspectorMedian as median,inspectorSamples as samples} from '../../inspectorLatency'
-import {clashVerdict} from '../../clashComparison'
+import {clashSampleVerdict} from '../../clashComparison'
 import {latencyRounds,latencyHistorySplit,readLatencyHistoryWithConfig,type LatencySeries,type LatencyConfigChange} from '../../latencyHistory'
 import {heartbeatRounds,hourBuckets,hourConclusion,hourTitle,pulseTone,pulseTitle,responseWindows,slowestHours} from '../../historyPulse'
 import LatencyChart from './LatencyChart.vue'
@@ -60,9 +60,7 @@ const comparisonHost=computed(()=>{try{return new URL(clashComparison.value?.tar
 const comparisonVerdict=computed(()=>{
  const r=clashComparison.value
  if(!r)return {text:'',tone:'empty'}
- const cst=r.cst.every(s=>s.success),clash=r.clash.every(s=>s.success)
- if(cst||clash||[...r.cst,...r.clash].every(s=>!s.success))return clashVerdict(cst,clash)
- return {text:'两次结果有差异，请看明细',tone:'warn'}
+ return clashSampleVerdict(r.cst.map(s=>s.success),r.clash.map(s=>s.success))
 })
 const pct=(v:number)=>Math.min(100,Math.max(0,v/1500*100))+'%'
 const ms=(v:number|null|undefined)=>v==null?'—':Math.round(v).toLocaleString()+' ms'
