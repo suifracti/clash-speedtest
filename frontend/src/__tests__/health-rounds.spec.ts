@@ -118,7 +118,7 @@ it('marks manual and scheduled cells with different borders while preserving res
  const wrapper=mount(HealthBars,{props:{points,label:'下载'}}),cells=wrapper.findAll('.health-cell.has-record')
  expect(cells[0].classes()).toContain('trigger-manual');expect(cells[1].classes()).toContain('trigger-scheduled')
  expect(cells[0].find('.health-segment.bad').exists()).toBe(true);expect(cells[1].find('.health-segment.good').exists()).toBe(true)
- expect(cells[0].attributes('title')).toContain('手动');expect(cells[1].attributes('title')).toContain('定时')
+ expect(cells[0].attributes('aria-label')).toContain('手动');expect(cells[1].attributes('aria-label')).toContain('定时')
  wrapper.unmount()
 })
 

@@ -23,6 +23,37 @@ export function latencyRounds(series:LatencySeries[]){
   return {...r,series:selected,stable:stableLatency(selected),first:inspectorMedian(selected.flatMap(s=>{const v=s.points[0]?inspectorSamples(s.points[0],s.id)[0]?.value:null;return v==null?[]:[v]})),responses,total:samples.length,failedSites,failureSummary:failureText(failedSites,responses,'summary'),failureDetail:failureText(failedSites,responses,'detail'),oldConfig:selected.some(s=>s.points.some(p=>p.oldConfig))}
  }).sort((a,b)=>Date.parse(a.time)-Date.parse(b.time))
 }
+export type LatencyRound = ReturnType<typeof latencyRounds>[number]
+export type RoundSiteTone = 'good' | 'warn' | 'bad' | 'empty'
+export interface RoundSiteDetail {id:string;name:string;stable:number|null;first:number|null;responses:number;total:number;tone:RoundSiteTone;reason:string}
+// One row per site inside a saved round: stable latency drops the first
+// sample, first connection is that first sample, and the tone is based on
+// how many of the saved samples actually responded.
+export function roundSiteDetails(round: LatencyRound): RoundSiteDetail[] {
+ return round.series.map(s => {
+  const point = s.points.find(p => p.id === round.id)
+  const list = point ? inspectorSamples(point, s.id) : []
+  const values = list.flatMap(p => p.value === null ? [] : [p.value])
+  const failed = list.find(p => p.value === null)
+  const total = list.length, responses = values.length
+  return {
+   id: s.id,
+   name: s.name,
+   stable: inspectorMedian(list.slice(1).flatMap(p => p.value === null ? [] : [p.value])),
+   first: list[0]?.value ?? null,
+   responses,
+   total,
+   tone: !total ? 'empty' : !responses ? 'bad' : responses === total ? 'good' : 'warn',
+   reason: !total ? '没有采样记录' : failed?.error || failed?.note || '',
+  }
+ })
+}
+export interface LatencyMedianPoint {id:string;time:string;value:number|null;details:RoundSiteDetail[]}
+// The history chart keeps one point per round: the median of the four sites'
+// stable latencies. A round where no site produced a stable value is a failure.
+export function latencyMedianPoints(series: LatencySeries[]): LatencyMedianPoint[] {
+ return latencyRounds(series).map(round => ({id: round.id, time: round.time, value: round.stable, details: roundSiteDetails(round)}))
+}
 export function latencyHistoryStats(series:LatencySeries[]){
  const rounds=latencyRounds(series),values=rounds.flatMap(r=>r.stable===null?[]:[r.stable]).sort((a,b)=>a-b)
  const percentile=(p:number)=>{const x=(values.length-1)*p,i=Math.floor(x);return values[i]+(values[Math.ceil(x)]-values[i])*(x-i)}

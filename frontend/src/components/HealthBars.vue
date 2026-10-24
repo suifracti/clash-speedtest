@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import {computed,nextTick,onBeforeUnmount,onMounted,ref} from 'vue'
 import {latencyTargetId} from '../latencyTargets'
-import {attemptTone} from '../measurementRounds'
-import {triggerLabel} from '../measurementRounds'
+import {attemptTone,triggerLabel} from '../measurementRounds'
 import {observeVisibleArea} from '../visibleArea'
+import {date} from '../domain'
+import {hideHoverTip,showHoverTip} from '../hoverTip'
 import type {TrendPoint} from '../presentation'
 const props=defineProps<{points:TrendPoint[];label:string;selectedId?:string;aggregate?:boolean;defer?:boolean;sites?:{id:string;name:string;match:string}[];serviceIds?:string[]}>(),emit=defineEmits<{open:[point:TrendPoint];inspect:[point:TrendPoint];leave:[]}>()
 const holder=ref<HTMLElement>(),capacity=ref(16),inView=ref(!props.defer||typeof IntersectionObserver==='undefined'),focused=ref(false)
@@ -24,9 +25,14 @@ function layers(point:TrendPoint|null){
 }
 const columns=computed(()=>visible.value.map((point,i)=>({point,i,layers:layers(point)})))
 function focusIn(e:FocusEvent){focused.value=true;if(e.target===holder.value)void nextTick(()=>{if(document.activeElement===holder.value)holder.value?.querySelector<HTMLButtonElement>('button.has-record')?.focus({preventScroll:true})})}
-function blur(e:FocusEvent){if(!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node|null)){focused.value=false;emit('leave')}}
+function blur(e:FocusEvent){if(!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node|null)){focused.value=false;leaveGroup()}}
+const toneText={good:'全部通过',warn:'部分失败',bad:'全部失败',empty:'未完成'} as const
+function pointTip(point:TrendPoint){return date(point.time)+' · '+triggerLabel(point.trigger)+' · '+toneText[point.tone]+' · '+(point.description||'没有补充说明')}
+function segmentTip(point:TrendPoint|null,sample:{description:string}){return (point?date(point.time)+' · ':'')+sample.description+' · '+(point?.description||'没有补充说明')}
+function enterPoint(event:MouseEvent,point:TrendPoint|null){if(!recorded(point)){hideHoverTip();emit('leave');return}showHoverTip(event,pointTip(point));emit('inspect',point)}
+function leaveGroup(){hideHoverTip();emit('leave')}
 </script>
-<template><div ref="holder" class="health-bars" :tabindex="defer&&!renderCells?0:undefined" role="group" :aria-label="label+'历史状态，悬停查看本轮数据'" @keydown="move" @mouseleave="emit('leave')" @focusout="blur" @focusin="focusIn"><template v-if="renderCells"><button v-for="{point,i,layers:segments} in columns" :key="point?.id||i" type="button" class="health-cell" :class="{'has-record':recorded(point),'selected-round':!!selectedId&&point?.id===selectedId,[`trigger-${point?.trigger||'unknown'}`]:recorded(point)}" :title="recorded(point)?triggerLabel(point.trigger)+' · '+point.description:undefined" :tabindex="recorded(point)?0:-1" :aria-disabled="!recorded(point)||undefined" :aria-pressed="recorded(point)&&selectedId?point.id===selectedId:undefined" :aria-label="recorded(point)?label+' · '+point.description:point?label+' · 暂无检测记录':'没有记录'" @mouseenter="recorded(point)?emit('inspect',point):emit('leave')" @focus="recorded(point)&&emit('inspect',point)" @click="($event.currentTarget as HTMLElement).focus({preventScroll:true});recorded(point)&&emit('open',point)"><span class="health-column"><i v-for="sample in segments" :key="sample.id" class="health-segment" :class="sample.tone" :style="{flex:sample.weight}" :title="sample.description"/></span></button></template><span v-else class="health-cell health-placeholder" aria-hidden="true"/></div></template>
+<template><div ref="holder" class="health-bars" :tabindex="defer&&!renderCells?0:undefined" role="group" :aria-label="label+'历史状态，悬停查看本轮数据'" @keydown="move" @mouseleave="leaveGroup" @focusout="blur" @focusin="focusIn"><template v-if="renderCells"><button v-for="{point,i,layers:segments} in columns" :key="point?.id||i" type="button" class="health-cell" :class="{'has-record':recorded(point),'selected-round':!!selectedId&&point?.id===selectedId,[`trigger-${point?.trigger||'unknown'}`]:recorded(point)}" :tabindex="recorded(point)?0:-1" :aria-disabled="!recorded(point)||undefined" :aria-pressed="recorded(point)&&selectedId?point.id===selectedId:undefined" :aria-label="recorded(point)?pointTip(point):point?label+' · 暂无检测记录':'没有记录'" @mouseenter="enterPoint($event,point)" @focus="recorded(point)&&emit('inspect',point)" @click="($event.currentTarget as HTMLElement).focus({preventScroll:true});hideHoverTip();recorded(point)&&emit('open',point)"><span class="health-column"><i v-for="sample in segments" :key="sample.id" class="health-segment" :class="sample.tone" :style="{flex:sample.weight}" :aria-label="sample.description" @mouseenter.stop="showHoverTip($event,segmentTip(point,sample))" @mouseleave.stop="hideHoverTip"/></span></button></template><span v-else class="health-cell health-placeholder" aria-hidden="true"/></div></template>
 <style scoped>
 .health-placeholder{pointer-events:none}
 .health-cell.selected-round{outline:2px solid var(--blue);outline-offset:2px;border-radius:1px}

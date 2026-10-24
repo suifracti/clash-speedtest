@@ -198,7 +198,7 @@ describe('shared node selection',()=>{
     const rows=wrapper.findAll('.hd-service-row')
     expect(rows).toHaveLength(2)
     expect(rows[0].text()).toContain('Netflix')
-    expect(rows[1].find('.recorded-mark').attributes('title')).toContain('无法判断')
+    expect(rows[1].find('.recorded-mark').attributes('aria-label')).toContain('无法判断')
     await rows[1].find('.hd-site-name').trigger('click');await flushPromises()
     const panel={find:(selector:string)=>({text:()=>document.body.querySelector(selector)?.textContent||''})}
     expect(panel.find('.measurement-results').text()).toContain('YouTube')
@@ -212,7 +212,7 @@ describe('shared node selection',()=>{
     w.services.value[key(a)]=[{...a,attempt_id:'netflix-a',request_id:'netflix-round',service_id:'netflix_unlock',requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',rule:{name:'Netflix',target_url:''},result:{outcome:'matched',bytes_read:0,finished_at:at}}]
     const wrapper=attach(HomeView,w);await flushPromises()
     expect(wrapper.findAll('.recorded-mark')).toHaveLength(1)
-    expect(wrapper.get('.recorded-mark').attributes('title')).toContain('可用')
+    expect(wrapper.get('.recorded-mark').attributes('aria-label')).toContain('可用')
     await wrapper.get('.hd-service-row .hd-site-name').trigger('click');await flushPromises()
     expect(document.body.querySelector('.measurement-results')?.textContent).toContain('Netflix')
     expect(w.serviceIds.value).toEqual(['netflix_unlock'])

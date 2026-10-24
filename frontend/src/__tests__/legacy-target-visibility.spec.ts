@@ -27,7 +27,7 @@ it('keeps an unrecognized RTT target inspectable without attributing it to a kno
  // 每个现行站点一格（都为空），再加一格“旧/未知目标”。
  expect(segments).toHaveLength(targets.length+1)
  expect(segments.slice(0,targets.length).every(s=>s.classes().includes('empty'))).toBe(true)
- expect(segments[targets.length].attributes('title')).toContain('旧/未知目标')
+ expect(segments[targets.length].attributes('aria-label')).toContain('旧/未知目标')
  await record.trigger('click');expect(ui.emitted('open')?.[0]?.[0]).toEqual(points[0])
  expect(monitorLatencyPoints([sample],'cloudflare')).toEqual([])
  ui.unmount()

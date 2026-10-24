@@ -27,7 +27,7 @@ function records(id:string){return m.servicePoints(props.node,id).filter(p=>!p.i
    <button class="hd-site-value unlock-state" :class="s.result.tone" :title="s.result.reason" @click="m.showService(node,s.id)">{{s.skip?'—':s.result.label}}<small v-if="s.attempt?.result&&(s.id==='netflix_unlock'||s.id==='netflix_unlock_ipv4')">未验证账号播放</small></button>
    <p v-if="s.skip" class="unlock-reason">{{s.skip}}</p>
    <p v-if="!s.skip&&s.result.reason&&s.result.reason!=='未验证账号播放'&&s.result.state!=='available'" class="unlock-reason">{{s.result.reason}}</p>
-   <div v-if="!s.skip" class="unlock-meta"><time v-if="s.at">{{s.at}}</time><RecordedBars :service-id="s.id" :points="records(s.id)" :label="s.name+' 实际检测记录'"/></div>
+   <div v-if="!s.skip" class="unlock-meta"><time v-if="s.at">{{s.at}}</time><RecordedBars :service-id="s.id" :points="records(s.id)" :label="s.name+' 实际检测记录'" @open="m.openRound(node,'service',$event,w.displayTarget.value,s.id)"/></div>
   </div>
  </component></template><p v-if="!groups.length" class="hd-muted">还没有解锁检测记录。</p>
 </div></template>

@@ -34,7 +34,7 @@ describe('global charts and large service rounds',()=>{
     const point:TrendPoint={id:'round-r',time:'2026-10-01T00:00:01Z',value:.4,tone:'warn',description:'8/20 项服务通过',attempts,samples:attempts.map((a,i)=>({id:a.attempt_id,time:a.requested_at,value:i<8?1:0,tone:i<8?'good':i<14?'warn':'bad',description:a.rule.name!,label:a.rule.name!}))}
     const bar=mount(HealthBars,{props:{points:[point],label:'解锁检测',aggregate:true}})
     const bands=bar.find('.health-cell.has-record').findAll('.health-segment')
-    expect(bands.map(b=>b.attributes('title'))).toEqual(['8 项通过','6 项受限','6 项失败'])
+    expect(bands.map(b=>b.attributes('aria-label'))).toEqual(['8 项通过','6 项受限','6 项失败'])
     await bar.find('.health-cell.has-record').trigger('mouseenter')
     expect((bar.emitted('inspect')![0][0] as TrendPoint).attempts).toHaveLength(20)
     const results=mount(MeasurementResults,{props:{point,project:'service'}})

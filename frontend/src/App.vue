@@ -20,6 +20,7 @@ import {latencyReportText} from './latencyReport'
 import QueueModal from './components/QueueModal.vue'
 import AutoPickReportModal from './components/AutoPickReportModal.vue'
 import CommandPalette from './components/CommandPalette.vue'
+import HoverTip from './components/HoverTip.vue'
 import {projectNames} from './domain'
 import AirportSidebar from './components/AirportSidebar.vue'
 const w=createWorkspace();provide(workspaceKey,w);useLocalNotifications(w)
@@ -99,5 +100,6 @@ onBeforeUnmount(()=>{document.removeEventListener('visibilitychange',visibilityC
     <AutoPickReportModal v-if="w.autoPickReportId.value" :key="w.autoPickReportId.value" :report-id="w.autoPickReportId.value" @close="w.autoPickReportId.value=''"/>
     <NodeDetailModal v-if="w.inspectNode.value" :key="w.inspectNode.value.profile_id+w.inspectNode.value.node_key" :node="w.inspectNode.value" @close="w.inspectNode.value=null"/>
     <Modal v-if="w.authRequired.value" title="访问此工作台" :closable="false"><form @submit.prevent="login"><p class="muted">输入此服务的访问密码。</p><label class="form-stack">访问密码<input v-model="password" type="password" autofocus autocomplete="current-password" required></label><p v-if="loginError" class="inline-error" role="alert">{{loginError}}</p><div class="form-actions"><button class="button primary" :disabled="loggingIn" type="submit">{{loggingIn?'正在登录…':'登录'}}</button></div></form></Modal>
+    <HoverTip/>
   </div>
 </template>
