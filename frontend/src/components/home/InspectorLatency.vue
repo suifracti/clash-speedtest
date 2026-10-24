@@ -55,7 +55,7 @@ function siteToneText(tone:RoundSiteDetail['tone']){return tone==='good'?'全部
 // only needs the cause, so drop that prefix and keep the head and tail readable.
 function shortReason(reason:string){
  const at=reason.lastIndexOf('connect error: '),tail=(at>=0?reason.slice(at+'connect error: '.length):reason).replace(/\s+/g,' ').trim()
- return tail.length>72?tail.slice(0,44)+'…'+tail.slice(-24):tail
+ return tail.length>72?tail.slice(0,44)+' … '+tail.slice(-24):tail
 }
 function showSiteTip(event:MouseEvent,time:string,site:RoundSiteDetail){showHoverTip(event,`${date(time)} · ${site.name} ${siteToneText(site.tone)} · ${site.responses}/${site.total} 次成功${site.reason?' · '+shortReason(site.reason):''}`)}
 onBeforeUnmount(hideHoverTip)
