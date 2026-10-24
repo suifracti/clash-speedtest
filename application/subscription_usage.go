@@ -308,6 +308,11 @@ func (s *AppService) collectSubscriptionUsage(ctx context.Context, now time.Time
 			retErr = errors.Join(retErr, fmt.Errorf("保存用量更新终态失败：%w", err))
 			return
 		}
+		// Start-up and scheduled runs finish without a client request, so the
+		// pages showing counters need an event to read them again.
+		if s.emitter != nil {
+			s.emitter.Emit(Event{Type: "subscription_usage_updated", Payload: map[string]any{"state": state, "message": message}})
+		}
 		var err error
 		result, err = s.historyStore.SubscriptionRefreshState(finishCtx)
 		retErr = errors.Join(retErr, err)
