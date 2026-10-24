@@ -40,7 +40,7 @@ beforeEach(()=>{
   refreshMocks.refreshJob.mockReset()
   refreshMocks.cancelRefresh.mockReset()
 })
-afterEach(()=>{wrapper?.unmount();wrapper=undefined;vi.clearAllMocks()})
+afterEach(()=>{wrapper?.unmount();wrapper=undefined;vi.useRealTimers();vi.clearAllMocks()})
 
 describe('SubscriptionOverview status strip',()=>{
   it('does not expose or draw a usage ratio without a real total',async()=>{
@@ -106,8 +106,9 @@ describe('SubscriptionOverview status strip',()=>{
   })
 
   it('keeps a failed refresh in the row as a gray last-refresh note and reuses cache inside thirty minutes',async()=>{
+    vi.useFakeTimers({toFake:['Date','setInterval','clearInterval']})
     const recent=new Date(Date.now()-5*60*1000).toISOString()
-    const single={...airportA,subscriptions:[{...airportA.subscriptions![0],last_attempt_at:recent,last_attempt_failed:true}]}
+    const single={...airportA,subscriptions:[{...airportA.subscriptions![0],last_attempt_at:recent,last_attempt_failed:true},airportA.subscriptions![1]!]}
     const workspace=createWorkspace()
     workspace.airports.value=[single]
     wrapper=mount(SubscriptionOverview,{props:{airports:[single],notices:[],airportId:'all'},global:{provide:{[workspaceKey as symbol]:workspace}}})
@@ -121,6 +122,9 @@ describe('SubscriptionOverview status strip',()=>{
     await refreshAll.trigger('click')
     await flushPromises()
     expect(refreshMocks.startRefresh).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(25*60*1000);await flushPromises()
+    expect(refreshAll.attributes('disabled')).toBeUndefined()
+    expect(wrapper!.text()).not.toContain('30 分钟内已刷新')
   })
 
   it('sends selected and full workspace refresh scopes without changing measurement scope',async()=>{

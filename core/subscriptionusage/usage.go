@@ -146,7 +146,7 @@ func TodayUsage(snapshots []Snapshot, now time.Time) []TodayTotal {
 		}
 		// No usable yesterday snapshot (or a counter reset): only today's own
 		// observation window is known, so report its delta as a lower bound.
-		if lastToday.CapturedAt.After(firstToday.CapturedAt) {
+		if !lastToday.CapturedAt.Before(firstToday.CapturedAt) {
 			current, currentOK := counterValue(*lastToday, kind)
 			first, firstOK := counterValue(*firstToday, kind)
 			if delta, measured := todayDelta(kind, first, current); currentOK && firstOK && measured {

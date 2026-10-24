@@ -161,7 +161,7 @@ func TestTodayUsageUsesYesterdayCloseAndLowerBoundFallback(t *testing.T) {
 		// No yesterday snapshot: today's own window is a lower bound.
 		fixture("b", "2026-10-24T08:00:00+08:00", 0, 500),
 		fixture("b", "2026-10-24T12:00:00+08:00", 0, 560),
-		// A single observation cannot measure anything yet.
+		// A first observation starts the lower-bound window at zero.
 		fixture("c", "2026-10-24T12:00:00+08:00", 0, 700),
 		// A counter reset falls back to today's first observation.
 		fixture("d", "2026-10-23T23:00:00+08:00", 0, 1000),
@@ -183,8 +183,9 @@ func TestTodayUsageUsesYesterdayCloseAndLowerBoundFallback(t *testing.T) {
 	if b.Bytes == nil || *b.Bytes != 60 || !b.LowerBound || b.Since == nil || !b.Since.Equal(mustTime("2026-10-24T08:00:00+08:00")) {
 		t.Fatalf("lower-bound delta: %+v", b)
 	}
-	if _, exists := got["c"]; exists {
-		t.Fatalf("single observation became a daily total: %+v", got["c"])
+	c := got["c"]
+	if c.Bytes == nil || *c.Bytes != 0 || !c.LowerBound || c.Since == nil {
+		t.Fatalf("first observation should start a lower-bound window: %+v", c)
 	}
 	d := got["d"]
 	if d.Bytes == nil || *d.Bytes != 20 || !d.LowerBound {

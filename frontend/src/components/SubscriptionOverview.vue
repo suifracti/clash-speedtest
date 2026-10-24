@@ -6,6 +6,7 @@ import {airportAccounts,noticesForAccount,safeAirportLink,parseNoticeUsage,type 
 import {useWorkspace} from '../workspace'
 import {accountDailyUsage,shanghaiDay,shiftDay,type DayUsage} from '../usageDaily'
 import SubscriptionChanges from './SubscriptionChanges.vue'
+import {useUsageRefreshWindow} from '../usageRefreshWindow'
 import Modal from './Modal.vue'
 import UsageDays from './UsageDays.vue'
 
@@ -115,10 +116,9 @@ watch(()=>[rowMode.value,displayedAccounts.value.map(a=>a.key).join('|'),workspa
   }))
   dailyByAccount.value=Object.fromEntries(entries)
 },{immediate:true})
-const RECENT_REFRESH_MS=30*60*1000
+const airportRecentlyRefreshed=useUsageRefreshWindow()
 const hm=(value?:string|number)=>{const date=typeof value==='number'?new Date(value):value&&!value.startsWith('0001')?new Date(value):undefined;return date&&Number.isFinite(date.getTime())?date.toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hour12:false}):''}
-const lastAttemptTime=(account:AirportAccount)=>Date.parse(account.subscription.last_attempt_at||'')||0
-const recentlyRefreshed=(account:AirportAccount)=>Date.now()-lastAttemptTime(account)<RECENT_REFRESH_MS
+const recentlyRefreshed=(account:AirportAccount)=>airportRecentlyRefreshed(account.airport)
 function sumDay(list:AirportAccount[],index:number){
   const day=shiftDay(shanghaiDay(),-index)
   const values=list.map(account=>dailyByAccount.value[account.key]?.find(d=>d.date===day))
