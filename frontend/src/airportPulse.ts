@@ -53,9 +53,8 @@ export function airportBeats(nodes: AirportNodeTests[]): AirportBeat[] {
 }
 
 export function beatTone(beat: AirportBeat): 'good' | 'warn' | 'bad' {
- const dead = beat.total - beat.responded
- if (dead <= 0) return 'good'
- return beat.responded * 2 > beat.total ? 'warn' : 'bad'
+ const ratio = beat.total ? beat.responded / beat.total : 0
+ return ratio >= .9 ? 'good' : ratio >= .5 ? 'warn' : 'bad'
 }
 
 export function airportFaults(beats: AirportBeat[]): AirportFault[] {

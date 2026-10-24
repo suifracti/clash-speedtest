@@ -1,6 +1,9 @@
 import {key,type NodeOption} from './domain'
 import type {QualityEvidence} from './nodeQuality'
 import {shanghaiDay} from './usageDaily'
+import {activeLatencyTargets} from './latencyTargets'
+import {manualLatencyPoint,monitorLatencyPoints} from './presentation'
+import {latencyHistoryStats} from './latencyHistory'
 export function airportReport(nodes:NodeOption[],data:Record<string,QualityEvidence>){
  const rounds=new Map<string,{responses:number;samples:number}>(),failures=new Map<string,number>(),days=new Map<string,number[]>(),seen=new Set<string>()
  let incomplete=false
@@ -16,4 +19,14 @@ export function airportReport(nodes:NodeOption[],data:Record<string,QualityEvide
  }
  const list=[...rounds.values()],responses=list.reduce((n,r)=>n+r.responses,0),samples=list.reduce((n,r)=>n+r.samples,0),total=list.length
  return {total,responses,samples,rate:samples?responses/samples*100:null,failedRounds:list.filter(r=>r.responses<r.samples).length,incomplete,failures:[...failures].sort((a,b)=>b[1]-a[1]),trend:[...days].sort(([a],[b])=>a.localeCompare(b)).map(([day,values])=>({id:day,time:day+'T12:00:00+08:00',value:values.reduce((a,b)=>a+b,0)/values.length,tone:'good' as const,description:`${day} · ${values.length} 次响应样本`}))}
+}
+
+export function filterAirportNodes(nodes:NodeOption[],region:string,line:string,protocol:string){
+ return nodes.filter(n=>(region==='all'||n.country_code===region)&&(line==='all'||n.display_name.includes(line))&&(protocol==='all'||n.type===protocol))
+}
+export function airportNodeStats(evidence?:QualityEvidence){
+ return latencyHistoryStats(activeLatencyTargets.map(target=>({...target,context:'',points:[
+  ...(evidence?.tests||[]).map(test=>manualLatencyPoint(test,target.id)),
+  ...monitorLatencyPoints(evidence?.monitor||[],target.id),
+ ]})))
 }

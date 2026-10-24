@@ -1,6 +1,6 @@
 import {describe,expect,it} from 'vitest'
 import {hourBuckets,hourConclusion,type PulseRound} from '../historyPulse'
-import {airportFaults,type AirportBeat} from '../airportPulse'
+import {airportFaults,beatTone,type AirportBeat} from '../airportPulse'
 
 const round=(hour:number,stable:number,responses=4,total=4,day=21):PulseRound=>({id:`${day}-${hour}-${stable}-${responses}`,time:new Date(2026,9,day,hour,0).toISOString(),responses,total,stable,oldConfig:false})
 
@@ -29,6 +29,7 @@ const beat=(at:string,nodes:[string,boolean][]):AirportBeat=>({
 describe('故障事件',()=>{
  it('一轮超过一半节点无响应记一条整轮故障',()=>{
   const faults=airportFaults([beat('2026-10-21T11:00:00.000Z',[['a',false],['b',false],['c',false],['d',true],['e',true]])])
+  expect([9,5,4].map(responded=>beatTone({total:10,responded} as AirportBeat))).toEqual(['good','warn','bad'])
   expect(faults).toHaveLength(1)
   expect(faults[0]).toMatchObject({kind:'round',nodes:3,start:'2026-10-21T11:00:00.000Z'})
   expect(faults[0].detail).toContain('3/5')
