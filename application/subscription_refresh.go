@@ -880,6 +880,7 @@ func (s *AppService) refreshSubscriptionWithFetchLocked(ctx context.Context, air
 			return nil, &refreshError{Code: "persist", Message: "失败信息无法保存；旧缓存保留"}
 		}
 		snapshot := usageSnapshot(airport, sub, "refresh_failed", "subscription_update", now)
+		snapshot.RawError = truncateUsageError(cause)
 		if err := s.saveUsageObservations(context.WithoutCancel(ctx), []subscriptionusage.Snapshot{snapshot}); err != nil {
 			if failure.Code == "rollback_unconfirmed" {
 				return nil, failure

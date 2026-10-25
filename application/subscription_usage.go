@@ -113,6 +113,17 @@ func usageSnapshot(ap *profiles.Airport, sub *profiles.Subscription, status, sou
 	return snap
 }
 
+func truncateUsageError(err error) string {
+	if err == nil {
+		return ""
+	}
+	runes := []rune(err.Error())
+	if len(runes) > 200 {
+		runes = runes[:200]
+	}
+	return string(runes)
+}
+
 func noticeRemainingBytes(body []byte) (int64, bool) {
 	names, err := speedtester.SubscriptionNoticeNames(body)
 	if err != nil {

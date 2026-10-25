@@ -2,7 +2,7 @@ import {query,request} from './api'
 
 // 机场账户流量（订阅计数）按天读取。未知就是未知：不补 0、不平摊、不把计数重置当成省流量。
 export interface UsageBucket {date:string;bytes:number|null;upload:number|null;download:number|null;intervals:number;estimated_intervals:number}
-export interface UsageSnapshot {account_key:string;airport_id?:string;subscription_id?:string;airport_name:string;subscription_name:string;captured_at:string;status:string;counter_kind?:string;upload:number|null;download:number|null;remaining?:number;total?:number;source:string;message?:string}
+export interface UsageSnapshot {account_key:string;airport_id?:string;subscription_id?:string;airport_name:string;subscription_name:string;captured_at:string;status:string;counter_kind?:string;upload:number|null;download:number|null;remaining?:number;total?:number;source:string;message?:string;raw_error?:string}
 export interface UsageInterval {account_key:string;name:string;from?:string;until:string;bucket?:string;counter_kind?:string;bytes:number|null;upload:number|null;download:number|null;status:string;estimated:boolean;message?:string}
 export interface TodayTotal {account_key:string;bytes:number|null;estimated:boolean;lower_bound:boolean;since?:string}
 export interface UsageReport {from:string;until:string;period:string;buckets:UsageBucket[];intervals:UsageInterval[];accounts:UsageSnapshot[];today?:TodayTotal[];observed_bytes:number|null;unallocated_bytes:number|null;unknown_intervals:number;daily_enabled:boolean;refresh?:{last_attempt:string;next_refresh:string;state:string;message:string}}

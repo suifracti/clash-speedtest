@@ -325,7 +325,9 @@ func TestAutoPickWritesRoundsWithAutoPickTrigger(t *testing.T) {
 			autoPickNodeKey(nodes[0]): {LatencyMS: 120, ResponseRate: 100, Samples: 6, Success: 6},
 		}, nil
 	}
-	svc.autoPick().hooks.checkService = func(_ context.Context, _ monitor.MonitoredNode, _ publicservice.Rule) publicservice.Result {
+	checks := map[string]int{}
+	svc.autoPick().hooks.checkService = func(_ context.Context, _ monitor.MonitoredNode, rule publicservice.Rule) publicservice.Result {
+		checks[rule.ServiceID]++
 		return publicservice.Result{Outcome: "unlocked", RequestCount: 1, Summary: "可用", StartedAt: time.Now().UTC(), FinishedAt: time.Now().UTC()}
 	}
 
@@ -362,6 +364,14 @@ func TestAutoPickWritesRoundsWithAutoPickTrigger(t *testing.T) {
 		}
 		if item.Service.PersistenceState != "saved" {
 			t.Fatalf("service persistence: %q", item.Service.PersistenceState)
+		}
+	}
+
+	// 信誉结果与解锁共用历史；24小时内重跑精选不再查询这三家。
+	svc.runAutoPickRound("manual")
+	for _, id := range []string{"ippure_ip_quality", "ping0_ipv4", "ipok_ipv4"} {
+		if checks[id] != 1 {
+			t.Fatalf("%s checks=%d, want one query across both rounds", id, checks[id])
 		}
 	}
 

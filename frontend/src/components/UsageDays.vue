@@ -45,7 +45,7 @@ const caption=computed(()=>{
     <div v-if="chart&&series.length" class="cst-usage-bars" role="img" :aria-label="`近 ${series.length} 天账户用量；空白表示没有可归属的数据`">
       <span v-for="d in [...series].reverse()" :key="d.date" :class="{unknown:d.bytes==null,estimated:d.estimated}" :title="title(d)"><i :style="{height:d.bytes!=null?Math.max(6,d.bytes/max*100)+'%':'100%'}"/></span>
     </div>
-    <small class="cst-usage-caption" :class="{bad:!!error}" :title="account?.message||''">{{caption}}</small>
+    <small class="cst-usage-caption" :class="{bad:!!error}" :title="account?.raw_error||account?.message||''">{{caption}}</small>
   </div>
 </template>
 <style>

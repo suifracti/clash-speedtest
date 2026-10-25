@@ -25,8 +25,11 @@ export function filterAirportNodes(nodes:NodeOption[],region:string,line:string,
  return nodes.filter(n=>(region==='all'||n.country_code===region)&&(line==='all'||n.display_name.includes(line))&&(protocol==='all'||n.type===protocol))
 }
 export function airportNodeStats(evidence?:QualityEvidence){
- return latencyHistoryStats(activeLatencyTargets.map(target=>({...target,context:'',points:[
+ const stats=latencyHistoryStats(activeLatencyTargets.map(target=>({...target,context:'',points:[
   ...(evidence?.tests||[]).map(test=>manualLatencyPoint(test,target.id)),
   ...monitorLatencyPoints(evidence?.monitor||[],target.id),
  ]})))
+ const stableRounds=stats.rounds.flatMap(round=>round.stable===null?[]:[round.stable]).sort((a,b)=>a-b)
+ const percentile=(p:number)=>{const x=(stableRounds.length-1)*p,i=Math.floor(x);return stableRounds[i]+(stableRounds[Math.ceil(x)]-stableRounds[i])*(x-i)}
+ return {...stats,volatility:stableRounds.length>=5?percentile(.9)-percentile(.1):null}
 }

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import {exitLanding} from '../exitLanding'
 import {inspectorSamples,stableLatency} from '../inspectorLatency'
 import {readLatencyHistoryWithConfig,latencyHistorySplit,type LatencyHistorySplit} from '../latencyHistory'
 import {sortSiteRows} from '../siteQualityView'
@@ -87,7 +88,7 @@ const weeklyStats=ref<Record<string,LatencyHistorySplit>>({}),weeklyErrors=ref<R
 const weeklyReady=computed(()=>w.proxyNodes.value.every(n=>weeklyStats.value[key(n)]||weeklyErrors.value[key(n)]))
 let weeklyGeneration=0
 async function readWeekly(refresh=false){const token=++weeklyGeneration;if(refresh){weeklyStats.value={};weeklyErrors.value={}}await mapLimited(w.proxyNodes.value.filter(n=>!weeklyStats.value[key(n)]&&!weeklyErrors.value[key(n)]),6,async n=>{try{const history=await readLatencyHistoryWithConfig(n,168);if(token===weeklyGeneration)weeklyStats.value[key(n)]=latencyHistorySplit(history.series)}catch(e){if(token===weeklyGeneration)weeklyErrors.value[key(n)]=e instanceof Error?e.message:String(e)}})}
-function sortWeekly(metric:string){weeklyDescending.value=weeklySort.value===metric?!weeklyDescending.value:metric==='responseRate';weeklySort.value=metric;currentPage.value=1}
+function sortWeekly(metric:string){weeklyDescending.value=weeklySort.value===metric?!weeklyDescending.value:['responseRate','purity'].includes(metric);weeklySort.value=metric;currentPage.value=1;if(metric==='purity')void readQualityNodes(w.proxyNodes.value)}
 watch([()=>w.project.value,qualityGate,qualityScopeKey],()=>{if(['latency','combined'].includes(w.project.value)||qualityGate.value==='response')void readWeekly()},{immediate:true})
 watch(()=>w.sort.value,()=>weeklySort.value='')
 watch(()=>w.busy.value,(busy,previous)=>{if(previous&&!busy&&(['latency','combined'].includes(w.project.value)||qualityGate.value==='response'))void readWeekly(true)})
@@ -95,7 +96,7 @@ const visibleNodes=computed(()=>{let list=w.filteredNodes.value;if(!qualityView.
  if(qualityGate.value==='response'&&weeklyReady.value)list=list.filter(n=>{const s=weeklyStats.value[key(n)];return !!s&&!s.allOld&&(s.all.responseRate??-1)>=90})
  else if(qualityGate.value!=='all'&&qualityGate.value!=='response'&&allQualityReady.value)list=list.filter(n=>qualityMatchesGate(qualityData.value[key(n)],qualitySummaries.value[key(n)],qualityGate.value,qualityCutoff.value))
  if(qualitySort.value!=='existing'&&allQualityReady.value)list=[...list].sort((a,b)=>{const ga=qualitySummaries.value[key(a)],gb=qualitySummaries.value[key(b)],ea=qualityData.value[key(a)],eb=qualityData.value[key(b)];const valid=(g:typeof ga,e:QualityEvidence|undefined)=>!!g&&!!e&&latencyReadComplete(e,g)&&g.comparable&&(qualitySort.value==='observed'?g.success>=1:!g.insufficient)&&(qualitySort.value!=='p95'||g.success>=20);const av=valid(ga,ea),bv=valid(gb,eb);if(av!==bv)return av?-1:1;if(!av)return 0;const group=ga.key.localeCompare(gb.key);if(group)return group;return qualitySort.value==='rate'?(gb.successRate||0)-(ga.successRate||0):(qualitySort.value==='p95'?ga.p95! -gb.p95!:ga.p50! -gb.p50!)})
- if(w.project.value==='latency'&&weeklySort.value)list=[...list].sort((a,b)=>{const metric=weeklySort.value as 'responseRate'|'volatility',value=(n:NodeOption)=>{const s=weeklyStats.value[key(n)];return !s||s.allOld?null:s.all[metric]},av=value(a),bv=value(b);return av==null?(bv==null?0:1):bv==null?-1:(av-bv)*(weeklyDescending.value?-1:1)})
+ if(['latency','combined'].includes(w.project.value)&&weeklySort.value)list=[...list].sort((a,b)=>{const metric=weeklySort.value as 'responseRate'|'volatility',value=(n:NodeOption)=>{if(weeklySort.value==='purity')return exitLanding(n,[...(qualityData.value[key(n)]?.services||[]),...(w.services.value[key(n)]||[])]).purity.score;const s=weeklyStats.value[key(n)];return !s||s.allOld?null:s.all[metric]},av=value(a),bv=value(b);return av==null?(bv==null?0:1):bv==null?-1:(av-bv)*(weeklyDescending.value?-1:1)})
  return list})
 watch([qualityGate,qualitySort],()=>{currentPage.value=1;if(qualityGate.value==='download'&&w.project.value!=='combined')w.project.value='download';else if(qualityGate.value==='service'&&w.project.value!=='combined')w.project.value='service';if(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing')void readQualityNodes(w.proxyNodes.value)})
 watch(protocolFilter,()=>currentPage.value=1)

@@ -371,8 +371,9 @@ func (s *AppService) runAutoPickRound(trigger string) {
 	}
 
 	// 解锁只测必需服务；结论“需人机验证／无法判断”算没通过，但不影响日常组。
-	if len(plans) > 0 {
-		serviceRound := s.autoPickStartServiceRound(report, plans)
+	reputationPlans := s.autoPickReputationPlans(ctx, report.CreatedAt, selected)
+	if len(plans)+len(reputationPlans) > 0 {
+		serviceRound := s.autoPickStartServiceRound(report, append(plans, reputationPlans...))
 		for i := range plans {
 			plan := &plans[i]
 			passed := true
@@ -396,6 +397,13 @@ func (s *AppService) runAutoPickRound(trigger string) {
 				plan.entry.Purposes = append(plan.entry.Purposes, plan.purpose)
 				groups[plan.purpose] = append(groups[plan.purpose], plan.node)
 				groupCounts[plan.purpose]++
+			}
+		}
+		for _, plan := range reputationPlans {
+			for _, serviceID := range plan.services {
+				rule, _ := publicservice.RuleFor(serviceID)
+				result := s.autoPickCheckService(ctx, plan.node.Node, rule)
+				s.autoPickSaveServiceAttempt(ctx, report, serviceRound, plan.node, serviceID, rule, result)
 			}
 		}
 		s.autoPickFinishServiceRound(serviceRound)

@@ -21,15 +21,17 @@ const regions=computed(()=>[...new Set(airportNodes.value.map(n=>n.country_code)
 const protocols=computed(()=>[...new Set(airportNodes.value.map(n=>n.type))].sort())
 const report=computed(()=>airportReport(nodes.value,data.value))
 type RankField='responseRate'|'median'|'volatility'|'lastFailure'
-const rankField=ref<RankField>('median'),rankDescending=ref(false)
+const rankField=ref<RankField>('responseRate'),rankDescending=ref(true)
 const rankColumns:{id:RankField;label:string}[]=[{id:'responseRate',label:'响应率'},{id:'median',label:'稳定延迟中位数'},{id:'volatility',label:'波动（P90−P10）'},{id:'lastFailure',label:'最近一次失败'}]
 function sortRank(field:RankField){if(rankField.value===field)rankDescending.value=!rankDescending.value;else{rankField.value=field;rankDescending.value=field==='responseRate'||field==='lastFailure'}}
 const ranks=computed(()=>nodes.value.map(node=>({node,...airportNodeStats(data.value[key(node)])})).sort((a,b)=>{
  const value=(r:typeof a)=>rankField.value==='lastFailure'?(r.lastFailure?Date.parse(r.lastFailure.time):null):r[rankField.value]
- const av=value(a),bv=value(b);return av===null?(bv===null?0:1):bv===null?-1:(av-bv)*(rankDescending.value?-1:1)
+ const compare=(av:number|null,bv:number|null,descending:boolean)=>av===null?(bv===null?0:1):bv===null?-1:(av-bv)*(descending?-1:1)
+ return compare(value(a),value(b),rankDescending.value)||(rankField.value==='responseRate'?compare(a.median,b.median,false):0)
 }))
 async function inspectNode(node:typeof nodes.value[number]){w.page.value='home';await nextTick();w.viewRequest.value=node}
 const ms=(value:number|null)=>value===null?'—':Math.round(value)+' ms'
+const responseTone=(value:number|null)=>value===null?'':value<80?'bad':value<=95?'warn':'good'
 watch([region,line,protocol],()=>{selectedBeat.value=null;hideHoverTip()})
 // 心跳和故障都用已读到的历史记录拼：轮次是同一段时间内保存的节点测试，
 // 单节点检查不算一轮；故障事件也只看这些轮次。
@@ -80,8 +82,8 @@ onMounted(()=>void refresh())
   </template>
   <section v-if="!busy" class="report-rank">
    <h3>节点排行</h3>
-   <div class="rank-table-wrap"><table><thead><tr><th>节点</th><th v-for="col in rankColumns" :key="col.id" :aria-sort="rankField===col.id?(rankDescending?'descending':'ascending'):'none'"><button class="text-button" @click="sortRank(col.id)">{{col.label}}{{rankField===col.id?(rankDescending?' ↓':' ↑'):''}}</button></th></tr></thead>
-    <tbody><tr v-for="row in ranks" :key="key(row.node)"><td><button class="text-button rank-node" @click="inspectNode(row.node)">{{nodeDisplayName(row.node)}}</button></td><td :title="`${row.responses}/${row.samples} 次响应 · 共 ${row.total} 轮`">{{row.responseRate===null?'—':row.responseRate.toFixed(0)+'%'}}</td><td>{{ms(row.median)}}</td><td title="慢的时候比快的时候多多少（P90−P10）；满5轮后显示">{{ms(row.volatility)}}</td><td :title="row.lastFailure?.detail">{{row.lastFailure?date(row.lastFailure.time):'—'}}</td></tr></tbody>
+   <div class="rank-table-wrap"><table><thead><tr><th>节点</th><th v-for="col in rankColumns.slice(0,1)" :key="col.id" :aria-sort="rankField===col.id?(rankDescending?'descending':'ascending'):'none'"><button class="text-button" @click="sortRank(col.id)">{{col.label}}{{rankField===col.id?(rankDescending?' ↓':' ↑'):''}}</button></th><th>轮数</th><th v-for="col in rankColumns.slice(1)" :key="col.id" :aria-sort="rankField===col.id?(rankDescending?'descending':'ascending'):'none'"><button class="text-button" @click="sortRank(col.id)">{{col.label}}{{rankField===col.id?(rankDescending?' ↓':' ↑'):''}}</button></th></tr></thead>
+    <tbody><tr v-for="row in ranks" :key="key(row.node)"><td><button class="text-button rank-node" @click="inspectNode(row.node)">{{nodeDisplayName(row.node)}}</button></td><td :class="responseTone(row.responseRate)" :title="`${row.responses}/${row.samples} 次响应`">{{row.responseRate===null?'—':row.responseRate.toFixed(0)+'%'}}</td><td>{{row.total}}</td><td>{{ms(row.median)}}</td><td title="慢的时候比快的时候多多少（P90−P10）；至少5轮有稳定延迟后显示">{{ms(row.volatility)}}</td><td :title="row.lastFailure?.detail">{{row.lastFailure?date(row.lastFailure.time):'—'}}</td></tr></tbody>
    </table></div>
    <p v-if="!ranks.length" class="muted small">当前筛选范围没有节点。</p>
   </section>

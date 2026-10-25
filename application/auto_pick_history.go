@@ -171,3 +171,30 @@ func (s *AppService) autoPickFinishServiceRound(round *history.MeasurementRound)
 	}
 	_ = db.FinishMeasurementRound(context.Background(), round.RoundID, "finished")
 }
+
+// 顺带查询延迟通过的节点；包括手动查询在内，已有信誉尝试的节点24小时内不再查。
+func (s *AppService) autoPickReputationPlans(ctx context.Context, now time.Time, nodes []autoPickScopedNode) []autoPickServicePlan {
+	db := s.autoPickHistoryDB()
+	if db == nil {
+		return nil
+	}
+	since := now.Add(-24 * time.Hour)
+	var plans []autoPickServicePlan
+	for _, node := range nodes {
+		recent := false
+		for _, id := range []string{"ippure_ip_quality", "ping0_ipv4", "ping0_ipv6", "ping0_ip_quality", "ipok_ipv4", "ipok_ipv6"} {
+			page, err := db.QueryPublicServiceAttempts(ctx, history.PublicServiceFilter{
+				ProfileID: node.ProfileID, NodeKey: node.Node.NodeKey, NodeIdentityKey: node.Node.NodeIdentityKey,
+				ConfigRevisionKey: node.Node.ConfigRevisionKey, ServiceID: id, Since: &since, Until: &now, Limit: 1,
+			})
+			if err != nil || len(page.Attempts) > 0 {
+				recent = true
+				break
+			}
+		}
+		if !recent {
+			plans = append(plans, autoPickServicePlan{node: node, services: []string{"ippure_ip_quality", "ping0_ipv4", "ipok_ipv4"}})
+		}
+	}
+	return plans
+}

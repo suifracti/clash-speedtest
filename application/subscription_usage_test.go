@@ -1,13 +1,17 @@
 package application
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/faceair/clash-speedtest/core/profiles"
+	"github.com/faceair/clash-speedtest/core/subscriptionusage"
 )
 
 func TestSubscriptionUsageRefreshPersistence(t *testing.T) {
@@ -43,6 +47,14 @@ func TestSubscriptionUsageRefreshPersistence(t *testing.T) {
 	status = http.StatusForbidden
 	if _, err := s.RefreshSubscription(ap.ID, sub.ID, "fixture"); err == nil || strings.Contains(err.Error(), "FAKE_SECRET") {
 		t.Fatal("failure must be explicit and safe")
+	}
+	day := time.Now().In(subscriptionusage.Location).Format("2006-01-02")
+	report, err := s.GetSubscriptionUsage(context.Background(), day, day, "day", "")
+	if err != nil || len(report.Accounts) != 1 || report.Accounts[0].RawError != "http 403" {
+		t.Fatalf("raw refresh error was not saved in the usage snapshot: report=%+v err=%v", report, err)
+	}
+	if got := truncateUsageError(errors.New(strings.Repeat("界", 201))); len([]rune(got)) != 200 {
+		t.Fatalf("raw error rune limit = %d, want 200", len([]rune(got)))
 	}
 	list, err := s.ListAirports()
 	if err != nil {

@@ -38,6 +38,10 @@ describe('node selection through DOM controls',()=>{
     expect(wrapper.get('.hd-inspector h2').text()).toContain(b.display_name)
     expect(wrapper.get('.exit-unqueried').text()).toBe('出口与信誉：未查询 查询')
     expect(wrapper.find('.exit-ipkind').exists()).toBe(false);expect(wrapper.find('.landing-sources').exists()).toBe(false)
+    w.services.value[key(b)]=[{...b,attempt_id:'purity',service_id:'ippure_ip_quality',persistence_state:'saved',execution_state:'completed',rule:{service_id:'ippure_ip_quality'},result:{outcome:'profiled',finished_at:'2026-10-24T10:00:00Z',details:{risk_score:'18',risk_scale_max:'100',risk_direction:'lower_is_better',ip_type:'机房 IDC',origin_type:'原生 IP',country_code:'SG'}}} as never]
+    await flushPromises();expect(wrapper.get('.exit-purity').text()).toContain('纯净度 82 · 机房 IP · 原生 SG')
+    await wrapper.findAll('[role="columnheader"] button').find(button=>button.text().startsWith('纯净度'))!.trigger('click');await flushPromises()
+    expect(wrapper.findAll('.hd-tr:not(.hd-th) .hd-node')[0]!.text()).toContain(b.display_name)
     expect(api.startLatency).not.toHaveBeenCalled();expect(api.startAttempt).not.toHaveBeenCalled();usage.mockRestore()
   })
   it('retains stopped monitor history in metrics, bars and node trends without mixing sites or revisions',async()=>{
@@ -46,16 +50,16 @@ describe('node selection through DOM controls',()=>{
     const {w,wrapper}=attach([a],['airport-a']);w.displayTargets.value=['cloudflare','google'];await flushPromises()
     expect(w.jobs.value).toEqual([])
     expect(api.monitorSamples).toHaveBeenCalledWith(expect.objectContaining({profile_id:'sub-a-one',node_identity_key:'identity-a',config_revision_key:'revision-a',probe_type:'rtt',target:undefined,limit:480}))
-    expect(cells(wrapper)).toEqual(['失败','未测'])
+    expect(cells(wrapper)).toEqual(['—','失败','未测'])
     expect(wrapper.findAll('.hd-latency .health-cell')).toHaveLength(0)
     expect(wrapper.find('.latency-spark').exists()).toBe(false)
     expect(wrapper.get('.latency-combined').attributes('aria-label')).toContain('本轮实际采样')
     expect(wrapper.findAll('.latency-combined .failed')).toHaveLength(1)
     w.latency.value={[key(a)]:[{...a,attempt_id:'new-manual',node_type:'trojan',requested_at:'2026-10-03T07:00:00Z',finished_at:'2026-10-03T07:00:01Z',status:'completed',latency_ms:55,total_samples:1,success_samples:1,failure_samples:0,persistence_state:'saved',samples:[{seq:1,target:'https://speed.cloudflare.com/__down?bytes=1',timestamp:'2026-10-03T07:00:01Z',latency_ms:55,success:true}]}]}
-    await flushPromises();expect(cells(wrapper)).toEqual(['—','未测'])
+    await flushPromises();expect(cells(wrapper)).toEqual(['—','—','未测'])
     w.nodes.value=[{...a,config_revision_key:'revision-new'}];await flushPromises()
     expect(api.monitorSamples).toHaveBeenLastCalledWith(expect.objectContaining({config_revision_key:'revision-new'}))
-    expect(cells(wrapper)).toEqual(['未测','未测'])
+    expect(cells(wrapper)).toEqual(['—','未测','未测'])
     expect(wrapper.findAll('.health-cell.has-record')).toHaveLength(0)
   })
   it('shows stopped HTTP monitoring in service and combined views without claiming catalog checks passed',async()=>{
