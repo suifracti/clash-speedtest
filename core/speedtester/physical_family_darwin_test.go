@@ -7,8 +7,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -396,3 +398,18 @@ func TestPhysicalFamilyFallbackVLESSConnectionRefused(t *testing.T) {
 	}
 }
 
+func TestPhysicalFamilyBothFailNextSampleStartsWithIPv4(t *testing.T) {
+	var order []string
+	ipv4 := &physicalFixtureProxy{dial: func(context.Context) error { order = append(order, "ipv4"); return io.EOF }}
+	ipv6 := &physicalFixtureProxy{dial: func(context.Context) error { order = append(order, "ipv6"); return io.EOF }}
+	wrapped := wrapPhysicalFamilies(&CProxy{Proxy: ipv4}, familyPath("ipv4"), &CProxy{Proxy: ipv6}, familyPath("ipv6"), time.Second)
+	defer wrapped.Close()
+	for i := 0; i < 2; i++ {
+		if _, err := wrapped.DialContext(context.Background(), &C.Metadata{Host: "fixture.invalid", DstPort: 443}); err == nil {
+			t.Fatal("failed adapters returned success")
+		}
+	}
+	if strings.Join(order, ",") != "ipv4,ipv6,ipv4,ipv6" || ipv4.closed.Load() != 0 {
+		t.Fatalf("failed family was pinned or closed: order=%v close4=%d", order, ipv4.closed.Load())
+	}
+}

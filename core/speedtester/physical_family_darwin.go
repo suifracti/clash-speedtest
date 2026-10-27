@@ -135,9 +135,6 @@ func (p *physicalFamilyProxy) DialContext(ctx context.Context, metadata *C.Metad
 	if run.Err() != nil {
 		return nil, run.Err()
 	}
-	// Publish the selection only after the complete IPv4/IPv6 decision, so no
-	// concurrent request uses a primary adapter while fallback closes it.
-	defer func() { p.mu.Lock(); p.settled = true; p.mu.Unlock() }()
 	deadline, _ := run.Deadline()
 	first := run
 	stop := func() {}
@@ -154,17 +151,27 @@ func (p *physicalFamilyProxy) DialContext(ctx context.Context, metadata *C.Metad
 		conn.Close()
 		conn = nil
 	}
-	if conn != nil || p.alternate == nil || !familyConnectFailed(run, err) {
+	if conn != nil {
+		p.mu.Lock()
+		p.settled = true
+		p.mu.Unlock()
 		return conn, err
 	}
-	p.mu.Lock()
-	p.selectedIPv6 = true
-	p.mu.Unlock()
-	p.close4.Do(func() { _ = p.primary.Close() })
+	if p.alternate == nil || !familyConnectFailed(run, err) {
+		return conn, err
+	}
 	if run.Err() != nil {
 		return nil, run.Err()
 	}
-	return p.attempt(run, p.alternate, "ipv6", metadata)
+	conn, err = p.attempt(run, p.alternate, "ipv6", metadata)
+	if conn != nil && err == nil {
+		// A failed fallback must leave IPv4 available for the next sample.
+		p.mu.Lock()
+		p.settled, p.selectedIPv6 = true, true
+		p.mu.Unlock()
+		p.close4.Do(func() { _ = p.primary.Close() })
+	}
+	return conn, err
 }
 
 func (p *physicalFamilyProxy) dialSelected(ctx context.Context, metadata *C.Metadata, selectedIPv6 bool) (C.Conn, error) {
@@ -221,18 +228,14 @@ func (p *physicalFamilyProxy) snapshot() DownloadNetworkPath {
 		second := p.alternatePath.snapshotBase()
 		if selected {
 			result = second
-			result.AddressFallback = "ipv6_not_started"
-			if len(attempts) > 1 {
-				result.AddressFallback = "ipv6_failed"
-				if attempts[1].Outcome == "connected" {
-					result.AddressFallback = "used_ipv6"
-				}
-			}
+			result.AddressFallback = "used_ipv6"
 		} else if p.alternate == nil {
 			result.AddressFallback = "ipv6_unavailable"
 			result.AddressFallbackFailure = second.FailureReason
 		} else if settled {
 			result.AddressFallback = "not_needed"
+		} else if len(attempts) > 0 && attempts[len(attempts)-1].AddressFamily == "ipv6" {
+			result.AddressFallback = "ipv6_failed"
 		} else {
 			result.AddressFallback = "available"
 		}
@@ -297,6 +300,9 @@ func PreparePhysicalAutoProxy(ctx context.Context, original *CProxy, timeout tim
 		if seed == nil {
 			seed = path
 		} else {
+			// Each unselected sample may need both families before one connects.
+			seed.tcpDials.limit += path.tcpDials.limit
+			seed.udpDials.limit += path.udpDials.limit
 			path.tcpDials = seed.tcpDials
 			path.udpDials = seed.udpDials
 		}
