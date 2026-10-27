@@ -23,6 +23,7 @@ type Snapshot struct {
 	Remaining        *int64    `json:"remaining,omitempty"`
 	Total            *int64    `json:"total,omitempty"`
 	Message          string    `json:"message,omitempty"`
+	FetchPath        string    `json:"fetch_path,omitempty"`
 	RawError         string    `json:"raw_error,omitempty"`
 }
 

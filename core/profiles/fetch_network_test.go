@@ -80,7 +80,7 @@ func TestSubscriptionSystemProxyKeepsBoundedGETAndRedirectPolicy(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodGet, "http://sub.example/source?token=fixture-secret", nil)
 	e := &FetchEvidence{}
 	client := subscriptionClient(req, e)
-	client.Transport.(*http.Transport).Proxy = normalSubscriptionProxy(&httpproxy.Config{}, func(context.Context, string) (*url.URL, error) { return url.Parse(server.URL) }, func(p string) { e.ProxyPolicy = p })
+	client.Transport.(*subscriptionFallbackTransport).primary.Proxy = normalSubscriptionProxy(&httpproxy.Config{}, func(context.Context, string) (*url.URL, error) { return url.Parse(server.URL) }, func(p string) { e.ProxyPolicy = p })
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -98,5 +98,34 @@ func TestSubscriptionSystemProxyKeepsBoundedGETAndRedirectPolicy(t *testing.T) {
 	}
 	if client.CheckRedirect(via, []*http.Request{via, via, via, via}) == nil {
 		t.Fatal("unbounded redirects")
+	}
+}
+
+func TestSubscriptionProxyFailureRetriesPhysicalDirect(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Subscription-Userinfo", "upload=1; download=2; total=100")
+		fmt.Fprint(w, "subscription body")
+	}))
+	defer server.Close()
+	proxy := httptest.NewServer(http.NotFoundHandler())
+	proxy.Close()
+	proxyURL, _ := url.Parse(proxy.URL)
+	req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
+	evidence := &FetchEvidence{}
+	client := subscriptionClient(req, evidence)
+	fallback := client.Transport.(*subscriptionFallbackTransport)
+	fallback.primary.Proxy = func(*http.Request) (*url.URL, error) {
+		evidence.ProxyPolicy = "system_proxy"
+		return proxyURL, nil
+	}
+	fallback.physical = func() (*http.Client, error) { return server.Client(), nil }
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "subscription body" || evidence.ProxyPolicy != "physical_direct" || parseSubscriptionUsageHeaders(resp.Header) == nil {
+		t.Fatalf("body=%s path=%s", body, evidence.ProxyPolicy)
 	}
 }

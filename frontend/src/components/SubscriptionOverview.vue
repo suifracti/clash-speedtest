@@ -4,7 +4,7 @@ import {api,type SubscriptionRefreshJob,type SubscriptionRefreshRequest} from '.
 import {bytes,date,subscriptionUsed,type Airport,type NodeOption} from '../domain'
 import {airportAccounts,noticesForAccount,safeAirportLink,parseNoticeUsage,type AirportAccount} from '../airportViewing'
 import {useWorkspace} from '../workspace'
-import {accountDailyUsage,shanghaiDay,shiftDay,type DayUsage} from '../usageDaily'
+import {accountDailyUsage,shanghaiDay,shiftDay,type DayUsage,type UsageSnapshot} from '../usageDaily'
 import SubscriptionChanges from './SubscriptionChanges.vue'
 import {useUsageRefreshWindow} from '../usageRefreshWindow'
 import Modal from './Modal.vue'
@@ -108,13 +108,15 @@ const workspaceRefreshIssues=computed(()=>workspaceAccounts.value.flatMap(accoun
 }).sort((a,b)=>Date.parse(b.job.created_at)-Date.parse(a.job.created_at)))
 // 全部机场只汇总现有账户数据，不改变订阅或检测范围。
 const dailyByAccount=ref<Record<string,DayUsage[]>>({})
+const snapshotsByAccount=ref<Record<string,UsageSnapshot|undefined>>({})
 watch(()=>[rowMode.value,displayedAccounts.value.map(a=>a.key).join('|'),workspace.usageRefreshVersion.value],async()=>{
   if(!rowMode.value)return
   const entries=await Promise.all(displayedAccounts.value.map(async account=>{
     const result=await accountDailyUsage(account.airport.id,account.subscription.id,3).catch(()=>undefined)
-    return [account.key,result?.days||[]] as const
+    return [account.key,result] as const
   }))
-  dailyByAccount.value=Object.fromEntries(entries)
+  dailyByAccount.value=Object.fromEntries(entries.map(([key,result])=>[key,result?.days||[]]))
+  snapshotsByAccount.value=Object.fromEntries(entries.map(([key,result])=>[key,result?.account]))
 },{immediate:true})
 const airportRecentlyRefreshed=useUsageRefreshWindow()
 const hm=(value?:string|number)=>{const date=typeof value==='number'?new Date(value):value&&!value.startsWith('0001')?new Date(value):undefined;return date&&Number.isFinite(date.getTime())?date.toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hour12:false}):''}
@@ -144,7 +146,8 @@ function accountRow(airport:Airport,list:AirportAccount[]){
   const refreshTimes=latestRefreshByAccount.value.filter(entry=>list.some(account=>account.key===entry.account.key)).map(entry=>entry.item?.finished_at||entry.job?.created_at||'')
   const updated=[...refreshTimes,...list.map(account=>account.subscription.updated_at||airport.updated_at||'')].filter(Boolean).sort((a,b)=>Date.parse(a)-Date.parse(b)).at(-1)
   const failedAt=[...list.filter(account=>account.subscription.last_attempt_failed).map(account=>Date.parse(account.subscription.last_attempt_at||'')),...issues.map(issue=>Date.parse(issue.item.finished_at||issue.job.created_at||''))].filter(Number.isFinite)
-  return {airport,remaining,ratio,today:sumDay(list,0),updated,issues,lastFailedAt:failedAt.length?Math.max(...failedAt):0,accounts:list}
+  const pathHint=list.map(account=>{const snapshot=snapshotsByAccount.value[account.key];return snapshot?.fetch_path?`${account.subscription.name}：${snapshot.fetch_path==='proxy'?'代理':'直连'}刷新成功`:''}).filter(Boolean).join('；')
+  return {pathHint,airport,remaining,ratio,today:sumDay(list,0),updated,issues,lastFailedAt:failedAt.length?Math.max(...failedAt):0,accounts:list}
 }
 const overviewRows=computed(()=>allAirports.value?props.airports.map(airport=>({...accountRow(airport,airportAccounts([airport])),id:airport.id,name:airport.name})):accounts.value.map(account=>({...accountRow(account.airport,[account]),id:account.key,name:account.subscription.name})))
 const workspaceRefreshIssueJobs=computed(()=>[...new Map(workspaceRefreshIssues.value.map(issue=>[issue.job.id,issue.job])).values()])
@@ -290,7 +293,7 @@ defineExpose({usageRatio})
     <template v-if="rowMode">
       <div class="subscription-all-main">
         <div class="subscription-airport-list" :aria-label="allAirports?'全部机场用量汇总':'机场订阅用量'">
-          <div v-for="row in overviewRows" :key="row.id" class="subscription-airport-row">
+          <div v-for="row in overviewRows" :key="row.id" class="subscription-airport-row" :title="row.pathHint">
             <strong class="airport-summary-name">{{row.name}}<small v-if="allAirports&&row.accounts.length>1">{{row.accounts.length}} 个订阅</small></strong>
             <div class="airport-summary-quota">
               <span>剩余 <b>{{row.remaining===null?'未知':bytes(row.remaining)}}</b> <small v-if="row.ratio!==null">{{(row.ratio*100).toFixed(2)}}% 可用</small></span>

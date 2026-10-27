@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/faceair/clash-speedtest/core/speedtester"
 	"golang.org/x/net/http/httpproxy"
 )
 
@@ -47,7 +48,10 @@ func WithFetchEvidence(ctx context.Context, evidence *FetchEvidence) context.Con
 }
 
 func FetchSubscriptionObserved(ctx context.Context, rawURL, userAgent string) ([]byte, *SubscriptionUsage, *FetchEvidence, error) {
-	evidence := &FetchEvidence{}
+	evidence, _ := ctx.Value(fetchObserverKey{}).(*FetchEvidence)
+	if evidence == nil {
+		evidence = &FetchEvidence{}
+	}
 	body, usage, err := FetchSubscriptionWithUsageContext(WithFetchEvidence(ctx, evidence), rawURL, userAgent)
 	return body, usage, evidence, err
 }
@@ -63,6 +67,9 @@ func retryAfterUntil(value string, now time.Time) time.Time {
 }
 
 func subscriptionClient(req *http.Request, evidence *FetchEvidence) *http.Client {
+	if evidence == nil {
+		evidence = &FetchEvidence{}
+	}
 	transport, ok := http.DefaultTransport.(*http.Transport)
 	if !ok {
 		transport = &http.Transport{}
@@ -88,7 +95,7 @@ func subscriptionClient(req *http.Request, evidence *FetchEvidence) *http.Client
 		mu.Unlock()
 	}}
 	*req = *req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
-	return &http.Client{Transport: transport, Timeout: 60 * time.Second, CheckRedirect: func(next *http.Request, via []*http.Request) error {
+	return &http.Client{Transport: &subscriptionFallbackTransport{primary: transport, evidence: evidence, physical: func() (*http.Client, error) { return speedtester.NewPhysicalHTTPClient(60 * time.Second) }}, Timeout: 60 * time.Second, CheckRedirect: func(next *http.Request, via []*http.Request) error {
 		if evidence != nil {
 			mu.Lock()
 			evidence.RedirectCount++
@@ -112,8 +119,7 @@ func SourceOrigin(raw string) string {
 	return strings.ToLower(u.Scheme + "://" + u.Host)
 }
 
-// Subscription acquisition follows the user's normal network. Physical binding
-// is exclusively a node-measurement concern. A nil environment proxy may mean
+// Subscription acquisition tries the normal network first. A nil proxy may mean
 // an explicit bypass, so check NO_PROXY/loopback before the macOS fallback.
 func normalSubscriptionProxy(config *httpproxy.Config, system func(context.Context, string) (*url.URL, error), observe func(string)) func(*http.Request) (*url.URL, error) {
 	environment := config.ProxyFunc()
@@ -156,4 +162,35 @@ func normalSubscriptionProxy(config *httpproxy.Config, system func(context.Conte
 		}
 		return proxy, nil
 	}
+}
+
+type subscriptionFallbackTransport struct {
+	primary  *http.Transport
+	physical func() (*http.Client, error)
+	evidence *FetchEvidence
+}
+
+func (t *subscriptionFallbackTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.evidence.ProxyPolicy != "physical_direct" {
+		resp, err := t.primary.RoundTrip(req)
+		if err == nil {
+			return resp, nil
+		}
+		if req.Context().Err() != nil || (t.evidence.ProxyPolicy != "environment_proxy" && t.evidence.ProxyPolicy != "system_proxy") {
+			return nil, err
+		}
+	}
+	t.evidence.ProxyPolicy = "physical_direct"
+	client, err := t.physical()
+	if err != nil {
+		return nil, err
+	}
+	transport := client.Transport
+	if transport == nil {
+		transport = &http.Transport{Proxy: nil}
+	}
+	if httpTransport, ok := transport.(*http.Transport); ok {
+		httpTransport.DisableKeepAlives = true
+	}
+	return transport.RoundTrip(req)
 }

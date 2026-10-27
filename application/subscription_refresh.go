@@ -766,6 +766,7 @@ func (s *AppService) refreshSubscriptionLocked(ctx context.Context, airportID, s
 }
 
 type subscriptionFetchResult struct {
+	path      string
 	body      []byte
 	usage     *profiles.SubscriptionUsage
 	err       error
@@ -773,15 +774,23 @@ type subscriptionFetchResult struct {
 	userAgent string
 }
 
-func fetchSubscriptionSource(ctx context.Context, rawURL, userAgent string) ([]byte, *profiles.SubscriptionUsage, error) {
+func fetchSubscriptionSource(ctx context.Context, rawURL, userAgent string) ([]byte, *profiles.SubscriptionUsage, string, error) {
 	if profiles.IsHTTPURL(rawURL) {
-		return profiles.FetchSubscriptionWithUsageContext(ctx, rawURL, userAgent)
+		body, usage, evidence, err := profiles.FetchSubscriptionObserved(ctx, rawURL, userAgent)
+		path := ""
+		if err == nil {
+			path = "direct"
+			if evidence.ProxyPolicy == "environment_proxy" || evidence.ProxyPolicy == "system_proxy" {
+				path = "proxy"
+			}
+		}
+		return body, usage, path, err
 	}
 	body, err := os.ReadFile(profiles.ExpandLocalPath(rawURL))
 	if err != nil {
-		return nil, nil, &refreshError{Code: "local_file", Message: "本地订阅文件读取失败；旧缓存保留"}
+		return nil, nil, "", &refreshError{Code: "local_file", Message: "本地订阅文件读取失败；旧缓存保留"}
 	}
-	return body, nil, nil
+	return body, nil, "", nil
 }
 
 func refreshSourceCooldown(store *profiles.Store, rawURL string, now time.Time) error {
@@ -914,11 +923,12 @@ func (s *AppService) refreshSubscriptionWithFetchLocked(ctx context.Context, air
 	store = latestStore
 	fetchFingerprint := refreshSourceFingerprint(sub.URL)
 	var body []byte
+	var path string
 	var usage *profiles.SubscriptionUsage
 	if fetched != nil {
-		body, usage, err = fetched.body, fetched.usage, fetched.err
+		body, usage, path, err = fetched.body, fetched.usage, fetched.path, fetched.err
 	} else {
-		body, usage, err = fetchSubscriptionSource(ctx, sub.URL, sub.EffectiveUserAgent(userAgent))
+		body, usage, path, err = fetchSubscriptionSource(ctx, sub.URL, sub.EffectiveUserAgent(userAgent))
 	}
 	if err != nil {
 		return fail(err)
@@ -995,6 +1005,7 @@ func (s *AppService) refreshSubscriptionWithFetchLocked(ctx context.Context, air
 		status = "missing"
 	}
 	snapshot := usageSnapshotWithNotice(airport, sub, status, "subscription_update", now, body)
+	snapshot.FetchPath = path
 	if err = s.saveUsageObservations(context.WithoutCancel(ctx), []subscriptionusage.Snapshot{snapshot}); err != nil {
 		cacheRollbackErr := s.restoreRefreshRecoveryCopy("cache", cacheRecovery)
 		storeRollbackErr := s.restoreRefreshStoreBytes(oldStoreBytes)

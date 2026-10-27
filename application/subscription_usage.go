@@ -420,7 +420,7 @@ func (s *AppService) refreshUsageSource(ctx context.Context, source usageRefresh
 	if err != nil {
 		return err
 	}
-	fetched.body, fetched.usage, fetched.err = fetchSubscriptionSource(ctx, rawURL, userAgent)
+	fetched.body, fetched.usage, fetched.path, fetched.err = fetchSubscriptionSource(ctx, rawURL, userAgent)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
