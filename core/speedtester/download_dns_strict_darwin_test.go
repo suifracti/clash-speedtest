@@ -101,14 +101,14 @@ func TestStrictPhysicalDNSBranchesAndBudgets(t *testing.T) {
 		{name: "REFUSED source limit", steps: []step{{rcode: dns.RcodeRefused}}, reason: "a_rcode_refused", dials: 1, writes: 1},
 		{name: "legacy not found unknown", steps: []step{{fail: &net.DNSError{IsNotFound: true}}}, reason: "a_ipv4_dns_not_found", dials: 1},
 		{name: "timeout", steps: []step{{stall: true}}, reason: "a_deadline_exceeded", dials: 1, writes: 1},
-		{name: "cancel before A", cancelled: true, reason: "user_cancelled"},
-		{name: "cancel after AAAA dial before write", steps: []step{{}, {cancelBefore: true}}, reason: "aaaa_user_cancelled", dials: 2, writes: 1},
-		{name: "cancel between A AAAA", steps: []step{{cancelAfter: true}}, reason: "aaaa_user_cancelled", dials: 1, writes: 1},
+		{name: "cancel before A", cancelled: true, reason: "context_cancelled"},
+		{name: "cancel after AAAA dial before write", steps: []step{{}, {cancelBefore: true}}, reason: "aaaa_context_cancelled", dials: 2, writes: 1},
+		{name: "cancel between A AAAA", steps: []step{{cancelAfter: true}}, reason: "aaaa_context_cancelled", dials: 1, writes: 1},
 		{name: "write budget before AAAA dial", steps: []step{{}}, requestLimit: 1, reason: "aaaa_physical_request_budget_exhausted", dials: 1, writes: 1},
 		{name: "dial budget before AAAA", steps: []step{{}}, dialLimit: 1, reason: "aaaa_physical_request_budget_exhausted", dials: 1, writes: 1},
 		{name: "UDP TC TCP failed", steps: []step{{truncate: true}, {fail: errors.New("fixture TCP failure")}}, reason: "a_physical_dns_unavailable", dials: 2, writes: 1},
 		{name: "UDP TC TCP A", steps: []step{{truncate: true}, {records: []string{"node.example. 60 IN A 203.0.113.9"}}}, ip: "203.0.113.9", family: "ipv4", source: "physical_ipv4_dns", dials: 2, writes: 2},
-		{name: "cancel before TC TCP", steps: []step{{truncate: true, cancelAfter: true}}, reason: "a_user_cancelled", dials: 1, writes: 1},
+		{name: "cancel before TC TCP", steps: []step{{truncate: true, cancelAfter: true}}, reason: "a_context_cancelled", dials: 1, writes: 1},
 		{name: "TC write budget", steps: []step{{truncate: true}}, requestLimit: 1, reason: "a_physical_request_budget_exhausted", dials: 1, writes: 1},
 		{name: "truncated NXDOMAIN", steps: []step{{truncate: true, rcode: dns.RcodeNameError}}, reason: "a_rcode_nxdomain", dials: 1, writes: 1},
 		{name: "fake A no fallback", steps: []step{{records: []string{"node.example. 60 IN A 198.18.0.9"}}}, reason: "a_records_unusable", dials: 1, writes: 1},
@@ -293,5 +293,47 @@ func TestStrictPhysicalDNSFrozenIPv6PreservesIdentityAndSource(t *testing.T) {
 	}
 	if _, err = e.resolve(context.Background(), "other.example"); err == nil || e.Snapshot().DNSRequests != 0 {
 		t.Fatal("frozen node allowed another destination")
+	}
+}
+
+func TestPhysicalDNSUsesConfiguredTimeoutAndRetriesOnce(t *testing.T) {
+	e := newPhysicalDownloadEgress()
+	e.dnsTimeout = 5 * time.Second
+	calls := 0
+	e.dnsDial = func(ctx context.Context, _ string) (net.Conn, error) {
+		calls++
+		deadline, _ := ctx.Deadline()
+		if time.Until(deadline) < 4*time.Second {
+			t.Error("configured DNS timeout was shortened")
+		}
+		if calls == 1 {
+			return nil, context.DeadlineExceeded
+		}
+		local, peer := net.Pipe()
+		go func() {
+			defer peer.Close()
+			dc := &dns.Conn{Conn: peer}
+			q, err := dc.ReadMsg()
+			if err != nil {
+				return
+			}
+			time.Sleep(2100 * time.Millisecond)
+			r := new(dns.Msg)
+			r.SetReply(q)
+			r.Answer = []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: q.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60}, A: net.ParseIP("203.0.113.9")}}
+			_ = dc.WriteMsg(r)
+		}()
+		return local, nil
+	}
+	ip, err := e.resolve(context.Background(), "fixture.example")
+	if err != nil || ip.String() != "203.0.113.9" || calls != 2 || e.Snapshot().FailureReason != "" {
+		t.Fatalf("ip=%v err=%v calls=%d path=%+v", ip, err, calls, e.Snapshot())
+	}
+	calls = 0
+	e.nodeIP = netip.Addr{}
+	e.nodeIPs = nil
+	e.dnsDial = func(context.Context, string) (net.Conn, error) { calls++; return nil, context.DeadlineExceeded }
+	if _, err = e.resolve(context.Background(), "fixture.example"); err == nil || calls != 2 {
+		t.Fatalf("failed DNS must stop after two attempts: calls=%d err=%v", calls, err)
 	}
 }

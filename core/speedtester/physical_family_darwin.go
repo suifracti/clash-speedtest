@@ -280,9 +280,15 @@ func hasPhysicalIPv6(path *PhysicalDownloadEgress) bool {
 // PreparePhysicalAutoProxy shares the existing DNS/socket limits across both
 // families. Preparing an alternate never sends node authentication or target HTTP.
 func PreparePhysicalAutoProxy(ctx context.Context, original *CProxy, timeout time.Duration, sockets int) (*CProxy, *PhysicalDownloadEgress, error) {
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
 	var seed *PhysicalDownloadEgress
 	prepare := func(ctx context.Context, proxy *CProxy, n int) (*CProxy, *PhysicalDownloadEgress, error) {
 		e := newPhysicalDownloadEgress()
+		e.dnsTimeout = timeout
+		e.dnsRequests = newPhysicalRequestBudget(physicalDownloadDNSRequestLimit * 4)
+		e.dnsDials = newPhysicalRequestBudget(physicalDownloadDNSRequestLimit * 4)
 		if seed != nil {
 			e.dnsRequests = seed.dnsRequests
 			e.dnsDials = seed.dnsDials
@@ -300,7 +306,11 @@ func PreparePhysicalAutoProxy(ctx context.Context, original *CProxy, timeout tim
 }
 
 func prepareAutoPhysicalProxyUsing(ctx context.Context, original *CProxy, timeout time.Duration, sockets int, prepare physicalProbePreparer, hasIPv6 func(*PhysicalDownloadEgress) bool) (*CProxy, *PhysicalDownloadEgress, error) {
-	ctx, cancel := boundedPhysicalContext(ctx, physicalDownloadPreparationTimeout)
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	// Two address families, at most two DNS attempts per family.
+	ctx, cancel := context.WithTimeout(ctx, 4*timeout)
 	defer cancel()
 	primary, path, err := prepare(ctx, original, sockets)
 	if err != nil || original == nil || !autoFamilyConfig(original.Config) || !hasIPv6(path) {

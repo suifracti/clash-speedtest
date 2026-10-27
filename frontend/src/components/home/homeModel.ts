@@ -1,3 +1,4 @@
+import {activeLatencyTargets,partialLatencySites,partialLatencyLabel} from '../../latencyTargets'
 import {inspectorMedian} from '../../inspectorLatency'
 import type {LatencyHistorySplit} from '../../latencyHistory'
 import type {ComputedRef,InjectionKey,Ref} from 'vue'
@@ -96,13 +97,15 @@ export interface Verdict {tone:HealthTone;label:string;detail:string}
 
 // Plain-language summary of the latest latency round across the shown sites.
 // A failed latest round is distinguished from sustained failure by its 7-day response rate.
-export function latencyVerdict(points:(TrendPoint|undefined)[],stableMs?:number|null,weeklyResponseRate?:number|null):Verdict{
+export function latencyVerdict(points:(TrendPoint|undefined)[],stableMs?:number|null,weeklyResponseRate?:number|null,siteNames:string[]=activeLatencyTargets.map(s=>s.name)):Verdict{
  const measured=points.filter((p):p is TrendPoint=>!!p&&p.tone!=='empty')
  if(!measured.length)return {tone:'empty',label:'还没测',detail:'这个时间范围内没有延迟记录'}
  const ok=measured.filter(p=>p.tone==='good'||p.tone==='warn')
  const raw=stableMs===undefined?inspectorMedian(ok.flatMap(p=>{const v=inspectorMedian((p.samples||[]).slice(1).flatMap(s=>s.value===null?[]:[s.value]));return v===null?[]:[v]})):stableMs===null?null:Math.round(stableMs)
  const mid=raw===null?null:Math.round(raw)
  if(!ok.length)return {tone:weeklyResponseRate!=null&&weeklyResponseRate>=90?'warn':'bad',label:weeklyResponseRate!=null&&weeklyResponseRate>=90?'刚失败一次':'连不上',detail:`${measured.length} 个站点全部失败`}
+ const partialSites=partialLatencySites(points.map((p,i)=>({name:siteNames[i]||'未知站点',total:(p?.samples||[]).filter(s=>s.tone!=='empty').length,success:(p?.samples||[]).filter(s=>s.value!==null).length})))
+ if(partialSites.length)return {tone:'warn',label:partialLatencyLabel(partialSites),detail:`其余站点正常${mid!==null?` · 约 ${mid} ms`:''}`}
  if(ok.length<measured.length)return {tone:'warn',label:'不稳定',detail:`${ok.length}/${measured.length} 个站点能连上${mid!==null?` · 通的约 ${mid} ms`:''}`}
  if(ok.some(p=>p.tone==='warn'))return {tone:'warn',label:'偶有失败',detail:`${ok.length} 个站点能连上，部分样本失败${mid!==null?` · 约 ${mid} ms`:''}`}
  return {tone:'good',label:'能用',detail:`${ok.length} 个站点${ok.length===1?'':'都'}能连上${mid!==null?` · 约 ${mid} ms`:''}`}

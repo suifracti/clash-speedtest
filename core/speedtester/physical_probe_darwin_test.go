@@ -129,8 +129,9 @@ func TestPhysicalClientRejectsAdapterThatNeverUsedItsBoundDialerBeforeHTTPWrite(
 
 func TestPhysicalLatencySixSitesUsePreparedProxyAndCloseWithoutFallback(t *testing.T) {
 	original := &physicalFixtureProxy{dial: func(context.Context) error { return errors.New("must not use default route") }}
-	bound := &physicalFixtureProxy{dial: func(context.Context) error { return errors.New("fixture node TCP failed") }}
+	bound := &physicalFixtureProxy{dial: func(context.Context) error { return context.DeadlineExceeded }}
 	e := newPhysicalDownloadEgress()
+	e.setFailure("context_cancelled")
 	st := &SpeedTester{config: &Config{PingCount: 1, Timeout: time.Second, LatencyTargetURL: "multi://latency-v1"}}
 	got := st.testSinglePhysicalContext(context.Background(), "selected", &CProxy{Proxy: original, Config: map[string]any{"server": "node.example", "sni": "tls.example"}}, nil, func(ctx context.Context, p *CProxy, limit int) (*CProxy, *PhysicalDownloadEgress, error) {
 		if limit != 6 || p.Config["sni"] != "tls.example" || ctx.Err() != nil {
@@ -145,6 +146,9 @@ func TestPhysicalLatencySixSitesUsePreparedProxyAndCloseWithoutFallback(t *testi
 		if s.Success || s.Error == "" {
 			t.Fatal("real fixture TCP failures lost")
 		}
+	}
+	if physicalFailureReason(context.Background(), context.Canceled) == "user_cancelled" || got.NetworkPath.FailureReason != "deadline_exceeded" {
+		t.Fatal("internal cancellation must preserve the timeout cause")
 	}
 	if got.PacketLoss != 100 || got.LatencyErrorClass != "" {
 		t.Fatal("TCP failure must remain a measured failure, not a preparation skip")

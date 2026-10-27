@@ -16,3 +16,10 @@ export function latencyTargetId(raw?:string){
   return latencyTargets.find(t=>t.urls.some(raw=>{const known=new URL(raw);return u.hostname===known.hostname&&u.pathname===known.pathname}))?.id
  }catch{return undefined}
 }
+
+// A completely blocked site is separate from intermittent failures elsewhere.
+export function partialLatencySites(sites:{name:string;total:number;success:number}[]):string[]{
+ const measured=sites.filter(s=>s.total>0),failed=measured.filter(s=>s.total>=6&&s.success===0)
+ return failed.length>0&&failed.length<measured.length&&measured.every(s=>failed.includes(s)||s.success===s.total)?failed.map(s=>s.name):[]
+}
+export function partialLatencyLabel(names:string[]){return `部分站点不通（${names.join('、')}）`}

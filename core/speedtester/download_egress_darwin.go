@@ -39,6 +39,7 @@ type PhysicalDownloadEgress struct {
 	multiAddressTCP  bool
 	preferredNodeIP  netip.Addr
 	dnsDial          func(context.Context, string) (net.Conn, error)
+	dnsTimeout       time.Duration
 	dnsRequests      *physicalRequestBudget
 	dnsDials         *physicalRequestBudget
 	tcpDials         *physicalRequestBudget
@@ -221,9 +222,23 @@ func (e *PhysicalDownloadEgress) resolve(ctx context.Context, host string) (neti
 	}
 	markDownloadPhase(ctx, "dns")
 	started := time.Now()
-	lookupCtx, cancel := boundedPhysicalContext(ctx, physicalDownloadLookupTimeout)
-	ip, err := e.resolvePhysicalDNS(lookupCtx, host)
-	cancel()
+	timeout, attempts := physicalDownloadLookupTimeout, 1
+	if e.dnsTimeout > 0 {
+		timeout, attempts = e.dnsTimeout, 2
+	}
+	var ip netip.Addr
+	var err error
+	for i := 0; i < attempts; i++ {
+		lookupCtx, cancel := context.WithTimeout(ctx, timeout)
+		ip, err = e.resolvePhysicalDNS(lookupCtx, host)
+		cancel()
+		if err == nil || ctx.Err() != nil {
+			break
+		}
+		if i+1 < attempts {
+			e.setFailure("")
+		}
+	}
 	e.mu.Lock()
 	e.dnsDuration += time.Since(started)
 	e.mu.Unlock()
@@ -328,11 +343,11 @@ func (e *PhysicalDownloadEgress) reserveDialBudget(ctx context.Context, udp bool
 }
 
 func physicalFailureReason(ctx context.Context, err error) string {
-	if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
-		return "user_cancelled"
-	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return "deadline_exceeded"
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+		return "context_cancelled"
 	}
 	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
 		return "deadline_exceeded"
@@ -367,11 +382,11 @@ func physicalFailureReason(ctx context.Context, err error) string {
 }
 
 func physicalSocketFailureReason(ctx context.Context, err error) string {
-	if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
-		return "user_cancelled"
-	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return "deadline_exceeded"
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+		return "context_cancelled"
 	}
 	if errors.Is(err, errPhysicalDownloadBudgetExceeded) {
 		return "physical_request_budget_exhausted"
@@ -668,7 +683,11 @@ func preparePhysicalProxyUsing(ctx context.Context, original *CProxy, socketLimi
 		}
 		e.mu.Unlock()
 	}()
-	ctx, cancel := boundedPhysicalContext(ctx, physicalDownloadPreparationTimeout)
+	preparationTimeout := physicalDownloadPreparationTimeout
+	if e.dnsTimeout > 0 {
+		preparationTimeout = 2 * e.dnsTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, preparationTimeout)
 	defer cancel()
 	dns, err := e.discoverPhysicalPath(ctx, original)
 	if err != nil {

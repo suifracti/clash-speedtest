@@ -5,6 +5,7 @@ import ReportMs from './ReportMs.vue'
 import {saveReportImage} from '../reportImage'
 import {nodeDisplayName} from '../nodePresentation'
 import type {BatchItem,LatencyBatch} from '../domain'
+import {partialLatencyLabel} from '../latencyTargets'
 import {buildLatencyReport,compareLatencyReports,type LatencyReportGroup,type LatencyReportRow} from '../latencyReport'
 
 const props=withDefaults(defineProps<{
@@ -70,7 +71,7 @@ function formatDuration(value:number|null){
 function formatMs(value:number|null|undefined){return value===null||value===undefined||!Number.isFinite(value)?'—':`${Math.round(value)} ms`}
 function formatSignedMs(value:number){const rounded=Math.round(value);return `${rounded>0?'+':''}${rounded} ms`}
 function statusLabel(row:LatencyReportRow){
- return ({usable:'能用',slow:'偏慢',unstable:'不稳定', 'no-response':'无响应',skipped:'未执行'} as const)[row.status]
+ return row.status==='partial'?partialLatencyLabel(row.partialSites):({usable:'能用',slow:'偏慢',unstable:'不稳定',partial:'部分站点不通', 'no-response':'无响应',skipped:'未执行'} as const)[row.status]
 }
 function issueDetail(group:LatencyReportGroup,row:LatencyReportRow){
  return group.issues.find(issue=>issue.row.key===row.key)?.detail||row.skipReason||row.suspectedReasons.join('；')
@@ -100,6 +101,7 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
     <span v-if="card.key==='suspected'&&card.value">与其他结果重叠</span>
    </article>
   </div>
+  <p v-if="report.counts.partial" class="latency-report-note partial">部分站点不通 {{report.counts.partial}} 项（不计入不稳定）</p>
   <p v-if="report.counts.skipped" class="latency-report-note">
    未执行 {{report.counts.skipped}} 项（不计入无响应）
   </p>
@@ -213,7 +215,7 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
 .latency-report-table-wrap .number{text-align:right;font-variant-numeric:tabular-nums}
 .latency-report-table-wrap td:first-child{min-width:135px}
 .latency-report-table-wrap td:first-child small,.latency-report-table-wrap td:nth-child(2) small,.latency-report-table-wrap td:last-child small{display:block;max-width:220px;margin-top:2px;color:var(--cst-muted);line-height:1.4}
-.latency-report-status{white-space:nowrap}.latency-report-status.usable{color:var(--cst-good)}.latency-report-status.slow{color:var(--cst-warn)}.latency-report-status.unstable{color:var(--cst-warn)}.latency-report-status.no-response{color:var(--cst-bad)}.latency-report-status.incomplete,.latency-report-status.skipped{color:var(--cst-muted)}
+.latency-report-status{white-space:nowrap}.latency-report-status.usable{color:var(--cst-good)}.latency-report-note.partial,.latency-report-status.partial{color:var(--cst-warn)}.latency-report-status.partial{white-space:normal}.latency-report-status.slow{color:var(--cst-warn)}.latency-report-status.unstable{color:var(--cst-warn)}.latency-report-status.no-response{color:var(--cst-bad)}.latency-report-status.incomplete,.latency-report-status.skipped{color:var(--cst-muted)}
 .latency-report-suspected{color:var(--cst-accent)!important}
 @media(max-width:760px){.latency-report-counts{grid-template-columns:repeat(2,minmax(0,1fr))}.latency-report-columns{grid-template-columns:minmax(0,1fr)}.latency-report-head{gap:8px}.latency-report-meta{max-width:58vw}.latency-report-group li{align-items:flex-start;flex-direction:column;gap:1px}.latency-report-group li small{text-align:left}.latency-report-actions{justify-content:stretch}.latency-report-actions .button{flex:1}}
 </style>

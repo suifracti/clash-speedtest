@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
@@ -131,7 +132,7 @@ func (st *SpeedTester) testSinglePhysicalContext(ctx context.Context, name strin
 	if st.config != nil && st.config.PhysicalSocketBudget > 0 {
 		sockets = st.config.PhysicalSocketBudget
 	}
-	prepCtx, cancel := context.WithTimeout(ctx, timeout)
+	prepCtx, cancel := context.WithTimeout(ctx, 4*timeout)
 	client, path, cleanup, err := openPhysicalProbeClient(prepCtx, proxy, timeout, sockets, prepare)
 	cancel()
 	defer cleanup()
@@ -144,6 +145,17 @@ func (st *SpeedTester) testSinglePhysicalContext(ctx context.Context, name strin
 	}
 	if path != nil {
 		snapshot := path()
+		if snapshot.FailureReason == "context_cancelled" && ctx.Err() == nil {
+			for i := len(result.LatencySamples) - 1; i >= 0; i-- {
+				sample := result.LatencySamples[i]
+				if !sample.Success {
+					if strings.Contains(sample.Error, context.DeadlineExceeded.Error()) {
+						snapshot.FailureReason = "deadline_exceeded"
+					}
+					break
+				}
+			}
+		}
 		result.NetworkPath = &snapshot
 		if err != nil && snapshot.FailureReason == "physical_ipv6_interface_unavailable" {
 			result.LatencyError = "未执行：当前物理网卡没有可用 IPv6 地址"

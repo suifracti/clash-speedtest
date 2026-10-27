@@ -506,6 +506,12 @@ func (s *AppService) runWorkbenchLatencyBatchItem(runtime *workbenchLatencyBatch
 		})
 		return
 	}
+	runtime.mu.Lock()
+	userCancelled := runtime.cancelRequested
+	runtime.mu.Unlock()
+	if userCancelled && measured.NetworkPath != nil {
+		measured.NetworkPath.FailureReason = "user_cancelled"
+	}
 	record := buildWorkbenchLatencyRecord(attemptID, snapshot.ProfileID, selected, batch.TestProject, requestedAt, startedAt, finishedAt, measured)
 	record.Source = workbenchLatencySourceBatch
 	record.Method = workbenchLatencyMethod

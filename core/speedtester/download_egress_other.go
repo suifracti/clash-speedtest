@@ -24,7 +24,7 @@ func PlanPhysicalDownloadPath(ctx context.Context, _ *CProxy) DownloadNetworkPat
 
 func physicalDownloadContextFailure(err error) string {
 	if err == context.Canceled {
-		return "user_cancelled"
+		return "context_cancelled"
 	}
 	if err == context.DeadlineExceeded {
 		return "deadline_exceeded"

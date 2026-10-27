@@ -56,7 +56,7 @@ const exitPath=computed(()=>pathSteps(w.localPosition.value||undefined,nodeEntry
 const pathNotice=computed(()=>mainlandNotice(entryCountry(nodeEntry.value),w.localPosition.value?.country_code))
 // 出口模式一打开就补一次入口解析；缓存命中时不会发 DNS。组合视图只用已有缓存。
 watch(()=>[key(props.node),props.exitOnly],()=>{if(props.exitOnly)void w.ensureEntry(props.node).catch(()=>{})},{immediate:true})
-const latencyVerdictValue=computed(()=>latencyVerdict((latencyFocus.value||latencySeries.value).map(s=>s.points.at(-1)),stableLatency(latencyFocus.value||latencySeries.value),m.weeklyStats.value[key(props.node)]?.allOld?null:m.weeklyStats.value[key(props.node)]?.all.responseRate))
+const latencyVerdictValue=computed(()=>latencyVerdict((latencyFocus.value||latencySeries.value).map(s=>s.points.at(-1)),stableLatency(latencyFocus.value||latencySeries.value),m.weeklyStats.value[key(props.node)]?.allOld?null:m.weeklyStats.value[key(props.node)]?.all.responseRate,(latencyFocus.value||latencySeries.value).map(s=>s.name)))
 const serviceVerdict=computed(()=>unlockSummary(w.catalog.value,id=>m.shownService(props.node,id),w.nodeUnlockRegion(props.node),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions,landing.value.ipKind.type))
 const downloadVerdict=computed(()=>({tone:m.downloadMetricTone(props.node)||'empty',label:m.downloadMetric(props.node),detail:m.downloadMetricContext(props.node)}))
 const verdict=computed(()=>props.exitOnly?{tone:landing.value.tone,label:landing.value.label,detail:landing.value.detail}:project.value==='download'?downloadVerdict.value:project.value==='service'?serviceVerdict.value:latencyVerdictValue.value)

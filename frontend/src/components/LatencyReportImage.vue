@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import {partialLatencyLabel} from '../latencyTargets'
 import type {LatencyReport} from '../latencyReport'
 import {nodeDisplayName} from '../nodePresentation'
 import ReportMs from './ReportMs.vue'
@@ -6,7 +7,7 @@ import {reportImageText as safe} from '../reportImage'
 defineProps<{report:LatencyReport;summary:string;comparison:string;monitor:boolean}>()
 declare const __CST_VERSION__:string
 const version=__CST_VERSION__
-const status=(value:string)=>({usable:'能用',slow:'偏慢',unstable:'不稳定','no-response':'无响应',skipped:'未执行'}[value]||'未记录')
+const status=(value:string,sites:string[]=[])=>value==='partial'?partialLatencyLabel(sites):({usable:'能用',slow:'偏慢',unstable:'不稳定','no-response':'无响应',skipped:'未执行'}[value]||'未记录')
 </script>
 <template>
  <article class="report-image" aria-label="待导出的检测报告">
@@ -17,6 +18,7 @@ const status=(value:string)=>({usable:'能用',slow:'偏慢',unstable:'不稳定
    <div class="bad"><small>无响应</small><strong>{{report.counts.noResponse}}</strong></div>
    <div><small>疑似检测问题</small><strong>{{report.counts.suspected}}</strong><small v-if="report.counts.suspected">与其他结果重叠</small></div>
   </div>
+  <p v-if="report.counts.partial" class="warn">部分站点不通 {{report.counts.partial}} 项（不计入不稳定）</p>
   <p class="image-compare">{{safe(comparison)}}</p>
   <div class="image-highlights">
    <section><h2>最快 5 个 <small>稳定延迟</small></h2><table><tbody><tr v-for="(row,i) in report.fastest5" :key="row.key"><td>{{i+1}}. {{safe(nodeDisplayName(row.item))}}</td><td class="number"><ReportMs :value="row.stableMs"/></td></tr></tbody></table><p v-if="!report.fastest5.length">没有四站齐全的稳定延迟结果</p></section>
@@ -24,7 +26,7 @@ const status=(value:string)=>({usable:'能用',slow:'偏慢',unstable:'不稳定
   </div>
   <h2>节点结果 <small>{{report.rows.length}} 个节点</small></h2>
   <table class="image-nodes"><thead><tr><th>节点</th><th>结果</th><th class="number">稳定延迟</th><th class="number">首次连接</th><th class="number">响应</th></tr></thead><tbody>
-   <tr v-for="row in report.rows" :key="row.key"><td>{{safe(nodeDisplayName(row.item))}}<small>{{safe(row.airportName)}} · {{row.nodeType}}</small></td><td :class="row.status==='usable'?'good':row.status==='no-response'?'bad':'warn'">{{status(row.status)}}<small v-if="row.suspected">疑似检测问题</small></td><td class="number"><ReportMs :value="row.stableMs"/></td><td class="number"><ReportMs :value="row.firstMedianMs"/></td><td class="number">{{row.responseSamples}}/{{row.attemptedSamples}}</td></tr>
+   <tr v-for="row in report.rows" :key="row.key"><td>{{safe(nodeDisplayName(row.item))}}<small>{{safe(row.airportName)}} · {{row.nodeType}}</small></td><td :class="row.status==='usable'?'good':row.status==='no-response'?'bad':'warn'">{{status(row.status,row.partialSites)}}<small v-if="row.suspected">疑似检测问题</small></td><td class="number"><ReportMs :value="row.stableMs"/></td><td class="number"><ReportMs :value="row.firstMedianMs"/></td><td class="number">{{row.responseSamples}}/{{row.attemptedSamples}}</td></tr>
   </tbody></table>
   <footer><strong>CST</strong><span>{{version}}</span><span>稳定延迟不含首次采样 · 仅包含检测摘要</span></footer>
  </article>

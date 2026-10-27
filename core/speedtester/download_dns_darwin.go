@@ -139,7 +139,11 @@ func (e *PhysicalDownloadEgress) lookupPhysicalDNS(ctx context.Context, host str
 		}
 		conn = wrapPhysicalDNSConn(conn, ctx, e.dnsRequests)
 		stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
-		client := &dns.Client{Net: network, Timeout: physicalDownloadLookupTimeout, UDPSize: 1232}
+		timeout := physicalDownloadLookupTimeout
+		if e.dnsTimeout > 0 {
+			timeout = e.dnsTimeout
+		}
+		client := &dns.Client{Net: network, Timeout: timeout, UDPSize: 1232}
 		r, _, exchangeErr := client.ExchangeWithConnContext(ctx, q, &dns.Conn{Conn: conn, UDPSize: 1232})
 		stop()
 		conn.Close()

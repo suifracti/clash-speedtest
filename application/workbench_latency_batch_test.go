@@ -222,6 +222,7 @@ func TestWorkbenchLatencyBatchCancellationAbortsCurrentMeasurementAndPreservesEv
 					result = knownWorkbenchLatencyResult(true)
 					result.LatencySamples = append(result.LatencySamples, speedtester.LatencySample{Seq: 2, Timestamp: time.Now().UTC(), Success: false, Error: context.Canceled.Error()})
 					result.PacketLoss = 50
+					result.NetworkPath = &speedtester.DownloadNetworkPath{FailureReason: "context_cancelled"}
 				} else if outcome == "empty" {
 					result = &speedtester.Result{}
 				}
@@ -284,6 +285,9 @@ func TestWorkbenchLatencyBatchCancellationAbortsCurrentMeasurementAndPreservesEv
 			record, err := store.GetLatencyTest(context.Background(), current.AttemptID)
 			if err != nil {
 				t.Fatalf("get partial attempt: %v", err)
+			}
+			if !strings.Contains(string(record.NetworkPath), "user_cancelled") {
+				t.Error("explicit user cancellation was not saved")
 			}
 			if record.TotalSamples != 2 || record.SuccessSamples != 1 || record.FailureSamples != 1 || len(record.Samples) != 2 || record.Samples[0].Seq != 1 || !record.Samples[0].Success || record.Samples[0].LatencyMs != 42 || record.Samples[1].Seq != 2 || record.Samples[1].Success || record.Samples[1].Error != context.Canceled.Error() {
 				t.Fatalf("partial samples or cancellation failure were lost: %+v", record)
