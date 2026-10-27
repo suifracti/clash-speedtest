@@ -34,7 +34,7 @@ func TestUsageRefreshKeepsThirtyMinuteGapPerAirport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if calls.Load() != 1 || state == nil || !strings.Contains(state.Message, "30 分钟内已刷新") {
+	if calls.Load() != 1 || state == nil || !strings.Contains(state.Message, "自动刷新间隔内") {
 		t.Fatalf("second refresh ignored the gap: calls=%d state=%+v err=%v", calls.Load(), state, err)
 	}
 	if _, err := s.collectSubscriptionUsage(context.Background(), now.Add(31*time.Minute), "fixture", true); err != nil {
@@ -45,7 +45,7 @@ func TestUsageRefreshKeepsThirtyMinuteGapPerAirport(t *testing.T) {
 	}
 }
 
-func TestRefreshJobMarksAirportsInsideGapAsNotExecuted(t *testing.T) {
+func TestManualRefreshJobRunsInsideThirtyMinuteGap(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -66,11 +66,12 @@ func TestRefreshJobMarksAirportsInsideGapAsNotExecuted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(job.Items) != 1 || job.Items[0].State != "not_executed" || job.Items[0].ErrorCode != "recently_refreshed" {
-		t.Fatalf("job did not reuse the cache: %+v", job)
+	if len(job.Items) != 1 || job.Items[0].State != "queued" || job.Items[0].ErrorCode != "" {
+		t.Fatalf("manual job was blocked by the gap: %+v", job)
 	}
-	if calls.Load() != 0 {
-		t.Fatalf("job inside the gap issued %d requests", calls.Load())
+	s.refreshWG.Wait()
+	if calls.Load() != 1 {
+		t.Fatalf("manual job inside the gap issued %d requests", calls.Load())
 	}
 	if ap.ID == "" {
 		t.Fatal("fixture airport was not created")

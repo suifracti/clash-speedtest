@@ -105,7 +105,7 @@ describe('SubscriptionOverview status strip',()=>{
     ]}))
   })
 
-  it('keeps a failed refresh in the row as a gray last-refresh note and reuses cache inside thirty minutes',async()=>{
+  it('keeps a failed refresh note while allowing manual refresh inside thirty minutes',async()=>{
     vi.useFakeTimers({toFake:['Date','setInterval','clearInterval']})
     const recent=new Date(Date.now()-5*60*1000).toISOString()
     const single={...airportA,subscriptions:[{...airportA.subscriptions![0],last_attempt_at:recent,last_attempt_failed:true},airportA.subscriptions![1]!]}
@@ -117,11 +117,11 @@ describe('SubscriptionOverview status strip',()=>{
     expect(wrapper!.get('.airport-refresh-note').text()).toContain('上次刷新')
     expect(wrapper!.get('.subscription-airport-row').text()).toContain('缓存')
     const refreshAll=wrapper!.findAll('button').find(button=>button.text().includes('全部刷新'))!
-    expect(refreshAll.attributes('disabled')).toBeDefined()
-    expect(wrapper!.text()).toContain('30 分钟内已刷新')
+    expect(refreshAll.attributes('disabled')).toBeUndefined()
+    expect(wrapper!.text()).not.toContain('30 分钟内已刷新')
     await refreshAll.trigger('click')
     await flushPromises()
-    expect(refreshMocks.startRefresh).not.toHaveBeenCalled()
+    expect(refreshMocks.startRefresh).toHaveBeenCalledOnce()
     await vi.advanceTimersByTimeAsync(25*60*1000);await flushPromises()
     expect(refreshAll.attributes('disabled')).toBeUndefined()
     expect(wrapper!.text()).not.toContain('30 分钟内已刷新')

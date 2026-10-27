@@ -44,22 +44,7 @@ func (s *AppService) RefreshAccountUsage(ctx context.Context, airportID, subID, 
 	if err == nil {
 		err = s.seedAccountUsageLocked(ctx, airport, sub)
 	}
-	if err == nil && subscriptionUsageTooSoon(subscriptionUsageLastAttempt(airport), time.Now()) {
-		status := "missing"
-		if sub.Usage != nil {
-			status = "ok"
-		}
-		cached := usageSnapshot(airport, sub, status, "cached_attempt", time.Now())
-		cached.Message = "30 分钟内已刷新；本次直接使用缓存"
-		hasCache := s.profilePaths.HasCache(sub.ID)
-		nodeCount := 0
-		if hasCache {
-			nodeCount = s.CountCachedNodes(sub.ID)
-		}
-		result := &SubscriptionUsageRefreshResult{Subscription: subscriptionDTO(airport.ID, sub, nodeCount, hasCache), Observation: cached, RecentlyRefreshed: true}
-		s.profileWriteMu.Unlock()
-		return result, nil
-	}
+
 	var source string
 	if err == nil {
 		source = sub.URL

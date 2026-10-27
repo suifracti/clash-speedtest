@@ -6,7 +6,6 @@ import {airportAccounts,noticesForAccount,safeAirportLink,parseNoticeUsage,type 
 import {useWorkspace} from '../workspace'
 import {accountDailyUsage,shanghaiDay,shiftDay,type DayUsage,type UsageSnapshot} from '../usageDaily'
 import SubscriptionChanges from './SubscriptionChanges.vue'
-import {useUsageRefreshWindow} from '../usageRefreshWindow'
 import Modal from './Modal.vue'
 import UsageDays from './UsageDays.vue'
 
@@ -118,9 +117,7 @@ watch(()=>[rowMode.value,displayedAccounts.value.map(a=>a.key).join('|'),workspa
   dailyByAccount.value=Object.fromEntries(entries.map(([key,result])=>[key,result?.days||[]]))
   snapshotsByAccount.value=Object.fromEntries(entries.map(([key,result])=>[key,result?.account]))
 },{immediate:true})
-const airportRecentlyRefreshed=useUsageRefreshWindow()
 const hm=(value?:string|number)=>{const date=typeof value==='number'?new Date(value):value&&!value.startsWith('0001')?new Date(value):undefined;return date&&Number.isFinite(date.getTime())?date.toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hour12:false}):''}
-const recentlyRefreshed=(account:AirportAccount)=>airportRecentlyRefreshed(account.airport)
 function sumDay(list:AirportAccount[],index:number){
   const day=shiftDay(shanghaiDay(),-index)
   const values=list.map(account=>dailyByAccount.value[account.key]?.find(d=>d.date===day))
@@ -201,8 +198,6 @@ const statusLabel=computed(()=>{
 })
 const statusTone=computed(()=>jobRunning(activeJob.value)?'warn':['failed','interrupted'].includes(visibleItem.value?.state||'')?'bad':visibleItem.value?.state==='succeeded'?'good':statusLabel.value?'warn':'')
 const refreshDisabled=computed(()=>loading.value||jobRunning(activeJob.value))
-const primaryAccounts=computed(()=>allAirports.value?workspaceAccounts.value:accounts.value)
-const primaryRecentlyRefreshed=computed(()=>primaryAccounts.value.length>0&&primaryAccounts.value.every(recentlyRefreshed))
 const cancelJob=computed(()=>jobRunning(activeJob.value)?activeJob.value:jobRunning(visibleJob.value)?visibleJob.value:null)
 
 function defaultScopeKeys(){
@@ -243,12 +238,10 @@ async function loadJobs(){
 }
 function requestID(){return globalThis.crypto?.randomUUID?.()||`refresh-${Date.now()}-${Math.random().toString(16).slice(2)}`}
 async function startSelections(accountsToRefresh:AirportAccount[]){
-  // 同一机场 30 分钟内只请求一次；命中下限时直接用缓存，不发请求也不弹提示。
-  const ready=accountsToRefresh.filter(account=>!recentlyRefreshed(account))
-  if(!ready.length||refreshDisabled.value)return
+  if(!accountsToRefresh.length||refreshDisabled.value)return
   loading.value=true;error.value=''
   try{
-    const selections=ready.map(account=>({airport_id:account.airport.id,subscription_id:account.subscription.id}))
+    const selections=accountsToRefresh.map(account=>({airport_id:account.airport.id,subscription_id:account.subscription.id}))
     const body:SubscriptionRefreshRequest={request_id:requestID(),selections}
     const job=await api.startRefresh(body)
     mergeJob(job)
@@ -303,7 +296,7 @@ defineExpose({usageRatio})
             <time class="airport-summary-time" :class="{'airport-refresh-note':row.lastFailedAt}">{{row.lastFailedAt?`上次刷新 ${hm(row.lastFailedAt)}`:row.updated?date(row.updated):'未刷新'}}</time>
             <span v-if="row.lastFailedAt" class="airport-refresh-note" title="本次刷新失败，仍使用上一次快照">缓存</span>
             <span v-else :class="{'airport-refresh-failed':row.issues.length}" :title="row.issues.map(issue=>issue.item.error_message||'刷新中断').join('；')">{{row.issues.length?'刷新失败':'正常'}}</span>
-            <button v-if="allAirports" class="text-button" @click="emit('viewed',row.airport.id)">只看</button><button v-else class="text-button" :disabled="refreshDisabled||row.accounts.every(recentlyRefreshed)" :title="row.accounts.every(recentlyRefreshed)?'30 分钟内已刷新，使用缓存':undefined" @click="startSelections(row.accounts)">刷新</button>
+            <button v-if="allAirports" class="text-button" @click="emit('viewed',row.airport.id)">只看</button><button v-else class="text-button" :disabled="refreshDisabled" @click="startSelections(row.accounts)">刷新</button>
           </div>
         </div>
         <div class="subscription-daily all-daily">
@@ -317,7 +310,7 @@ defineExpose({usageRatio})
           </div>
         </div>
       </div>
-      <div class="subscription-actions"><button class="button primary" :disabled="refreshDisabled||!workspaceAccounts.length||primaryRecentlyRefreshed" @click="allAirports?startAll():startAirport()">{{loading?'提交中…':allAirports?'全部刷新':'刷新此机场'}}</button><span v-if="primaryRecentlyRefreshed&&!loading" class="refresh-recent-note" role="status">30 分钟内已刷新</span><template v-if="!allAirports"><div class="refresh-scope">
+      <div class="subscription-actions"><button class="button primary" :disabled="refreshDisabled||!workspaceAccounts.length" @click="allAirports?startAll():startAirport()">{{loading?'提交中…':allAirports?'全部刷新':'刷新此机场'}}</button><template v-if="!allAirports"><div class="refresh-scope">
           <button class="button ghost" type="button" aria-label="选择刷新范围" :aria-expanded="scopeOpen" @click="scopeOpen=!scopeOpen">选择范围</button>
           <div v-if="scopeOpen" class="refresh-scope-panel" role="group" aria-label="刷新订阅范围">
             <label v-for="entry in workspaceAccounts" :key="entry.key">
@@ -430,7 +423,7 @@ defineExpose({usageRatio})
 .subscription-daily{display:flex;flex-direction:column;justify-content:center;gap:3px;min-width:0;padding-left:12px;border-left:1px solid var(--line)}.subscription-daily h3{margin:0;color:var(--muted);font-size:10px;line-height:12px;font-weight:600}.subscription-daily :deep(.cst-usage-summary){height:50px;gap:4px;padding-bottom:0}.subscription-daily :deep(.cst-usage-day){grid-template-rows:10px 24px 10px;gap:3px}.subscription-daily :deep(.cst-usage-day-value),.subscription-daily :deep(.cst-usage-day-label){font-size:8.5px;line-height:10px}.subscription-daily :deep(.cst-usage-day-track){width:20px;height:24px;border-radius:5px 5px 2px 2px}.subscription-daily :deep(.cst-usage-caption){font-size:8px;line-height:10px}
 
 .subscription-actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;min-height:30px;font-size:11px}.subscription-actions .button{min-height:28px;padding:4px 10px;font-size:12px}.subscription-actions .badge{padding:4px 7px;font-size:11px}.subscription-actions .text-button{font-size:11px}.subscription-message{color:var(--red);font-size:10px;line-height:1.3}.subscription-issues{position:relative;font-size:11px}.subscription-issues summary{width:max-content;max-width:100%;color:var(--red);cursor:pointer}.subscription-issues p{display:flex;flex-wrap:wrap;gap:4px 8px;margin:6px 0 0;line-height:1.5}.subscription-issues p small{flex:1 0 100%;color:var(--muted)}.issue-retries{display:flex;flex-wrap:wrap;gap:8px;margin-top:7px}.issue-retries button{font-size:12px}.status-read{font-size:11px}.refresh-scope{position:relative}.refresh-scope-panel{position:absolute;top:calc(100% + 5px);left:0;z-index:20;display:grid;gap:8px;width:min(310px,calc(100vw - 28px));max-height:250px;overflow:auto;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--surface);box-shadow:var(--shadow)}.refresh-scope-panel label{display:flex;align-items:center;gap:8px;font-size:12px;line-height:1.4}.refresh-scope-panel label span{overflow-wrap:anywhere}.refresh-scope-panel>.button{justify-self:start}.notice-row{padding:8px 0;border-bottom:1px solid var(--line)}.notice-row small{color:var(--muted)}.notice-row p{margin-top:4px;overflow-wrap:anywhere}
-.subscription-all-main{display:grid;grid-template-columns:minmax(0,1fr) 140px;align-items:center;gap:12px;min-width:0}.subscription-airport-list{display:grid;gap:8px;min-width:0}.subscription-airport-heading{display:flex;align-items:center;gap:8px;font-size:13px}.subscription-airport-heading small,.airport-summary-name small{font-size:10px;color:var(--muted);font-weight:400;margin-left:5px}.subscription-airport-row{display:grid;grid-template-columns:minmax(56px,.6fr) minmax(145px,1.7fr) minmax(74px,.8fr) 78px 48px 26px;align-items:center;gap:10px;font-size:11px}.airport-summary-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.airport-summary-quota{display:grid;gap:5px;min-width:0}.airport-summary-quota>span{font-size:10px;color:var(--muted);white-space:nowrap}.airport-summary-quota b{color:var(--ink);font-size:11px;font-weight:600}.airport-summary-quota small{color:var(--blue);font-size:9px;margin-left:3px}.airport-summary-quota .usage-track{height:4px}.airport-summary-time,.airport-summary-today{color:var(--muted);font-size:10px}.airport-refresh-failed{color:var(--red)}.airport-refresh-note{color:var(--muted)}.refresh-recent-note{color:var(--muted);font-size:11px}.subscription-airport-row .text-button{font-size:11px;color:var(--blue)}.subscription-airport-row .text-button:hover{text-decoration:underline}.all-airports>.subscription-issues{order:-1}.all-daily-chart{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}.all-daily-chart>div{display:grid;justify-items:center;gap:3px}.all-daily-chart small{font-size:8.5px;color:var(--muted);white-space:nowrap}.all-day-track{display:flex;align-items:flex-end;width:20px;height:24px;overflow:hidden;border-radius:5px 5px 2px 2px}.all-day-track i{display:block;width:100%;background:var(--blue);border-radius:inherit}.all-day-track i.partial{opacity:.5}.all-day-track i.unknown{background:repeating-linear-gradient(-45deg,var(--line) 0 3px,transparent 3px 6px);border:1px dashed var(--line)}
+.subscription-all-main{display:grid;grid-template-columns:minmax(0,1fr) 140px;align-items:center;gap:12px;min-width:0}.subscription-airport-list{display:grid;gap:8px;min-width:0}.subscription-airport-heading{display:flex;align-items:center;gap:8px;font-size:13px}.subscription-airport-heading small,.airport-summary-name small{font-size:10px;color:var(--muted);font-weight:400;margin-left:5px}.subscription-airport-row{display:grid;grid-template-columns:minmax(56px,.6fr) minmax(145px,1.7fr) minmax(74px,.8fr) 78px 48px 26px;align-items:center;gap:10px;font-size:11px}.airport-summary-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.airport-summary-quota{display:grid;gap:5px;min-width:0}.airport-summary-quota>span{font-size:10px;color:var(--muted);white-space:nowrap}.airport-summary-quota b{color:var(--ink);font-size:11px;font-weight:600}.airport-summary-quota small{color:var(--blue);font-size:9px;margin-left:3px}.airport-summary-quota .usage-track{height:4px}.airport-summary-time,.airport-summary-today{color:var(--muted);font-size:10px}.airport-refresh-failed{color:var(--red)}.airport-refresh-note{color:var(--muted)}.subscription-airport-row .text-button{font-size:11px;color:var(--blue)}.subscription-airport-row .text-button:hover{text-decoration:underline}.all-airports>.subscription-issues{order:-1}.all-daily-chart{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}.all-daily-chart>div{display:grid;justify-items:center;gap:3px}.all-daily-chart small{font-size:8.5px;color:var(--muted);white-space:nowrap}.all-day-track{display:flex;align-items:flex-end;width:20px;height:24px;overflow:hidden;border-radius:5px 5px 2px 2px}.all-day-track i{display:block;width:100%;background:var(--blue);border-radius:inherit}.all-day-track i.partial{opacity:.5}.all-day-track i.unknown{background:repeating-linear-gradient(-45deg,var(--line) 0 3px,transparent 3px 6px);border:1px dashed var(--line)}
 @media(max-width:1200px){.subscription-all-main{grid-template-columns:minmax(0,1fr)}.all-daily{flex-direction:row;align-items:center;gap:12px;padding:0;border:0}.all-daily-chart{width:150px}.all-daily-chart>div{grid-template-columns:1fr 1fr}.all-day-track{display:none}.subscription-airport-row{gap:7px}}
 @media(max-width:760px){.subscription-airport-row{grid-template-columns:64px minmax(140px,1fr) 48px 26px}.airport-summary-time,.airport-summary-today{grid-row:2}.airport-summary-today{grid-column:1/3}.airport-summary-time{grid-column:3/5}.subscription-airport-row{gap:5px 8px}}
 @media(max-width:1200px){.subscription-main{grid-template-columns:minmax(120px,.8fr) minmax(210px,1.5fr) 144px;gap:10px}.subscription-overview{padding-right:12px;padding-left:12px}.subscription-daily{padding-left:8px}}

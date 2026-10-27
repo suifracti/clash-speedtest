@@ -580,13 +580,7 @@ func (s *AppService) StartSubscriptionRefreshJob(req SubscriptionRefreshRequest,
 			State:             "queued",
 			Stages:            []RefreshStage{{State: "queued", At: job.CreatedAt}},
 		}
-		if subscriptionUsageTooSoon(subscriptionUsageLastAttempt(airport), time.Now()) {
-			item.State = "not_executed"
-			item.ErrorCode = "recently_refreshed"
-			item.ErrorMessage = "30 分钟内已刷新；使用缓存"
-			item.FinishedAt = job.CreatedAt
-			item.Stages = append(item.Stages, RefreshStage{State: "not_executed", At: job.CreatedAt})
-		}
+
 		job.Items = append(job.Items, item)
 	}
 	if len(job.Items) == 0 {

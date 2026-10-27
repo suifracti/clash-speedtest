@@ -11,7 +11,6 @@ import Icon from './Icon.vue'
 import SubscriptionUsageView from './SubscriptionUsageView.vue'
 import {airportAccounts,noticesForAccount,parseNoticeUsage} from '../airportViewing'
 import UsageDays from './UsageDays.vue'
-import {useUsageRefreshWindow} from '../usageRefreshWindow'
 const section=ref('manage')
 const noticeBalances=ref<Record<string,number|undefined>>({})
 const w=useWorkspace(),busy=ref(''),search=ref(''),form=ref<{kind:'airport'|'subscription';airportId?:string;subId?:string;name:string;url:string;website_url:string;backup_url:string;note:string}|null>(null),formError=ref(''),remove=ref<{airport:Airport;sub?:Subscription}|null>(null),maintenance=ref<{airport:Airport;settings:NonNullable<Airport['maintenance']>}|null>(null),refreshJob=ref<SubscriptionRefreshJob|null>(null),refreshProgressVisible=ref(false),refreshLoading=ref(false)
@@ -30,9 +29,7 @@ async function loadRefreshJobs(){try{const jobs=await api.refreshJobs();if(dispo
 function refreshRequestID(){return globalThis.crypto?.randomUUID?.()||`refresh-${Date.now()}-${Math.random().toString(16).slice(2)}`}
 async function refresh(a:Airport,s?:Subscription){if(refreshLoading.value||refreshJob.value?.state==='running')return;busy.value=s?.id||a.id;refreshLoading.value=true;try{const accounts=airportAccounts([a]),selected=s?accounts.find(entry=>entry.subscription.id===s.id):undefined,requestBody=s?{request_id:refreshRequestID(),selections:[{airport_id:a.id,subscription_id:s.id}]}:{request_id:refreshRequestID(),selections:accounts.map(entry=>({airport_id:a.id,subscription_id:entry.subscription.id}))};if(s&&!selected)throw new Error('订阅已变化，请重新载入机场列表');mergeRefresh(await api.startRefresh(requestBody),true);if(refreshJob.value?.state!=='running'){await w.refreshNodes();w.notify('订阅刷新任务已完成')}}catch(e){w.fail(e)}finally{busy.value='';refreshLoading.value=false}}
 const hm=(value?:string)=>!value||value.startsWith('0001')?'':new Date(value).toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hour12:false})
-const usageRecent=useUsageRefreshWindow()
 async function refreshUsage(a:Airport,s:Subscription){
-  if(usageRecent(a))return
   busy.value=s.id
   try{
     const result=await request<{observation:{status:string;remaining?:number};recently_refreshed?:boolean}>(`/api/airports/${a.id}/subscriptions/${s.id}/usage/refresh`,'POST',undefined,'RefreshSubscriptionUsage',[a.id,s.id])
@@ -87,8 +84,7 @@ onBeforeUnmount(()=>{disposed=true;clearTimeout(refreshTimer)})
     <UsageDays :airport-id="a.id" :subscription-id="s.id" :days="14" :refresh-version="w.usageRefreshVersion.value" chart @account="noticeBalances[s.id]=$event?.remaining"/>
     <div class="cst-ledger-actions">
       <button class="button" :disabled="!s.has_cache" title="在工作台把这个账户设为测量来源并查看节点" @click="browse(a,s)">选为测量来源</button>
-      <small v-if="usageRecent(a)" class="muted">30 分钟内已刷新</small>
-      <button class="button ghost" :disabled="!!busy||usageRecent(a)" :title="usageRecent(a)?'30 分钟内已刷新，使用缓存':undefined" aria-label="刷新用量" @click="refreshUsage(a,s)">刷新用量</button>
+      <button class="button ghost" :disabled="!!busy" aria-label="刷新用量" @click="refreshUsage(a,s)">刷新用量</button>
       <button class="button ghost icon-button" :disabled="!!busy||refreshLoading||refreshJob?.state==='running'" aria-label="更新节点" title="更新节点与订阅用量" @click="refresh(a,s)"><Icon name="refresh"/></button>
       <button class="button ghost icon-button" :disabled="!!busy" aria-label="编辑订阅" @click="edit(a,s)"><Icon name="edit"/></button>
       <button class="button ghost icon-button" aria-label="删除订阅" @click="remove={airport:a,sub:s}"><Icon name="trash"/></button>

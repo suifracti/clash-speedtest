@@ -22,9 +22,9 @@ var noticeRemainingValue = regexp.MustCompile(`(?i)(?:距离下次重置剩余|�
 
 var errUsageRefreshPanic = errors.New("订阅用量更新出现内部异常；请查看账户状态并重试")
 
-// Automatic usage collection runs at startup and then every two hours. Even a
-// manual refresh waits for the per-airport gap so a provider is never asked
-// twice inside half an hour; the cached counters stay usable meanwhile.
+// Automatic usage collection runs at startup and then every two hours. Each
+// automatic refresh respects a per-airport half-hour gap, including the last
+// manual refresh. Manual requests are available at any time.
 const (
 	subscriptionUsageAutoInterval = 2 * time.Hour
 	subscriptionUsageMinGap       = 30 * time.Minute
@@ -229,10 +229,14 @@ func (s *AppService) UpdateSubscriptionUsage(ctx context.Context, userAgent stri
 	if s == nil {
 		return nil, fmt.Errorf("app service is not initialized")
 	}
-	return s.collectSubscriptionUsage(ctx, time.Now(), userAgent, true)
+	return s.refreshSubscriptionUsage(ctx, time.Now(), userAgent, true, true)
 }
 
-func (s *AppService) collectSubscriptionUsage(ctx context.Context, now time.Time, userAgent string, force bool) (result *subscriptionusage.RefreshState, retErr error) {
+func (s *AppService) collectSubscriptionUsage(ctx context.Context, now time.Time, userAgent string, force bool) (*subscriptionusage.RefreshState, error) {
+	return s.refreshSubscriptionUsage(ctx, now, userAgent, force, false)
+}
+
+func (s *AppService) refreshSubscriptionUsage(ctx context.Context, now time.Time, userAgent string, force, manual bool) (result *subscriptionusage.RefreshState, retErr error) {
 	if s == nil {
 		return nil, fmt.Errorf("app service is not initialized")
 	}
@@ -260,8 +264,8 @@ func (s *AppService) collectSubscriptionUsage(ctx context.Context, now time.Time
 	if err != nil {
 		return nil, err
 	}
-	// Airports refreshed within the gap keep the cached counters, including
-	// manual "refresh all" runs; failures already saved a snapshot.
+	// Automatic refreshes reuse cached counters inside the per-airport gap.
+	// Manual refreshes bypass this gap.
 	groups := map[string][]usageRefreshSource{}
 	var origins []string
 	skipped := 0
@@ -269,7 +273,7 @@ func (s *AppService) collectSubscriptionUsage(ctx context.Context, now time.Time
 		if ap == nil {
 			continue
 		}
-		if subscriptionUsageTooSoon(subscriptionUsageLastAttempt(ap), now) {
+		if !manual && subscriptionUsageTooSoon(subscriptionUsageLastAttempt(ap), now) {
 			skipped++
 			continue
 		}
@@ -293,7 +297,7 @@ func (s *AppService) collectSubscriptionUsage(ctx context.Context, now time.Time
 			state = &subscriptionusage.RefreshState{}
 		}
 		if force {
-			state.Message = "30 分钟内已刷新；本次直接使用缓存"
+			state.Message = "自动刷新间隔内；本次使用缓存"
 		}
 		return state, nil
 	}
@@ -369,7 +373,7 @@ func (s *AppService) collectSubscriptionUsage(ctx context.Context, now time.Time
 	}
 	cached := ""
 	if skipped > 0 {
-		cached = fmt.Sprintf("；%d 个机场 30 分钟内已刷新，使用缓存", skipped)
+		cached = fmt.Sprintf("；%d 个机场在自动刷新间隔内，使用缓存", skipped)
 	}
 	state, message = "completed", fmt.Sprintf("已更新 %d 个订阅并记录用量%s；不提供用量的订阅保持未知", processed.Load(), cached)
 	if failed.Load() > 0 {
