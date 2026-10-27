@@ -69,9 +69,9 @@ export function routeKind(entry?:string,exit?:string,anycast=false,local?:string
 export function routeLabel(kind:RouteKind|''){return kind==='direct'?'直连':kind==='cross'?'跨境直连':kind==='transit'?'中转':kind==='domestic'?'国内中转':kind==='anycast'?'任播':''}
 export function routeTone(kind:RouteKind|''){return kind==='direct'||kind==='cross'?'good':kind==='domestic'?'warn':'empty'}
 export function lineLabel(entry?:NodeEntry,exitCountry?:string,exitOrg?:string){
- const from=entryPlace(entry)||'入口未解析'
+ const from=entryPlace(entry)
  const to=exitPlace(exitCountry,exitOrg)||'出口未测'
- return `${from} → ${to}`
+ return from?`${from} → ${to}`:`→ ${to}`
 }
 export function pathSteps(local:LocalPosition|undefined,entry:NodeEntry|undefined,exitCountry?:string,exitOrg?:string){
  const localValue=[countryLabel(local?.country_code),shortISP(local?.isp)].filter(Boolean).join('·')||'本机未取得'

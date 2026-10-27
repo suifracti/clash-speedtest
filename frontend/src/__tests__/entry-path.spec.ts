@@ -29,7 +29,7 @@ describe('线路类型',()=>{
  it('入口写法与服务商缩写用于线路列',()=>{
   expect(entryPlace(entry('Shanghai','China Unicom','CN'))).toBe('上海 联通')
   expect(lineLabel(entry('Shanghai','China Unicom','CN'),'SG','Amazon.com, Inc.')).toBe('上海 联通 → 新加坡 AWS')
-  expect(lineLabel(undefined,'SG')).toBe('入口未解析 → 新加坡')
+  expect(lineLabel(undefined,'SG')).toBe('→ 新加坡')
  })
 
  it('本机在境外且入口在大陆才提示绕路',()=>{

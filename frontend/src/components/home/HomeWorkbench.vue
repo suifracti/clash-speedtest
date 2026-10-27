@@ -155,7 +155,7 @@ const showVerdict=computed(()=>!exitMode.value&&['combined','latency'].includes(
 const showSites=showVerdict
 const showDownload=computed(()=>!exitMode.value&&['combined','download'].includes(w.project.value))
 // Grid tracks follow the active project so each tab shows its own columns.
-const columns=computed(()=>exitMode.value?['28px','minmax(0,1.45fr)','minmax(0,1.6fr)','78px','minmax(0,1.05fr)','88px','66px'].join(' '):['36px','minmax(220px,2.2fr)',...(showVerdict.value?['92px','104px']:[]),...(!exitMode.value&&w.project.value==='latency'?['106px','82px']:[]),...(showSites.value?sites.value.map(()=>'minmax(74px,.8fr)'):[]),...(showDownload.value?['minmax(110px,1fr)']:[]),...(w.project.value==='download'?['minmax(160px,1.4fr)']:[]),...(w.project.value==='combined'?['minmax(80px,.8fr)']:[]),...(w.project.value==='service'?unlockGroups.map(()=>'minmax(90px,1fr)'):[])].join(' '))
+const columns=computed(()=>exitMode.value?['28px','minmax(190px,1.8fr)','minmax(90px,1.1fr)','78px','minmax(0,1.05fr)','88px','66px'].join(' '):['36px','minmax(220px,2.2fr)',...(showVerdict.value?['92px','104px']:[]),...(!exitMode.value&&w.project.value==='latency'?['106px','82px']:[]),...(showSites.value?sites.value.map(()=>'minmax(74px,.8fr)'):[]),...(showDownload.value?['minmax(110px,1fr)']:[]),...(w.project.value==='download'?['minmax(160px,1.4fr)']:[]),...(w.project.value==='combined'?['minmax(80px,.8fr)']:[]),...(w.project.value==='service'?unlockGroups.map(()=>'minmax(90px,1fr)'):[])].join(' '))
 const allOnPage=computed(()=>m.pageNodes.value.length>0&&m.pageNodes.value.every(selected))
 function keyNav(e:KeyboardEvent){
  const list=m.pageNodes.value,i=list.findIndex(isFocus)
