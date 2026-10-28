@@ -644,3 +644,9 @@
 - 基线CI运行40627447638确认Linux UTC与固定东八区预期不一致；本地 `TZ=UTC` 先复现失败，修复后UTC/Asia-Taipei均通过。
 - `TZ=UTC` 下Go vet/test全部通过，未新增测试或改前端；推main后复核同提交CI，结果以提交checks及本轮交付为准。
 - 测试及日志证据留本地 `.ui-preview/google-tls-plan-20261028/`；不打包、不换运行App、不发检测、不改历史。
+
+### 2026-10-28 Google TLS两节点只读核对与待授权对照
+- 新加坡专线02/日本专线01均Hysteria2，当前CST缓存identity/revision与原TLS EOF记录一致，Verge用户侧生成配置也匹配；root运行配置无读取权限，尚不能证明实际内核加载完全相同配置。
+- 官方2.27.0日志10/28 11:23:30–33有账号/目录URL记录；`logging before google.Init`是初始化提示、`http_helpers.go:349`是源码行号，不是HTTP/TLS错误；无绑定两节点的成功对照，不改10条模型生成HTTP400地区拒绝。
+- 待授权候选：同主机 `daily-cloudcode-pa.googleapis.com`，2节点×CST/Mihomo各1次无凭据HEAD，共4次、每路径15秒、预计几十至约200KiB（非底层硬上限）；另3次本地只读元数据核验，不自动追加复测、不发模型请求。
+- `/delay`可能双HEAD且写alive/延迟历史，可能影响自动组，也不返回Google状态细节；无零副作用通道前不执行，当前0探测、网络代码不变；方案留本地 `.ui-preview/google-tls-plan-20261028/plan.md`；测试修复5915d2d的Linux/Windows/macOS CI均绿（运行40656996621），未打包换包。
