@@ -650,3 +650,9 @@
 - 官方2.27.0日志10/28 11:23:30–33有账号/目录URL记录；`logging before google.Init`是初始化提示、`http_helpers.go:349`是源码行号，不是HTTP/TLS错误；无绑定两节点的成功对照，不改10条模型生成HTTP400地区拒绝。
 - 待授权候选：同主机 `daily-cloudcode-pa.googleapis.com`，2节点×CST/Mihomo各1次无凭据HEAD，共4次、每路径15秒、预计几十至约200KiB（非底层硬上限）；另3次本地只读元数据核验，不自动追加复测、不发模型请求。
 - `/delay`可能双HEAD且写alive/延迟历史，可能影响自动组，也不返回Google状态细节；无零副作用通道前不执行，当前0探测、网络代码不变；方案留本地 `.ui-preview/google-tls-plan-20261028/plan.md`；测试修复5915d2d的Linux/Windows/macOS CI均绿（运行40656996621），未打包换包。
+
+### 2026-10-28 Google TLS离线路径核对（关闭）
+- CST仍使用锁定Mihomo v1.19.19的HY2适配器，传递原认证/ALPN，冻结节点IP并绑定物理出口、保留节点SNI；节点地址族不等于Google目标地址族，Antigravity不自动双栈回退。
+- 节点证书设置只作用于外层QUIC（默认ALPN h3）；Google SNI来自请求主机、独立正常校验证书。CST标准net/http启用HTTP2且禁HTTP连接复用，Mihomo URLTest使用metacubex/http及tls/CA配置；这些差异可能影响握手，但未复现为本轮EOF根因。
+- 上游HY2 DialConn延迟到首次写出目标连接请求/首次读取代理响应，因此TLS阶段EOF也可能来自代理流关闭，不能证明Google TLS端主动拒绝；不是CST独有差异，未发现可离线复现的实际缺陷。
+- 仅跑已有配置保真/纯内存HTTP客户端2条测试通过（依赖下载关闭，无外网/本地socket请求）；记录“网络根因未确认”并关闭本轮，仅同步本文档，不改代码/历史、不调用控制接口/模型、不切组/提权/启动内核、不换包或调整重试/超时/双栈。
