@@ -626,3 +626,9 @@
 - 沿用现有回退字段，成功IPv6记 `used_ipv6`，两边失败记 `ipv6_failed`；不改 `context_cancelled`、超时及并发配置。
 - 仅新增“两边都失败→下次仍先试IPv4”1条测试，旧代码复现顺序IPv4/IPv6/IPv6，修复后IPv4/IPv6/IPv4/IPv6；Go vet/test全部通过。
 - 并发归因调查按用户确认关闭；单提交推main后日常脚本换包，保留SG04历史与旧包，不发新检测或切组；证据留本地 `.ui-preview/ipv6-selection-20261027/`。
+
+### 2026-10-28 Antigravity 39节点只读归因
+- 运行包内嵌 `ff4b28bd`（clean）；10/27 23:53–23:59台北时间39/39处理并保存、模型确认0；生成阶段HTTP400地区拒绝10（CF独立观察US7/GB2/TW1，不等于Google出口）。
+- TLS失败15均在账号查询 `loadCodeAssist/tls_handshake`（13 EOF、2重置；高速Vless9、专线Hysteria2共6）；另账号查询代理建连失败1；超时13为账号8/目录4/生成1，11检查总时限/2传输超时，7条请求细分阶段未记录。
+- 39条均IPv4，无IPv6成功对照；同配置最近四站记录均早约527–533分钟，不能证实本轮网络状态；代理建连累计含Cloudflare与Google，不是单次Google耗时（CUCM累计10004.4ms/2次失败）。
+- SQL只读提取脱敏字段，未读Google凭据/订阅配置、未输出敏感IP；证据留本地 `.ui-preview/antigravity-39-20261028/`；网络根因尚不足以定位，不放开回退、不调TLS/超时/重试、不改历史、不发新请求。
