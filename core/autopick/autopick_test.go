@@ -6,7 +6,7 @@ import (
 )
 
 func TestNextRunAfterUsesLocalGrid(t *testing.T) {
-	loc := time.FixedZone("CST", 8*3600)
+	loc := time.Local
 	now := time.Date(2026, 10, 21, 7, 30, 0, 0, loc)
 	for _, tc := range []struct {
 		schedule string
