@@ -38,12 +38,22 @@ const counts=computed(()=>{
  const rows=w.queue.value,unknown=w.pendingStart.value?rows.filter(q=>q.id===w.pendingStart.value?.requestId||w.pendingStart.value?.kind==='latency'&&q.project==='latency'&&q.state==='running'&&!q.batchId).length:0
  return {queued:rows.filter(q=>q.state==='queued').length,running:Math.max(0,rows.filter(q=>['running','cancelling'].includes(q.state)).length-unknown),unknown,notRun:rows.filter(q=>['not_executed','cancelled'].includes(q.state)||resultStatus(q)?.notExecuted).length,saveFailed:rows.filter(q=>q.attempt?.persistence_state==='failed'||q.error?.startsWith('保存失败')).length}
 })
+const isAntigravity=(q:QueueItem)=>q.project==='service'&&(q.serviceId||q.attempt?.service_id)==='antigravity'
+const modelConfirmed=(q:QueueItem)=>q.attempt?.result?.outcome==='matched'&&q.attempt.result.details?.antigravity_progress==='真实模型已回答'
+const antigravitySummary=computed(()=>{
+ const rows=w.queue.value.filter(isAntigravity);if(!rows.length)return ''
+ const processed=rows.filter(q=>['completed','failed','not_executed','cancelled','interrupted'].includes(q.state))
+ const confirmed=processed.filter(modelConfirmed).length,refused=processed.filter(q=>q.attempt?.result?.outcome==='region_blocked').length
+ return `Antigravity：已处理 ${processed.length}/${rows.length} · 确认模型可用 ${confirmed} · 地区拒绝 ${refused} · 未确认 ${processed.length-confirmed-refused}`
+})
 function resultStatus(q:QueueItem):{label:string;tone:string;notExecuted?:boolean}|null{
  if(q.project==='service'&&['completed','failed'].includes(q.state)){
   if(q.attempt?.persistence_state==='failed')return {label:'保存失败',tone:'bad'}
   const result=q.attempt?.result
   if(!result)return {label:'已结束 · 无结果',tone:''}
   const outcome=result.outcome
+  if(isAntigravity(q)&&outcome==='matched')return {label:modelConfirmed(q)?'确认模型可用':'未确认模型可用',tone:modelConfirmed(q)?'good':'warn'}
+  if(isAntigravity(q)&&outcome==='region_blocked')return {label:'地区拒绝',tone:'warn'}
   if(['not_executed','cancelled','user_cancelled','interrupted'].includes(outcome))return {label:stateLabel(outcome==='user_cancelled'?'cancelled':outcome),tone:'',notExecuted:true}
   if(['timed_out','transport_error','rate_limited'].includes(outcome))return {label:outcomeLabel(outcome)+' · 未确认',tone:'warn'}
   return {label:outcomeLabel(outcome),tone:outcomeTone(outcome)}
@@ -76,12 +86,23 @@ function resultStatus(q:QueueItem):{label:string;tone:string;notExecuted?:boolea
 function servicePhaseNote(q:QueueItem){
  if(q.project!=='service'||!['completed','failed'].includes(q.state)||!q.attempt?.result)return ''
  const r=q.attempt.result,d=r.details
- if(!['timed_out','transport_error','unknown'].includes(r.outcome)||!d)return ''
+ if(!d||!isAntigravity(q)&&!['timed_out','transport_error','unknown'].includes(r.outcome))return ''
  const ms=d.proxy_connect_ms,written=d.http_requests_written
  if((typeof ms!=='string'&&typeof ms!=='number')||String(ms).trim()===''||(typeof written!=='string'&&typeof written!=='number')||String(written).trim()==='')return ''
  const duration=Number(ms)
- if(!Number.isFinite(duration)||duration<0||Number(written)!==0)return ''
- return `代理连接耗时约 ${(duration/1000).toFixed(2)} 秒 · 未记录完整 HTTP 请求写出，服务结论未确认`
+ if(!Number.isFinite(duration)||duration<0||!isAntigravity(q)&&Number(written)!==0)return ''
+ if(isAntigravity(q)){
+  const pending=Number(d.proxy_connect_pending||0),finished=Number(d.proxy_connect_attempts||0)-pending
+  return `代理建连累计约 ${(duration/1000).toFixed(2)} 秒 · ${d.proxy_connect_attempts===undefined?'次数未记录':`已结束 ${finished} 次${pending?` · 另 ${pending} 次未结束`:''}`} · ${d.exit_observation?'含 Cloudflare 出口观察与 Google 请求':'各请求累计，非单次 Google 耗时'}`
+ }
+ return `代理建连累计约 ${(duration/1000).toFixed(2)} 秒 · 未记录完整 HTTP 请求写出，服务结论未确认`
+}
+function antigravityDetails(q:QueueItem){
+ const r=q.attempt?.result;if(!isAntigravity(q)||!r)return []
+ const d=r.details||{},steps:Record<string,string>={loadCodeAssist:'账号项目查询',fetchAvailableModels:'模型目录查询','streamGenerateContent?alt=sse':'模型生成',model_response:'模型回答确认'}
+ const phases:Record<string,string>={proxy_connect:'节点代理建连',tls_handshake:'目标 TLS 握手',request_write:'请求写出',response_headers:'等待响应头',response_read:'读取响应体'}
+ let path:{address_family?:string;interface?:string}={};try{path=JSON.parse(String(d.network_path||'{}'))}catch{}
+ return [`${d.antigravity_progress||'模型进度未记录'}`,`账号／模型阶段：${steps[r.failure_phase||'']||r.failure_phase||'已结束'}`,`HTTP 状态：${r.http_status??'未收到'}`,`请求失败阶段：${phases[String(d.request_failure_phase)]||d.request_failure_phase||'未记录'}`,`超时来源：${d.timeout_origin==='checker_deadline'?'检查总时限':d.timeout_origin==='transport'?'传输超时':'未记录'}`,`HTTP 请求写出累计：${d.http_requests_written??'未记录'}（含出口观察）`,`地址族：${path.address_family||'未记录'} · 网卡：${path.interface||'未记录'}`,`Cloudflare 独立出口观察：${d.country_code?`${d.country_code}（不代表 Google 出口）`:d.exit_observation_state||'未记录'}`]
 }
 // 执行与保存是两个独立属性：先看有没有跑完，再看结果有没有落库。
 function latencyItem(q:QueueItem){return q.project==='latency'?w.batches.value.find(b=>b.batch_id===q.batchId)?.items?.find(i=>i.item_id===q.itemId):undefined}
@@ -108,12 +129,13 @@ async function retry(q:QueueItem){retrying.value=q.id;try{if(q.batchId&&q.itemId
     <div class="cst-queue-actions"><button class="button ghost" @click="w.syncActive()">刷新进度</button><button v-if="w.pendingStart.value?.body" class="button" :disabled="w.running.value||w.retryingStart.value" @click="w.retryPending()">{{w.retryingStart.value?'正在确认…':'确认启动状态'}}</button><button v-if="w.busy.value" class="button danger-outline" :disabled="w.cancelRequested.value" @click="w.cancelTests()">{{w.cancelRequested.value?'正在取消…':'取消检测'}}</button></div>
   </div>
   <p class="queue-counts" role="status">已处理 {{w.done.value}} / {{w.queue.value.length}} · 排队 {{counts.queued}} · 执行 {{counts.running}} · 未运行/取消 {{counts.notRun}} · 启动未知 {{counts.unknown}} · 保存失败 {{counts.saveFailed}}</p>
+  <p v-if="antigravitySummary" class="queue-counts antigravity-summary" role="status">{{antigravitySummary}}</p>
   <div v-if="!w.pendingStart.value" class="progress-track"><i :style="{width:w.queue.value.length?`${w.done.value/w.queue.value.length*100}%`:'0%'}"/></div>
   <p v-else class="muted small">后台还没确认这次启动；确认前不显示进度，也不会重复启动。</p>
   <div v-if="!w.queue.value.length&&w.activeBatch.value" class="muted">恢复的后台批次包含 {{w.activeBatch.value.item_count}} 个节点；结果可在检测历史查看。</div>
   <div v-if="w.queue.value.length" class="cst-queue-cols" aria-hidden="true"><span>节点与项目</span><span>执行</span><span>结果</span><span>保存</span></div>
   <div v-for="q in w.queue.value" :key="q.id" class="queue-row cst-queue-row">
-    <div class="cst-queue-node"><strong>{{nodeDisplayName(q.node)}}</strong><small>{{q.node.profile_name}} · {{projectNames[q.project]}}<template v-if="q.serviceId"> · {{w.catalog.value.find(s=>s.service_id===q.serviceId)?.name||q.serviceId}}</template></small><p v-if="q.error" class="bad small">{{q.project==='download'&&!q.error.startsWith('保存失败')?downloadNoDataReason(q.attempt)||q.error:q.error}}</p><p v-if="servicePhaseNote(q)" class="muted small">{{servicePhaseNote(q)}}</p></div>
+    <div class="cst-queue-node"><strong>{{nodeDisplayName(q.node)}}</strong><small>{{q.node.profile_name}} · {{projectNames[q.project]}}<template v-if="q.serviceId"> · {{w.catalog.value.find(s=>s.service_id===q.serviceId)?.name||q.serviceId}}</template></small><p v-if="q.error" class="bad small">{{q.project==='download'&&!q.error.startsWith('保存失败')?downloadNoDataReason(q.attempt)||q.error:q.error}}</p><p v-if="servicePhaseNote(q)" class="muted small">{{servicePhaseNote(q)}}</p><details v-if="antigravityDetails(q).length" class="small muted"><summary>执行详情</summary><p v-for="detail in antigravityDetails(q)" :key="detail">{{detail}}</p></details></div>
     <span class="cst-queue-exec" :class="{warn:unknownStart(q)}"><i class="cst-queue-dot" :class="unknownStart(q)?'warn':['queued'].includes(q.state)?'empty':['running','cancelling'].includes(q.state)?'running':'done'"/>{{unknownStart(q)?'启动未知':stateLabel(q.state)}}</span>
     <div class="queue-state"><span v-if="resultStatus(q)&&!unknownStart(q)" class="badge" :class="resultStatus(q)!.tone">{{resultStatus(q)!.label}}</span><span v-else-if="!unknownStart(q)&&!['queued','running','cancelling'].includes(q.state)" class="badge" :class="q.state==='completed'?'good':q.state==='failed'?'bad':''">{{stateLabel(q.state)}}</span><span v-else class="cst-queue-pending">{{unknownStart(q)?'待确认':'等待结果'}}</span></div>
     <div class="cst-queue-save" :class="saveState(q).tone"><span>{{saveState(q).label}}</span><button v-if="saveFailed(q)&&retryable(q)" class="text-button" :disabled="retrying===q.id" @click="retry(q)">重试保存</button><small v-else-if="saveFailed(q)&&!retryable(q)" class="muted">原结果无法恢复</small></div>
