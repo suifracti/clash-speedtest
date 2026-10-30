@@ -7,6 +7,7 @@ import UiSelect from './UiSelect.vue'
 import Modal from './Modal.vue'
 import ServicePicker from './ServicePicker.vue'
 import UnlockPicker from './UnlockPicker.vue'
+import {antigravityBatchRisk} from '../unlock'
 
 const w=useWorkspace(),submitting=ref(false),validation=ref('')
 const isReputationId=(id:string)=>isReputationRule(w.catalog.value.find(rule=>rule.service_id===id)||{service_id:id})
@@ -41,6 +42,7 @@ function applyPreset(x:Preset){const p=w.plan.value;if(!p)return;if(!p.projects.
 const extras=computed(()=>{const p=w.plan.value;if(!p)return [];return [...p.projects.filter(x=>x!=='latency').map(x=>projectNames[x]),...(p.includeReputation?['IP信誉/纯净度']:[])]})
 // 只有 Antigravity 会用已绑定账号发真实模型请求；其余 AI 项是网页/资源可达性检查。
 const modelServices=computed(()=>selectedServiceIds.value.filter(id=>id==='antigravity'))
+const modelRisk=computed(()=>antigravityBatchRisk(w.plan.value?.nodes.length||0,selectedServiceIds.value))
 const latencySamples=computed(()=>{const p=w.plan.value;return p&&p.projects.includes('latency')?p.nodes.length*p.repeats*(p.target==='all'?targets.length:1)*p.samples:0})
 const serviceObservations=computed(()=>{const p=w.plan.value;return p?p.nodes.reduce((sum,n)=>sum+w.allowedUnlockServices(n,selectedServiceIds.value).length,0)*p.repeats*(p.serviceSamples??4):0})
 async function submit(){
@@ -123,6 +125,7 @@ async function submit(){
       <p class="muted small">合计 {{plannedRequests}} 次计划采样（延迟采样 + 服务观察{{w.plan.value.projects.includes('download')?' + 每节点 1 次下载':''}}）；这是计划次数，不是实际请求总数。</p>
     </section>
     <p v-if="validation" class="inline-error" role="alert">{{validation}}</p>
-    <template #footer><button class="button" @click="w.plan.value=null">返回调整</button><button class="button primary" :disabled="submitting||w.busy.value" @click="submit">开始检测 {{w.plan.value.nodes.length}} 个节点</button></template>
+    <p v-if="modelRisk" class="inline-warning" role="alert">{{modelRisk}}</p>
+    <template #footer><button class="button" @click="w.plan.value=null">返回调整</button><button class="button primary" :disabled="submitting||w.busy.value||!!modelRisk" @click="submit">开始检测 {{w.plan.value.nodes.length}} 个节点</button></template>
   </Modal>
 </template>

@@ -66,7 +66,7 @@ func TestRequiredServicesAreTheOnlyOnesProbed(t *testing.T) {
 	if got := cfg.Projects(); got != 4 {
 		t.Fatalf("projects: %d, want 1 latency + 2 ai + 1 streaming", got)
 	}
-	cfg.AIRequired = []string{"chatgpt_unlock", "gemini_unlock", "claude_unlock", "nope"}
+	cfg.AIRequired = []string{"chatgpt_unlock", "gemini_unlock", "claude_unlock", "antigravity", "nope"}
 	cfg.StreamingRequired = []string{"youtube_premium"}
 	cfg.Normalize()
 	if got := cfg.AIRequired; len(got) != 3 || got[2] != "claude_unlock" {

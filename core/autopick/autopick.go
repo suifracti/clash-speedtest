@@ -42,13 +42,12 @@ const (
 // GroupServices lists every unlock service a group can require. The user picks
 // the required subset per group; the rest are never probed.
 var GroupServices = map[string][]string{
-	PurposeAI:        {"chatgpt_unlock", "claude_unlock", "gemini_unlock", "antigravity"},
+	PurposeAI:        {"chatgpt_unlock", "claude_unlock", "gemini_unlock"},
 	PurposeStreaming: {"netflix_unlock", "youtube_premium", "disney_unlock"},
 }
 
 // DefaultRequiredServices is the required subset used until the user edits it.
-// Gemini and Antigravity stay optional: the human-verification page and the
-// bound Google credential make them fail on almost every node.
+// Gemini stays optional. Antigravity is manual-only because it uses an account.
 var DefaultRequiredServices = map[string][]string{
 	PurposeAI:        {"chatgpt_unlock", "claude_unlock"},
 	PurposeStreaming: {"netflix_unlock"},

@@ -8,7 +8,7 @@ const w=useWorkspace()
 const selectable=computed(()=>props.catalog.filter(s=>!s.superseded_by&&unlockGroup(s.service_id)!=='legacy'))
 const visible=computed(()=>selectable.value.filter(s=>!search.value||(s.name+' '+s.description).toLowerCase().includes(search.value.trim().toLowerCase())))
 function toggle(id:string){emit('update:modelValue',props.modelValue.includes(id)?props.modelValue.filter(s=>s!==id):[...props.modelValue,id])}
-function groupIds(id:string){return selectable.value.filter(s=>unlockGroup(s.service_id)===id&&unlockSupported(s.service_id)).map(s=>s.service_id)}
+function groupIds(id:string){return selectable.value.filter(s=>s.service_id!=='antigravity'&&unlockGroup(s.service_id)===id&&unlockSupported(s.service_id)).map(s=>s.service_id)}
 function toggleGroup(id:string,checked:boolean){const ids=groupIds(id);emit('update:modelValue',checked?[...new Set([...props.modelValue,...ids])]:props.modelValue.filter(s=>!ids.includes(s)))}
 </script>
 <template><div class="service-picker unlock-picker">

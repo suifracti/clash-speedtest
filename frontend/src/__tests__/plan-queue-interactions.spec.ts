@@ -24,6 +24,17 @@ beforeEach(()=>{
 })
 afterEach(()=>{wrapper?.unmount();wrapper=undefined;w.dispose();document.body.innerHTML=''})
 
+it('blocks Antigravity batches above three nodes before any request',async()=>{
+ const list=Array.from({length:4},(_,i)=>({...node,node_key:`node-${i}`,node_identity_key:`identity-${i}`}))
+ w.nodes.value=list;w.project.value='service';w.openPlan(list);w.plan.value!.serviceIds=['antigravity'];attach(TestPlanModal)
+ expect(button('开始检测').disabled).toBe(true)
+ expect(document.body.textContent).toContain('多节点会用同一账号从多个 IP 请求，有风控风险')
+ await expect(w.runPlan()).rejects.toThrow('Antigravity 每次最多检测 3 个节点')
+ expect(api.startAttempt).not.toHaveBeenCalled();expect(api.createRound).not.toHaveBeenCalled()
+ w.plan.value!.nodes=list.slice(0,3);await flushPromises()
+ expect(button('开始检测').disabled).toBe(false)
+})
+
 it('keeps the configuration dialog open when a node changed after selecting the test scope',async()=>{
   w.project.value='latency';w.openPlan([node]);attach(TestPlanModal)
   vi.mocked(api.airports).mockResolvedValue([airport]);vi.mocked(api.nodes).mockResolvedValue([{...node,config_revision_key:'revision-new'}])

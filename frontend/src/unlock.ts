@@ -2,6 +2,7 @@ import {type Attempt,type ServiceRule} from './domain'
 import {servicePassed} from './sharedResults'
 import type {IpType} from './ipKind'
 import config from './unlock-config.json'
+export const antigravityBatchRisk=(nodes:number,ids:string[])=>nodes>3&&ids.includes('antigravity')?'Antigravity 每次最多检测 3 个节点。多节点会用同一账号从多个 IP 请求，有风控风险':''
 export const unlockGroups=config.groups
 export const unlockGroup=(id:string)=>unlockGroups.find(g=>(g.ids as readonly string[]).includes(id))?.id||'legacy'
 export const unlockSupported=(id:string)=>id!=='disney_unlock'

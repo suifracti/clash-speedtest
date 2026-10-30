@@ -54,8 +54,7 @@ export const groupServices:Record<'ai'|'streaming',{id:string;label:string}[]>={
   ai:[
     {id:'chatgpt_unlock',label:'ChatGPT'},
     {id:'claude_unlock',label:'Claude'},
-    {id:'gemini_unlock',label:'Gemini'},
-    {id:'antigravity',label:'Antigravity'}
+    {id:'gemini_unlock',label:'Gemini'}
   ],
   streaming:[
     {id:'netflix_unlock',label:'Netflix 完整片库'},
