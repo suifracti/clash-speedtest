@@ -76,6 +76,10 @@ function statusLabel(row:LatencyReportRow){
 function issueDetail(group:LatencyReportGroup,row:LatencyReportRow){
  return group.issues.find(issue=>issue.row.key===row.key)?.detail||row.skipReason||row.suspectedReasons.join('；')
 }
+function sharedIssueDetail(group:LatencyReportGroup){
+ const first=group.rows[0]&&issueDetail(group,group.rows[0])
+ return first&&group.rows.every(row=>issueDetail(group,row)===first)?first:''
+}
 function uniqueItems(rows:LatencyReportRow[]){
  const unique=new Map<string,BatchItem>()
  for(const row of rows)unique.set(row.key,row.item)
@@ -126,14 +130,14 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
     <div v-if="report.groups.length" class="latency-report-groups">
      <article v-for="(group,index) in report.groups" :key="group.kind+'-'+group.reason+'-'+index" class="latency-report-group" :class="group.kind">
       <header>
-       <div><h4>{{group.reason}} <span>· {{group.rows.length}} 个</span></h4><small v-if="group.kind==='skipped'">未执行项目单列，不计为无响应</small></div>
+       <div><h4>{{group.reason}} <span>· {{group.rows.length}} 个</span></h4><small v-if="sharedIssueDetail(group)&&sharedIssueDetail(group)!==group.reason">{{sharedIssueDetail(group)}}</small><small v-if="group.kind==='skipped'">未执行项目单列，不计为无响应</small></div>
        <button v-if="group.rows.length&&group.kind!=='skipped'" class="button ghost latency-report-retry" @click="emit('retry',uniqueItems(group.rows))">重测</button>
       </header>
       <p v-if="group.kind==='slow'&&props.entryNotice" class="latency-report-group-note">{{props.entryNotice}}</p>
       <ul>
        <li v-for="row in group.rows" :key="row.key">
         <button class="text-button" @click="emit('inspect',row.item)">{{nodeDisplayName(row.item)}}</button>
-        <small>{{issueDetail(group,row)}}</small>
+        <small v-if="!sharedIssueDetail(group)&&issueDetail(group,row)!==group.reason">{{issueDetail(group,row)}}</small>
        </li>
       </ul>
      </article>
