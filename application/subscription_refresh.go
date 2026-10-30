@@ -775,8 +775,10 @@ func fetchSubscriptionSource(ctx context.Context, rawURL, userAgent string) ([]b
 		switch evidence.ProxyPolicy {
 		case "environment_proxy", "system_proxy":
 			path = "proxy"
-		case "physical_direct", "direct_normal_network":
-			path = "direct"
+		case "direct_normal_network":
+			path = "normal"
+		case "physical_direct":
+			path = "physical"
 		}
 		return body, usage, path, err
 	}

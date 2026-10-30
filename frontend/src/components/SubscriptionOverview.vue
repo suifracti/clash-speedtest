@@ -143,7 +143,8 @@ function accountRow(airport:Airport,list:AirportAccount[]){
   const refreshTimes=latestRefreshByAccount.value.filter(entry=>list.some(account=>account.key===entry.account.key)).map(entry=>entry.item?.finished_at||entry.job?.created_at||'')
   const updated=[...refreshTimes,...list.map(account=>account.subscription.updated_at||airport.updated_at||'')].filter(Boolean).sort((a,b)=>Date.parse(a)-Date.parse(b)).at(-1)
   const failedAt=[...list.filter(account=>account.subscription.last_attempt_failed).map(account=>Date.parse(account.subscription.last_attempt_at||'')),...issues.map(issue=>Date.parse(issue.item.finished_at||issue.job.created_at||''))].filter(Number.isFinite)
-  const pathHint=list.map(account=>{const snapshot=snapshotsByAccount.value[account.key];return snapshot?.fetch_path?`${account.subscription.name}：${snapshot.fetch_path==='proxy'?'代理':'直连'}刷新成功`:''}).filter(Boolean).join('；')
+  const pathLabels:Record<string,string>={proxy:'代理',normal:'普通网络（可能经 TUN）',physical:'物理网卡',direct:'旧记录，路径未区分'}
+  const pathHint=list.map(account=>{const snapshot=snapshotsByAccount.value[account.key];return snapshot?.fetch_path?`${account.subscription.name}：${pathLabels[snapshot.fetch_path]||snapshot.fetch_path} · ${snapshot.status==='refresh_failed'?'刷新失败':'刷新成功'}`:''}).filter(Boolean).join('；')
   return {pathHint,airport,remaining,ratio,today:sumDay(list,0),updated,issues,lastFailedAt:failedAt.length?Math.max(...failedAt):0,accounts:list}
 }
 const overviewRows=computed(()=>allAirports.value?props.airports.map(airport=>({...accountRow(airport,airportAccounts([airport])),id:airport.id,name:airport.name})):accounts.value.map(account=>({...accountRow(account.airport,[account]),id:account.key,name:account.subscription.name})))

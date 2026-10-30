@@ -87,7 +87,24 @@ func TestFailedSubscriptionRefreshRecordsFetchPath(t *testing.T) {
 		t.Fatal("expected failure")
 	}
 	snapshots, err := s.historyStore.QuerySubscriptionUsage(context.Background(), time.Now().Add(-time.Minute), time.Now().Add(time.Minute))
-	if err != nil || len(snapshots) != 1 || snapshots[0].Status != "refresh_failed" || snapshots[0].FetchPath != "direct" {
+	if err != nil || len(snapshots) != 1 || snapshots[0].Status != "refresh_failed" || snapshots[0].FetchPath != "normal" {
 		t.Fatalf("failed snapshot must retain attempted path: %+v, %v", snapshots, err)
+	}
+}
+
+func TestNormalNetworkFailureRetriesPhysicalAndRecordsFailedPath(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	server.Close() // Ordinary loopback transport fails; the physical attempt also cannot connect.
+	s, paths := newAirportURLTestService(t)
+	store := &profiles.Store{Airports: []*profiles.Airport{{ID: "a", Subscriptions: []*profiles.Subscription{{ID: "s", URL: server.URL}}}}}
+	if err := profiles.SaveStore(paths.StoreFile(), store); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RefreshSubscription("a", "s", "fixture"); err == nil {
+		t.Fatal("expected failure")
+	}
+	snapshots, err := s.historyStore.QuerySubscriptionUsage(context.Background(), time.Now().Add(-time.Minute), time.Now().Add(time.Minute))
+	if err != nil || len(snapshots) != 1 || snapshots[0].Status != "refresh_failed" || snapshots[0].FetchPath != "physical" {
+		t.Fatalf("normal transport failure must attempt physical and persist its path: %+v, %v", snapshots, err)
 	}
 }

@@ -176,7 +176,7 @@ func (t *subscriptionFallbackTransport) RoundTrip(req *http.Request) (*http.Resp
 		if err == nil {
 			return resp, nil
 		}
-		if req.Context().Err() != nil || (t.evidence.ProxyPolicy != "environment_proxy" && t.evidence.ProxyPolicy != "system_proxy") {
+		if req.Context().Err() != nil || (t.evidence.ProxyPolicy != "environment_proxy" && t.evidence.ProxyPolicy != "system_proxy" && t.evidence.ProxyPolicy != "direct_normal_network") {
 			return nil, err
 		}
 	}
