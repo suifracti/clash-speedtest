@@ -74,3 +74,20 @@ func TestSubscriptionUsageRefreshPersistence(t *testing.T) {
 		t.Fatal("missing provider header must clear old snapshot, not pretend fresh")
 	}
 }
+
+func TestFailedSubscriptionRefreshRecordsFetchPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) }))
+	defer server.Close()
+	s, paths := newAirportURLTestService(t)
+	store := &profiles.Store{Airports: []*profiles.Airport{{ID: "a", Subscriptions: []*profiles.Subscription{{ID: "s", URL: server.URL}}}}}
+	if err := profiles.SaveStore(paths.StoreFile(), store); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RefreshSubscription("a", "s", "fixture"); err == nil {
+		t.Fatal("expected failure")
+	}
+	snapshots, err := s.historyStore.QuerySubscriptionUsage(context.Background(), time.Now().Add(-time.Minute), time.Now().Add(time.Minute))
+	if err != nil || len(snapshots) != 1 || snapshots[0].Status != "refresh_failed" || snapshots[0].FetchPath != "direct" {
+		t.Fatalf("failed snapshot must retain attempted path: %+v, %v", snapshots, err)
+	}
+}

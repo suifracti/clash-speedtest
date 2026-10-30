@@ -772,11 +772,11 @@ func fetchSubscriptionSource(ctx context.Context, rawURL, userAgent string) ([]b
 	if profiles.IsHTTPURL(rawURL) {
 		body, usage, evidence, err := profiles.FetchSubscriptionObserved(ctx, rawURL, userAgent)
 		path := ""
-		if err == nil {
+		switch evidence.ProxyPolicy {
+		case "environment_proxy", "system_proxy":
+			path = "proxy"
+		case "physical_direct", "direct_normal_network":
 			path = "direct"
-			if evidence.ProxyPolicy == "environment_proxy" || evidence.ProxyPolicy == "system_proxy" {
-				path = "proxy"
-			}
 		}
 		return body, usage, path, err
 	}
@@ -860,6 +860,7 @@ func (s *AppService) refreshSubscriptionWithFetchLocked(ctx context.Context, air
 		return nil, err
 	}
 
+	var path string
 	fail := func(cause error) (*SubscriptionDTO, error) {
 		failure := refreshFailure(cause)
 		if failure.Code == "cancelled" || failure.Code == "configuration_changed" || failure.Code == "source_cooldown" {
@@ -884,6 +885,7 @@ func (s *AppService) refreshSubscriptionWithFetchLocked(ctx context.Context, air
 		}
 		snapshot := usageSnapshot(airport, sub, "refresh_failed", "subscription_update", now)
 		snapshot.RawError = truncateUsageError(cause)
+		snapshot.FetchPath = path
 		if err := s.saveUsageObservations(context.WithoutCancel(ctx), []subscriptionusage.Snapshot{snapshot}); err != nil {
 			if failure.Code == "rollback_unconfirmed" {
 				return nil, failure
@@ -917,7 +919,6 @@ func (s *AppService) refreshSubscriptionWithFetchLocked(ctx context.Context, air
 	store = latestStore
 	fetchFingerprint := refreshSourceFingerprint(sub.URL)
 	var body []byte
-	var path string
 	var usage *profiles.SubscriptionUsage
 	if fetched != nil {
 		body, usage, path, err = fetched.body, fetched.usage, fetched.path, fetched.err
