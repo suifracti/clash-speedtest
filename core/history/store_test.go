@@ -335,7 +335,7 @@ func TestGetAirportHistoryAndListAirports(t *testing.T) {
 
 	run1 := &TestRun{
 		AirportID:   "ap-liangxin",
-		AirportName: "良心云",
+		AirportName: "机场A",
 		CreatedAt:   t1,
 		TotalNodes:  2,
 		PassedNodes: 2,
@@ -365,7 +365,7 @@ func TestGetAirportHistoryAndListAirports(t *testing.T) {
 	}
 	run2 := &TestRun{
 		AirportID:   "ap-liangxin",
-		AirportName: "良心云",
+		AirportName: "机场A",
 		CreatedAt:   t2,
 		TotalNodes:  1,
 		PassedNodes: 1,

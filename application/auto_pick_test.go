@@ -36,8 +36,8 @@ func autoPickFixture(t *testing.T) *AppService {
 
 func autoPickFakeNodes() []autoPickScopedNode {
 	return []autoPickScopedNode{
-		{Node: monitor.MonitoredNode{DisplayName: "新加坡 01", NodeKey: "k1", NodeIdentityKey: "i1", ConfigRevisionKey: "r1", Type: "ss", RawConfig: map[string]any{"name": "新加坡 01", "type": "ss", "server": "1.1.1.1", "port": 8388, "cipher": "aes-128-gcm", "password": "pw"}}, ProfileID: "p1", AirportID: "airport-1", AirportName: "良心云"},
-		{Node: monitor.MonitoredNode{DisplayName: "新加坡 02", NodeKey: "k2", NodeIdentityKey: "i2", ConfigRevisionKey: "r2", Type: "ss", RawConfig: map[string]any{"name": "新加坡 02", "type": "ss", "server": "1.1.1.2", "port": 8388, "cipher": "aes-128-gcm", "password": "pw"}}, ProfileID: "p1", AirportID: "airport-1", AirportName: "良心云"},
+		{Node: monitor.MonitoredNode{DisplayName: "新加坡 01", NodeKey: "k1", NodeIdentityKey: "i1", ConfigRevisionKey: "r1", Type: "ss", RawConfig: map[string]any{"name": "新加坡 01", "type": "ss", "server": "1.1.1.1", "port": 8388, "cipher": "aes-128-gcm", "password": "pw"}}, ProfileID: "p1", AirportID: "airport-1", AirportName: "机场A"},
+		{Node: monitor.MonitoredNode{DisplayName: "新加坡 02", NodeKey: "k2", NodeIdentityKey: "i2", ConfigRevisionKey: "r2", Type: "ss", RawConfig: map[string]any{"name": "新加坡 02", "type": "ss", "server": "1.1.1.2", "port": 8388, "cipher": "aes-128-gcm", "password": "pw"}}, ProfileID: "p1", AirportID: "airport-1", AirportName: "机场A"},
 	}
 }
 

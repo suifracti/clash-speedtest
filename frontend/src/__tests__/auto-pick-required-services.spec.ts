@@ -16,7 +16,7 @@ const status:any={
 
 function mountCard(){
   const workspace=createWorkspace()
-  workspace.airports.value=[{id:'a1',name:'良心云',node_count:10} as any]
+  workspace.airports.value=[{id:'a1',name:'机场A',node_count:10} as any]
   return mount(AutoPickCard,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:workspace},stubs:{Icon:true}}})
 }
 
