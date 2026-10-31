@@ -10,7 +10,7 @@ import s5 from './fixtures/s5-saved-quality.json'
 const readQualityMock=vi.hoisted(()=>vi.fn())
 const localStorageItems=vi.hoisted(()=>new Map<string,string>())
 vi.mock('../nodeQuality',async importOriginal=>{const actual=await importOriginal<typeof import('../nodeQuality')>();return {...actual,readQuality:readQualityMock}})
-vi.mock('../api',async importOriginal=>{const actual=await importOriginal<typeof import('../api')>();return {...actual,api:{...actual.api,refreshJobs:vi.fn(async()=>[]),latencyHistory:vi.fn(async()=>({tests:[],has_more:false,complete:true})),measurementRounds:vi.fn(async()=>[]),createRound:vi.fn(async()=>undefined),finishRound:vi.fn(async()=>undefined),monitorSamples:vi.fn(async()=>({items:[],has_more:false,next_cursor:''})),latencySummaries:vi.fn(async()=>[]),attemptHistory:vi.fn(async()=>({attempts:[],has_more:false,complete:true})),jobs:vi.fn(async()=>[]),createJob:vi.fn(),jobAction:vi.fn(async()=>{}),startLatency:vi.fn(),batch:vi.fn(),startAttempt:vi.fn(),attempt:vi.fn(),attemptAction:vi.fn()}}})
+vi.mock('../api',async importOriginal=>{const actual=await importOriginal<typeof import('../api')>();return {...actual,api:{...actual.api,refreshJobs:vi.fn(async()=>[]),latencyHistory:vi.fn(async()=>({tests:[],has_more:false,complete:true})),measurementRounds:vi.fn(async()=>[]),createRound:vi.fn(async()=>undefined),finishRound:vi.fn(async()=>undefined),monitorSamples:vi.fn(async()=>({items:[],has_more:false,next_cursor:''})),latencySummaries:vi.fn(async()=>[]),attemptHistory:vi.fn(async()=>({attempts:[],has_more:false,complete:true})),jobs:vi.fn(async()=>[]),createJob:vi.fn(),jobAction:vi.fn(async()=>{}),startLatency:vi.fn(),batch:vi.fn(),batchProgress:vi.fn(),startAttempt:vi.fn(),attempt:vi.fn(),attemptAction:vi.fn()}}})
 vi.hoisted(()=>Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:(k:string)=>localStorageItems.get(k)||null,setItem:(k:string,v:string)=>localStorageItems.set(k,v),removeItem:(k:string)=>localStorageItems.delete(k),clear:()=>localStorageItems.clear()}}))
 
 const stale:NodeOption={profile_id:'sub-a',node_key:'stale',node_identity_key:'stale-identity',config_revision_key:'stale-revision',profile_name:'机场 A',display_name:'旧范围节点',type:'trojan',country_code:'HK',country_flag:''}
@@ -66,7 +66,7 @@ it('refreshes after real runPlan polling and raw measurement-round readback befo
  }))
  const batch=(state:string):LatencyBatch=>({batch_id:'native-batch',request_id:requestId,state,requested_at:at,item_count:1,items:[{...node,item_id:'native-item',batch_id:'native-batch',display_name:node.display_name,execution_state:state==='running'?'running':'completed',persistence_state:state==='running'?'pending':'saved',result:state==='running'?undefined:saved}]})
  vi.mocked(api.startLatency).mockImplementationOnce(async(body:any)=>{requestId=body.request_id;return batch('running')})
- vi.mocked(api.batch).mockImplementationOnce(async()=>{available=true;return batch('completed')})
+ vi.mocked(api.batchProgress).mockResolvedValue({batch_id:'batch-a',state:'completed',total:1,processed:1,all_success:1,partial_response:0,no_response:0,save_failed:0,not_executed:0});vi.mocked(api.batch).mockImplementationOnce(async()=>{available=true;return batch('completed')})
  // Batch Get/emit uses WorkbenchLatencyTestDTO (state inside result). The
  // separate ListMeasurementRoundNodes API returns history.LatencyTest without it.
  const {persistence_state:_,...rawResult}=saved

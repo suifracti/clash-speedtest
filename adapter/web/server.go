@@ -282,6 +282,7 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("GET /api/workbench/latency-tests/{attempt_id}", s.handleGetWorkbenchLatencyTest)
 	mux.HandleFunc("POST /api/workbench/latency-batches", s.handleStartWorkbenchLatencyBatch)
 	mux.HandleFunc("GET /api/workbench/latency-batches", s.handleListWorkbenchLatencyBatches)
+	mux.HandleFunc("GET /api/workbench/latency-batches/{batch_id}/progress", s.handleGetWorkbenchLatencyBatchProgress)
 	mux.HandleFunc("GET /api/workbench/latency-batches/{batch_id}", s.handleGetWorkbenchLatencyBatch)
 	mux.HandleFunc("POST /api/workbench/latency-batches/{batch_id}/cancel", s.handleCancelWorkbenchLatencyBatch)
 	mux.HandleFunc("POST /api/workbench/latency-batches/{batch_id}/items/{item_id}/retry-save", s.handleRetryWorkbenchLatencyBatchItem)
@@ -1494,6 +1495,15 @@ func (s *Server) handleListWorkbenchLatencyBatches(w http.ResponseWriter, r *htt
 
 func (s *Server) handleGetWorkbenchLatencyBatch(w http.ResponseWriter, r *http.Request) {
 	result, err := s.app.GetWorkbenchLatencyBatch(r.Context(), r.PathValue("batch_id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleGetWorkbenchLatencyBatchProgress(w http.ResponseWriter, r *http.Request) {
+	result, err := s.app.GetWorkbenchLatencyBatchProgress(r.Context(), r.PathValue("batch_id"))
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return

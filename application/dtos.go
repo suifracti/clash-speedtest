@@ -403,3 +403,5 @@ type SelectNodeRequest struct {
 	Group string `json:"group"`
 	Node  string `json:"node"`
 }
+
+type WorkbenchLatencyBatchProgressDTO = history.LatencyBatchProgress

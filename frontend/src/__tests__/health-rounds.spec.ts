@@ -36,7 +36,7 @@ describe('one health column per round',()=>{
     const groups=details.findAll('.round-target')
     expect(groups[0].text()).toContain('Cloudflare')
     expect(groups[0].findAll('.round-result strong').map(s=>s.text())).toEqual(['80 ms','未确认'])
-    expect(groups[0].text()).toContain('timeout')
+    expect(details.text()).toContain('3 次中 1 次超时')
     expect(groups[1].text()).toContain('Google')
     expect(groups[1].find('.round-result strong').text()).toBe('900 ms')
     expect(details.text()).not.toContain('70 ms')
@@ -145,7 +145,7 @@ it('keeps every latency target in the persisted round expansion',()=>{
  expect(p).toHaveLength(1);expect(p[0].sampleGroups).toHaveLength(2)
  expect(points(w,node,'combined')[0]).toMatchObject({id:'manual-root',value:80})
  const detail=mount(RoundResults,{props:{point:p[0]}})
- expect(detail.text()).toContain('80 ms');expect(detail.text()).toContain('timeout')
+ expect(detail.text()).toContain('80 ms');expect(detail.text()).toContain('2 次中 1 次超时')
 })
 
 it('preserves cancelled latency samples in persisted round projections',()=>{

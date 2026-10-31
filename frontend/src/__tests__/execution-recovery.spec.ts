@@ -6,7 +6,7 @@ import type {Attempt,LatencyBatch,LatencyTest,NodeOption,Plan} from '../domain'
 
 vi.hoisted(()=>{const items=new Map<string,string>();Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:(k:string)=>items.get(k)||null,setItem:(k:string,v:string)=>items.set(k,v),clear:()=>items.clear()}})})
 let onEvent:(type:string,payload:any)=>void
-vi.mock('../api',async importOriginal=>{const actual=await importOriginal<typeof import('../api')>();return {...actual,events:vi.fn((callback:any)=>{onEvent=callback;return vi.fn()}),api:{...actual.api,measurementRounds:vi.fn(async()=>[]),createRound:vi.fn(async()=>undefined),finishRound:vi.fn(async()=>undefined),auth:vi.fn(async()=>({auth_required:false,authenticated:true})),setup:vi.fn(async()=>({state:'ready'})),airports:vi.fn(),nodes:vi.fn(),catalog:vi.fn(async()=>[]),jobs:vi.fn(async()=>[]),settings:vi.fn(async()=>({})),token:vi.fn(async()=>({has_token:false})),batches:vi.fn(async()=>[]),batch:vi.fn(),startLatency:vi.fn(),cancelBatch:vi.fn(),startAttempt:vi.fn(),attempt:vi.fn(),attemptAction:vi.fn(),attemptHistory:vi.fn(async()=>({attempts:[],has_more:false,complete:true}))}}})
+vi.mock('../api',async importOriginal=>{const actual=await importOriginal<typeof import('../api')>();return {...actual,events:vi.fn((callback:any)=>{onEvent=callback;return vi.fn()}),api:{...actual.api,measurementRounds:vi.fn(async()=>[]),createRound:vi.fn(async()=>undefined),finishRound:vi.fn(async()=>undefined),auth:vi.fn(async()=>({auth_required:false,authenticated:true})),setup:vi.fn(async()=>({state:'ready'})),airports:vi.fn(),nodes:vi.fn(),catalog:vi.fn(async()=>[]),jobs:vi.fn(async()=>[]),settings:vi.fn(async()=>({})),token:vi.fn(async()=>({has_token:false})),batches:vi.fn(async()=>[]),batch:vi.fn(),batchProgress:vi.fn(),startLatency:vi.fn(),cancelBatch:vi.fn(),startAttempt:vi.fn(),attempt:vi.fn(),attemptAction:vi.fn(),attemptHistory:vi.fn(async()=>({attempts:[],has_more:false,complete:true}))}}})
 const node:NodeOption={profile_id:'sub-a',node_key:'node-a',node_identity_key:'identity-a',config_revision_key:'revision-a',profile_name:'Airport A',display_name:'Node A',type:'http',country_code:'HK',country_flag:''}
 const plan:Plan={nodes:[node],projects:['download'],target:'all',samples:6,timeout:5,concurrency:8,downloadMiB:1,downloadSeconds:2,serviceIds:[],repeats:1}
 function attempt(state='running'):Attempt{return {...node,attempt_id:'attempt-a',request_id:'request-a',requested_at:'2026-10-02T12:00:00Z',execution_state:state,persistence_state:state==='running'?'not_started':'saved',rule:{target_url:'https://probe.example'},result:state==='running'?undefined:{outcome:'byte_limit',bytes_read:1048576,duration_ns:1000000000,finished_at:'2026-10-02T12:00:01Z'}}}
@@ -17,6 +17,21 @@ beforeEach(()=>{vi.useFakeTimers();vi.resetAllMocks();vi.mocked(api.measurementR
 afterEach(()=>{workspaces.splice(0).forEach(w=>w.dispose());vi.useRealTimers()})
 
 describe('execution recovery',()=>{
+  it('polls only counters while latency is running and reads the full batch once finished',async()=>{
+    const w=await workspace();w.plan.value={...plan,projects:['latency']}
+    vi.mocked(api.startLatency).mockImplementation(async(body:any)=>batch('running',body.request_id))
+    const counts={batch_id:'batch-a',state:'running',total:1,processed:0,all_success:0,partial_response:0,no_response:0,save_failed:0,not_executed:0}
+    vi.mocked(api.batchProgress).mockResolvedValue(counts)
+    const running=w.runPlan();await flushPromises();await vi.advanceTimersByTimeAsync(1200)
+    expect(api.batchProgress).toHaveBeenCalledWith('batch-a');expect(api.batch).not.toHaveBeenCalled();expect(w.latest(node)).toBeUndefined()
+    const completed=batch('completed',w.activeBatch.value!.request_id)
+    onEvent('workbench_latency_test_completed',completed.items![0].result)
+    expect(w.latest(node)).toBeUndefined()
+    vi.mocked(api.batchProgress).mockResolvedValue({...counts,state:'completed',processed:1,all_success:1});vi.mocked(api.batch).mockResolvedValue(completed)
+    await vi.advanceTimersByTimeAsync(1200);await running
+    expect(api.batch).toHaveBeenCalledTimes(1);expect(w.latest(node)?.latency_ms).toBe(42);expect(w.reportSelection.value?.batch.batch_id).toBe('batch-a')
+  })
+
   it('keeps an accepted attempt through a temporary read failure and uses its terminal event to release the queue',async()=>{
     const w=await workspace();w.plan.value={...plan};vi.mocked(api.startAttempt).mockImplementation(async(_kind,body:any)=>({...attempt(),request_id:body.request_id}));vi.mocked(api.attempt).mockRejectedValueOnce(new Error('temporary read failure'))
     const running=w.runPlan();await flushPromises();await vi.advanceTimersByTimeAsync(1000)
@@ -53,9 +68,9 @@ describe('execution recovery',()=>{
   it('keeps a latency batch recoverable while its measured results are still saving',async()=>{
     const first=await workspace();first.plan.value={...plan,projects:['latency']};vi.mocked(api.startLatency).mockImplementation(async(body:any)=>batch('saving',body.request_id))
     const running=first.runPlan();await flushPromises();expect(first.busy.value).toBe(true)
-    const accepted=first.activeBatch.value!;expect(window.sessionStorage.getItem('speedtest.active-work')).not.toBe(null);first.dispose();vi.mocked(api.batch).mockResolvedValue(accepted)
+    const accepted=first.activeBatch.value!;expect(window.sessionStorage.getItem('speedtest.active-work')).not.toBe(null);first.dispose();vi.mocked(api.batchProgress).mockResolvedValue({batch_id:'batch-a',state:'saving',total:1,processed:1,all_success:1,partial_response:0,no_response:0,save_failed:0,not_executed:0})
     const restored=await workspace();expect(restored.activeBatch.value?.state).toBe('saving');expect(restored.busy.value).toBe(true)
-    onEvent('workbench_latency_batch_updated',batch('completed',accepted.request_id));await vi.advanceTimersByTimeAsync(1200);await running
+    vi.mocked(api.batchProgress).mockResolvedValue({batch_id:'batch-a',state:'completed',total:1,processed:1,all_success:1,partial_response:0,no_response:0,save_failed:0,not_executed:0});vi.mocked(api.batch).mockResolvedValue(batch('completed',accepted.request_id));await vi.advanceTimersByTimeAsync(1200);await running
     expect(restored.busy.value).toBe(false);expect(restored.latest(node)?.latency_ms).toBe(42);expect(window.sessionStorage.getItem('speedtest.active-work')).toBe(null)
   })
   it('does not let a disposed plan rejection erase the replacement workspace task',async()=>{

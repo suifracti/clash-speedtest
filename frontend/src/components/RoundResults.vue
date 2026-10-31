@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {computed} from 'vue'
+import {partialLatencyFailures} from '../inspectorLatency'
 import {triggerLabel} from '../measurementRounds'
 import {date} from '../domain'
 import type {SampleGroup,TrendPoint} from '../presentation'
@@ -10,7 +11,7 @@ const samples=computed(()=>groups.value.flatMap(g=>g.samples))
 const success=computed(()=>samples.value.filter(s=>s.value!==null).length)
 const executedSites=computed(()=>groups.value.filter(g=>g.samples.some(s=>s.tone!=='empty'||s.executionState==='cancelled')).length)
 const cancelled=computed(()=>samples.value.filter(s=>s.executionState==='cancelled').length)
-function failures(group:SampleGroup){const errors=new Map<string,string[]>();for(const sample of group.samples){if(!sample.error)continue;const labels=errors.get(sample.error)||[];labels.push(sample.label);errors.set(sample.error,labels)}return Array.from(errors,([error,labels])=>({error,labels:labels.join('、')}))}
+function failures(group:SampleGroup){if(success.value&&success.value<samples.value.length)return [];const errors=new Map<string,string[]>();for(const sample of group.samples){if(!sample.error)continue;const labels=errors.get(sample.error)||[];labels.push(sample.label);errors.set(sample.error,labels)}return Array.from(errors,([error,labels])=>({error,labels:labels.join('、')}))}
 function notes(group:SampleGroup){
  const entries=new Map<string,number>()
  for(const sample of group.samples){if(sample.note){const code=sample.note.match(/HTTP\s*(\d{3})/)?.[1],text=code?`HTTP ${code}（连通正常）`:sample.note;entries.set(text,(entries.get(text)||0)+1)}}
@@ -25,6 +26,7 @@ function notes(group:SampleGroup){
     <p v-for="iface in physicalInterfaces" :key="iface" class="small muted">已绕开本机 TUN（{{iface}}）</p>
     <template v-for="test in point.latencyTests||[]" :key="test.attempt_id"><p v-if="test.network_path?.socket_bind_verified&&(test.network_path.dns_bind_verified||test.network_path.dns_mode==='node_literal_no_dns')" class="small muted">已绕开本机 TUN（{{test.network_path.interface}}）</p></template>
     <details v-for="test in point.latencyTests||[]" :key="test.attempt_id" class="small"><summary>方法与出口证据 · {{test.network_path?.interface||'未记录'}} · {{test.attempt_id}}</summary><p>{{test.source||'来源未知'}} · {{test.method||'方法未知'}} / v{{test.method_version||'?'}} · {{test.target||'目标见子样本'}}</p><p>仅展示结果中已保存的方法与出口证据；空缺表示未记录，不据此推断 DNS、地址族或流量绕行情况。</p><pre>{{JSON.stringify(test.network_path||{evidence:'旧结果无出口证据'},null,2)}}</pre></details>
+    <p v-if="success&&success<samples.length" class="small muted">{{partialLatencyFailures(samples.length,success,samples.filter(s=>s.value===null&&!s.executionState).map(s=>s.error||''))}}</p>
     <div class="round-target-list">
       <article v-for="group in groups" :key="group.id" class="round-target">
         <header><strong :title="group.target">{{group.name}}</strong><span>中位数 <b>{{group.value===null?'—':group.value.toFixed(0)+' ms'}}</b></span><small>{{group.samples.filter(s=>s.value!==null).length}}/{{group.samples.length}} 成功</small></header>

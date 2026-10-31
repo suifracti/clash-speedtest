@@ -225,6 +225,13 @@ func (s *AppService) GetWorkbenchLatencyBatch(ctx context.Context, batchID strin
 	return workbenchLatencyBatchDTO(*batch), nil
 }
 
+func (s *AppService) GetWorkbenchLatencyBatchProgress(ctx context.Context, batchID string) (*history.LatencyBatchProgress, error) {
+	if s == nil || s.historyStore == nil {
+		return nil, fmt.Errorf("history store is not initialized")
+	}
+	return s.historyStore.GetLatencyBatchProgress(ctx, strings.TrimSpace(batchID))
+}
+
 func (s *AppService) ListWorkbenchLatencyBatches(ctx context.Context, limit int) ([]WorkbenchLatencyBatchDTO, error) {
 	if s == nil || s.historyStore == nil {
 		return nil, fmt.Errorf("history store is not initialized")
@@ -727,7 +734,7 @@ func (s *AppService) emitWorkbenchLatencyBatch(batch *history.LatencyBatch) {
 		return
 	}
 	copyBatch := *batch
-	copyBatch.Items = append([]history.LatencyBatchItem(nil), batch.Items...)
+	copyBatch.Items = nil
 	s.emitter.Emit(Event{Type: "workbench_latency_batch_updated", Payload: workbenchLatencyBatchDTO(copyBatch)})
 }
 

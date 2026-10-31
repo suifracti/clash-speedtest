@@ -130,6 +130,8 @@ function shortError(raw:string){
 }
 const visibleQueue=computed(()=>w.queue.value.filter(q=>!['queued','completed'].includes(q.state)||unknownStart(q)||saveFailed(q)||!!q.error||q.state==='completed'&&resultStatus(q)?.tone!=='good'))
 const succeeded=computed(()=>w.queue.value.filter(q=>q.state==='completed'&&!saveFailed(q)&&!q.error&&resultStatus(q)?.tone==='good').length)
+const compactLatency=computed(()=>!!w.activeBatch.value&&['queued','running','cancelling','saving'].includes(w.activeBatch.value.state)||w.running.value&&w.queue.value.every(q=>q.project==='latency'))
+const progress=computed(()=>w.activeBatchProgress.value||{total:w.activeBatch.value?.item_count||w.queue.value.length,processed:0,all_success:0,partial_response:0,no_response:0,save_failed:0,not_executed:0})
 const finished=computed(()=>!w.busy.value&&!w.pendingStart.value&&w.done.value===w.queue.value.length)
 const headline=computed(()=>w.pendingStart.value?'正在确认启动状态':w.busy.value?'检测进行中':w.done.value<w.queue.value.length?'检测已停止，部分项目没有运行完':counts.value.saveFailed?'检测已结束，部分结果未保存':'检测已结束')
 const retryable=(q:QueueItem)=>!!(q.batchId&&q.itemId||q.project!=='latency'&&q.attempt?.result)
@@ -137,6 +139,14 @@ async function retry(q:QueueItem){retrying.value=q.id;try{if(q.batchId&&q.itemId
 </script>
 <template><Modal :title="report?'延迟检测报告':'检测进度'" wide variant="cst-queue" @close="w.queueOpen.value=false;w.reportSelection.value=null">
 <LatencyReport v-if="report" :batch="report.batch" :previous="previous" :airport-names="airportNames" :monitor="report.monitor" :entry-notice="entryNotice" @retry="retryReport" @export="exportReport" @inspect="inspectReport"/>
+<template v-else-if="compactLatency">
+ <div class="queue-summary cst-queue-head"><strong ref="progressTitle" class="queue-title" tabindex="-1" autofocus>已处理 {{progress.processed}} / {{progress.total}}</strong><button class="button danger-outline" :disabled="w.cancelRequested.value" @click="w.cancelTests()">{{w.cancelRequested.value?'正在取消…':'取消检测'}}</button></div>
+ <div class="progress-track"><i :style="{width:progress.total?`${progress.processed/progress.total*100}%`:'0%'}"/></div>
+ <div class="compact-progress-counts"><span>全部成功 <strong>{{progress.all_success}}</strong></span><span>部分响应 <strong>{{progress.partial_response}}</strong></span><span>无响应 <strong>{{progress.no_response}}</strong></span></div>
+ <p v-if="progress.not_executed" class="muted small">未执行/取消 {{progress.not_executed}}</p>
+ <p v-if="w.error.value||w.pendingStart.value" class="warn small" role="alert">{{w.error.value||'正在确认检测启动状态'}}</p>
+ <p v-if="progress.save_failed" class="warn small" role="alert">保存失败 {{progress.save_failed}} 项；结束后可在报告重试保存。</p>
+</template>
 <template v-else>
   <div class="queue-summary cst-queue-head">
     <div><strong ref="progressTitle" class="queue-title" tabindex="-1" autofocus>{{w.queue.value.length?`已处理 ${w.done.value}/${w.queue.value.length}`:'后台任务'}}</strong><span :class="{warn:!!w.pendingStart.value||finished&&counts.saveFailed>0}">{{headline}}</span></div>
@@ -158,4 +168,5 @@ async function retry(q:QueueItem){retrying.value=q.id;try{if(q.batchId&&q.itemId
 
 <style scoped>
 .queue-title:focus{outline:none}
+.compact-progress-counts{display:flex;justify-content:space-around;gap:20px;padding:24px 0}.compact-progress-counts span{color:var(--cst-muted);font-size:13px}.compact-progress-counts strong{display:block;color:var(--cst-text);font-size:24px;margin-top:8px}
 </style>

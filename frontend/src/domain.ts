@@ -65,3 +65,5 @@ export function date(v?:string){if(!v||v.startsWith('0001'))return '—';const d
 
 export interface MeasurementRoundItem extends NodeScope {request_id:string;project:'latency'|'download'|'service';service_id?:string;display_name?:string;execution_state:string;persistence_state:string;not_executed_reason?:string;download?:Attempt;service?:Attempt;latency?:LatencyTest}
 export interface MeasurementRound {round_id:string;trigger_type:'manual'|'scheduled'|'diagnostic'|'auto_pick';started_at:string;state:string;items:MeasurementRoundItem[]}
+
+export interface LatencyBatchProgress {batch_id:string;state:string;total:number;processed:number;all_success:number;partial_response:number;no_response:number;save_failed:number;not_executed:number}

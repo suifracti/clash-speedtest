@@ -3,7 +3,7 @@ import {computed,onBeforeUnmount,ref,watch} from 'vue'
 import {api,type ClashCompareResult,type ClashNodeStatus} from '../../api'
 import {manualLatencyPoint} from '../../presentation'
 import {date,key,type NodeOption,type LatencyTest} from '../../domain'
-import {inspectorMedian as median,inspectorSamples as samples} from '../../inspectorLatency'
+import {inspectorMedian as median,inspectorSamples as samples,partialLatencyFailures} from '../../inspectorLatency'
 import {clashSampleVerdict} from '../../clashComparison'
 import {latencyRounds,latencyHistorySplit,readLatencyHistoryWithConfig,roundSiteDetails,type LatencySeries,type LatencyConfigChange,type RoundSiteDetail} from '../../latencyHistory'
 import {hourBuckets,hourConclusion,hourTitle,slowestHours} from '../../historyPulse'
@@ -44,6 +44,7 @@ const currentSeries=computed(()=>current.value?.series||props.series.map(s=>({..
 watch(currentSeries,value=>emit('round-change',value),{immediate:true})
 const colors:Record<string,string>={cloudflare:'#378ADD',google:'#1D9E75',github:'#7F77DD',apple:'#D85A30'}
 const data=computed(()=>currentSeries.value.map(s=>{const list=s.points[0]?samples(s.points[0],s.id):[],values=list.flatMap(p=>p.value===null?[]:[p.value]);return {...s,color:colors[s.id],values,stable:median(list.slice(1).flatMap(p=>p.value===null?[]:[p.value])),first:list[0]?.value??null,responded:values.length,total:list.length}}))
+const partialFailure=computed(()=>{const list=currentSeries.value.flatMap(s=>s.points.flatMap(p=>samples(p,s.id)));return partialLatencyFailures(list.length,list.filter(s=>s.value!==null).length,list.filter(s=>s.value===null).map(s=>s.error||''))})
 const historical=computed(()=>!!current.value&&current.value.id!==latest.value?.id)
 const historySplit=computed(()=>latencyHistorySplit(historySeries.value)),stats=computed(()=>historySplit.value.all),currentStats=computed(()=>historySplit.value.current),configChanged=computed(()=>changes.value.length>0||stats.value.total>currentStats.value.total),listed=computed(()=>stats.value.rounds.slice().reverse().slice(0,expanded.value?undefined:10))
 const siteDetails=computed(()=>new Map(stats.value.rounds.map(r=>[r.id,roundSiteDetails(r)])))
@@ -80,6 +81,7 @@ const ms=(v:number|null|undefined)=>v==null?'—':Math.round(v).toLocaleString()
    <div><span>首次连接</span><strong class="first" title="各站第 1 次采样的中位数，包含建立连接">{{ms(current?.first)}}</strong></div>
    <div><span>响应</span><strong :class="current?.responses===current?.total&&current?.total?'responded':''">{{current?.total?current.responses+'/'+current.total:'—'}}</strong></div>
   </div>
+  <p v-if="partialFailure" class="history-note">{{partialFailure}}</p>
   <LatencyChart :series="currentSeries"/>
   <div v-for="s in data" :key="s.id" class="hd-site latency-range" :title="s.total?`${s.responded}/${s.total} 次响应 · 首次连接 ${ms(s.first)}`:'未测'">
    <span class="hd-site-name">{{s.name}}</span><div class="range-track"><template v-if="s.values.length"><i :style="{left:pct(Math.min(...s.values)),right:pct(1500-Math.max(...s.values)),background:s.color}"/><b v-if="s.stable!==null" :style="{left:pct(s.stable),background:s.color}"/></template></div><span class="hd-site-value" :title="s.context">{{ms(s.stable)}}</span>

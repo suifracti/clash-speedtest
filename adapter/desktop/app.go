@@ -260,6 +260,13 @@ func (a *App) GetWorkbenchLatencyBatch(batchID string) (*application.WorkbenchLa
 	return a.app.GetWorkbenchLatencyBatch(a.context(), batchID)
 }
 
+func (a *App) GetWorkbenchLatencyBatchProgress(batchID string) (*application.WorkbenchLatencyBatchProgressDTO, error) {
+	if a == nil || a.app == nil {
+		return nil, errAppNotInitialized
+	}
+	return a.app.GetWorkbenchLatencyBatchProgress(a.context(), batchID)
+}
+
 func (a *App) CancelWorkbenchLatencyBatch(batchID string) (*application.WorkbenchLatencyBatchDTO, error) {
 	if a == nil || a.app == nil {
 		return nil, errAppNotInitialized

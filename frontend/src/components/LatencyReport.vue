@@ -5,6 +5,7 @@ import ReportMs from './ReportMs.vue'
 import {saveReportImage} from '../reportImage'
 import {nodeDisplayName} from '../nodePresentation'
 import type {BatchItem,LatencyBatch} from '../domain'
+import {partialLatencyError} from '../inspectorLatency'
 import {partialLatencyLabel} from '../latencyTargets'
 import {buildLatencyReport,compareLatencyReports,latencyAirportSummary,type LatencyReportGroup,type LatencyReportRow} from '../latencyReport'
 
@@ -171,7 +172,7 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
        <td><button class="text-button" @click="emit('inspect',row.item)">{{nodeDisplayName(row.item)}}</button><span class="report-airport">{{row.airportName}}</span><small>{{row.airportName}} · {{row.nodeType}}</small></td>
        <td><span class="latency-report-status" :class="row.status">{{statusLabel(row)}}</span><small v-if="row.suspected" class="latency-report-suspected">疑似检测问题</small></td>
        <td class="number"><ReportMs :value="row.firstMedianMs"/></td><td class="number"><ReportMs :value="row.stableMs"/></td><td>{{siteLine(row)}}</td>
-       <td><small>{{row.suspectedReasons.join('；')||row.skipReason||'—'}}</small></td>
+       <td><small>{{partialLatencyError(row.item.result)||row.suspectedReasons.join('；')||row.skipReason||'—'}}</small></td>
       </tr>
      </tbody>
     </table>
