@@ -81,7 +81,7 @@ function weeklyTitle(n:NodeOption,metric:'responseRate'|'volatility'){
 }
 const catalog=computed(()=>w.catalog.value.filter(r=>!isReputationRule(r)))
 const projects:Project[]=['combined','latency','download','service']
-const chosenNodeCount=computed(()=>chosen.value.reduce((count,airport)=>count+airportNodeCount(airport),0))
+const chosenNodeCount=computed(()=>chosen.value.reduce((count,airport)=>count+airportNodeCount(airport,w.nodes.value),0))
 const hasSourceNodes=computed(()=>w.proxyNodes.value.some(n=>w.airportFilter.value==='all'||w.nodeAirportId(n)===w.airportFilter.value))
 function clearFilters(){w.search.value='';w.region.value='all';w.excludeRegion.value=false;w.subscription.value='all';w.downloadFullOnly.value=false;m.protocolFilter.value='all';m.qualityGate.value='all';m.currentPage.value=1}
 async function inspectClashUsage(){
@@ -116,7 +116,7 @@ const more=ref<HTMLDetailsElement>(),moreSummary=ref<HTMLElement>()
 function closeMore(){if(!more.value?.open)return;more.value.open=false;moreSummary.value?.focus({preventScroll:true})}
 // 按机场筛选时，页头和来源带都切到这个机场，不再显示全部机场的汇总。
 const filteredAirport=computed(()=>w.airportFilter.value==='all'?undefined:chosen.value.find(a=>a.id===w.airportFilter.value))
-const filteredAirportNodes=computed(()=>airportNodeCount(w.airports.value.find(airport=>airport.id===w.airportFilter.value)))
+const filteredAirportNodes=computed(()=>airportNodeCount(w.airports.value.find(airport=>airport.id===w.airportFilter.value),w.nodes.value))
 const qualityFiltering=computed(()=>m.qualityGate.value!=='all'||m.qualitySort.value!=='existing')
 const focusKey=ref<string|null>(null)
 const focusNode=computed(()=>m.pageNodes.value.find(n=>key(n)===focusKey.value)||m.pageNodes.value[0])

@@ -1,18 +1,19 @@
-import {type Airport,type NodeOption,type Subscription} from './domain'
+import {isNotice,type Airport,type NodeOption,type Subscription} from './domain'
 import {nodeSourceIndex,sourceForNode} from './nodePresentation'
 
 export interface AirportAccount {airport:Airport;subscription:Subscription;key:string}
 
-export function airportNodeCount(airport:Airport|undefined):number{
+export function airportNodeCount(airport:Airport|undefined,nodes?:NodeOption[]):number{
   if(!airport)return 0
+  if(nodes){const ids=airport.subscriptions?.length?airport.subscriptions.map(s=>s.id):[airport.id];return Math.max(0,...ids.map(id=>nodes.filter(n=>n.profile_id===id&&!isNotice(n)).length))}
   const cachedCounts=(airport.subscriptions||[]).filter(subscription=>subscription.has_cache).map(subscription=>subscription.node_count||0)
   return cachedCounts.length?Math.max(...cachedCounts):airport.node_count||0
 }
 
-export function airportNodeCounts(airports:Airport[]):Record<string,number>{
+export function airportNodeCounts(airports:Airport[],nodes?:NodeOption[]):Record<string,number>{
   const counts:Record<string,number>={}
   for(const airport of airports){
-    const count=airportNodeCount(airport)
+    const count=airportNodeCount(airport,nodes)
     if(count>0)counts[airport.id]=count
   }
   return counts

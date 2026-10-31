@@ -18,6 +18,7 @@ import (
 const MaxSubscriptionBytes = 8 << 20
 
 type FetchEvidence struct {
+	normalError     error
 	UsageFallback   *UsageFallback `json:"usage_fallback,omitempty"`
 	ProxyPolicy     string         `json:"proxy_policy,omitempty"`
 	Method          string         `json:"method"`
@@ -53,6 +54,9 @@ func FetchSubscriptionObserved(ctx context.Context, rawURL, userAgent string) ([
 		evidence = &FetchEvidence{}
 	}
 	body, usage, err := FetchSubscriptionWithUsageContext(WithFetchEvidence(ctx, evidence), rawURL, userAgent)
+	if err != nil && evidence.normalError != nil && evidence.ProxyPolicy == "physical_direct" {
+		err = fmt.Errorf("普通网络：%v；物理网卡：%w", evidence.normalError, err)
+	}
 	return body, usage, evidence, err
 }
 
@@ -179,6 +183,7 @@ func (t *subscriptionFallbackTransport) RoundTrip(req *http.Request) (*http.Resp
 		if req.Context().Err() != nil || (t.evidence.ProxyPolicy != "environment_proxy" && t.evidence.ProxyPolicy != "system_proxy" && t.evidence.ProxyPolicy != "direct_normal_network") {
 			return nil, err
 		}
+		t.evidence.normalError = err
 	}
 	t.evidence.ProxyPolicy = "physical_direct"
 	client, err := t.physical()

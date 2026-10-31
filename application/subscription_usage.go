@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -19,6 +20,10 @@ import (
 )
 
 var noticeRemainingValue = regexp.MustCompile(`(?i)(?:距离下次重置剩余|剩余(?:可用)?(?:流量)?|可用流量)[：:\s]*([0-9]+(?:\.[0-9]+)?)\s*(PiB|PB|TiB|TB|GiB|GB|MiB|MB|KiB|KB|B)\b`)
+
+var usageErrorURL = regexp.MustCompile(`(?i)https?://[^\s"'<>；;]+`)
+var usageErrorAddress = regexp.MustCompile(`\[[0-9a-fA-F:]+\](?::[0-9]+)?|(?:[a-z0-9_-]+\.)+[a-z0-9_-]+(?::[0-9]+)?|(?:[0-9a-fA-F]{0,4}:){2,}[0-9a-fA-F:]+`)
+var usageErrorCredential = regexp.MustCompile(`(?i)(token|password|secret|authorization|api[_-]?key)\s*[:=]\s*[^\s"'；;]+`)
 
 var errUsageRefreshPanic = errors.New("订阅用量更新出现内部异常；请查看账户状态并重试")
 
@@ -117,8 +122,23 @@ func truncateUsageError(err error) string {
 	if err == nil {
 		return ""
 	}
-	runes := []rune(err.Error())
+	if requestError, ok := err.(*url.Error); ok && requestError.Err != nil {
+		err = requestError.Err
+	}
+	message := usageErrorURL.ReplaceAllString(err.Error(), "[地址已隐藏]")
+	message = usageErrorAddress.ReplaceAllString(message, "[地址已隐藏]")
+	message = usageErrorCredential.ReplaceAllString(message, "$1=[已隐藏]")
+	runes := []rune(message)
 	if len(runes) > 200 {
+		const separator = "；物理网卡："
+		if first, second, ok := strings.Cut(message, separator); ok {
+			a, b := []rune(first), []rune(second)
+			budget := 200 - len([]rune(separator))
+			left := min(len(a), budget/2)
+			right := min(len(b), budget-left)
+			left = min(len(a), budget-right)
+			return string(a[:left]) + separator + string(b[:right])
+		}
 		runes = runes[:200]
 	}
 	return string(runes)

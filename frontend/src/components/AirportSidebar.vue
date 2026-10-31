@@ -5,7 +5,7 @@ import {useWorkspace} from '../workspace'
 import {airportNodeCounts} from '../airportViewing'
 import {date,type LatencyBatch} from '../domain'
 const emit=defineEmits<{select:[id:string]}>(),w=useWorkspace(),search=ref(''),collapsed=ref(false),batches=ref<LatencyBatch[]>([])
-const counts=computed(()=>airportNodeCounts(w.airports.value)),total=computed(()=>Object.values(counts.value).reduce((a,b)=>a+b,0))
+const counts=computed(()=>airportNodeCounts(w.airports.value,w.nodes.value)),total=computed(()=>Object.values(counts.value).reduce((a,b)=>a+b,0))
 const visible=computed(()=>w.airports.value.filter(a=>a.name.toLowerCase().includes(search.value.trim().toLowerCase())))
 const cache=new Map<string,LatencyBatch>()
 watch(()=>w.batches.value,async(rows,_,onCleanup)=>{

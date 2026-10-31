@@ -96,7 +96,7 @@ func TestNormalNetworkFailureRetriesPhysicalAndRecordsFailedPath(t *testing.T) {
 	server := httptest.NewServer(http.NotFoundHandler())
 	server.Close() // Ordinary loopback transport fails; the physical attempt also cannot connect.
 	s, paths := newAirportURLTestService(t)
-	store := &profiles.Store{Airports: []*profiles.Airport{{ID: "a", Subscriptions: []*profiles.Subscription{{ID: "s", URL: server.URL}}}}}
+	store := &profiles.Store{Airports: []*profiles.Airport{{ID: "a", Subscriptions: []*profiles.Subscription{{ID: "s", URL: server.URL + "/sub?token=FAKE_SECRET"}}}}}
 	if err := profiles.SaveStore(paths.StoreFile(), store); err != nil {
 		t.Fatal(err)
 	}
@@ -106,6 +106,9 @@ func TestNormalNetworkFailureRetriesPhysicalAndRecordsFailedPath(t *testing.T) {
 	snapshots, err := s.historyStore.QuerySubscriptionUsage(context.Background(), time.Now().Add(-time.Minute), time.Now().Add(time.Minute))
 	if err != nil || len(snapshots) != 1 || snapshots[0].Status != "refresh_failed" || snapshots[0].FetchPath != "physical" {
 		t.Fatalf("normal transport failure must attempt physical and persist its path: %+v, %v", snapshots, err)
+	}
+	if raw := snapshots[0].RawError; !strings.Contains(raw, "普通网络：") || !strings.Contains(raw, "物理网卡：") || strings.Contains(raw, "127.0.0.1") || strings.Contains(raw, "FAKE_SECRET") || len([]rune(raw)) > 200 {
+		t.Fatalf("failed paths must be retained and redacted: %q", raw)
 	}
 }
 
