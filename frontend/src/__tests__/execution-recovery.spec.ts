@@ -20,10 +20,10 @@ describe('execution recovery',()=>{
   it('polls only counters while latency is running and reads the full batch once finished',async()=>{
     const w=await workspace();w.plan.value={...plan,projects:['latency']}
     vi.mocked(api.startLatency).mockImplementation(async(body:any)=>batch('running',body.request_id))
-    const counts={batch_id:'batch-a',state:'running',total:1,processed:0,all_success:0,partial_response:0,no_response:0,save_failed:0,not_executed:0}
+    const counts={batch_id:'batch-a',state:'running',total:1,processed:1,all_success:1,partial_response:0,no_response:0,save_failed:0,not_executed:0}
     vi.mocked(api.batchProgress).mockResolvedValue(counts)
     const running=w.runPlan();await flushPromises();await vi.advanceTimersByTimeAsync(1200)
-    expect(api.batchProgress).toHaveBeenCalledWith('batch-a');expect(api.batch).not.toHaveBeenCalled();expect(w.latest(node)).toBeUndefined()
+    expect(api.batchProgress).toHaveBeenCalledWith('batch-a');expect(api.batch).not.toHaveBeenCalled();expect(w.latest(node)).toBeUndefined();expect(w.done.value).toBe(w.activeBatchProgress.value?.processed)
     const completed=batch('completed',w.activeBatch.value!.request_id)
     onEvent('workbench_latency_test_completed',completed.items![0].result)
     expect(w.latest(node)).toBeUndefined()
