@@ -122,6 +122,9 @@ func TestAutoPickKeepsPreviousSubscriptionWhenNothingSelected(t *testing.T) {
 		t.Fatalf("first subscription: %v", err)
 	}
 
+	// Report names use milliseconds plus a random ID; keep the rounds in distinct milliseconds.
+	time.Sleep(2 * time.Millisecond)
+
 	// Second round: every node loses too many samples.
 	svc.autoPick().hooks.measureLatency = func(_ context.Context, _ string, _ []autoPickScopedNode, _ autopick.Config) (string, map[string]autoPickLatency, error) {
 		return "batch-2", map[string]autoPickLatency{
