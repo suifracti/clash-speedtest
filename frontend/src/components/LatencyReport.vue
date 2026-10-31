@@ -7,7 +7,7 @@ import {nodeDisplayName} from '../nodePresentation'
 import type {BatchItem,LatencyBatch} from '../domain'
 import {partialLatencyError} from '../inspectorLatency'
 import {partialLatencyLabel} from '../latencyTargets'
-import {buildLatencyReport,compareLatencyReports,latencyAirportSummary,latencySlowThresholdNote,type LatencyReportGroup,type LatencyReportRow} from '../latencyReport'
+import {buildLatencyReport,compareLatencyReports,latencyAirportSummary,latencyHttpNotices,latencySlowThresholdNote,type LatencyReportGroup,type LatencyReportRow} from '../latencyReport'
 
 const props=withDefaults(defineProps<{
  batch:LatencyBatch
@@ -37,6 +37,7 @@ onMounted(()=>nextTick(()=>reportTitle.value?.focus({preventScroll:true})))
 const expandedGroups=ref(new Set<number>())
 function toggleGroup(index:number){const next=new Set(expandedGroups.value);next.has(index)?next.delete(index):next.add(index);expandedGroups.value=next}
 const airportSummary=computed(()=>latencyAirportSummary(report.value))
+const httpNotices=computed(()=>latencyHttpNotices(report.value))
 const comparison=computed(()=>compareLatencyReports(props.batch,report.value,props.previous))
 const issueItems=computed(()=>{
  const unique=new Map<string,BatchItem>()
@@ -119,6 +120,7 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
   </p>
 
   <p class="latency-report-compare">{{comparisonLine}}</p>
+  <p v-for="notice in httpNotices" :key="notice" class="latency-report-http">{{notice}}</p>
 
   <section v-if="airportSummary.length>1" class="airport-summary"><h3>按机场</h3><table><thead><tr><th>机场</th><th>节点数</th><th>能用</th><th>能用率</th><th>偏慢/不稳定</th><th>部分不通</th><th>无响应</th></tr></thead><tbody><tr v-for="a in airportSummary" :key="a.airport"><td>{{a.airport}}</td><td>{{a.total}}</td><td>{{a.usable}}</td><td>{{a.total?Math.round(a.usable/a.total*100):0}}%</td><td>{{a.slow}}</td><td>{{a.partial}}</td><td :class="{bad:a.noResponse>0}">{{a.noResponse}}</td></tr></tbody></table></section>
   <div class="latency-report-columns">
@@ -196,6 +198,7 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
 .latency-report-count strong{font-size:23px;line-height:1.1;font-variant-numeric:tabular-nums}
 .latency-report-count.good{background:color-mix(in srgb,var(--cst-good) 10%,var(--cst-panel))}.latency-report-count.warn{background:color-mix(in srgb,var(--cst-warn) 12%,var(--cst-panel))}.latency-report-count.bad{background:color-mix(in srgb,var(--cst-bad) 10%,var(--cst-panel))}.latency-report-count.good strong{color:var(--cst-good)}.latency-report-count.warn strong{color:var(--cst-warn)}.latency-report-count.bad strong{color:var(--cst-bad)}.latency-report-count.suspected strong{color:var(--cst-accent)}
 .latency-report-note{color:var(--cst-muted);font-size:11px;margin-top:-8px}
+.latency-report-http{color:var(--cst-muted);font-size:12px;margin:-4px 0 0}
 .latency-report-compare{border:1px solid var(--cst-line);border-radius:8px;background:var(--cst-panel);padding:9px 11px;font-size:12px;line-height:1.5}
 .latency-report-columns{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;align-items:start}
 .latency-report-panel{min-width:0;border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel);padding:11px}

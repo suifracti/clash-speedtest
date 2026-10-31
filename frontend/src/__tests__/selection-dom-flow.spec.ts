@@ -50,7 +50,7 @@ describe('node selection through DOM controls',()=>{
     const {w,wrapper}=attach([a],['airport-a']);w.displayTargets.value=['cloudflare','google'];await flushPromises()
     expect(w.jobs.value).toEqual([])
     expect(api.monitorSamples).toHaveBeenCalledWith(expect.objectContaining({profile_id:'sub-a-one',node_identity_key:'identity-a',config_revision_key:'revision-a',probe_type:'rtt',target:undefined,limit:480}))
-    expect(cells(wrapper)).toEqual(['—','失败','未测'])
+    expect(cells(wrapper)).toEqual(['—','超时','未测'])
     expect(wrapper.findAll('.hd-latency .health-cell')).toHaveLength(0)
     expect(wrapper.find('.latency-spark').exists()).toBe(false)
     expect(wrapper.get('.latency-combined').attributes('aria-label')).toContain('本轮实际采样')

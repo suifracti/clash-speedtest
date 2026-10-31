@@ -1,10 +1,10 @@
 import {describe,it,expect} from 'vitest'
 import {mount} from '@vue/test-utils'
 import LatencyReport from '../components/LatencyReport.vue'
-import {manualLatencyPoint} from '../presentation'
+import {manualLatencyPoint,latencyPointLabel} from '../presentation'
 import {latencyVerdict} from '../components/home/homeModel'
 import {activeLatencyTargets} from '../latencyTargets'
-import {buildLatencyReport,compareLatencyReports,latencyAirportSummary} from '../latencyReport'
+import {latencyHttpNotices,buildLatencyReport,compareLatencyReports,latencyAirportSummary} from '../latencyReport'
 import type {LatencyBatch,BatchItem} from '../domain'
 const item=(id:string,ms:number,success=true):BatchItem=>({item_id:id,batch_id:'b',profile_id:'p',node_key:id,node_identity_key:id,config_revision_key:'r',display_name:id,execution_state:'completed',persistence_state:'saved',result:{profile_id:'p',node_key:id,node_identity_key:id,config_revision_key:'r',attempt_id:id,display_name:id,node_type:'Vless',requested_at:'2026-10-21T11:00:00Z',finished_at:'2026-10-21T11:01:00Z',status:'completed',latency_ms:ms,total_samples:24,success_samples:success?24:0,failure_samples:success?0:24,persistence_state:'saved',samples:['https://speed.cloudflare.com/__down?bytes=1','https://www.gstatic.com/generate_204','https://api.github.com/zen','https://captive.apple.com/hotspot-detect.html'].flatMap(target=>Array.from({length:6},(_,i)=>({seq:i+1,target,timestamp:'2026-10-21T11:00:00Z',latency_ms:i?ms:9000,success,error:success?'':'context deadline exceeded'})))}})
 const batch=(items:BatchItem[]):LatencyBatch=>({batch_id:'b',request_id:'b',requested_at:'2026-10-21T11:00:00Z',state:'completed',target_id:'all',timeout_seconds:5,sample_count:6,item_count:items.length,items})
@@ -22,6 +22,8 @@ describe('latency run report',()=>{
   wrapper.unmount()
  })
 
+ it('names refused sites while keeping them connected',()=>{const refused=item('refused',300);refused.result!.samples[12]={...refused.result!.samples[12],error:'HTTP 403；响应时延已测，业务／地区解锁未确认'};const r=buildLatencyReport(batch([refused]));expect(r.counts.usable).toBe(1);expect(latencyHttpNotices(r)).toEqual(['GitHub 拒绝访问 1 次，涉及 1 个节点（已连通，可能是限流或风控）'])})
+ it('states why a failed site failed',()=>{const failed=item('failed',0,false);expect(latencyPointLabel(manualLatencyPoint(failed.result!,'cloudflare'),'cloudflare')).toBe('超时')})
  it('shows shared cause detail once while keeping different node details',()=>{
   const wrapper=mount(LatencyReport,{props:{batch:batch([item('failed-a',0,false),item('failed-b',0,false),item('slow-a',2000),item('slow-b',3000)])}}),group=wrapper.get('.latency-report-group.no-response')
   expect(group.text().match(/已执行采样，但四站均未取得响应/g)).toHaveLength(1);expect(group.findAll('li small')).toHaveLength(0);const slow=wrapper.get('.latency-report-group.slow');expect(slow.text().match(/阈值 1,500 ms/g)).toHaveLength(1);expect(slow.findAll('li small').map(s=>s.text())).toEqual(['2000 ms','3000 ms']);wrapper.unmount()

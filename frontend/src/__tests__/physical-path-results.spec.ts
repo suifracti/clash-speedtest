@@ -11,7 +11,7 @@ it('shows a local physical binding rejection as unexecuted history, never a fail
  const groups=qualityGroups([test],[],'cloudflare')
  expect(groups[0].total).toBe(0);expect(groups[0].excluded).toBe(1);expect(groups[0].successRate).toBe(null)
  const failed=manualLatencyPoint({...test,status:'failed',total_samples:1,failure_samples:1,samples:[{...test.samples[0],error:'EOF'}]},'cloudflare')
- expect(failed.tone).toBe('bad');expect(latencyPointLabel(failed)).toBe('失败')
+ expect(failed.tone).toBe('bad');expect(latencyPointLabel(failed)).toBe('连接被关闭')
 })
 
 it('does not count saved IP-version preparation errors as node failures or rewrite their raw records',()=>{

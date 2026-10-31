@@ -4,6 +4,20 @@ import type {BatchItem,LatencyBatch,LatencyTest} from './domain'
 
 export const latencySlowThresholdNote='四站稳定中位阈值 1,500 ms'
 
+// Any HTTP response counts as connected, so refusals stay out of the failure counts.
+export function latencyHttpNotices(report:Pick<LatencyReport,'rows'>){
+ const groups=new Map<string,{samples:number;nodes:Set<string>}>()
+ for(const row of report.rows)for(const sample of row.item.result?.samples||[]){
+  const status=sample.success?sample.error?.match(/^HTTP (\d+)/)?.[1]:''
+  if(!status)continue
+  const name=activeLatencyTargets.find(t=>t.id===latencyTargetId(sample.target))?.name||'网站'
+  const label=`${name} ${['403','429'].includes(status)?'拒绝访问':'返回 HTTP '+status}`
+  const group=groups.get(label)||{samples:0,nodes:new Set<string>()}
+  group.samples++;group.nodes.add(row.key);groups.set(label,group)
+ }
+ return [...groups].map(([label,group])=>`${label} ${group.samples} 次，涉及 ${group.nodes.size} 个节点（已连通，可能是限流或风控）`)
+}
+
 export type LatencyReportStatus='usable'|'slow'|'partial'|'unstable'|'no-response'|'skipped'
 export type LatencyReportIssueKind='slow'|'partial'|'unstable'|'no-response'|'suspected'
 
