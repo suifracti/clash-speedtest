@@ -456,10 +456,11 @@ func (s *AppService) GetSubscriptionUsage(ctx context.Context, from, until, peri
 		return nil, fmt.Errorf("用量历史存储尚未初始化")
 	}
 	// The first hour of the following day can close the last daily bucket.
-	snapshots, err := s.historyStore.QuerySubscriptionUsage(ctx, a, b.Add(time.Hour))
+	snapshots, err := s.historyStore.QuerySubscriptionUsage(ctx, time.Time{}, time.Now().Add(time.Hour))
 	if err != nil {
 		return nil, err
 	}
+	snapshots = subscriptionusage.ContinueAccounts(snapshots)
 	if account != "" {
 		filtered := snapshots[:0]
 		for _, snap := range snapshots {

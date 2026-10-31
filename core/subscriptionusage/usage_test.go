@@ -201,3 +201,13 @@ func mustTime(value string) time.Time {
 	at, _ := time.Parse(time.RFC3339, value)
 	return at
 }
+
+func TestContinueAccountsChoosesClosestUsage(t *testing.T) {
+	now := time.Now()
+	total, a, b, n, z := int64(100), int64(20), int64(60), int64(65), int64(0)
+	rows := []Snapshot{{AccountKey: "old-a", AirportID: "a", CapturedAt: now, Status: "ok", Total: &total, Upload: &z, Download: &a}, {AccountKey: "old-b", AirportID: "a", CapturedAt: now, Status: "ok", Total: &total, Upload: &z, Download: &b}, {AccountKey: "new", AirportID: "a", CapturedAt: now.Add(time.Hour), Status: "ok", Total: &total, Upload: &z, Download: &n}}
+	got := ContinueAccounts(rows)
+	if got[0].AccountKey != "old-a" || got[1].AccountKey != "new" || rows[1].AccountKey != "old-b" {
+		t.Fatalf("unexpected read-only linkage: %+v", got)
+	}
+}
