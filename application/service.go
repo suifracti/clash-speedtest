@@ -1510,34 +1510,27 @@ func (s *AppService) UpdateSubscription(airportID, subID, name, rawURL, note, us
 		return nil, fmt.Errorf("更新订阅时必须提供完整订阅链接")
 	}
 
+	previousStore, err := os.ReadFile(s.profilePaths.StoreFile())
+	if err != nil {
+		return nil, err
+	}
 	sub.Name = name
 	sub.Note = strings.TrimSpace(note)
 	urlChanged := sub.URL != rawURL
 	sub.URL = rawURL
-
-	if urlChanged || !s.profilePaths.HasCache(sub.ID) {
+	if urlChanged {
 		sub.Usage = nil
-		if profiles.IsHTTPURL(rawURL) {
-			body, usage, err := profiles.FetchSubscriptionWithUsage(rawURL, sub.EffectiveUserAgent(userAgent))
-			sub.Usage = usage
-			if err != nil {
-				return nil, airportOperationError("获取订阅节点失败", ap.ID, rawURL)
-			}
-			if err := s.profilePaths.WriteCache(sub.ID, body); err != nil {
-				return nil, airportOperationError("写入节点缓存失败", ap.ID, rawURL)
-			}
-			sub.UpdatedAt = time.Now()
-		} else {
-			expanded := profiles.ExpandLocalPath(rawURL)
-			data, err := os.ReadFile(expanded)
-			if err != nil {
-				return nil, airportOperationError("读取本地节点文件失败", ap.ID, rawURL)
-			}
-			if err := s.profilePaths.WriteCache(sub.ID, data); err != nil {
-				return nil, airportOperationError("写入节点缓存失败", ap.ID, rawURL)
-			}
-			sub.UpdatedAt = time.Now()
+		if err := profiles.SaveStore(s.profilePaths.StoreFile(), store); err != nil {
+			return nil, err
 		}
+		dto, refreshErr := s.refreshSubscriptionLocked(context.Background(), ap.ID, sub.ID, userAgent, "", nil)
+		if refreshErr != nil {
+			if restoreErr := s.restoreRefreshStoreBytes(previousStore); restoreErr != nil {
+				return nil, fmt.Errorf("刷新失败且原订阅恢复失败：%w", restoreErr)
+			}
+			return nil, refreshErr
+		}
+		return dto, nil
 	}
 
 	if err := profiles.SaveStore(s.profilePaths.StoreFile(), store); err != nil {

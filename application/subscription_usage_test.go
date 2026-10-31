@@ -108,3 +108,38 @@ func TestNormalNetworkFailureRetriesPhysicalAndRecordsFailedPath(t *testing.T) {
 		t.Fatalf("normal transport failure must attempt physical and persist its path: %+v, %v", snapshots, err)
 	}
 }
+
+func TestUpdateSubscriptionRefreshesNodesAndSnapshot(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Subscription-Userinfo", "upload=1; download=2; total=100")
+		_, _ = w.Write([]byte(strings.ReplaceAll(rollbackFixtureBody, "replacement-node", r.URL.Path)))
+	}))
+	defer server.Close()
+	s, paths := newAirportURLTestService(t)
+	ap, err := s.CreateAirport("机场A", server.URL+"/old", "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.UpdateSubscription(ap.ID, ap.Subscriptions[0].ID, "fixture", server.URL+"/new", "", "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	store, err := profiles.LoadStore(paths.StoreFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub := store.Get(ap.ID).Subscriptions[0]
+	versions, _ := json.Marshal(sub.NodeVersions)
+	if !strings.Contains(string(versions), "/old") || !strings.Contains(string(versions), "/new") {
+		t.Fatalf("missing node versions: %s", versions)
+	}
+	snapshots, err := s.historyStore.QuerySubscriptionUsage(context.Background(), time.Now().Add(-time.Minute), time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, snap := range snapshots {
+		if snap.AccountKey == usageAccountKey(server.URL+"/new") && snap.Source == "subscription_update" && snap.FetchPath == "normal" && snap.Status == "ok" {
+			return
+		}
+	}
+	t.Fatal("missing updated snapshot and fetch path")
+}

@@ -684,3 +684,7 @@
 
 - 2026-10-31 机场B手动刷新后只读验收：订阅1 18:34:10：fetch_path=physical，status=refresh_failed，raw_error=`Get "[订阅地址已隐藏]": DNS 返回 NXDOMAIN`；订阅2 18:35:10：fetch_path=physical，status=refresh_failed，raw_error=`Get "[订阅地址已隐藏]": context deadline exceeded`。
 - 两订阅均刷新失败，配置更新时间仍为10/24 12:01，节点版本与换包前一致（新增0、变化0）；已取消20:15单次验收，未发刷新/检测请求、未修改历史或切换Clash。
+
+### 2026-10-31 修改订阅链接复用刷新
+- 修改链接复用单订阅刷新：旧缓存参与节点比较，成功清失败状态并写subscription_update及fetch_path，失败恢复原链接和设置；只改名/备注不抓取，不合并历史或改变usageAccountKey。
+- 仅新增改链接后节点版本与快照更新的主路径测试；另将既有报告测试两轮间隔2毫秒，连续20次通过；公开测试标识已脱敏，真实数据与网络未操作。
