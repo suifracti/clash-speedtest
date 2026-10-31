@@ -324,5 +324,5 @@ function observedSampleCount(batch:LatencyBatch){if(batch.sample_count)return ba
 export function latencyAirportSummary(report:LatencyReport){
  const airports=new Map<string,{airport:string;total:number;usable:number;slow:number;partial:number;noResponse:number}>()
  for(const row of report.rows){const airport=row.airportName;let group=airports.get(airport);if(!group){group={airport,total:0,usable:0,slow:0,partial:0,noResponse:0};airports.set(airport,group)}group.total++;if(row.status==='usable')group.usable++;else if(row.status==='slow'||row.status==='unstable')group.slow++;else if(row.status==='partial')group.partial++;else if(row.status==='no-response')group.noResponse++}
- return [...airports.values()]
+ return [...airports.values()].sort((a,b)=>(b.total?b.usable/b.total:0)-(a.total?a.usable/a.total:0)||a.airport.localeCompare(b.airport))
 }

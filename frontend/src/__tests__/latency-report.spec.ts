@@ -4,19 +4,21 @@ import LatencyReport from '../components/LatencyReport.vue'
 import {manualLatencyPoint} from '../presentation'
 import {latencyVerdict} from '../components/home/homeModel'
 import {activeLatencyTargets} from '../latencyTargets'
-import {buildLatencyReport,compareLatencyReports} from '../latencyReport'
+import {buildLatencyReport,compareLatencyReports,latencyAirportSummary} from '../latencyReport'
 import type {LatencyBatch,BatchItem} from '../domain'
 const item=(id:string,ms:number,success=true):BatchItem=>({item_id:id,batch_id:'b',profile_id:'p',node_key:id,node_identity_key:id,config_revision_key:'r',display_name:id,execution_state:'completed',persistence_state:'saved',result:{profile_id:'p',node_key:id,node_identity_key:id,config_revision_key:'r',attempt_id:id,display_name:id,node_type:'Vless',requested_at:'2026-10-21T11:00:00Z',finished_at:'2026-10-21T11:01:00Z',status:'completed',latency_ms:ms,total_samples:24,success_samples:success?24:0,failure_samples:success?0:24,persistence_state:'saved',samples:['https://speed.cloudflare.com/__down?bytes=1','https://www.gstatic.com/generate_204','https://api.github.com/zen','https://captive.apple.com/hotspot-detect.html'].flatMap(target=>Array.from({length:6},(_,i)=>({seq:i+1,target,timestamp:'2026-10-21T11:00:00Z',latency_ms:i?ms:9000,success,error:success?'':'context deadline exceeded'})))}})
 const batch=(items:BatchItem[]):LatencyBatch=>({batch_id:'b',request_id:'b',requested_at:'2026-10-21T11:00:00Z',state:'completed',target_id:'all',timeout_seconds:5,sample_count:6,item_count:items.length,items})
 describe('latency run report',()=>{
  it('shows five exclusive counts, airport totals and expandable problem rows',async()=>{
-  const rows=Array.from({length:8},(_,i)=>({...item('node-'+i,0,false),profile_id:i<4?'a':'b'}))
+  const rows=Array.from({length:9},(_,i)=>({...item('node-'+i,0,false),profile_id:i<4?'a':'b'}))
   const wrapper=mount(LatencyReport,{props:{batch:batch(rows),airportNames:{a:'机场A',b:'机场B'}}})
   expect(wrapper.findAll('.latency-report-count')).toHaveLength(5)
-  expect(wrapper.findAll('.latency-report-count strong').reduce((n,c)=>n+Number(c.text()),0)).toBe(8)
+  expect(wrapper.findAll('.latency-report-count strong').reduce((n,c)=>n+Number(c.text()),0)).toBe(9)
   expect(wrapper.findAll('.airport-summary tbody tr')).toHaveLength(2)
+  const ranked=latencyAirportSummary(buildLatencyReport(batch([{...item('good',300),profile_id:'b'},{...item('bad',0,false),profile_id:'a'}]),{a:'机场A',b:'机场B'}));expect(ranked[0].airport).toBe('机场B')
+  expect(wrapper.get('.airport-summary').text()).toContain('能用率')
   const group=wrapper.get('.latency-report-group.no-response');expect(group.findAll('li')).toHaveLength(6)
-  expect(group.text()).toContain('机场A');await group.findAll('button').find(b=>b.text().includes('展开全部'))!.trigger('click');expect(group.findAll('li')).toHaveLength(8)
+  expect(group.text()).toContain('机场A');await group.findAll('button').find(b=>b.text().includes('再看'))!.trigger('click');expect(group.findAll('li')).toHaveLength(9)
   wrapper.unmount()
  })
 
