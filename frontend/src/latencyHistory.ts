@@ -69,11 +69,6 @@ export function latencyHistorySplit(series:LatencySeries[]){
  return {all,current,old,allOld:all.total>0&&current.total===0}
 }
 export interface LatencyHistorySplit {all:LatencyHistoryStats;current:LatencyHistoryStats;old:LatencyHistoryStats;allOld:boolean}
-// Node keys embed the sanitized server host between the type and port segments.
-function serverTagFromKey(nodeKey:string){
- const parts=(nodeKey||'').split('_')
- return parts.length>3?parts.slice(2,-2).join('_'):''
-}
 // Batch items keep the exact scope every saved test ran with, so an identity that
 // a subscription update replaced is still discoverable by the node's display name.
 let historicalScopesPromise:Promise<Map<string,NodeScope[]>>|null=null
@@ -105,16 +100,14 @@ export async function readLatencyHistoryWithConfig(node:NodeOption,hours:number)
  const identities=new Map<string,NodeOption>()
  for(const candidate of [node,...saved.map(s=>({...node,...s}))])identities.set(candidate.node_identity_key,candidate)
  const identityList=[...identities.values()],revisionLists=await Promise.all(identityList.map(identity=>revisionsFor(identity)))
- const scopes=new Map<string,NodeOption>(),observedAt=new Map<string,string>()
+ const scopes=new Map<string,NodeOption>()
  for(const candidate of [node,...saved.map(s=>({...node,...s}))])scopes.set(candidate.config_revision_key,candidate)
- identityList.forEach((identity,index)=>revisionLists[index].forEach(revision=>{scopes.set(revision.config_revision_key,{...identity,node_key:revision.node_key,config_revision_key:revision.config_revision_key});if(revision.last_observed_at)observedAt.set(revision.config_revision_key,revision.last_observed_at)}))
+ identityList.forEach((identity,index)=>revisionLists[index].filter(revision=>revision.display_name===node.display_name).forEach(revision=>{scopes.set(revision.config_revision_key,{...identity,node_key:revision.node_key,config_revision_key:revision.config_revision_key})}))
  const loaded=await Promise.all([...scopes].map(async([revision,item])=>({old:revision!==node.config_revision_key,...await readScope(item,since,until)})))
  const series=activeLatencyTargets.map(target=>({...target,context:'',points:loaded.flatMap(batch=>[...batch.tests.map(test=>({...manualLatencyPoint(test,target.id),...(batch.old?{oldConfig:true}:{})})),...monitorLatencyPoints(batch.monitor,target.id).map(point=>batch.old?{...point,oldConfig:true}:point)]).sort((a,b)=>Date.parse(a.time)-Date.parse(b.time))}))
- const currentServer=serverTagFromKey(node.node_key)
- const changes:LatencyConfigChange[]=[...observedAt].filter(([revision])=>revision!==node.config_revision_key).map(([revision,time])=>{
-  const oldServer=serverTagFromKey(scopes.get(revision)?.node_key||''),serverChanged=!!currentServer&&!!oldServer&&oldServer!==currentServer
-  return {time,serverChanged,label:date(time)+' 订阅更新了这个节点的配置'+(serverChanged?'；服务器地址也变了，旧记录可能不是同一台机器':'')}
- }).sort((a,b)=>Date.parse(a.time)-Date.parse(b.time))
+ const rounds=loaded.flatMap(batch=>batch.tests.map(test=>({revision:test.config_revision_key,time:test.finished_at||test.requested_at}))).sort((a,b)=>Date.parse(a.time)-Date.parse(b.time))
+ const changes:LatencyConfigChange[]=[]
+ for(let i=1;i<rounds.length;i++)if(rounds[i].revision!==rounds[i-1].revision)changes.push({time:rounds[i].time,label:'配置已变化'})
  return {series,changes}
 }
 export async function readLatencyHistory(node:NodeOption,hours:number):Promise<LatencySeries[]>{return (await readLatencyHistoryWithConfig(node,hours)).series}

@@ -58,7 +58,7 @@ watch([exitMode,()=>m.pageNodes.value],()=>{if(exitMode.value)void w.readEntries
 const exitColumns=['线路','出口 IP','真实落地','IP 类型','风险']
 const exitFields=['line','ip','label','ipTag','riskLabel'] as const
 const sites=computed(()=>targets.filter(t=>w.displayTargets.value.includes(t.id)))
-// 旧配置轮次不能代表现在：只由旧配置撑起的节点，数字置灰并标“旧”，不参与这两列排序和“稳定能连的”筛选。
+// 同名节点的七天统计包含配置变化前后的历史。
 function weeklyStat(n:NodeOption){return m.weeklyStats.value[key(n)]}
 function weeklyOld(n:NodeOption){return !!weeklyStat(n)?.allOld}
 function weeklyText(n:NodeOption,metric:'responseRate'|'volatility'){
@@ -68,7 +68,7 @@ function weeklyText(n:NodeOption,metric:'responseRate'|'volatility'){
  if(metric==='responseRate')return value!=null?Math.round(value)+'%':'未测'
  return value!=null?Math.round(value)+' ms':'—'
 }
-function weeklyTone(n:NodeOption){const s=weeklyStat(n);return !s||s.allOld||s.all.responseRate==null?'empty':s.all.responseRate>=90?'good':'warn'}
+function weeklyTone(n:NodeOption){const s=weeklyStat(n);return !s||s.all.responseRate==null?'empty':s.all.responseRate>=90?'good':'warn'}
 function weeklyTitle(n:NodeOption,metric:'responseRate'|'volatility'){
  const s=weeklyStat(n),error=m.weeklyErrors.value[key(n)]
  if(error)return error
