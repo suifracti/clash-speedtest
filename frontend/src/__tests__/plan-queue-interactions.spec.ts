@@ -124,7 +124,7 @@ it('cancellation after the first saved result prevents subsequent dispatch and p
 })
 
 
-it('shows response coverage for each exact latency batch item instead of green completion',()=>{
+it('shows response coverage for each exact latency batch item instead of green completion',async()=>{
  const items=[
   {name:'partial',state:'completed',status:'partial_failed',ok:5,bad:1,error:'EOF'},
   {name:'none',state:'failed',status:'failed',ok:0,bad:6,error:'context deadline exceeded'},
@@ -138,7 +138,8 @@ it('shows response coverage for each exact latency batch item instead of green c
  w.mergeLatency({...items[0].result,attempt_id:'unrelated-newer',requested_at:'2026-10-15T07:00:00Z',success_samples:6,failure_samples:0,status:'completed'})
  w.absorbBatch({batch_id:'batch-current',request_id:'req-current',state:'completed',requested_at:'2026-10-15T06:00:00Z',item_count:3,items})
  w.queue.value.push({id:'waiting',node,project:'latency',state:'queued'})
- attach(QueueModal)
+ attach(QueueModal);await flushPromises()
+ expect(document.activeElement).toBe(document.querySelector('.queue-title'))
  const rows=Array.from(document.querySelectorAll('.queue-row')).map(el=>new DOMWrapper(el))
  expect(rows[0].find('.badge').text()).toBe('部分响应 · 5/6')
  expect(rows[0].find('.badge').classes()).toContain('warn')

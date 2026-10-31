@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {nodeDisplayName} from '../nodePresentation'
-import {computed,ref,watch,nextTick} from 'vue'
+import {computed,ref,watch,nextTick,onMounted} from 'vue'
 import {api,saveFile} from '../api'
 import {readLatencyBatches} from '../latencyReportData'
 import {key,type BatchItem,type LatencyBatch} from '../domain'
@@ -11,7 +11,8 @@ import {entryCountry,mainlandNotice} from '../entryPath'
 import {useWorkspace} from '../workspace'
 import {projectNames,stateLabel,outcomeLabel,outcomeTone,downloadSpeed,downloadTone,type QueueItem} from '../domain'
 import Modal from './Modal.vue'
-const w=useWorkspace(),retrying=ref('')
+const w=useWorkspace(),retrying=ref(''),progressTitle=ref<HTMLElement>()
+onMounted(()=>nextTick(()=>progressTitle.value?.focus({preventScroll:true})))
 const report=computed(()=>w.reportSelection.value),previous=ref<LatencyBatch[]>([])
 const airportNames=computed(()=>Object.fromEntries(w.nodes.value.map(n=>[n.profile_id,w.nodeAirportName(n)])))
 // 只有本机在境外、且本轮确实有大陆入口的节点时，才在“偏慢”里解释绕路。
@@ -138,7 +139,7 @@ async function retry(q:QueueItem){retrying.value=q.id;try{if(q.batchId&&q.itemId
 <LatencyReport v-if="report" :batch="report.batch" :previous="previous" :airport-names="airportNames" :monitor="report.monitor" :entry-notice="entryNotice" @retry="retryReport" @export="exportReport" @inspect="inspectReport"/>
 <template v-else>
   <div class="queue-summary cst-queue-head">
-    <div><strong>{{w.queue.value.length?`已处理 ${w.done.value}/${w.queue.value.length}`:'后台任务'}}</strong><span :class="{warn:!!w.pendingStart.value||finished&&counts.saveFailed>0}">{{headline}}</span></div>
+    <div><strong ref="progressTitle" class="queue-title" tabindex="-1" autofocus>{{w.queue.value.length?`已处理 ${w.done.value}/${w.queue.value.length}`:'后台任务'}}</strong><span :class="{warn:!!w.pendingStart.value||finished&&counts.saveFailed>0}">{{headline}}</span></div>
     <div class="cst-queue-actions"><button class="button ghost" @click="w.syncActive()">刷新进度</button><button v-if="w.pendingStart.value?.body" class="button" :disabled="w.running.value||w.retryingStart.value" @click="w.retryPending()">{{w.retryingStart.value?'正在确认…':'确认启动状态'}}</button><button v-if="w.busy.value" class="button danger-outline" :disabled="w.cancelRequested.value" @click="w.cancelTests()">{{w.cancelRequested.value?'正在取消…':'取消检测'}}</button></div>
   </div>
   <p class="queue-counts" role="status">已处理 {{w.done.value}} / {{w.queue.value.length}} · 已成功 {{succeeded}} · 排队 {{counts.queued}} · 执行 {{counts.running}} · 未运行/取消 {{counts.notRun}} · 启动未知 {{counts.unknown}} · 保存失败 {{counts.saveFailed}}</p>
@@ -154,3 +155,7 @@ async function retry(q:QueueItem){retrying.value=q.id;try{if(q.batchId&&q.itemId
     <div class="cst-queue-save" :class="saveState(q).tone"><span>{{saveState(q).label}}</span><button v-if="saveFailed(q)&&retryable(q)" class="text-button" :disabled="retrying===q.id" @click="retry(q)">重试保存</button><small v-else-if="saveFailed(q)&&!retryable(q)" class="muted">原结果无法恢复</small></div>
   </div>
 </template></Modal></template>
+
+<style scoped>
+.queue-title:focus{outline:none}
+</style>
