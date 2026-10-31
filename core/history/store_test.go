@@ -334,7 +334,7 @@ func TestGetAirportHistoryAndListAirports(t *testing.T) {
 	t3 := time.Now().Add(-1 * time.Hour)
 
 	run1 := &TestRun{
-		AirportID:   "ap-liangxin",
+		AirportID:   "ap-a",
 		AirportName: "机场A",
 		CreatedAt:   t1,
 		TotalNodes:  2,
@@ -364,7 +364,7 @@ func TestGetAirportHistoryAndListAirports(t *testing.T) {
 		},
 	}
 	run2 := &TestRun{
-		AirportID:   "ap-liangxin",
+		AirportID:   "ap-a",
 		AirportName: "机场A",
 		CreatedAt:   t2,
 		TotalNodes:  1,
@@ -419,26 +419,26 @@ func TestGetAirportHistoryAndListAirports(t *testing.T) {
 	}
 	var lx *AirportSummary
 	for _, a := range airports {
-		if a.AirportID == "ap-liangxin" {
+		if a.AirportID == "ap-a" {
 			lx = a
 			break
 		}
 	}
 	if lx == nil {
-		t.Fatal("ap-liangxin airport summary not found")
+		t.Fatal("ap-a airport summary not found")
 	}
 	if lx.TotalRuns != 2 {
-		t.Fatalf("expected 2 runs for ap-liangxin, got %d", lx.TotalRuns)
+		t.Fatalf("expected 2 runs for ap-a, got %d", lx.TotalRuns)
 	}
 	if lx.DistinctNodeCount != 2 {
-		t.Fatalf("expected 2 distinct nodes for ap-liangxin, got %d", lx.DistinctNodeCount)
+		t.Fatalf("expected 2 distinct nodes for ap-a, got %d", lx.DistinctNodeCount)
 	}
 	if lx.MaxSpeedMBps != 35.0 {
-		t.Fatalf("expected max speed 35.0 for ap-liangxin, got %f", lx.MaxSpeedMBps)
+		t.Fatalf("expected max speed 35.0 for ap-a, got %f", lx.MaxSpeedMBps)
 	}
 
 	// 2. Test GetAirportHistory
-	hist, err := store.GetAirportHistory("ap-liangxin")
+	hist, err := store.GetAirportHistory("ap-a")
 	if err != nil {
 		t.Fatalf("GetAirportHistory failed: %v", err)
 	}
