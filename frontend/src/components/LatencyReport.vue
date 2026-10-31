@@ -6,7 +6,7 @@ import {saveReportImage} from '../reportImage'
 import {nodeDisplayName} from '../nodePresentation'
 import type {BatchItem,LatencyBatch} from '../domain'
 import {partialLatencyLabel} from '../latencyTargets'
-import {buildLatencyReport,compareLatencyReports,type LatencyReportGroup,type LatencyReportRow} from '../latencyReport'
+import {buildLatencyReport,compareLatencyReports,latencyAirportSummary,type LatencyReportGroup,type LatencyReportRow} from '../latencyReport'
 
 const props=withDefaults(defineProps<{
  batch:LatencyBatch
@@ -31,6 +31,9 @@ async function exportImage(){
  finally{imageBusy.value=false}
 }
 const report=computed(()=>buildLatencyReport(props.batch,props.airportNames))
+const expandedGroups=ref(new Set<number>())
+function toggleGroup(index:number){const next=new Set(expandedGroups.value);next.has(index)?next.delete(index):next.add(index);expandedGroups.value=next}
+const airportSummary=computed(()=>latencyAirportSummary(report.value))
 const comparison=computed(()=>compareLatencyReports(props.batch,report.value,props.previous))
 const issueItems=computed(()=>{
  const unique=new Map<string,BatchItem>()
@@ -52,9 +55,10 @@ const comparisonLine=computed(()=>{
 
 const countCards=computed(()=>[
  {key:'usable',label:'能用',value:report.value.counts.usable,tone:'good'},
- {key:'slow',label:'偏慢/不稳定',value:report.value.counts.slow+report.value.counts.unstable,tone:'warn'},
+ {key:'slow',label:'偏慢',value:report.value.counts.slow,tone:'warn'},
+ {key:'unstable',label:'不稳定',value:report.value.counts.unstable,tone:'warn'},
  {key:'no-response',label:'无响应',value:report.value.counts.noResponse,tone:'bad'},
- {key:'suspected',label:'疑似检测问题',value:report.value.counts.suspected,tone:'suspected'}
+ {key:'partial',label:'部分站点不通',value:report.value.counts.partial,tone:'warn'}
 ])
 
 function formatTime(value?:string){
@@ -105,20 +109,21 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
     <span v-if="card.key==='suspected'&&card.value">与其他结果重叠</span>
    </article>
   </div>
-  <p v-if="report.counts.partial" class="latency-report-note partial">部分站点不通 {{report.counts.partial}} 项（不计入不稳定）</p>
+  <p v-if="report.counts.suspected" class="latency-report-note">疑似检测问题 {{report.counts.suspected}} 项（与上方分类重叠）</p>
   <p v-if="report.counts.skipped" class="latency-report-note">
    未执行 {{report.counts.skipped}} 项（不计入无响应）
   </p>
 
   <p class="latency-report-compare">{{comparisonLine}}</p>
 
+  <section v-if="airportSummary.length>1" class="airport-summary"><h3>按机场</h3><table><thead><tr><th>机场</th><th>节点数</th><th>能用</th><th>偏慢/不稳定</th><th>部分不通</th><th>无响应</th></tr></thead><tbody><tr v-for="a in airportSummary" :key="a.airport"><td>{{a.airport}}</td><td>{{a.total}}</td><td>{{a.usable}}</td><td>{{a.slow}}</td><td>{{a.partial}}</td><td>{{a.noResponse}}</td></tr></tbody></table></section>
   <div class="latency-report-columns">
    <section class="latency-report-panel">
     <header><div><h3>最快 5 个</h3><small>按四站稳定中位延迟排序</small></div></header>
     <ol v-if="report.fastest5.length" class="latency-report-fastest">
      <li v-for="(row,index) in report.fastest5" :key="row.key">
       <span class="latency-report-rank">{{index+1}}</span>
-      <div class="latency-report-node"><button class="text-button" @click="emit('inspect',row.item)">{{nodeDisplayName(row.item)}}</button><small>{{row.airportName}}<template v-if="row.nodeType!=='未知协议'"> · {{row.nodeType}}</template></small></div>
+      <div class="latency-report-node"><button class="text-button" @click="emit('inspect',row.item)">{{nodeDisplayName(row.item)}}</button><span class="report-airport">{{row.airportName}}</span><small v-if="row.nodeType!=='未知协议'">{{row.nodeType}}</small></div>
       <strong><ReportMs :value="row.stableMs"/></strong>
      </li>
     </ol>
@@ -135,11 +140,11 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
       </header>
       <p v-if="group.kind==='slow'&&props.entryNotice" class="latency-report-group-note">{{props.entryNotice}}</p>
       <ul>
-       <li v-for="row in group.rows" :key="row.key">
-        <button class="text-button" @click="emit('inspect',row.item)">{{nodeDisplayName(row.item)}}</button>
+       <li v-for="row in expandedGroups.has(index)?group.rows:group.rows.slice(0,6)" :key="row.key">
+        <span><button class="text-button" @click="emit('inspect',row.item)">{{nodeDisplayName(row.item)}}</button> <span class="report-airport">{{row.airportName}}</span></span>
         <small v-if="!sharedIssueDetail(group)&&issueDetail(group,row)!==group.reason">{{issueDetail(group,row)}}</small>
        </li>
-      </ul>
+      </ul><button v-if="group.rows.length>6" class="text-button" @click="toggleGroup(index)">{{expandedGroups.has(index)?'收起':'展开全部（'+group.rows.length+'）'}}</button>
      </article>
     </div>
     <p v-else class="latency-report-empty">本轮没有需要处理的问题。</p>
@@ -161,7 +166,7 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
      <thead><tr><th>节点</th><th>结果</th><th class="number">首次四站中位</th><th class="number">稳定四站中位</th><th>各站稳定值</th><th>说明</th></tr></thead>
      <tbody>
       <tr v-for="row in report.rows" :key="row.key">
-       <td><button class="text-button" @click="emit('inspect',row.item)">{{nodeDisplayName(row.item)}}</button><small>{{row.airportName}} · {{row.nodeType}}</small></td>
+       <td><button class="text-button" @click="emit('inspect',row.item)">{{nodeDisplayName(row.item)}}</button><span class="report-airport">{{row.airportName}}</span><small>{{row.airportName}} · {{row.nodeType}}</small></td>
        <td><span class="latency-report-status" :class="row.status">{{statusLabel(row)}}</span><small v-if="row.suspected" class="latency-report-suspected">疑似检测问题</small></td>
        <td class="number"><ReportMs :value="row.firstMedianMs"/></td><td class="number"><ReportMs :value="row.stableMs"/></td><td>{{siteLine(row)}}</td>
        <td><small>{{row.suspectedReasons.join('；')||row.skipReason||'—'}}</small></td>
@@ -181,7 +186,7 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
 .latency-report-head h2{margin:3px 0 4px;font-size:19px}
 .latency-report-meta{color:var(--cst-muted);font-size:12px;line-height:1.45}
 .latency-report-state{flex:none;border:1px solid var(--cst-line);border-radius:999px;padding:4px 9px;color:var(--cst-muted);font-size:11px}
-.latency-report-counts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.latency-report-counts{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
 .latency-report-count{display:flex;min-height:70px;flex-direction:column;justify-content:center;gap:2px;border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel);padding:9px 12px}
 .latency-report-count small,.latency-report-count span{color:var(--cst-muted);font-size:11px}
 .latency-report-count strong{font-size:23px;line-height:1.1;font-variant-numeric:tabular-nums}
@@ -201,7 +206,7 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
 .latency-report-fastest li>strong{flex:none;font-size:12px;font-variant-numeric:tabular-nums}
 .latency-report-empty{padding:12px 0 3px;color:var(--cst-muted);font-size:12px}
 .latency-report-groups{display:flex;flex-direction:column;gap:7px;margin-top:8px}
-.latency-report-group{border:1px solid var(--cst-line);border-radius:8px;padding:8px 9px}
+.latency-report-group{border:0;border-top:1px solid var(--cst-line);border-radius:0;padding:10px 0}
 .latency-report-group>header h4{font-size:12px;font-weight:600}.latency-report-group>header h4 span{color:var(--cst-muted);font-weight:400}
 .latency-report-group>header small{display:block;margin-top:2px;color:var(--cst-muted)}.latency-report-group-note{margin:7px 0 0;padding:6px 8px;border-radius:6px;background:#fff6e5;border:1px solid #e3c184;color:#805211;font-size:10px;line-height:1.55}.latency-report-group ul{display:flex;flex-direction:column;gap:4px;list-style:none;padding:0;margin:7px 0 0}
 .latency-report-group li{display:flex;align-items:baseline;justify-content:space-between;gap:8px;min-width:0}
@@ -222,4 +227,5 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
 .latency-report-status{white-space:nowrap}.latency-report-status.usable{color:var(--cst-good)}.latency-report-note.partial,.latency-report-status.partial{color:var(--cst-warn)}.latency-report-status.partial{white-space:normal}.latency-report-status.slow{color:var(--cst-warn)}.latency-report-status.unstable{color:var(--cst-warn)}.latency-report-status.no-response{color:var(--cst-bad)}.latency-report-status.incomplete,.latency-report-status.skipped{color:var(--cst-muted)}
 .latency-report-suspected{color:var(--cst-accent)!important}
 @media(max-width:760px){.latency-report-counts{grid-template-columns:repeat(2,minmax(0,1fr))}.latency-report-columns{grid-template-columns:minmax(0,1fr)}.latency-report-head{gap:8px}.latency-report-meta{max-width:58vw}.latency-report-group li{align-items:flex-start;flex-direction:column;gap:1px}.latency-report-group li small{text-align:left}.latency-report-actions{justify-content:stretch}.latency-report-actions .button{flex:1}}
+.latency-report-problems{border:0;background:transparent;padding:0;overflow:visible;max-height:none}.latency-report-groups,.latency-report-group,.latency-report-group ul{max-height:none;overflow:visible}.report-airport{font-size:10px;color:var(--cst-muted)}.airport-summary table{width:100%;border-collapse:collapse;font-size:12px}.airport-summary th,.airport-summary td{padding:7px;border-bottom:1px solid var(--cst-line);text-align:left}
 </style>

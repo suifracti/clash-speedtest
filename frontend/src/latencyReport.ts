@@ -320,3 +320,9 @@ export function compareLatencyReports(batch:LatencyBatch,current:LatencyReport,p
 export function latencyReportText(batch:LatencyBatch){const c=buildLatencyReport(batch).counts;return `${c.usable} 能用 · ${c.slow} 偏慢 · ${c.unstable} 不稳定${c.partial?` · ${c.partial} 部分站点不通`:""} · ${c.noResponse} 无响应${c.skipped?` · ${c.skipped} 未执行`:''}`}
 
 function observedSampleCount(batch:LatencyBatch){if(batch.sample_count)return batch.sample_count;return Math.max(0,...(batch.items||[]).flatMap(i=>{const counts=new Map<string,number>();for(const s of i.result?.samples||[])counts.set(s.target||'',1+(counts.get(s.target||'')||0));return [...counts.values()]}))}
+
+export function latencyAirportSummary(report:LatencyReport){
+ const airports=new Map<string,{airport:string;total:number;usable:number;slow:number;partial:number;noResponse:number}>()
+ for(const row of report.rows){const airport=row.airportName;let group=airports.get(airport);if(!group){group={airport,total:0,usable:0,slow:0,partial:0,noResponse:0};airports.set(airport,group)}group.total++;if(row.status==='usable')group.usable++;else if(row.status==='slow'||row.status==='unstable')group.slow++;else if(row.status==='partial')group.partial++;else if(row.status==='no-response')group.noResponse++}
+ return [...airports.values()]
+}
