@@ -35,7 +35,7 @@ h2{font-size:16px;font-weight:600;letter-spacing:-.2px}
 .spinner{border-color:var(--cst-line-strong);border-top-color:var(--cst-accent)}
 /* 弹窗 */
 .modal{border:0;border-radius:var(--cst-radius-lg);background:var(--cst-panel);color:var(--cst-text);box-shadow:var(--cst-shadow-pop)}
-.modal::backdrop{background:var(--cst-backdrop);backdrop-filter:blur(2px)}
+.modal::backdrop{background:var(--cst-backdrop)}
 .modal-header,.modal-footer{background:var(--cst-panel);border-color:var(--cst-line)}
 .modal-header{padding:16px 20px 14px}
 .modal-header h2{font-size:16px}
