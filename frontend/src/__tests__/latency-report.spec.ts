@@ -24,7 +24,7 @@ describe('latency run report',()=>{
 
  it('shows shared cause detail once while keeping different node details',()=>{
   const wrapper=mount(LatencyReport,{props:{batch:batch([item('failed-a',0,false),item('failed-b',0,false),item('slow-a',2000),item('slow-b',3000)])}}),group=wrapper.get('.latency-report-group.no-response')
-  expect(group.text().match(/已执行采样，但四站均未取得响应/g)).toHaveLength(1);expect(group.findAll('li small')).toHaveLength(0);expect(wrapper.get('.latency-report-group.slow').findAll('li small')).toHaveLength(2);wrapper.unmount()
+  expect(group.text().match(/已执行采样，但四站均未取得响应/g)).toHaveLength(1);expect(group.findAll('li small')).toHaveLength(0);const slow=wrapper.get('.latency-report-group.slow');expect(slow.text().match(/阈值 1,500 ms/g)).toHaveLength(1);expect(slow.findAll('li small').map(s=>s.text())).toEqual(['2000 ms','3000 ms']);wrapper.unmount()
  })
  it('uses stable medians, sorts fastest and compares the same nodes',()=>{const b=batch([item('fast',300),item('slow',3000)]),r=buildLatencyReport(b);expect(r.counts).toMatchObject({usable:1,slow:1,suspected:1});expect(r.fastest5[0].stableMs).toBe(300);const old={...batch([item('fast',500),item('slow',3100)]),batch_id:'old',requested_at:'2026-10-20T11:00:00Z'};expect(compareLatencyReports(b,r,[old])).toMatchObject({comparableNodes:2,stableMedianDeltaMs:-150})})
  it('keeps an unexecuted configuration out of no-response counts',()=>{const skipped={...item('skip',0),result:undefined,error_message:'配置冲突'},r=buildLatencyReport(batch([item('failed',0,false),skipped]));expect(r.counts).toMatchObject({noResponse:1,skipped:1});expect(r.groups.find(g=>g.kind==='no-response')?.reason).toBe('连接超时')})

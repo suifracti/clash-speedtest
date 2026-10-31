@@ -10,7 +10,6 @@ import Icon from '../Icon.vue'
 import UiSelect from '../UiSelect.vue'
 import UnlockPicker from '../UnlockPicker.vue'
 import SubscriptionOverview from '../SubscriptionOverview.vue'
-import NodeActivity from '../NodeActivity.vue'
 import SiteDisplayPicker from '../SiteDisplayPicker.vue'
 import UnlockServiceMatrix from './UnlockServiceMatrix.vue'
 import NodeInspector from './NodeInspector.vue'
@@ -256,7 +255,7 @@ function keyNav(e:KeyboardEvent){
         </div>
         <div v-for="n in m.pageNodes.value" :key="key(n)" class="hd-tr" role="row" :class="{focus:isFocus(n),selected:selected(n)}" :aria-selected="isFocus(n)" @click="focus(n)">
           <span role="cell" @click.stop><input type="checkbox" :checked="selected(n)" :aria-label="'选择 '+nodeDisplayName(n)" @change="w.toggleNode(n)"></span>
-          <span role="cell" class="hd-node" :title="n.display_name+' · '+m.sourceLabel(n)+' · '+n.type"><span class="hd-flag">{{n.country_code||'—'}}</span><span><strong><i v-if="isClashUsing(n)" class="hd-clash-node-dot" aria-label="Clash 正在使用" title="Clash 正在使用"></i>{{nodeDisplayName(n)}}</strong><small>{{exitMode?w.nodeAirportName(n):m.sourceLabel(n)}} · {{n.type}}</small></span><NodeActivity :state="m.nodeActivities.value[key(n)]?.state" :label="m.nodeActivities.value[key(n)]?.label"/></span>
+          <span role="cell" class="hd-node" :title="n.display_name+' · '+m.sourceLabel(n)+' · '+n.type"><span class="hd-flag">{{n.country_code||'—'}}</span><span><strong><i v-if="isClashUsing(n)" class="hd-clash-node-dot" aria-label="Clash 正在使用" title="Clash 正在使用"></i>{{nodeDisplayName(n)}}</strong><small>{{exitMode?w.nodeAirportName(n):m.sourceLabel(n)}} · {{n.type}}</small></span></span>
           <template v-if="exitMode"><template v-for="field in exitFields" :key="field"><span v-if="field==='line'" role="cell" class="hd-exit-cell hd-line-cell"><span class="hd-line-text" :title="exitRows[key(n)].line">{{exitRows[key(n)].line}}</span><span v-if="exitRows[key(n)].route" class="hd-route-tag" :class="exitRows[key(n)].routeTone" :title="exitRows[key(n)].routeTitle">{{exitRows[key(n)].route}}</span></span><span v-else-if="field==='ipTag'" role="cell" class="hd-exit-cell hd-ip-cell"><span class="hd-ip-tag" :class="exitRows[key(n)].ipKind.tone" :title="'IP 类型：'+exitRows[key(n)].ipKind.detail">{{exitRows[key(n)].ipTag}}</span></span><span v-else role="cell" class="hd-num hd-exit-cell" :class="field==='label'?exitRows[key(n)].tone:field==='riskLabel'?exitRows[key(n)].riskTone:''" :title="field==='label'?exitRows[key(n)].detail:field==='riskLabel'?'IPPure 与机器流量占比取较高值':''">{{exitRows[key(n)][field]}}</span></template></template>
           <span v-if="showVerdict" role="cell"><b class="hd-pill" :class="[verdicts[key(n)].tone,{'partial-sites':verdicts[key(n)].label.startsWith('部分站点不通')}]">{{verdicts[key(n)].label}}</b></span>
           <span v-if="showVerdict" role="cell" class="hd-num" :class="exitRows[key(n)].purity.tone" :title="exitRows[key(n)].purity.title">{{exitRows[key(n)].purity.label}}</span>

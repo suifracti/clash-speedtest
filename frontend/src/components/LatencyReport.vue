@@ -7,7 +7,7 @@ import {nodeDisplayName} from '../nodePresentation'
 import type {BatchItem,LatencyBatch} from '../domain'
 import {partialLatencyError} from '../inspectorLatency'
 import {partialLatencyLabel} from '../latencyTargets'
-import {buildLatencyReport,compareLatencyReports,latencyAirportSummary,type LatencyReportGroup,type LatencyReportRow} from '../latencyReport'
+import {buildLatencyReport,compareLatencyReports,latencyAirportSummary,latencySlowThresholdNote,type LatencyReportGroup,type LatencyReportRow} from '../latencyReport'
 
 const props=withDefaults(defineProps<{
  batch:LatencyBatch
@@ -84,6 +84,7 @@ function issueDetail(group:LatencyReportGroup,row:LatencyReportRow){
  return group.issues.find(issue=>issue.row.key===row.key)?.detail||row.skipReason||row.suspectedReasons.join('；')
 }
 function sharedIssueDetail(group:LatencyReportGroup){
+ if(group.kind==='slow')return latencySlowThresholdNote
  const first=group.rows[0]&&issueDetail(group,group.rows[0])
  return first&&group.rows.every(row=>issueDetail(group,row)===first)?first:''
 }
@@ -145,7 +146,7 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
       <ul>
        <li v-for="row in expandedGroups.has(index)||group.rows.length<=8?group.rows:group.rows.slice(0,6)" :key="row.key">
         <span><button class="text-button" @click="emit('inspect',row.item)">{{nodeDisplayName(row.item)}}</button> <span class="report-airport">{{row.airportName}}</span></span>
-        <small v-if="!sharedIssueDetail(group)&&issueDetail(group,row)!==group.reason">{{issueDetail(group,row)}}</small>
+        <small v-if="group.kind==='slow'||!sharedIssueDetail(group)&&issueDetail(group,row)!==group.reason">{{issueDetail(group,row)}}</small>
        </li>
       </ul><button v-if="group.rows.length>8" class="text-button" @click="toggleGroup(index)">{{expandedGroups.has(index)?'收起':'再看 '+(group.rows.length-6)+' 个'}}</button>
      </article>

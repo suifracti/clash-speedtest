@@ -2,6 +2,8 @@ import {inspectorMedian} from './inspectorLatency'
 import {activeLatencyTargets,latencyTargetId,partialLatencySites,partialLatencyLabel} from './latencyTargets'
 import type {BatchItem,LatencyBatch,LatencyTest} from './domain'
 
+export const latencySlowThresholdNote='四站稳定中位阈值 1,500 ms'
+
 export type LatencyReportStatus='usable'|'slow'|'partial'|'unstable'|'no-response'|'skipped'
 export type LatencyReportIssueKind='slow'|'partial'|'unstable'|'no-response'|'suspected'
 
@@ -218,7 +220,7 @@ function buildGroups(rows:LatencyReportRow[]):{groups:LatencyReportGroup[];issue
   group.issues.push(issue)
  }
  for(const row of rows){
-  if(row.status==='slow')add(row,'slow','偏慢',`四站稳定中位 ${Math.round(row.stableMs!)} ms（阈值 1,500 ms）`)
+  if(row.status==='slow')add(row,'slow','偏慢',`${Math.round(row.stableMs!)} ms`)
   if(row.status==='partial')add(row,'partial','部分站点不通',partialLatencyLabel(row.partialSites))
   if(row.status==='unstable')add(row,'unstable','不稳定',`响应 ${row.responseSamples}/${row.attemptedSamples}，少于 5/6`)
   if(row.status==='no-response')add(row,'no-response',failureReason(row),'已执行采样，但四站均未取得响应')

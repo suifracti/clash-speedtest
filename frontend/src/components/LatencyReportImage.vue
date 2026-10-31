@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {computed} from 'vue'
-import {latencyAirportSummary} from '../latencyReport'
+import {latencyAirportSummary,latencySlowThresholdNote} from '../latencyReport'
 import {partialLatencyLabel} from '../latencyTargets'
 import type {LatencyReport} from '../latencyReport'
 import {nodeDisplayName} from '../nodePresentation'
@@ -26,7 +26,7 @@ const status=(value:string,sites:string[]=[])=>value==='partial'?partialLatencyL
   <section v-if="airportSummary.length>1"><h2>按机场</h2><table><thead><tr><th>机场</th><th>节点数</th><th>能用</th><th>能用率</th><th>偏慢/不稳定</th><th>部分不通</th><th>无响应</th></tr></thead><tbody><tr v-for="a in airportSummary" :key="a.airport"><td>{{safe(a.airport)}}</td><td>{{a.total}}</td><td>{{a.usable}}</td><td>{{a.total?Math.round(a.usable/a.total*100):0}}%</td><td>{{a.slow}}</td><td>{{a.partial}}</td><td :class="{bad:a.noResponse>0}">{{a.noResponse}}</td></tr></tbody></table></section>
   <div class="image-highlights">
    <section><h2>最快 5 个 <small>稳定延迟</small></h2><table><tbody><tr v-for="(row,i) in report.fastest5" :key="row.key"><td>{{i+1}}. {{safe(nodeDisplayName(row.item))}}<small>{{safe(row.airportName)}} · {{row.nodeType}}</small></td><td class="number"><ReportMs :value="row.stableMs"/></td></tr></tbody></table><p v-if="!report.fastest5.length">没有四站齐全的稳定延迟结果</p></section>
-   <section><h2>问题分组</h2><div class="image-problem-grid"><div v-for="(group,i) in report.groups" :key="i" class="image-problem"><b>{{group.reason}} · {{group.rows.length}}</b><p>{{group.rows.map(row=>safe(nodeDisplayName(row.item))+' · '+safe(row.airportName)).join('、')}}</p></div></div><p v-if="!report.groups.length">本轮没有需要处理的问题</p></section>
+   <section><h2>问题分组</h2><div class="image-problem-grid"><div v-for="(group,i) in report.groups" :key="i" class="image-problem"><b>{{group.reason}} · {{group.rows.length}}</b><small v-if="group.kind==='slow'">{{latencySlowThresholdNote}}</small><p>{{group.rows.map(row=>safe(nodeDisplayName(row.item))+' · '+safe(row.airportName)+(group.kind==='slow'?' · '+Math.round(row.stableMs!)+' ms':'')).join('、')}}</p></div></div><p v-if="!report.groups.length">本轮没有需要处理的问题</p></section>
   </div>
   <h2>节点结果 <small>{{report.rows.length}} 个节点</small></h2>
   <table class="image-nodes"><thead><tr><th>节点</th><th>结果</th><th class="number">稳定延迟</th><th class="number">首次连接</th><th class="number">响应</th></tr></thead><tbody>
