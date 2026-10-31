@@ -64,7 +64,7 @@ const expireLabel=computed(()=>{
     if(Number.isFinite(at.getTime()))return at.getTime()<=Date.now()?`已过期 ${at.toLocaleDateString('zh-CN')}`:`到期 ${at.toLocaleDateString('zh-CN')}`
   }
   if(parsedNoticeUsage.value.expireText)return parsedNoticeUsage.value.isPerpetual?'长期有效':`到期 ${parsedNoticeUsage.value.expireText}`
-  return '到期未知'
+  return total.value!==undefined?'长期有效':'未提供'
 })
 const sourceLabel=computed(()=>{
   if(usage.value&&subscriptionUsed(usage.value)!==null)return '订阅返回'
@@ -332,7 +332,7 @@ defineExpose({usageRatio})
             <strong>{{selected.subscription.name}}</strong>
             <small>{{sourceLabel}} · {{updatedAtLabel}}</small>
             <div class="subscription-facts">
-              <span class="subscription-expiry">{{expireLabel}}</span>
+              <span class="subscription-expiry">{{expireLabel}}<small v-if="!usage?.expire&&!parsedNoticeUsage.expireText&&total!==undefined">机场未提供到期日</small></span>
               <a v-if="officialLink" :href="officialLink" target="_blank" rel="noopener noreferrer">官网 ↗</a>
               <details v-if="extraLinks.length" class="subscription-extra-links">
                 <summary>更多入口 {{extraLinks.length}}</summary>

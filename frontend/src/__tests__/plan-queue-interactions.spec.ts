@@ -246,3 +246,14 @@ it('omits off-region unlock items from both the round plan and progress',async()
  expect((vi.mocked(api.createRound).mock.calls[0][0] as {items:unknown[]}).items).toHaveLength(3)
  w.skipByApplicableRegions.value=false;expect(w.allowedUnlockServices(overseas,['chatgpt_unlock','abema_unlock'])).toEqual(['chatgpt_unlock','abema_unlock'])
 })
+
+it('sends more than 200 nodes in one latency batch',async()=>{
+ const nodes=Array.from({length:208},(_,i)=>({...node,node_key:`node-${i}`,node_identity_key:`identity-${i}`}))
+ w.nodes.value=nodes;w.project.value='latency';w.openPlan(nodes);w.plan.value!.includeReputation=false
+ vi.mocked(api.startLatency).mockImplementation(async(body:any)=>({batch_id:'one-batch',request_id:body.request_id,state:'completed',items:body.selections.map((n:any,i:number)=>({...n,item_id:`item-${i}`,execution_state:'completed',persistence_state:'saved'}))}) as any)
+ await w.runPlan()
+ expect(api.startLatency).toHaveBeenCalledTimes(1)
+ expect((vi.mocked(api.startLatency).mock.calls[0][0] as any).selections).toHaveLength(208)
+ expect(w.latestReportBatch.value?.items).toHaveLength(208)
+ expect(new Set(w.queue.value.map(q=>q.batchId))).toEqual(new Set(['one-batch']))
+})

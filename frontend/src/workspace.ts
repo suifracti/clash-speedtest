@@ -267,21 +267,21 @@ export function createWorkspace(){
     for(const roundId of roundIds)for(const p of projects)for(const node of frozen.nodes)for(const serviceId of p==='service'?allowedUnlockServices(node,serviceList):[undefined])queue.value.push({id:`round:${roundId}:${uid()}`,node,project:p,serviceId,state:'queued'})
     const plans=new Map<string,{round_id:string;items:Record<string,unknown>[]}>()
     const latencyRequests=new Map<string,string>()
-    for(const q of queue.value){const id=q.id.match(/^round:([^:]+):/)![1];let plan=plans.get(id);if(!plan){plan={round_id:id,items:[]};plans.set(id,plan)}const requestId=q.project==='latency'?`round:${id}:latency:${Math.floor(frozen.nodes.findIndex(n=>key(n)===key(q.node))/200)}`:q.id;if(q.project==='latency')latencyRequests.set(q.id,requestId);plan.items.push({...scope(q.node),display_name:q.node.display_name,project:q.project,service_id:q.serviceId,request_id:requestId})}
+    for(const q of queue.value){const id=q.id.match(/^round:([^:]+):/)![1];let plan=plans.get(id);if(!plan){plan={round_id:id,items:[]};plans.set(id,plan)}const requestId=q.project==='latency'?`round:${id}:latency`:q.id;if(q.project==='latency')latencyRequests.set(q.id,requestId);plan.items.push({...scope(q.node),display_name:q.node.display_name,project:q.project,service_id:q.serviceId,request_id:requestId})}
     let starting:QueueItem[]=[]
     try{for(const p of plans.values())await api.createRound(p);for(let r=0;r<frozen.repeats&&alive(version);r++){for(const p of projects){
       if(cancelRequested.value||!alive(version))break
-      if(p==='latency'){for(let offset=0;offset<frozen.nodes.length;offset+=200){
+      if(p==='latency'){
         if(cancelRequested.value||!alive(version))break
-        const chunk=frozen.nodes.slice(offset,offset+200),entries=queue.value.filter(q=>q.project==='latency'&&q.state==='queued'&&chunk.some(n=>key(n)===key(q.node))).slice(0,chunk.length),requestId=latencyRequests.get(entries[0].id)!
+        const entries=queue.value.filter(q=>q.project==='latency'&&q.state==='queued'&&q.id.startsWith('round:'+roundIds[r]+':')),requestId=latencyRequests.get(entries[0].id)!
         starting=entries;entries.forEach(q=>q.state='running')
-        const body={request_id:requestId,test_project:'latency_stability',target_id:frozen.target,timeout_seconds:frozen.timeout,sample_count:frozen.samples,concurrency:frozen.concurrency,selections:chunk.map(n=>({...scope(n),display_name:n.display_name,node_type:n.type}))}
+        const body={request_id:requestId,test_project:'latency_stability',target_id:frozen.target,timeout_seconds:frozen.timeout,sample_count:frozen.samples,concurrency:frozen.concurrency,selections:entries.map(q=>({...scope(q.node),display_name:q.node.display_name,node_type:q.node.type}))}
         pendingStart.value={kind:'latency',requestId,body};remember(pendingStart.value)
         const batch=await api.startLatency(body)
         if(!alive(version))return
         entries.forEach(q=>{const item=batch.items?.find(i=>key(i)===key(q.node));q.batchId=batch.batch_id;q.itemId=item?.item_id;q.state=item?.execution_state||'queued'})
         starting=[];await pollBatch(batch)
-      }}else{
+      }else{
         const entries=queue.value.filter(q=>q.project===p&&q.state==='queued'&&q.id.startsWith('round:'+roundIds[r]+':'))
         const runEntry=async(q:QueueItem)=>{
           if(cancelRequested.value||!alive(version))return
