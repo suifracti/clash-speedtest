@@ -9,6 +9,14 @@ import type {LatencyBatch,BatchItem} from '../domain'
 const item=(id:string,ms:number,success=true):BatchItem=>({item_id:id,batch_id:'b',profile_id:'p',node_key:id,node_identity_key:id,config_revision_key:'r',display_name:id,execution_state:'completed',persistence_state:'saved',result:{profile_id:'p',node_key:id,node_identity_key:id,config_revision_key:'r',attempt_id:id,display_name:id,node_type:'Vless',requested_at:'2026-10-21T11:00:00Z',finished_at:'2026-10-21T11:01:00Z',status:'completed',latency_ms:ms,total_samples:24,success_samples:success?24:0,failure_samples:success?0:24,persistence_state:'saved',samples:['https://speed.cloudflare.com/__down?bytes=1','https://www.gstatic.com/generate_204','https://api.github.com/zen','https://captive.apple.com/hotspot-detect.html'].flatMap(target=>Array.from({length:6},(_,i)=>({seq:i+1,target,timestamp:'2026-10-21T11:00:00Z',latency_ms:i?ms:9000,success,error:success?'':'context deadline exceeded'})))}})
 const batch=(items:BatchItem[]):LatencyBatch=>({batch_id:'b',request_id:'b',requested_at:'2026-10-21T11:00:00Z',state:'completed',target_id:'all',timeout_seconds:5,sample_count:6,item_count:items.length,items})
 describe('latency run report',()=>{
+ it('uses the report response threshold for workbench verdicts',()=>{
+  for(const [responses,label] of [[11,'不稳定'],[22,'偶有失败']] as const){
+   const node=item('fixture',400),test=node.result!;test.samples=test.samples.map((s,i)=>({...s,success:i<responses,error:i<responses?'':'timeout'}));test.success_samples=responses;test.failure_samples=24-responses
+   expect(latencyVerdict(activeLatencyTargets.map(t=>manualLatencyPoint(test,t.id))).label).toBe(label)
+   expect(buildLatencyReport(batch([node])).rows[0].status).toBe(responses===11?'unstable':'usable')
+  }
+ })
+
  it('shows five exclusive counts, airport totals and expandable problem rows',async()=>{
   const rows=Array.from({length:9},(_,i)=>({...item('node-'+i,0,false),profile_id:i<4?'a':'b'}))
   const wrapper=mount(LatencyReport,{props:{batch:batch(rows),airportNames:{a:'机场A',b:'机场B'}}})

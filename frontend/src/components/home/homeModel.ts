@@ -1,4 +1,5 @@
 import {activeLatencyTargets,partialLatencySites,partialLatencyLabel} from '../../latencyTargets'
+import {latencyResponseUnstable} from '../../latencyReport'
 import {inspectorMedian,mainLatencyFailure} from '../../inspectorLatency'
 import type {LatencyHistorySplit} from '../../latencyHistory'
 import type {ComputedRef,InjectionKey,Ref} from 'vue'
@@ -106,8 +107,9 @@ export function latencyVerdict(points:(TrendPoint|undefined)[],stableMs?:number|
  if(!ok.length)return {tone:weeklyResponseRate!=null&&weeklyResponseRate>=90?'warn':'bad',label:weeklyResponseRate!=null&&weeklyResponseRate>=90?'刚失败一次':'连不上',detail:`${measured.length} 个站点全部${mainLatencyFailure(measured.flatMap(p=>(p.samples||[]).flatMap(s=>s.error?[s.error]:[])))||'失败'}`}
  const partialSites=partialLatencySites(points.map((p,i)=>({name:siteNames[i]||'未知站点',total:(p?.samples||[]).filter(s=>s.tone!=='empty').length,success:(p?.samples||[]).filter(s=>s.value!==null).length})))
  if(partialSites.length)return {tone:'warn',label:partialLatencyLabel(partialSites),detail:`其余站点正常${mid!==null?` · 约 ${mid} ms`:''}`}
- if(ok.length<measured.length)return {tone:'warn',label:'不稳定',detail:`${ok.length}/${measured.length} 个站点能连上${mid!==null?` · 通的约 ${mid} ms`:''}`}
- if(ok.some(p=>p.tone==='warn'))return {tone:'warn',label:'偶有失败',detail:`${ok.length} 个站点能连上，部分样本失败${mid!==null?` · 约 ${mid} ms`:''}`}
+ const samples=measured.flatMap(p=>p.samples||[]),responses=samples.filter(s=>s.value!==null).length
+ if(latencyResponseUnstable(responses,samples.length))return {tone:'warn',label:'不稳定',detail:`响应 ${responses}/${samples.length}，部分采样失败${mid!==null?` · 约 ${mid} ms`:''}`}
+ if(responses<samples.length||ok.some(p=>p.tone==='warn'))return {tone:'warn',label:'偶有失败',detail:`${ok.length} 个站点能连上，部分样本失败${mid!==null?` · 约 ${mid} ms`:''}`}
  return {tone:'good',label:'能用',detail:`${ok.length} 个站点${ok.length===1?'':'都'}能连上${mid!==null?` · 约 ${mid} ms`:''}`}
 }
 

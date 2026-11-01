@@ -3,6 +3,7 @@ import {activeLatencyTargets,latencyTargetId,partialLatencySites,partialLatencyL
 import type {BatchItem,LatencyBatch,LatencyTest} from './domain'
 
 export const latencySlowThresholdNote='四站稳定中位阈值 1,500 ms'
+export function latencyResponseUnstable(responses:number,total:number){return responses*6<total*5}
 
 // Any HTTP response counts as connected, so refusals stay out of the failure counts.
 export function latencyHttpNotices(report:Pick<LatencyReport,'rows'>){
@@ -181,7 +182,7 @@ function makeRow(item:BatchItem,airportNames:Record<string,string>,batchTarget?:
  const firstMedianMs=inspectorMedian(firstValues)
  const stableMs=inspectorMedian(stableValues)
  const partialSites=partialLatencySites(sites.map(s=>({name:s.name,total:s.attemptedSamples,success:s.responseSamples})))
- const status:LatencyReportStatus=!executed?'skipped':responseSamples===0?'no-response':partialSites.length?'partial':responseSamples*6<attemptedSamples*5?'unstable':stableMs!==null&&stableMs>1500?'slow':'usable'
+ const status:LatencyReportStatus=!executed?'skipped':responseSamples===0?'no-response':partialSites.length?'partial':latencyResponseUnstable(responseSamples,attemptedSamples)?'unstable':stableMs!==null&&stableMs>1500?'slow':'usable'
  const dynamicType=(item as ItemNodeType).node_type||result?.node_type||''
  return {
   key:identity(item),item,nodeName:item.display_name||result?.display_name||item.node_key,
