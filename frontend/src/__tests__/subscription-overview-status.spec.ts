@@ -43,6 +43,13 @@ beforeEach(()=>{
 afterEach(()=>{wrapper?.unmount();wrapper=undefined;vi.useRealTimers();vi.clearAllMocks()})
 
 describe('SubscriptionOverview status strip',()=>{
+  it('shows the saved network paths and translated failures without exposing addresses',async()=>{
+    const at='2026-11-01T06:00:00Z',failed={...airportB,subscriptions:[{...airportB.subscriptions![0],last_attempt_at:at,last_attempt_failed:true}]}
+    usageMocks.accountDailyUsage.mockResolvedValue({account:{captured_at:at,status:'refresh_failed',fetch_path:'physical',raw_error:'普通网络：Get "https://sub.example.invalid/sub?token=FAKE_SECRET": EOF；物理网卡：lookup sub.example.invalid on 192.0.2.53:53: NXDOMAIN'},days:[]})
+    const workspace=createWorkspace();workspace.airports.value=[failed];wrapper=mount(SubscriptionOverview,{props:{airports:[failed],notices:[],airportId:'all'},global:{provide:{[workspaceKey as symbol]:workspace}}});await flushPromises()
+    const text=wrapper.get('.subscription-issues').text();expect(text).toContain('普通网络：连接被关闭；物理网卡：DNS 查不到域名；旧缓存保留');expect(text).not.toMatch(/sub\.example|192\.0\.2|FAKE_SECRET/);workspace.dispose()
+  })
+
   it('clears an earlier failed job after the same subscription succeeds automatically',async()=>{
     const failedAt='2026-10-31T15:37:00Z',successAt='2026-11-01T01:00:00Z'
     const failed={...airportB,subscriptions:[{...airportB.subscriptions![0],last_attempt_at:failedAt,last_attempt_failed:true,updated_at:'2026-10-31T14:00:00Z'}]}

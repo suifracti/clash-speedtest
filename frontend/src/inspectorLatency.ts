@@ -4,7 +4,7 @@ export function inspectorMedian(values:number[]){const a=values.slice().sort((a,
 export function inspectorSamples(point:TrendPoint,id:string):SamplePoint[]{return (point.sampleGroups?.filter(g=>latencyTargetId(g.target)===id).flatMap(g=>g.samples)||point.samples||[]).filter(s=>!s.executionState&&!(s.tone==='empty'&&s.value===null))}
 export function stableLatency(series:{id:string;points:TrendPoint[]}[]){return inspectorMedian(series.flatMap(s=>{const latest=s.points.filter(p=>!p.id.startsWith('planned:')&&inspectorSamples(p,s.id).length).at(-1);const stable=inspectorMedian((latest?inspectorSamples(latest,s.id).slice(1):[]).flatMap(p=>p.value===null?[]:[p.value]));return stable===null?[]:[stable]}))}
 
-export function latencyFailureReason(error:string){return /timeout|timed out|deadline|超时/i.test(error)?'超时':/refused|拒绝/i.test(error)?'连接被拒绝':/reset|重置/i.test(error)?'连接被重置':/eof|closed|关闭/i.test(error)?'连接被关闭':'未响应'}
+export function latencyFailureReason(error:string){return /NXDOMAIN|no such host|nodename nor servname|name or service not known/i.test(error)?'DNS 查不到域名':/timeout|timed out|deadline|超时/i.test(error)?'超时':/refused|拒绝/i.test(error)?'连接被拒绝':/reset|重置/i.test(error)?'连接被重置':/eof|closed|关闭/i.test(error)?'连接被关闭':'未响应'}
 // The most frequent known reason; empty when no error says why.
 export function mainLatencyFailure(errors:string[]){
  const counts=new Map<string,number>()

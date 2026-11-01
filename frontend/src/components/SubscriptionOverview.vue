@@ -4,7 +4,7 @@ import {api,type SubscriptionRefreshJob,type SubscriptionRefreshRequest} from '.
 import {bytes,date,subscriptionUsed,type Airport,type NodeOption} from '../domain'
 import {airportAccounts,noticesForAccount,safeAirportLink,parseNoticeUsage,type AirportAccount} from '../airportViewing'
 import {useWorkspace} from '../workspace'
-import {accountDailyUsage,shanghaiDay,shiftDay,type DayUsage,type UsageSnapshot} from '../usageDaily'
+import {accountDailyUsage,usageRefreshError,shanghaiDay,shiftDay,type DayUsage,type UsageSnapshot} from '../usageDaily'
 import SubscriptionChanges from './SubscriptionChanges.vue'
 import Modal from './Modal.vue'
 import UsageDays from './UsageDays.vue'
@@ -103,15 +103,16 @@ const workspaceRefreshIssues=computed(()=>latestRefreshByAccount.value.filter(en
 // 全部机场只汇总现有账户数据，不改变订阅或检测范围。
 const dailyByAccount=ref<Record<string,DayUsage[]>>({})
 const snapshotsByAccount=ref<Record<string,UsageSnapshot|undefined>>({})
-watch(()=>[rowMode.value,displayedAccounts.value.map(a=>a.key).join('|'),workspace.usageRefreshVersion.value],async()=>{
-  if(!rowMode.value)return
-  const entries=await Promise.all(displayedAccounts.value.map(async account=>{
+watch(()=>[rowMode.value,displayedAccounts.value.map(a=>a.key).join('|'),workspaceRefreshIssues.value.map(i=>i.account.key).join('|'),workspace.usageRefreshVersion.value],async()=>{
+  const accountsToRead=[...new Map([...(rowMode.value?displayedAccounts.value:[]),...workspaceRefreshIssues.value.map(i=>i.account)].map(account=>[account.key,account])).values()]
+  const entries=await Promise.all(accountsToRead.map(async account=>{
     const result=await accountDailyUsage(account.airport.id,account.subscription.id,3).catch(()=>undefined)
     return [account.key,result] as const
   }))
   dailyByAccount.value=Object.fromEntries(entries.map(([key,result])=>[key,result?.days||[]]))
   snapshotsByAccount.value=Object.fromEntries(entries.map(([key,result])=>[key,result?.account]))
 },{immediate:true})
+function issueText(issue:(typeof workspaceRefreshIssues.value)[number]){const snapshot=snapshotsByAccount.value[issue.account.key];return snapshot?.status==='refresh_failed'&&snapshot.raw_error?usageRefreshError(snapshot):issue.message}
 const hm=(value?:string|number)=>{const date=typeof value==='number'?new Date(value):value&&!value.startsWith('0001')?new Date(value):undefined;return date&&Number.isFinite(date.getTime())?date.toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hour12:false}):''}
 function sumDay(list:AirportAccount[],index:number){
   const day=shiftDay(shanghaiDay(),-index)
@@ -379,7 +380,7 @@ defineExpose({usageRatio})
       <p v-for="issue in workspaceRefreshIssues" :key="issue.account.key">
         <strong>{{issue.account.airport.name}} · {{issue.account.subscription.name}}</strong>
         <span>{{issue.state==='failed'?'刷新失败':'刷新中断'}}</span>
-        <small v-if="issue.message">{{issue.message}}</small>
+        <small v-if="issueText(issue)">{{issueText(issue)}}</small>
       </p>
       <p v-if="error||jobsReadState==='error'" class="subscription-message" role="alert">{{error||'刷新状态读取失败'}}</p>
       <div class="issue-retries">
