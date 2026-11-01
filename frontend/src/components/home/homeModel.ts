@@ -1,5 +1,5 @@
 import {activeLatencyTargets,partialLatencySites,partialLatencyLabel} from '../../latencyTargets'
-import {latencyResponseUnstable} from '../../latencyReport'
+import {latencyResponseUnstable,latencySlowThresholdMs} from '../../latencyReport'
 import {inspectorMedian,mainLatencyFailure} from '../../inspectorLatency'
 import type {LatencyHistorySplit} from '../../latencyHistory'
 import type {ComputedRef,InjectionKey,Ref} from 'vue'
@@ -102,13 +102,14 @@ export function latencyVerdict(points:(TrendPoint|undefined)[],stableMs?:number|
  const measured=points.filter((p):p is TrendPoint=>!!p&&p.tone!=='empty')
  if(!measured.length)return {tone:'empty',label:'还没测',detail:'这个时间范围内没有延迟记录'}
  const ok=measured.filter(p=>p.tone==='good'||p.tone==='warn')
- const raw=stableMs===undefined?inspectorMedian(ok.flatMap(p=>{const v=inspectorMedian((p.samples||[]).slice(1).flatMap(s=>s.value===null?[]:[s.value]));return v===null?[]:[v]})):stableMs===null?null:Math.round(stableMs)
+ const raw=stableMs===undefined?inspectorMedian(ok.flatMap(p=>{const v=inspectorMedian((p.samples||[]).slice(1).flatMap(s=>s.value===null?[]:[s.value]));return v===null?[]:[v]})):stableMs??null
  const mid=raw===null?null:Math.round(raw)
  if(!ok.length)return {tone:weeklyResponseRate!=null&&weeklyResponseRate>=90?'warn':'bad',label:weeklyResponseRate!=null&&weeklyResponseRate>=90?'刚失败一次':'连不上',detail:`${measured.length} 个站点全部${mainLatencyFailure(measured.flatMap(p=>(p.samples||[]).flatMap(s=>s.error?[s.error]:[])))||'失败'}`}
  const partialSites=partialLatencySites(points.map((p,i)=>({name:siteNames[i]||'未知站点',total:(p?.samples||[]).filter(s=>s.tone!=='empty').length,success:(p?.samples||[]).filter(s=>s.value!==null).length})))
  if(partialSites.length)return {tone:'warn',label:partialLatencyLabel(partialSites),detail:`其余站点正常${mid!==null?` · 约 ${mid} ms`:''}`}
  const samples=measured.flatMap(p=>p.samples||[]),responses=samples.filter(s=>s.value!==null).length
  if(latencyResponseUnstable(responses,samples.length))return {tone:'warn',label:'不稳定',detail:`响应 ${responses}/${samples.length}，部分采样失败${mid!==null?` · 约 ${mid} ms`:''}`}
+ if(raw!==null&&raw>latencySlowThresholdMs)return {tone:'warn',label:'偏慢',detail:`稳定延迟约 ${mid} ms，超过 ${latencySlowThresholdMs} ms${responses<samples.length?' · 部分采样失败':''}`}
  if(responses<samples.length||ok.some(p=>p.tone==='warn'))return {tone:'warn',label:'偶有失败',detail:`${ok.length} 个站点能连上，部分样本失败${mid!==null?` · 约 ${mid} ms`:''}`}
  return {tone:'good',label:'能用',detail:`${ok.length} 个站点${ok.length===1?'':'都'}能连上${mid!==null?` · 约 ${mid} ms`:''}`}
 }
