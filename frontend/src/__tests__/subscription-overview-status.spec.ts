@@ -43,6 +43,16 @@ beforeEach(()=>{
 afterEach(()=>{wrapper?.unmount();wrapper=undefined;vi.useRealTimers();vi.clearAllMocks()})
 
 describe('SubscriptionOverview status strip',()=>{
+  it('clears an earlier failed job after the same subscription succeeds automatically',async()=>{
+    const failedAt='2026-10-31T15:37:00Z',successAt='2026-11-01T01:00:00Z'
+    const failed={...airportB,subscriptions:[{...airportB.subscriptions![0],last_attempt_at:failedAt,last_attempt_failed:true,updated_at:'2026-10-31T14:00:00Z'}]}
+    refreshMocks.refreshJobs.mockResolvedValue([{id:'old',created_at:failedAt,state:'finished',failed:1,items:[{airport_id:'airport-b',subscription_id:'account-b1',state:'failed',finished_at:failedAt,error_message:'timeout'}]}])
+    const workspace=createWorkspace();workspace.airports.value=[failed];wrapper=mount(SubscriptionOverview,{props:{airports:[failed],notices:[],airportId:'all'},global:{provide:{[workspaceKey as symbol]:workspace}}});await flushPromises()
+    expect(wrapper.find('.subscription-issues').exists()).toBe(true)
+    const succeeded={...failed,subscriptions:[{...failed.subscriptions[0]!,last_attempt_at:successAt,last_attempt_failed:false,updated_at:successAt}]};workspace.airports.value=[succeeded];await wrapper.setProps({airports:[succeeded]});await flushPromises()
+    expect(wrapper.find('.subscription-issues').exists()).toBe(false);expect(wrapper.get('.subscription-airport-row').text()).toContain('正常');expect(wrapper.text()).not.toContain('缓存');workspace.dispose()
+  })
+
   it('does not expose or draw a usage ratio without a real total',async()=>{
     const noTotal:Airport={...airportB,subscriptions:[{id:'account-b1',airport_id:'airport-b',name:'Account B1',url_display:'',url_configured:true,node_count:1,has_cache:true,usage:{upload:1024,download:2048}}]}
     const workspace=createWorkspace()

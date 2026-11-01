@@ -86,25 +86,20 @@ const extraLinks=computed(()=>{
 })
 const workspaceAccounts=computed(()=>airportAccounts(workspace.airports.value))
 const selectedScopeAccounts=computed(()=>workspaceAccounts.value.filter(account=>selectedScopeKeys.value.includes(account.key)))
-const latestRefreshByAccount=computed(()=>{
-  const latestFor=(accountList:AirportAccount[])=>accountList.map(account=>{
-    let latest:{job:SubscriptionRefreshJob;item:SubscriptionRefreshJob['items'][number]}|undefined
-    for(const job of jobs.value){
-      const item=job.items.find(candidate=>candidate.airport_id===account.airport.id&&candidate.subscription_id===account.subscription.id)
-      if(item&&(!latest||Date.parse(job.created_at)>Date.parse(latest.job.created_at)))latest={job,item}
-    }
-    return {account,...latest}
-  })
-  return latestFor(airportAccounts(props.airports))
-})
-const workspaceRefreshIssues=computed(()=>workspaceAccounts.value.flatMap(account=>{
-  let latest:{job:SubscriptionRefreshJob;item:SubscriptionRefreshJob['items'][number]}|undefined
+// Manual job history and persisted automatic attempts share one latest state per subscription.
+const latestRefreshByAccount=computed(()=>workspaceAccounts.value.map(account=>{
+  let latest:{job:SubscriptionRefreshJob;item:SubscriptionRefreshJob['items'][number];at:string}|undefined
   for(const job of jobs.value){
     const item=job.items.find(candidate=>candidate.airport_id===account.airport.id&&candidate.subscription_id===account.subscription.id)
-    if(item&&(!latest||Date.parse(job.created_at)>Date.parse(latest.job.created_at)))latest={job,item}
+    const at=item?.finished_at||item?.started_at||job.created_at
+    if(item&&(!latest||Date.parse(at)>Date.parse(latest.at)))latest={job,item,at}
   }
-  return latest&&(latest.item.state==='failed'||latest.item.state==='interrupted')?[{account,...latest}]:[]
-}).sort((a,b)=>Date.parse(b.job.created_at)-Date.parse(a.job.created_at)))
+  const subscription=account.subscription
+  const attemptedAt=subscription.last_attempt_at?.startsWith('0001')?undefined:subscription.last_attempt_at
+  if(latest&&Date.parse(attemptedAt||'')>Date.parse(latest.at))latest=undefined
+  return {account,...latest,at:latest?.at||attemptedAt,state:latest?.item.state||(attemptedAt?(subscription.last_attempt_failed?'failed':'succeeded'):undefined),message:latest?.item.error_message||(subscription.last_attempt_failed?'订阅刷新失败；旧缓存保留':'')}
+}))
+const workspaceRefreshIssues=computed(()=>latestRefreshByAccount.value.filter(entry=>entry.state==='failed'||entry.state==='interrupted').sort((a,b)=>Date.parse(b.at||'')-Date.parse(a.at||'')))
 // 全部机场只汇总现有账户数据，不改变订阅或检测范围。
 const dailyByAccount=ref<Record<string,DayUsage[]>>({})
 const snapshotsByAccount=ref<Record<string,UsageSnapshot|undefined>>({})
@@ -140,23 +135,23 @@ function accountRow(airport:Airport,list:AirportAccount[]){
   const total=quotas.every(q=>q.total!=null)?quotas.reduce((sum,q)=>sum+q.total!,0):null
   const ratio=remaining!==null&&total!==null&&total>0?Math.min(1,Math.max(0,remaining/total)):null
   const issues=workspaceRefreshIssues.value.filter(issue=>list.some(account=>account.key===issue.account.key))
-  const refreshTimes=latestRefreshByAccount.value.filter(entry=>list.some(account=>account.key===entry.account.key)).map(entry=>entry.item?.finished_at||entry.job?.created_at||'')
+  const refreshTimes=latestRefreshByAccount.value.filter(entry=>list.some(account=>account.key===entry.account.key)).map(entry=>entry.at||'')
   const updated=[...refreshTimes,...list.map(account=>account.subscription.updated_at||airport.updated_at||'')].filter(Boolean).sort((a,b)=>Date.parse(a)-Date.parse(b)).at(-1)
-  const failedAt=[...list.filter(account=>account.subscription.last_attempt_failed).map(account=>Date.parse(account.subscription.last_attempt_at||'')),...issues.map(issue=>Date.parse(issue.item.finished_at||issue.job.created_at||''))].filter(Number.isFinite)
+  const failedAt=issues.map(issue=>Date.parse(issue.at||'')).filter(Number.isFinite)
   const pathLabels:Record<string,string>={proxy:'代理',normal:'普通网络（可能经 TUN）',physical:'物理网卡',direct:'旧记录，路径未区分'}
   const pathHint=list.map(account=>{const snapshot=snapshotsByAccount.value[account.key];return snapshot?.fetch_path?`${account.subscription.name}：${pathLabels[snapshot.fetch_path]||snapshot.fetch_path} · ${snapshot.status==='refresh_failed'?'刷新失败':'刷新成功'}`:''}).filter(Boolean).join('；')
   return {pathHint,airport,remaining,ratio,today:sumDay(list,0),updated,issues,lastFailedAt:failedAt.length?Math.max(...failedAt):0,accounts:list}
 }
 const overviewRows=computed(()=>allAirports.value?props.airports.map(airport=>({...accountRow(airport,airportAccounts([airport])),id:airport.id,name:airport.name})):accounts.value.map(account=>({...accountRow(account.airport,[account]),id:account.key,name:account.subscription.name})))
-const workspaceRefreshIssueJobs=computed(()=>[...new Map(workspaceRefreshIssues.value.map(issue=>[issue.job.id,issue.job])).values()])
+const workspaceRefreshIssueJobs=computed(()=>[...new Map(workspaceRefreshIssues.value.flatMap(issue=>issue.job?[[issue.job.id,issue.job] as const]:[])).values()])
 const disclosureSummary=computed<SubscriptionDisclosureSummary>(()=>{
   const expiry=airportAccounts(props.airports).map(account=>account.subscription.usage?.expire).filter((value):value is number=>typeof value==='number'&&Number.isFinite(value)&&value>0)
-  const latest=latestRefreshByAccount.value
-  const failed=latest.filter(entry=>entry.item?.state==='failed')
-  const interrupted=latest.filter(entry=>entry.item?.state==='interrupted')
-  const issues=latest.filter(entry=>entry.item?.state==='failed'||entry.item?.state==='interrupted').sort((a,b)=>Date.parse(b.job!.created_at)-Date.parse(a.job!.created_at))
+  const latest=latestRefreshByAccount.value.filter(entry=>props.airports.some(airport=>airport.id===entry.account.airport.id))
+  const failed=latest.filter(entry=>entry.state==='failed')
+  const interrupted=latest.filter(entry=>entry.state==='interrupted')
+  const issues=latest.filter(entry=>entry.state==='failed'||entry.state==='interrupted').sort((a,b)=>Date.parse(b.at||'')-Date.parse(a.at||''))
   const runningStates=['queued','running','fetching','parsing','saving']
-  const running=latest.filter(entry=>!!entry.item&&runningStates.includes(entry.item.state))
+  const running=latest.filter(entry=>runningStates.includes(entry.state||''))
   const knownExpiry=(account:AirportAccount)=>{
     const expire=account.subscription.usage?.expire
     return typeof expire==='number'&&Number.isFinite(expire)&&expire>0||!!parseNoticeUsage(noticesForAccount(props.notices,account)).expireText
@@ -170,24 +165,16 @@ const disclosureSummary=computed<SubscriptionDisclosureSummary>(()=>{
     interruptedItemCount:interrupted.length,
     runningItemCount:running.length,
     latestRefreshIssueAccount:issues[0]?`${issues[0].account.airport.name} · ${issues[0].account.subscription.name}`:undefined,
-    latestRefreshIssueState:issues[0]?.item?.state==='interrupted'?'interrupted':issues[0]?'failed':undefined,
+    latestRefreshIssueState:issues[0]?.state==='interrupted'?'interrupted':issues[0]?'failed':undefined,
   }
 })
 const jobRunning=(job:SubscriptionRefreshJob|null)=>job?.state==='running'
-const visibleJob=computed(()=>{
-  const account=selected.value
-  if(!account)return null
-  const matches=(job:SubscriptionRefreshJob)=>job.items.find(item=>item.airport_id===account.airport.id&&item.subscription_id===account.subscription.id)
-  if(activeJob.value&&matches(activeJob.value))return activeJob.value
-  return [...jobs.value].sort((a,b)=>Date.parse(b.created_at)-Date.parse(a.created_at)).find(matches)||null
-})
-const visibleItem=computed(()=>{
-  const account=selected.value,job=visibleJob.value
-  return account&&job?job.items.find(item=>item.airport_id===account.airport.id&&item.subscription_id===account.subscription.id)||null:null
-})
+const selectedRefresh=computed(()=>latestRefreshByAccount.value.find(entry=>entry.account.key===selected.value?.key))
+const visibleJob=computed(()=>selectedRefresh.value?.job||null)
+const visibleItem=computed(()=>selectedRefresh.value?.item||null)
 const itemStatusLabel=(state?:string)=>state?({queued:'等待刷新',running:'刷新中',fetching:'抓取中',parsing:'解析中',saving:'保存中',succeeded:'刷新成功',failed:'刷新失败',interrupted:'刷新中断',not_executed:'未执行',cancelled:'已取消'} as Record<string,string>)[state]||state:''
 const statusLabel=computed(()=>{
-  const state=visibleItem.value?.state
+  const state=selectedRefresh.value?.state
   const current=itemStatusLabel(state)
   if(jobRunning(activeJob.value)){
     const completed=Math.min(activeJob.value!.completed,activeJob.value!.items.length),totalItems=activeJob.value!.items.length
@@ -197,7 +184,7 @@ const statusLabel=computed(()=>{
   }
   return current
 })
-const statusTone=computed(()=>jobRunning(activeJob.value)?'warn':['failed','interrupted'].includes(visibleItem.value?.state||'')?'bad':visibleItem.value?.state==='succeeded'?'good':statusLabel.value?'warn':'')
+const statusTone=computed(()=>jobRunning(activeJob.value)?'warn':['failed','interrupted'].includes(selectedRefresh.value?.state||'')?'bad':selectedRefresh.value?.state==='succeeded'?'good':statusLabel.value?'warn':'')
 const refreshDisabled=computed(()=>loading.value||jobRunning(activeJob.value))
 const cancelJob=computed(()=>jobRunning(activeJob.value)?activeJob.value:jobRunning(visibleJob.value)?visibleJob.value:null)
 
@@ -296,7 +283,7 @@ defineExpose({usageRatio})
             <span class="airport-summary-today">今日 {{dayText(row.today)}}</span>
             <time class="airport-summary-time" :class="{'airport-refresh-note':row.lastFailedAt}">{{row.lastFailedAt?`上次刷新 ${hm(row.lastFailedAt)}`:row.updated?date(row.updated):'未刷新'}}</time>
             <span v-if="row.lastFailedAt" class="airport-refresh-note" title="本次刷新失败，仍使用上一次快照">缓存</span>
-            <span v-else :class="{'airport-refresh-failed':row.issues.length}" :title="row.issues.map(issue=>issue.item.error_message||'刷新中断').join('；')">{{row.issues.length?'刷新失败':'正常'}}</span>
+            <span v-else :class="{'airport-refresh-failed':row.issues.length}" :title="row.issues.map(issue=>issue.message||'刷新中断').join('；')">{{row.issues.length?'刷新失败':'正常'}}</span>
             <button v-if="allAirports" class="text-button" @click="emit('viewed',row.airport.id)">只看</button><button v-else class="text-button" :disabled="refreshDisabled" @click="startSelections(row.accounts)">刷新</button>
           </div>
         </div>
@@ -391,8 +378,8 @@ defineExpose({usageRatio})
       <summary>刷新异常 {{workspaceRefreshIssues.length||1}} 项</summary>
       <p v-for="issue in workspaceRefreshIssues" :key="issue.account.key">
         <strong>{{issue.account.airport.name}} · {{issue.account.subscription.name}}</strong>
-        <span>{{issue.item.state==='failed'?'刷新失败':'刷新中断'}}</span>
-        <small v-if="issue.item.error_message">{{issue.item.error_message}}</small>
+        <span>{{issue.state==='failed'?'刷新失败':'刷新中断'}}</span>
+        <small v-if="issue.message">{{issue.message}}</small>
       </p>
       <p v-if="error||jobsReadState==='error'" class="subscription-message" role="alert">{{error||'刷新状态读取失败'}}</p>
       <div class="issue-retries">
