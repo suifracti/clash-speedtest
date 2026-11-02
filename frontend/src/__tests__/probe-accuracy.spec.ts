@@ -6,11 +6,16 @@ import {attemptStatus,downloadCondition} from '../measurementRounds'
 import {createPresentationCache} from '../presentation'
 import {downloadSpeed,key,type Attempt,type MonitorSample,type NodeOption} from '../domain'
 const n:NodeOption={profile_id:'p',node_key:'n',node_identity_key:'i',config_revision_key:'r',profile_name:'p',display_name:'n',type:'ss',country_code:'',country_flag:''}
-const a:Attempt={...n,attempt_id:'a',request_id:'q',display_name:'n',requested_at:'2026-10-07T00:00:00Z',execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://speed.cloudflare.com/__down?bytes=10485761',method:'GET',maximum_bytes:10485760,network_path_method:'physical_socket_v1'},result:{outcome:'byte_limit',bytes_read:10485760,duration_ns:1e9,finished_at:'2026-10-07T00:00:01Z'}}
+const a:Attempt={...n,attempt_id:'a',request_id:'q',display_name:'n',requested_at:'2026-10-07T00:00:00Z',execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://speed.cloudflare.com/__down?bytes=10485761',method:'GET',maximum_bytes:10485760,network_path_method:'physical_socket_v1'},result:{outcome:'byte_limit',bytes_read:10485760,duration_ns:1e9,phase_timings_ns:{response_body:1e9},finished_at:'2026-10-07T00:00:01Z'}}
 it('labels a full bounded download as normal completion and includes partial conditions',()=>{
  expect(attemptStatus(a,true)).toBe('完成·10 MiB')
  const short={...a,result:{...a.result!,outcome:'completed',bytes_read:25}};expect(downloadSpeed(short)).toBeNull();expect(attemptStatus(short,true)).toBe('测速源返回内容过短')
- expect(attemptStatus({...a,result:{...a.result!,outcome:'time_limit',bytes_read:5242880,duration_ns:10e9}},true)).toContain('5.0 MiB / 10.00 秒')
+ expect(attemptStatus({...a,result:{...a.result!,outcome:'time_limit',bytes_read:5242880,duration_ns:11e9,phase_timings_ns:{response_body:10e9}}},true)).toContain('5.0 MiB / 10.00 秒')
+})
+it('calculates download speed using the recorded response body time',()=>{
+ const measured={...a,result:{...a.result!,duration_ns:9.2e9,phase_timings_ns:{connection:5.6e9,response_body:3.6e9}}}
+ expect(downloadSpeed(measured)).toBeCloseTo(10/3.6)
+ expect(downloadSpeed({...a,result:{...a.result!,phase_timings_ns:undefined}})).toBeNull()
 })
 it('does not merge declared physical routing with actually verified socket routing',()=>{
  const verified={...a,result:{...a.result!,network_path:{method:'physical_socket_v1',dns_bind_verified:true,socket_bind_verified:true,tcp_bindings:1,udp_bindings:0}}}

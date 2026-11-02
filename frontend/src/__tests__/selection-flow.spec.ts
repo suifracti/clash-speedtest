@@ -90,12 +90,12 @@ describe('shared node selection',()=>{
     expect(w.filteredNodes.value.findIndex(n=>n.node_key==='a2')).toBeLessThan(w.filteredNodes.value.findIndex(n=>n.node_key==='node-a'))
     w.nodes.value=[a2,b2,unknown]
     const attempt=(node:NodeOption,id:string,second:number,result?:Attempt['result'],service_id?:string):Attempt=>({...node,node_type:node.type,attempt_id:id,request_id:id,service_id,requested_at:`2026-10-01T00:00:0${second}Z`,execution_state:result?'completed':'queued',persistence_state:result?'saved':'pending',rule:{target_url:'',method:'GET',rule_version:1,maximum_bytes:20971520,maximum_duration_ns:10000000000,network_path_method:'physical_socket_v1',physical_interface:'en1',dns_mode:'physical_interface_dns_v1'},result})
-    const download=(bytes_read:number):NonNullable<Attempt['result']>=>({outcome:'byte_limit',bytes_read,duration_ns:2000000000,finished_at:'2026-10-01T00:00:01Z',network_path:{method:'physical_socket_v1',interface:'en1',dns_mode:'physical_interface_dns_v1',dns_bind_verified:true,socket_bind_verified:true,tcp_bindings:1,udp_bindings:0,address_family:'IPv4',address_source:'A'}})
+    const download=(bytes_read:number):NonNullable<Attempt['result']>=>({outcome:'byte_limit',bytes_read,duration_ns:2000000000,phase_timings_ns:{response_body:2000000000},finished_at:'2026-10-01T00:00:01Z',network_path:{method:'physical_socket_v1',interface:'en1',dns_mode:'physical_interface_dns_v1',dns_bind_verified:true,socket_bind_verified:true,tcp_bindings:1,udp_bindings:0,address_family:'IPv4',address_source:'A'}})
     w.mergeAttempt('download',attempt(a2,'download-slow',1,download(10485760)))
     w.mergeAttempt('download',attempt(b2,'download-fast',1,download(20971520)))
     w.sort.value='latency';w.project.value='download'
     expect(w.sort.value).toBe('download');expect(w.filteredNodes.value.map(n=>n.node_key)).toEqual(['node-b','a2','unknown'])
-    w.mergeAttempt('download',attempt(b2,'download-new-failure',2,{outcome:'transfer_interrupted',bytes_read:20971520,duration_ns:1000000000,finished_at:'2026-10-01T00:00:03Z'}))
+    w.mergeAttempt('download',attempt(b2,'download-new-failure',2,{outcome:'transfer_interrupted',bytes_read:20971520,duration_ns:1000000000,phase_timings_ns:{response_body:1000000000},finished_at:'2026-10-01T00:00:03Z'}))
     expect(w.filteredNodes.value.map(n=>n.node_key)).toEqual(['a2','node-b','unknown'])
     w.catalog.value=[...w.catalog.value,{service_id:'youtube',name:'YouTube',category:'服务',description:'',result_kind:'availability',success_criterion:'',timeout_seconds:15}];w.displayServiceIds.value=['netflix_unlock','youtube']
     const service=(outcome:string):NonNullable<Attempt['result']>=>({outcome,bytes_read:0,finished_at:'2026-10-01T00:00:01Z'})
@@ -162,7 +162,7 @@ describe('shared node selection',()=>{
   it('extends the focused node to full history and comparison without replacing the list or changing test selection',async()=>{
     vi.useFakeTimers()
     const w=workspace(),at=new Date().toISOString(),more=Array.from({length:23},(_,i)=>({...b,node_key:'extra-'+i,node_identity_key:'identity-extra-'+i,display_name:'Extra '+i}));w.nodes.value=[a,b,...more];w.project.value='download';w.toggleNode(b)
-    w.downloads.value[key(a)]=[{...a,attempt_id:'download-a',request_id:'req-a',requested_at:at,finished_at:at,execution_state:'byte_limit',persistence_state:'saved',rule:{target_url:''},result:{outcome:'byte_limit',bytes_read:20971520,duration_ns:2000000000,finished_at:at}}]
+    w.downloads.value[key(a)]=[{...a,attempt_id:'download-a',request_id:'req-a',requested_at:at,finished_at:at,execution_state:'byte_limit',persistence_state:'saved',rule:{target_url:''},result:{outcome:'byte_limit',bytes_read:20971520,duration_ns:2000000000,phase_timings_ns:{response_body:2000000000},finished_at:at}}]
     const wrapper=attach(HomeView,w);await flushPromises()
     const panel=()=>wrapper.find('.hd-ins-detail')
     await wrapper.get('.hd-download h3 .hd-link').trigger('click');await flushPromises()
@@ -240,11 +240,11 @@ describe('shared node selection',()=>{
   })
   it('updates the saved download summary and clears it when switching nodes',async()=>{
     const w=workspace(),at=new Date().toISOString();w.project.value='download'
-    w.downloads.value[key(a)]=[{...a,attempt_id:'latest',request_id:'latest',requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://download.example'},result:{outcome:'byte_limit',bytes_read:10485760,duration_ns:1000000000,finished_at:at}}]
+    w.downloads.value[key(a)]=[{...a,attempt_id:'latest',request_id:'latest',requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://download.example'},result:{outcome:'byte_limit',bytes_read:10485760,duration_ns:1000000000,phase_timings_ns:{response_body:1000000000},finished_at:at}}]
     const wrapper=attach(HomeView,w);await flushPromises()
     expect(wrapper.get('.download-success').text()).toBe('10.00 MiB/s')
     expect(wrapper.find('.download-spark').exists()).toBe(false)
-    w.downloads.value[key(a)][0].result!.duration_ns=2000000000;await flushPromises()
+    w.downloads.value[key(a)][0].result!.phase_timings_ns!.response_body=2000000000;await flushPromises()
     expect(wrapper.get('.download-success').text()).toBe('5.00 MiB/s')
     w.search.value='新加坡';await flushPromises()
     expect(wrapper.get('.download-failure').text()).toBe('尚无测速记录')

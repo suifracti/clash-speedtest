@@ -57,7 +57,7 @@ func TestMeasureDownloadStreamUsesActualBytesAndBitsPerSecond(t *testing.T) {
 	clockCalls := 0
 	now := func() time.Time {
 		clockCalls++
-		if clockCalls == 1 {
+		if clockCalls <= 2 {
 			return base
 		}
 		return base.Add(time.Second)

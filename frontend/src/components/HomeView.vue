@@ -13,7 +13,7 @@ import HomeWorkbench from './home/HomeWorkbench.vue'
 import {homeModelKey} from './home/homeModel'
 import {useWorkspace} from '../workspace'
 import {api} from '../api'
-import {date,isReputationRule,sameHistoryRecords,downloadSpeed,downloadTone,downloadOutcome,isNotice,key,outcomeLabel,type NodeOption,type Project,type Attempt} from '../domain'
+import {date,isReputationRule,sameHistoryRecords,downloadSpeed,downloadTone,downloadOutcome,downloadConnectionSeconds,isNotice,key,outcomeLabel,type NodeOption,type Project,type Attempt} from '../domain'
 import {attemptStatus,downloadNoDataReason,triggerLabel} from '../measurementRounds'
 import {latencyPointLabel,createPresentationCache,monitorHTTPServices,type TrendPoint} from '../presentation'
 import Modal from './Modal.vue'
@@ -130,7 +130,7 @@ function serviceTone(n:NodeOption,id:string){const a=shownService(n,id);return a
 function hoveredDownloadPoint(n:NodeOption){return hoverMode.value==='download'&&hoverNode.value&&key(hoverNode.value)===key(n)?activeRound.value:null}
 function downloadMetric(n:NodeOption){const point=hoveredDownloadPoint(n),attempt=point?.attempts?.[0],a=attempt||w.summaryDownload(n),v=point?point.value:downloadSpeed(a);if(a?.result?.http_status===429)return '测速源限流（429）';if(downloadNoDataReason(a))return downloadNoDataReason(a);return a?.result&&downloadTone(a)==='bad'?(a.result.outcome==='time_limit'?'时限内未读取数据':(a.result.phase||a.result.failure_phase||'').includes('handshake')?'代理握手失败':outcomeLabel(downloadOutcome(a))):v!==null?`${v<.01?'<0.01':v<1?v.toFixed(2):v.toFixed(1)} MiB/s`:a?attemptStatus(a,true):'未测'}
 function downloadMetricTone(n:NodeOption){const point=hoveredDownloadPoint(n),a=point?.attempts?.[0]||w.summaryDownload(n);return point?point.tone:a?downloadTone(a):'empty'}
-function downloadMetricContext(n:NodeOption){const point=hoveredDownloadPoint(n),attempt=point?.attempts?.[0]||w.summaryDownload(n);if(point)return `${date(point.time)} · ${triggerLabel(point.trigger)} · ${attempt?attemptStatus(attempt,true).replace(' · 达到时限',''):point.description}`;return attempt?`${date(attempt.finished_at||attempt.requested_at)} · ${triggerLabel(attempt.trigger_type)} · ${attemptStatus(attempt,true).replace(' · 达到时限','')}`:'没有下载记录'}
+function downloadMetricContext(n:NodeOption){const point=hoveredDownloadPoint(n),attempt=point?.attempts?.[0]||w.summaryDownload(n),connection=downloadConnectionSeconds(attempt),suffix=connection===null?'':` · 连接 ${connection.toFixed(2)} 秒`;if(point)return `${date(point.time)} · ${triggerLabel(point.trigger)} · ${attempt?attemptStatus(attempt,true).replace(' · 达到时限',''):point.description}${suffix}`;return attempt?`${date(attempt.finished_at||attempt.requested_at)} · ${triggerLabel(attempt.trigger_type)} · ${attemptStatus(attempt,true).replace(' · 达到时限','')}${suffix}`:'没有下载记录'}
 function openCombinedPlan(){const nodes=[...runNodes.value];closeHover();w.project.value='combined';w.openPlan(nodes)}
 function runLabel(p:Project){return p==='latency'?'测延迟':p==='download'?'测速':p==='service'?'解锁检测':'组合检测'}
 function toggleAirport(id:string){const selected=w.selectedAirportIds.value||[];w.setAirports(selected.includes(id)?selected.filter(s=>s!==id):[...selected,id])}

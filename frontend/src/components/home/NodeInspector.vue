@@ -22,7 +22,7 @@ import Modal from '../Modal.vue'
 import {homeModelKey,latencyVerdict,toneLabel} from './homeModel'
 import {attemptObservedAt,downloadEvidence} from '../../nodeQuality'
 import {attemptStatus} from '../../measurementRounds'
-import {downloadSpeed,downloadTarget} from '../../domain'
+import {downloadSpeed,downloadTarget,downloadConnectionSeconds} from '../../domain'
 const props=defineProps<{node:NodeOption;exitOnly?:boolean;clashUsage?:ClashUsage[]}>()
 const emit=defineEmits<{(e:'select-project',id:Project|'exit'):void;(e:'refresh-clash-usage'):void}>()
 const w=useWorkspace(),m=inject(homeModelKey)!
@@ -152,7 +152,7 @@ function run(){m.closeHover();props.exitOnly?w.openReputationPlan([props.node]):
       <h3>下载 <button class="hd-link" @click="openHistory('download',w.displayTarget.value)">记录</button></h3>
       <div v-if="downloadValue!==null&&!readError" class="download-success"><strong>{{downloadValue.toFixed(2)}} <small>MiB/s</small></strong></div>
       <div v-else class="download-failure" :class="{empty:!downloadLatest}"><span>{{downloadFailure}}</span><button v-if="downloadLatest&&!readError" class="hd-btn" :disabled="w.busy.value" @click="retryDownload">换源重测</button></div>
-      <small v-if="downloadLatest" class="hd-saved-download" :title="downloadHistoryContext">{{downloadSource}} · {{date(attemptObservedAt(downloadLatest))}}</small>
+      <small v-if="downloadLatest" class="hd-saved-download" :title="downloadHistoryContext">{{downloadSource}} · {{date(attemptObservedAt(downloadLatest))}}<template v-if="downloadConnectionSeconds(downloadLatest)!==null"> · 连接 {{downloadConnectionSeconds(downloadLatest)?.toFixed(2)}} 秒</template></small>
       <svg v-if="downloadTrend.length>=3" class="download-spark" viewBox="0 0 352 34" role="img" aria-label="已有下载测速走势"><path :d="downloadSpark" fill="none" stroke="var(--hd-accent)" stroke-width="1.8"/><g v-for="(p,i) in downloadTrend" :key="p.id"><title>{{date(p.time)}} · {{p.value===null?'未取得速度':p.value.toFixed(2)+' MiB/s'}}</title><circle v-if="p.value!==null" :cx="4+i*344/Math.max(1,downloadTrend.length-1)" :cy="30-p.value/Math.max(1,...downloadTrend.map(p=>p.value||0))*26" r="2" fill="var(--hd-accent)"/></g></svg>
     </div>
 

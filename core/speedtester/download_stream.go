@@ -294,7 +294,7 @@ func (st *SpeedTester) measureDownloadStream(ctx context.Context, client *http.C
 
 	setPhase("response_body")
 	var responsePrefix []byte
-	sampler := downloadStreamSampler{started: started, everyBytes: options.SampleEveryBytes, everyDuration: options.SampleEveryDuration}
+	sampler := downloadStreamSampler{started: now(), everyBytes: options.SampleEveryBytes, everyDuration: options.SampleEveryDuration}
 	buffer := make([]byte, 32*1024)
 	for {
 		remaining := options.MaximumBytes - result.BytesRead

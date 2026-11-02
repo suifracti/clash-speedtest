@@ -7,7 +7,7 @@ const a:NodeOption={profile_id:'s',node_key:'a',node_identity_key:'identity-a',c
 const b:NodeOption={...a,node_key:'b',node_identity_key:'identity-b',display_name:'B'}
 const at='2026-10-01T00:00:00Z'
 function latency(id='test',value=80):LatencyTest{return {...a,attempt_id:id,node_type:'ss',requested_at:at,finished_at:at,status:'completed',latency_ms:value,total_samples:2,success_samples:2,failure_samples:0,persistence_state:'saved',samples:[{seq:1,timestamp:at,target:'https://speed.cloudflare.com/__down?bytes=1',success:true,latency_ms:value},{seq:2,timestamp:at,target:'https://www.gstatic.com/generate_204',success:true,latency_ms:900}]}}
-function download(id='download'):Attempt{return {...a,attempt_id:id,request_id:id,display_name:'A',requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://speed.cloudflare.com/__down',maximum_bytes:10485760},result:{outcome:'byte_limit',bytes_read:10485760,duration_ns:1000000000,finished_at:at}}}
+function download(id='download'):Attempt{return {...a,attempt_id:id,request_id:id,display_name:'A',requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://speed.cloudflare.com/__down',maximum_bytes:10485760},result:{outcome:'byte_limit',bytes_read:10485760,duration_ns:1000000000,phase_timings_ns:{response_body:1000000000},finished_at:at}}}
 function fixture(){return {displayTarget:ref('cloudflare'),serviceIds:ref(['one']),latency:ref<Record<string,LatencyTest[]>>({[key(a)]:[latency()]}),downloads:ref<Record<string,Attempt[]>>({[key(a)]:[download()]}),services:ref<Record<string,Attempt[]>>({}),measurementRounds:ref<Record<string,MeasurementRound[]>>({}),catalog:ref<ServiceRule[]>([])} }
 function cache(w=fixture(),monitor=ref<Record<string,MonitorSample[]>>({}),http=ref<Record<string,MonitorSample[]>>({})){return presentation.createPresentationCache(w,monitor,http)}
 
@@ -22,7 +22,7 @@ describe('bounded reactive presentation cache',()=>{
   const w=fixture(),c=cache(w);c.retain([a,b]);const first=c.points(a,'download');expect(first[0].value).toBe(10)
   w.downloads.value[key(b)]=[{...download('b'),...b,result:{...download().result!,bytes_read:5242880}}]
   expect(c.points(a,'download')).toBe(first);expect(c.points(b,'download')[0].value).toBe(5)
-  w.downloads.value[key(a)][0].result!.duration_ns=2000000000
+  w.downloads.value[key(a)][0].result!.phase_timings_ns!.response_body=2000000000
   expect(c.points(a,'download')[0].value).toBe(5);expect(c.points(b,'download')[0].value).toBe(5)
   w.downloads.value[key(a)].push({...download('older'),requested_at:'2026-09-30T23:00:00Z',finished_at:'2026-09-30T23:00:00Z'})
   expect(c.points(a,'download').map(p=>p.id)).toEqual(['older','download'])
@@ -33,7 +33,7 @@ describe('bounded reactive presentation cache',()=>{
   const w=fixture(),c=cache(w);c.retain([a]);const embedded=download()
   w.measurementRounds.value[key(a)]=[{round_id:'round',trigger_type:'scheduled',started_at:at,state:'finished',items:[{...a,request_id:embedded.request_id,project:'download',execution_state:'completed',persistence_state:'saved',download:embedded}]}]
   expect(c.points(a,'download').map(p=>p.id)).toEqual(['round']);expect(c.points(a,'download')[0].value).toBe(10)
-  w.downloads.value[key(a)]=[{...embedded,result:{...embedded.result!,duration_ns:2000000000}}]
+  w.downloads.value[key(a)]=[{...embedded,result:{...embedded.result!,duration_ns:2000000000,phase_timings_ns:{response_body:2000000000}}}]
   expect(c.points(a,'download')[0].value).toBe(5);expect(c.points(a,'download')[0].trigger).toBe('scheduled');expect(c.points(a,'download')).toHaveLength(1)
   expect(w.measurementRounds.value[key(a)][0].items[0].download?.result?.duration_ns).toBe(1000000000)
   c.clear()

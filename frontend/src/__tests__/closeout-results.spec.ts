@@ -6,7 +6,7 @@ import {downloadGroup,servicePassed,serviceExecuted,serviceComparisonGroup} from
 import {durableRoundPoints,serviceConclusion,attemptTone,attemptStatus,downloadNoDataReason,downloadConditionLabel} from '../measurementRounds'
 import {downloadSpeed,type Attempt,type NodeOption} from '../domain'
 const n:NodeOption={profile_id:'p',node_key:'n',node_identity_key:'i',config_revision_key:'r',profile_name:'p',display_name:'n',type:'ss',country_code:'',country_flag:''}
-const a:Attempt={...n,attempt_id:'a',request_id:'q',requested_at:'2026-10-09T00:00:00Z',execution_state:'completed',persistence_state:'failed',rule:{target_url:'https://example.test/data',method:'GET',maximum_bytes:10485760},result:{outcome:'time_limit',bytes_read:5242880,duration_ns:1e9,finished_at:'2026-10-09T00:00:01Z'}}
+const a:Attempt={...n,attempt_id:'a',request_id:'q',requested_at:'2026-10-09T00:00:00Z',execution_state:'completed',persistence_state:'failed',rule:{target_url:'https://example.test/data',method:'GET',maximum_bytes:10485760},result:{outcome:'time_limit',bytes_read:5242880,duration_ns:1e9,phase_timings_ns:{response_body:1e9},finished_at:'2026-10-09T00:00:01Z'}}
 it('retains staged effective partial speed and separates it from full and invalid measurements',()=>{
  expect(downloadSpeed(a)).toBe(5)
  expect(downloadGroup(a).kind).toBe('partial')

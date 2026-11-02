@@ -168,7 +168,7 @@ it('describes only stored method and path evidence',()=>{
 
 
 it('retains a download round when an independent service filter is selected',()=>{
- const a:Attempt={...node,attempt_id:'download-child',request_id:'download-request',requested_at:base.requested_at,execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://download.example',maximum_bytes:10485760,maximum_duration_ns:10000000000},result:{outcome:'byte_limit',bytes_read:10485760,duration_ns:1000000000,finished_at:base.finished_at}}
+ const a:Attempt={...node,attempt_id:'download-child',request_id:'download-request',requested_at:base.requested_at,execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://download.example',maximum_bytes:10485760,maximum_duration_ns:10000000000},result:{outcome:'byte_limit',bytes_read:10485760,duration_ns:1000000000,phase_timings_ns:{response_body:1000000000},finished_at:base.finished_at}}
  const w={latency:ref({}),downloads:ref({[key(node)]:[a]}),services:ref({}),serviceIds:ref(['chatgpt_web']),displayTarget:ref('cloudflare'),measurementRounds:ref({[key(node)]:[{round_id:'download-root',trigger_type:'scheduled' as const,started_at:base.requested_at,state:'finished',items:[{...node,request_id:a.request_id,project:'download' as const,execution_state:'completed',persistence_state:'saved',download:a}]}]})}
  expect(points(w,node,'download')).toHaveLength(1)
  expect(points(w,node,'download')[0]).toMatchObject({id:'download-root',trigger:'scheduled',value:10})
