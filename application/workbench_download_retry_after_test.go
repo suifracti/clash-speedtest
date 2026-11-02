@@ -18,7 +18,7 @@ func runDownloadSources(t *testing.T, statuses ...int) (*history.WorkbenchDownlo
 	var targets []string
 	configureDownloadResponse(app, func(r *http.Request) (*http.Response, error) {
 		targets = append(targets, r.URL.String())
-		status, body := statuses[len(targets)-1], "payload"
+		status, body := statuses[len(targets)-1], strings.Repeat("x", 1000)
 		if status != http.StatusOK {
 			body = ""
 		}
@@ -38,7 +38,7 @@ func runDownloadSources(t *testing.T, statuses ...int) (*history.WorkbenchDownlo
 
 func TestWorkbenchDownloadSwitchesAfter429AndComparesActualTarget(t *testing.T) {
 	got, targets, store := runDownloadSources(t, http.StatusTooManyRequests, http.StatusOK)
-	if len(targets) != 2 || targets[0] != "https://speed.cloudflare.com/__down?bytes=1001" || targets[1] != "https://cachefly.cachefly.net/100mb.test" || got.Result.TargetURL != targets[1] || got.Result.Outcome != "completed" {
+	if len(targets) != 2 || targets[0] != "https://speed.cloudflare.com/__down?bytes=1001" || targets[1] != "https://cachefly.cachefly.net/100mb.test" || got.Result.TargetURL != targets[1] || got.Result.Outcome != "byte_limit" {
 		t.Fatalf("fallback result mismatch: requests=%v result=%+v", targets, got.Result)
 	}
 	next := *got

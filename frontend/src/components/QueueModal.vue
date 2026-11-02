@@ -9,7 +9,7 @@ import {latencySampleState} from '../presentation'
 import {downloadNoDataReason} from '../measurementRounds'
 import {entryCountry,mainlandNotice} from '../entryPath'
 import {useWorkspace} from '../workspace'
-import {projectNames,stateLabel,outcomeLabel,outcomeTone,downloadSpeed,downloadTone,type QueueItem} from '../domain'
+import {projectNames,stateLabel,outcomeLabel,outcomeTone,downloadSpeed,downloadTone,downloadOutcome,type QueueItem} from '../domain'
 import Modal from './Modal.vue'
 const w=useWorkspace(),retrying=ref(''),progressTitle=ref<HTMLElement>()
 onMounted(()=>nextTick(()=>progressTitle.value?.focus({preventScroll:true})))
@@ -68,6 +68,7 @@ function resultStatus(q:QueueItem):{label:string;tone:string;notExecuted?:boolea
   const outcome=result.outcome
   if(['not_executed','cancelled','user_cancelled','interrupted'].includes(outcome))return {label:stateLabel(outcome==='user_cancelled'?'cancelled':outcome),tone:'',notExecuted:true}
   if(downloadNoDataReason(a))return {label:downloadNoDataReason(a),tone:'warn'}
+  if(downloadOutcome(a)==='response_too_short')return {label:outcomeLabel('response_too_short'),tone:'bad'}
   const speed=downloadSpeed(a)
   if(speed!==null)return {label:`${speed.toFixed(2)} MB/s · ${(result.bytes_read/1048576).toFixed(1)}MB`,tone:downloadTone(a)}
   if(outcome==='source_rate_limited'||result.http_status===429)return {label:'下载源限流',tone:'warn'}

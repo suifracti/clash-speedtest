@@ -370,6 +370,9 @@ func (s *AppService) executeWorkbenchDownload(runtime *workbenchDownloadRuntime)
 	if executionState == "completed" || executionState == "byte_limit" || executionState == "time_limit" {
 		executionState = "completed"
 	}
+	if executionState == "response_too_short" {
+		executionState = "failed"
+	}
 	if interrupted {
 		executionState = "interrupted"
 	}
@@ -479,6 +482,7 @@ func workbenchDownloadMeasurement(result speedtester.DownloadStreamResult) histo
 		})
 	}
 	return history.WorkbenchDownloadMeasurement{
+		ContentType: result.ContentType, ResponseSummary: result.ResponseSummary,
 		Phase: result.Phase, ErrorClass: result.ErrorClass, EndReason: result.EndReason, PartialMeasurement: result.PartialMeasurement, RetryAfterSeconds: result.RetryAfterSeconds,
 		Outcome: result.Outcome, TargetURL: result.TargetURL, HTTPStatus: result.HTTPStatus, BytesRead: result.BytesRead,
 		StartedAt: result.StartedAt.UTC(), FinishedAt: result.FinishedAt.UTC(), DurationNS: result.DurationNS,

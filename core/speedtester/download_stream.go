@@ -11,11 +11,13 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 )
 
 const (
@@ -45,6 +47,8 @@ type DownloadStreamSample struct {
 }
 
 type DownloadStreamResult struct {
+	ContentType        string                 `json:"content_type,omitempty"`
+	ResponseSummary    string                 `json:"response_summary,omitempty"`
 	PhaseTimingsNS     map[string]int64       `json:"phase_timings_ns,omitempty"`
 	Phase              string                 `json:"phase,omitempty"`
 	ErrorClass         string                 `json:"error_class,omitempty"`
@@ -289,6 +293,7 @@ func (st *SpeedTester) measureDownloadStream(ctx context.Context, client *http.C
 	}
 
 	setPhase("response_body")
+	var responsePrefix []byte
 	sampler := downloadStreamSampler{started: started, everyBytes: options.SampleEveryBytes, everyDuration: options.SampleEveryDuration}
 	buffer := make([]byte, 32*1024)
 	for {
@@ -306,6 +311,9 @@ func (st *SpeedTester) measureDownloadStream(ctx context.Context, client *http.C
 		}
 		read, readErr := response.Body.Read(readBuffer)
 		if read > 0 {
+			if len(responsePrefix) < 4096 {
+				responsePrefix = append(responsePrefix, readBuffer[:min(read, 4096-len(responsePrefix))]...)
+			}
 			result.BytesRead += int64(read)
 			current := now()
 			if sample, ok := sampler.add(result.BytesRead, current, result.BytesRead >= options.MaximumBytes); ok {
@@ -335,6 +343,12 @@ func (st *SpeedTester) measureDownloadStream(ctx context.Context, client *http.C
 				result.FailurePhase = "time_limit"
 				result.ErrorMessage = "达到下载时长上限"
 			} else if errors.Is(readErr, io.EOF) {
+				result.Outcome = "response_too_short"
+				result.FailurePhase = "response_body"
+				result.ErrorMessage = "测速源返回内容过短"
+				result.ContentType = response.Header.Get("Content-Type")
+				result.ResponseSummary = shortResponseSummary(responsePrefix, result.ContentType)
+				result.Samples = nil
 				break
 			} else if errors.Is(readErr, context.Canceled) {
 				result.Outcome = "user_cancelled"
@@ -366,7 +380,7 @@ func (st *SpeedTester) measureDownloadStream(ctx context.Context, client *http.C
 	if result.Outcome == "" {
 		result.Outcome = "completed"
 	}
-	if sample, ok := sampler.add(result.BytesRead, now(), true); ok {
+	if sample, ok := sampler.add(result.BytesRead, now(), true); ok && result.Outcome != "response_too_short" {
 		result.Samples = append(result.Samples, sample)
 		if progress != nil {
 			progress(sample, result.BytesRead)
@@ -374,6 +388,38 @@ func (st *SpeedTester) measureDownloadStream(ctx context.Context, client *http.C
 	}
 	result.Samples = append([]DownloadStreamSample(nil), result.Samples...)
 	return finish()
+}
+
+var shortResponseURL = regexp.MustCompile(`(?i)\b(?:https?|socks5?|ss|vmess|vless|trojan)://[^\s"'<>]+`)
+var shortResponseCredential = regexp.MustCompile(`(?i)token|password|secret|authorization|bearer\s|api[_-]?key|set-cookie`)
+var shortResponseAddress = regexp.MustCompile(`\b(?:[a-zA-Z0-9_-]+\.)+[a-zA-Z0-9_-]+(?::[0-9]+)?\b|\[[0-9a-fA-F:]+\](?::[0-9]+)?`)
+var shortResponseIPv6 = regexp.MustCompile(`(?i)(?:[0-9a-f]{0,4}:){2,}[0-9a-f:]+`)
+
+func shortResponseSummary(body []byte, contentType string) string {
+	if len(body) == 0 {
+		return "空响应"
+	}
+	typeLower := strings.ToLower(contentType)
+	if !strings.HasPrefix(typeLower, "text/") && !strings.Contains(typeLower, "json") && !strings.Contains(typeLower, "xml") {
+		return "非文本内容"
+	}
+	text := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, strings.ToValidUTF8(string(body), "�"))
+	if shortResponseCredential.MatchString(text) {
+		return "[敏感内容已隐藏]"
+	}
+	text = shortResponseURL.ReplaceAllString(text, "[地址已隐藏]")
+	text = shortResponseAddress.ReplaceAllString(text, "[地址已隐藏]")
+	text = shortResponseIPv6.ReplaceAllString(text, "[地址已隐藏]")
+	runes := []rune(strings.Join(strings.Fields(text), " "))
+	if len(runes) > 200 {
+		runes = runes[:200]
+	}
+	return string(runes)
 }
 
 type downloadStreamSampler struct {

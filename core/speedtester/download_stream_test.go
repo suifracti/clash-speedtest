@@ -29,11 +29,26 @@ func newDownloadStreamTester(t *testing.T) *SpeedTester {
 	return st
 }
 
+func TestMeasureDownloadStreamRejectsShortResponse(t *testing.T) {
+	st := newDownloadStreamTester(t)
+	client := &http.Client{Transport: downloadRoundTripper(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/html"}}, Body: io.NopCloser(strings.NewReader("short response token=secret https://example.test/private")), Request: r}, nil
+	})}
+	result := st.MeasureDownloadStream(context.Background(), client, DownloadStreamOptions{MaximumBytes: 10 << 20, MaximumDuration: time.Second}, nil)
+	encoded, _ := json.Marshal(result)
+	var record map[string]any
+	_ = json.Unmarshal(encoded, &record)
+	summary, _ := record["response_summary"].(string)
+	if result.Outcome != "response_too_short" || record["content_type"] != "text/html" || summary == "" || strings.Contains(summary, "secret") || strings.Contains(summary, "example.test") || len([]rune(summary)) > 200 || len(result.Samples) != 0 {
+		t.Fatalf("short response must be recorded without a speed or sensitive details: %+v", result)
+	}
+}
+
 func TestMeasureDownloadStreamUsesActualBytesAndBitsPerSecond(t *testing.T) {
 	st := newDownloadStreamTester(t)
 	payload := strings.Repeat("x", 1_000_000)
 	client := &http.Client{Transport: downloadRoundTripper(func(r *http.Request) (*http.Response, error) {
-		if r.Method != http.MethodGet || r.URL.String() != DefaultSpeedServer+"/__down?bytes=2097153" || r.Header.Get("Accept-Encoding") != "identity" {
+		if r.Method != http.MethodGet || r.URL.String() != DefaultSpeedServer+"/__down?bytes=1000001" || r.Header.Get("Accept-Encoding") != "identity" {
 			t.Fatalf("unexpected fixed request: %s %s headers=%v", r.Method, r.URL, r.Header)
 		}
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(payload)), Request: r}, nil
@@ -47,8 +62,8 @@ func TestMeasureDownloadStreamUsesActualBytesAndBitsPerSecond(t *testing.T) {
 		}
 		return base.Add(time.Second)
 	}
-	result := st.measureDownloadStream(context.Background(), client, DownloadStreamOptions{MaximumBytes: 2 << 20, MaximumDuration: time.Second, SampleEveryBytes: 2 << 20, SampleEveryDuration: 24 * time.Hour}, nil, now)
-	if result.Outcome != "completed" || result.BytesRead != int64(len(payload)) {
+	result := st.measureDownloadStream(context.Background(), client, DownloadStreamOptions{MaximumBytes: int64(len(payload)), MaximumDuration: time.Second, SampleEveryBytes: 2 << 20, SampleEveryDuration: 24 * time.Hour}, nil, now)
+	if result.Outcome != "byte_limit" || result.BytesRead != int64(len(payload)) {
 		t.Fatalf("response body measurement mismatch: outcome=%s bytes=%d", result.Outcome, result.BytesRead)
 	}
 	if len(result.Samples) != 1 || result.Samples[0].CumulativeBytes != int64(len(payload)) || result.Samples[0].DeltaBytes != int64(len(payload)) {
@@ -77,9 +92,9 @@ func TestMeasureDownloadStreamCompletesOfflineHTTPSFixture(t *testing.T) {
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport}
 	result := st.MeasureDownloadStream(context.Background(), client, DownloadStreamOptions{
-		MaximumBytes: 512, MaximumDuration: time.Second, SampleEveryBytes: 128,
+		MaximumBytes: int64(len(payload)), MaximumDuration: time.Second, SampleEveryBytes: 128,
 	}, nil)
-	if result.Outcome != "completed" || result.BytesRead != int64(len(payload)) || result.ErrorClass != "" {
+	if result.Outcome != "byte_limit" || result.BytesRead != int64(len(payload)) || result.ErrorClass != "" {
 		t.Fatalf("offline TLS download result = %+v", result)
 	}
 	var sampled int64
@@ -354,4 +369,3 @@ func TestDownloadStreamSamplerNilDefense(t *testing.T) {
 		t.Fatalf("expected nil sampler to return false, got ok=%v sample=%+v", ok, sample)
 	}
 }
-

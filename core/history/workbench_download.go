@@ -37,6 +37,8 @@ type WorkbenchDownloadSample struct {
 }
 
 type WorkbenchDownloadMeasurement struct {
+	ContentType        string                           `json:"content_type,omitempty"`
+	ResponseSummary    string                           `json:"response_summary,omitempty"`
 	TimingNS           map[string]int64                 `json:"timing_ns,omitempty"`
 	PhaseTimingsNS     map[string]int64                 `json:"phase_timings_ns,omitempty"`
 	NetworkPath        *speedtester.DownloadNetworkPath `json:"network_path,omitempty"`

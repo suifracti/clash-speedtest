@@ -1,4 +1,4 @@
-import {bytes,date,downloadTarget,downloadSpeed,downloadTone,key,median,sampleFor,outcomeLabel,outcomeTone,stateLabel,type Attempt,type MeasurementRound,type NodeOption,type Project} from './domain'
+import {bytes,date,downloadTarget,downloadSpeed,downloadTone,downloadOutcome,key,median,sampleFor,outcomeLabel,outcomeTone,stateLabel,type Attempt,type MeasurementRound,type NodeOption,type Project} from './domain'
 import {downloadGroup,servicePassed,serviceExecuted,serviceAvailability,serviceAvailabilitySummary} from './sharedResults'
 import {groupSamples,latencySampleState,type TrendPoint,type SamplePoint,type HealthTone} from './presentation'
 export type Trigger='manual'|'scheduled'|'diagnostic'|'auto_pick'|'unknown'
@@ -29,7 +29,7 @@ export function downloadNoDataReason(a?:Attempt){
  const phase=r.failure_phase||r.phase||''
  return /tls/i.test(phase)?'TLS 握手超时 · 未开始下载':/proxy|connect|dial|dns/i.test(phase)?'连接阶段超时 · 未开始下载':/header|request/i.test(phase)?'等待响应超时 · 未开始下载':'超时 · 未读到下载数据'
 }
-export function attemptStatus(a:Attempt,download=false){const r=a.result;return `${a.execution_state==='not_executed'?'未执行':r?(!download?(serviceExecuted(a)?'已执行 · ':'')+serviceConclusion(a):download&&r.error_message==='测速源都限流'?'测速源都限流':download&&r.http_status===429?'测速源限流（429）':download&&r.outcome==='byte_limit'?'完成·'+bytes(r.bytes_read).replace('.0 MiB',' MiB'):download&&downloadNoDataReason(a)?downloadNoDataReason(a):download&&r.outcome==='time_limit'&&r.bytes_read>0?'部分测量 · '+bytes(r.bytes_read)+' / '+((r.duration_ns||0)/1e9).toFixed(2)+' 秒 · 达到时限':outcomeLabel(r.outcome)):stateLabel(a.execution_state)}${a.persistence_state==='failed'?' · 保存失败':a.persistence_state==='saving'?' · 保存中':''}`}
+export function attemptStatus(a:Attempt,download=false){const r=a.result;return `${a.execution_state==='not_executed'?'未执行':r?(!download?(serviceExecuted(a)?'已执行 · ':'')+serviceConclusion(a):download&&r.error_message==='测速源都限流'?'测速源都限流':download&&r.http_status===429?'测速源限流（429）':download&&r.outcome==='byte_limit'?'完成·'+bytes(r.bytes_read).replace('.0 MiB',' MiB'):download&&downloadNoDataReason(a)?downloadNoDataReason(a):download&&r.outcome==='time_limit'&&r.bytes_read>0?'部分测量 · '+bytes(r.bytes_read)+' / '+((r.duration_ns||0)/1e9).toFixed(2)+' 秒 · 达到时限':outcomeLabel(download?downloadOutcome(a):r.outcome)):stateLabel(a.execution_state)}${a.persistence_state==='failed'?' · 保存失败':a.persistence_state==='saving'?' · 保存中':''}`}
 export function durableRoundPoints(rounds:MeasurementRound[],project:Project,target='cloudflare',serviceId='',serviceNames:Record<string,string>={}):TrendPoint[]{
  if(project==='combined')project='latency'
  return rounds.flatMap(r=>{
