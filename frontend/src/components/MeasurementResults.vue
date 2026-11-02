@@ -2,10 +2,10 @@
 import {unlockGroups,unlockGroup,unlockResult} from '../unlock'
 import UiSelect from './UiSelect.vue'
 import {computed,ref,watch} from 'vue'
-import {bytes,date,downloadTarget,downloadSpeed,downloadTone,downloadConnectionSeconds,outcomeLabel,outcomeTone,stateLabel} from '../domain'
+import {bytes,date,downloadTarget,downloadSpeed,downloadTone,downloadOutcome,downloadConnectionSeconds,outcomeLabel,outcomeTone,stateLabel} from '../domain'
 import {attemptStatus,attemptTone,triggerLabel,downloadConditionLabel} from '../measurementRounds'
 import {monitorHTTPServices,type TrendPoint} from '../presentation'
-const phaseLabels:Record<string,string>={request_setup:'请求准备',address_resolution:'地址解析（可含缓存）',dns:'DNS 查询',connection:'到节点的连接',proxy_connect_and_handshake:'代理建连／握手（组合观测）',proxy_handshake:'代理协议握手',tls:'目标 TLS',response_headers:'等待响应头',response_status:'HTTP 状态',response_body:'读取响应体',queue_wait_ns:'调度队列投递等待',download_exclusion_wait_ns:'下载／服务带宽互斥等待',admission_wait_ns:'启动资源等待',start_setup_ns:'启动与身份登记',network_ns:'测量总时长（不与阶段重复相加）',stage_save_lock_wait_ns:'暂存写锁等待',commit_save_lock_wait_ns:'保存写锁等待'}
+const phaseLabels:Record<string,string>={request_setup:'请求准备',address_resolution:'地址解析（可含缓存）',dns:'DNS 查询',connection:'到节点的连接',proxy_connect_and_handshake:'代理建连／握手（组合观测）',proxy_handshake:'代理协议握手',tls:'目标 TLS',response_headers:'等待响应头',response_status:'HTTP 状态',response_body:'读取响应体',cancelled:'已取消',time_limit:'达到时间上限',local_egress:'本机出口',proxy_setup:'代理准备',application_exit:'应用退出',queue_wait_ns:'调度队列投递等待',download_exclusion_wait_ns:'下载／服务带宽互斥等待',admission_wait_ns:'启动资源等待',start_setup_ns:'启动与身份登记',network_ns:'测量总时长（不与阶段重复相加）',stage_save_lock_wait_ns:'暂存写锁等待',commit_save_lock_wait_ns:'保存写锁等待'}
 const props=defineProps<{point:TrendPoint;project:'download'|'service'}>()
 const search=ref(''),status=ref('all'),page=ref(1),pageSize=12
 const attempts=computed(()=>props.point.attempts||[])
@@ -34,7 +34,7 @@ watch(pageCount,count=>page.value=Math.min(page.value,count))
     <p v-if="a.result?.competing_probes?.length" class="warn">同时有其他探测：{{a.result.competing_probes.join('、')}}。本次延迟／速度可能受资源竞争影响，不宜单独作为节点质量依据。</p>
     <p v-if="a.not_executed_reason" class="small muted">未执行原因：{{a.not_executed_reason}}</p>
     <p v-if="a.persistence_state==='failed'" class="warn">保存失败：{{a.persistence_error||'原始测量与执行状态独立；可重试保存'}}（重试保存不新增测试格）</p>
-    <p v-if="project==='download'" class="small muted break-text">条件：{{downloadConditionLabel(a)}} · 结束：{{a.result?.end_reason||a.result?.outcome||'尚未结束'}} · 阶段：{{phaseLabels[a.result?.phase||a.result?.failure_phase||'']||a.result?.phase||a.result?.failure_phase||(a.attempt_id.startsWith('planned:')?'尚未执行':'旧记录未知')}} · 错误分类：{{a.result?.error_class||(a.rule.rule_version&&a.rule.rule_version>=2?'无':'旧记录未知')}}</p>
+    <p v-if="project==='download'" class="small muted break-text">条件：{{downloadConditionLabel(a)}} · 结束：{{a.result?outcomeLabel(downloadOutcome(a)==='response_too_short'?'response_too_short':a.result.end_reason||downloadOutcome(a)):'尚未结束'}} · 阶段：{{phaseLabels[a.result?.phase||a.result?.failure_phase||'']||(a.attempt_id.startsWith('planned:')?'尚未执行':'未记录')}} · 错误分类：{{a.result?.error_class?outcomeLabel(a.result.error_class):(a.rule.rule_version&&a.rule.rule_version>=2?'无':'旧记录未知')}}</p>
     <p v-if="project==='download'&&a.result?.outcome==='time_limit'&&a.result.bytes_read>0" class="warn">部分测量：已读取实际响应体后达到时限，速度仅对应上述读取量及条件；不同源／方法／读取上限不连成同一趋势。</p>
     <p v-if="project==='download'&&(a.result?.http_status===429||a.result?.outcome==='source_rate_limited')" class="warn">{{a.result?.error_message==='测速源都限流'?'测速源都限流，请稍后重测。':'测速网站限流，不是节点问题。'}}</p>
     <p v-if="project==='service'" class="small muted">执行：{{a.result?(a.result.details?.execution_status==='not_executed'||a.result.outcome==='credentials_required'?'未执行':'已执行／已结束（旧原始状态 '+a.execution_state+'）'):stateLabel(a.execution_state)}} · HTTP 成功只证明此端点响应；验证挑战、拒绝、超时或未确认均不等于节点不可用。</p>

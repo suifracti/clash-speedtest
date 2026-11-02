@@ -60,7 +60,7 @@ function resultStatus(q:QueueItem):{label:string;tone:string;notExecuted?:boolea
   if(['timed_out','transport_error','rate_limited'].includes(outcome))return {label:outcomeLabel(outcome)+' · 未确认',tone:'warn'}
   return {label:outcomeLabel(outcome),tone:outcomeTone(outcome)}
  }
- if(q.project==='download'&&['completed','failed'].includes(q.state)){
+ if(q.project==='download'&&!['queued','running','cancelling'].includes(q.state)){
   const a=q.attempt
   if(a?.persistence_state==='failed')return {label:'保存失败',tone:'bad'}
   const result=a?.result

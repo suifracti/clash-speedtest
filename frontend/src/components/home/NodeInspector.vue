@@ -82,7 +82,8 @@ const downloadFailure=computed(()=>{
  if(r?.error_message==='测速源都限流')return '测速源都限流'
  if(r?.http_status===429)return '测速网站限流（429），不是节点问题'
  if(r?.http_status===403)return '测速网站拒绝了请求（403）。不是节点的问题。'
- return attemptStatus(a,true)+((r?.error_message||a.not_executed_reason)?'：'+(r?.error_message||a.not_executed_reason):'')
+ const status=attemptStatus(a,true),reason=r?.error_message||a.not_executed_reason
+ return status+(reason&&!status.includes(reason)?'：'+reason:'')
 })
 const downloadTrend=computed(()=>m.rowPoints(props.node,'download').filter(p=>!p.id.startsWith('planned:')))
 const downloadSpark=computed(()=>{

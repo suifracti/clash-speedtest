@@ -206,6 +206,14 @@ it('shows exact download outcomes and speeds instead of green task completion',(
  expect(rows[3].text()).toContain('重试保存')
 })
 
+it('shows a failed download state in Chinese',()=>{
+ const attempt:Attempt={...node,attempt_id:'download-failure',request_id:'request-failure',requested_at:'2026-10-15T09:27:25Z',execution_state:'connection_failed',persistence_state:'saved',rule:{target_url:'https://example.test/'},result:{outcome:'connection_failed',bytes_read:0,finished_at:'2026-10-15T09:27:26Z'}}
+ w.queue.value=[{id:attempt.attempt_id,node,project:'download',state:attempt.execution_state,attempt}]
+ attach(QueueModal)
+ expect(document.querySelector('.queue-row')?.textContent).toContain('连接失败')
+ expect(document.querySelector('.queue-row')?.textContent).not.toContain('connection_failed')
+})
+
 it('defaults to one explicit service observation and retains optional repeated sampling',async()=>{
  w.project.value='service';w.serviceIds.value=['cloudflare_204'];w.openPlan([node]);attach(TestPlanModal);await flushPromises()
  const field=Array.from(document.querySelectorAll('dialog label')).map(el=>new DOMWrapper(el)).find(l=>l.text().includes('每服务采样次数'))
