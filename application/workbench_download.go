@@ -16,6 +16,7 @@ import (
 )
 
 const workbenchDownloadRuleVersion = 3
+const workbenchDownloadBackupURL = "https://proof.ovh.net/files/100Mb.dat"
 
 type workbenchDownloadRuntime struct {
 	timingNS        map[string]int64
@@ -122,8 +123,8 @@ func (s *AppService) StartWorkbenchDownloadTest(ctx context.Context, req Workben
 	if err != nil {
 		return nil, fmt.Errorf("初始化固定下载目标失败；未发出请求: %w", err)
 	}
-	fallbackTarget := "https://cachefly.cachefly.net/100mb.test"
-	if req.SourceID == "cachefly" {
+	fallbackTarget := workbenchDownloadBackupURL
+	if req.SourceID == "ovh" {
 		target, fallbackTarget = fallbackTarget, target
 	}
 	now := time.Now().UTC()
@@ -331,7 +332,7 @@ func (s *AppService) executeWorkbenchDownload(runtime *workbenchDownloadRuntime)
 		} else {
 			measure := func(target string) speedtester.DownloadStreamResult {
 				options := speedtester.DownloadStreamOptions{
-					TargetURL: target, MaximumBytes: runtime.rule.MaximumBytes,
+					TargetURL: target, UseRange: target == workbenchDownloadBackupURL, MaximumBytes: runtime.rule.MaximumBytes,
 					MaximumDuration:  time.Duration(runtime.rule.MaximumDurationNS),
 					SampleEveryBytes: runtime.rule.SampleEveryBytes, SampleEveryDuration: time.Duration(runtime.rule.SampleEveryNS),
 				}
@@ -345,10 +346,10 @@ func (s *AppService) executeWorkbenchDownload(runtime *workbenchDownloadRuntime)
 			}
 			result = measure(runtime.rule.TargetURL)
 			if downloadSourceLimited(result) && runtime.fallbackTarget != "" && runtime.ctx.Err() == nil {
+				firstStatus := *result.HTTPStatus
 				result = measure(runtime.fallbackTarget)
-				if downloadSourceLimited(result) {
-					result.Outcome, result.EndReason, result.ErrorClass = "source_rate_limited", "source_rate_limited", "source_rate_limit"
-					result.ErrorMessage = "测速源都限流"
+				if runtime.ctx.Err() == nil && !downloadSourceHasData(result) {
+					result.ErrorMessage = downloadSourcesFailure(firstStatus, result)
 				}
 			}
 		}
@@ -492,6 +493,28 @@ func workbenchDownloadMeasurement(result speedtester.DownloadStreamResult) histo
 
 func downloadSourceLimited(result speedtester.DownloadStreamResult) bool {
 	return result.HTTPStatus != nil && (*result.HTTPStatus == http.StatusForbidden || *result.HTTPStatus == http.StatusTooManyRequests)
+}
+
+func downloadSourceHasData(result speedtester.DownloadStreamResult) bool {
+	return result.BytesRead > 0 && (result.Outcome == "completed" || result.Outcome == "byte_limit" || result.Outcome == "time_limit")
+}
+
+func downloadSourcesFailure(firstStatus int, fallback speedtester.DownloadStreamResult) string {
+	first := "测速源限流（429）"
+	if firstStatus == http.StatusForbidden {
+		first = "测速源拒绝（403）"
+	}
+	reason := "备用源不可用"
+	if fallback.HTTPStatus != nil && *fallback.HTTPStatus != http.StatusOK && *fallback.HTTPStatus != http.StatusPartialContent {
+		reason = fmt.Sprintf("备用源返回 HTTP %d", *fallback.HTTPStatus)
+	} else if fallback.Outcome == "time_limit" {
+		reason = "备用源超时"
+	} else if fallback.Outcome == "response_too_short" {
+		reason = "备用源返回内容过短"
+	} else if fallback.ErrorMessage != "" {
+		reason = "备用源：" + fallback.ErrorMessage
+	}
+	return first + "，" + reason
 }
 
 func safeDownloadError(message string) string {

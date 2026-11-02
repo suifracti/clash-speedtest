@@ -9,7 +9,7 @@ import {latencySampleState} from '../presentation'
 import {downloadNoDataReason} from '../measurementRounds'
 import {entryCountry,mainlandNotice} from '../entryPath'
 import {useWorkspace} from '../workspace'
-import {projectNames,stateLabel,outcomeLabel,outcomeTone,downloadSpeed,downloadTone,downloadOutcome,type QueueItem} from '../domain'
+import {projectNames,stateLabel,outcomeLabel,outcomeTone,downloadSpeed,downloadTone,downloadOutcome,downloadSourceName,type QueueItem} from '../domain'
 import Modal from './Modal.vue'
 const w=useWorkspace(),retrying=ref(''),progressTitle=ref<HTMLElement>()
 onMounted(()=>nextTick(()=>progressTitle.value?.focus({preventScroll:true})))
@@ -66,11 +66,12 @@ function resultStatus(q:QueueItem):{label:string;tone:string;notExecuted?:boolea
   const result=a?.result
   if(!a||!result)return {label:'已结束 · 无结果',tone:''}
   const outcome=result.outcome
+  if(result.error_message?.includes('备用源'))return {label:result.error_message,tone:'warn'}
   if(['not_executed','cancelled','user_cancelled','interrupted'].includes(outcome))return {label:stateLabel(outcome==='user_cancelled'?'cancelled':outcome),tone:'',notExecuted:true}
   if(downloadNoDataReason(a))return {label:downloadNoDataReason(a),tone:'warn'}
   if(downloadOutcome(a)==='response_too_short')return {label:outcomeLabel('response_too_short'),tone:'bad'}
   const speed=downloadSpeed(a)
-  if(speed!==null)return {label:`${speed.toFixed(2)} MB/s · ${(result.bytes_read/1048576).toFixed(1)}MB`,tone:downloadTone(a)}
+  if(speed!==null)return {label:`${downloadSourceName(a)} · ${speed.toFixed(2)} MiB/s · ${(result.bytes_read/1048576).toFixed(1)} MiB`,tone:downloadTone(a)}
   if(outcome==='source_rate_limited'||result.http_status===429)return {label:'下载源限流',tone:'warn'}
   if(result.bytes_read>0)return {label:`${(result.bytes_read/1048576).toFixed(2)} MB · 中断`,tone:'warn'}
   if(['timed_out','transport_error','connection_failed'].includes(outcome))return {label:outcomeLabel(outcome)+' · 未确认',tone:'warn'}
@@ -121,6 +122,7 @@ function saveState(q:QueueItem):{label:string;tone:string}{
 }
 function errorText(q:QueueItem){return q.error||latencyItem(q)?.error_message||latencyItem(q)?.result?.samples?.find(s=>!s.success)?.error||q.attempt?.result?.error_message||''}
 function shortError(raw:string){
+ if(raw.includes('备用源'))return raw
  if(/timeout|deadline|timed_out/i.test(raw))return '超时'
  if(/refused/i.test(raw))return '连接被拒绝'
  if(/reset/i.test(raw))return '连接被重置'

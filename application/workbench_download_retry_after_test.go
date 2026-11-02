@@ -18,8 +18,11 @@ func runDownloadSources(t *testing.T, statuses ...int) (*history.WorkbenchDownlo
 	var targets []string
 	configureDownloadResponse(app, func(r *http.Request) (*http.Response, error) {
 		targets = append(targets, r.URL.String())
+		if len(targets) == 2 && r.Header.Get("Range") != "bytes=0-999" {
+			t.Errorf("backup must request the configured byte range")
+		}
 		status, body := statuses[len(targets)-1], strings.Repeat("x", 1000)
-		if status != http.StatusOK {
+		if status != http.StatusOK && status != http.StatusPartialContent {
 			body = ""
 		}
 		return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
@@ -37,8 +40,8 @@ func runDownloadSources(t *testing.T, statuses ...int) (*history.WorkbenchDownlo
 }
 
 func TestWorkbenchDownloadSwitchesAfter429AndComparesActualTarget(t *testing.T) {
-	got, targets, store := runDownloadSources(t, http.StatusTooManyRequests, http.StatusOK)
-	if len(targets) != 2 || targets[0] != "https://speed.cloudflare.com/__down?bytes=1001" || targets[1] != "https://cachefly.cachefly.net/100mb.test" || got.Result.TargetURL != targets[1] || got.Result.Outcome != "byte_limit" {
+	got, targets, store := runDownloadSources(t, http.StatusTooManyRequests, http.StatusPartialContent)
+	if len(targets) != 2 || targets[0] != "https://speed.cloudflare.com/__down?bytes=1001" || targets[1] != workbenchDownloadBackupURL || got.Result.TargetURL != targets[1] || got.Result.Outcome != "byte_limit" {
 		t.Fatalf("fallback result mismatch: requests=%v result=%+v", targets, got.Result)
 	}
 	next := *got
@@ -53,7 +56,14 @@ func TestWorkbenchDownloadSwitchesAfter429AndComparesActualTarget(t *testing.T) 
 
 func TestWorkbenchDownloadReportsBothSourcesLimited(t *testing.T) {
 	got, targets, _ := runDownloadSources(t, http.StatusForbidden, http.StatusTooManyRequests)
-	if len(targets) != 2 || got.Result.TargetURL != targets[1] || got.Result.Outcome != "source_rate_limited" || got.Result.ErrorMessage != "测速源都限流" {
+	if len(targets) != 2 || got.Result.TargetURL != targets[1] || got.Result.Outcome != "source_rate_limited" || got.Result.ErrorMessage != "测速源拒绝（403），备用源返回 HTTP 429" {
 		t.Fatalf("both-source limit mismatch: requests=%v result=%+v", targets, got.Result)
+	}
+}
+
+func TestWorkbenchDownloadReportsPrimaryLimitAndFallbackFailure(t *testing.T) {
+	got, targets, _ := runDownloadSources(t, http.StatusTooManyRequests, http.StatusServiceUnavailable)
+	if len(targets) != 2 || got.Result.HTTPStatus == nil || *got.Result.HTTPStatus != http.StatusServiceUnavailable || got.Result.ErrorMessage != "测速源限流（429），备用源返回 HTTP 503" {
+		t.Fatalf("both source failures should remain visible: result=%+v", got.Result)
 	}
 }

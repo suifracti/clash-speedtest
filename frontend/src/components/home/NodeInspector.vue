@@ -22,7 +22,7 @@ import Modal from '../Modal.vue'
 import {homeModelKey,latencyVerdict,toneLabel} from './homeModel'
 import {attemptObservedAt,downloadEvidence} from '../../nodeQuality'
 import {attemptStatus} from '../../measurementRounds'
-import {downloadSpeed,downloadTarget,downloadConnectionSeconds} from '../../domain'
+import {downloadSpeed,downloadSourceName,downloadConnectionSeconds} from '../../domain'
 const props=defineProps<{node:NodeOption;exitOnly?:boolean;clashUsage?:ClashUsage[]}>()
 const emit=defineEmits<{(e:'select-project',id:Project|'exit'):void;(e:'refresh-clash-usage'):void}>()
 const w=useWorkspace(),m=inject(homeModelKey)!
@@ -74,11 +74,12 @@ const downloadRecords=computed(()=>[...new Map([...(w.downloads.value[key(props.
 const downloadHistoryContext=computed(()=>{const {latest,valid}=downloadEvidence(downloadRecords.value),speed=downloadSpeed(valid);return valid&&speed!==null?`${valid.attempt_id===latest?.attempt_id?'最近有效速度':'历史有效速度'} ${speed.toFixed(2)} MiB/s（${date(attemptObservedAt(valid))}）`:''})
 const downloadLatest=computed(()=>downloadEvidence(downloadRecords.value).latest)
 const downloadValue=computed(()=>downloadSpeed(downloadLatest.value))
-const downloadSource=computed(()=>{const url=downloadTarget(downloadLatest.value);return url.includes('cachefly')?'Cachefly':url.includes('cloudflare')?'Cloudflare':url?new URL(url).hostname:'测速源未记录'})
+const downloadSource=computed(()=>downloadSourceName(downloadLatest.value))
 const downloadFailure=computed(()=>{
  const a=downloadLatest.value,r=a?.result
  if(readError.value)return '已保存记录读取失败'
  if(!a)return '尚无测速记录'
+ if(r?.error_message?.includes('备用源'))return r.error_message
  if(r?.error_message==='测速源都限流')return '测速源都限流'
  if(r?.http_status===429)return '测速网站限流（429），不是节点问题'
  if(r?.http_status===403)return '测速网站拒绝了请求（403）。不是节点的问题。'
@@ -91,7 +92,7 @@ const downloadSpark=computed(()=>{
  return points.map((p,i)=>{if(p.value===null){started=false;return ''}const cmd=started?'L':'M';started=true;return `${cmd}${4+i*344/Math.max(1,points.length-1)},${30-p.value/max*26}`}).join(' ')
 })
 function retryDownload(){
- w.openPlan([props.node]);if(w.plan.value){w.plan.value.projects=['download'];w.plan.value.includeReputation=false;w.plan.value.reputationServiceIds=[];w.plan.value.downloadSource=downloadSource.value==='Cachefly'?'cloudflare':'cachefly'}
+ w.openPlan([props.node]);if(w.plan.value){w.plan.value.projects=['download'];w.plan.value.includeReputation=false;w.plan.value.reputationServiceIds=[];w.plan.value.downloadSource=downloadSource.value==='OVH'?'cloudflare':'ovh'}
 }
 function windowText(id:string){
  if(readError.value)return '已保存记录读取失败'

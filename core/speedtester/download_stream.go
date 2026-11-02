@@ -32,6 +32,7 @@ const defaultDownloadSampleInterval = 100 * time.Millisecond
 
 type DownloadStreamOptions struct {
 	TargetURL           string
+	UseRange            bool
 	MaximumBytes        int64
 	MaximumDuration     time.Duration
 	SampleEveryBytes    int64
@@ -204,6 +205,9 @@ func (st *SpeedTester) measureDownloadStream(ctx context.Context, client *http.C
 	}
 	request.Header.Set("User-Agent", "clash-speedtest")
 	request.Header.Set("Accept-Encoding", "identity")
+	if options.UseRange {
+		request.Header.Set("Range", fmt.Sprintf("bytes=0-%d", options.MaximumBytes-1))
+	}
 	// A proxy adapter may hide DNS/TCP/handshake. Name the combined span
 	// honestly; Darwin's verified socket path supplies finer boundaries.
 	setPhase("proxy_connect_and_handshake")
@@ -285,7 +289,7 @@ func (st *SpeedTester) measureDownloadStream(ctx context.Context, client *http.C
 		}
 		return finish()
 	}
-	if status != http.StatusOK {
+	if status != http.StatusOK && !(options.UseRange && status == http.StatusPartialContent) {
 		result.Outcome = "http_rejected"
 		result.FailurePhase = "response_status"
 		result.ErrorMessage = fmt.Sprintf("下载目标返回 HTTP %d", status)
