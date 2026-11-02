@@ -2,14 +2,15 @@
 import SubscriptionChanges from './SubscriptionChanges.vue'
 import AirportReport from './AirportReport.vue'
 import UiSelect from './UiSelect.vue'
-import {computed,onBeforeUnmount,onMounted,ref} from 'vue'
-import {api,desktop,request,type SubscriptionRefreshJob} from '../api'
+import {computed,onBeforeUnmount,onMounted,ref,watch} from 'vue'
+import {api,desktop,request,type SubscriptionRefreshItem,type SubscriptionRefreshJob} from '../api'
 import {useWorkspace} from '../workspace'
 import {bytes,date,subscriptionUsed,type Airport,type Subscription} from '../domain'
 import Modal from './Modal.vue'
 import Icon from './Icon.vue'
 import SubscriptionUsageView from './SubscriptionUsageView.vue'
 import {airportAccounts,noticesForAccount,parseNoticeUsage} from '../airportViewing'
+import {readUsage,usageRefreshError,shanghaiDay,shiftDay,type UsageSnapshot} from '../usageDaily'
 import UsageDays from './UsageDays.vue'
 const section=ref('manage')
 const noticeBalances=ref<Record<string,number|undefined>>({})
@@ -21,6 +22,23 @@ async function edit(airport?:Airport,sub?:Subscription){formError.value='';if(!a
 function addSub(airport:Airport){formError.value='';form.value={kind:'subscription',airportId:airport.id,name:'',url:'',website_url:'',backup_url:'',note:''}}
 async function save(){const f=form.value;if(!f)return;formError.value='';if(!f.name.trim()||!f.url.trim()){formError.value='请填写名称和订阅地址或配置文件路径';return}busy.value='form';try{if(f.kind==='airport'){const body={name:f.name,url:f.url,website_url:f.website_url,backup_url:f.backup_url,note:f.note};await request(f.airportId?`/api/airports/${f.airportId}`:'/api/airports',f.airportId?'PUT':'POST',body,f.airportId?'UpdateFrontendAirport':'CreateFrontendAirport',f.airportId?[f.airportId,body]:[body])}else await request(`/api/airports/${f.airportId}/subscriptions${f.subId?'/'+f.subId:''}`,f.subId?'PUT':'POST',{name:f.name,url:f.url,note:f.note},f.subId?'UpdateSubscription':'AddSubscription',f.subId?[f.airportId,f.subId,f.name,f.url,f.note]:[f.airportId,f.name,f.url,f.note]);form.value=null;await w.refreshNodes();w.notify('订阅已保存')}catch(e){formError.value=e instanceof Error?e.message:String(e)}finally{busy.value=''}}
 const refreshState=(state:string)=>({queued:'排队中',fetching:'抓取中',parsing:'解析中',saving:'保存中',succeeded:'成功',failed:'失败',cancelled:'已取消',not_executed:'未执行',interrupted:'中断'} as Record<string,string>)[state]||state
+const failedSnapshots=ref<UsageSnapshot[]>([])
+watch(()=>JSON.stringify([refreshProgressVisible.value,refreshJob.value?.id,refreshJob.value?.items.filter(item=>item.state==='failed').map(item=>[item.airport_id,item.subscription_id,item.finished_at])]),async(_,__,onCleanup)=>{
+  failedSnapshots.value=[]
+  if(!refreshProgressVisible.value||!refreshJob.value?.items.some(item=>item.state==='failed'))return
+  let current=true;onCleanup(()=>{current=false})
+  const today=shanghaiDay()
+  try{const report=await readUsage({from:shiftDay(today,-13),until:today,period:'day'},0);if(current)failedSnapshots.value=report.accounts}
+  catch{/* Keep the task's existing message if the saved snapshot is unavailable. */}
+},{immediate:true})
+function refreshItemError(item:SubscriptionRefreshItem){
+  if(item.state!=='failed')return item.error_message
+  const snapshot=failedSnapshots.value.find(s=>s.airport_id===item.airport_id&&s.subscription_id===item.subscription_id&&s.status==='refresh_failed'&&s.raw_error)
+  if(!snapshot)return item.error_message
+  const at=Date.parse(snapshot.captured_at)
+  if(item.started_at&&at<Date.parse(item.started_at)||item.finished_at&&at>Date.parse(item.finished_at))return item.error_message
+  return usageRefreshError(snapshot)
+}
 function mergeRefresh(job:SubscriptionRefreshJob,openProgress=false){refreshJob.value=job;if(openProgress)refreshProgressVisible.value=true;if(job.state==='running')scheduleRefreshPoll(job.id);else clearTimeout(refreshTimer)}
 function scheduleRefreshPoll(id:string){clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>void pollRefresh(id),700)}
 async function pollRefresh(id:string){if(disposed)return;try{const job=await api.refreshJob(id);if(disposed)return;mergeRefresh(job);if(job.state!=='running'){await w.refreshNodes();if(job.failed===0)w.notify('订阅已刷新，选择与节点范围已同步')}}catch(e){if(!disposed)w.fail(e)}}
@@ -98,7 +116,7 @@ onBeforeUnmount(()=>{disposed=true;clearTimeout(refreshTimer)})
 <Modal v-if="form" :title="`${form.airportId&&form.kind==='airport'||form.subId?'编辑':'添加'}${form.kind==='airport'?'机场':'订阅'}`" @close="()=>{if(!busy)form=null}"><form @submit.prevent="save"><div class="form-stack"><label>名称<input v-model="form.name" autofocus required maxlength="100"></label><label>订阅地址或配置路径<input v-model="form.url" required autocomplete="off" spellcheck="false" placeholder="https://… 或本地文件路径"></label><template v-if="form.kind==='airport'"><label>官网地址<input v-model="form.website_url" placeholder="可选"></label><label>备用入口<input v-model="form.backup_url" placeholder="可选"></label></template><label>备注<textarea v-model="form.note" rows="3"/></label></div><p v-if="formError" class="inline-error" role="alert">{{formError}}</p><div class="form-actions"><button type="button" class="button" :disabled="!!busy" @click="form=null">取消</button><button class="button primary" type="submit" :disabled="!!busy">{{busy==='form'?'保存中…':'保存订阅'}}</button></div></form></Modal>
 <Modal v-if="remove" title="删除订阅来源" @close="remove=null"><p>删除「{{remove.sub?.name||remove.airport.name}}」{{remove.sub?'这个订阅':'及其下的订阅'}}。已有检测历史保留，关联监测可能因来源缺失而停止。</p><template #footer><button class="button" @click="remove=null">返回</button><button class="button danger-fill" :disabled="!!busy" @click="deleteItem">删除</button></template></Modal>
 <Modal v-if="maintenance" title="更新与维护" wide @close="maintenance=null"><div class="form-grid"><label>自动更新订阅<UiSelect v-model.number="maintenance.settings.refresh_hours"><option :value="0">关闭</option><option v-for="h in [1,6,12,24,72,168]" :key="h" :value="h">每 {{h}} 小时</option></UiSelect></label></div><h3>快捷入口与每月提醒</h3><div v-for="(link,i) in maintenance.settings.links" :key="i" class="maintenance-link"><input v-model="link.label" aria-label="入口名称" placeholder="入口名称"><input v-model="link.url" aria-label="入口地址" placeholder="https://…"><label>每月<input v-model.number="link.monthly_day" type="number" min="0" max="28" aria-label="每月提醒日"></label><button class="button ghost icon-button" aria-label="移除入口" @click="maintenance.settings.links.splice(i,1)"><Icon name="close"/></button></div><p class="small muted">提醒日填 1–28；填 0 时只保留快捷入口。</p><button class="button" @click="maintenance.settings.links.push({label:'',url:'',monthly_day:0})"><Icon name="plus"/>添加入口</button><template #footer><button class="button" @click="maintenance=null">返回</button><button class="button primary" :disabled="!!busy" @click="saveMaintenance">保存</button></template></Modal>
-<Modal v-if="refreshJob&&refreshProgressVisible" title="订阅刷新进度" wide @close="refreshProgressVisible=false"><p class="muted">{{refreshJob.completed}} / {{refreshJob.items.length}} 项已完成 · {{refreshJob.success}} 成功 · {{refreshJob.failed}} 失败 · {{refreshJob.not_executed}} 未执行</p><p v-if="refreshJob.persistence_error" class="inline-error" role="alert">{{refreshJob.persistence_error}}</p><div class="refresh-progress-list"><article v-for="item in refreshJob.items" :key="item.airport_id+'|'+item.subscription_id"><strong>{{item.airport_name}} · {{item.subscription_name}}</strong><span class="badge" :class="item.state==='succeeded'?'good':item.state==='failed'?'bad':item.state==='not_executed'?'':'warn'">{{refreshState(item.state)}}</span><small v-if="item.stages?.length">{{item.stages.map(stage=>refreshState(stage.state)).join(' → ')}}</small><p v-if="item.error_message" class="inline-error">{{item.error_message}}</p><small v-if="item.duration_ms">{{item.duration_ms}} ms · {{item.node_count}} 条配置</small></article></div><template #footer><button v-if="refreshJob.failed>0" class="button" :disabled="refreshLoading||refreshJob.state==='running'" @click="retryRefresh">只重试失败项</button><button v-if="refreshJob.state==='running'" class="button danger-fill" aria-label="取消刷新任务" @click="cancelRefresh">取消刷新</button><button class="button primary" @click="refreshProgressVisible=false">关闭</button></template></Modal></section></template>
+<Modal v-if="refreshJob&&refreshProgressVisible" title="订阅刷新进度" wide @close="refreshProgressVisible=false"><p class="muted">{{refreshJob.completed}} / {{refreshJob.items.length}} 项已完成 · {{refreshJob.success}} 成功 · {{refreshJob.failed}} 失败 · {{refreshJob.not_executed}} 未执行</p><p v-if="refreshJob.persistence_error" class="inline-error" role="alert">{{refreshJob.persistence_error}}</p><div class="refresh-progress-list"><article v-for="item in refreshJob.items" :key="item.airport_id+'|'+item.subscription_id"><strong>{{item.airport_name}} · {{item.subscription_name}}</strong><span class="badge" :class="item.state==='succeeded'?'good':item.state==='failed'?'bad':item.state==='not_executed'?'':'warn'">{{refreshState(item.state)}}</span><small v-if="item.stages?.length">{{item.stages.map(stage=>refreshState(stage.state)).join(' → ')}}</small><p v-if="refreshItemError(item)" class="inline-error">{{refreshItemError(item)}}</p><small v-if="item.duration_ms">{{item.duration_ms}} ms · {{item.node_count}} 条配置</small></article></div><template #footer><button v-if="refreshJob.failed>0" class="button" :disabled="refreshLoading||refreshJob.state==='running'" @click="retryRefresh">只重试失败项</button><button v-if="refreshJob.state==='running'" class="button danger-fill" aria-label="取消刷新任务" @click="cancelRefresh">取消刷新</button><button class="button primary" @click="refreshProgressVisible=false">关闭</button></template></Modal></section></template>
 <style src="./secondary-observatory.css" scoped></style>
 <style scoped>
 .cst-ledger{display:flex;flex-direction:column;gap:14px}

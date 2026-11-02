@@ -4,13 +4,14 @@ import AirportsView from '../components/AirportsView.vue'
 import type {Airport} from '../domain'
 
 const mocks=vi.hoisted(()=>({
-  api:{refreshJobs:vi.fn(async()=>[]),startRefresh:vi.fn(),refreshJob:vi.fn(),cancelRefresh:vi.fn()},
+  api:{refreshJobs:vi.fn(async():Promise<any[]>=>[]),startRefresh:vi.fn(),refreshJob:vi.fn(),cancelRefresh:vi.fn()},
+  readUsage:vi.fn(async():Promise<any>=>({accounts:[]})),
   workspace:{airports:{value:[] as Airport[]},notices:{value:[]},usageRefreshVersion:{value:0},maintenanceAirportId:{value:''},page:{value:'airports'},subscription:{value:'all'},setAirports:vi.fn(),refreshNodes:vi.fn(async()=>{}),refreshJobs:vi.fn(async()=>{}),notify:vi.fn(),fail:vi.fn()},
   request:vi.fn(async()=>undefined),
 }))
 vi.mock('../api',async importOriginal=>{const actual=await importOriginal<typeof import('../api')>();return {...actual,request:mocks.request,desktop:()=>false,api:{...actual.api,...mocks.api}}})
 vi.mock('../workspace',()=>({useWorkspace:()=>mocks.workspace}))
-vi.mock('../usageDaily',async importOriginal=>({...await importOriginal<typeof import('../usageDaily')>(),accountDailyUsage:vi.fn(async(airportId:string)=>airportId==='airport-a'?{account:{account_key:'k',airport_name:'A',subscription_name:'A1',captured_at:'2026-10-19T02:00:00Z',status:'ok',upload:0,download:0,source:'subscription_update'},report:undefined,days:[{date:'2026-10-20',label:'今天',bytes:null,estimated:false,recorded:false},{date:'2026-10-19',label:'昨天',bytes:2*1024**3,estimated:false,recorded:true},{date:'2026-10-18',label:'前天',bytes:null,estimated:false,recorded:true}]}:{account:undefined,report:undefined,days:[]})}))
+vi.mock('../usageDaily',async importOriginal=>({...await importOriginal<typeof import('../usageDaily')>(),readUsage:mocks.readUsage,accountDailyUsage:vi.fn(async(airportId:string)=>airportId==='airport-a'?{account:{account_key:'k',airport_name:'A',subscription_name:'A1',captured_at:'2026-10-19T02:00:00Z',status:'ok',upload:0,download:0,source:'subscription_update'},report:undefined,days:[{date:'2026-10-20',label:'今天',bytes:null,estimated:false,recorded:false},{date:'2026-10-19',label:'昨天',bytes:2*1024**3,estimated:false,recorded:true},{date:'2026-10-18',label:'前天',bytes:null,estimated:false,recorded:true}]}:{account:undefined,report:undefined,days:[]})}))
 
 let wrapper:VueWrapper|undefined
 const airports:Airport[]=[{id:'airport-a',name:'A',node_count:2,has_cache:true,url_display:'',subscriptions:[
@@ -24,6 +25,7 @@ beforeEach(()=>{
   mocks.workspace.page.value='airports'
   mocks.workspace.subscription.value='all'
   mocks.api.refreshJobs.mockResolvedValue([])
+  mocks.readUsage.mockReset().mockResolvedValue({accounts:[]})
   mocks.api.startRefresh.mockReset()
   mocks.api.refreshJob.mockReset()
   mocks.api.cancelRefresh.mockReset()
@@ -34,6 +36,16 @@ beforeEach(()=>{
 afterEach(()=>{wrapper?.unmount();wrapper=undefined;document.body.innerHTML='';vi.useRealTimers();vi.clearAllMocks()})
 
 describe('AirportsView manual refresh jobs',()=>{
+  it('shows the saved failure paths in refresh progress without exposing addresses',async()=>{
+    const failed=job('refresh-failed','finished',[{airport_id:'airport-a',subscription_id:'account-a1',airport_name:'A',subscription_name:'A1',state:'failed',started_at:'2026-11-02T10:00:00Z',finished_at:'2026-11-02T10:00:05Z',error_message:'订阅连接或传输失败；旧缓存保留'}],{completed:1,success:0,failed:1,cancelled:0,not_executed:0})
+    mocks.api.refreshJobs.mockResolvedValueOnce([failed]);mocks.readUsage.mockResolvedValueOnce({accounts:[{airport_id:'airport-a',subscription_id:'account-a1',captured_at:'2026-11-02T10:00:04Z',status:'refresh_failed',fetch_path:'physical',raw_error:'普通网络：Get "https://sub.example.invalid/sub?token=FAKE_SECRET": EOF；物理网卡：lookup sub.example.invalid on 192.0.2.53:53: NXDOMAIN'}]})
+    wrapper=mount(AirportsView,{attachTo:document.body});await flushPromises()
+    await wrapper.findAll('button').find(button=>button.text().includes('查看刷新进度'))!.trigger('click');await flushPromises()
+    const text=document.body.querySelector('dialog.modal')?.textContent||''
+    expect(text).toContain('普通网络：连接被关闭；物理网卡：DNS 查不到域名；旧缓存保留')
+    expect(text).not.toMatch(/sub\.example|192\.0\.2|FAKE_SECRET/)
+    expect(mocks.api.startRefresh).not.toHaveBeenCalled()
+  })
   it('preserves unknown usage in the account ledger',async()=>{
     mocks.workspace.airports.value=[{...airports[0],subscriptions:[{...airports[0].subscriptions![0],usage:{upload:null,download:2048,total:4096} as any}]}]
     wrapper=mount(AirportsView);await flushPromises()
