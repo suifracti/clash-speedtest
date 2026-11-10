@@ -1,8 +1,8 @@
 # 开发、运行版与功能保留检查
 
-代码以 GitHub 明确分支和提交为准，不默认把 `main`、旧工作树、旧 App 或浏览器端口当最新候选。当前开发分支为 `codex/cst-w12i-integration-20261011-6aa2079`；Obsidian 记录任务与决定；按2026-10-19用户要求，新附件留本地，不默认上传云盘。每次改动验证后提交/推送此分支，读回远端 SHA。合并 main、正式发布、生产数据与实网检测仍按对应授权。
+现行协作与授权见 [AGENTS](../AGENTS.md)，路线见 [第三轮优化路线](roadmap-round3.md)，当前进度见 [第三轮进度](backend-round3-progress.md)。本页保留版本核对方法和有日期的证据，不另维护当前分支或运行 App。每轮以用户指定的活动工作树、实际 refs@SHA、dirty 与运行身份为准；下文 2026-10 的分支与 App 仅代表当时，不据此切换工作树、恢复旧任务或推定今天仍在运行。Obsidian 保存私人体验、决定与历史，不是第二份当前施工表。附件按既有约定留本地。合并 main、发布、生产数据与实网操作仍按对应授权。
 
-## 2026-10-19 用户确认的运行 App 开发基线
+## 2026-10-19 用户确认的运行 App 开发基线（历史截点）
 
 - 业务源码基线：`068cc64f20032974f16a10cc42cae5b3df4f04b0`；仍使用原开发分支，不另开并行开发线。
 - 当前运行的是从该提交构建的 `CST Mac 068cc64f.app`。内嵌 manifest 与核心 SHA256 一致，原生窗口已加载账户和节点，沿用原隔离历史；没有为确认基线重新测速或查询信誉。
@@ -22,14 +22,14 @@
 
 1. 在同一现有工作树核对 HEAD、dirty、远端分支、运行 App/PID/数据根。dirty 先保留；只抓取和比较，禁止 reset/覆盖/清理。
 2. 比较 main 与候选的独立增量，并核对 `candidate-capabilities.json` 中已接受能力。遗漏、替代、未完成分别记清，不删能力条目凑通过；替代必须有明确映射及行为回归。
-3. 运行受影响的离线测试与构建。每轮代码同步 GitHub，明确提交和真实失败；源代码在远端不等于功能已验收。
+3. 业务代码变更运行受影响的离线测试与必要构建；仅文档变更核内容、链接、路由与差异，不构建 App。每轮代码同步 GitHub，明确提交和真实失败；源代码在远端不等于功能已验收。
 4. App 从 clean、明确提交重新构建前端和原生 core。Go 链接参数写入 `-X main.commit=<完整SHA>`；构建时记录 source_revision、source_tree、core_sha256、frontend_dist_sha256、build_verified。manifest 必须来自实际 clean 构建，不补写到旧未知二进制。分享可用 App 时带上该记录，重核正在运行的文件/PID。
 5. 代码、离线测试、构建、原生交互、实网、保存/重开分开报告；历史未提交能力及实际缺口保留在 GitHub，不仅藏在本地 ZIP/长聊天。
 
 源码检查命令（只读 Git、源码与指定 core，不读取订阅或数据库）：
 
 ```sh
-python3 scripts/candidate_audit.py --online --branch codex/cst-w12i-integration-20261011-6aa2079
+python3 scripts/candidate_audit.py --online --branch <实际已核对的候选分支>
 python3 scripts/candidate_audit.py --online --app /absolute/path/cst-core --manifest /absolute/path/build-manifest.json
 python3 -m unittest discover -s scripts/tests -v
 ```
