@@ -11,6 +11,7 @@
 | 打了新包仍是旧功能；改构建/包装入口 | L-001；scripts/build-mac-candidate.sh |
 | 迁移/合并后功能丢了、换工作树或执行者 | L-002；docs/version-consistency.md |
 | 用量不完整、检测失败、取消/保存、历史身份 | L-003；docs/backend-round3-progress.md |
+| 切换机场后体检变空或显示上个机场的数据 | L-003；frontend/src/components/AirportReport.vue |
 | 下载只有短文本、速度口径偏低、备用源限流与旧测速结果 | L-004；application/workbench_download.go；frontend/src/domain.ts |
 
 ## 默认自动执行：不等用户提醒
@@ -42,6 +43,8 @@
 依据：进度页 B2.1 接受小数/科学计数并对缺计数保留 null/partial；AGENTS 要求账户隔离、节点 identity/revision 与执行/判据/保存状态分开。HTTP 可达不等于业务成功，缺证据不能当节点坏、零用量或模型可用。
 
 下次检查：用已存记录及相关用例解释真正阶段、条件和未知项；不能为解释失败自动发起全量实网、付费调用或修改运行代理状态。真实个人配置/节点信息只留私人位置，公开记忆写脱敏行为要求。
+
+体检切换机场的异步读取需在启动时固定机场和节点范围，并沿用已有 generation 模式，只让最新请求写回数据、月费、错误和忙状态。旧机场响应晚到会覆盖当前结果，不能因此认定当前机场没有历史。`frontend/src/components/AirportReport.vue` 已处理，回归用例位于 `airport-report.spec.ts`，离线模拟新请求先完成、旧请求后返回。
 
 ## L-004 下载短响应、计速与备用源要分开判断
 

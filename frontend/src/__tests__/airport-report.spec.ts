@@ -38,3 +38,30 @@ it('filters the report and ranking together, sorts rows and opens the inspector'
  await wrapper.findAll('.rank-node')[0]!.trigger('click');expect(w.viewRequest.value?.node_key).toBe('slow');expect(w.page.value).toBe('home')
  wrapper.unmount();w.dispose();settings.mockRestore()
 })
+
+it('keeps the selected airport report when an older airport read finishes later',async()=>{
+ const make=(id:string)=>({profile_id:'p-'+id,node_identity_key:id,config_revision_key:'r',node_key:id,display_name:'节点 '+id,type:'Vless'} as NodeOption)
+ const a=make('a'),b=make('b'),at='2026-10-20T10:00:00Z'
+ const history=(node:NodeOption,success:boolean)=>({
+  [key(node)]:{
+   tests:[{...node,attempt_id:node.node_key,requested_at:at,total_samples:2,success_samples:success?2:0,
+    samples:[1,2].map(seq=>({seq,target:'https://speed.cloudflare.com/__down?bytes=1',timestamp:at,success,latency_ms:success?200:0,error:success?'':'timeout'}))}],
+   monitor:[],reads:{latency:{complete:true},monitor:{complete:true}},
+  },
+ }) as unknown as Record<string,QualityEvidence>
+ let finishA!:(value:Record<string,QualityEvidence>)=>void
+ vi.mocked(readQualityBatch).mockReset().mockImplementationOnce(()=>new Promise(resolve=>{finishA=resolve})).mockResolvedValueOnce(history(b,true))
+ const settings=vi.spyOn(api,'settings').mockResolvedValue({airport_monthly_prices:{a:10,b:20}} as never)
+ const w=createWorkspace();w.airports.value=[{id:'a',name:'机场A',subscriptions:[{id:'p-a',airport_id:'a'}]},{id:'b',name:'机场B',subscriptions:[{id:'p-b',airport_id:'b'}]}] as never;w.nodes.value=[a,b]
+ const wrapper=mount(AirportReport,{global:{provide:{[workspaceKey as symbol]:w},stubs:{TrendChart:true}}})
+ try{
+  await flushPromises()
+  wrapper.findAllComponents(UiSelect)[0]!.vm.$emit('update:modelValue','b');await flushPromises()
+  expect(wrapper.get('.report-metrics').text()).toContain('2/2 次')
+  finishA(history(a,false));await flushPromises()
+  expect(wrapper.findAllComponents(UiSelect)[0]!.props('modelValue')).toBe('b')
+  expect(wrapper.get('.report-metrics').text()).toContain('2/2 次')
+  expect(wrapper.get('.rank-node').text()).toContain('b')
+  expect((wrapper.get('[aria-label="机场月费"]').element as HTMLInputElement).value).toBe('20')
+ }finally{wrapper.unmount();w.dispose();settings.mockRestore()}
+})

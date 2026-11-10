@@ -44,7 +44,20 @@ function selectBeat(b:AirportBeat){selectedBeat.value=b;hideHoverTip()}
 const traffic=computed(()=>{const accounts=new Set(usage.value?.accounts.filter(a=>a.airport_id===airport.value).map(a=>a.account_key));const values=usage.value?.intervals.filter(i=>accounts.has(i.account_key)&&i.bytes!==null).map(i=>i.bytes!)||[];return values.length?values.reduce((a,b)=>a+b,0):null})
 const cost=computed(()=>price.value>0&&traffic.value!==null&&traffic.value>0?price.value/(traffic.value/1e9):null)
 watch(airport,()=>{region.value='all';line.value='all';protocol.value='all';void refresh()})
-async function refresh(){busy.value=true;error.value='';selectedBeat.value=null;data.value={};usage.value=null;const until=new Date().toISOString(),since=new Date(Date.parse(until)-30*86400000).toISOString(),today=shanghaiDay();try{settings.value=await api.settings();price.value=settings.value.airport_monthly_prices?.[airport.value]||0;const [evidence,u]=await Promise.all([readQualityBatch(airportNodes.value,since,until),readUsage({from:shiftDay(today,-29),until:today,period:'day'},0)]);data.value=evidence;usage.value=u}catch(e){error.value=e instanceof Error?e.message:String(e)}finally{busy.value=false}}
+let generation=0
+async function refresh(){
+ const token=++generation,selectedAirport=airport.value,requestedNodes=airportNodes.value.slice()
+ busy.value=true;error.value='';selectedBeat.value=null;data.value={};usage.value=null
+ const until=new Date().toISOString(),since=new Date(Date.parse(until)-30*86400000).toISOString(),today=shanghaiDay()
+ try{
+  const current=await api.settings()
+  if(token!==generation)return
+  const [evidence,u]=await Promise.all([readQualityBatch(requestedNodes,since,until),readUsage({from:shiftDay(today,-29),until:today,period:'day'},0)])
+  if(token!==generation)return
+  settings.value=current;price.value=current.airport_monthly_prices?.[selectedAirport]||0;data.value=evidence;usage.value=u
+ }catch(e){if(token===generation)error.value=e instanceof Error?e.message:String(e)}
+ finally{if(token===generation)busy.value=false}
+}
 async function savePrice(){try{const current=await api.settings();current.airport_monthly_prices={...current.airport_monthly_prices,[airport.value]:price.value};await api.saveSettings(current);settings.value=current;w.notify('月费已保存到本机设置')}catch(e){w.fail(e)}}
 onMounted(()=>void refresh())
 </script>
