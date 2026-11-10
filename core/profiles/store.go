@@ -20,6 +20,7 @@ const (
 type Subscription struct {
 	NodeVersions       *SubscriptionNodeVersions `json:"node_versions,omitempty"`
 	UserAgent          string                    `json:"user_agent,omitempty"`
+	VergeUID           string                    `json:"verge_uid,omitempty"`
 	LastFailureRetryAt time.Time                 `json:"last_failure_retry_at,omitempty"`
 	LastFailureAt      time.Time                 `json:"last_failure_at,omitempty"`
 	LastFailureCode    string                    `json:"last_failure_code,omitempty"`

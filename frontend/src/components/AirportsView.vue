@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import SubscriptionChanges from './SubscriptionChanges.vue'
 import AirportReport from './AirportReport.vue'
+import ClashVergeImport from './ClashVergeImport.vue'
 import UiSelect from './UiSelect.vue'
 import {computed,onBeforeUnmount,onMounted,ref,watch} from 'vue'
 import {api,desktop,request,type SubscriptionRefreshItem,type SubscriptionRefreshJob} from '../api'
@@ -12,7 +13,7 @@ import SubscriptionUsageView from './SubscriptionUsageView.vue'
 import {airportAccounts,noticesForAccount,parseNoticeUsage} from '../airportViewing'
 import {readUsage,usageRefreshError,shanghaiDay,shiftDay,type UsageSnapshot} from '../usageDaily'
 import UsageDays from './UsageDays.vue'
-const section=ref('manage')
+const section=ref('manage'),vergeOpen=ref(false)
 const noticeBalances=ref<Record<string,number|undefined>>({})
 const w=useWorkspace(),busy=ref(''),search=ref(''),form=ref<{kind:'airport'|'subscription';airportId?:string;subId?:string;name:string;url:string;website_url:string;backup_url:string;note:string}|null>(null),formError=ref(''),remove=ref<{airport:Airport;sub?:Subscription}|null>(null),maintenance=ref<{airport:Airport;settings:NonNullable<Airport['maintenance']>}|null>(null),refreshJob=ref<SubscriptionRefreshJob|null>(null),refreshProgressVisible=ref(false),refreshLoading=ref(false)
 const visible=computed(()=>w.airports.value.filter(a=>(a.name+' '+(a.note||'')).includes(search.value)))
@@ -77,7 +78,7 @@ function browse(a:Airport,s?:Subscription){w.setAirports([a.id]);if(s)w.subscrip
 onMounted(()=>void loadRefreshJobs())
 onBeforeUnmount(()=>{disposed=true;clearTimeout(refreshTimer)})
 </script>
-<template><section class="page-view airports-view"><div class="page-header"><div><h1>机场与账户</h1><p>每个订阅账户一行：套餐用量、到期、每日用量和更新状态。这里是机场账户计数，不是本工具的探测流量。</p></div><button v-if="section==='manage'&&refreshJob&&!refreshProgressVisible" class="button ghost" @click="refreshProgressVisible=true"><Icon name="refresh"/>查看刷新进度</button><button v-if="section==='manage'" class="button primary" @click="edit()"><Icon name="plus"/>添加机场</button></div><div class="subscription-view-tabs" role="group" aria-label="机场订阅视图"><button class="button" :class="{active:section==='manage'}" :aria-pressed="section==='manage'" @click="section='manage'">账户台账</button><button class="button" :class="{active:section==='usage'}" :aria-pressed="section==='usage'" @click="section='usage'">用量明细</button><button class="button" :class="{active:section==='report'}" :aria-pressed="section==='report'" @click="section='report'">体检</button></div><SubscriptionUsageView v-if="section==='usage'"/><AirportReport v-else-if="section==='report'"/><template v-else><div class="page-toolbar"><label class="search-field"><Icon name="search"/><input v-model="search" placeholder="搜索机场" aria-label="搜索机场"></label><span class="muted small">{{w.airports.value.length}} 个机场 · {{w.airports.value.reduce((n,x)=>n+(x.subscriptions?.length||1),0)}} 个账户</span></div>
+<template><section class="page-view airports-view"><div class="page-header"><div><h1>机场与账户</h1><p>每个订阅账户一行：套餐用量、到期、每日用量和更新状态。这里是机场账户计数，不是本工具的探测流量。</p></div><button v-if="section==='manage'&&refreshJob&&!refreshProgressVisible" class="button ghost" @click="refreshProgressVisible=true"><Icon name="refresh"/>查看刷新进度</button><button v-if="section==='manage'" class="button" :disabled="!!busy" @click="vergeOpen=true">从 Clash Verge 导入／同步</button><button v-if="section==='manage'" class="button primary" @click="edit()"><Icon name="plus"/>添加机场</button></div><div class="subscription-view-tabs" role="group" aria-label="机场订阅视图"><button class="button" :class="{active:section==='manage'}" :aria-pressed="section==='manage'" @click="section='manage'">账户台账</button><button class="button" :class="{active:section==='usage'}" :aria-pressed="section==='usage'" @click="section='usage'">用量明细</button><button class="button" :class="{active:section==='report'}" :aria-pressed="section==='report'" @click="section='report'">体检</button></div><ClashVergeImport v-if="vergeOpen" @close="vergeOpen=false"/><SubscriptionUsageView v-if="section==='usage'"/><AirportReport v-else-if="section==='report'"/><template v-else><div class="page-toolbar"><label class="search-field"><Icon name="search"/><input v-model="search" placeholder="搜索机场" aria-label="搜索机场"></label><span class="muted small">{{w.airports.value.length}} 个机场 · {{w.airports.value.reduce((n,x)=>n+(x.subscriptions?.length||1),0)}} 个账户</span></div>
 <div class="cst-ledger">
 <article v-for="a in visible" :key="a.id" class="airport-card cst-ledger-airport">
   <header class="cst-ledger-airport-head">

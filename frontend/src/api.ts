@@ -10,6 +10,8 @@ export interface ClashUsage {name:string;bytes:number;chains:string[]}
 export interface ClashSelectionStep {group:string;before:string;after:string}
 export interface ClashGroupOption {group:string;path:string[];steps:ClashSelectionStep[]}
 export interface ClashSelectionResult {verified:boolean;steps:ClashSelectionStep[]}
+export interface ClashVergeSubscription {uid:string;name:string;updated_at:string;airport_id?:string;subscription_id?:string;linked:boolean;url_changed:boolean}
+export interface ClashVergeImport {uid:string;airport_id?:string;subscription_id?:string}
 declare global {interface Window {go?:{desktop?:{App?:Record<string,(...args:any[])=>Promise<any>>}};runtime?:{EventsOn:(name:string,callback:(payload:any)=>void)=>()=>void}}}
 export const desktop=()=>!!window.go?.desktop?.App
 let token=window.localStorage.getItem('cst_auth_token')||''
@@ -66,6 +68,8 @@ export const api={
   settings:()=>request<Settings>('/api/settings','GET',undefined,'GetSettings'),saveSettings:(s:Settings)=>request('/api/settings','POST',s,'SaveSettings',[s]),token:()=>request<TokenStatus>('/api/antigravity/status','GET',undefined,'GetTokenStatus'),discoverToken:()=>request<TokenStatus>('/api/antigravity/discover','POST',undefined,'DiscoverToken'),setToken:(value:string)=>request('/api/antigravity/token','POST',{token:value},'SetToken',[value]),oauth:()=>request('/api/antigravity/login','POST',undefined,'StartOAuthLogin'),
   clashNodeStatus:(n:NodeScope)=>request<ClashNodeStatus>('/api/clash/node-status','POST',scope(n),'GetClashNodeStatus',[scope(n)]),compareClashNode:(n:NodeScope)=>request<ClashCompareResult>('/api/clash/compare','POST',scope(n),'CompareClashNode',[scope(n)]),
   clashUsage:()=>request<ClashUsage[]>('/api/clash/usage','GET',undefined,'GetClashUsage'),
+  vergeSubscriptions:()=>request<ClashVergeSubscription[]>('/api/clash/verge-subscriptions','GET',undefined,'ListClashVergeSubscriptions'),
+  importVergeSubscription:(body:ClashVergeImport)=>request<import('./domain').Subscription>('/api/clash/verge-subscriptions/import','POST',body,'ImportClashVergeSubscription',[body]),
   clashNodeGroups:(n:NodeScope)=>request<ClashGroupOption[]>('/api/clash/groups','POST',scope(n),'GetClashNodeGroups',[scope(n)]),
   useClashNode:(n:NodeScope,group:string)=>{const body={...scope(n),group};return request<ClashSelectionResult>('/api/clash/select','POST',body,'UseClashNode',[body])},
   initialize:()=>request('/api/profile/setup/empty','POST',undefined,'InitializeEmptyProfileStore'),inspect:(path:string)=>request<Record<string,any>>('/api/profile/source/inspect','POST',{path},'InspectProfileSource',[path]),importSource:(path:string)=>request('/api/profile/import','POST',{path},'ImportProfileSource',[path]),migrate:()=>request('/api/data/migration','POST',undefined,'MigrateLegacyData'),discardImport:()=>request('/api/profile/import/discard','POST',undefined,'DiscardProfileImport'),storage:()=>request<Record<string,any>>('/api/monitor/storage','GET',undefined,'GetMonitorStorageUsage'),budget:()=>request<Record<string,any>>('/api/monitor/budget','GET',undefined,'GetMonitorBudgetStatus'),

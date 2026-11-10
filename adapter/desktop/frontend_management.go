@@ -76,6 +76,20 @@ func (a *App) UpdateSubscription(airportID, subscriptionID, name, source, note s
 	return a.app.UpdateSubscription(airportID, subscriptionID, name, source, note, a.userAgent)
 }
 
+func (a *App) ListClashVergeSubscriptions() ([]application.ClashVergeSubscriptionDTO, error) {
+	if a == nil || a.app == nil {
+		return nil, fmt.Errorf("应用服务未初始化")
+	}
+	return a.app.ListClashVergeSubscriptions()
+}
+
+func (a *App) ImportClashVergeSubscription(request application.ClashVergeImportRequest) (*application.SubscriptionDTO, error) {
+	if a == nil || a.app == nil {
+		return nil, fmt.Errorf("应用服务未初始化")
+	}
+	return a.app.ImportClashVergeSubscription(a.context(), request)
+}
+
 func (a *App) DeleteSubscription(airportID, subscriptionID string) error {
 	if a == nil || a.app == nil {
 		return fmt.Errorf("应用服务未初始化")

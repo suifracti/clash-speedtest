@@ -858,8 +858,10 @@ func (s *AppService) refreshSubscriptionWithFetchLocked(ctx context.Context, air
 	if fetched != nil && (!sub.UpdatedAt.Equal(fetched.updatedAt) || sub.UserAgent != fetched.userAgent) {
 		return nil, &refreshError{Code: "configuration_changed", Message: "抓取期间订阅已有更新；旧响应未写入，请重新提交刷新"}
 	}
-	if err := refreshSourceCooldown(store, sub.URL, time.Now()); err != nil {
-		return nil, err
+	if fetched == nil || fetched.path != "verge" {
+		if err := refreshSourceCooldown(store, sub.URL, time.Now()); err != nil {
+			return nil, err
+		}
 	}
 
 	var path string

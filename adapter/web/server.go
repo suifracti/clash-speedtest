@@ -175,6 +175,8 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("POST /api/profile/import", s.handleImportProfileSource)
 	mux.HandleFunc("POST /api/profile/import/discard", s.handleDiscardProfileImport)
 	mux.HandleFunc("GET /api/airports", s.handleGetAirports)
+	mux.HandleFunc("GET /api/clash/verge-subscriptions", s.handleListClashVergeSubscriptions)
+	mux.HandleFunc("POST /api/clash/verge-subscriptions/import", s.handleImportClashVergeSubscription)
 	mux.HandleFunc("GET /api/subscription-refresh-jobs", s.handleListSubscriptionRefreshJobs)
 	mux.HandleFunc("POST /api/subscription-refresh-jobs", s.handleStartSubscriptionRefreshJob)
 	mux.HandleFunc("GET /api/subscription-refresh-jobs/{id}", s.handleGetSubscriptionRefreshJob)
