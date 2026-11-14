@@ -125,7 +125,7 @@ async function submit(){
       <p class="muted small">合计 {{plannedRequests}} 次计划采样（延迟采样 + 服务观察{{w.plan.value.projects.includes('download')?' + 每节点 1 次下载':''}}）；这是计划次数，不是实际请求总数。</p>
     </section>
     <p v-if="validation" class="inline-error" role="alert">{{validation}}</p>
-    <p v-if="modelRisk" class="inline-warning" role="alert">{{modelRisk}}</p>
-    <template #footer><button class="button" @click="w.plan.value=null">返回调整</button><button class="button primary" :disabled="submitting||w.busy.value||!!modelRisk" @click="submit">开始检测 {{w.plan.value.nodes.length}} 个节点</button></template>
+    <p v-if="modelRisk" class="inline-warning">{{modelRisk}}</p>
+    <template #footer><button class="button" @click="w.plan.value=null">返回调整</button><button class="button primary" :disabled="submitting||w.busy.value" @click="submit">开始检测 {{w.plan.value.nodes.length}} 个节点</button></template>
   </Modal>
 </template>
