@@ -32,9 +32,13 @@ export function unlockResult(a?:Attempt,serviceId?:string,ipType?:IpType){
 export const unlockMeasured=(state:string)=>['available','unavailable','partial','verification'].includes(state)
 export type ServiceRegions=Record<string,string[]>
 export function applicableRegions(id:string,rules:ServiceRegions={}){return rules[id]??unlockGroups.find(g=>(g.ids as string[]).includes(id))?.regions??[]}
+// A leading "!" marks an excluded region; a service's list is either all included or all excluded.
+export const excludedRegion=(code:string)=>code.startsWith('!')
 export function unlockServiceSkipReason(id:string,region:string,enabled=true,rules:ServiceRegions={}){
  const regions=applicableRegions(id,rules)
- if(!enabled||!regions.length||regions.includes(region))return ''
+ if(!enabled||!regions.length)return ''
+ if(regions.some(excludedRegion))return regions.includes('!'+region)?'已排除此地区，不检测':''
+ if(regions.includes(region))return ''
  return regions.length===1&&regions[0]==='JP'?'非日本节点，不检测':'不适用于此地区，不检测'
 }
 export const unlockServiceAllowed=(id:string,region:string,enabled=true,rules:ServiceRegions={})=>!unlockServiceSkipReason(id,region,enabled,rules)

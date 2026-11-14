@@ -57,3 +57,9 @@ it('keeps YouTube not-available amber and only CN red',()=>{
  const cn={...blocked,result:{...blocked.result!,details:{service_region:'CN'},summary:'Google 判定为中国大陆'}}
  expect(unlockResult(cn)).toMatchObject({state:'unavailable',tone:'bad',label:'Google 判定为中国大陆'})
 })
+it('skips only excluded regions when a service uses an exclusion list',()=>{
+ const rules={antigravity:['!CN','!HK']}
+ expect(unlockServiceAllowed('antigravity','HK',true,rules)).toBe(false)
+ expect(unlockServiceAllowed('antigravity','US',true,rules)).toBe(true)
+ expect(unlockServiceAllowed('antigravity','HK',false,rules)).toBe(true)
+})
