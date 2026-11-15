@@ -133,7 +133,7 @@ func (s *AppService) StartWorkbenchDownloadTest(ctx context.Context, req Workben
 		MaximumBytes: maximumBytes, MaximumDurationNS: int64(time.Duration(timeoutSeconds) * time.Second),
 		SampleEveryBytes: speedtester.DefaultDownloadSampleBytes, SampleEveryNS: int64(100 * time.Millisecond),
 	}
-	runCtx, cancel := newWorkbenchDownloadLifecycleContext(ctx, time.Duration(timeoutSeconds)*time.Second)
+	runCtx, cancel := newWorkbenchDownloadLifecycleContext(ctx, 2*time.Duration(timeoutSeconds)*time.Second)
 	runtime := &workbenchDownloadRuntime{timingNS: probeTiming(ctx), networkDone: make(chan struct{}),
 		attemptID: newWorkbenchLatencyID("workbench_download_attempt_"), requestID: requestID,
 		ctx: runCtx, cancel: cancel, ready: make(chan struct{}), node: node, proxy: proxy, engine: engine, rule: rule, fallbackTarget: fallbackTarget,

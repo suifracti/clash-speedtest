@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/metacubex/mihomo/component/dialer"
+	"github.com/metacubex/mihomo/component/resolver"
 )
 
 var (
@@ -85,17 +86,31 @@ func ResolvePhysicalHost(ctx context.Context, host string, timeout time.Duration
 	}
 	queryCtx, cancel := context.WithTimeout(ctx, timeout*2)
 	defer cancel()
-	resolver := net.DefaultResolver
+	resolverClient := net.DefaultResolver
 	if ifaceName != "" {
-		resolver = &net.Resolver{
+		resolverClient = &net.Resolver{
 			PreferGo: true,
 			Dial: func(dialCtx context.Context, network, address string) (net.Conn, error) {
+				if dnsHost, _, splitErr := net.SplitHostPort(address); splitErr == nil {
+					if dnsIP, parseErr := netip.ParseAddr(strings.TrimSpace(dnsHost)); parseErr == nil && isFakeIPAddress(dnsIP) {
+						return nil, fmt.Errorf("skip fake-ip dns server %s on physical interface", address)
+					}
+				}
 				return dialer.DialContext(dialCtx, network, address,
 					dialer.WithInterface(ifaceName), dialer.WithFallbackBind(true))
 			},
 		}
 	}
-	addresses, err := resolver.LookupHost(queryCtx, host)
+	addresses, err := resolverClient.LookupHost(queryCtx, host)
+	if err != nil && ifaceName != "" {
+		if ips, fallbackErr := resolver.LookupIPv4(queryCtx, host); fallbackErr == nil && len(ips) > 0 {
+			addresses = make([]string, 0, len(ips))
+			for _, ip := range ips {
+				addresses = append(addresses, ip.String())
+			}
+			err = nil
+		}
+	}
 	if err != nil {
 		return PhysicalHostResolve{}, err
 	}
@@ -120,6 +135,7 @@ func NewPhysicalHTTPClient(timeout time.Duration) (*http.Client, error) {
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
+	resolver.AddSystemDnsBlacklist("198.18.0.1", "198.18.0.2", "fdfe:dcba:9876::1", "fdfe:dcba:9876::2")
 	iface := AutoDetectPhysicalInterface()
 	baseDialer := &net.Dialer{Timeout: timeout}
 	dial := func(ctx context.Context, network, address string) (net.Conn, error) {

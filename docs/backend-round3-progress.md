@@ -807,3 +807,18 @@
 - Windows 系统代理与物理网卡绑定：`core/profiles/fetch_network_windows.go` 读取 `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`（`ProxyEnable` / `ProxyServer`）解析 HTTP/HTTPS 系统代理；`core/speedtester/physical_entry_other.go` 将非 Darwin 平台的 `ResolvePhysicalHost` 与 `NewPhysicalHTTPClient` 绑定至 `AutoDetectPhysicalInterface()` 物理网卡，显式置 `Proxy: nil` 并拒绝 `198.18.0.0/15`、`fdfe:dcba:9876::/64` Fake-IP。
 - Windows 通知设置与构建测试脚本：`adapter/desktop/notifications.go` 在 Windows 下打开 `ms-settings:notifications`；`core/history/backup.go` 与 `core/history/upgrade_backup.go` 统一改用 `sqliteFileURI` 生成 `file:///C:/...` URI，修复 Windows 下“导出备份”（`ExportDataBackup`）与“迁移旧版历史”（`MigrateLegacyData`）报 `invalid uri authority: C:...` 的问题；`.github/workflows/ci.yml` 与 `run.ps1` 补齐 `-tags production`；`frontend/vite.config.ts` 自动配置 `--localstorage-file` 兼容 Node 25/26 直接执行 `npm test`。
 - 验证：新增 `TestClashClientAutoDiscoversVergeControllerConfig`、`TestWindowsSystemProxySnapshot`、`TestPhysicalEntryOtherRejectsFakeIPAndDisablesSystemProxy` 及桌面通知 URI 单测，并在 Windows 下跑通 `TestDataBackupRestoresCommittedHistoryAndUserFiles` 与 `TestAppServiceMigrationReopensJobsWithoutStartingThem`；`go vet ./...`、`go test ./core/profiles ./core/speedtester ./application ./adapter/desktop ./adapter/web`、前端 73 文件 450 项 `npm test` 与 `npm run build` 全部通过。
+
+### 2026-11-15 全功能 UI 重构与 Windows 控制器/非 Darwin 推荐/换端口变更优化
+- **全功能 UI 重构（`bdb1f92`、`d304cfe`、`55ed495`）**：统一 Polar（浅色）与 Midnight（暗灰石板）两套设计 token 与设计系统，彻底重做 `App.vue` 侧栏与导航、工作台 `HomeWorkbench.vue`、`NodeInspector.vue`、`AirportsView.vue`、`RecommendationView.vue`（2×2 场景 Bento 推荐卡片）、`MonitorView.vue` / `PeriodicSamplingPanel.vue` / `AutoPickCard.vue`（预算台账+双栏 Bento+轮次进度卡）、`HistoryView.vue`、`SettingsView.vue` 与 `DataView.vue`。
+- **Windows Clash Verge 2.x 命名管道与子毫秒监控（`7f24210`）**：`core/profiles/verge.go` 联合读取 `clash-verge.yaml` 与 `config.yaml`，`adapter/controller/mihomo/dial_windows.go` 支持 Windows Named Pipe 拨号及 `-sidecar-*` → `-production-` 回退；`core/monitor/runner.go` 修正计时器粒度内的 sub-tick 延迟保底 `1ns`。
+- **同节点换端口变更加去重与非 Darwin 推荐适配（`ceb9a21`）**：`core/profiles/node_changes.go` 对同名节点更换入口端口产生的同批 Added/Removed 进行抵消去重；`frontend/src/recommendations.ts` 在无物理绑定核验平台上允许同条件工作台记录进入候选并统一按 `downloadCondition` 聚合。
+
+### 2026-11-15 下载速度与预算优化、上游对照排障与 Windows TUN Fake-IP DNS 绕过
+- **下载测试包、超时预算分离与稳态/峰值/均速计算**：
+  - `core/speedtester/download_stream.go` 将默认测试包与正文预算提升至 `20 MiB / 15s`、读取缓冲升至 `64 KiB`；将共享 `http.Client.Timeout` 拆分为独立的建连握手 `connectTimer` 与正文 `bodyTimer`，避免冷握手耗时侵占传输预算；`application/bounded_deadline.go` 与 `workbench_download.go` 将任务生命周期上限放宽至 `2 * MaximumDownloadStreamTimeout`（单次上限 `2 * timeoutSeconds`）。
+  - 前端 `workspace.ts` 与 `TestPlanModal.vue` 默认测试档升至 `20 MiB / 15s`；`domain.ts` 新增 `downloadAverageSpeed`（全程均速）与 `downloadPeakSpeed`（峰值），并将 `downloadSpeed` 升级为优先截取响应体后段稳态速率（过滤慢启动阶段），同步在工作台、检查器与检测记录页并列展示，旧历史不修改。
+- **与上游基线对照修复三项延迟与物理 DNS 缺陷**：
+  - `core/speedtester/speedtester.go` 的 `testLatencyWithClientContext` 在记录首字节 TTFB 后，在 Keep-Alive 开启时额外排空最多 512 字节使常见 >1B 探针短响应到达 `EOF`，恢复第 2–6 次“稳定延迟”热连接复用；直测下载模式对探测目标附加 `Range: bytes=0-0` 请求头；CLI `--tsv` 通过 `TestProxiesFinalUntil` 消除重复中间行。
+  - `core/speedtester/physical_entry_other.go` 与 `interface.go` 对物理 DNS 解析加入系统 DNS 黑名单并跳过 TUN Fake-IP DNS（`198.18.0.1/2`、`fdfe:dcba:9876::1/2`），必要时回退 `resolver.LookupIPv4`，消除 Windows 开启 TUN 时物理入口解析固定等满 5 秒的卡顿。
+  - `core/history/measurement_round.go` 为 `FinishMeasurementRound`、`ReconcileMeasurementRounds`、`MarkMeasurementNotExecuted`、`FinishAutomaticMeasurementRound` 补齐 `d.mu.Lock()`，消除高并发更新轮次状态时的 `SQLITE_BUSY_SNAPSHOT`。
+- **验证**：`npm run build`、`npm test`、`go vet ./...` 与受影响 Go 包测试（含新增 `TestMeasureDownloadStreamSeparatesConnectAndBodyDurationBudgets` 及 `probe-accuracy.spec.ts` 稳态/峰值/均速用例）全部通过。

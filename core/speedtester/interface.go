@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/metacubex/mihomo/component/dialer"
+	"github.com/metacubex/mihomo/component/resolver"
 )
 
 // AutoDetectPhysicalInterface finds the active physical network interface
@@ -90,6 +91,7 @@ func AutoDetectPhysicalInterface() string {
 // BindPhysicalInterface automatically detects and binds Mihomo's dialer
 // to the physical network interface so that proxy probes bypass any active TUN adapter.
 func BindPhysicalInterface() string {
+	resolver.AddSystemDnsBlacklist("198.18.0.1", "198.18.0.2", "fdfe:dcba:9876::1", "fdfe:dcba:9876::2")
 	ifaceName := AutoDetectPhysicalInterface()
 	dialer.DefaultInterface.Store(ifaceName)
 	return ifaceName

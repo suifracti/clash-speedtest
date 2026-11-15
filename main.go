@@ -357,7 +357,7 @@ func main() {
 	}
 
 	sampleIndex := 0
-	speedTester.TestProxiesUntil(allProxies, func(result *speedtester.Result) bool {
+	speedTester.TestProxiesFinalUntil(allProxies, func(result *speedtester.Result) bool {
 		latestResults[result.ProxyName] = result
 		if tsvWriter != nil {
 			if err := tsvWriter.WriteRow(result, sampleIndex); err != nil {

@@ -90,11 +90,11 @@ async function submit(){
         </div>
       </div>
       <div v-if="w.plan.value.projects.includes('download')" class="plan-section">
-        <h4>下载测速</h4><p class="muted small">Cloudflare 与 OVH；遇到 403／429 自动换另一源一次。</p>
+        <h4>下载测速</h4><p class="muted small">Cloudflare 与 OVH；遇到 403／429 自动换另一源一次。连接握手与正文传输独立计时。</p>
         <div class="form-grid">
           <label>首选测速源<UiSelect :model-value="w.plan.value.downloadSource||'cloudflare'" @update:model-value="w.plan.value.downloadSource=String($event)"><option value="cloudflare">Cloudflare</option><option value="ovh">OVH</option></UiSelect></label>
           <label>每节点最多读取<UiSelect v-model.number="w.plan.value.downloadMiB"><option v-for="n in [5,10,20,50,100]" :key="n" :value="n">{{n}} MiB</option></UiSelect></label>
-          <label>每节点最多持续<UiSelect v-model.number="w.plan.value.downloadSeconds"><option v-for="n in [5,10,20,30]" :key="n" :value="n">{{n}} 秒</option></UiSelect></label>
+          <label>每节点最多持续<UiSelect v-model.number="w.plan.value.downloadSeconds"><option v-for="n in [5,10,15,20,30]" :key="n" :value="n">{{n}} 秒</option></UiSelect></label>
         </div>
         <p class="muted small">逐个下载，避免抢占带宽。</p>
       </div>

@@ -12,7 +12,7 @@
 | 迁移/合并后功能丢了、换工作树或执行者 | L-002；docs/version-consistency.md |
 | 用量不完整、检测失败、取消/保存、历史身份 | L-003；docs/backend-round3-progress.md |
 | 切换机场后体检变空或显示上个机场的数据 | L-003；frontend/src/components/AirportReport.vue |
-| 下载只有短文本、速度口径偏低、备用源限流与旧测速结果 | L-004；application/workbench_download.go；frontend/src/domain.ts |
+| 下载只有短文本、速度口径/稳态均值/峰值、超时、备用源限流与旧测速结果 | L-004；core/speedtester/download_stream.go；application/workbench_download.go；frontend/src/domain.ts |
 | Clash Verge 更新订阅后不想重填链接；关联已有账户 | L-005；application/verge_subscriptions.go |
 | 某解锁服务只想测指定地区或排除指定地区；Antigravity 批量风险与连接耗时 | L-006；frontend/src/unlock.ts；core/autopick/autopick.go；frontend/src/components/QueueModal.vue |
 | 手动刷新被 30 分钟冷却拦住；订阅代理/直连/物理重试原因、换链接后今日与 14 天用量断掉 | L-007；application/subscription_refresh.go；application/subscription_usage.go；core/subscriptionusage/continuity.go |
@@ -23,6 +23,8 @@
 | 持续监测抢占预算、暂停时无法手动触发、Mac 监测未绕开 TUN；本机通知重复告警或授权失败 | L-012；core/monitor/；core/speedtester/；application/local_notifications.go |
 | Netflix DoH 超时吞掉结论、YouTube 误判送中（pagead）、Gemini/Spotify 机房限制、Disney+ 握手 EOF；出口 IP 类型与原生/广播判定 | L-013；core/publicservice/probes.go；core/publicservice/checker.go；frontend/src/ipKind.ts；frontend/src/exitLanding.ts |
 | 自动精选端口被占后 Verge 订阅失效、运行期改设置被覆盖或报告丢用途；入口超 100 地址丢国家；Clash/Verge 本机对照与报告导图 | L-014；application/auto_pick.go；application/auto_pick_subscription.go；core/entry/lookup.go；application/clash_comparison.go；frontend/src/components/LatencyReportImage.vue |
+| Windows Clash Verge 命名管道、同名节点换端口变更抵消与非 Darwin 场景推荐 | L-015；adapter/controller/mihomo/dial_windows.go；core/profiles/node_changes.go；frontend/src/recommendations.ts |
+| 延迟 Keep-Alive 复用失效、Windows TUN Fake-IP DNS 拖慢物理出口、测量轮次并发锁竞争 | L-016；core/speedtester/speedtester.go；core/speedtester/physical_entry_other.go；core/history/measurement_round.go |
 
 ## 默认自动执行：不等用户提醒
 
@@ -66,7 +68,12 @@
 
 `35e25ed` 将备用源替换为 OVH，按请求量发送 Range 并接受 HTTP 206。当前源返回 403/429 后换另一源一次，记录与比较沿实际目标来源，双源均失败时保留两次原因。旧来源记录仍按其实际来源显示。
 
-入口在 `application/workbench_download.go` 的 `executeWorkbenchDownload`、`downloadSourcesFailure`，传输与采样在 `core/speedtester/download_stream.go`，旧记录显示和计速在 `frontend/src/domain.ts` 的 `downloadOutcome`、`downloadSpeed`、`downloadSourceName`，队列文案在 `frontend/src/measurementRounds.ts`。对应交付见[进度页 2026-11-02 下载各节](backend-round3-progress.md#2026-11-02-下载短响应)。
+入口在 `application/workbench_download.go` 的 `executeWorkbenchDownload`、`downloadSourcesFailure`，传输与采样在 `core/speedtester/download_stream.go`，旧记录显示和计速在 `frontend/src/domain.ts` 的 `downloadOutcome`、`downloadSpeed`、`downloadAverageSpeed`、`downloadPeakSpeed`、`downloadSourceName`，队列文案在 `frontend/src/measurementRounds.ts`。对应交付见[进度页 2026-11-02 下载各节](backend-round3-progress.md#2026-11-02-下载短响应)。
+
+2026-11-15 补充（下载包体积、超时拆分与稳态速度口径）：
+- **默认测试包与预算**：工作台默认下载测试包调高至 `20 MiB` / `15s`（`core/speedtester/download_stream.go` 的 `DefaultDownloadStreamBytes = 20<<20`、`DefaultDownloadStreamTimeout = 15*time.Second`；前端 `workspace.ts` 默认与 `TestPlanModal.vue` `15 秒` 选项），流读取缓冲区由 32 KiB 扩至 64 KiB。
+- **握手/连接与正文传输分离计时**：`download_stream.go` 不再共享单个 `http.Client.Timeout`，改为 `connectTimer`（`localClient.Do`）与 `bodyTimer`（进入 `response_body` 后启动）各自独立享有 `MaximumDuration`，同时将 `application/bounded_deadline.go` 的 `newWorkbenchDownloadLifecycleContext` 上限倍增至 `2 * MaximumDownloadStreamTimeout`、任务级超时传 `2 * timeoutSeconds`，防止冷启动建连/TLS 慢挤压有效响应体传输时间。
+- **稳态 / 峰值 / 全程均速并列展示**：`frontend/src/domain.ts` 将主速度 `downloadSpeed` 调整为优先取 `response_body` 后段稳态速率（当 `response_body >= 2s` 且有效采样点 $\ge 2$ 时，截取覆盖尾部至少 1.0 秒且占比 $\ge 40\%$ 总字节数的采样段去除 TCP 慢启动预热），并用 `downloadAverageSpeed`（全程均速 `bytes_read / response_body`）与 `downloadPeakSpeed`（采样切片峰值）分别呈现于工作台、`NodeInspector.vue` 与 `MeasurementResults.vue`，不回改旧历史库。
 
 证据边界截至 2026-11-02。保存的四次实网结果均为直接选择 OVH，HTTP 206 且各收到 10 MiB。403/429 后自动换源由离线测试覆盖，这四次实测不能替代该路径的现场验证。原生截图只确认选源页面，不能当作四节点结果截图。本轮只复读已有实现差异与脱敏记录，未重新测速或核实当前运行包。
 
@@ -162,6 +169,14 @@ Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 
 2. **订阅节点换端口不重复计入新增与下线**：机场常在保持节点显示名不变的情况下轮换入口域名或端口（导致 `node_identity_key` 变化）。`core/profiles/node_changes.go` 在按同一 `Identity` 匹配改名后，进一步抵消 `Removed` 与 `Added` 中的同名项，避免同一节点名同时出现在“新增”和“下线”列表中。
 3. **非 Darwin 同条件推荐与完整/部分下载同组排序**：在不伪造 `socket_bind_verified`/`dns_bind_verified` 的前提下，`frontend/src/recommendations.ts` 优先采用具备物理出口核验（`comparable=true`）的候选组；若当前平台无物理套接字核验（如 Windows），则允许同条件的当前工作台首字节延迟与有效下载记录进入对应用途候选，且下载推荐按同一 `downloadCondition` 聚合（不再因 `byte_limit` 完整下载与 `time_limit` 部分下载分属不同子键而导致慢节点多时反压快节点）。
 
+## L-016 延迟 Keep-Alive 复用、Windows TUN Fake-IP DNS 绕过与轮次并发锁
+
+适用：与上游延迟实测出现稳态偏慢、物理入口 DNS 固定卡 ~5 秒（Windows 开启 TUN 时）、CLI TSV 重复行，或高并发写测量轮次偶现 `SQLITE_BUSY_SNAPSHOT`。
+
+1. **延迟测速首字节计时后排空短响应保持 Keep-Alive 复用**：`core/speedtester/speedtester.go` 的 `testLatencyWithClientContext` 原在 `io.CopyN(io.Discard, resp.Body, 1)` 后立即 `resp.Body.Close()`，导致 >1B 的探测响应（如 Apple 68B、GitHub ~42B、Microsoft 22B、Firefox 8B）因未读到 `io.EOF` 而被迫关闭连接，第 2–6 次“稳定延迟”退化为重复 TCP+TLS 握手（实测曾偏慢 10–35 ms）。现先记录首字节 TTFB `dur := time.Since(start)`，开启 Keep-Alive 时再最多排空 512 字节使短响应到达 `EOF`；若 `serverModeDirectDownload` 直测大文件 URL，额外附加 `Range: bytes=0-0` 请求头；CLI `--tsv` 通过新增 `TestProxiesFinalUntil` 只输出每节点最终一轮结果，避免同节点重复多行。
+2. **Windows 开启 TUN 时跳过 Fake-IP DNS 服务器**：Clash Verge 等内核在 Windows 开启 TUN 后常把虚拟适配器 DNS（`198.18.0.2:53`）设进系统默认首选 DNS，导致 `ResolvePhysicalHost` 经物理网卡拨 `198.18.0.2:53` 等满 5 秒超时。`core/speedtester/physical_entry_other.go` 与 `interface.go` 显式调用 Mihomo `resolver.AddSystemDnsBlacklist("198.18.0.1", "198.18.0.2", "fdfe:dcba:9876::1", "fdfe:dcba:9876::2")`，并在自定义 `net.Resolver.Dial` 遇到 Fake-IP DNS 地址时直接报错跳过，必要时回退 `resolver.LookupIPv4`（将入口 DNS 解析由 5 秒降至几十毫秒）。
+3. **测量轮次状态更新统一持锁串行写库**：`core/history/measurement_round.go` 的 `FinishMeasurementRound`、`ReconcileMeasurementRounds`、`MarkMeasurementNotExecuted` 与 `FinishAutomaticMeasurementRound` 补齐 `d.mu.Lock()` / `defer d.mu.Unlock()`，消除高频并发更新轮次状态时的 `SQLITE_BUSY_SNAPSHOT` 竞争。
+
 ## 维护方法
 
 方法统一继承总规则“2 项目记录”“5.1 全周期复盘与覆盖”，从下方实际覆盖记录接续。
@@ -188,3 +203,7 @@ Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 
 2. **早期与中期分叉批次（`7549994`..`4b0f557`）**：完整遍历 426 条非 merge 提交清单，并实际读取 `56b02e9`、`1dec197`、`114296f`、`7fec4ec`、`cbd05f2`、`38eb812`、`28fcbe4`、`3d0bd9f`、`019aa2e`、`a1f0c28`、`42d8c02`、`899105a`、`fd6bc58`、`0103591`、`db43f58`、`457b551`、`c73cb9a`、`c775dcc`、`0734ba4` 的提交 diff 与核心实现文件（`application/auto_pick.go`、`application/auto_pick_subscription.go`、`application/clash_comparison.go`、`frontend/src/ipKind.ts` 等），提炼为 L-010～L-014。
 
 验证与覆盖边界：属于本仓分叉改动的 `upstream/main..main` 提交历史与进度文档已全部过目并建立 L-001～L-014 索引（若后续深入某一早期 PR 的逐行边角细节，仍以对应源码与 commit diff 为准）；Windows 环境已完成 `go vet ./...`、`core/history` SQLite/Windows 专项测试、前端 73 文件 449 项 Vitest 与 `npm run build`，未触碰本机生产库、未执行实网测速或付费模型调用。
+
+## 2026-11-15 下午增量覆盖（UI 重构、下载/延迟优化与上游对照排障）
+
+本轮基于实网与本地 Web 服务排障反馈，同步更新 `L-004`、补入 `L-015` 与 `L-016`，覆盖全功能 UI 重构（`bdb1f92`..`55ed495`）、Windows Clash Verge 2.x 命名管道与同节点换端口/非 Darwin 推荐适配（`7f24210`、`ceb9a21`），以及下载预算分离（`20 MiB / 15s` 与稳态/峰值/均速）、延迟 Keep-Alive 512B 排空、Windows TUN Fake-IP DNS 跳过、`measurement_round.go` 并发锁修复（均完成 `npm run build`、`npm test`、`go vet ./...` 与受影响 Go 包测试）。

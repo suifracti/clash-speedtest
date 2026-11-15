@@ -369,3 +369,53 @@ func TestDownloadStreamSamplerNilDefense(t *testing.T) {
 		t.Fatalf("expected nil sampler to return false, got ok=%v sample=%+v", ok, sample)
 	}
 }
+
+type delayedChunkBody struct {
+	ctx    context.Context
+	chunks [][]byte
+	delay  time.Duration
+	index  int
+}
+
+func (b *delayedChunkBody) Read(p []byte) (int, error) {
+	if b.index >= len(b.chunks) {
+		return 0, io.EOF
+	}
+	select {
+	case <-time.After(b.delay):
+	case <-b.ctx.Done():
+		return 0, b.ctx.Err()
+	}
+	n := copy(p, b.chunks[b.index])
+	b.index++
+	return n, nil
+}
+
+func (*delayedChunkBody) Close() error { return nil }
+
+func TestMeasureDownloadStreamSeparatesConnectAndBodyDurationBudgets(t *testing.T) {
+	st := newDownloadStreamTester(t)
+	client := &http.Client{
+		Timeout: 60 * time.Millisecond,
+		Transport: downloadRoundTripper(func(r *http.Request) (*http.Response, error) {
+			time.Sleep(40 * time.Millisecond)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: &delayedChunkBody{
+					ctx:    r.Context(),
+					chunks: [][]byte{[]byte("aaaa"), []byte("bbbb")},
+					delay:  20 * time.Millisecond,
+				},
+				Request: r,
+			}, nil
+		}),
+	}
+	got := st.MeasureDownloadStream(context.Background(), client, DownloadStreamOptions{
+		MaximumBytes:    8,
+		MaximumDuration: 60 * time.Millisecond,
+	}, nil)
+	if got.Outcome != "byte_limit" || got.BytesRead != 8 {
+		t.Fatalf("expected full 60ms body budget after 40ms connect, got outcome=%s bytes=%d err=%s", got.Outcome, got.BytesRead, got.ErrorMessage)
+	}
+}

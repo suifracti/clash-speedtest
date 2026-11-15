@@ -105,17 +105,27 @@ func (d *DB) CreateMeasurementRound(ctx context.Context, r MeasurementRound) err
 	return tx.Commit()
 }
 func (d *DB) FinishMeasurementRound(ctx context.Context, id, state string) error {
-	if d == nil || d.db == nil {
+	if d == nil {
 		return fmt.Errorf("history database is closed")
 	}
 	if state != "finished" && state != "interrupted" {
 		return fmt.Errorf("invalid finished round state")
 	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.db == nil {
+		return fmt.Errorf("history database is closed")
+	}
 	_, err := d.db.ExecContext(ctx, "UPDATE measurement_rounds SET state=? WHERE round_id=? AND state='running'", state, id)
 	return err
 }
 func (d *DB) ReconcileMeasurementRounds(ctx context.Context) error {
-	if d == nil || d.db == nil {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.db == nil {
 		return fmt.Errorf("history database is closed")
 	}
 	_, err := d.db.ExecContext(ctx, "UPDATE measurement_rounds SET state='interrupted' WHERE state='running'")
@@ -133,7 +143,12 @@ func (d *DB) MeasurementRequestTrigger(ctx context.Context, requestID, profile, 
 	return trigger, err
 }
 func (d *DB) MarkMeasurementNotExecuted(ctx context.Context, requestID, reason string) error {
-	if d == nil || d.db == nil {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.db == nil {
 		return fmt.Errorf("history database is closed")
 	}
 	_, err := d.db.ExecContext(ctx, "UPDATE measurement_round_items SET not_executed_reason=? WHERE request_id=?", reason, requestID)
@@ -262,7 +277,12 @@ func (d *DB) FinishManualMeasurementRound(ctx context.Context, id, state string)
 // Single compatibility requests have no external plan runner to close their
 // parent. Never close a multi-item/user-created plan from one child callback.
 func (d *DB) FinishAutomaticMeasurementRound(ctx context.Context, requestID string) error {
-	if d == nil || d.db == nil {
+	if d == nil {
+		return fmt.Errorf("history database is closed")
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.db == nil {
 		return fmt.Errorf("history database is closed")
 	}
 	_, err := d.db.ExecContext(ctx, `UPDATE measurement_rounds SET state='finished' WHERE state='running' AND round_id LIKE 'manual-%' AND round_id IN(SELECT round_id FROM measurement_round_items WHERE request_id=?) AND (SELECT COUNT(*) FROM measurement_round_items i WHERE i.round_id=measurement_rounds.round_id)=1`, requestID)

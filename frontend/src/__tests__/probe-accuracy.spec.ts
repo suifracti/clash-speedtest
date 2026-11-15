@@ -4,7 +4,7 @@ import {mount} from '@vue/test-utils'
 import RoundResults from '../components/RoundResults.vue'
 import {attemptStatus,downloadCondition} from '../measurementRounds'
 import {createPresentationCache} from '../presentation'
-import {downloadSpeed,key,type Attempt,type MonitorSample,type NodeOption} from '../domain'
+import {downloadSpeed,downloadAverageSpeed,downloadPeakSpeed,key,type Attempt,type MonitorSample,type NodeOption} from '../domain'
 const n:NodeOption={profile_id:'p',node_key:'n',node_identity_key:'i',config_revision_key:'r',profile_name:'p',display_name:'n',type:'ss',country_code:'',country_flag:''}
 const a:Attempt={...n,attempt_id:'a',request_id:'q',display_name:'n',requested_at:'2026-10-07T00:00:00Z',execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://speed.cloudflare.com/__down?bytes=10485761',method:'GET',maximum_bytes:10485760,network_path_method:'physical_socket_v1'},result:{outcome:'byte_limit',bytes_read:10485760,duration_ns:1e9,phase_timings_ns:{response_body:1e9},finished_at:'2026-10-07T00:00:01Z'}}
 it('labels a full bounded download as normal completion and includes partial conditions',()=>{
@@ -16,6 +16,15 @@ it('calculates download speed using the recorded response body time',()=>{
  const measured={...a,result:{...a.result!,duration_ns:9.2e9,phase_timings_ns:{connection:5.6e9,response_body:3.6e9}}}
  expect(downloadSpeed(measured)).toBeCloseTo(10/3.6)
  expect(downloadSpeed({...a,result:{...a.result!,phase_timings_ns:undefined}})).toBeNull()
+ const slowStart:Attempt={...a,result:{...a.result!,bytes_read:10*1048576,phase_timings_ns:{response_body:4e9},samples:[
+  {elapsed_ns:1e9,cumulative_bytes:0.2*1048576},
+  {elapsed_ns:2e9,cumulative_bytes:0.5*1048576},
+  {elapsed_ns:3e9,cumulative_bytes:2.5*1048576},
+  {elapsed_ns:4e9,cumulative_bytes:10*1048576},
+ ]}}
+ expect(downloadAverageSpeed(slowStart)).toBeCloseTo(2.5)
+ expect(downloadSpeed(slowStart)).toBeCloseTo(7.5)
+ expect(downloadPeakSpeed(slowStart)).toBeCloseTo(7.5)
 })
 it('does not merge declared physical routing with actually verified socket routing',()=>{
  const verified={...a,result:{...a.result!,network_path:{method:'physical_socket_v1',dns_bind_verified:true,socket_bind_verified:true,tcp_bindings:1,udp_bindings:0}}}

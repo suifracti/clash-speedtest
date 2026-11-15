@@ -15,15 +15,16 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode"
 )
 
 const (
-	DefaultDownloadStreamTimeout = 10 * time.Second
+	DefaultDownloadStreamTimeout = 15 * time.Second
 	MaximumDownloadStreamTimeout = 30 * time.Second
-	DefaultDownloadStreamBytes   = int64(10 << 20)
+	DefaultDownloadStreamBytes   = int64(20 << 20)
 	MaximumDownloadStreamBytes   = int64(100 << 20)
 	DefaultDownloadSampleBytes   = int64(256 << 10)
 )
@@ -192,9 +193,16 @@ func (st *SpeedTester) measureDownloadStream(ctx context.Context, client *http.C
 		target = options.TargetURL
 	}
 	result.TargetURL = target
-	runCtx, cancel := context.WithTimeout(ctx, options.MaximumDuration)
+	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	var timedOut atomic.Bool
+	connectTimer := time.AfterFunc(options.MaximumDuration, func() {
+		timedOut.Store(true)
+		cancel()
+	})
+	defer connectTimer.Stop()
 	localClient := *client
+	localClient.Timeout = 0
 	localClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
 	request, err := http.NewRequestWithContext(runCtx, http.MethodGet, target, nil)
 	if err != nil {
@@ -240,16 +248,20 @@ func (st *SpeedTester) measureDownloadStream(ctx context.Context, client *http.C
 		GotConn: func(httptrace.GotConnInfo) { setPhase("response_headers") },
 	}))
 	response, err := localClient.Do(request)
+	connectTimer.Stop()
 	if err != nil {
 		result.ErrorClass = downloadErrorClass(err)
+		if timedOut.Load() && result.ErrorClass == "cancelled" {
+			result.ErrorClass = "timeout"
+		}
 		if result.ErrorClass == "tls" || result.ErrorClass == "dns" {
 			setPhase(result.ErrorClass)
 		}
-		if ctx.Err() == context.Canceled || errors.Is(err, context.Canceled) {
+		if ctx.Err() == context.Canceled || (!timedOut.Load() && errors.Is(err, context.Canceled)) {
 			result.Outcome = "user_cancelled"
 			result.FailurePhase = "cancelled"
 			result.ErrorMessage = "下载已由用户取消"
-		} else if runCtx.Err() == context.DeadlineExceeded || errors.Is(err, context.DeadlineExceeded) {
+		} else if timedOut.Load() || runCtx.Err() == context.DeadlineExceeded || errors.Is(err, context.DeadlineExceeded) {
 			result.Outcome = "time_limit"
 			result.FailurePhase = getPhase()
 			result.ErrorMessage = "达到下载时长上限"
@@ -297,9 +309,14 @@ func (st *SpeedTester) measureDownloadStream(ctx context.Context, client *http.C
 	}
 
 	setPhase("response_body")
+	bodyTimer := time.AfterFunc(options.MaximumDuration, func() {
+		timedOut.Store(true)
+		cancel()
+	})
+	defer bodyTimer.Stop()
 	var responsePrefix []byte
 	sampler := downloadStreamSampler{started: now(), everyBytes: options.SampleEveryBytes, everyDuration: options.SampleEveryDuration}
-	buffer := make([]byte, 32*1024)
+	buffer := make([]byte, 64*1024)
 	for {
 		remaining := options.MaximumBytes - result.BytesRead
 		if remaining <= 0 {
@@ -337,12 +354,15 @@ func (st *SpeedTester) measureDownloadStream(ctx context.Context, client *http.C
 		if readErr != nil {
 			if !errors.Is(readErr, io.EOF) {
 				result.ErrorClass = downloadErrorClass(readErr)
+				if timedOut.Load() && result.ErrorClass == "cancelled" {
+					result.ErrorClass = "timeout"
+				}
 			}
-			if ctx.Err() == context.Canceled || errors.Is(readErr, context.Canceled) {
+			if ctx.Err() == context.Canceled || (!timedOut.Load() && errors.Is(readErr, context.Canceled)) {
 				result.Outcome = "user_cancelled"
 				result.FailurePhase = "cancelled"
 				result.ErrorMessage = "下载已由用户取消"
-			} else if runCtx.Err() == context.DeadlineExceeded || errors.Is(readErr, context.DeadlineExceeded) {
+			} else if timedOut.Load() || runCtx.Err() == context.DeadlineExceeded || errors.Is(readErr, context.DeadlineExceeded) {
 				result.Outcome = "time_limit"
 				result.FailurePhase = "time_limit"
 				result.ErrorMessage = "达到下载时长上限"
@@ -371,7 +391,7 @@ func (st *SpeedTester) measureDownloadStream(ctx context.Context, client *http.C
 			result.ErrorMessage = "下载已由用户取消"
 			break
 		}
-		if runCtx.Err() == context.DeadlineExceeded {
+		if timedOut.Load() || runCtx.Err() == context.DeadlineExceeded {
 			result.Outcome = "time_limit"
 			result.FailurePhase = "time_limit"
 			result.ErrorMessage = "达到下载时长上限"

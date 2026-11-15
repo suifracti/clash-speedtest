@@ -544,6 +544,22 @@ func (st *SpeedTester) TestProxies(proxies map[string]*CProxy, tester func(resul
 }
 
 func (st *SpeedTester) TestProxiesUntil(proxies map[string]*CProxy, tester func(result *Result) bool) {
+	st.testProxiesLoop(proxies, func(name string, proxy *CProxy) bool {
+		return st.testProxyEmit(name, proxy, tester)
+	})
+}
+
+func (st *SpeedTester) TestProxiesFinalUntil(proxies map[string]*CProxy, tester func(result *Result) bool) {
+	st.testProxiesLoop(proxies, func(name string, proxy *CProxy) bool {
+		result := st.testProxy(name, proxy)
+		if result == nil || tester == nil {
+			return true
+		}
+		return tester(result)
+	})
+}
+
+func (st *SpeedTester) testProxiesLoop(proxies map[string]*CProxy, runNode func(name string, proxy *CProxy) bool) {
 	if st == nil {
 		return
 	}
@@ -569,7 +585,7 @@ func (st *SpeedTester) TestProxiesUntil(proxies map[string]*CProxy, tester func(
 			if !deadline.IsZero() && !time.Now().Before(deadline) {
 				return
 			}
-			if !st.testProxyEmit(name, proxies[name], tester) {
+			if !runNode(name, proxies[name]) {
 				return
 			}
 		}
@@ -1101,6 +1117,9 @@ rounds:
 					sample.Error = err.Error()
 					return
 				}
+				if st != nil && st.serverMode == serverModeDirectDownload && probeURL == st.downloadURL {
+					req.Header.Set("Range", "bytes=0-0")
+				}
 				resp, err := probeClient.Do(req)
 				if err != nil {
 					// net/http detaches dialing (including target TLS) from the
@@ -1119,6 +1138,12 @@ rounds:
 					return
 				}
 				_, readErr := io.CopyN(io.Discard, resp.Body, 1)
+				dur := time.Since(start)
+				if readErr == nil && requestCtx.Err() == nil {
+					if transport, ok := probeClient.Transport.(*http.Transport); !ok || !transport.DisableKeepAlives {
+						_, _ = io.CopyN(io.Discard, resp.Body, 512)
+					}
+				}
 				resp.Body.Close()
 				if err := requestCtx.Err(); err != nil {
 					sample.Error = err.Error()
@@ -1128,7 +1153,6 @@ rounds:
 					sample.Error = readErr.Error()
 					return
 				}
-				dur := time.Since(start)
 				sample.Duration, sample.LatencyMs, sample.Success = dur, dur.Milliseconds(), true
 				if resp.StatusCode >= 300 {
 					sample.Error = fmt.Sprintf("HTTP %d；响应时延已测，业务／地区解锁未确认", resp.StatusCode)

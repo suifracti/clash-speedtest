@@ -53,7 +53,30 @@ export function median(values:number[]){if(!values.length)return null;const sort
 export function sampleFor(test:LatencyTest,target:string){const t=targets.find(t=>t.id===target);return (test.samples||[]).filter(s=>t?latencyTargetId(s.target)===t.id:true)}
 export function latencyFor(test:LatencyTest|undefined,target='cloudflare'){if(!test)return null;return median(sampleFor(test,target).filter(s=>s.success).map(s=>s.latency_ms))}
 export function downloadOutcome(a?:Attempt){const r=a?.result;return r?.outcome==='completed'&&a?.rule.maximum_bytes&&r.bytes_read<a.rule.maximum_bytes?'response_too_short':r?.outcome}
-export function downloadSpeed(a:Attempt|undefined){const r=a?.result,bodyNS=r?.phase_timings_ns?.response_body;return bodyNS&&bodyNS>0&&r.bytes_read>0&&(r.http_status===undefined||r.http_status<400)&&!['not_executed','cancelled','interrupted'].includes(a!.execution_state)&&['completed','byte_limit','time_limit'].includes(downloadOutcome(a)||'')?r.bytes_read/1048576/(bodyNS/1e9):null}
+export function downloadAverageSpeed(a:Attempt|undefined){const r=a?.result,bodyNS=r?.phase_timings_ns?.response_body;return bodyNS&&bodyNS>0&&r.bytes_read>0&&(r.http_status===undefined||r.http_status<400)&&!['not_executed','cancelled','interrupted'].includes(a!.execution_state)&&['completed','byte_limit','time_limit'].includes(downloadOutcome(a)||'')?r.bytes_read/1048576/(bodyNS/1e9):null}
+export function downloadPeakSpeed(a:Attempt|undefined){
+  const avg=downloadAverageSpeed(a),samples=a?.result?.samples
+  if(avg===null||!samples||samples.length<2)return null
+  const pts=[{t:0,b:0},...samples.map(s=>({t:s.elapsed_ns,b:s.cumulative_bytes}))]
+  let best:number|null=null
+  for(let i=0;i<pts.length;i++)for(let j=i+1;j<pts.length;j++){
+    const dt=pts[j].t-pts[i].t,db=pts[j].b-pts[i].b
+    if(dt>=8e8&&db>0){const v=db/1048576/(dt/1e9);if(best===null||v>best)best=v}
+  }
+  return best
+}
+// 剔除前段 QUIC/TCP 慢启动爬坡后的稳态速度（尾部至少 1 秒且占总字节 ≥40% 的窗口）；无采样时退回全程均速。
+export function downloadSpeed(a:Attempt|undefined){
+  const avg=downloadAverageSpeed(a),r=a?.result,samples=r?.samples,bodyNS=r?.phase_timings_ns?.response_body
+  if(avg===null||!r||!samples||samples.length<2||!bodyNS||bodyNS<2e9)return avg
+  const pts=[{t:0,b:0},...samples.map(s=>({t:s.elapsed_ns,b:s.cumulative_bytes}))],last=pts[pts.length-1]
+  let best=avg
+  for(let i=1;i<pts.length-1;i++){
+    const dt=last.t-pts[i].t,db=last.b-pts[i].b
+    if(dt>=1e9&&db>=r.bytes_read*0.4){const v=db/1048576/(dt/1e9);if(v>best)best=v}
+  }
+  return best
+}
 export function downloadConnectionSeconds(a?:Attempt){const p=a?.result?.phase_timings_ns;if(!p)return null;const values=['dns','address_resolution','connection','socket_verification','proxy_connect_and_handshake','proxy_handshake','tls'].flatMap(k=>typeof p[k]==='number'?[p[k]]:[]);return values.length?values.reduce((sum,n)=>sum+n,0)/1e9:null}
 export function downloadTarget(a?:Attempt){return a?.result?.target_url||a?.rule.target_url||''}
 export function downloadSourceName(a?:Attempt){const url=downloadTarget(a);return url.includes('cachefly')?'Cachefly':url.includes('cloudflare')?'Cloudflare':url.includes('proof.ovh.net')?'OVH':url?new URL(url).hostname:'测速源未记录'}
