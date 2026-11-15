@@ -17,6 +17,20 @@ const section=ref('manage'),vergeOpen=ref(false)
 const noticeBalances=ref<Record<string,number|undefined>>({})
 const w=useWorkspace(),busy=ref(''),search=ref(''),form=ref<{kind:'airport'|'subscription';airportId?:string;subId?:string;name:string;url:string;website_url:string;backup_url:string;note:string}|null>(null),formError=ref(''),remove=ref<{airport:Airport;sub?:Subscription}|null>(null),maintenance=ref<{airport:Airport;settings:NonNullable<Airport['maintenance']>}|null>(null),refreshJob=ref<SubscriptionRefreshJob|null>(null),refreshProgressVisible=ref(false),refreshLoading=ref(false)
 const visible=computed(()=>w.airports.value.filter(a=>(a.name+' '+(a.note||'')).includes(search.value)))
+const allSubscriptions=computed(()=>w.airports.value.flatMap(a=>a.subscriptions||[]))
+const totalAccounts=computed(()=>w.airports.value.reduce((n,x)=>n+(x.subscriptions?.length||1),0))
+const totalNodes=computed(()=>w.airports.value.reduce((n,x)=>n+(x.node_count||0),0))
+const knownQuotaStats=computed(()=>{
+  let sum=0,count=0
+  for(const a of w.airports.value){
+    for(const s of a.subscriptions||[]){
+      const rem=remaining(s)??noticeUsage(a,s).remaining??null
+      if(rem!==null){sum+=rem;count++}
+    }
+  }
+  return {sum:count>0?sum:null,count}
+})
+const expiringSoonCount=computed(()=>allSubscriptions.value.filter(s=>s.usage?.expire&&expireDays(s.usage.expire)<=7).length)
 const safeLink=(v?:string)=>/^https?:\/\//i.test(v||'')?v:undefined
 let refreshTimer:ReturnType<typeof setTimeout>|undefined,disposed=false
 async function edit(airport?:Airport,sub?:Subscription){formError.value='';if(!airport){form.value={kind:'airport',name:'',url:'',website_url:'',backup_url:'',note:''};return}busy.value=sub?.id||airport.id;try{const url=await request<{url:string}|string>(sub?`/api/airports/${airport.id}/subscriptions/${sub.id}/url`:`/api/airports/${airport.id}/url`,'GET',undefined,sub?'GetSubscriptionURL':'GetAirportURL',sub?[airport.id,sub.id]:[airport.id]);form.value={kind:sub?'subscription':'airport',airportId:airport.id,subId:sub?.id,name:sub?.name||airport.name,url:typeof url==='string'?url:url.url,website_url:airport.website_url||'',backup_url:airport.backup_url||'',note:sub?.note||airport.note||''}}catch(e){w.fail(e)}finally{busy.value=''}}
@@ -78,7 +92,55 @@ function browse(a:Airport,s?:Subscription){w.setAirports([a.id]);if(s)w.subscrip
 onMounted(()=>void loadRefreshJobs())
 onBeforeUnmount(()=>{disposed=true;clearTimeout(refreshTimer)})
 </script>
-<template><section class="page-view airports-view"><div class="page-header"><div><h1>机场与账户</h1><p>每个订阅账户一行：套餐用量、到期、每日用量和更新状态。这里是机场账户计数，不是本工具的探测流量。</p></div><div v-if="section==='manage'" class="button-group page-header-actions"><button v-if="refreshJob&&!refreshProgressVisible" class="button ghost" @click="refreshProgressVisible=true"><Icon name="refresh"/>查看刷新进度</button><button class="button" :disabled="!!busy" @click="vergeOpen=true">从 Clash Verge 导入／同步</button><button class="button primary" @click="edit()"><Icon name="plus"/>添加机场</button></div></div><div class="subscription-view-tabs" role="group" aria-label="机场订阅视图"><button class="button" :class="{active:section==='manage'}" :aria-pressed="section==='manage'" @click="section='manage'">账户台账</button><button class="button" :class="{active:section==='usage'}" :aria-pressed="section==='usage'" @click="section='usage'">用量明细</button><button class="button" :class="{active:section==='report'}" :aria-pressed="section==='report'" @click="section='report'">体检</button></div><ClashVergeImport v-if="vergeOpen" @close="vergeOpen=false"/><SubscriptionUsageView v-if="section==='usage'"/><AirportReport v-else-if="section==='report'"/><template v-else><div class="page-toolbar"><label class="search-field"><Icon name="search"/><input v-model="search" placeholder="搜索机场" aria-label="搜索机场"></label><span class="cst-ledger-summary muted small">{{w.airports.value.length}} 个机场 · {{w.airports.value.reduce((n,x)=>n+(x.subscriptions?.length||1),0)}} 个账户</span></div>
+<template><section class="page-view airports-view">
+<div class="page-header airports-top-bar">
+  <div class="airports-title-group">
+    <h1>机场与账户</h1>
+    <p>集中管理订阅来源、套餐余量、每日消耗与近 30 天稳定性体检。</p>
+  </div>
+  <div class="airports-header-right">
+    <div class="subscription-view-tabs" role="group" aria-label="机场订阅视图">
+      <button class="button" :class="{active:section==='manage'}" :aria-pressed="section==='manage'" @click="section='manage'">账户台账</button>
+      <button class="button" :class="{active:section==='usage'}" :aria-pressed="section==='usage'" @click="section='usage'">用量明细</button>
+      <button class="button" :class="{active:section==='report'}" :aria-pressed="section==='report'" @click="section='report'">体检</button>
+    </div>
+    <div v-if="section==='manage'" class="button-group page-header-actions">
+      <button v-if="refreshJob&&!refreshProgressVisible" class="button ghost" @click="refreshProgressVisible=true"><Icon name="refresh"/>查看刷新进度</button>
+      <button class="button" :disabled="!!busy" @click="vergeOpen=true">从 Clash Verge 导入／同步</button>
+      <button class="button primary" @click="edit()"><Icon name="plus"/>添加机场</button>
+    </div>
+  </div>
+</div>
+<ClashVergeImport v-if="vergeOpen" @close="vergeOpen=false"/>
+<SubscriptionUsageView v-if="section==='usage'"/>
+<AirportReport v-else-if="section==='report'"/>
+<template v-else>
+<div v-if="w.airports.value.length" class="cst-kpi-strip" aria-label="账户台账概览">
+  <div class="cst-kpi-card">
+    <div class="cst-kpi-head"><span>已接入机场</span><span class="cst-kpi-icon"><Icon name="layers"/></span></div>
+    <strong class="cst-kpi-value">{{w.airports.value.length}}</strong>
+    <span class="cst-kpi-sub">共 {{totalAccounts}} 个订阅账户</span>
+  </div>
+  <div class="cst-kpi-card">
+    <div class="cst-kpi-head"><span>缓存节点总数</span><span class="cst-kpi-icon good"><Icon name="gauge"/></span></div>
+    <strong class="cst-kpi-value">{{totalNodes}}</strong>
+    <span class="cst-kpi-sub">已解析并缓存至本地</span>
+  </div>
+  <div class="cst-kpi-card">
+    <div class="cst-kpi-head"><span>已知剩余配额</span><span class="cst-kpi-icon"><Icon name="activity"/></span></div>
+    <strong class="cst-kpi-value">{{knownQuotaStats.sum!==null?bytes(knownQuotaStats.sum):'未知'}}</strong>
+    <span class="cst-kpi-sub">{{knownQuotaStats.count?`${knownQuotaStats.count} 个账户已报告配额`:'机场尚未返回配额头'}}</span>
+  </div>
+  <div class="cst-kpi-card">
+    <div class="cst-kpi-head"><span>效期提醒</span><span class="cst-kpi-icon" :class="expiringSoonCount?'warn':'good'"><Icon name="clock"/></span></div>
+    <strong class="cst-kpi-value">{{expiringSoonCount?`${expiringSoonCount} 项`:'正常'}}</strong>
+    <span class="cst-kpi-sub">{{expiringSoonCount?'7 天内到期或已过期':'无近期到期账户'}}</span>
+  </div>
+</div>
+<div class="page-toolbar">
+  <label class="search-field"><Icon name="search"/><input v-model="search" placeholder="搜索机场名称或备注…" aria-label="搜索机场"></label>
+  <span class="cst-ledger-summary muted small">显示 {{visible.length}} / {{w.airports.value.length}} 个机场 · {{totalAccounts}} 个账户</span>
+</div>
 <div class="cst-ledger">
 <article v-for="a in visible" :key="a.id" class="airport-card cst-ledger-airport">
   <header class="cst-ledger-airport-head">
@@ -120,6 +182,9 @@ onBeforeUnmount(()=>{disposed=true;clearTimeout(refreshTimer)})
 <Modal v-if="refreshJob&&refreshProgressVisible" title="订阅刷新进度" wide @close="refreshProgressVisible=false"><p class="muted">{{refreshJob.completed}} / {{refreshJob.items.length}} 项已完成 · {{refreshJob.success}} 成功 · {{refreshJob.failed}} 失败 · {{refreshJob.not_executed}} 未执行</p><p v-if="refreshJob.persistence_error" class="inline-error" role="alert">{{refreshJob.persistence_error}}</p><div class="refresh-progress-list"><article v-for="item in refreshJob.items" :key="item.airport_id+'|'+item.subscription_id"><strong>{{item.airport_name}} · {{item.subscription_name}}</strong><span class="badge" :class="item.state==='succeeded'?'good':item.state==='failed'?'bad':item.state==='not_executed'?'':'warn'">{{refreshState(item.state)}}</span><small v-if="item.stages?.length">{{item.stages.map(stage=>refreshState(stage.state)).join(' → ')}}</small><p v-if="refreshItemError(item)" class="inline-error">{{refreshItemError(item)}}</p><small v-if="item.duration_ms">{{item.duration_ms}} ms · {{item.node_count}} 条配置</small></article></div><template #footer><button v-if="refreshJob.failed>0" class="button" :disabled="refreshLoading||refreshJob.state==='running'" @click="retryRefresh">只重试失败项</button><button v-if="refreshJob.state==='running'" class="button danger-fill" aria-label="取消刷新任务" @click="cancelRefresh">取消刷新</button><button class="button primary" @click="refreshProgressVisible=false">关闭</button></template></Modal></section></template>
 <style src="./secondary-observatory.css" scoped></style>
 <style scoped>
+.airports-top-bar{align-items:center;margin-bottom:18px;padding-bottom:16px;border-bottom:1px solid var(--cst-line)}
+.airports-header-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-left:auto}
+.airports-top-bar .subscription-view-tabs{margin-bottom:0}
 .cst-ledger-summary{padding:4px 10px;border-radius:999px;background:var(--cst-panel);border:1px solid var(--cst-line);font-weight:500;font-variant-numeric:tabular-nums}
 .cst-ledger{display:flex;flex-direction:column;gap:16px}
 .cst-ledger-airport{padding:0;overflow:hidden;border:1px solid var(--cst-line);border-radius:var(--cst-radius);box-shadow:var(--cst-shadow-card)}

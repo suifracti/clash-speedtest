@@ -115,3 +115,53 @@ h2{font-size:16px;font-weight:650;letter-spacing:-.2px;color:var(--cst-text)}
 /* 设置项生效时机标记 */
 .cst-effect{display:inline-block;margin-left:8px;padding:1.5px 7px;border-radius:5px;font-size:11px;font-weight:500;vertical-align:2px;background:var(--cst-empty-bg);color:var(--cst-muted)}
 .cst-effect.now{background:var(--cst-accent-soft);color:var(--cst-accent)}
+/* 现代仪表盘 KPI 卡片条 */
+.cst-kpi-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:18px}
+.cst-kpi-card{display:flex;flex-direction:column;justify-content:space-between;gap:6px;padding:14px 16px;background:var(--cst-panel);border:1px solid var(--cst-line);border-radius:var(--cst-radius);box-shadow:var(--cst-shadow-xs);position:relative;overflow:hidden;transition:border-color .15s,box-shadow .15s}
+.cst-kpi-card:hover{border-color:var(--cst-line-strong);box-shadow:var(--cst-shadow-card)}
+.cst-kpi-head{display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--cst-muted);font-size:12px;font-weight:550}
+.cst-kpi-icon{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;background:var(--cst-accent-soft);color:var(--cst-accent);flex:none}
+.cst-kpi-icon.good{background:var(--cst-good-bg);color:var(--cst-good)}
+.cst-kpi-icon.warn{background:var(--cst-warn-bg);color:var(--cst-warn)}
+.cst-kpi-icon .icon{width:14px;height:14px}
+.cst-kpi-value{font-size:22px;font-weight:700;letter-spacing:-.03em;line-height:1.15;color:var(--cst-text);font-variant-numeric:tabular-nums}
+.cst-kpi-sub{font-size:11.5px;color:var(--cst-muted);line-height:1.35;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+/* 折叠说明条：将原本冗长的说明书式段落收敛为精巧的展开块 */
+.cst-info-collapse{margin:0 0 14px;border:1px solid var(--cst-line);border-radius:var(--cst-radius-sm);background:color-mix(in srgb,var(--cst-panel-2) 65%,var(--cst-panel));font-size:12px;color:var(--cst-muted)}
+.cst-info-collapse>summary{display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;font-weight:550;color:var(--cst-muted);user-select:none;list-style:none}
+.cst-info-collapse>summary::-webkit-details-marker{display:none}
+.cst-info-collapse>summary::before{content:'ⓘ';display:inline-grid;place-items:center;width:16px;height:16px;border-radius:50%;background:var(--cst-accent-soft);color:var(--cst-accent);font-size:11px;font-weight:700;flex:none}
+.cst-info-collapse>summary::after{content:'展开说明 ▾';margin-left:auto;font-size:11px;color:var(--cst-accent)}
+.cst-info-collapse[open]>summary{border-bottom:1px solid var(--cst-line);color:var(--cst-text)}
+.cst-info-collapse[open]>summary::after{content:'收起 ▴'}
+.cst-info-collapse-body{padding:10px 14px;display:grid;gap:6px;line-height:1.6}
+.cst-info-collapse-body p{margin:0;color:var(--cst-muted);font-size:12px}
+/* Bento 双列/多列网格 */
+.cst-bento-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;align-items:start}
+/* 用途推荐卡片网格 */
+.cst-purpose-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:4px}
+@media(max-width:920px){.cst-purpose-grid{grid-template-columns:1fr}}
+.cst-purpose-card{display:flex;flex-direction:column;gap:14px;padding:18px 20px;background:var(--cst-panel);border:1px solid var(--cst-line);border-radius:var(--cst-radius);box-shadow:var(--cst-shadow-card)}
+.cst-purpose-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding-bottom:12px;border-bottom:1px solid var(--cst-line)}
+.cst-purpose-title{display:flex;align-items:center;gap:10px}
+.cst-purpose-badge{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;background:var(--cst-accent-soft);color:var(--cst-accent);font-weight:700;font-size:14px;flex:none}
+.cst-purpose-title h2{font-size:16px;font-weight:700;margin:0}
+.cst-purpose-title p{font-size:12px;color:var(--cst-muted);margin:2px 0 0}
+.cst-candidate-list{display:grid;gap:10px}
+.cst-candidate-row{display:grid;grid-template-columns:28px minmax(0,1fr) auto;align-items:center;gap:12px;padding:11px 13px;border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel-2);transition:border-color .15s,background .15s}
+.cst-candidate-row:hover{border-color:color-mix(in srgb,var(--cst-accent) 40%,var(--cst-line));background:var(--cst-panel)}
+.cst-rank-medal{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;font-size:12px;font-weight:750;font-variant-numeric:tabular-nums;background:var(--cst-empty-bg);color:var(--cst-muted)}
+.cst-rank-medal.rank-1{background:var(--cst-accent);color:var(--cst-accent-ink);box-shadow:0 2px 6px color-mix(in srgb,var(--cst-accent) 30%,transparent)}
+.cst-rank-medal.rank-2{background:var(--cst-accent-soft);color:var(--cst-accent)}
+.cst-candidate-main{min-width:0;display:grid;gap:3px}
+.cst-candidate-name{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.cst-candidate-name strong{font-size:13.5px;font-weight:650;color:var(--cst-text)}
+.cst-candidate-meta{font-size:12px;color:var(--cst-muted);line-height:1.45}
+/* 巡检轮次进度卡片 */
+.cst-cycle-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-top:8px}
+.cst-cycle-card{display:flex;flex-direction:column;gap:8px;padding:13px 15px;border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel-2)}
+.cst-cycle-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.cst-cycle-head strong{font-size:13.5px;font-weight:650}
+.cst-cycle-stats{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:12px;color:var(--cst-muted);font-variant-numeric:tabular-nums}
+.cst-cycle-bar{height:5px;border-radius:999px;background:var(--cst-line);overflow:hidden}
+.cst-cycle-bar i{display:block;height:100%;background:var(--cst-accent);transition:width .25s ease}

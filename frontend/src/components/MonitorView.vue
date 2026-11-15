@@ -172,8 +172,6 @@ onBeforeUnmount(()=>{mounted=false;reloadGeneration++;runsGeneration++;clearInte
     <p v-if="jobsError" class="inline-warning monitor-read-error" role="alert">
       任务列表刷新失败{{jobsReadAt?`；显示上次成功读取于 ${jobsReadAt}`:'；尚未确认是否存在任务'}}：{{jobsError}}
     </p>
-    <div class="monitor-sampling-panel"><PeriodicSamplingPanel/></div>
-    <div class="monitor-sampling-panel"><AutoPickCard/></div>
     <div class="monitor-resource monitor-resource-ledger" :aria-busy="refreshing" aria-live="polite">
       <div class="monitor-resource-values">
         <div class="monitor-resource-item">
@@ -192,6 +190,8 @@ onBeforeUnmount(()=>{mounted=false;reloadGeneration++;runsGeneration++;clearInte
       <button class="text-button" @click="w.page.value='settings'">调整监测与保存策略</button>
     </div>
     <p v-if="resourceWarning" class="inline-warning">{{resourceWarning}}</p>
+    <div class="monitor-sampling-panel"><PeriodicSamplingPanel/></div>
+    <div class="monitor-sampling-panel"><AutoPickCard/></div>
 
     <div v-if="!jobsReadAt&&!w.jobs.value.length" class="loading-state" :class="{'inline-warning':!!jobsError}" :role="jobsError?'alert':'status'">
       {{jobsError?'任务列表尚未读取，无法确认是否有任务。':'正在读取监测任务…'}}
