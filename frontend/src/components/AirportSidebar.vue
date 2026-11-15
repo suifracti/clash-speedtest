@@ -37,8 +37,9 @@ const health=computed(()=>Object.fromEntries(w.airports.value.map(a=>{
  <p v-if="!visible.length" class="muted small">没有匹配机场</p></template>
 </section></template>
 <style scoped>
-.airport-search{width:100%;height:26px;min-height:26px;padding:3px 8px;font-size:11px;margin:2px 0 4px}
-.airport-heading{font-weight:600;color:var(--cst-muted)!important}
-.airport-health{width:6px;height:6px;flex:0 0 6px;border-radius:50%;background:var(--cst-muted)}
+.airport-search{width:100%;height:28px;min-height:28px;padding:4px 9px;font-size:11.5px;margin:3px 0 5px;border-radius:7px;border:1px solid var(--cst-line);background:var(--cst-panel)}
+.airport-heading{font-size:11.5px;font-weight:650;color:var(--cst-muted)!important;height:26px!important}
+.airport-heading small{background:transparent!important;padding:0!important;font-weight:500}
+.airport-health{width:6px;height:6px;flex:0 0 6px;border-radius:50%;background:var(--cst-subtle)}
 .airport-health.good{background:var(--cst-good)}.airport-health.warn{background:var(--cst-warn)}.airport-health.bad{background:var(--cst-bad)}
 </style>

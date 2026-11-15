@@ -3,17 +3,42 @@
 .monitor-view,
 .preferences-view,
 .data-view {
-  --secondary-signal: var(--signal, #148c98);
-  --secondary-signal-soft: var(--signal-soft, color-mix(in srgb, var(--secondary-signal) 10%, var(--surface)));
+  --secondary-signal: var(--cst-accent, #2563eb);
+  --secondary-signal-soft: var(--cst-accent-soft, color-mix(in srgb, var(--secondary-signal) 10%, var(--surface)));
 }
 
 /* Airport subscriptions read as a small account ledger grouped by provider. */
 .airports-view .subscription-view-tabs {
-  display: flex;
-  gap: 7px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 15px;
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--cst-line);
+  border-radius: 10px;
+  background: var(--cst-panel-2);
+  margin-bottom: 18px;
+}
+
+.airports-view .subscription-view-tabs .button {
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+  min-height: 30px;
+  padding: 5px 15px;
+  color: var(--cst-muted);
+  font-weight: 500;
+}
+
+.airports-view .subscription-view-tabs .button:hover:not(.active) {
+  color: var(--cst-text);
+  background: color-mix(in srgb, var(--cst-panel) 55%, transparent);
+}
+
+.airports-view .subscription-view-tabs .button.active {
+  background: var(--cst-panel);
+  color: var(--cst-accent);
+  font-weight: 650;
+  box-shadow: var(--cst-shadow);
 }
 
 .airports-view .subscription-actions {

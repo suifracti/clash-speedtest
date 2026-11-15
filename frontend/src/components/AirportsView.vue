@@ -78,7 +78,7 @@ function browse(a:Airport,s?:Subscription){w.setAirports([a.id]);if(s)w.subscrip
 onMounted(()=>void loadRefreshJobs())
 onBeforeUnmount(()=>{disposed=true;clearTimeout(refreshTimer)})
 </script>
-<template><section class="page-view airports-view"><div class="page-header"><div><h1>机场与账户</h1><p>每个订阅账户一行：套餐用量、到期、每日用量和更新状态。这里是机场账户计数，不是本工具的探测流量。</p></div><button v-if="section==='manage'&&refreshJob&&!refreshProgressVisible" class="button ghost" @click="refreshProgressVisible=true"><Icon name="refresh"/>查看刷新进度</button><button v-if="section==='manage'" class="button" :disabled="!!busy" @click="vergeOpen=true">从 Clash Verge 导入／同步</button><button v-if="section==='manage'" class="button primary" @click="edit()"><Icon name="plus"/>添加机场</button></div><div class="subscription-view-tabs" role="group" aria-label="机场订阅视图"><button class="button" :class="{active:section==='manage'}" :aria-pressed="section==='manage'" @click="section='manage'">账户台账</button><button class="button" :class="{active:section==='usage'}" :aria-pressed="section==='usage'" @click="section='usage'">用量明细</button><button class="button" :class="{active:section==='report'}" :aria-pressed="section==='report'" @click="section='report'">体检</button></div><ClashVergeImport v-if="vergeOpen" @close="vergeOpen=false"/><SubscriptionUsageView v-if="section==='usage'"/><AirportReport v-else-if="section==='report'"/><template v-else><div class="page-toolbar"><label class="search-field"><Icon name="search"/><input v-model="search" placeholder="搜索机场" aria-label="搜索机场"></label><span class="muted small">{{w.airports.value.length}} 个机场 · {{w.airports.value.reduce((n,x)=>n+(x.subscriptions?.length||1),0)}} 个账户</span></div>
+<template><section class="page-view airports-view"><div class="page-header"><div><h1>机场与账户</h1><p>每个订阅账户一行：套餐用量、到期、每日用量和更新状态。这里是机场账户计数，不是本工具的探测流量。</p></div><div v-if="section==='manage'" class="button-group page-header-actions"><button v-if="refreshJob&&!refreshProgressVisible" class="button ghost" @click="refreshProgressVisible=true"><Icon name="refresh"/>查看刷新进度</button><button class="button" :disabled="!!busy" @click="vergeOpen=true">从 Clash Verge 导入／同步</button><button class="button primary" @click="edit()"><Icon name="plus"/>添加机场</button></div></div><div class="subscription-view-tabs" role="group" aria-label="机场订阅视图"><button class="button" :class="{active:section==='manage'}" :aria-pressed="section==='manage'" @click="section='manage'">账户台账</button><button class="button" :class="{active:section==='usage'}" :aria-pressed="section==='usage'" @click="section='usage'">用量明细</button><button class="button" :class="{active:section==='report'}" :aria-pressed="section==='report'" @click="section='report'">体检</button></div><ClashVergeImport v-if="vergeOpen" @close="vergeOpen=false"/><SubscriptionUsageView v-if="section==='usage'"/><AirportReport v-else-if="section==='report'"/><template v-else><div class="page-toolbar"><label class="search-field"><Icon name="search"/><input v-model="search" placeholder="搜索机场" aria-label="搜索机场"></label><span class="cst-ledger-summary muted small">{{w.airports.value.length}} 个机场 · {{w.airports.value.reduce((n,x)=>n+(x.subscriptions?.length||1),0)}} 个账户</span></div>
 <div class="cst-ledger">
 <article v-for="a in visible" :key="a.id" class="airport-card cst-ledger-airport">
   <header class="cst-ledger-airport-head">
@@ -87,7 +87,7 @@ onBeforeUnmount(()=>{disposed=true;clearTimeout(refreshTimer)})
     <div class="button-group"><button class="button" :disabled="!!busy||refreshLoading||refreshJob?.state==='running'" @click="refresh(a)"><Icon name="refresh"/>{{busy===a.id||refreshJob?.state==='running'?'更新中…':'全部更新'}}</button><button class="button ghost" @click="openMaintenance(a)">更新与维护</button><button class="button ghost icon-button" :disabled="!!busy" aria-label="编辑机场" @click="edit(a)"><Icon name="edit"/></button><button class="button ghost icon-button" aria-label="删除机场" @click="remove={airport:a}"><Icon name="trash"/></button></div>
   </header>
   <p v-if="a.note" class="airport-note">{{a.note}}</p>
-  <div v-if="a.subscriptions?.length" class="cst-ledger-cols" aria-hidden="true"><span>账户</span><span>套餐用量</span><span>到期</span><span>每日用量 · 近 14 天</span><span/></div>
+  <div v-if="a.subscriptions?.length" class="cst-ledger-cols" aria-hidden="true"><span>账户</span><span>套餐用量</span><span>到期</span><span>每日用量 · 近 14 天</span><span class="cst-col-actions">操作</span></div>
   <div v-for="s in a.subscriptions||[]" :key="s.id" class="cst-ledger-row">
     <div class="cst-ledger-account">
       <strong>{{s.name}}</strong>
@@ -120,30 +120,35 @@ onBeforeUnmount(()=>{disposed=true;clearTimeout(refreshTimer)})
 <Modal v-if="refreshJob&&refreshProgressVisible" title="订阅刷新进度" wide @close="refreshProgressVisible=false"><p class="muted">{{refreshJob.completed}} / {{refreshJob.items.length}} 项已完成 · {{refreshJob.success}} 成功 · {{refreshJob.failed}} 失败 · {{refreshJob.not_executed}} 未执行</p><p v-if="refreshJob.persistence_error" class="inline-error" role="alert">{{refreshJob.persistence_error}}</p><div class="refresh-progress-list"><article v-for="item in refreshJob.items" :key="item.airport_id+'|'+item.subscription_id"><strong>{{item.airport_name}} · {{item.subscription_name}}</strong><span class="badge" :class="item.state==='succeeded'?'good':item.state==='failed'?'bad':item.state==='not_executed'?'':'warn'">{{refreshState(item.state)}}</span><small v-if="item.stages?.length">{{item.stages.map(stage=>refreshState(stage.state)).join(' → ')}}</small><p v-if="refreshItemError(item)" class="inline-error">{{refreshItemError(item)}}</p><small v-if="item.duration_ms">{{item.duration_ms}} ms · {{item.node_count}} 条配置</small></article></div><template #footer><button v-if="refreshJob.failed>0" class="button" :disabled="refreshLoading||refreshJob.state==='running'" @click="retryRefresh">只重试失败项</button><button v-if="refreshJob.state==='running'" class="button danger-fill" aria-label="取消刷新任务" @click="cancelRefresh">取消刷新</button><button class="button primary" @click="refreshProgressVisible=false">关闭</button></template></Modal></section></template>
 <style src="./secondary-observatory.css" scoped></style>
 <style scoped>
-.cst-ledger{display:flex;flex-direction:column;gap:14px}
-.cst-ledger-airport{padding:0;overflow:hidden}
-.cst-ledger-airport-head{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--cst-line);flex-wrap:wrap}
-.cst-ledger-logo{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;background:var(--cst-accent-soft);color:var(--cst-accent);font-weight:700;flex:none}
-.cst-ledger-title{flex:1;min-width:200px}
-.cst-ledger-title h2{margin:0;font-size:15px}
-.cst-ledger-title small{color:var(--cst-muted)}
-.cst-ledger-airport .airport-note{margin:0;padding:8px 16px;color:var(--cst-muted);font-size:12px;border-bottom:1px solid var(--cst-line)}
-.cst-ledger-cols,.cst-ledger-row{display:grid;grid-template-columns:minmax(180px,1.3fr) minmax(150px,1fr) 96px minmax(200px,1.3fr) auto;gap:16px;align-items:center;padding:0 16px}
-.cst-ledger-cols{padding-top:8px;padding-bottom:6px;font-size:11px;font-weight:600;color:var(--cst-muted);background:var(--cst-panel-2);border-bottom:1px solid var(--cst-line)}
-.cst-ledger-row{padding-top:12px;padding-bottom:12px;border-bottom:1px solid var(--cst-line)}
-.cst-ledger-account{display:flex;flex-direction:column;gap:2px;min-width:0}
-.cst-ledger-account small{color:var(--cst-muted)}
-.cst-ledger-account small .bad{color:var(--cst-bad);font-weight:500}
-.cst-ledger-account code{font:11px var(--cst-mono);color:var(--cst-subtle);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.cst-ledger-quota,.cst-ledger-expire{display:flex;flex-direction:column;gap:4px;font-variant-numeric:tabular-nums;min-width:0}
-.cst-ledger-quota small,.cst-ledger-expire small{color:var(--cst-muted);font-size:11px}
+.cst-ledger-summary{padding:4px 10px;border-radius:999px;background:var(--cst-panel);border:1px solid var(--cst-line);font-weight:500;font-variant-numeric:tabular-nums}
+.cst-ledger{display:flex;flex-direction:column;gap:16px}
+.cst-ledger-airport{padding:0;overflow:hidden;border:1px solid var(--cst-line);border-radius:var(--cst-radius);box-shadow:var(--cst-shadow-card)}
+.cst-ledger-airport-head{display:flex;align-items:center;gap:14px;padding:16px 20px;background:linear-gradient(180deg,var(--cst-panel),var(--cst-panel-2));border-bottom:1px solid var(--cst-line);flex-wrap:wrap}
+.cst-ledger-logo{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;background:var(--cst-accent-soft);border:1px solid color-mix(in srgb,var(--cst-accent) 22%,transparent);color:var(--cst-accent);font-size:15px;font-weight:750;flex:none}
+.cst-ledger-title{flex:1;min-width:200px;display:flex;flex-direction:column;gap:2px}
+.cst-ledger-title h2{margin:0;font-size:16px;font-weight:700}
+.cst-ledger-title small{color:var(--cst-muted);font-size:12px}
+.cst-ledger-airport .airport-note{margin:0;padding:9px 20px;color:var(--cst-muted);font-size:12px;background:var(--cst-panel-2);border-bottom:1px solid var(--cst-line)}
+.cst-ledger-cols,.cst-ledger-row{display:grid;grid-template-columns:minmax(200px,1.25fr) minmax(175px,1.1fr) minmax(104px,.65fr) minmax(240px,1.45fr) auto;gap:20px;align-items:center;padding:0 20px}
+.cst-ledger-cols{padding-top:9px;padding-bottom:8px;font-size:11.5px;font-weight:650;color:var(--cst-muted);background:var(--cst-panel-2);border-bottom:1px solid var(--cst-line);letter-spacing:.01em}
+.cst-col-actions{text-align:right;padding-right:4px}
+.cst-ledger-row{padding-top:16px;padding-bottom:16px;border-bottom:1px solid var(--cst-line);transition:background .12s}
+.cst-ledger-row:hover{background:color-mix(in srgb,var(--cst-panel-2) 65%,var(--cst-panel))}
+.cst-ledger-account{display:flex;flex-direction:column;gap:4px;min-width:0}
+.cst-ledger-account strong{font-size:14px;font-weight:650;color:var(--cst-text)}
+.cst-ledger-account small{color:var(--cst-muted);font-size:12px}
+.cst-ledger-account small .bad{color:var(--cst-bad);font-weight:600}
+.cst-ledger-account code{font:11px/1.4 var(--cst-mono);color:var(--cst-muted);background:var(--cst-panel-2);border:1px solid var(--cst-line);border-radius:5px;padding:2px 7px;width:fit-content;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cst-ledger-quota,.cst-ledger-expire{display:flex;flex-direction:column;gap:5px;font-variant-numeric:tabular-nums;min-width:0}
+.cst-ledger-quota strong,.cst-ledger-expire strong{font-size:13.5px;font-weight:650;color:var(--cst-text)}
+.cst-ledger-quota small,.cst-ledger-expire small{color:var(--cst-muted);font-size:11.5px}
 .cst-ledger-expire strong.warn{color:var(--cst-warn)}
 .cst-ledger-expire strong.bad{color:var(--cst-bad)}
-.cst-meter{height:5px;border-radius:3px;background:var(--cst-line);overflow:hidden}
-.cst-meter i{display:block;height:100%;background:var(--cst-accent)}
+.cst-meter{height:7px;border-radius:999px;background:var(--cst-accent-soft);overflow:hidden}
+.cst-meter i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--cst-accent),color-mix(in srgb,var(--cst-accent) 80%,#38bdf8))}
 .cst-meter i.warn{background:var(--cst-warn)}
-.cst-ledger-actions{display:flex;gap:4px;justify-content:flex-end}
-.cst-ledger-foot{padding:8px 16px}
-@media(max-width:1100px){.cst-ledger-cols{display:none}.cst-ledger-row{grid-template-columns:1fr 1fr;row-gap:10px}.cst-ledger-account{grid-column:1/-1}.cst-ledger-actions{grid-column:1/-1;justify-content:flex-start}}
+.cst-ledger-actions{display:flex;align-items:center;gap:6px;justify-content:flex-end}
+.cst-ledger-foot{padding:10px 20px;background:var(--cst-panel-2)}
+@media(max-width:1100px){.cst-ledger-cols{display:none}.cst-ledger-row{grid-template-columns:1fr 1fr;row-gap:12px}.cst-ledger-account{grid-column:1/-1}.cst-ledger-actions{grid-column:1/-1;justify-content:flex-start}}
 @media(max-width:560px){.cst-ledger-row{grid-template-columns:1fr}}
 </style>

@@ -43,24 +43,24 @@ const caption=computed(()=>{
       <div v-if="!series.length" class="cst-usage-none"><dt>今天</dt><dd class="unknown">{{loading?'…':'未记录'}}</dd></div>
     </dl>
     <div v-if="chart&&series.length" class="cst-usage-bars" role="img" :aria-label="`近 ${series.length} 天账户用量；空白表示没有可归属的数据`">
-      <span v-for="d in [...series].reverse()" :key="d.date" :class="{unknown:d.bytes==null,estimated:d.estimated}" :title="title(d)"><i :style="{height:d.bytes!=null?Math.max(6,d.bytes/max*100)+'%':'100%'}"/></span>
+      <span v-for="d in [...series].reverse()" :key="d.date" :class="{unknown:d.bytes==null,estimated:d.estimated}" :title="title(d)"><i :style="{height:d.bytes!=null?Math.max(14,d.bytes/max*100)+'%':'22%'}"/></span>
     </div>
     <small class="cst-usage-caption" :class="{bad:!!error}" :title="account?.raw_error||account?.message||''">{{caption}}</small>
   </div>
 </template>
 <style>
-.cst-usage{display:flex;flex-direction:column;gap:4px;min-width:0}
-.cst-usage-days{display:flex;gap:14px;margin:0}
-.cst-usage-days div{display:flex;flex-direction:column;min-width:0}
+.cst-usage{display:flex;flex-direction:column;gap:5px;min-width:0}
+.cst-usage-days{display:flex;gap:14px;margin:0;flex-wrap:wrap}
+.cst-usage-days div{display:flex;flex-direction:column;gap:1px;min-width:0}
 .cst-usage-days dt{font-size:11px;color:var(--cst-muted)}
-.cst-usage-days dd{margin:0;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
-.cst-usage-since{display:block;font-size:10px;font-weight:400;color:var(--cst-muted)}
+.cst-usage-days dd{margin:0;font-size:12.5px;font-weight:650;font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--cst-text)}
+.cst-usage-since{display:inline;margin-left:2px;font-size:10.5px;font-weight:400;color:var(--cst-muted)}
 .cst-usage-days dd.unknown{font-weight:400;color:var(--cst-muted)}
-.cst-usage-bars{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:2px;height:28px;align-items:end}
+.cst-usage-bars{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:3px;height:24px;align-items:end;padding:2px 0}
 .cst-usage-bars span{height:100%;display:flex;align-items:flex-end}
-.cst-usage-bars i{display:block;width:100%;border-radius:2px;background:var(--cst-accent)}
-.cst-usage-bars .estimated i{opacity:.55}
-.cst-usage-bars .unknown i{background:repeating-linear-gradient(-45deg,var(--cst-line) 0 2px,transparent 2px 4px);border:1px dashed var(--cst-line-strong);box-sizing:border-box}
+.cst-usage-bars i{display:block;width:100%;border-radius:3px;background:var(--cst-accent)}
+.cst-usage-bars .estimated i{opacity:.6}
+.cst-usage-bars .unknown i{background:var(--cst-empty-bg);border:1px dashed var(--cst-line-strong);box-sizing:border-box}
 .cst-usage-caption{color:var(--cst-muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cst-usage-caption.bad{color:var(--cst-bad)}
 .cst-usage-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:end;gap:10px;height:82px;padding-bottom:4px;border-bottom:1px solid var(--cst-line)}

@@ -1,25 +1,29 @@
-/* CST 设计系统：唯一的颜色、字体、圆角来源。旧变量（--canvas/--surface/…/--hd-*）单向映射到这里，随各页迁移逐步退役。 */
+/* CST 设计系统：统一的色彩、字体、圆角与阴影层级。 */
 :root{
-  --cst-bg:#f5f5f7;--cst-side:#ececef;--cst-panel:#fff;--cst-panel-2:#fafafa;--cst-hover:#f0f0f3;
-  --cst-line:#e3e3e8;--cst-line-strong:#d1d1d6;
-  --cst-text:#1d1d1f;--cst-muted:#6e6e73;--cst-subtle:#a1a1a6;
-  --cst-accent:#0a66d9;--cst-accent-hover:#0857bb;--cst-accent-soft:#e8f0fc;--cst-accent-ink:#fff;
-  --cst-good:#1f8f4e;--cst-good-bg:#e5f5ec;--cst-warn:#b26a00;--cst-warn-bg:#fdf1dc;--cst-bad:#c9302c;--cst-bad-bg:#fbe7e6;--cst-empty:#8e8e93;--cst-empty-bg:#f0f0f2;
-  --cst-focus-bg:#e8f0fc;--cst-backdrop:#1d1d1f59;
-  --cst-radius:10px;--cst-radius-sm:7px;--cst-radius-lg:14px;
-  --cst-font:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",sans-serif;
-  --cst-mono:"SF Mono",ui-monospace,Menlo,monospace;
-  --cst-shadow:0 1px 2px #0000000d;--cst-shadow-pop:0 18px 60px #0000002e,0 0 0 1px #0000000f;
-  --cst-side-w:212px;
+  --cst-bg:#f3f6fb;--cst-side:#ebeef5;--cst-panel:#ffffff;--cst-panel-2:#f7f9fc;--cst-hover:#e9eef6;
+  --cst-line:#e1e7f0;--cst-line-strong:#cbd5e1;
+  --cst-text:#0f172a;--cst-muted:#5b6b82;--cst-subtle:#8c9bb0;
+  --cst-accent:#2563eb;--cst-accent-hover:#1d4ed8;--cst-accent-soft:#ebf2ff;--cst-accent-ink:#ffffff;
+  --cst-good:#15803d;--cst-good-bg:#dcfce7;--cst-warn:#b45309;--cst-warn-bg:#fef3c7;--cst-bad:#dc2626;--cst-bad-bg:#fee2e2;--cst-empty:#64748b;--cst-empty-bg:#eef2f7;
+  --cst-focus-bg:#eff6ff;--cst-backdrop:rgba(15,23,42,.45);
+  --cst-radius:12px;--cst-radius-sm:8px;--cst-radius-lg:16px;
+  --cst-font:Inter,-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  --cst-mono:"JetBrains Mono","SF Mono",ui-monospace,Consolas,Menlo,monospace;
+  --cst-shadow:0 1px 2px rgba(15,23,42,.05),0 1px 1px rgba(15,23,42,.03);
+  --cst-shadow-card:0 2px 10px -2px rgba(15,23,42,.05),0 1px 3px -1px rgba(15,23,42,.03);
+  --cst-shadow-pop:0 22px 56px -12px rgba(15,23,42,.24),0 0 0 1px rgba(15,23,42,.06);
+  --cst-side-w:226px;
 }
 :root[data-theme=dark]{
-  --cst-bg:#1c1c1e;--cst-side:#161618;--cst-panel:#242426;--cst-panel-2:#2c2c2e;--cst-hover:#303033;
-  --cst-line:#38383c;--cst-line-strong:#48484c;
-  --cst-text:#f2f2f7;--cst-muted:#a1a1a6;--cst-subtle:#76767b;
-  --cst-accent:#4c9bff;--cst-accent-hover:#6badff;--cst-accent-soft:#1f2b3b;--cst-accent-ink:#0b1220;
-  --cst-good:#4cd17f;--cst-good-bg:#173a26;--cst-warn:#ffb340;--cst-warn-bg:#3d2d10;--cst-bad:#ff6961;--cst-bad-bg:#43201e;--cst-empty:#8e8e93;--cst-empty-bg:#2c2c2e;
-  --cst-focus-bg:#1f2b3b;--cst-backdrop:#00000080;
-  --cst-shadow:0 1px 2px #0006;--cst-shadow-pop:0 18px 60px #0009,0 0 0 1px #ffffff14;
+  --cst-bg:#0b1120;--cst-side:#0f172a;--cst-panel:#151f32;--cst-panel-2:#1c283d;--cst-hover:#24324b;
+  --cst-line:#253349;--cst-line-strong:#364863;
+  --cst-text:#f1f5f9;--cst-muted:#94a3b8;--cst-subtle:#64748b;
+  --cst-accent:#60a5fa;--cst-accent-hover:#93c5fd;--cst-accent-soft:#1e3454;--cst-accent-ink:#09111e;
+  --cst-good:#4ade80;--cst-good-bg:rgba(22,163,74,.2);--cst-warn:#fbbf24;--cst-warn-bg:rgba(217,119,6,.2);--cst-bad:#f87171;--cst-bad-bg:rgba(220,38,38,.2);--cst-empty:#94a3b8;--cst-empty-bg:#1e293b;
+  --cst-focus-bg:#1b2e4b;--cst-backdrop:rgba(2,6,23,.65);
+  --cst-shadow:0 1px 3px rgba(0,0,0,.35);
+  --cst-shadow-card:0 4px 16px -2px rgba(0,0,0,.35),0 1px 3px rgba(0,0,0,.25);
+  --cst-shadow-pop:0 24px 64px -12px rgba(0,0,0,.65),0 0 0 1px rgba(255,255,255,.08);
 }
 /* 旧变量 → 新 token（data-theme 总会设置，[data-theme] 让它压过旧样式表里的同名定义） */
 :root[data-theme]{
