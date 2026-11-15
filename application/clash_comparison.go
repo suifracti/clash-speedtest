@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/faceair/clash-speedtest/adapter/controller/mihomo"
+	"github.com/faceair/clash-speedtest/core/profiles"
 	"github.com/faceair/clash-speedtest/core/speedtester"
 )
 
@@ -41,12 +43,40 @@ func (s *AppService) clashClient() (*mihomo.Client, string, error) {
 		return nil, "", err
 	}
 	cfg := mihomo.Config{Timeout: 12 * time.Second}
-	endpoint := fmt.Sprintf("/var/run/clash-verge-service/users/%d/verge-mihomo.sock", os.Getuid())
+	defaultSocket := fmt.Sprintf("/var/run/clash-verge-service/users/%d/verge-mihomo.sock", os.Getuid())
+	endpoint := defaultSocket
 	if settings.ClashConnection != nil && settings.ClashConnection.Mode == "tcp" {
 		cfg.Endpoint, cfg.Secret = settings.ClashConnection.Endpoint, settings.ClashConnection.Secret
 		endpoint = cfg.Endpoint
 	} else {
-		cfg.SocketPath = endpoint
+		useDefaultSocket := false
+		if runtime.GOOS != "windows" {
+			if _, statErr := os.Stat(defaultSocket); statErr == nil {
+				useDefaultSocket = true
+			}
+		}
+		if !useDefaultSocket {
+			if file, fileErr := profiles.DefaultVergeProfilesFile(); fileErr == nil {
+				if vergeCfg, vergeErr := profiles.LoadVergeControllerConfig(file); vergeErr == nil && vergeCfg != nil {
+					if runtime.GOOS != "windows" && vergeCfg.ExternalControllerUnix != "" {
+						if _, statErr := os.Stat(vergeCfg.ExternalControllerUnix); statErr == nil {
+							cfg.SocketPath = vergeCfg.ExternalControllerUnix
+							cfg.Secret = vergeCfg.Secret
+							endpoint = vergeCfg.ExternalControllerUnix
+						}
+					}
+					if cfg.SocketPath == "" && vergeCfg.ExternalController != "" {
+						cfg.Endpoint = vergeCfg.ExternalController
+						cfg.Secret = vergeCfg.Secret
+						endpoint = vergeCfg.ExternalController
+					}
+				}
+			}
+		}
+		if cfg.SocketPath == "" && cfg.Endpoint == "" {
+			cfg.SocketPath = defaultSocket
+			endpoint = defaultSocket
+		}
 	}
 	client, err := mihomo.NewClient(cfg)
 	return client, endpoint, err

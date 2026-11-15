@@ -1,4 +1,4 @@
-# Clash-SpeedTest launcher (Windows; also works on macOS if pwsh is installed)
+﻿# Clash-SpeedTest launcher (Windows; also works on macOS if pwsh is installed)
 # Runs from source with `go run`. No exe is built.
 #
 # Usage:
@@ -61,11 +61,11 @@ if (-not $env:CLASH_SPEEDTEST_DATA_DIR) {
     $env:CLASH_SPEEDTEST_DATA_DIR = Join-Path $PSScriptRoot "data"
 }
 
-Write-Host "从源码启动 clash-speedtest（go run，不生成 exe）..."
+Write-Host "从源码启动 clash-speedtest（go run -tags production，不生成 exe）..."
 if ($null -ne $args -and $args.Count -gt 0) {
-    & $go run . @args
+    & $go run -tags production . @args
 }
 else {
-    & $go run .
+    & $go run -tags production .
 }
 exit $LASTEXITCODE

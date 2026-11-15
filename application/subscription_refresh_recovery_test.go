@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -33,6 +34,9 @@ func TestRefreshWorkerProgressSaveFailureTerminatesQueuedItems(t *testing.T) {
 		profilePaths:  profiles.Paths{Dir: profileDir},
 		refreshJobs:   []*SubscriptionRefreshJob{job},
 		refreshLoaded: true,
+	}
+	if err := os.MkdirAll(filepath.Join(profileDir, "subscription-refresh-jobs.json", "blocker"), 0o700); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.Chmod(profileDir, 0o500); err != nil {
 		t.Fatal(err)
@@ -165,7 +169,7 @@ func TestRefreshRollbackFailuresKeepRecoveryCopiesAndReportUnconfirmedState(t *t
 				t.Fatal("cache recovery copy was not offered to the restore operation")
 			} else if tt.cacheBackupRemains {
 				info, err := os.Stat(got)
-				if err != nil || info.Mode().Perm() != 0o600 {
+				if err != nil || !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
 					t.Fatalf("old cache recovery copy missing or not private: stat error=%v info=%v", err, info)
 				}
 				data, err := os.ReadFile(got)

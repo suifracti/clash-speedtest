@@ -20,12 +20,40 @@ type VergeProfile struct {
 	Usage     *SubscriptionUsage
 }
 
+// VergeControllerConfig holds the local controller endpoint and secret from Clash Verge's runtime config.yaml.
+type VergeControllerConfig struct {
+	ExternalController     string `yaml:"external-controller"`
+	ExternalControllerUnix string `yaml:"external-controller-unix"`
+	ExternalControllerPipe string `yaml:"external-controller-pipe"`
+	Secret                 string `yaml:"secret"`
+}
+
 func DefaultVergeProfilesFile() (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", errors.New("无法定位 Clash Verge 配置目录")
 	}
 	return filepath.Join(dir, "io.github.clash-verge-rev.clash-verge-rev", "profiles.yaml"), nil
+}
+
+// LoadVergeControllerConfig reads Clash Verge's runtime config.yaml sitting alongside profiles.yaml.
+func LoadVergeControllerConfig(indexPath string) (*VergeControllerConfig, error) {
+	if strings.TrimSpace(indexPath) == "" {
+		return nil, errors.New("无法定位 Clash Verge 配置目录")
+	}
+	body, err := os.ReadFile(filepath.Join(filepath.Dir(indexPath), "config.yaml"))
+	if err != nil {
+		return nil, errors.New("无法读取 Clash Verge 运行配置")
+	}
+	var cfg VergeControllerConfig
+	if err := yaml.Unmarshal(body, &cfg); err != nil {
+		return nil, errors.New("Clash Verge 运行配置格式无效")
+	}
+	cfg.ExternalController = strings.TrimSpace(cfg.ExternalController)
+	cfg.ExternalControllerUnix = strings.TrimSpace(cfg.ExternalControllerUnix)
+	cfg.ExternalControllerPipe = strings.TrimSpace(cfg.ExternalControllerPipe)
+	cfg.Secret = strings.TrimSpace(cfg.Secret)
+	return &cfg, nil
 }
 
 func LoadVergeProfiles(indexPath string) ([]VergeProfile, error) {

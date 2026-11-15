@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -170,5 +173,32 @@ func TestVergeImportInitializesUninitializedStoreAndRollsBackOnFailure(t *testin
 	}
 	if setup, err := s.GetProfileSetup(); err != nil || setup.State != "ready" || !setup.Initialized || imported.NodeCount != 1 {
 		t.Fatalf("successful initial import must mark store ready: %+v %+v %v", setup, imported, err)
+	}
+}
+
+func TestClashClientAutoDiscoversVergeControllerConfig(t *testing.T) {
+	indexPath, _ := vergeSourceFixture(t)
+	s, _ := newAirportURLTestService(t)
+
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"connections":[{"id":"c1","upload":1024,"download":2048,"chains":["Node-A","Proxy"]}]}`)
+	}))
+	defer server.Close()
+
+	controllerHost := strings.TrimPrefix(server.URL, "http://")
+	configBody := fmt.Sprintf("external-controller: %s\nsecret: fixture-controller-secret\n", controllerHost)
+	if err := os.WriteFile(filepath.Join(filepath.Dir(indexPath), "config.yaml"), []byte(configBody), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	usage := s.GetClashUsage(context.Background())
+	if len(usage) != 1 || usage[0].Name != "Node-A" || usage[0].Bytes != 3072 {
+		t.Fatalf("expected auto-discovered Verge controller usage, got %+v", usage)
+	}
+	if gotAuth != "Bearer fixture-controller-secret" {
+		t.Fatalf("expected controller secret header, got %q", gotAuth)
 	}
 }

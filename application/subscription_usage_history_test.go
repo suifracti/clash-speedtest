@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -187,7 +188,7 @@ func TestSaveSettingsAtomicPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("settings.json does not exist: %v", err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
 		t.Fatalf("expected permissions 0600, got: %v", info.Mode().Perm())
 	}
 

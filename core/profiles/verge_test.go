@@ -74,4 +74,16 @@ proxies:
 	if node["password"] != "001234" || node["port"] != 443 || node["sni"] != "example.invalid" {
 		t.Fatalf("cached node values changed: %v", node)
 	}
+
+	controllerYAML := "external-controller: 127.0.0.1:9097\nsecret: fixture-secret\nexternal-controller-pipe: \\\\.\\pipe\\verge-mihomo\n"
+	if err = os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(controllerYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctrlCfg, err := LoadVergeControllerConfig(indexPath)
+	if err != nil {
+		t.Fatalf("LoadVergeControllerConfig: %v", err)
+	}
+	if ctrlCfg.ExternalController != "127.0.0.1:9097" || ctrlCfg.Secret != "fixture-secret" || ctrlCfg.ExternalControllerPipe != `\\.\pipe\verge-mihomo` {
+		t.Fatalf("unexpected controller config: %+v", ctrlCfg)
+	}
 }

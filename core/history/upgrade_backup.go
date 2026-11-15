@@ -182,7 +182,7 @@ func verifyV11Rollback(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	uri := (&url.URL{Scheme: "file", Path: abs, RawQuery: "mode=ro"}).String()
+	uri := sqliteFileURI(abs, url.Values{"mode": {"ro"}})
 	raw, err := sql.Open("sqlite", uri)
 	if err != nil {
 		return err

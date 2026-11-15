@@ -26,7 +26,7 @@ func BackupDatabase(ctx context.Context, sourceDir, targetDBPath string) error {
 	if err != nil {
 		return err
 	}
-	uri := (&url.URL{Scheme: "file", Path: sourcePath, RawQuery: "mode=ro"}).String()
+	uri := sqliteFileURI(sourcePath, url.Values{"mode": {"ro"}})
 	raw, err := sql.Open("sqlite", uri)
 	if err != nil {
 		return fmt.Errorf("open source history: %w", err)
@@ -101,7 +101,7 @@ func (d *DB) BackupTo(ctx context.Context, targetDBPath string) error {
 		if !ok {
 			return fmt.Errorf("sqlite driver does not support online backup")
 		}
-		backup, err := backuper.NewBackup((&url.URL{Scheme: "file", Path: temporaryPath}).String())
+		backup, err := backuper.NewBackup(sqliteFileURI(temporaryPath, nil))
 		if err != nil {
 			return fmt.Errorf("create online backup: %w", err)
 		}

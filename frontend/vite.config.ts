@@ -1,7 +1,14 @@
 import { defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
 import {execFileSync} from 'node:child_process'
+import os from 'node:os'
+import path from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
+
+if (!process.env.NODE_OPTIONS?.includes('--localstorage-file')) {
+  const storageFlag = `--localstorage-file=${path.join(os.tmpdir(), 'cst-vitest-localstorage.json')}`
+  process.env.NODE_OPTIONS = process.env.NODE_OPTIONS ? `${process.env.NODE_OPTIONS} ${storageFlag}` : storageFlag
+}
 
 // https://vitejs.dev/config/
 //

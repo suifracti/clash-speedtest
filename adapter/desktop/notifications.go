@@ -2,9 +2,18 @@ package desktop
 
 import (
 	"fmt"
+	"runtime"
+
 	"github.com/faceair/clash-speedtest/core/auth"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
+
+func systemNotificationSettingsURI(goos string) string {
+	if goos == "windows" {
+		return "ms-settings:notifications"
+	}
+	return "x-apple.systempreferences:com.apple.Notifications-Settings.extension"
+}
 
 func (a *App) initializeNotifications() error {
 	if a == nil || a.ctx == nil {
@@ -31,7 +40,7 @@ func (a *App) EnableLocalNotifications() error {
 }
 
 func (a *App) OpenSystemNotificationSettings() error {
-	return auth.OpenBrowser("x-apple.systempreferences:com.apple.Notifications-Settings.extension")
+	return auth.OpenBrowser(systemNotificationSettingsURI(runtime.GOOS))
 }
 func (a *App) SendLocalNotification(id, title, body string) error {
 	if err := a.initializeNotifications(); err != nil {

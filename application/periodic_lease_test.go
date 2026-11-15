@@ -232,7 +232,7 @@ func TestPeriodicSustainedQueuesFairAndWaitAccounting(t *testing.T) {
 	// Only this single worker's phases can be compared additively with wall time.
 	// Producer queue wait overlaps these phases and must not be added again.
 	unaccounted := c.ElapsedSeconds - c.WaitSeconds - c.ExecutionSeconds
-	if unaccounted < 0 || unaccounted > .25 || c.QueueWaitSeconds < 5 {
+	if unaccounted < -1e-6 || unaccounted > .25 || c.QueueWaitSeconds < 5 {
 		t.Fatalf("wall timing gap or missing producer backpressure: gap=%v queue=%v cycle=%+v", unaccounted, c.QueueWaitSeconds, c)
 	}
 	t.Logf("offline 16-reader sustained queue: downloads=12 service_admissions=%d timed_out=%d turn_wait=%.3fs lock_wait=%.3fs producer_wait=%.3fs network=%.3fs wall=%.3fs residual=%.4fs", serviceCalls.Load(), timeouts.Load(), c.ServiceTurnWaitSeconds, c.ExclusionWaitSeconds, c.QueueWaitSeconds, c.ExecutionSeconds, c.ElapsedSeconds, unaccounted)

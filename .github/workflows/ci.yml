@@ -97,7 +97,7 @@ jobs:
 
       - name: Build Windows Desktop Executable
         run: |
-          go build -v -trimpath -ldflags "-s -w -H windowsgui" -o build/bin/clash-speedtest.exe .
+          go build -v -tags production -trimpath -ldflags "-s -w -H windowsgui" -o build/bin/clash-speedtest.exe .
 
       - name: Verify Windows Binary Exists
         run: |

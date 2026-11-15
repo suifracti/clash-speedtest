@@ -104,11 +104,13 @@
 
 `f9903a6`、`4febe64`、`6a3f74e`、`8845c67` 统一工作台（`homeModel.ts` 的 `latencyVerdict`）、检查器（`inspectorLatency.ts`）与批次报告（`latencyReport.ts`）的判定优先级：单站 6 次全失败且其余站有响应优先判为橙色“部分站点不通”（`partialLatencySites`）；响应比例统一用 `latencyResponseUnstable`（不足 5/6 为“不稳定”，其余有失败为“偶有失败”）；稳定延迟超过 `latencySlowThresholdMs`（1500 ms）统一判为“偏慢”；失败原因展示具体超时/被拒绝/被重置/被关闭，HTTP 状态码 ≥300 计为已连通并单独统计站点拒绝。`ff4b28b` 在 `core/speedtester/physical_family_darwin.go` 的 `DialContext` 中仅在 IPv4 或 IPv6 实际连接成功后才置 `settled=true`（IPv6 成功时才置 `selectedIPv6=true` 并关闭 IPv4 适配器），双栈均失败（`ipv6_failed`）时保留 IPv4 供后续采样继续先试 IPv4。
 
-## L-009 Windows 本地构建、Node 26 测试与未初始化数据页连接状态
+## L-009 Windows 平台适配、本地构建、Node 26 测试与未初始化数据页连接状态
 
-适用：Windows 环境拉起桌面端或 Web 服务、运行前端 Vitest、首次打开空数据目录（尚未初始化存储）看到侧栏状态异常。
+适用：Windows 环境拉起桌面端或 Web 服务、连接本机 Clash Verge 控制器、读取 Windows 系统代理与物理网卡、运行前端 Vitest、首次打开空数据目录（尚未初始化存储）看到侧栏状态异常。
 
-Windows 下编译或运行 Wails 桌面端需显式传入 `-tags production`（并先执行 `node scripts/prepare-legacy-assets.mjs` 与 `frontend` 的 `npm run build`），否则落入 Wails 默认的 `app_default_windows.go` 弹出 build tags 提示框；在无交互或沙箱隔离桌面（如 `WinSta0\exebox-*`）中，`WebView2` 的 `CreateCoreWebView2Controller` 会因窗口句柄跨桌面报 `80070578: Invalid window handle`，此时可用 `--web --port 8999 --listen 127.0.0.1 --browser none --data-dir <dir>` 启动本地 Web 服务调试，真实桌面双击 `build/bin/clash-speedtest.exe` 独立验收。Node `v25/v26` 内置全局 `localStorage` 在未传 `--localstorage-file` 时返回 `undefined` 并覆盖 jsdom，运行 `npm test` 需设置 `NODE_OPTIONS="--localstorage-file=<temp-file>"`。
+Windows 下编译或运行 Wails 桌面端需显式传入 `-tags production`（`.github/workflows/ci.yml` 与 `run.ps1` 已默认带上；构建前需有 `frontend/dist` 与 legacy embed 资产），否则落入 Wails 默认的 `app_default_windows.go` 弹出 build tags 提示框；在无交互或沙箱隔离桌面（如 `WinSta0\exebox-*`）中，`WebView2` 的 `CreateCoreWebView2Controller` 会因窗口句柄跨桌面报 `80070578: Invalid window handle`，此时可用 `--web --port 8999 --listen 127.0.0.1 --browser none --data-dir <dir>` 启动本地 Web 服务调试，真实桌面双击 `build/bin/clash-speedtest.exe` 独立验收。`frontend/vite.config.ts` 已自动为未带 `--localstorage-file` 的 Node `v25/v26` 进程注入临时文件路径，直接运行 `npm test` 即可通过。
+
+Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 模式且默认 `/var/run/clash-verge-service/users/<uid>/verge-mihomo.sock` 不存在时，通过 `core/profiles/verge.go` 的 `LoadVergeControllerConfig` 自动读取本机 Clash Verge `config.yaml` 中的 `external-controller` / `external-controller-unix` 与 `secret`；`core/profiles/fetch_network_windows.go` 从注册表 `Internet Settings` 读取 `ProxyEnable` 与 `ProxyServer`（支持统一 `host:port` 与分协议 `http=...;https=...`）接入订阅抓取的 `system_proxy` 策略；`core/speedtester/physical_entry_other.go` 将非 Darwin 平台的 `ResolvePhysicalHost` 与 `NewPhysicalHTTPClient` 绑定到 `AutoDetectPhysicalInterface()` 检出的物理网卡（非回环地址使用 `mihomo/component/dialer` 绑定接口，显式置 `Proxy: nil`），并过滤 `198.18.0.0/15` 与 `fdfe:dcba:9876::/64` Fake-IP；`adapter/desktop/notifications.go` 在 Windows 下使用 `ms-settings:notifications` 打开系统通知设置。
 
 `frontend/src/workspace.ts` 的 `boot()` 此前在 `setup.state !== 'ready'` 时提前返回而未调用 `events(...)`，导致新数据目录停留在“数据与备份”初始化页时侧栏一直显示“本地服务未连接”。现已抽出 `subscribeEvents()` 在 `api.setup()` 成功后立即建立事件连接（非 `ready` 状态下忽略业务事件刷新，初始化成功后直接复用同一连接），并在 `dispose()` 中重置 `unsubscribe` 与 `connected`。
 
@@ -116,7 +118,7 @@ Windows 下编译或运行 Wails 桌面端需显式传入 `-tags production`（�
 
 适用：修改 `core/history` 数据库连接、迁移、升级备份、孤儿检查或历史保留清理。
 
-`56b02e9` 在 `core/history/db.go` 中通过编码后的 DSN 为连接池每个连接设置 `foreign_keys`、`busy_timeout` 与 `synchronous`，避免仅在首个连接执行 pragma 导致并发连接外键级联失效；`cmd/history-orphans`（`core/history/orphans.go`）以 `mode=ro` / `query_only` 只读检查孤儿记录，绝不自动改库。`1dec197` 在 `core/history/sqlite_uri.go` 中将 Windows 盘符路径规范化为 `file:///C:/...`，防止 `C:` 被解析为 URI authority。
+`56b02e9` 在 `core/history/db.go` 中通过编码后的 DSN 为连接池每个连接设置 `foreign_keys`、`busy_timeout` 与 `synchronous`，避免仅在首个连接执行 pragma 导致并发连接外键级联失效；`cmd/history-orphans`（`core/history/orphans.go`）以 `mode=ro` / `query_only` 只读检查孤儿记录，绝不自动改库。`1dec197` 在 `core/history/sqlite_uri.go` 中将 Windows 盘符路径规范化为 `file:///C:/...`，防止 `C:` 被解析为 URI authority；2026-11-15 进一步将 `core/history/backup.go`（在线备份源与临时快照）和 `core/history/upgrade_backup.go`（v11 回滚校验）中遗漏的直拼 `&url.URL{Scheme: "file", Path: ...}` 统一收敛到 `sqliteFileURI`，修复 Windows 下导出备份与迁移旧版历史报 `invalid uri authority` 的问题。
 
 `91afa7b`、`114296f`、`897ebc0`（`core/history/upgrade_backup.go`）要求既有 v11 库在执行 DDL 升级前必须先完成经校验的 WAL 备份（Windows 下不支持安全私有根目录权限时直接阻断 DDL 升级并保留原库），备份清理失败时显式暴露并隔离。`fc16f63`、`3e3736e` 将工作台与监测历史清理放入事务并感知取消，清理已终止但缺 `finished_at` 或孤立的 `interrupted`/`persistence_failed` 轮次，同时保留进行中记录。
 
