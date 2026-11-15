@@ -215,7 +215,7 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
 .latency-report-groups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:8px}
 .latency-report-group{border:0;border-top:1px solid var(--cst-line);border-radius:0;padding:10px 0}
 .latency-report-group>header h4{font-size:12px;font-weight:600}.latency-report-group>header h4 span{color:var(--cst-muted);font-weight:400}
-.latency-report-group>header small{display:block;margin-top:2px;color:var(--cst-muted)}.latency-report-group-note{margin:7px 0 0;padding:6px 8px;border-radius:6px;background:#fff6e5;border:1px solid #e3c184;color:#805211;font-size:10px;line-height:1.55}.latency-report-group ul{display:flex;flex-direction:column;gap:4px;list-style:none;padding:0;margin:7px 0 0}
+.latency-report-group>header small{display:block;margin-top:2px;color:var(--cst-muted)}.latency-report-group-note{margin:7px 0 0;padding:6px 8px;border-radius:6px;background:var(--cst-warn-bg);border:1px solid var(--cst-warn-line);color:var(--cst-warn);font-size:10px;line-height:1.55}.latency-report-group ul{display:flex;flex-direction:column;gap:4px;list-style:none;padding:0;margin:7px 0 0}
 .latency-report-group li{display:flex;align-items:baseline;justify-content:space-between;gap:8px;min-width:0}
 .latency-report-group li small{min-width:0;color:var(--cst-muted);font-size:10px;text-align:right}
 .latency-report-group.suspected{border-color:color-mix(in srgb,var(--cst-accent) 35%,var(--cst-line))}

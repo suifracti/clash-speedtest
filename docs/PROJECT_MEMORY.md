@@ -154,6 +154,14 @@ Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 
 
 `899105a`、`fd6bc58` 在 `core/entry/lookup.go` 中经物理网卡解析节点入口并按 100 个地址一批循环查询画像（修复超出 100 个地址被上游静默丢弃导致无国家的问题），未测出口的节点线路标签置灰注明“按节点名称推断”。`0103591`、`573b450`、`64c8641`、`db43f58` 在 `application/clash_comparison.go` 与 `frontend/src/clashComparison.ts` 中通过本机 Clash socket/TCP 接口与物理网卡各跑 2 次采样对照（不写工作台轮次库），展示活跃路由链并在手动切换代理组前确认，两边均失败时归为“节点本身不稳定”。`457b551`、`c73cb9a` 在 `LatencyReportImage.vue` 中导出 PNG 时去掉 `tabular-nums` 以避免导出渲染器字距挤压。
 
+## L-015 Windows Clash Verge 命名管道、同名节点换端口变更抵消与非 Darwin 场景推荐
+
+适用：Windows 下连接 Clash Verge 2.x 内核、计算订阅更新节点变更（`node_changes`）、以及在非 Darwin 平台生成“现在用哪个”候选推荐。
+
+1. **Windows Clash Verge 2.x 命名管道与双配置文件读取**：Clash Verge Rev 2.x 在 Windows 下默认把 `verge_mihomo_socket` 写入 `clash-verge.yaml` 并使用命名管道（`\\.\pipe\verge-mihomo-...`），服务模式运行时实际管道常将 `-sidecar-release-`/`-sidecar-` 切为 `-production-`。`core/profiles/verge.go` 同时合并 `config.yaml` 与 `clash-verge.yaml`，`adapter/controller/mihomo/dial_windows.go` 支持 `\\.\pipe\...` 拨号并在配置管道不存在时自动回退至对应 `-production-` 管道。
+2. **订阅节点换端口不重复计入新增与下线**：机场常在保持节点显示名不变的情况下轮换入口域名或端口（导致 `node_identity_key` 变化）。`core/profiles/node_changes.go` 在按同一 `Identity` 匹配改名后，进一步抵消 `Removed` 与 `Added` 中的同名项，避免同一节点名同时出现在“新增”和“下线”列表中。
+3. **非 Darwin 同条件推荐与完整/部分下载同组排序**：在不伪造 `socket_bind_verified`/`dns_bind_verified` 的前提下，`frontend/src/recommendations.ts` 优先采用具备物理出口核验（`comparable=true`）的候选组；若当前平台无物理套接字核验（如 Windows），则允许同条件的当前工作台首字节延迟与有效下载记录进入对应用途候选，且下载推荐按同一 `downloadCondition` 聚合（不再因 `byte_limit` 完整下载与 `time_limit` 部分下载分属不同子键而导致慢节点多时反压快节点）。
+
 ## 维护方法
 
 方法统一继承总规则“2 项目记录”“5.1 全周期复盘与覆盖”，从下方实际覆盖记录接续。

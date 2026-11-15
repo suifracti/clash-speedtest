@@ -67,6 +67,22 @@ func (v *SubscriptionNodeVersions) Changes() *SubscriptionNodeChanges {
 		changes.Removed = append(changes.Removed, before[paired:]...)
 		changes.Added = append(changes.Added, after[paired:]...)
 	}
+	// Cancel identical names when a node kept its display name across an endpoint/port rotation.
+	for i := 0; i < len(changes.Removed); {
+		found := -1
+		for j, name := range changes.Added {
+			if name == changes.Removed[i] {
+				found = j
+				break
+			}
+		}
+		if found < 0 {
+			i++
+			continue
+		}
+		changes.Removed = append(changes.Removed[:i], changes.Removed[i+1:]...)
+		changes.Added = append(changes.Added[:found], changes.Added[found+1:]...)
+	}
 	sort.Strings(changes.Added)
 	sort.Strings(changes.Removed)
 	sort.Slice(changes.Renamed, func(i, j int) bool { return changes.Renamed[i].From < changes.Renamed[j].From })
