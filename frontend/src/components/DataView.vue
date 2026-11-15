@@ -3,9 +3,10 @@ import {computed,nextTick,ref,watch} from 'vue'
 import {api,backup,desktop,request,selectProfileSourceDirectory} from '../api'
 import {date} from '../domain'
 import {useWorkspace} from '../workspace'
+import ClashVergeImport from './ClashVergeImport.vue'
 import Icon from './Icon.vue'
 import Modal from './Modal.vue'
-const w=useWorkspace(),source=ref(''),inspected=ref<Record<string,any>|null>(null),inspectedPath=ref(''),busy=ref(false),error=ref(''),feedback=ref(''),operation=ref('')
+const w=useWorkspace(),source=ref(''),inspected=ref<Record<string,any>|null>(null),inspectedPath=ref(''),busy=ref(false),error=ref(''),feedback=ref(''),operation=ref(''),vergeOpen=ref(false)
 const refreshButton=ref<HTMLButtonElement|null>(null)
 let dialogTrigger:HTMLElement|null=null
 function restoreFocus(){void nextTick(()=>{const target=dialogTrigger?.isConnected?dialogTrigger:refreshButton.value;target?.focus()})}
@@ -40,9 +41,9 @@ async function apply(){const kind=confirmation.value;if(!kind||locked.value)retu
       <div class="data-backup-actions"><div class="button-group"><button class="button" :disabled="locked||!w.setup.value?.data_root" @click="openFolder">打开数据目录</button><button class="button primary" :disabled="locked||!w.setup.value?.data_root" @click="exportBackup"><Icon name="download"/>导出备份</button></div>
       <p class="section-note">完整备份包含订阅、历史与设置；导出文件格式与保存方式沿用现有功能。下方订阅导入不等于完整备份恢复。</p></div>
     </section>
-    <section v-if="w.setup.value&&w.setup.value.state!=='ready'&&!w.loading.value" class="settings-section data-start-panel"><h2>选择开始方式</h2><p class="section-note">可以检查已有订阅来源，或创建空白存储后添加机场。</p><button class="button primary" :disabled="locked||!!pageError" @click="initialize">创建空白存储</button></section>
+    <section v-if="w.setup.value&&w.setup.value.state!=='ready'&&!w.loading.value" class="settings-section data-start-panel"><h2>选择开始方式</h2><p class="section-note">可以从 Clash Verge 导入、检查已有订阅来源，或创建空白存储后添加机场。</p><div class="button-group"><button class="button primary" :disabled="locked||!!pageError" @click="initialize">创建空白存储</button><button class="button" :disabled="locked||!!pageError" @click="vergeOpen=true">从 Clash Verge 导入／同步</button></div></section>
     <div class="data-workflow-grid">
-    <section class="settings-section data-import-panel"><h2>导入现有订阅</h2><p class="section-note">选择目录 → 检查来源 → 确认导入。仅导入订阅来源，历史与设置迁移在下方单独确认。</p>
+    <section class="settings-section data-import-panel"><div class="section-heading"><h2>导入现有订阅</h2><button v-if="w.setup.value?.state==='ready'" class="button" :disabled="locked||!!pageError" @click="vergeOpen=true">从 Clash Verge 导入／同步</button></div><p class="section-note">选择目录 → 检查来源 → 确认导入，或从本机 Clash Verge 导入／同步。仅导入订阅来源，历史与设置迁移在下方单独确认。</p>
       <label class="source-label" for="profile-source">现有订阅数据目录</label><div class="source-controls"><input id="profile-source" v-model="source" :disabled="locked" placeholder="现有数据目录的绝对路径"><button v-if="desktop()" class="button" :disabled="locked" @click="browse"><Icon name="data"/>浏览目录</button><button class="button" :disabled="locked||!source.trim()" @click="inspect">检查来源</button></div>
       <p v-if="!desktop()" class="section-note">Web 模式不支持原生目录选择器，请输入服务器可访问的绝对路径。</p>
       <div v-if="inspected" class="source-inspection"><strong>{{inspected.label||inspected.path||inspectedPath}}</strong><p>{{count(inspected.profile_count)}} 个机场 · {{count(inspected.cache_count)}} 份缓存</p><p v-if="inspected.error" class="inline-error" role="alert">{{inspected.error}}</p><button class="button primary" :disabled="locked||!inspected.available" @click="confirm('import')">导入这个来源</button></div>
@@ -55,6 +56,7 @@ async function apply(){const kind=confirmation.value;if(!kind||locked.value)retu
       <div class="confirmation-content"><p>{{confirmation==='import'?'将使用已检查的订阅来源导入当前存储。请核对目录；此操作不会恢复完整备份中的历史与设置。':'将按现有迁移流程处理旧版历史与设置。请先确认已备份，并核对来源和目标。'}}</p><dl class="path-list"><div><dt>来源</dt><dd>{{confirmation==='import'?inspectedPath:migration?.source_history_dir||'由现有迁移流程检查'}}</dd></div><div><dt>目标</dt><dd>{{confirmation==='import'?w.setup.value?.profile_dir||'尚未读取':migration?.target_history_dir||'尚未读取'}}</dd></div></dl><p v-if="error" class="inline-error" role="alert">{{error}}</p><p v-if="busy" role="status">正在{{operation}}…</p></div>
       <template #footer><button class="button" :disabled="locked" @click="cancel">取消</button><button class="button primary" :disabled="locked" @click="apply">{{confirmation==='import'?'确认导入':'确认迁移'}}</button></template>
     </Modal>
+    <ClashVergeImport v-if="vergeOpen" @close="vergeOpen=false"/>
   </section>
 </template>
 <style scoped>

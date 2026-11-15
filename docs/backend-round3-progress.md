@@ -795,3 +795,7 @@
 ### 2026-11-15 未初始化数据页保持服务连接状态
 - 修复 `frontend/src/workspace.ts` 中 `boot()` 在 `setup.state !== 'ready'` 时提前返回导致跳过 `events(...)` 订阅的问题；改由 `subscribeEvents()` 在读取 `setup` 后建立 SSE/事件连接，对未就绪状态的业务事件安全忽略，并在 `dispose()` 清零 `connected` 与 `unsubscribe`。
 - 在 `execution-recovery.spec.ts` 补 1 条未初始化 `boot()` 回归测试；前端 73 文件 449 项（Node 26 传入 `--localstorage-file`）与 `npm run build` 通过，本地 Web 服务（`127.0.0.1:8999`）已重启加载。
+
+### 2026-11-15 初始配置与数据页支持从 Clash Verge 导入／同步
+- `DataView.vue` 的“选择开始方式”（未初始化时）与“导入现有订阅”（已就绪时）新增“从 Clash Verge 导入／同步”入口并接入 `ClashVergeImport.vue`；当尚无机场时默认预选“新建机场”，首次在未初始化状态下导入成功后自动执行 `w.boot()` 完成存储就绪切换。
+- `application/verge_subscriptions.go` 的 `ImportClashVergeSubscription` 支持在 `airports.json` 尚未创建（`setup.state === "needs_choice"`）时直接创建并写入首个机场与缓存；若存在未完成导入暂存或锁则拒绝，若首次导入失败则清理新建的 `airports.json` 与缓存文件，保持未初始化状态。

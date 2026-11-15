@@ -144,3 +144,31 @@ func TestVergeImportCreatesOneAirportAndReusesIt(t *testing.T) {
 		t.Fatal("reimport must update the created account rather than duplicate it")
 	}
 }
+
+func TestVergeImportInitializesUninitializedStoreAndRollsBackOnFailure(t *testing.T) {
+	_, write := vergeSourceFixture(t)
+	s, paths := newAirportURLTestService(t)
+	if err := os.RemoveAll(paths.Dir); err != nil {
+		t.Fatal(err)
+	}
+	if setup, err := s.GetProfileSetup(); err != nil || setup.State != "needs_choice" || setup.Initialized {
+		t.Fatalf("expected uninitialized setup before import, got %+v %v", setup, err)
+	}
+
+	write("https://sub.example.invalid/new", "proxies: []\n")
+	if _, err := s.ImportClashVergeSubscription(context.Background(), ClashVergeImportRequest{UID: "remote-fixture"}); err == nil {
+		t.Fatal("expected invalid cache import to fail")
+	}
+	if setup, err := s.GetProfileSetup(); err != nil || setup.State != "needs_choice" || setup.Initialized {
+		t.Fatalf("failed initial import must leave setup uninitialized, got %+v %v", setup, err)
+	}
+
+	write("https://sub.example.invalid/new", rollbackFixtureBody)
+	imported, err := s.ImportClashVergeSubscription(context.Background(), ClashVergeImportRequest{UID: "remote-fixture"})
+	if err != nil {
+		t.Fatalf("ImportClashVergeSubscription on uninitialized store: %v", err)
+	}
+	if setup, err := s.GetProfileSetup(); err != nil || setup.State != "ready" || !setup.Initialized || imported.NodeCount != 1 {
+		t.Fatalf("successful initial import must mark store ready: %+v %+v %v", setup, imported, err)
+	}
+}

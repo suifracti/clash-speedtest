@@ -135,8 +135,16 @@ func (s *AppService) ImportClashVergeSubscription(ctx context.Context, request C
 		return nil, err
 	}
 	previousStore, err := os.ReadFile(s.profilePaths.StoreFile())
+	hadStore := err == nil
 	if err != nil {
-		return nil, err
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+		if status := s.profilePaths.InspectSetup(); status.Error != "" {
+			return nil, fmt.Errorf("%s", status.Error)
+		} else if len(status.UnfinishedStaging) > 0 || status.LockPresent {
+			return nil, profiles.ErrProfileImportStaged
+		}
 	}
 	created := sub == nil
 	if created {
@@ -162,7 +170,13 @@ func (s *AppService) ImportClashVergeSubscription(ctx context.Context, request C
 	fetched := &subscriptionFetchResult{path: "verge", body: body, usage: source.Usage, updatedAt: sub.UpdatedAt, userAgent: sub.UserAgent}
 	result, err := s.refreshSubscriptionWithFetchLocked(ctx, airport.ID, sub.ID, "", "", nil, fetched)
 	if err != nil {
-		if restoreErr := s.restoreRefreshStoreBytes(previousStore); restoreErr != nil {
+		var restoreErr error
+		if hadStore {
+			restoreErr = s.restoreRefreshStoreBytes(previousStore)
+		} else if removeErr := os.Remove(s.profilePaths.StoreFile()); removeErr != nil && !os.IsNotExist(removeErr) {
+			restoreErr = removeErr
+		}
+		if restoreErr != nil {
 			return nil, fmt.Errorf("导入失败且原订阅恢复失败：%w", restoreErr)
 		}
 		if created {

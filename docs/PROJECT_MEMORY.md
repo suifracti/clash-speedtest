@@ -72,11 +72,11 @@
 
 ## L-005 从 Clash Verge 同步订阅时保留账户关联
 
-适用：本机 Verge 已更新订阅或修改链接，用户在账户页点击“从 Clash Verge 导入／同步”。从标准配置目录的 `profiles.yaml` 读取 remote 项及其本地节点缓存，以 `uid` 关联 `Subscription.VergeUID`，后续按该绑定更新原 CST 订阅 ID。首次只对唯一完整 URL 相同的账户建议关联；链接已变化时由用户选择已有账户，名字相同不自动合并。
+适用：本机 Verge 已更新订阅或修改链接，或首次在“数据与备份”初始配置页／“机场与账户”页点击“从 Clash Verge 导入／同步”。从标准配置目录的 `profiles.yaml` 读取 remote 项及其本地节点缓存，以 `uid` 关联 `Subscription.VergeUID`，后续按该绑定更新原 CST 订阅 ID。首次只对唯一完整 URL 相同的账户建议关联；尚无机场时默认预选“新建机场”，已有账户且链接不同时由用户选择已有账户或新建，名字相同不自动合并。
 
-`core/profiles/verge.go` 只输出缓存的 `proxies` 根，保留节点标量类型；用量缺字段保留未知。`application/verge_subscriptions.go` 复用 `refreshSubscriptionWithFetchLocked` 的 prepared fetch，记录 `fetch_path=verge`，沿用节点变化、失败清除、缓存和快照提交；本机读取不占用 HTTP 429 冷却。导入失败恢复原订阅配置，原缓存由既有刷新恢复逻辑保留。
+`core/profiles/verge.go` 只输出缓存的 `proxies` 根，保留节点标量类型；用量缺字段保留未知。`application/verge_subscriptions.go` 复用 `refreshSubscriptionWithFetchLocked` 的 prepared fetch，记录 `fetch_path=verge`，沿用节点变化、失败清除、缓存和快照提交；本机读取不占用 HTTP 429 冷却。未初始化存储（`airports.json` 不存在）下可直接导入首个订阅并完成初始化，若导入失败则删除新建 `airports.json` 保持 `needs_choice`；已有存储下导入失败恢复原订阅配置与原缓存。
 
-链接变化后的用量仍由既有连续性读取规则衔接，`usageAccountKey` 沿 URL 哈希。普通 API 摘要只传 UID、名称、时间与关联状态，完整 URL 留后端。Wails 和 Web 接口均已接入 `ClashVergeImport.vue`；新建、改链接复用原账户、失败保留、账户选择用临时数据覆盖，本机清单只读核对。
+链接变化后的用量仍由既有连续性读取规则衔接，`usageAccountKey` 沿 URL 哈希。普通 API 摘要只传 UID、名称、时间与关联状态，完整 URL 留后端。Wails 和 Web 接口均已接入 `AirportsView.vue`、`DataView.vue` 与 `ClashVergeImport.vue`（未初始化状态下导入成功后自动 `w.boot()`）；新建、改链接复用原账户、未初始化导入与失败回退、账户选择均由临时数据单测覆盖。
 
 ## L-006 解锁地区正反向规则与 Antigravity 批量风险及耗时归因
 

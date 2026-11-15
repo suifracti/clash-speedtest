@@ -12,7 +12,7 @@ async function load(){
  loading.value=true;error.value=''
  try{
   sources.value=await api.vergeSubscriptions()
-  targets.value=Object.fromEntries(sources.value.map(source=>[source.uid,source.airport_id&&source.subscription_id?`${source.airport_id}:${source.subscription_id}`:'']))
+  targets.value=Object.fromEntries(sources.value.map(source=>[source.uid,source.airport_id&&source.subscription_id?`${source.airport_id}:${source.subscription_id}`:w.airports.value.length?'':'new']))
  }catch(e){error.value=e instanceof Error?e.message:String(e)}
  finally{loading.value=false}
 }
@@ -26,7 +26,7 @@ async function sync(source:ClashVergeSubscription){
   source.airport_id=result.airport_id;source.subscription_id=result.id;source.linked=true;source.url_changed=false
   targets.value[source.uid]=`${result.airport_id}:${result.id}`
   results.value[source.uid]=`已同步 ${result.node_count} 个节点`
-  await w.refreshNodes()
+  if(w.setup.value&&w.setup.value.state!=='ready')await w.boot();else await w.refreshNodes()
  }catch(e){error.value=e instanceof Error?e.message:String(e)}
  finally{syncing.value=''}
 }
