@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/faceair/clash-speedtest/core/profiles"
@@ -14,6 +15,8 @@ type ClashVergeImportRequest struct {
 	UID            string `json:"uid"`
 	AirportID      string `json:"airport_id,omitempty"`
 	SubscriptionID string `json:"subscription_id,omitempty"`
+	Name           string `json:"name,omitempty"`
+	SyncName       bool   `json:"sync_name,omitempty"`
 }
 
 type ClashVergeSubscriptionDTO struct {
@@ -24,6 +27,7 @@ type ClashVergeSubscriptionDTO struct {
 	SubscriptionID string    `json:"subscription_id,omitempty"`
 	Linked         bool      `json:"linked"`
 	URLChanged     bool      `json:"url_changed"`
+	NameChanged    bool      `json:"name_changed"`
 }
 
 func (s *AppService) ListClashVergeSubscriptions() ([]ClashVergeSubscriptionDTO, error) {
@@ -57,6 +61,7 @@ func (s *AppService) ListClashVergeSubscriptions() ([]ClashVergeSubscriptionDTO,
 				if sub.VergeUID == source.UID {
 					dto.AirportID, dto.SubscriptionID, dto.Linked = airport.ID, sub.ID, true
 					dto.URLChanged = sub.URL != source.URL
+					dto.NameChanged = source.Name != "" && sub.Name != source.Name
 				} else if sub.VergeUID == "" && sub.URL == source.URL && !dto.Linked {
 					matches++
 					dto.AirportID, dto.SubscriptionID = airport.ID, sub.ID
@@ -146,16 +151,24 @@ func (s *AppService) ImportClashVergeSubscription(ctx context.Context, request C
 			return nil, profiles.ErrProfileImportStaged
 		}
 	}
+	name := strings.TrimSpace(request.Name)
+	if name == "" {
+		name = strings.TrimSpace(source.Name)
+	}
+	if name == "" {
+		name = "Clash Verge 订阅"
+	}
 	created := sub == nil
 	if created {
 		id := fmt.Sprintf("%d", time.Now().UnixNano())
-		name := source.Name
-		if name == "" {
-			name = "Clash Verge 订阅"
-		}
 		sub = &profiles.Subscription{ID: id, Name: name}
 		airport = &profiles.Airport{ID: id, Name: name, Subscriptions: []*profiles.Subscription{sub}}
 		store.Add(airport)
+	} else if request.SyncName || strings.TrimSpace(request.Name) != "" {
+		sub.Name = name
+		if len(airport.Subscriptions) == 1 {
+			airport.Name = name
+		}
 	}
 	if sub.URL != source.URL {
 		sub.Usage = nil

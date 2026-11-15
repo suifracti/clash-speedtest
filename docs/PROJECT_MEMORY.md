@@ -70,9 +70,9 @@
 
 证据边界截至 2026-11-02。保存的四次实网结果均为直接选择 OVH，HTTP 206 且各收到 10 MiB。403/429 后自动换源由离线测试覆盖，这四次实测不能替代该路径的现场验证。原生截图只确认选源页面，不能当作四节点结果截图。本轮只复读已有实现差异与脱敏记录，未重新测速或核实当前运行包。
 
-## L-005 从 Clash Verge 同步订阅时保留账户关联
+## L-005 从 Clash Verge 同步订阅时保留账户关联并支持同步名称
 
-适用：本机 Verge 已更新订阅或修改链接，或首次在“数据与备份”初始配置页／“机场与账户”页点击“从 Clash Verge 导入／同步”。从标准配置目录的 `profiles.yaml` 读取 remote 项及其本地节点缓存，以 `uid` 关联 `Subscription.VergeUID`，后续按该绑定更新原 CST 订阅 ID。首次只对唯一完整 URL 相同的账户建议关联；尚无机场时默认预选“新建机场”，已有账户且链接不同时由用户选择已有账户或新建，名字相同不自动合并。
+适用：本机 Verge 已更新订阅或修改链接，或首次在“数据与备份”初始配置页／“机场与账户”页点击“从 Clash Verge 导入／同步”。从标准配置目录的 `profiles.yaml` 读取 remote 项及其本地节点缓存，以 `uid` 关联 `Subscription.VergeUID`，后续按该绑定更新原 CST 订阅 ID。首次只对唯一完整 URL 相同的账户建议关联；尚无机场时默认预选“新建机场”，已有账户且链接不同时由用户选择已有账户或新建，名字相同不自动合并；每行提供可编辑的“同步名称”输入框与“同步名字”开关（新建机场默认使用该名称，关联或同步已有账户时勾选或修改名称即同步更新订阅名与单订阅机场名，Verge 侧改名时标记 `name_changed`）。
 
 `core/profiles/verge.go` 只输出缓存的 `proxies` 根，保留节点标量类型；用量缺字段保留未知。`application/verge_subscriptions.go` 复用 `refreshSubscriptionWithFetchLocked` 的 prepared fetch，记录 `fetch_path=verge`，沿用节点变化、失败清除、缓存和快照提交；本机读取不占用 HTTP 429 冷却。未初始化存储（`airports.json` 不存在）下可直接导入首个订阅并完成初始化，若导入失败则删除新建 `airports.json` 保持 `needs_choice`；已有存储下导入失败恢复原订阅配置与原缓存。
 

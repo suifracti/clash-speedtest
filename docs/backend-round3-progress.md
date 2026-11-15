@@ -796,10 +796,11 @@
 - 修复 `frontend/src/workspace.ts` 中 `boot()` 在 `setup.state !== 'ready'` 时提前返回导致跳过 `events(...)` 订阅的问题；改由 `subscribeEvents()` 在读取 `setup` 后建立 SSE/事件连接，对未就绪状态的业务事件安全忽略，并在 `dispose()` 清零 `connected` 与 `unsubscribe`。
 - 在 `execution-recovery.spec.ts` 补 1 条未初始化 `boot()` 回归测试；前端 73 文件 449 项（Node 26 传入 `--localstorage-file`）与 `npm run build` 通过，本地 Web 服务（`127.0.0.1:8999`）已重启加载。
 
-### 2026-11-15 初始配置与数据页支持从 Clash Verge 导入／同步
+### 2026-11-15 初始配置与数据页支持从 Clash Verge 导入／同步（含同步名称）
 - `DataView.vue` 的“选择开始方式”（未初始化时）与“导入现有订阅”（已就绪时）新增“从 Clash Verge 导入／同步”入口并接入 `ClashVergeImport.vue`；当尚无机场时默认预选“新建机场”，首次在未初始化状态下导入成功后自动执行 `w.boot()` 完成存储就绪切换。
+- `ClashVergeImport.vue` 每行新增可编辑的“同步名称”输入框（默认带入 Clash Verge 订阅名称，位置下拉实时显示将要新建或同步的名称）；`application/verge_subscriptions.go` 的 `ClashVergeImportRequest` 支持 `name`、`ClashVergeSubscriptionDTO` 新增 `name_changed`，新建机场、关联已有账户及后续同步时一并同步更新订阅名称（单订阅机场同步更新机场名称）。
 - `application/verge_subscriptions.go` 的 `ImportClashVergeSubscription` 支持在 `airports.json` 尚未创建（`setup.state === "needs_choice"`）时直接创建并写入首个机场与缓存；若存在未完成导入暂存或锁则拒绝，若首次导入失败则清理新建的 `airports.json` 与缓存文件，保持未初始化状态。
-- 补 `TestVergeImportInitializesUninitializedStoreAndRollsBackOnFailure` 与 `verge-import.spec.ts` 未初始化导入主路径；`go vet ./...`、`go test ./application ./core/profiles`、前端 73 文件 450 项与构建通过。
+- 补 `TestVergeImportInitializesUninitializedStoreAndRollsBackOnFailure`、名称同步断言与 `verge-import.spec.ts` 未初始化导入/自定义同步名称主路径；`go vet ./...`、`go test ./application ./core/profiles`、前端 73 文件 450 项与构建通过。
 
 ### 2026-11-15 Windows 平台适配与工具链对齐
 - 本机 Clash 控制器自动发现：`core/profiles/verge.go` 新增 `LoadVergeControllerConfig` 读取 Clash Verge 目录 `config.yaml`；`application/clash_comparison.go` 在 `auto` 模式且默认 Unix socket 不存在时（Windows 或非服务 socket 模式）自动回退使用本机 Verge 的 `external-controller` / `external-controller-unix` 与 `secret`。

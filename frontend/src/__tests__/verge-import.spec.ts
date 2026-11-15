@@ -25,9 +25,11 @@ it('associates a Verge subscription with the chosen existing account and keeps i
   expect(sync).toHaveBeenLastCalledWith({uid:'remote-a',airport_id:'airport-a',subscription_id:'sub-a'})
   expect(document.body.textContent).toContain('已同步 3 个节点')
   expect(wrapper.findComponent(UiSelect).props('disabled')).toBe(true)
+  const nameInput=document.body.querySelector<HTMLInputElement>('input.verge-name-input')!
+  nameInput.value='自定义同步名称';nameInput.dispatchEvent(new Event('input',{bubbles:true}));await flushPromises()
   button().click();await flushPromises()
   expect(sync).toHaveBeenCalledTimes(2)
-  expect(sync).toHaveBeenLastCalledWith({uid:'remote-a',airport_id:'airport-a',subscription_id:'sub-a'})
+  expect(sync).toHaveBeenLastCalledWith({uid:'remote-a',airport_id:'airport-a',subscription_id:'sub-a',name:'自定义同步名称'})
   expect(refresh).toHaveBeenCalled()
  }finally{wrapper.unmount();w.dispose();list.mockRestore();sync.mockRestore();jobs.mockRestore();refresh.mockRestore()}
 })

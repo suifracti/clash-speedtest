@@ -96,12 +96,12 @@ func TestVergeSyncKeepsAccountWhenSourceURLChanges(t *testing.T) {
 	if strings.Contains(string(encoded), "FIXTURE_SECRET") || strings.Contains(string(encoded), "sub.example.invalid") {
 		t.Fatal("preview leaked a source URL")
 	}
-	if _, err = s.ImportClashVergeSubscription(context.Background(), ClashVergeImportRequest{UID: "remote-fixture"}); err != nil {
+	if _, err = s.ImportClashVergeSubscription(context.Background(), ClashVergeImportRequest{UID: "remote-fixture", Name: "自定义名称"}); err != nil {
 		t.Fatal(err)
 	}
 	store, _ = profiles.LoadStore(paths.StoreFile())
-	if len(store.Airports) != 1 || len(store.Get("airport-a").Subscriptions) != 1 || store.Get("airport-a").GetSubscription("sub-a").NodeVersions.Current[0].Name != "rotated-node" {
-		t.Fatal("rotated URL must update the same account and cache")
+	if len(store.Airports) != 1 || len(store.Get("airport-a").Subscriptions) != 1 || store.Get("airport-a").GetSubscription("sub-a").NodeVersions.Current[0].Name != "rotated-node" || store.Get("airport-a").GetSubscription("sub-a").Name != "自定义名称" || store.Get("airport-a").Name != "自定义名称" {
+		t.Fatal("rotated URL must update the same account, synced name, and cache")
 	}
 }
 

@@ -10,8 +10,8 @@ export interface ClashUsage {name:string;bytes:number;chains:string[]}
 export interface ClashSelectionStep {group:string;before:string;after:string}
 export interface ClashGroupOption {group:string;path:string[];steps:ClashSelectionStep[]}
 export interface ClashSelectionResult {verified:boolean;steps:ClashSelectionStep[]}
-export interface ClashVergeSubscription {uid:string;name:string;updated_at:string;airport_id?:string;subscription_id?:string;linked:boolean;url_changed:boolean}
-export interface ClashVergeImport {uid:string;airport_id?:string;subscription_id?:string}
+export interface ClashVergeSubscription {uid:string;name:string;updated_at:string;airport_id?:string;subscription_id?:string;linked:boolean;url_changed:boolean;name_changed?:boolean}
+export interface ClashVergeImport {uid:string;airport_id?:string;subscription_id?:string;name?:string;sync_name?:boolean}
 declare global {interface Window {go?:{desktop?:{App?:Record<string,(...args:any[])=>Promise<any>>}};runtime?:{EventsOn:(name:string,callback:(payload:any)=>void)=>()=>void}}}
 export const desktop=()=>!!window.go?.desktop?.App
 let token=window.localStorage.getItem('cst_auth_token')||''
