@@ -534,6 +534,10 @@ func (r *Runner) executeSingleProbe(
 	}
 	defer resp.Body.Close()
 
+	if latency <= 0 {
+		latency = time.Nanosecond
+	}
+
 	if sample.Metadata == nil {
 		sample.Metadata = map[string]any{}
 	}

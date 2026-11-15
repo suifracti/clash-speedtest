@@ -59,7 +59,7 @@ func NewClient(cfg Config) (*Client, error) {
 			timeout = 5 * time.Second
 		}
 		transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, "unix", cfg.SocketPath)
+			return dialLocalSocket(ctx, cfg.SocketPath)
 		}}
 		return &Client{endpoint: "http://localhost", secret: cfg.Secret, client: &http.Client{Timeout: timeout, Transport: transport}}, nil
 	}

@@ -70,6 +70,11 @@ func (d *DB) BackupTo(ctx context.Context, targetDBPath string) error {
 	if err := os.MkdirAll(filepath.Dir(targetDBPath), 0o755); err != nil {
 		return fmt.Errorf("create backup target directory: %w", err)
 	}
+	if dirInfo, err := os.Stat(filepath.Dir(targetDBPath)); err != nil {
+		return fmt.Errorf("inspect backup target directory: %w", err)
+	} else if dirInfo.Mode().Perm()&0o200 == 0 {
+		return fmt.Errorf("backup target directory is not writable: %s", filepath.Dir(targetDBPath))
+	}
 
 	// Build privately in the destination filesystem. Link publishes atomically
 	// without replacing any target created while the snapshot was in progress.

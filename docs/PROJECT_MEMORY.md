@@ -108,9 +108,9 @@
 
 适用：Windows 环境拉起桌面端或 Web 服务、连接本机 Clash Verge 控制器、读取 Windows 系统代理与物理网卡、运行前端 Vitest、首次打开空数据目录（尚未初始化存储）看到侧栏状态异常。
 
-Windows 下编译或运行 Wails 桌面端需显式传入 `-tags production`（`.github/workflows/ci.yml` 与 `run.ps1` 已默认带上；构建前需有 `frontend/dist` 与 legacy embed 资产），否则落入 Wails 默认的 `app_default_windows.go` 弹出 build tags 提示框；在无交互或沙箱隔离桌面（如 `WinSta0\exebox-*`）中，`WebView2` 的 `CreateCoreWebView2Controller` 会因窗口句柄跨桌面报 `80070578: Invalid window handle`，此时可用 `--web --port 8999 --listen 127.0.0.1 --browser none --data-dir <dir>` 启动本地 Web 服务调试，真实桌面双击 `build/bin/clash-speedtest.exe` 独立验收。`frontend/vite.config.ts` 已自动为未带 `--localstorage-file` 的 Node `v25/v26` 进程注入临时文件路径，直接运行 `npm test` 即可通过。
+Windows 下编译或运行 Wails 桌面端需显式传入 `-tags production`（`.github/workflows/ci.yml` 与 `run.ps1` 已默认带上；构建前需有 `frontend/dist` 与 legacy embed 资产），否则落入 Wails 默认的 `app_default_windows.go` 弹出 build tags 提示框；在无交互或沙箱隔离桌面（如 `WinSta0\exebox-*`）中，`WebView2` 的 `CreateCoreWebView2Controller` 会因窗口句柄跨桌面报 `80070578: Invalid window handle`，此时可用 `--web --port 8999 --listen 127.0.0.1 --browser none --data-dir <dir>` 启动本地 Web 服务调试，真实桌面双击 `build/bin/clash-speedtest.exe` 独立验收。`frontend/vite.config.ts` 已自动为未带 `--localstorage-file` 的 Node `v25/v26` 进程注入按进程隔离的临时文件路径（`cst-vitest-localstorage-${process.pid}.json`），并在 Windows 下设置 `fileParallelism: false` 避免多 worker 并发争用同一 SQLite localStorage 文件报 `disk I/O error`，直接运行 `npm test` 即可通过。
 
-Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 模式且默认 `/var/run/clash-verge-service/users/<uid>/verge-mihomo.sock` 不存在时，通过 `core/profiles/verge.go` 的 `LoadVergeControllerConfig` 自动读取本机 Clash Verge `config.yaml` 中的 `external-controller` / `external-controller-unix` 与 `secret`；`core/profiles/fetch_network_windows.go` 从注册表 `Internet Settings` 读取 `ProxyEnable` 与 `ProxyServer`（支持统一 `host:port` 与分协议 `http=...;https=...`）接入订阅抓取的 `system_proxy` 策略；`core/speedtester/physical_entry_other.go` 将非 Darwin 平台的 `ResolvePhysicalHost` 与 `NewPhysicalHTTPClient` 绑定到 `AutoDetectPhysicalInterface()` 检出的物理网卡（非回环地址使用 `mihomo/component/dialer` 绑定接口，显式置 `Proxy: nil`），并过滤 `198.18.0.0/15` 与 `fdfe:dcba:9876::/64` Fake-IP；`adapter/desktop/notifications.go` 在 Windows 下使用 `ms-settings:notifications` 打开系统通知设置。
+Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 模式且默认 `/var/run/clash-verge-service/users/<uid>/verge-mihomo.sock` 不存在时，通过 `core/profiles/verge.go` 的 `LoadVergeControllerConfig` 自动读取本机 Clash Verge `clash-verge.yaml` 与 `config.yaml` 中的 `external-controller-pipe` / `external-controller-unix` / `external-controller` 与 `secret`（Windows 下优先连接 Named Pipe `\\.\pipe\verge-mihomo-...`，并由 `adapter/controller/mihomo/dial_windows.go` 在 Service Mode 下自动从 `-sidecar-release-` / `-sidecar-` 回退到 `-production-` 管道）；`core/profiles/fetch_network_windows.go` 从注册表 `Internet Settings` 读取 `ProxyEnable` 与 `ProxyServer`（支持统一 `host:port` 与分协议 `http=...;https=...`）接入订阅抓取的 `system_proxy` 策略；`core/speedtester/physical_entry_other.go` 将非 Darwin 平台的 `ResolvePhysicalHost` 与 `NewPhysicalHTTPClient` 绑定到 `AutoDetectPhysicalInterface()` 检出的物理网卡（非回环地址使用 `mihomo/component/dialer` 绑定接口，显式置 `Proxy: nil`），并过滤 `198.18.0.0/15` 与 `fdfe:dcba:9876::/64` Fake-IP；`adapter/desktop/notifications.go` 在 Windows 下使用 `ms-settings:notifications` 打开系统通知设置。
 
 `frontend/src/workspace.ts` 的 `boot()` 此前在 `setup.state !== 'ready'` 时提前返回而未调用 `events(...)`，导致新数据目录停留在“数据与备份”初始化页时侧栏一直显示“本地服务未连接”。现已抽出 `subscribeEvents()` 在 `api.setup()` 成功后立即建立事件连接（非 `ready` 状态下忽略业务事件刷新，初始化成功后直接复用同一连接），并在 `dispose()` 中重置 `unsubscribe` 与 `connected`。
 
@@ -120,7 +120,7 @@ Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 
 
 `56b02e9` 在 `core/history/db.go` 中通过编码后的 DSN 为连接池每个连接设置 `foreign_keys`、`busy_timeout` 与 `synchronous`，避免仅在首个连接执行 pragma 导致并发连接外键级联失效；`cmd/history-orphans`（`core/history/orphans.go`）以 `mode=ro` / `query_only` 只读检查孤儿记录，绝不自动改库。`1dec197` 在 `core/history/sqlite_uri.go` 中将 Windows 盘符路径规范化为 `file:///C:/...`，防止 `C:` 被解析为 URI authority；2026-11-15 进一步将 `core/history/backup.go`（在线备份源与临时快照）和 `core/history/upgrade_backup.go`（v11 回滚校验）中遗漏的直拼 `&url.URL{Scheme: "file", Path: ...}` 统一收敛到 `sqliteFileURI`，修复 Windows 下导出备份与迁移旧版历史报 `invalid uri authority` 的问题。
 
-`91afa7b`、`114296f`、`897ebc0`（`core/history/upgrade_backup.go`）要求既有 v11 库在执行 DDL 升级前必须先完成经校验的 WAL 备份（Windows 下不支持安全私有根目录权限时直接阻断 DDL 升级并保留原库），备份清理失败时显式暴露并隔离。`fc16f63`、`3e3736e` 将工作台与监测历史清理放入事务并感知取消，清理已终止但缺 `finished_at` 或孤立的 `interrupted`/`persistence_failed` 轮次，同时保留进行中记录。
+`91afa7b`、`114296f`、`897ebc0`（`core/history/upgrade_backup.go`）要求既有 v11 库在执行 DDL 升级前必须先完成经校验的 WAL 备份（Windows 下不支持安全私有根目录权限时直接阻断 DDL 升级并保留原库），备份清理失败时显式暴露并隔离；`core/history/backup.go` 的 `BackupTo` 在创建临时备份前显式校验目标目录写权限位（`0o200 != 0`），确保 Windows 下只读目录（`0500`）同样 fail-closed。`fc16f63`、`3e3736e` 将工作台与监测历史清理放入事务并感知取消，清理已终止但缺 `finished_at` 或孤立的 `interrupted`/`persistence_failed` 轮次，同时保留进行中记录。
 
 ## L-011 节点身份与配置修订解耦、YAML 别名归一化、VLESS 特殊 TLS 与导出保真
 
@@ -134,7 +134,7 @@ Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 
 
 适用：24/7 持续监测调度、容量保护、恢复准入、Mac 监测绕开本机 TUN、桌面原生通知。
 
-`8e61026`、`6780a3f`、`d0269c2`、`9c008e5`、`2de0518`、`b0fddba` 在 `core/monitor/` 中建立按键集分页的原始样本库、容量阈值保护、持久化全局共享预算与采样分档准入；暂停状态下仍允许手动触发单次监测（`d708035`），预算调整或启动恢复时保持队列准入与配置阻断语义（`4b45e00`、`02f1e6e`）。`6627e70` 将 Mac 持续监测的 DNS 与 socket 统一走物理网卡客户端（检测后关闭连接与代理），仅当 DNS 与 socket 均核验通过时写入 `tun_bypass_interface`。
+`8e61026`、`6780a3f`、`d0269c2`、`9c008e5`、`2de0518`、`b0fddba` 在 `core/monitor/` 中建立按键集分页的原始样本库、容量阈值保护、持久化全局共享预算与采样分档准入；暂停状态下仍允许手动触发单次监测（`d708035`），预算调整或启动恢复时保持队列准入与配置阻断语义（`4b45e00`、`02f1e6e`）。`6627e70` 将 Mac 持续监测的 DNS 与 socket 统一走物理网卡客户端（检测后关闭连接与代理），仅当 DNS 与 socket 均核验通过时写入 `tun_bypass_interface`；`core/monitor/runner.go` 在收到 HTTP 响应但 Windows 计时器刻度内耗时为 `0` 时将 `Latency` 保底为 `1ns`，避免回环或极快响应被误判为未测得延迟。
 
 `6128b16`、`fa74fc6` 在 `application/local_notifications.go` 中支持故障率、低余量、到期三类阈值提醒（包含 `completed_with_issues` / `completed_with_save_failures` 批次），仅在设置变更与每 5 分钟轮询检查，相同告警本机去重、恢复后才可再提醒；勾选开启时先调 `requestAuthorization`，系统拒绝则保持关闭并提示打开系统通知设置。
 

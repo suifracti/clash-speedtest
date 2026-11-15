@@ -9,12 +9,16 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestV11UpgradeBackupFailuresBeforeDDL(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows v11 upgrade refusal is covered by TestV11UpgradeBackupWindowsUnsupportedPrivateRootBlocksDDL")
+	}
 	for _, mode := range []string{"copy", "corrupt", "wrong-version", "v12-column", "foreign-key", "snapshot-sync", "manifest-write", "manifest-sync", "manifest-publish", "directory-sync", "cancel-before", "cancel-after-copy"} {
 		t.Run(mode, func(t *testing.T) {
 			dir, live, hashes := upgradeWALFixture(t)
@@ -106,6 +110,9 @@ func TestV11UpgradeBackupFailuresBeforeDDL(t *testing.T) {
 }
 
 func TestV11UpgradeBackupWriterCommitBlocksStaleMigration(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows v11 upgrade refusal is covered by TestV11UpgradeBackupWindowsUnsupportedPrivateRootBlocksDDL")
+	}
 	for _, phase := range []string{"before-backup", "after-backup"} {
 		t.Run(phase, func(t *testing.T) {
 			dir, live, _ := upgradeWALFixture(t)
@@ -221,6 +228,9 @@ func TestV11UpgradeBackupOnlyExistingRecognizedV11(t *testing.T) {
 }
 
 func TestV11UpgradeBackupConcurrentMigrators(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows v11 upgrade refusal is covered by TestV11UpgradeBackupWindowsUnsupportedPrivateRootBlocksDDL")
+	}
 	dir, _, _ := upgradeWALFixture(t)
 	ready := make(chan struct{}, 2)
 	release := make(chan struct{})
@@ -277,6 +287,9 @@ func TestV11UpgradeBackupConcurrentMigrators(t *testing.T) {
 
 // Removing the migration gate must fail these tests, even though migration itself succeeds.
 func TestV11UpgradeBackupIncludesWALAndIsolatedRollback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows v11 upgrade refusal is covered by TestV11UpgradeBackupWindowsUnsupportedPrivateRootBlocksDDL")
+	}
 	dir, live, _ := upgradeWALFixture(t)
 	db, err := OpenDB(dir)
 	if err != nil {

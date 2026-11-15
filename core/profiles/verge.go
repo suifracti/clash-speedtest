@@ -36,24 +36,44 @@ func DefaultVergeProfilesFile() (string, error) {
 	return filepath.Join(dir, "io.github.clash-verge-rev.clash-verge-rev", "profiles.yaml"), nil
 }
 
-// LoadVergeControllerConfig reads Clash Verge's runtime config.yaml sitting alongside profiles.yaml.
+// LoadVergeControllerConfig reads Clash Verge's runtime clash-verge.yaml / config.yaml sitting alongside profiles.yaml.
 func LoadVergeControllerConfig(indexPath string) (*VergeControllerConfig, error) {
 	if strings.TrimSpace(indexPath) == "" {
 		return nil, errors.New("无法定位 Clash Verge 配置目录")
 	}
-	body, err := os.ReadFile(filepath.Join(filepath.Dir(indexPath), "config.yaml"))
-	if err != nil {
+	dir := filepath.Dir(indexPath)
+	var merged VergeControllerConfig
+	loadedAny := false
+	for _, name := range []string{"clash-verge.yaml", "config.yaml"} {
+		body, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			continue
+		}
+		var cfg VergeControllerConfig
+		if err := yaml.Unmarshal(body, &cfg); err != nil {
+			if !loadedAny {
+				return nil, errors.New("Clash Verge 运行配置格式无效")
+			}
+			continue
+		}
+		loadedAny = true
+		if merged.ExternalController == "" {
+			merged.ExternalController = strings.TrimSpace(cfg.ExternalController)
+		}
+		if merged.ExternalControllerUnix == "" {
+			merged.ExternalControllerUnix = strings.TrimSpace(cfg.ExternalControllerUnix)
+		}
+		if merged.ExternalControllerPipe == "" {
+			merged.ExternalControllerPipe = strings.TrimSpace(cfg.ExternalControllerPipe)
+		}
+		if merged.Secret == "" {
+			merged.Secret = strings.TrimSpace(cfg.Secret)
+		}
+	}
+	if !loadedAny {
 		return nil, errors.New("无法读取 Clash Verge 运行配置")
 	}
-	var cfg VergeControllerConfig
-	if err := yaml.Unmarshal(body, &cfg); err != nil {
-		return nil, errors.New("Clash Verge 运行配置格式无效")
-	}
-	cfg.ExternalController = strings.TrimSpace(cfg.ExternalController)
-	cfg.ExternalControllerUnix = strings.TrimSpace(cfg.ExternalControllerUnix)
-	cfg.ExternalControllerPipe = strings.TrimSpace(cfg.ExternalControllerPipe)
-	cfg.Secret = strings.TrimSpace(cfg.Secret)
-	return &cfg, nil
+	return &merged, nil
 }
 
 func LoadVergeProfiles(indexPath string) ([]VergeProfile, error) {

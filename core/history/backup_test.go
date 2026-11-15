@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -71,6 +72,9 @@ func TestBackupDatabaseBeforeSchemaUpgrade(t *testing.T) {
 	candidate := filepath.Join(root, "candidate", "history.db")
 	if err := BackupDatabase(context.Background(), filepath.Dir(snapshot), candidate); err != nil {
 		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows v11 upgrade refusal is covered by TestV11UpgradeBackupWindowsUnsupportedPrivateRootBlocksDDL")
 	}
 	upgraded, err := OpenDB(filepath.Dir(candidate))
 	if err != nil {

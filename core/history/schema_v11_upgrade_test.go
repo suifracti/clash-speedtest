@@ -6,12 +6,16 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestSchemaV11UpgradePreservesLatencyHistoryAndLeavesPathUnknown(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows v11 upgrade refusal is covered by TestV11UpgradeBackupWindowsUnsupportedPrivateRootBlocksDDL")
+	}
 	dir := filepath.Join(t.TempDir(), "history-v11")
 	requestedAt := time.Date(2026, 10, 9, 8, 0, 0, 0, time.UTC)
 	seedSchemaV11LatencyHistory(t, dir, requestedAt)

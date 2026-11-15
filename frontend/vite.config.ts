@@ -6,7 +6,7 @@ import path from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 
 if (!process.env.NODE_OPTIONS?.includes('--localstorage-file')) {
-  const storageFlag = `--localstorage-file=${path.join(os.tmpdir(), 'cst-vitest-localstorage.json')}`
+  const storageFlag = `--localstorage-file=${path.join(os.tmpdir(), `cst-vitest-localstorage-${process.pid}.json`)}`
   process.env.NODE_OPTIONS = process.env.NODE_OPTIONS ? `${process.env.NODE_OPTIONS} ${storageFlag}` : storageFlag
 }
 
@@ -44,6 +44,7 @@ export default defineConfig({
     environment: 'jsdom',
     include: ['src/**/*.spec.ts'],
     testTimeout: 10000,
+    fileParallelism: process.platform !== 'win32',
     restoreMocks: true,
     clearMocks: true,
   },

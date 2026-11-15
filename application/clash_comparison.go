@@ -58,7 +58,11 @@ func (s *AppService) clashClient() (*mihomo.Client, string, error) {
 		if !useDefaultSocket {
 			if file, fileErr := profiles.DefaultVergeProfilesFile(); fileErr == nil {
 				if vergeCfg, vergeErr := profiles.LoadVergeControllerConfig(file); vergeErr == nil && vergeCfg != nil {
-					if runtime.GOOS != "windows" && vergeCfg.ExternalControllerUnix != "" {
+					if runtime.GOOS == "windows" && vergeCfg.ExternalControllerPipe != "" {
+						cfg.SocketPath = vergeCfg.ExternalControllerPipe
+						cfg.Secret = vergeCfg.Secret
+						endpoint = vergeCfg.ExternalControllerPipe
+					} else if runtime.GOOS != "windows" && vergeCfg.ExternalControllerUnix != "" {
 						if _, statErr := os.Stat(vergeCfg.ExternalControllerUnix); statErr == nil {
 							cfg.SocketPath = vergeCfg.ExternalControllerUnix
 							cfg.Secret = vergeCfg.Secret
@@ -74,8 +78,13 @@ func (s *AppService) clashClient() (*mihomo.Client, string, error) {
 			}
 		}
 		if cfg.SocketPath == "" && cfg.Endpoint == "" {
-			cfg.SocketPath = defaultSocket
-			endpoint = defaultSocket
+			if runtime.GOOS == "windows" {
+				cfg.Endpoint = "127.0.0.1:9097"
+				endpoint = cfg.Endpoint
+			} else {
+				cfg.SocketPath = defaultSocket
+				endpoint = defaultSocket
+			}
 		}
 	}
 	client, err := mihomo.NewClient(cfg)
