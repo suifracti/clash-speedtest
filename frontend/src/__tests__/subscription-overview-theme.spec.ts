@@ -34,8 +34,8 @@ describe('SubscriptionOverview theme tokens',()=>{
 
   it('makes the remaining amount primary and reserves a labeled daily chart column',()=>{
     expect(declaration('.subscription-main','display')).toBe('grid')
-    expect(declaration('.subscription-overview','padding')).toBe('8px 14px')
-    expect(declaration('.subscription-overview','min-height')).toBe('104px')
+    expect(declaration('.subscription-overview','padding')).toBe('10px 16px')
+    expect(declaration('.subscription-overview','min-height')).toBe('58px')
     expect(declaration('.subscription-main','grid-template-columns')).toBe('minmax(140px,.85fr) minmax(220px,1.65fr) 156px')
     expect(declaration('.subscription-remaining-value','font-size')).toBe('17px')
     expect(declaration('.subscription-remaining-value','color')).toBe('var(--blue)')
