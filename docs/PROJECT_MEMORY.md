@@ -18,6 +18,11 @@
 | 手动刷新被 30 分钟冷却拦住；订阅代理/直连/物理重试原因、换链接后今日与 14 天用量断掉 | L-007；application/subscription_refresh.go；application/subscription_usage.go；core/subscriptionusage/continuity.go |
 | 延迟大批量卡顿或分段；工作台/检查器/报告结论不一致；订阅更新后同名节点 7 天指标丢失；双栈回退后一直走 IPv6 | L-008；core/history/latency_batch_progress.go；frontend/src/latencyHistory.ts；frontend/src/latencyReport.ts；core/speedtester/physical_family_darwin.go |
 | Windows 启动报 build tags 或 WebView2 句柄错误；Node 26 跑前端测试报 localStorage；新数据目录显示本地服务未连接 | L-009；frontend/src/workspace.ts；scripts/prepare-legacy-assets.mjs |
+| SQLite 外键/busy_timeout 在连接池失效；Windows 盘符 URI 报错；v11 升级备份与历史清理中断 | L-010；core/history/db.go；core/history/sqlite_uri.go；core/history/upgrade_backup.go；cmd/history-orphans/main.go |
+| 同配置 YAML 别名节点在延迟批次被跳过；VLESS pcs/vcn 特殊 TLS 导出失真；推荐/体检漏读旧 revision | L-011；core/speedtester/speedtester.go；core/speedtester/vless_tls.go；application/export.go；frontend/src/nodeQuality.ts |
+| 持续监测抢占预算、暂停时无法手动触发、Mac 监测未绕开 TUN；本机通知重复告警或授权失败 | L-012；core/monitor/；core/speedtester/；application/local_notifications.go |
+| Netflix DoH 超时吞掉结论、YouTube 误判送中（pagead）、Gemini/Spotify 机房限制、Disney+ 握手 EOF；出口 IP 类型与原生/广播判定 | L-013；core/publicservice/probes.go；core/publicservice/checker.go；frontend/src/ipKind.ts；frontend/src/exitLanding.ts |
+| 自动精选端口被占后 Verge 订阅失效、运行期改设置被覆盖或报告丢用途；入口超 100 地址丢国家；Clash/Verge 本机对照与报告导图 | L-014；application/auto_pick.go；application/auto_pick_subscription.go；core/entry/lookup.go；application/clash_comparison.go；frontend/src/components/LatencyReportImage.vue |
 
 ## 默认自动执行：不等用户提醒
 
@@ -107,6 +112,46 @@ Windows 下编译或运行 Wails 桌面端需显式传入 `-tags production`（�
 
 `frontend/src/workspace.ts` 的 `boot()` 此前在 `setup.state !== 'ready'` 时提前返回而未调用 `events(...)`，导致新数据目录停留在“数据与备份”初始化页时侧栏一直显示“本地服务未连接”。现已抽出 `subscribeEvents()` 在 `api.setup()` 成功后立即建立事件连接（非 `ready` 状态下忽略业务事件刷新，初始化成功后直接复用同一连接），并在 `dispose()` 中重置 `unsubscribe` 与 `connected`。
 
+## L-010 SQLite 连接池 Pragma、Windows 文件 URI、v11 升级门禁与事务清理
+
+适用：修改 `core/history` 数据库连接、迁移、升级备份、孤儿检查或历史保留清理。
+
+`56b02e9` 在 `core/history/db.go` 中通过编码后的 DSN 为连接池每个连接设置 `foreign_keys`、`busy_timeout` 与 `synchronous`，避免仅在首个连接执行 pragma 导致并发连接外键级联失效；`cmd/history-orphans`（`core/history/orphans.go`）以 `mode=ro` / `query_only` 只读检查孤儿记录，绝不自动改库。`1dec197` 在 `core/history/sqlite_uri.go` 中将 Windows 盘符路径规范化为 `file:///C:/...`，防止 `C:` 被解析为 URI authority。
+
+`91afa7b`、`114296f`、`897ebc0`（`core/history/upgrade_backup.go`）要求既有 v11 库在执行 DDL 升级前必须先完成经校验的 WAL 备份（Windows 下不支持安全私有根目录权限时直接阻断 DDL 升级并保留原库），备份清理失败时显式暴露并隔离。`fc16f63`、`3e3736e` 将工作台与监测历史清理放入事务并感知取消，清理已终止但缺 `finished_at` 或孤立的 `interrupted`/`persistence_failed` 轮次，同时保留进行中记录。
+
+## L-011 节点身份与配置修订解耦、YAML 别名归一化、VLESS 特殊 TLS 与导出保真
+
+适用：节点配置比较与去重、延迟批次未执行排查、推荐/体检历史读取、VLESS 特殊 TLS 参数及 Clash 配置导出。
+
+`cbd05f2` 修复 `core/speedtester/speedtester.go` 中 `buildProxyServerPortKey` 对 YAML 解析出的嵌套 `map[any]any` 直接 `json.Marshal` 失败导致 `EquivalentProxyConfiguration` 恒为 `false` 的 bug：归一化嵌套 map 后，同配置别名节点正常合并去重，不再被误判为“多个 TLS/连接配置”而在批次中整项跳过。`415d739`、`63a436b` 将公告/余额提示条目与真实节点分开，避免公告别名吞掉同配置真实节点。
+
+`7fec4ec` 在 `core/speedtester/vless_tls.go` 與 `application/export.go` 中恢复 VLESS `pcs`/`vcn` 与 insecure 别名解析及私有 TCP TLS 校验，证书约束计入 `config_revision_key`；未准备好的路径拒绝静默忽略证书约束，普通 Clash/Mihomo 导出无法保真时整次拒绝，且导出时剥离内部 `_cst_` 运行时字段（`fb2511f`）、同机场缓存节点先去重防误报歧义（`db86ef6`）。`911db84`、`7255be4` 在推荐页与机场体检中通过 `ListNodeHistoryRevisions` 聚合同一 `node_identity_key` 的历史 revision（6 并发限流），避免配置微调后漏读旧记录。
+
+## L-012 持续监测预算准入、物理网卡绕 TUN 与本机通知去重
+
+适用：24/7 持续监测调度、容量保护、恢复准入、Mac 监测绕开本机 TUN、桌面原生通知。
+
+`8e61026`、`6780a3f`、`d0269c2`、`9c008e5`、`2de0518`、`b0fddba` 在 `core/monitor/` 中建立按键集分页的原始样本库、容量阈值保护、持久化全局共享预算与采样分档准入；暂停状态下仍允许手动触发单次监测（`d708035`），预算调整或启动恢复时保持队列准入与配置阻断语义（`4b45e00`、`02f1e6e`）。`6627e70` 将 Mac 持续监测的 DNS 与 socket 统一走物理网卡客户端（检测后关闭连接与代理），仅当 DNS 与 socket 均核验通过时写入 `tun_bypass_interface`。
+
+`6128b16`、`fa74fc6` 在 `application/local_notifications.go` 中支持故障率、低余量、到期三类阈值提醒（包含 `completed_with_issues` / `completed_with_save_failures` 批次），仅在设置变更与每 5 分钟轮询检查，相同告警本机去重、恢复后才可再提醒；勾选开启时先调 `requestAuthorization`，系统拒绝则保持关闭并提示打开系统通知设置。
+
+## L-013 解锁探测判据（Netflix / YouTube / AI / Disney+）与出口 IP 类型多数票
+
+适用：维护 `core/publicservice` 解锁规则、排查误判送中或 DoH 超时、解释出口 IP 类型（机房/家宽/移动、原生/广播）及机房限制提示。
+
+`4327e3d`、`28fcbe4`、`38eb812` 对齐并修正解锁判据：Netflix 在 `core/publicservice/checker.go` 与 `probes.go` 中将 Fast.com 预检提到节点 DoH 之前（出结论即记 `target_dns_skipped=fast_api_decided`，避免节点 DoH 超时吞掉结论），地区优先取 `client.location.country`、`targets[0]` 仅作后备，预检未决再走双片目（`70143836`/`81280792`）；YouTube Premium 请求 `/premium?hl=en`，排除页面自带 `google.cn/pagead` 遥测避免误判送中，非 CN 的不可用标橙色“不向该 IP 提供 Premium（常见于机房/代理 IP）”；ChatGPT 用 trace `loc` + 官方 compliance，Claude 用 trace `loc` + `claude_regions.json`，Gemini 识别 `,2,1,200,"CHN"` 与 `google.com/sorry`（标橙色 `verification_required` 计入已测分母但不计可用）；Spotify 代理注册拒绝记橙色“限注册”；`disney_unlock` 因多节点 TLS 握手均 EOF 无响应，已停用请求并直接返回“暂不支持”（`4e1ab98`）。
+
+`3d0bd9f` 在 `frontend/src/ipKind.ts` 中对已保存的 `IPPure`、`Ping0`、`IPOK` 结果按每来源一票（IPv4 优先）做多数票表决：明确区分 `机房`/`家宽`/`移动`，将 `非住宅`/`非 IDC`/`未提供` 与平票保留为 `未知`；原生/广播由 `origin_type`、`isBroadcast`/`is_native` 或注册国与使用国对比判定。出口为机房时仅在 Gemini 验证、YouTube 拒提供、Spotify 限注册原因后追加机房提示，不改变解锁结论与自动精选规则。`c775dcc`、`0734ba4` 在每日纯净度与机场体检排名中优先排满轮次节点并区分纯净度口径。
+
+## L-014 自动精选本地订阅与设置保护、入口百条分批画像、Clash 双轮对照与报告导图
+
+适用：自动精选（`auto-pick`）配置/运行/本地订阅、物理网卡解析节点入口、本机 Clash/Verge 实时对照、延迟报告导出 PNG。
+
+`019aa2e`、`ebc1270`、`a1f0c28`、`8cb3183`、`5471464`、`42d8c02` 在 `application/auto_pick.go` 与 `auto_pick_subscription.go` 中实现定时精选：延迟决定“日常”组，必需解锁服务（默认 ChatGPT、Claude、Netflix 完整片库，不含 Gemini 与 Antigravity）决定流媒体/AI 组，本轮选空或失败时保留上一份 `subscription.yaml`。本地订阅仅监听 `127.0.0.1`（默认 17891，校验 16 字节 hex token 与 `.yaml` 后缀）；**首选端口被占用时本轮临时换随机端口但绝不覆盖 `subscription-port` 文件**，防止 Clash Verge 已填地址重启后失效；构建节点列表前预分配 `make([]autopick.Node, 0, len(nodes))` 防止 slice 扩容导致指针丢失追加用途；`finishAutoPickReport` 结束时重新读取磁盘配置，仅更新 `LastRunAt`/`NextRunAt` 而不覆盖运行期用户修改的设置。
+
+`899105a`、`fd6bc58` 在 `core/entry/lookup.go` 中经物理网卡解析节点入口并按 100 个地址一批循环查询画像（修复超出 100 个地址被上游静默丢弃导致无国家的问题），未测出口的节点线路标签置灰注明“按节点名称推断”。`0103591`、`573b450`、`64c8641`、`db43f58` 在 `application/clash_comparison.go` 与 `frontend/src/clashComparison.ts` 中通过本机 Clash socket/TCP 接口与物理网卡各跑 2 次采样对照（不写工作台轮次库），展示活跃路由链并在手动切换代理组前确认，两边均失败时归为“节点本身不稳定”。`457b551`、`c73cb9a` 在 `LatencyReportImage.vue` 中导出 PNG 时去掉 `tabular-nums` 以避免导出渲染器字距挤压。
+
 ## 维护方法
 
 方法统一继承总规则“2 项目记录”“5.1 全周期复盘与覆盖”，从下方实际覆盖记录接续。
@@ -125,8 +170,11 @@ Windows 下编译或运行 Wails 桌面端需显式传入 `-tags production`（�
 
 本次以 `main@fd754680434d433544bc432559f8c7a569d4e712` 为读取截点，完整读取现行总规则、项目入口及本页，定向读取进度末段和 `76d6e58`、`d87cd8d`、`ce0261b`、`35e25ed` 的有关实现与既有脱敏结果，归入 L-004。本次没有重跑测试、构建、实网请求或检查生产历史，未前移全历史处理游标。下次涉及下载时从 L-004 及其实现接续，其他历史覆盖仍按原有缺口记录。
 
-## 2026-11-15 历史提交增量归并与 Windows 接手范围
+## 2026-11-15 本仓全量分叉提交复盘与 Windows 接手范围
 
-本次在 `main@de31a464867b6caef4b974849646eb3b0db9b3b3` 基础上，完整读取 `docs/backend-round3-progress.md` 第 450–797 行，核对 `c747674`..`de31a46` 区间提交清单，并实际读取 `de31a46`、`7cb86bb`、`b690d3d`、`8b794ea`、`4952869`、`91d9d50`、`67d5392`、`36e3577`、`ff4b28b`、`fb6abca`、`ccfb073`、`8845c67` 等提交对应的源码与 diff（含 `frontend/src/unlock.ts`、`core/subscriptionusage/continuity.go`、`core/history/latency_batch_progress.go`、`frontend/src/latencyHistory.ts`、`frontend/src/components/home/homeModel.ts`、`core/speedtester/physical_family_darwin.go`、`frontend/src/workspace.ts`），将解锁地区正反向规则与 Antigravity 风险/耗时归因（L-006）、订阅抓取路径与用量连续性（L-007）、延迟单批次与跨配置连续性及结论对齐（L-008）、Windows 构建/测试与未初始化数据页连接状态（L-009）归入本页。
+本次分两批完成 `upstream/main..main`（`7549994`..`a7bb500`，共 560 条提交、479 条非 merge 提交）的全量历史复盘，并全文读取 `docs/backend-round3-progress.md`（1–797 行）、`docs/version-consistency.md`（1–57 行）、`docs/roadmap-round3.md`（1–82 行）：
 
-验证与覆盖边界：已在 Windows 环境执行 `go vet ./...`、`core/history` SQLite/Windows 专项测试、前端 73 文件 449 项 Vitest 与 `npm run build`，并在 `127.0.0.1:8999` 启动隔离数据目录 Web 服务验证未初始化连接修复；未觸碰本机生产库、未执行实网测速或付费模型调用。`c747674` 之前的早期提交（645 条总历史中的更早阶段）仍按需定向补齐，**全历史逐提交游标未标全**。
+1. **近期提交批次（`c747674`..`a7bb500`）**：实际读取 `de31a46`、`7cb86bb`、`b690d3d`、`8b794ea`、`4952869`、`91d9d50`、`67d5392`、`36e3577`、`ff4b28b`、`fb6abca`、`ccfb073`、`8845c67`、`a7bb500` 等提交及源码（`frontend/src/unlock.ts`、`core/subscriptionusage/continuity.go`、`core/history/latency_batch_progress.go`、`frontend/src/latencyHistory.ts`、`frontend/src/components/home/homeModel.ts`、`core/speedtester/physical_family_darwin.go`、`frontend/src/workspace.ts`），提炼为 L-006～L-009。
+2. **早期与中期分叉批次（`7549994`..`4b0f557`）**：完整遍历 426 条非 merge 提交清单，并实际读取 `56b02e9`、`1dec197`、`114296f`、`7fec4ec`、`cbd05f2`、`38eb812`、`28fcbe4`、`3d0bd9f`、`019aa2e`、`a1f0c28`、`42d8c02`、`899105a`、`fd6bc58`、`0103591`、`db43f58`、`457b551`、`c73cb9a`、`c775dcc`、`0734ba4` 的提交 diff 与核心实现文件（`application/auto_pick.go`、`application/auto_pick_subscription.go`、`application/clash_comparison.go`、`frontend/src/ipKind.ts` 等），提炼为 L-010～L-014。
+
+验证与覆盖边界：属于本仓分叉改动的 `upstream/main..main` 提交历史与进度文档已全部过目并建立 L-001～L-014 索引（若后续深入某一早期 PR 的逐行边角细节，仍以对应源码与 commit diff 为准）；Windows 环境已完成 `go vet ./...`、`core/history` SQLite/Windows 专项测试、前端 73 文件 449 项 Vitest 与 `npm run build`，未触碰本机生产库、未执行实网测速或付费模型调用。
