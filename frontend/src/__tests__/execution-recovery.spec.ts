@@ -104,4 +104,12 @@ describe('execution recovery',()=>{
     const saved={...saving,persistence_state:'saved'};onEvent('workbench_public_service_attempt_updated',saved);onEvent('workbench_public_service_attempt_updated',failed);onEvent('workbench_public_service_attempt_updated',saving)
     expect(w.activeAttempt.value?.attempt.persistence_state).toBe('saved');expect(w.queue.value[0].error).toBeUndefined();expect(w.busy.value).toBe(false);expect(window.sessionStorage.getItem('speedtest.active-work')).toBe(null)
   })
+  it('connects to backend events while setup is uninitialized without loading ready-only workspace data',async()=>{
+    vi.mocked(api.setup).mockResolvedValueOnce({state:'needs_choice'} as any)
+    vi.mocked(events).mockImplementationOnce((callback,onConnection)=>{onEvent=callback;onConnection(true);return vi.fn()})
+    const w=await workspace()
+    expect(w.page.value).toBe('data');expect(w.connected.value).toBe(true);expect(api.airports).not.toHaveBeenCalled()
+    onEvent('subscription_usage_updated',{});await flushPromises();expect(api.airports).not.toHaveBeenCalled()
+    w.dispose();expect(w.connected.value).toBe(false)
+  })
 })

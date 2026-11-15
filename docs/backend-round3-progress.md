@@ -791,3 +791,7 @@
 - 设置页每个服务可选“只测所选 / 排除所选”；排除项沿用 `unlock_service_regions`，以 `!地区码` 保存，后端无改动。
 - `unlockServiceSkipReason` 遇排除列表时只跳过勾选地区，原因“已排除此地区，不检测”；切换方式会保留已勾地区。
 - 补 1 条排除主路径测试，前端 448 项通过。
+
+### 2026-11-15 未初始化数据页保持服务连接状态
+- 修复 `frontend/src/workspace.ts` 中 `boot()` 在 `setup.state !== 'ready'` 时提前返回导致跳过 `events(...)` 订阅的问题；改由 `subscribeEvents()` 在读取 `setup` 后建立 SSE/事件连接，对未就绪状态的业务事件安全忽略，并在 `dispose()` 清零 `connected` 与 `unsubscribe`。
+- 在 `execution-recovery.spec.ts` 补 1 条未初始化 `boot()` 回归测试；前端 73 文件 449 项（Node 26 传入 `--localstorage-file`）与 `npm run build` 通过，本地 Web 服务（`127.0.0.1:8999`）已重启加载。

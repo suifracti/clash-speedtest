@@ -14,6 +14,10 @@
 | 切换机场后体检变空或显示上个机场的数据 | L-003；frontend/src/components/AirportReport.vue |
 | 下载只有短文本、速度口径偏低、备用源限流与旧测速结果 | L-004；application/workbench_download.go；frontend/src/domain.ts |
 | Clash Verge 更新订阅后不想重填链接；关联已有账户 | L-005；application/verge_subscriptions.go |
+| 某解锁服务只想测指定地区或排除指定地区；Antigravity 批量风险与连接耗时 | L-006；frontend/src/unlock.ts；core/autopick/autopick.go；frontend/src/components/QueueModal.vue |
+| 手动刷新被 30 分钟冷却拦住；订阅代理/直连/物理重试原因、换链接后今日与 14 天用量断掉 | L-007；application/subscription_refresh.go；application/subscription_usage.go；core/subscriptionusage/continuity.go |
+| 延迟大批量卡顿或分段；工作台/检查器/报告结论不一致；订阅更新后同名节点 7 天指标丢失；双栈回退后一直走 IPv6 | L-008；core/history/latency_batch_progress.go；frontend/src/latencyHistory.ts；frontend/src/latencyReport.ts；core/speedtester/physical_family_darwin.go |
+| Windows 启动报 build tags 或 WebView2 句柄错误；Node 26 跑前端测试报 localStorage；新数据目录显示本地服务未连接 | L-009；frontend/src/workspace.ts；scripts/prepare-legacy-assets.mjs |
 
 ## 默认自动执行：不等用户提醒
 
@@ -69,6 +73,40 @@
 
 链接变化后的用量仍由既有连续性读取规则衔接，`usageAccountKey` 沿 URL 哈希。普通 API 摘要只传 UID、名称、时间与关联状态，完整 URL 留后端。Wails 和 Web 接口均已接入 `ClashVergeImport.vue`；新建、改链接复用原账户、失败保留、账户选择用临时数据覆盖，本机清单只读核对。
 
+## L-006 解锁地区正反向规则与 Antigravity 批量风险及耗时归因
+
+适用：配置某项解锁只测指定地区或排除指定地区；开启/批量勾选 Antigravity；解释 Antigravity 队列里的模型可用与代理建连耗时。
+
+`4bb77e7`、`0c344f0`、`de31a46` 在现有 `unlock_service_regions` 字段上支持每服务独立地区规则：默认无前缀列表为“只测所选”，`!地区码`（`excludedRegion`）为“排除所选”，空列表为不限地区（后端无需新增字段）。`unlockServiceSkipReason` 遇到只测列表跳过未选地区（“不在该项设定的检测地区内”），遇到排除列表只跳过所选地区（“已排除此地区，不检测”），入口与节点名均无法识别地区时仍继续检测。空列表无法保存 `!` 前缀，`UnlockRegionEditor.vue` 用 `pendingExclude` 暂存模式并在只测/排除切换时保留已勾地区。
+
+`b690d3d` 将 Antigravity 从自动精选（`core/autopick/autopick.go` 的 `defaultCatalog`）与工作台分组/全选默认目录（`defaultSelectableServices`）排除，只允许显式手动勾选。`7cb86bb` 取消此前每次最多 3 个节点的硬拦截，超过 3 个节点时由 `antigravityBatchRisk` 在计划弹窗与工作台显示多 IP 风控与额度消耗提醒，不再禁用开始按钮或在 `runPlan` 拒绝提交。`8b794ea` 在 `QueueModal.vue` 中把“已处理”与“确认模型可用（仅 `matched` 且真实模型回答）/地区拒绝（`streamGenerateContent` HTTP 400）/未确认”分开，并标明 `details.proxy_connect_ms` 是已结束调用（含同时发起的无凭据 Cloudflare trace 与 Google 请求）的代理建连累计耗时，不能归因给单次请求。上述逻辑由前端与 Go 离线单测覆盖，未发起真实付费模型调用。
+
+## L-007 订阅抓取路径、手动冷却豁免与换链接用量连续性
+
+适用：解释订阅刷新走了哪条网络路径或为何失败；手动刷新被间隔限制；修改订阅链接后节点缓存、失败状态与 14 天/今日用量的衔接。
+
+`4952869` 将每机场 30 分钟间隔（`usageRefreshAirportGap`）仅作用于自动刷新，手动刷新（单机场、全部、行内、仅刷新用量）不再受 30 分钟冷却限制；自动刷新仍按 2 小时周期并参考最近一次手动刷新时间。`c747674`、`7e546be`、`91d9d50`、`9e9f8bf` 将 `fetch_path` 细分为 `proxy`、`normal`、`physical`（及本地导入的 `verge`），旧记录 `direct` 标为路径未区分；普通网络（或代理）传输层失败时复用入口 DNS 的物理网卡客户端重试一次，物理重试仍失败时合并保存两段脱敏原因（总长上限 200 字，避免后一段被截断），HTTP 429、取消与超时不盲目重试。`d69b53f`、`44a226b`、`480101c` 在 `SubscriptionOverview.vue` 与刷新弹窗中将刷新任务完成时间与订阅 `last_attempt_at` 合并取每订阅唯一最新状态，避免旧手动失败覆盖后续自动成功，并展示保存的路径与原因。侧栏与工作台节点计数统一复用 `airportViewing.ts` 过滤公告项。
+
+`67d5392` 在 `UpdateSubscription` 链接变化时直接复用单订阅刷新（旧缓存参与节点增删改比较，成功清除旧失败并写 `subscription_update`，失败恢复原链接与设置，仅改名/备注不抓取）。`36e3577` 在 `core/subscriptionusage/continuity.go` 的 `ContinueAccounts` 中按只读方式衔接换链接后的用量：当同机场旧 `AccountKey` 已停止记录、新旧 `Total` 一致且累计已用流量不减（多候选取最小非负增量）时，将旧快照归入新 `AccountKey` 供 14 天趋势与今日用量连续计算，不改写数据库与 `usageAccountKey` 生成规则。
+
+## L-008 延迟单批次轻量进度、同名节点跨配置连续性、三处结论对齐与双栈回退
+
+适用：大批量延迟测速进度与完成拉取；订阅更新后同名节点的 7 天指标与配置分界线；工作台、检查器、报告的延迟结论不一致；Mac 物理双栈回退后地址族固定问题。
+
+`4657444`、`ee35394`、`ccfb073`、`99a57f8` 移除前端 200 节点分段，每轮延迟作为单批次提交（后端上限 10000，默认并发 16）；运行中由 `core/history/latency_batch_progress.go` 的 `GetLatencyBatchProgress`（`GET /api/workbench/latency-batches/{batch_id}/progress`）只读汇总计数，SSE 批次事件不携带全量节点明细，批次结束后一次读取完整结果并弹出报告。`f9903a6` 在 `application/workbench_latency_batch.go` 中将内部取消记为 `context_cancelled`、超时记为 `deadline_exceeded`，仅用户点击停止记为 `user_cancelled`。
+
+`059fd63`、`2f08443`、`fb6abca` 在 `frontend/src/latencyHistory.ts` 的 `readLatencyHistoryWithConfig` 中汇总同机场同名节点跨 `node_identity_key` / `config_revision_key` 的历史轮次：工作台 7 天响应率、波动和中位延迟默认保留同名节点的跨配置历史参与显示、排序与筛选（`LatencyChart.vue` 在新配置首次测速处画竖线标记“配置已变化”），检查器同时通过 `latencyHistorySplit` 区分 `current` 与 `old` 轮次；节点改名不猜测合并，底层历史 scope 不改写。
+
+`f9903a6`、`4febe64`、`6a3f74e`、`8845c67` 统一工作台（`homeModel.ts` 的 `latencyVerdict`）、检查器（`inspectorLatency.ts`）与批次报告（`latencyReport.ts`）的判定优先级：单站 6 次全失败且其余站有响应优先判为橙色“部分站点不通”（`partialLatencySites`）；响应比例统一用 `latencyResponseUnstable`（不足 5/6 为“不稳定”，其余有失败为“偶有失败”）；稳定延迟超过 `latencySlowThresholdMs`（1500 ms）统一判为“偏慢”；失败原因展示具体超时/被拒绝/被重置/被关闭，HTTP 状态码 ≥300 计为已连通并单独统计站点拒绝。`ff4b28b` 在 `core/speedtester/physical_family_darwin.go` 的 `DialContext` 中仅在 IPv4 或 IPv6 实际连接成功后才置 `settled=true`（IPv6 成功时才置 `selectedIPv6=true` 并关闭 IPv4 适配器），双栈均失败（`ipv6_failed`）时保留 IPv4 供后续采样继续先试 IPv4。
+
+## L-009 Windows 本地构建、Node 26 测试与未初始化数据页连接状态
+
+适用：Windows 环境拉起桌面端或 Web 服务、运行前端 Vitest、首次打开空数据目录（尚未初始化存储）看到侧栏状态异常。
+
+Windows 下编译或运行 Wails 桌面端需显式传入 `-tags production`（并先执行 `node scripts/prepare-legacy-assets.mjs` 与 `frontend` 的 `npm run build`），否则落入 Wails 默认的 `app_default_windows.go` 弹出 build tags 提示框；在无交互或沙箱隔离桌面（如 `WinSta0\exebox-*`）中，`WebView2` 的 `CreateCoreWebView2Controller` 会因窗口句柄跨桌面报 `80070578: Invalid window handle`，此时可用 `--web --port 8999 --listen 127.0.0.1 --browser none --data-dir <dir>` 启动本地 Web 服务调试，真实桌面双击 `build/bin/clash-speedtest.exe` 独立验收。Node `v25/v26` 内置全局 `localStorage` 在未传 `--localstorage-file` 时返回 `undefined` 并覆盖 jsdom，运行 `npm test` 需设置 `NODE_OPTIONS="--localstorage-file=<temp-file>"`。
+
+`frontend/src/workspace.ts` 的 `boot()` 此前在 `setup.state !== 'ready'` 时提前返回而未调用 `events(...)`，导致新数据目录停留在“数据与备份”初始化页时侧栏一直显示“本地服务未连接”。现已抽出 `subscribeEvents()` 在 `api.setup()` 成功后立即建立事件连接（非 `ready` 状态下忽略业务事件刷新，初始化成功后直接复用同一连接），并在 `dispose()` 中重置 `unsubscribe` 与 `connected`。
+
 ## 维护方法
 
 方法统一继承总规则“2 项目记录”“5.1 全周期复盘与覆盖”，从下方实际覆盖记录接续。
@@ -86,3 +124,9 @@
 ## 2026-11-11 下载链路增量归并范围
 
 本次以 `main@fd754680434d433544bc432559f8c7a569d4e712` 为读取截点，完整读取现行总规则、项目入口及本页，定向读取进度末段和 `76d6e58`、`d87cd8d`、`ce0261b`、`35e25ed` 的有关实现与既有脱敏结果，归入 L-004。本次没有重跑测试、构建、实网请求或检查生产历史，未前移全历史处理游标。下次涉及下载时从 L-004 及其实现接续，其他历史覆盖仍按原有缺口记录。
+
+## 2026-11-15 历史提交增量归并与 Windows 接手范围
+
+本次在 `main@de31a464867b6caef4b974849646eb3b0db9b3b3` 基础上，完整读取 `docs/backend-round3-progress.md` 第 450–797 行，核对 `c747674`..`de31a46` 区间提交清单，并实际读取 `de31a46`、`7cb86bb`、`b690d3d`、`8b794ea`、`4952869`、`91d9d50`、`67d5392`、`36e3577`、`ff4b28b`、`fb6abca`、`ccfb073`、`8845c67` 等提交对应的源码与 diff（含 `frontend/src/unlock.ts`、`core/subscriptionusage/continuity.go`、`core/history/latency_batch_progress.go`、`frontend/src/latencyHistory.ts`、`frontend/src/components/home/homeModel.ts`、`core/speedtester/physical_family_darwin.go`、`frontend/src/workspace.ts`），将解锁地区正反向规则与 Antigravity 风险/耗时归因（L-006）、订阅抓取路径与用量连续性（L-007）、延迟单批次与跨配置连续性及结论对齐（L-008）、Windows 构建/测试与未初始化数据页连接状态（L-009）归入本页。
+
+验证与覆盖边界：已在 Windows 环境执行 `go vet ./...`、`core/history` SQLite/Windows 专项测试、前端 73 文件 449 项 Vitest 与 `npm run build`，并在 `127.0.0.1:8999` 启动隔离数据目录 Web 服务验证未初始化连接修复；未觸碰本机生产库、未执行实网测速或付费模型调用。`c747674` 之前的早期提交（645 条总历史中的更早阶段）仍按需定向补齐，**全历史逐提交游标未标全**。
