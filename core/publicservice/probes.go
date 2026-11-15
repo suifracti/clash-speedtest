@@ -418,7 +418,7 @@ func youtubeMainlandSignal(lowerBody string) bool {
 }
 
 func checkPrimeVideo(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
-	result, page, ok := readPage(ctx, client, rule.TargetURL, []string{"primevideo.com", "amazon.com"}, nil)
+	result, page, ok := readPage(ctx, client, rule.TargetURL, []string{"primevideo.com", "amazon.com"}, nil, rule.MaximumBodyBytes)
 	if !ok {
 		return finish(result, started)
 	}
@@ -1000,7 +1000,10 @@ func pageHasChallenge(body []byte) bool {
 
 func pageHasExplicitChallenge(body []byte) bool {
 	text := strings.ToLower(string(body))
-	return strings.Contains(text, "/cdn-cgi/challenge-platform/") || strings.Contains(text, "cf-chl-")
+	return strings.Contains(text, "/cdn-cgi/challenge-platform/") ||
+		strings.Contains(text, "cf-chl-") ||
+		strings.Contains(text, "slardarwaf") ||
+		strings.Contains(text, "_wafchallengeid")
 }
 
 // Titles and traffic-warning text can suggest verification, but do not prove

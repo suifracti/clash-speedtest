@@ -20,9 +20,9 @@ import (
 const (
 	disneyDeviceURL  = "https://disney.api.edge.bamgrid.com/devices"
 	spotifyRegionURL = "https://spclient.wg.spotify.com/signup/public/v1/account"
-	tiktokRegionURL  = "https://www.tiktok.com/"
+	tiktokRegionURL  = "https://www.tiktok.com/explore"
 	unextRegionURL   = "https://cc.unext.jp/?zxuid=1b64984ecc23&zxemp=29854391&operationName=cosmo_getPlaylistUrl&variables=%7B%22code%22%3A%22ED00440417%22%2C%22playMode%22%3A%22caption%22%2C%22bitrateLow%22%3A192%2C%22bitrateHigh%22%3Anull%2C%22validationOnly%22%3Atrue%7D&extensions=%7B%22persistedQuery%22%3A%7B%22version%22%3A1%2C%22sha256Hash%22%3A%22a2309e22a6819ff747cf9a389dd78db35fa3c386fac1d53461061ba20fa44e34%22%7D%7D"
-	dmmRegionURL     = "https://tv.dmm.com/vod/"
+	dmmRegionURL     = "https://api.tv.dmm.com/graphql"
 	radikoRegionURL  = "https://radiko.jp/"
 )
 
@@ -38,9 +38,9 @@ func regionUnlockRules() []Rule {
 	return []Rule{
 		regionUnlockRule("disney_unlock", "Disney+ 地区判定", "流媒体", "全球", disneyDeviceURL, http.MethodPost, "Disney+ 会话返回国家代码及 supported-location 地区判据"),
 		regionUnlockRule("spotify_unlock", "Spotify 地区判定", "流媒体", "全球", spotifyRegionURL, http.MethodPost, "Spotify 注册校验接口返回 country 与 is_country_launched；不提交邮箱或密码，不注册账号"),
-		regionUnlockRule("tiktok_unlock", "TikTok 地区判定", "流媒体", "全球", tiktokRegionURL, http.MethodGet, "TikTok 首页启动数据提供 region；普通网页响应不算解锁"),
+		regionUnlockRule("tiktok_unlock", "TikTok 地区判定", "流媒体", "全球", tiktokRegionURL, http.MethodGet, "TikTok 探索页启动数据提供 region；普通网页响应或 WAF 挑战不算解锁"),
 		regionUnlockRule("unext_unlock", "U-NEXT 日本地区判定", "日本", "日本", unextRegionURL, http.MethodGet, "U-NEXT 播放校验返回地区判定状态；validationOnly 不取播放清单"),
-		regionUnlockRule("dmm_unlock", "DMM TV 日本地区判定", "日本", "日本", dmmRegionURL, http.MethodGet, "DMM TV 地区拒绝页或服务数据中的明确地区字段"),
+		regionUnlockRule("dmm_unlock", "DMM TV 日本地区判定", "日本", "日本", dmmRegionURL, http.MethodPost, "DMM TV 客户端地区接口返回 client.isForeignAccess；false 判定日本地区可用，true 判定非日本地区"),
 		regionUnlockRule("radiko_unlock", "radiko 日本地区判定", "日本", "日本", radikoRegionURL, http.MethodGet, "radiko 页面当前 areaId 为日本区域或明确显示区域限制"),
 	}
 }
@@ -59,8 +59,9 @@ func regionUnlockRule(id, name, category, region, target, method, criterion stri
 	}
 	if id == "tiktok_unlock" {
 		rule.MaximumBodyBytes = MaximumWebDocumentBytes
+		rule.RuleVersion = 3
 	}
-	if id == "spotify_unlock" || id == "tiktok_unlock" {
+	if id == "spotify_unlock" || id == "unext_unlock" || id == "dmm_unlock" {
 		rule.RuleVersion = 2
 	}
 	return rule
@@ -296,7 +297,7 @@ func checkTikTokRegion(ctx context.Context, client *http.Client, rule Rule, star
 }
 
 func checkUNextRegion(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
-	body, result, ok := regionRequest(ctx, client, http.MethodGet, rule.TargetURL, "", nil, rule.MaximumBodyBytes)
+	body, result, ok := regionRequest(ctx, client, http.MethodGet, rule.TargetURL, "application/json", nil, rule.MaximumBodyBytes)
 	if !ok {
 		return finishPageResult(result, "U-NEXT 地区接口未提供判定状态", started)
 	}
@@ -319,23 +320,29 @@ func checkUNextRegion(ctx context.Context, client *http.Client, rule Rule, start
 }
 
 func checkDMMRegion(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
-	result, page, ok := readPage(ctx, client, rule.TargetURL, []string{"dmm.com"}, nil, rule.MaximumBodyBytes)
+	const dmmRegionQuery = `{"query":"query FetchClient { client { isForeignAccess } }"}`
+	body, result, ok := regionRequest(ctx, client, http.MethodPost, rule.TargetURL, "application/json", []byte(dmmRegionQuery), rule.MaximumBodyBytes)
 	if !ok {
 		return finishPageResult(result, "DMM TV 地区状态未确认", started)
 	}
-	text := strings.ToLower(string(page.body))
-	if strings.Contains(strings.ToLower(page.finalURL), "not-available-in-your-region") || strings.Contains(text, "お住まいの地域からはご利用になれません") || strings.Contains(text, "not available in your region") {
-		result.Outcome, result.Summary = "region_blocked", "DMM TV 明确拒绝当前地区"
+	var payload struct {
+		Data struct {
+			Client struct {
+				IsForeignAccess *bool `json:"isForeignAccess"`
+			} `json:"client"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(body, &payload) != nil || payload.Data.Client.IsForeignAccess == nil {
+		return regionUnknown(result, "region_document", "DMM TV 地区接口未返回明确字段", started)
+	}
+	if *payload.Data.Client.IsForeignAccess {
+		result.Outcome, result.Summary = "region_blocked", "DMM TV 判定当前访问不在日本地区"
 		result.ErrorMessage = result.Summary
 		return finish(result, started)
 	}
-	region := jsonRegionField(page.body, "serviceRegion", "countryCode", "country_code")
-	if strings.EqualFold(region, "JP") {
-		result.Outcome, result.Summary = "unlocked", "DMM TV 日本地区判定通过；未验证登录或播放"
-		result.Details = map[string]string{"service_region": "JP"}
-		return finish(result, started)
-	}
-	return regionUnknown(result, "region_document", "DMM TV 页面未提供明确地区字段", started)
+	result.Outcome, result.Summary = "unlocked", "DMM TV 日本地区判定通过；未验证登录或播放"
+	result.Details = map[string]string{"service_region": "JP"}
+	return finish(result, started)
 }
 
 func checkRadikoRegion(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
@@ -365,7 +372,11 @@ func checkRadikoRegion(ctx context.Context, client *http.Client, rule Rule, star
 
 func regionRequest(ctx context.Context, client *http.Client, method, target, contentType string, body []byte, maximum int) ([]byte, Result, bool) {
 	result := Result{RequestCount: 1}
-	request, err := http.NewRequestWithContext(ctx, method, target, strings.NewReader(string(body)))
+	var reqBody io.Reader
+	if len(body) > 0 {
+		reqBody = bytes.NewReader(body)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, target, reqBody)
 	if err != nil {
 		result.Outcome, result.FailurePhase, result.ErrorMessage = "transport_error", "request_setup", "无法创建地区请求"
 		return nil, result, false
@@ -376,6 +387,10 @@ func regionRequest(ctx context.Context, client *http.Client, method, target, con
 
 	if contentType != "" {
 		request.Header.Set("Content-Type", contentType)
+	}
+	if target == unextRegionURL {
+		// Apollo GraphQL GET queries require a preflight marker to pass CSRF checks.
+		request.Header.Set("apollo-require-preflight", "true")
 	}
 	clone := *client
 	clone.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -464,43 +479,6 @@ func regionUnknown(result Result, phase, message string, started time.Time) Resu
 }
 
 func validRegionCode(value string) bool { return regionCodePattern.MatchString(strings.ToUpper(value)) }
-
-func jsonRegionField(body []byte, keys ...string) string {
-	var document any
-	if json.Unmarshal(body, &document) != nil {
-		return ""
-	}
-	allowed := make(map[string]bool, len(keys))
-	for _, key := range keys {
-		allowed[key] = true
-	}
-	var find func(any) string
-	find = func(value any) string {
-		switch item := value.(type) {
-		case map[string]any:
-			for key, child := range item {
-				if allowed[key] {
-					if code, ok := child.(string); ok && validRegionCode(code) {
-						return strings.ToUpper(code)
-					}
-				}
-			}
-			for _, child := range item {
-				if code := find(child); code != "" {
-					return code
-				}
-			}
-		case []any:
-			for _, child := range item {
-				if code := find(child); code != "" {
-					return code
-				}
-			}
-		}
-		return ""
-	}
-	return find(document)
-}
 
 func jsonStringField(value any, key string) string {
 	switch item := value.(type) {

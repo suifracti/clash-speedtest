@@ -70,3 +70,68 @@ func TestDisneyRegionFlow(t *testing.T) {
 		t.Fatalf("Disney 403 was not treated as a ban: %+v", blocked)
 	}
 }
+
+func TestTikTokSlardarWAFClassifiedAsChallenge(t *testing.T) {
+	rule, ok := RuleFor("tiktok_unlock")
+	if !ok {
+		t.Fatal("missing tiktok_unlock")
+	}
+	wafBody := `<html><head><script id="slardar-config">{"slardarClient":"SlardarWAF"}</script></head><body>Please wait...<p id="wci" class="_wafchallengeid"></p></body></html>`
+	got := checkRegionUnlock(context.Background(), aiUnlockFixtureClient(200, wafBody), rule, time.Now())
+	if got.Outcome != "challenge" {
+		t.Fatalf("SlardarWAF should classify as challenge, got %+v", got)
+	}
+}
+
+func TestUNextApolloHeadersAndRegionStatus(t *testing.T) {
+	rule, ok := RuleFor("unext_unlock")
+	if !ok {
+		t.Fatal("missing unext_unlock")
+	}
+	for _, tc := range []struct {
+		name, body, want, region string
+	}{
+		{"outside japan 467", `{"data":{"webfront_playlistUrl":{"resultStatus":467}}}`, "region_blocked", ""},
+		{"japan 200", `{"data":{"webfront_playlistUrl":{"resultStatus":200}}}`, "unlocked", "JP"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if req.Header.Get("apollo-require-preflight") != "true" || req.Header.Get("Content-Type") != "application/json" {
+					t.Fatalf("missing Apollo CSRF preflight headers: %v", req.Header)
+				}
+				return fixtureResponse(req, 200, "application/json", tc.body), nil
+			})}
+			got := checkRegionUnlock(context.Background(), client, rule, time.Now())
+			if got.Outcome != tc.want || got.Details["service_region"] != tc.region {
+				t.Fatalf("got %+v, want %s/%s", got, tc.want, tc.region)
+			}
+		})
+	}
+}
+
+func TestDMMGraphQLRegionCheck(t *testing.T) {
+	rule, ok := RuleFor("dmm_unlock")
+	if !ok {
+		t.Fatal("missing dmm_unlock")
+	}
+	for _, tc := range []struct {
+		name, body, want, region string
+	}{
+		{"foreign access true", `{"data":{"client":{"isForeignAccess":true}}}`, "region_blocked", ""},
+		{"japan local access", `{"data":{"client":{"isForeignAccess":false}}}`, "unlocked", "JP"},
+		{"missing field", `{"data":{}}`, "unknown", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if req.Method != http.MethodPost || req.Header.Get("Content-Type") != "application/json" {
+					t.Fatalf("unexpected DMM request method=%s content-type=%s", req.Method, req.Header.Get("Content-Type"))
+				}
+				return fixtureResponse(req, 200, "application/json", tc.body), nil
+			})}
+			got := checkRegionUnlock(context.Background(), client, rule, time.Now())
+			if got.Outcome != tc.want || got.Details["service_region"] != tc.region {
+				t.Fatalf("got %+v, want %s/%s", got, tc.want, tc.region)
+			}
+		})
+	}
+}

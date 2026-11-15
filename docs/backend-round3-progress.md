@@ -822,3 +822,14 @@
   - `core/speedtester/physical_entry_other.go` 与 `interface.go` 对物理 DNS 解析加入系统 DNS 黑名单并跳过 TUN Fake-IP DNS（`198.18.0.1/2`、`fdfe:dcba:9876::1/2`），必要时回退 `resolver.LookupIPv4`，消除 Windows 开启 TUN 时物理入口解析固定等满 5 秒的卡顿。
   - `core/history/measurement_round.go` 为 `FinishMeasurementRound`、`ReconcileMeasurementRounds`、`MarkMeasurementNotExecuted`、`FinishAutomaticMeasurementRound` 补齐 `d.mu.Lock()`，消除高并发更新轮次状态时的 `SQLITE_BUSY_SNAPSHOT`。
 - **验证**：`npm run build`、`npm test`、`go vet ./...` 与受影响 Go 包测试（含新增 `TestMeasureDownloadStreamSeparatesConnectAndBodyDurationBudgets` 及 `probe-accuracy.spec.ts` 稳态/峰值/均速用例）全部通过。
+
+### 2026-11-15 延迟/下载复核与核心解锁探针六项修复
+- **延迟与下载实测复核**：经本地 Web 控制台（`127.0.0.1:8999`）抽检多节点 4 站 × 6 次延迟采样与 20 MiB / 15s 下载测速，确认 Fake-IP DNS 绕过、Keep-Alive 512B 排空及建连/正文双计时器均稳定生效，`byte_limit` 与 `time_limit` 排序与记录一致，无新缺陷。
+- **解锁与地区探针修复**：
+  - `gemini_unlock`（v5，`core/publicservice/unlock_ai.go`）：`geminiAvailablePattern` 兼容 Google 新版转义 JSON 标记 `\"45631641\":true` 及原 `45631641,null,true`，保持 CHN/禁用地区代码先行拒判与未截断 200 校验。
+  - `tiktok_unlock`（v3，`core/publicservice/unlock_regions.go` & `probes.go`）：在 `pageHasExplicitChallenge` 增加 `slardarwaf` / `_wafchallengeid` 识别使 TikTok SlardarWAF 挑战不再误归 `unknown`；将 `tiktokRegionURL` 切至 `https://www.tiktok.com/explore` 读取 `__UNIVERSAL_DATA_FOR_REHYDRATION__` 地区字段。
+  - `unext_unlock`（v2，`core/publicservice/unlock_regions.go`）：为 `checkUNextRegion` 请求传入 `Content-Type: application/json` 并在 `regionRequest` 对 `unextRegionURL` 设置 `apollo-require-preflight: true`，解决 Apollo Server CSRF 拦截报 HTTP 400 问题。
+  - `dmm_unlock`（v2，`core/publicservice/unlock_regions.go`）：因 `tv.dmm.com/vod/` 已静态化不再携带地区字段，改为 `POST https://api.tv.dmm.com/graphql` 查询公开 `client.isForeignAccess` 字段判定是否为日本地区。
+  - `prime_video`（v3，`core/publicservice/checker.go` & `probes.go`）：将规则体上限从 64 KiB 扩为 `MaximumWebDocumentBytes`（2 MiB）并透传给 `readPage`，修复约 489 KB 首页必遭截断问题，仍保持缺失 `isServiceRestricted` 时不推断可用的诚实边界。
+  - `target_ipv4.go`：`prepareTargetIPv4` 的 DoH 查解析子超时由固定 5s 改为按 `ctx` 剩余时限动态计算（`min(8s, remaining-2s)`，保底 5s），降低高延迟代理在 TLS 握手阶段的 `target_dns` 超时。
+- **验证**：补齐 `TestGeminiSupportsEscapedBootstrapFlagWithoutRelaxingCountryBlock`、`TestTikTokSlardarWAFClassifiedAsChallenge`、`TestUNextApolloHeadersAndRegionStatus`、`TestDMMGraphQLRegionCheck` 与 `TestPrimeVideoReadsLargeHomepageBeyond64KiB`；`go vet ./...`、`go test ./core/publicservice/... ./application/... -count=1`、前端 73 文件 451 项 `npm test` 与 `npm run build` 全部通过；重启 `127.0.0.1:8999` 后经受控双节点实网复验（跳过 `antigravity`），`gemini_unlock`、`tiktok_unlock`、`unext_unlock`、`dmm_unlock` 与 `abema_unlock` 均按新判据给出准确结论，无控制台或服务端接口报错。

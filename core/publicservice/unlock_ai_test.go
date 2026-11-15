@@ -69,3 +69,27 @@ func TestAIUnlockDoesNotTreatMissingEvidenceAsSupported(t *testing.T) {
 		t.Fatalf("%+v", result)
 	}
 }
+
+func TestGeminiSupportsEscapedBootstrapFlagWithoutRelaxingCountryBlock(t *testing.T) {
+	rule, ok := RuleFor("gemini_unlock")
+	if !ok {
+		t.Fatal("missing gemini_unlock")
+	}
+	unlockedBody := `<script>var x = ',2,1,200,"SGP"'; var y = "\"45631641\":true";</script>`
+	got := checkAIUnlock(context.Background(), aiUnlockFixtureClient(200, unlockedBody), rule, time.Now())
+	if got.Outcome != "unlocked" || got.Details["service_region"] != "SG" {
+		t.Fatalf("escaped flag failed: %+v", got)
+	}
+
+	blockedBody := `<script>var x = ',2,1,200,"HKG"'; var y = "\"45631641\":true";</script>`
+	blocked := checkAIUnlock(context.Background(), aiUnlockFixtureClient(200, blockedBody), rule, time.Now())
+	if blocked.Outcome != "region_blocked" || blocked.Details["service_region"] != "HK" {
+		t.Fatalf("blocked country leaked: %+v", blocked)
+	}
+
+	falseBody := `<script>var x = ',2,1,200,"SGP"'; var y = "\"45631641\":false";</script>`
+	unknown := checkAIUnlock(context.Background(), aiUnlockFixtureClient(200, falseBody), rule, time.Now())
+	if unknown.Outcome != "unknown" {
+		t.Fatalf("false flag unlocked: %+v", unknown)
+	}
+}

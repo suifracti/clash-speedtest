@@ -25,6 +25,8 @@ var geminiBlockedCodes = map[string]bool{
 	"IRN": true, "PRK": true, "SYR": true, "HKG": true, "MAC": true,
 }
 
+var geminiAvailablePattern = regexp.MustCompile(`(?:45631641,\s*null,\s*true|(?:\\)?"45631641(?:\\)?"\s*:\s*true)`)
+
 func normalizeRegionCode(raw string) string {
 	code := strings.ToUpper(strings.TrimSpace(raw))
 	if validRegionCode(code) {
@@ -59,10 +61,10 @@ func aiUnlockRules() []Rule {
 			Accept: "text/html,application/xhtml+xml",
 		},
 		{
-			ServiceID: "gemini_unlock", Name: "Gemini（Google）网页解锁", Category: "AI 服务", Region: "全球", ResultKind: "unlock", RuleVersion: 4,
+			ServiceID: "gemini_unlock", Name: "Gemini（Google）网页解锁", Category: "AI 服务", Region: "全球", ResultKind: "unlock", RuleVersion: 5,
 			Description: "读取 Gemini 页面地区码，对照 Google 不可用国家表；中国香港、中国澳门等按地区不可用处理，不登录或发送消息。",
 			TargetURL:   "https://gemini.google.com/", Method: http.MethodGet,
-			SuccessCriterion: "页面 bootstrap 出现 ,2,1,200,\"ISO3\"；CHN 记 Google 判定为中国大陆，RUS/BLR/CUB/IRN/PRK/SYR/HKG/MAC 记地区不可用；其余地区仍须 45631641,null,true 标记；不验证账号或消息发送。",
+			SuccessCriterion: "页面 bootstrap 出现 ,2,1,200,\"ISO3\"；CHN 记 Google 判定为中国大陆，RUS/BLR/CUB/IRN/PRK/SYR/HKG/MAC 记地区不可用；其余地区仍须 45631641,null,true 或 \"45631641\":true 标记；不验证账号或消息发送。",
 			RedirectPolicy:   "probe_specific", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumWebDocumentBytes,
 			Accept: "text/html,application/xhtml+xml",
 		},
@@ -136,7 +138,7 @@ func checkAIUnlock(ctx context.Context, client *http.Client, rule Rule, started 
 				label = raw
 			}
 			result.Outcome, result.Summary = "region_blocked", "Gemini 在该地区不可用（"+label+"）"
-		case page.status == 200 && !page.truncated && regexp.MustCompile(`45631641,\s*null,\s*true`).MatchString(body):
+		case page.status == 200 && !page.truncated && geminiAvailablePattern.MatchString(body):
 			result.Outcome, result.Summary = "unlocked", "Gemini 地区可用标记通过；未验证账号或对话"
 		default:
 			result.Outcome, result.Summary = "unknown", "未取得 Gemini 明确可用标记，无法判断"

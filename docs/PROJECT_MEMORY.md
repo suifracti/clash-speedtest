@@ -21,7 +21,7 @@
 | SQLite 外键/busy_timeout 在连接池失效；Windows 盘符 URI 报错；v11 升级备份与历史清理中断 | L-010；core/history/db.go；core/history/sqlite_uri.go；core/history/upgrade_backup.go；cmd/history-orphans/main.go |
 | 同配置 YAML 别名节点在延迟批次被跳过；VLESS pcs/vcn 特殊 TLS 导出失真；推荐/体检漏读旧 revision | L-011；core/speedtester/speedtester.go；core/speedtester/vless_tls.go；application/export.go；frontend/src/nodeQuality.ts |
 | 持续监测抢占预算、暂停时无法手动触发、Mac 监测未绕开 TUN；本机通知重复告警或授权失败 | L-012；core/monitor/；core/speedtester/；application/local_notifications.go |
-| Netflix DoH 超时吞掉结论、YouTube 误判送中（pagead）、Gemini/Spotify 机房限制、Disney+ 握手 EOF；出口 IP 类型与原生/广播判定 | L-013；core/publicservice/probes.go；core/publicservice/checker.go；frontend/src/ipKind.ts；frontend/src/exitLanding.ts |
+| Netflix DoH 超时吞掉结论、YouTube 误判送中（pagead）、Gemini/Spotify 机房限制、Disney+ 握手 EOF、Gemini/TikTok/U-NEXT/DMM/Prime Video/ABEMA DoH 修复；出口 IP 类型 | L-013；core/publicservice/probes.go；core/publicservice/unlock_ai.go；core/publicservice/unlock_regions.go；core/publicservice/target_ipv4.go；core/publicservice/checker.go；frontend/src/ipKind.ts |
 | 自动精选端口被占后 Verge 订阅失效、运行期改设置被覆盖或报告丢用途；入口超 100 地址丢国家；Clash/Verge 本机对照与报告导图 | L-014；application/auto_pick.go；application/auto_pick_subscription.go；core/entry/lookup.go；application/clash_comparison.go；frontend/src/components/LatencyReportImage.vue |
 | Windows Clash Verge 命名管道、同名节点换端口变更抵消与非 Darwin 场景推荐 | L-015；adapter/controller/mihomo/dial_windows.go；core/profiles/node_changes.go；frontend/src/recommendations.ts |
 | 延迟 Keep-Alive 复用失效、Windows TUN Fake-IP DNS 拖慢物理出口、测量轮次并发锁竞争 | L-016；core/speedtester/speedtester.go；core/speedtester/physical_entry_other.go；core/history/measurement_round.go |
@@ -153,6 +153,14 @@ Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 
 
 `3d0bd9f` 在 `frontend/src/ipKind.ts` 中对已保存的 `IPPure`、`Ping0`、`IPOK` 结果按每来源一票（IPv4 优先）做多数票表决：明确区分 `机房`/`家宽`/`移动`，将 `非住宅`/`非 IDC`/`未提供` 与平票保留为 `未知`；原生/广播由 `origin_type`、`isBroadcast`/`is_native` 或注册国与使用国对比判定。出口为机房时仅在 Gemini 验证、YouTube 拒提供、Spotify 限注册原因后追加机房提示，不改变解锁结论与自动精选规则。`c775dcc`、`0734ba4` 在每日纯净度与机场体检排名中优先排满轮次节点并区分纯净度口径。
 
+2026-11-15 补充（解锁与地区探针六项实测修复）：
+- **Gemini（`gemini_unlock` v5，`core/publicservice/unlock_ai.go`）**：Google 页面 bootstrap 标记已切换为转义 JSON `\"45631641\":true`，在保留 `,2,1,200,"ISO3"` 与不可用国家/地区（含 `CHN`/`HKG`/`MAC` 等）先行判定及完整 200 未截断前提下，扩展 `geminiAvailablePattern` 同时识别 `45631641,null,true` 与转义/未转义 `"45631641":true`。
+- **TikTok 与 SlardarWAF 挑战识别（`tiktok_unlock` v3，`core/publicservice/unlock_regions.go` & `probes.go`）**：`www.tiktok.com/` 无头请求返回 `SlardarWAF`（`_wafchallengeid`）挑战页；将 `pageHasExplicitChallenge` 扩展识别 `slardarwaf` / `_wafchallengeid` 避免再把 WAF 页误判为 `unknown`，并将 `tiktokRegionURL` 切至稳定提供 `__UNIVERSAL_DATA_FOR_REHYDRATION__`（含 `webapp.app-context.region`）的 `https://www.tiktok.com/explore`。
+- **U-NEXT（`unext_unlock` v2，`unlock_regions.go`）**：Apollo Server CSRF 防护拦截无 `Content-Type` / preflight 头的 GET 查询返回 HTTP 400 `CSRF_ERROR`；为 `checkUNextRegion` 传入 `application/json` 并在 `regionRequest` 对 `unextRegionURL` 附加 `apollo-require-preflight: true`，正常读取 `resultStatus`（467 判非日本、200/475 判日本可用）。
+- **DMM TV（`dmm_unlock` v2，`unlock_regions.go`）**：`https://tv.dmm.com/vod/` 已改为静态 Next.js 外壳（不含 SSR 地区字段）；改由官方客户端接口 `POST https://api.tv.dmm.com/graphql` 执行未鉴权 `query FetchClient { client { isForeignAccess } }`，`false` 判 JP 可用，`true` 判非日本地区。
+- **Prime Video（`prime_video` v3，`checker.go` & `probes.go`）**：此前 `streamingRule` 设为 64 KiB 且 `checkPrimeVideo` 调用 `readPage` 漏传 `rule.MaximumBodyBytes` 导致约 489 KB 首页恒遭截断；改为 `MaximumWebDocumentBytes`（2 MiB）并透传 `rule.MaximumBodyBytes`，同时严格保留“无 `isServiceRestricted` 不推断可用”诚实口径。
+- **目标固定 DNS 预算（`core/publicservice/target_ipv4.go`）**：`prepareTargetIPv4` 原硬编码 `5s` 子超时在高延迟/并发代理上易在 DoH TLS 握手阶段超时，改为按父 `ctx` 剩余期限动态分配至 `min(8s, remaining-2s)`（保底 `5s`，不延长检查总限）。
+
 ## L-014 自动精选本地订阅与设置保护、入口百条分批画像、Clash 双轮对照与报告导图
 
 适用：自动精选（`auto-pick`）配置/运行/本地订阅、物理网卡解析节点入口、本机 Clash/Verge 实时对照、延迟报告导出 PNG。
@@ -207,3 +215,7 @@ Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 
 ## 2026-11-15 下午增量覆盖（UI 重构、下载/延迟优化与上游对照排障）
 
 本轮基于实网与本地 Web 服务排障反馈，同步更新 `L-004`、补入 `L-015` 与 `L-016`，覆盖全功能 UI 重构（`bdb1f92`..`55ed495`）、Windows Clash Verge 2.x 命名管道与同节点换端口/非 Darwin 推荐适配（`7f24210`、`ceb9a21`），以及下载预算分离（`20 MiB / 15s` 与稳态/峰值/均速）、延迟 Keep-Alive 512B 排空、Windows TUN Fake-IP DNS 跳过、`measurement_round.go` 并发锁修复（均完成 `npm run build`、`npm test`、`go vet ./...` 与受影响 Go 包测试）。
+
+## 2026-11-15 晚间增量覆盖（延迟/下载复核与解锁探针六项修复）
+
+在 `http://127.0.0.1:8999` 本地调试实例上复核延迟与 20 MiB / 15s 下载测速确认稳定后，完成 `L-013` 解锁探测六项修复（`gemini_unlock` v5、`tiktok_unlock` v3 与 `SlardarWAF` 挑战识别、`unext_unlock` v2、`dmm_unlock` v2、`prime_video` v3 及 `target_ipv4.go` 动态 DoH 预算）；同步通过 `go vet ./...`、`core/publicservice` + `application` Go 单测、前端 73 文件 451 项 Vitest、`npm run build` 及双节点受控实网复验（未执行 Antigravity 或全机场批量测速，未重编 `.exe`）。

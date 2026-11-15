@@ -160,7 +160,13 @@ func prepareTargetIPv4(ctx context.Context, client *http.Client, phases *request
 	}
 	// No redirect/retry of the DNS lookup. Its time is part of the original
 	// checker deadline, not a new per-phase extension.
-	dnsCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	dnsBudget := 5 * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining > 7*time.Second {
+			dnsBudget = min(8*time.Second, remaining-2*time.Second)
+		}
+	}
+	dnsCtx, cancel := context.WithTimeout(ctx, dnsBudget)
 	dnsClient := *client
 	dnsClient.Jar = nil
 	dnsClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }

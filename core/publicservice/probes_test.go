@@ -354,3 +354,21 @@ func TestPrimeEncodedTemplateMetadata(t *testing.T) {
 		})
 	}
 }
+
+func TestPrimeVideoReadsLargeHomepageBeyond64KiB(t *testing.T) {
+	rule, ok := RuleFor("prime_video")
+	if !ok {
+		t.Fatal("missing prime_video rule")
+	}
+	if rule.MaximumBodyBytes <= MaximumResponseBytes {
+		t.Fatalf("prime_video limit too small: %d", rule.MaximumBodyBytes)
+	}
+	body := `<html><head>` + strings.Repeat(" ", 90000) + `</head><script>{"currentTerritory":"SG","isServiceRestricted":false}</script></html>`
+	checker := Checker{ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+		return fixtureResponse(req, http.StatusOK, "text/html", body), nil
+	})}
+	r := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
+	if r.Outcome != "unlocked" || r.Details["service_region"] != "SG" || r.BytesRead != int64(len(body)) {
+		t.Fatalf("large Prime Video body was truncated or misparsed: %+v", r)
+	}
+}

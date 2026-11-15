@@ -223,7 +223,13 @@ var catalog = []Rule{
 		SuccessCriterion: "页面含 www.google.cn 判 CN；含 premium is not available in your country/region 判不可用；否则须有 Premium 标记且读到地区，读不到记无法判断，不默认 US；不验证购买或播放",
 		RedirectPolicy:   "probe_specific", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumWebDocumentBytes,
 	},
-	streamingRule("prime_video", "Prime Video 地区判定", "全球", "https://www.primevideo.com/", "读取 Prime Video 首页公开的 territory 与限制标记。", "currentTerritory 存在且 isServiceRestricted 明确为 false 才通过地区判据，不代表播放"),
+	{
+		ServiceID: "prime_video", Name: "Prime Video 地区判定", Category: "流媒体解锁", Region: "全球", ResultKind: "streaming_unlock", RuleVersion: 3,
+		TargetURL: "https://www.primevideo.com/", Method: http.MethodGet,
+		Description:      "读取 Prime Video 首页公开的 territory 与限制标记。",
+		SuccessCriterion: "currentTerritory 存在且 isServiceRestricted 明确为 false 才通过地区判据，不代表播放",
+		RedirectPolicy:   "probe_specific", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumWebDocumentBytes,
+	},
 	{
 		ServiceID: "cloudflare_doh", Name: "Cloudflare DNS over HTTPS", Category: "基础网络", Region: "全球",
 		ResultKind: "connectivity", Description: "验证 DNS 响应成功且包含解析结果。", RuleVersion: 3,
