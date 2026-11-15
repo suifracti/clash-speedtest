@@ -1,33 +1,38 @@
-/* CST 设计系统：Deep Slate Command Rail + Indigo Pro 体系 */
+/* CST 统一设计系统：Polar Clean (浅色) 与 Midnight Studio (深色) 双主题同源 Token */
 :root{
-  --cst-bg:#f1f5f9;--cst-side:#0b1120;--cst-panel:#ffffff;--cst-panel-2:#f8fafc;--cst-hover:#e2e8f0;
-  --cst-line:#e2e8f0;--cst-line-strong:#cbd5e1;
-  --cst-text:#0f172a;--cst-muted:#475569;--cst-subtle:#64748b;
-  --cst-accent:#4f46e5;--cst-accent-hover:#4338ca;--cst-accent-soft:#eef2ff;--cst-accent-ink:#ffffff;
-  --cst-good:#10b981;--cst-good-bg:#ecfdf5;--cst-warn:#d97706;--cst-warn-bg:#fffbeb;--cst-bad:#e11d48;--cst-bad-bg:#fff1f2;--cst-empty:#64748b;--cst-empty-bg:#f1f5f9;
-  --cst-focus-bg:#eef2ff;--cst-backdrop:rgba(15,23,42,.52);
-  --cst-radius:12px;--cst-radius-sm:8px;--cst-radius-lg:16px;--cst-radius-xl:18px;
+  color-scheme:light;
+  --cst-bg:#f4f6fa;--cst-side:#ffffff;--cst-panel:#ffffff;--cst-panel-2:#f8fafc;--cst-hover:#eff3f9;
+  --cst-line:#e3e8f2;--cst-line-strong:#cdd6e6;
+  --cst-text:#0f172a;--cst-muted:#516078;--cst-subtle:#8b98ae;
+  --cst-accent:#3b5bfd;--cst-accent-hover:#2d4be8;--cst-accent-soft:#eef2ff;--cst-accent-ink:#ffffff;
+  --cst-good:#059669;--cst-good-bg:#ecfdf5;--cst-warn:#d97706;--cst-warn-bg:#fffbeb;--cst-bad:#e11d48;--cst-bad-bg:#fff1f2;--cst-empty:#64748b;--cst-empty-bg:#f1f5f9;
+  --cst-focus-bg:#eef2ff;--cst-backdrop:rgba(15,23,42,.42);
+  --cst-radius:12px;--cst-radius-sm:8px;--cst-radius-lg:14px;--cst-radius-xl:16px;
   --cst-font:Inter,-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
   --cst-mono:"JetBrains Mono","SF Mono",ui-monospace,Consolas,Menlo,monospace;
   --cst-shadow-xs:0 1px 2px rgba(15,23,42,.04);
-  --cst-shadow:0 1px 3px rgba(15,23,42,.06),0 1px 2px rgba(15,23,42,.04);
-  --cst-shadow-card:0 4px 14px -2px rgba(15,23,42,.06),0 2px 4px -2px rgba(15,23,42,.04);
-  --cst-shadow-pop:0 22px 56px -12px rgba(15,23,42,.26),0 0 0 1px rgba(15,23,42,.08);
-  --cst-side-w:236px;
+  --cst-shadow:0 1px 3px rgba(15,23,42,.05),0 1px 2px rgba(15,23,42,.03);
+  --cst-shadow-card:0 4px 14px -4px rgba(15,23,42,.06),0 1px 3px rgba(15,23,42,.03);
+  --cst-shadow-pop:0 20px 48px -12px rgba(15,23,42,.18),0 0 0 1px rgba(15,23,42,.06);
+  --cst-side-w:232px;
+  --canvas:var(--cst-bg);--surface:var(--cst-panel);--surface-soft:var(--cst-panel-2);--ink:var(--cst-text);--muted:var(--cst-muted);--subtle:var(--cst-subtle);--line:var(--cst-line);--gray:var(--cst-line-strong);
+  --blue:var(--cst-accent);--blue-hover:var(--cst-accent-hover);--blue-soft:var(--cst-accent-soft);--signal:var(--cst-accent);
+  --green:var(--cst-good);--green-soft:var(--cst-good-bg);--amber:var(--cst-warn);--amber-soft:var(--cst-warn-bg);--red:var(--cst-bad);--red-soft:var(--cst-bad-bg);
+  --shadow:var(--cst-shadow-pop);
 }
 :root[data-theme=dark]{
-  --cst-bg:#090d16;--cst-side:#050811;--cst-panel:#111827;--cst-panel-2:#1e293b;--cst-hover:#1f2937;
-  --cst-line:#1e293b;--cst-line-strong:#334155;
-  --cst-text:#f8fafc;--cst-muted:#94a3b8;--cst-subtle:#64748b;
-  --cst-accent:#6366f1;--cst-accent-hover:#818cf8;--cst-accent-soft:rgba(99,102,241,.2);--cst-accent-ink:#ffffff;
-  --cst-good:#34d399;--cst-good-bg:rgba(16,185,129,.18);--cst-warn:#fbbf24;--cst-warn-bg:rgba(245,158,11,.18);--cst-bad:#fb7185;--cst-bad-bg:rgba(225,29,72,.2);--cst-empty:#94a3b8;--cst-empty-bg:#1e293b;
-  --cst-focus-bg:rgba(99,102,241,.18);--cst-backdrop:rgba(2,6,23,.72);
+  color-scheme:dark;
+  --cst-bg:#0b0f17;--cst-side:#101622;--cst-panel:#141b29;--cst-panel-2:#1a2335;--cst-hover:#212c42;
+  --cst-line:#1f293d;--cst-line-strong:#2e3c59;
+  --cst-text:#f1f5f9;--cst-muted:#94a3b8;--cst-subtle:#64748b;
+  --cst-accent:#6382ff;--cst-accent-hover:#7c97ff;--cst-accent-soft:rgba(99,130,255,.16);--cst-accent-ink:#ffffff;
+  --cst-good:#34d399;--cst-good-bg:rgba(16,185,129,.16);--cst-warn:#fbbf24;--cst-warn-bg:rgba(245,158,11,.16);--cst-bad:#fb7185;--cst-bad-bg:rgba(244,63,94,.18);--cst-empty:#94a3b8;--cst-empty-bg:#1e293b;
+  --cst-focus-bg:rgba(99,130,255,.14);--cst-backdrop:rgba(2,6,23,.72);
   --cst-shadow-xs:0 1px 2px rgba(0,0,0,.3);
-  --cst-shadow:0 1px 3px rgba(0,0,0,.4);
-  --cst-shadow-card:0 6px 20px -2px rgba(0,0,0,.45),0 1px 3px rgba(0,0,0,.3);
-  --cst-shadow-pop:0 24px 64px -12px rgba(0,0,0,.72),0 0 0 1px rgba(255,255,255,.08);
+  --cst-shadow:0 1px 3px rgba(0,0,0,.36);
+  --cst-shadow-card:0 6px 20px -4px rgba(0,0,0,.45),0 1px 3px rgba(0,0,0,.28);
+  --cst-shadow-pop:0 24px 60px -12px rgba(0,0,0,.72),0 0 0 1px rgba(255,255,255,.08);
 }
-/* 旧变量 → 新 token（data-theme 总会设置，[data-theme] 让它压过旧样式表里的同名定义） */
 :root[data-theme]{
   --canvas:var(--cst-bg);--surface:var(--cst-panel);--surface-soft:var(--cst-panel-2);--ink:var(--cst-text);--muted:var(--cst-muted);--subtle:var(--cst-subtle);--line:var(--cst-line);--gray:var(--cst-line-strong);
   --blue:var(--cst-accent);--blue-hover:var(--cst-accent-hover);--blue-soft:var(--cst-accent-soft);--signal:var(--cst-accent);

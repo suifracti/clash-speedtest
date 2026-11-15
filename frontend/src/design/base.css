@@ -157,6 +157,7 @@ h2{font-size:16px;font-weight:650;letter-spacing:-.2px;color:var(--cst-text)}
 .cst-candidate-name{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .cst-candidate-name strong{font-size:13.5px;font-weight:650;color:var(--cst-text)}
 .cst-candidate-meta{font-size:12px;color:var(--cst-muted);line-height:1.45}
+.cst-candidate-actions{display:flex;align-items:center;gap:10px;white-space:nowrap;flex-wrap:wrap;justify-content:flex-end}
 /* 巡检轮次进度卡片 */
 .cst-cycle-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-top:8px}
 .cst-cycle-card{display:flex;flex-direction:column;gap:8px;padding:13px 15px;border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel-2)}

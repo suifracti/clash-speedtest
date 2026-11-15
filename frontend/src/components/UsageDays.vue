@@ -63,11 +63,11 @@ const caption=computed(()=>{
 .cst-usage-bars .unknown i{background:var(--cst-empty-bg);border:1px dashed var(--cst-line-strong);box-sizing:border-box}
 .cst-usage-caption{color:var(--cst-muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cst-usage-caption.bad{color:var(--cst-bad)}
-.cst-usage-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:end;gap:10px;height:82px;padding-bottom:4px;border-bottom:1px solid var(--cst-line)}
-.cst-usage-day{display:grid;grid-template-rows:16px 1fr 15px;justify-items:center;align-items:end;gap:4px;min-width:0;height:100%}
-.cst-usage-day-value,.cst-usage-day-label{max-width:100%;font-size:11px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.cst-usage-day-value{color:var(--cst-muted)}.cst-usage-day-label{color:var(--cst-text)}
-.cst-usage-day-track{display:flex;align-items:flex-end;justify-content:center;width:28px;height:100%;overflow:hidden;border-radius:7px 7px 3px 3px}
+.cst-usage-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:end;gap:10px;height:78px;padding-bottom:6px;border-bottom:1px solid var(--cst-line)}
+.cst-usage-day{display:grid;grid-template-rows:15px 1fr 15px;justify-items:center;align-items:end;gap:4px;min-width:0;height:100%}
+.cst-usage-day-value,.cst-usage-day-label{max-width:100%;font-size:11px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cst-usage-day-value{color:var(--cst-muted)}.cst-usage-day-label{color:var(--cst-text);font-weight:500}
+.cst-usage-day-track{display:flex;align-items:flex-end;justify-content:center;width:28px;height:100%;overflow:hidden;border-radius:7px 7px 3px 3px;background:color-mix(in srgb,var(--cst-panel-2) 65%,transparent)}
 .cst-usage-day-track i{display:block;width:100%;min-height:6px;border-radius:inherit;background:var(--cst-accent)}
 .cst-usage-day-track i.estimated{opacity:.55}
 .cst-usage-day-track i.unknown{height:100%!important;background:repeating-linear-gradient(-45deg,var(--cst-line) 0 3px,transparent 3px 6px);border:1px dashed var(--cst-line-strong);box-sizing:border-box}

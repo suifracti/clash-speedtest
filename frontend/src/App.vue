@@ -23,11 +23,19 @@ import CommandPalette from './components/CommandPalette.vue'
 import HoverTip from './components/HoverTip.vue'
 import {projectNames} from './domain'
 import AirportSidebar from './components/AirportSidebar.vue'
+import {applyTheme,savedThemePreference,type ThemePreference} from './theme'
 const w=createWorkspace();provide(workspaceKey,w);useLocalNotifications(w)
 const windowHidden=ref(document.hidden)
 function visibilityChanged(){windowHidden.value=document.hidden}
 const password=ref(''),loginError=ref(''),loggingIn=ref(false)
-const pages:{id:Page;label:string;icon:string}[]=[{id:'home',label:'线路工作台',icon:'home'},{id:'recommend',label:'现在用哪个',icon:'pulse'},{id:'airports',label:'机场与账户',icon:'layers'},{id:'history',label:'检测记录',icon:'history'},{id:'monitor',label:'持续监测',icon:'monitor'}]
+const themePref=ref<ThemePreference>(savedThemePreference())
+const themeOrder:ThemePreference[]=['light','dark','system']
+const themeMeta=computed(()=>({light:{label:'浅色',icon:'sun'},dark:{label:'深色',icon:'moon'},system:{label:'自动',icon:'settings'}}[themePref.value]))
+function onThemeChanged(e:Event){const detail=(e as CustomEvent<{preference?:ThemePreference}>).detail;if(detail?.preference)themePref.value=detail.preference}
+async function cycleTheme(){const next=themeOrder[(themeOrder.indexOf(themePref.value)+1)%themeOrder.length];await applyTheme(next)}
+const primaryPages:{id:Page;label:string;icon:string}[]=[{id:'home',label:'线路工作台',icon:'home'},{id:'recommend',label:'现在用哪个',icon:'pulse'}]
+const managePages:{id:Page;label:string;icon:string}[]=[{id:'airports',label:'机场与账户',icon:'layers'},{id:'monitor',label:'持续监测',icon:'monitor'},{id:'history',label:'检测记录',icon:'history'}]
+const pages=[...primaryPages,...managePages]
 const utilities:{id:Page;label:string;icon:string}[]=[{id:'settings',label:'偏好设置',icon:'settings'},{id:'data',label:'数据与备份',icon:'data'}]
 const palette=ref(false)
 const runningJobs=computed(()=>w.jobs.value.filter(j=>j.state==='running').length)
@@ -50,8 +58,8 @@ let timer:ReturnType<typeof setInterval>|undefined
 function navigate(page:Page){w.page.value=page;window.scrollTo({top:0,behavior:'instant'})}
 function authExpired(){w.authRequired.value=true;w.dispose()}
 async function login(){loggingIn.value=true;loginError.value='';try{await api.login(password.value);password.value='';w.authRequired.value=false;await w.boot()}catch(e){loginError.value=e instanceof Error?e.message:String(e)}finally{loggingIn.value=false}}
-onMounted(()=>{document.addEventListener('visibilitychange',visibilityChanged);window.addEventListener('keydown',paletteKey);void w.boot();window.addEventListener('speedtest:auth-required',authExpired);timer=setInterval(()=>{if(w.busy.value&&!w.running.value&&document.visibilityState==='visible')void w.syncActive()},2500)})
-onBeforeUnmount(()=>{document.removeEventListener('visibilitychange',visibilityChanged);window.removeEventListener('keydown',paletteKey);w.dispose();clearInterval(timer);window.removeEventListener('speedtest:auth-required',authExpired)})
+onMounted(()=>{document.addEventListener('visibilitychange',visibilityChanged);window.addEventListener('keydown',paletteKey);window.addEventListener('cst:theme',onThemeChanged);void w.boot();window.addEventListener('speedtest:auth-required',authExpired);timer=setInterval(()=>{if(w.busy.value&&!w.running.value&&document.visibilityState==='visible')void w.syncActive()},2500)})
+onBeforeUnmount(()=>{document.removeEventListener('visibilitychange',visibilityChanged);window.removeEventListener('keydown',paletteKey);window.removeEventListener('cst:theme',onThemeChanged);w.dispose();clearInterval(timer);window.removeEventListener('speedtest:auth-required',authExpired)})
 </script>
 <template>
   <div class="cst-shell observatory-app" :class="{'window-hidden':windowHidden}">
@@ -59,7 +67,12 @@ onBeforeUnmount(()=>{document.removeEventListener('visibilitychange',visibilityC
       <a class="cst-brand" href="#" @click.prevent="navigate('home')"><span class="cst-brand-mark"><Icon name="pulse"/></span><span class="cst-brand-copy"><strong>CST<span class="brand-period">.</span></strong><small>线路观测台</small></span></a>
       <button v-if="w.setup.value?.state==='ready'" class="cst-jump" type="button" aria-keyshortcuts="Meta+K" title="快速跳转（⌘K）" @click="palette=true"><Icon name="search"/><span>快速跳转</span><kbd>⌘K</kbd></button>
       <nav class="cst-nav" aria-label="主导航">
-        <button v-for="p in pages" :key="p.id" type="button" :title="p.label" :aria-current="w.page.value===p.id?'page':undefined" @click="navigate(p.id)">
+        <span class="cst-nav-group-label">测速与选线</span>
+        <button v-for="p in primaryPages" :key="p.id" type="button" :title="p.label" :aria-current="w.page.value===p.id?'page':undefined" @click="navigate(p.id)">
+          <Icon :name="p.icon"/><span>{{p.label}}</span>
+        </button>
+        <span class="cst-nav-group-label">管理与记录</span>
+        <button v-for="p in managePages" :key="p.id" type="button" :title="p.label" :aria-current="w.page.value===p.id?'page':undefined" @click="navigate(p.id)">
           <Icon :name="p.icon"/><span>{{p.label}}</span>
           <small v-if="p.id==='monitor'&&runningJobs" :aria-label="runningJobs+' 个监测任务运行中'">{{runningJobs}}</small>
         </button>
@@ -75,7 +88,10 @@ onBeforeUnmount(()=>{document.removeEventListener('visibilitychange',visibilityC
         <nav class="cst-utilities" aria-label="工具">
           <button v-for="u in utilities" :key="u.id" type="button" :aria-label="u.label" :title="u.label" :aria-current="w.page.value===u.id?'page':undefined" @click="navigate(u.id)"><Icon :name="u.icon"/><span>{{u.label}}</span></button>
         </nav>
-        <div class="cst-connection" role="status" :class="connection.tone" :title="connection.label" :aria-label="connection.label"><span class="cst-dot"/><small>{{connection.label}}</small></div>
+        <div class="cst-side-status-row">
+          <div class="cst-connection" role="status" :class="connection.tone" :title="connection.label" :aria-label="connection.label"><span class="cst-dot"/><small>{{connection.label}}</small></div>
+          <button type="button" class="cst-theme-cycle" :title="`切换外观（当前：${themeMeta.label}）`" @click="cycleTheme"><Icon :name="themeMeta.icon"/><span>{{themeMeta.label}}</span></button>
+        </div>
       </div>
     </aside>
     <main class="cst-main workspace-body">

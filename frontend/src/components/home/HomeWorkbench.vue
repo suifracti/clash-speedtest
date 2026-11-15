@@ -118,9 +118,10 @@ function closeMore(){if(!more.value?.open)return;more.value.open=false;moreSumma
 const filteredAirport=computed(()=>w.airportFilter.value==='all'?undefined:chosen.value.find(a=>a.id===w.airportFilter.value))
 const filteredAirportNodes=computed(()=>airportNodeCount(w.airports.value.find(airport=>airport.id===w.airportFilter.value),w.nodes.value))
 const qualityFiltering=computed(()=>m.qualityGate.value!=='all'||m.qualitySort.value!=='existing')
+const inspectorOpen=ref(true)
 const focusKey=ref<string|null>(null)
 const focusNode=computed(()=>m.pageNodes.value.find(n=>key(n)===focusKey.value)||m.pageNodes.value[0])
-function focus(n:NodeOption){w.latencyReportFocus.value=null;if(focusNode.value&&key(focusNode.value)===key(n))return;m.closeHover();focusKey.value=key(n)}
+function focus(n:NodeOption){inspectorOpen.value=true;w.latencyReportFocus.value=null;if(focusNode.value&&key(focusNode.value)===key(n))return;m.closeHover();focusKey.value=key(n)}
 // 检查器宽度可拖动（或用 ←→），记在本机。
 const SIDE_MIN=340,SIDE_MAX=680
 function savedSide(){try{const v=Number(window.localStorage.getItem('cst.inspector-width'));return v>=SIDE_MIN&&v<=SIDE_MAX?v:420}catch{return 420}}
@@ -141,7 +142,7 @@ watch(()=>w.viewRequest.value,async n=>{
  if(w.latencyReportFocus.value?.nodeKey===key(n)){exitMode.value=false;m.qualityGate.value='all';m.protocolFilter.value='all';m.qualitySort.value='existing';m.weeklySort.value='';await nextTick()}
  const k=key(n),i=m.visibleNodes.value.findIndex(v=>key(v)===k)
  if(i<0){w.inspectNode.value=n;return}
- m.currentPage.value=m.pageSize.value>0?Math.floor(i/m.pageSize.value)+1:1;m.closeHover();focusKey.value=k
+ inspectorOpen.value=true;m.currentPage.value=m.pageSize.value>0?Math.floor(i/m.pageSize.value)+1:1;m.closeHover();focusKey.value=k
  void nextTick(()=>table.value?.querySelector<HTMLElement>('.hd-tr.focus')?.scrollIntoView?.({block:'nearest'}))
 },{immediate:true})
 function isFocus(n:NodeOption){return !!focusNode.value&&key(focusNode.value)===key(n)}
@@ -171,6 +172,10 @@ function keyNav(e:KeyboardEvent){
         <p v-else><button class="hd-link" @click="m.picker.value=true">{{chosen.length?m.chosenNames.value:'选择机场'}}</button> · {{chosenNodeCount}} 个节点</p>
         <button v-if="dominantClashUsage" class="hd-clash-usage" :disabled="!dominantClashNode" title="查看正在用的节点；按当前连接累计流量排序，每 30 秒更新" @click="inspectClashUsage"><span class="hd-clash-usage-dot" aria-hidden="true"></span>Clash 正在用：<strong>{{dominantClashName}}</strong><template v-if="dominantClashChains">（经 {{dominantClashChains}}）</template></button>
       </div>
+      <div class="hd-head-actions">
+        <button class="hd-btn ghost hd-nav-shortcut" @click="w.page.value='recommend'">智能选线<Icon name="arrowRight"/></button>
+        <button v-if="!matrixMode&&!m.compareOpen.value" class="hd-btn" :aria-pressed="!inspectorOpen" :title="inspectorOpen?'收起右侧详情，全宽显示节点表':'展开右侧节点详情'" @click="inspectorOpen=!inspectorOpen"><Icon name="panel"/>{{inspectorOpen?'全宽列表':'展开详情'}}</button>
+      </div>
     </header>
 
     <section class="hd-source" aria-label="机场选择">
@@ -178,12 +183,20 @@ function keyNav(e:KeyboardEvent){
     </section>
 
     <div class="hd-toolbar">
-      <nav class="hd-seg" aria-label="检测项目"><button v-for="p in projects" :key="p" :aria-pressed="!exitMode&&w.project.value===p" @click="exitMode=false;w.project.value=p">{{projectNames[p]}}</button><button :aria-pressed="exitMode" @click="selectExit">出口与信誉</button></nav>
-      <label class="hd-search"><Icon name="search"/><input v-model="w.search.value" type="search" placeholder="搜节点、机场、地区" aria-label="搜索节点、机场或地区" title="可搜索节点名、机场名或地区"></label>
-      <UiSelect v-model="w.region.value" aria-label="地区"><option value="all">全部地区</option><option v-for="r in m.filterRegions.value" :key="r" :value="r">{{nodeRegionLabel(r)}}</option></UiSelect>
-      <UiSelect v-model="w.sort.value" aria-label="排序"><option v-for="s in sorts" :key="s.id" :value="s.id">排序：{{s.label}}</option></UiSelect>
-      <UiSelect v-model.number="w.hours.value" aria-label="时间范围"><option :value="6">最近 6 小时</option><option :value="24">最近 24 小时</option><option :value="168">最近 7 天</option><option :value="720">最近 30 天</option></UiSelect>
-      <details ref="more" class="hd-more" :class="{'has-active':moreActive>0}" @keydown.esc="closeMore"><summary ref="moreSummary">更多筛选<small>{{filterSummary?filterSummary+' · ':''}}{{m.qualityFiltersPending.value?'范围确认中':'符合 '+m.visibleNodes.value.length+' 个'}}</small></summary>
+      <div class="hd-toolbar-top">
+        <nav class="hd-seg" aria-label="检测项目"><button v-for="p in projects" :key="p" :aria-pressed="!exitMode&&w.project.value===p" @click="exitMode=false;w.project.value=p">{{projectNames[p]}}</button><button :aria-pressed="exitMode" @click="selectExit">出口与信誉</button></nav>
+        <div class="hd-toolbar-actions">
+          <button class="hd-btn ghost" :disabled="w.loading.value" title="重新载入节点列表" @click="w.refreshNodes().catch(w.fail)"><Icon name="refresh"/>重新载入</button>
+          <button v-if="!exitMode&&w.project.value!=='combined'" class="hd-btn hd-run-combined" :disabled="w.busy.value||!m.runNodes.value.length" title="按当前显示的节点范围打开组合检测" @click="m.openCombinedPlan()">组合检测</button>
+          <button class="hd-btn primary hd-run" :disabled="w.busy.value||!m.runNodes.value.length" @click="run"><Icon name="play"/>{{exitMode?'检测出口与信誉':m.runLabel(w.project.value)}} · {{scopeLabel}}</button>
+        </div>
+      </div>
+      <div class="hd-toolbar-filters">
+        <label class="hd-search"><Icon name="search"/><input v-model="w.search.value" type="search" placeholder="搜节点、机场、地区" aria-label="搜索节点、机场或地区" title="可搜索节点名、机场名或地区"></label>
+        <UiSelect v-model="w.region.value" aria-label="地区"><option value="all">全部地区</option><option v-for="r in m.filterRegions.value" :key="r" :value="r">{{nodeRegionLabel(r)}}</option></UiSelect>
+        <UiSelect v-model="w.sort.value" aria-label="排序"><option v-for="s in sorts" :key="s.id" :value="s.id">排序：{{s.label}}</option></UiSelect>
+        <UiSelect v-model.number="w.hours.value" aria-label="时间范围"><option :value="6">最近 6 小时</option><option :value="24">最近 24 小时</option><option :value="168">最近 7 天</option><option :value="720">最近 30 天</option></UiSelect>
+        <details ref="more" class="hd-more" :class="{'has-active':moreActive>0}" @keydown.esc="closeMore"><summary ref="moreSummary">更多筛选<small>{{filterSummary?filterSummary+' · ':''}}{{m.qualityFiltersPending.value?'范围确认中':'符合 '+m.visibleNodes.value.length+' 个'}}</small></summary>
         <div class="hd-more-groups">
           <section class="hd-more-group" aria-labelledby="more-scope">
             <h4 id="more-scope">看哪些节点<small>按来源和协议缩小列表</small></h4>
@@ -217,11 +230,9 @@ function keyNav(e:KeyboardEvent){
             </div>
           </section>
         </div>
-      </details>
-      <details v-if="!exitMode&&(w.project.value==='service'||w.project.value==='combined')" class="hd-services"><summary>选择解锁项目<small>{{m.displayServices.value.length?'已选 '+m.displayServices.value.length+' 项':'还没选'}}</small></summary><UnlockPicker v-model="w.serviceIds.value" :catalog="catalog"/></details>
-      <button class="hd-btn ghost" :disabled="w.loading.value" title="重新载入节点列表" @click="w.refreshNodes().catch(w.fail)"><Icon name="refresh"/>重新载入</button>
-      <button class="hd-btn primary hd-run" :disabled="w.busy.value||!m.runNodes.value.length" @click="run"><Icon name="play"/>{{exitMode?'检测出口与信誉':m.runLabel(w.project.value)}} · {{scopeLabel}}</button>
-      <button v-if="!exitMode&&w.project.value!=='combined'" class="hd-btn hd-run-combined" :disabled="w.busy.value||!m.runNodes.value.length" title="按当前显示的节点范围打开组合检测" @click="m.openCombinedPlan()">组合检测</button>
+        </details>
+        <details v-if="!exitMode&&(w.project.value==='service'||w.project.value==='combined')" class="hd-services"><summary>选择解锁项目<small>{{m.displayServices.value.length?'已选 '+m.displayServices.value.length+' 项':'还没选'}}</small></summary><UnlockPicker v-model="w.serviceIds.value" :catalog="catalog"/></details>
+      </div>
     </div>
     <p v-if="['latency','download','service'].includes(w.sort.value)" class="hd-muted hd-sort-status" role="status">{{w.sortLoading.value?`读取全部节点 ${w.sortReadCount.value}/${w.proxyNodes.value.length}…`:w.sortError.value||(w.sortAt.value?'排序截止 '+date(w.sortAt.value)+' · 翻页不改变排名':'尚未读取全部节点，仅按已读记录排序')}}<button class="hd-link" :disabled="w.sortLoading.value" @click="w.refreshSort()">更新排序</button></p>
 
@@ -239,7 +250,7 @@ function keyNav(e:KeyboardEvent){
 
     <nav v-if="!exitMode&&w.project.value==='service'" class="hd-seg matrix-switch" aria-label="解锁结果视图"><button :aria-pressed="serviceView==='nodes'" @click="serviceView='nodes'">按节点</button><button :aria-pressed="serviceView==='services'" @click="serviceView='services'">按服务</button></nav>
     <UnlockServiceMatrix v-if="matrixMode"/>
-    <div v-else class="hd-body" :class="{'exit-mode':exitMode,comparing:m.compareOpen.value,'compare-wide':m.compareOpen.value&&m.compareNodes.value.length>2}" :style="{'--hd-side-w':sideWidth+'px'}">
+    <div v-else class="hd-body" :class="{'exit-mode':exitMode,comparing:m.compareOpen.value,'compare-wide':m.compareOpen.value&&m.compareNodes.value.length>2,'full-table':!inspectorOpen&&!m.compareOpen.value}" :style="{'--hd-side-w':sideWidth+'px'}">
       <div ref="table" class="hd-table" role="table" aria-label="节点列表" tabindex="0" :style="{'--hd-cols':columns}" @keydown="keyNav">
         <div class="hd-tr hd-th" role="row">
           <span role="columnheader"><input type="checkbox" :checked="allOnPage" aria-label="选择本页全部节点" @change="w.toggleAll(m.pageNodes.value)"></span>
@@ -268,9 +279,9 @@ function keyNav(e:KeyboardEvent){
         </div>
         <div v-if="!m.pageNodes.value.length" class="hd-empty"><Icon name="layers"/><strong>{{!chosen.length?'先选择一个机场':hasSourceNodes?'节点被筛选条件隐藏了':'这个机场还没有节点'}}</strong><button class="hd-btn" @click="!chosen.length?m.picker.value=true:hasSourceNodes?clearFilters():w.page.value='airports'">{{!chosen.length?'选择机场':hasSourceNodes?'清除筛选':'管理订阅'}}</button></div>
       </div>
-      <div class="hd-resize" role="separator" aria-orientation="vertical" aria-label="调整检查器宽度" :aria-valuenow="sideWidth" :aria-valuemin="SIDE_MIN" :aria-valuemax="SIDE_MAX" tabindex="0" @pointerdown="startResize" @keydown.left.prevent="setSide(sideWidth+24)" @keydown.right.prevent="setSide(sideWidth-24)" @dblclick="setSide(420)"/>
+      <div v-if="inspectorOpen||m.compareOpen.value" class="hd-resize" role="separator" aria-orientation="vertical" aria-label="调整检查器宽度" :aria-valuenow="sideWidth" :aria-valuemin="SIDE_MIN" :aria-valuemax="SIDE_MAX" tabindex="0" @pointerdown="startResize" @keydown.left.prevent="setSide(sideWidth+24)" @keydown.right.prevent="setSide(sideWidth-24)" @dblclick="setSide(420)"/>
       <NodeCompare v-if="m.compareOpen.value" class="hd-side"/>
-      <NodeInspector v-else-if="focusNode" :key="key(focusNode)" class="hd-side" :node="focusNode" :exit-only="exitMode" :clash-usage="clashUsage" @select-project="selectInspectorProject" @refresh-clash-usage="refreshClashUsage"/>
+      <NodeInspector v-else-if="focusNode&&inspectorOpen" :key="key(focusNode)" class="hd-side" :node="focusNode" :exit-only="exitMode" :clash-usage="clashUsage" @collapse="inspectorOpen=false" @select-project="selectInspectorProject" @refresh-clash-usage="refreshClashUsage"/>
     </div>
 
     <footer v-if="!matrixMode" class="hd-foot">
@@ -286,7 +297,7 @@ function keyNav(e:KeyboardEvent){
 .history-sort{font-size:11px;white-space:nowrap;text-align:left}
 .old-tag{margin-left:2px;padding:0 2px;border-radius:2px;background:var(--hd-soft);color:var(--hd-muted);font-size:9px;font-weight:600}
 .hd-clash-usage{display:inline-flex;align-items:center;gap:5px;margin-top:5px;padding:3px 7px;border:1px solid var(--hd-line);border-radius:999px;background:var(--hd-panel);font-size:11px;line-height:1.4;color:var(--hd-muted)}.hd-clash-usage{cursor:pointer}.hd-clash-usage:hover{border-color:var(--hd-accent)}.hd-clash-usage strong{color:var(--hd-text)}.hd-clash-usage-dot,.hd-clash-node-dot{display:inline-block;flex:none;width:7px;height:7px;border-radius:50%;background:var(--hd-good)}.hd-clash-node-dot{width:6px;height:6px;margin-right:5px;vertical-align:middle}
-.hd-body.exit-mode .hd-tr{padding-top:9px;padding-bottom:9px}.hd-body.exit-mode .hd-exit-cell.good{color:var(--hd-good)}.hd-source{display:block}.hd-exit-cell{font-size:11px;white-space:normal;line-height:1.4}.hd-exit-cell.bad{color:#c6343e;font-weight:600}.hd-exit-cell.warn{color:#ad680b}
+.hd-body.exit-mode .hd-tr{padding-top:9px;padding-bottom:9px}.hd-body.exit-mode .hd-exit-cell.good{color:var(--hd-good)}.hd-source{display:block}.hd-exit-cell{font-size:11px;white-space:normal;line-height:1.4}.hd-exit-cell.bad{color:var(--hd-bad);font-weight:600}.hd-exit-cell.warn{color:var(--hd-warn)}
 .hd .hd-svc-cell.empty{color:var(--hd-empty);font-weight:400}.hd .hd-svc-cell.warn{color:var(--hd-warn)}
 </style>
 
@@ -296,7 +307,7 @@ function keyNav(e:KeyboardEvent){
 .hd-line-text{min-width:0;color:var(--hd-text,inherit)}
 .hd-route-tag{flex:none;margin-top:1px;padding:0 5px;border-radius:4px;border:1px solid var(--hd-line);color:var(--hd-muted);background:var(--hd-panel);font-size:10px;line-height:1.5;white-space:nowrap}
 .hd-route-tag.good{color:var(--hd-good);border-color:color-mix(in srgb,var(--hd-good) 35%,var(--hd-line))}
-.hd-route-tag.warn{color:#ad680b;border-color:#e3c184;background:#fff6e5}
+.hd-route-tag.warn{color:var(--hd-warn);border-color:color-mix(in srgb,var(--hd-warn) 35%,var(--hd-line));background:var(--hd-warn-bg)}
 .hd-ip-cell{display:flex;align-items:center}
 .hd-ip-tag{display:inline-block;padding:0 5px;border-radius:4px;border:1px solid var(--hd-line);background:var(--hd-panel-2);color:var(--hd-muted);font-size:10px;line-height:1.6;white-space:nowrap}
 .hd-ip-tag.good{color:var(--hd-good);background:var(--hd-good-bg);border-color:color-mix(in srgb,var(--hd-good) 30%,var(--hd-line))}

@@ -20,6 +20,11 @@ function inspect(node:NodeOption,at:string,purpose:Purpose){
  w.hours.value=168;w.project.value=purpose==='daily'?'latency':purpose==='download'?'download':'service'
  w.inspectNode.value=record?{...node,node_key:record.node_key,config_revision_key:record.config_revision_key}:node
 }
+function openInWorkbench(node:NodeOption,purpose:Purpose){
+ w.project.value=purpose==='daily'?'latency':purpose==='download'?'download':'service'
+ if(w.viewRequest)w.viewRequest.value=node
+ w.page.value='home'
+}
 onMounted(()=>void refresh())
 </script>
 <template><section class="page-view">
@@ -68,7 +73,10 @@ onMounted(()=>void refresh())
        <p class="small break-text cst-candidate-meta">{{candidate.basis}}</p>
        <small class="muted">{{candidate.count}} {{purpose.id==='daily'?'次采样':'次已保存检测'}} · 最近 {{date(candidate.at)}}</small>
       </div>
-      <button class="text-button" @click="inspect(candidate.node,candidate.at,purpose.id)">查看记录 ›</button>
+      <div class="cst-candidate-actions">
+       <button class="text-button" @click="inspect(candidate.node,candidate.at,purpose.id)">查看记录 ›</button>
+       <button class="text-button" @click="openInWorkbench(candidate.node,purpose.id)">在工作台查看</button>
+      </div>
      </article>
     </div>
    </section>

@@ -8,7 +8,8 @@ export function savedTheme():Theme {return resolveTheme(savedThemePreference())}
 function resolveTheme(theme:ThemePreference):Theme {return theme==='system'?(window.matchMedia?.('(prefers-color-scheme: dark)').matches?'dark':'light'):theme}
 async function renderTheme(theme:Theme){
  document.documentElement.dataset.theme=theme
- document.querySelector('meta[name="theme-color"]')?.setAttribute('content',theme==='dark'?'#1c1c1e':'#f5f5f7')
+ document.querySelector('meta[name="theme-color"]')?.setAttribute('content',theme==='dark'?'#0b0f17':'#f4f6fa')
+ window.dispatchEvent(new CustomEvent('cst:theme',{detail:{theme,preference:savedThemePreference()}}))
  if(desktop()){const update=window.go?.desktop?.App?.SetWindowTheme;if(update)await update(theme)}
 }
 export async function applyTheme(theme:ThemePreference){
