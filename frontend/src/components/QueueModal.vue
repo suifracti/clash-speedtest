@@ -3,7 +3,7 @@ import {nodeDisplayName} from '../nodePresentation'
 import {computed,ref,watch,nextTick,onMounted} from 'vue'
 import {api,saveFile} from '../api'
 import {readLatencyBatches} from '../latencyReportData'
-import {key,type BatchItem,type LatencyBatch} from '../domain'
+import {key,targets,type BatchItem,type LatencyBatch} from '../domain'
 import LatencyReport from './LatencyReport.vue'
 import {latencySampleState} from '../presentation'
 import {downloadNoDataReason} from '../measurementRounds'
@@ -27,11 +27,17 @@ const entryNotice=computed(()=>{
  return ''
 })
 watch(report,async selected=>{previous.value=selected?.previous||[];if(selected&&!selected.monitor&&!selected.previous.length){try{const all=await readLatencyBatches();if(report.value===selected)previous.value=all}catch(e){w.fail(e)}}},{immediate:true})
-function currentNodes(items:BatchItem[]){return items.flatMap(i=>{const n=w.nodes.value.find(n=>key(n)===key(i));return n?[n]:[]})}
+function currentNodes(items:BatchItem[]){return items.flatMap(i=>{const n=w.nodes.value.find(n=>key(n)===key(i)&&n.node_key===i.node_key);return n?[n]:[]})}
 function retryReport(items:BatchItem[]){const nodes=currentNodes(items);if(!nodes.length){w.notify('这些历史节点的配置已变化，请重新选择');return}w.openPlan(nodes);if(w.plan.value){w.plan.value.projects=['latency'];w.plan.value.includeReputation=false;w.plan.value.target=report.value?.batch.target_id||'all';w.plan.value.samples=report.value?.batch.sample_count||6;w.plan.value.timeout=report.value?.batch.timeout_seconds||5}w.queueOpen.value=false}
-async function exportReport(items:BatchItem[]){try{const nodes=currentNodes(items);if(!nodes.length){w.notify('这些历史节点已不在当前订阅中');return}const result=await api.exportClash(nodes);await saveFile(result.yaml_content,'cst-usable.yaml','application/x-yaml')}catch(e){w.fail(e)}}
+async function exportReport(items:BatchItem[]){try{const nodes=currentNodes(items);if(nodes.length!==items.length){w.notify(`${items.length-nodes.length} 个报告节点的配置已变化或已移除，本次未导出。请在工作台明确选择当前节点后导出。`);return}const result=await api.exportClash(nodes);await saveFile(result.yaml_content,'cst-usable.yaml','application/x-yaml')}catch(e){w.fail(e)}}
 async function inspectReport(item:BatchItem){
- const n=currentNodes([item])[0];if(!n){w.notify('这个历史节点已不在当前订阅中');return}if(!item.result?.samples?.length){w.notify('这项未执行，没有采样轮次');return}
+ if(!item.result?.samples?.length){w.notify('这项未执行，没有采样轮次');return}
+ const n=currentNodes([item])[0]
+ if(!n){
+  const end=Date.parse(item.result.finished_at||report.value?.batch.requested_at||''),target=report.value?.batch.target_id
+  w.inspectNode.value={...item,profile_name:airportNames.value[item.profile_id]||'历史账户',type:item.result.node_type||'',country_code:'',country_flag:'',historyProject:'latency',historySource:report.value?.monitor?'monitor':'manual',historyTargetId:targets.some(t=>t.id===target)?target:undefined,historyUntil:Number.isFinite(end)?new Date(end+1000).toISOString():undefined}
+  w.queueOpen.value=false;return
+ }
  w.latencyReportFocus.value={nodeKey:key(n),id:report.value?.monitor?report.value.batch.batch_id:item.result.attempt_id,test:item.result}
  w.queueOpen.value=false;w.project.value='latency';const airport=w.nodeAirportId(n);if(w.airportFilter.value!==airport)w.viewAirport(airport);w.search.value='';w.region.value='all';w.excludeRegion.value=false;w.subscription.value='all';w.downloadFullOnly.value=false;w.page.value='home';await nextTick();w.viewRequest.value=n
 }

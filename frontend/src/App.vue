@@ -108,7 +108,7 @@ onBeforeUnmount(()=>{document.removeEventListener('visibilitychange',visibilityC
     <MonitorCreateModal v-if="w.monitorNodes.value"/>
     <QueueModal v-if="w.queueOpen.value"/>
     <AutoPickReportModal v-if="w.autoPickReportId.value" :key="w.autoPickReportId.value" :report-id="w.autoPickReportId.value" @close="w.autoPickReportId.value=''"/>
-    <NodeDetailModal v-if="w.inspectNode.value" :key="w.inspectNode.value.profile_id+w.inspectNode.value.node_key" :node="w.inspectNode.value" :initial-service-id="w.inspectNode.value.historyServiceId" :initial-target-id="w.inspectNode.value.historyTargetId" @close="w.inspectNode.value=null"/>
+    <NodeDetailModal v-if="w.inspectNode.value" :key="w.inspectNode.value.profile_id+w.inspectNode.value.node_key" :node="w.inspectNode.value" :initial-service-id="w.inspectNode.value.historyServiceId" :initial-target-id="w.inspectNode.value.historyTargetId" :initial-project="w.inspectNode.value.historyProject" :initial-source="w.inspectNode.value.historySource" :initial-until="w.inspectNode.value.historyUntil" @close="w.inspectNode.value=null"/>
     <Modal v-if="w.authRequired.value" title="访问此工作台" :closable="false"><form @submit.prevent="login"><p class="muted">输入此服务的访问密码。</p><label class="form-stack">访问密码<input v-model="password" type="password" autofocus autocomplete="current-password" required></label><p v-if="loginError" class="inline-error" role="alert">{{loginError}}</p><div class="form-actions"><button class="button primary" :disabled="loggingIn" type="submit">{{loggingIn?'正在登录…':'登录'}}</button></div></form></Modal>
     <HoverTip/>
   </div>

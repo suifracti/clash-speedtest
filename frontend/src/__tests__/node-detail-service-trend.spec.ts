@@ -10,7 +10,7 @@ import type {Attempt,NodeOption,LatencyTest} from '../domain'
 vi.hoisted(()=>{Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:()=>null,setItem:()=>{}}})})
 vi.mock('../api',async importOriginal=>{
   const actual=await importOriginal<typeof import('../api')>()
-  return {...actual,api:{...actual.api,measurementRounds:vi.fn(async()=>[]),revisions:vi.fn(async()=>[]),attemptHistory:vi.fn(),previousAttempt:vi.fn(),latencyHistory:vi.fn()}}
+  return {...actual,api:{...actual.api,measurementRounds:vi.fn(async()=>[]),revisions:vi.fn(async()=>[]),attemptHistory:vi.fn(),previousAttempt:vi.fn(),latencyHistory:vi.fn(),monitorSamples:vi.fn()}}
 })
 
 const node:NodeOption={profile_id:'profile',node_key:'node',node_identity_key:'identity',config_revision_key:'revision',profile_name:'Airport',display_name:'Node',type:'ss',country_code:'',country_flag:''}
@@ -114,4 +114,15 @@ it('retains archive reading but cannot start detection for a configuration absen
  const run=Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(button=>button.textContent?.includes('检测当前配置'))!
  expect(run.disabled).toBe(true)
  expect(wrapper.findComponent(TrendChart).props('points')).toHaveLength(1)
+})
+
+it.each(['manual','monitor'] as const)('opens the report time window and explicit %s source without changing workbench settings',async source=>{
+ const until='2026-10-01T08:01:01.000Z'
+ w.page.value=source==='manual'?'monitor':'history'
+ vi.mocked(api.latencyHistory).mockResolvedValue({tests:[],has_more:false,complete:true})
+ vi.mocked(api.monitorSamples).mockResolvedValue({items:[],has_more:false,next_cursor:''})
+ wrapper=mount(NodeDetailModal,{props:{node,initialProject:'latency',initialSource:source,initialTargetId:'google',initialUntil:until},attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
+ if(source==='manual'){expect(api.latencyHistory).toHaveBeenCalledWith(expect.objectContaining({profile_id:node.profile_id,config_revision_key:node.config_revision_key}),expect.objectContaining({until}));expect(api.monitorSamples).not.toHaveBeenCalled()}
+ else{expect(api.monitorSamples).toHaveBeenCalledWith(expect.objectContaining({profile_id:node.profile_id,config_revision_key:node.config_revision_key,probe_type:'rtt',until}));expect(api.latencyHistory).not.toHaveBeenCalled()}
+ expect(document.body.textContent).toContain('报告时段');expect(w.project.value).toBe('service');expect(w.serviceIds.value).toEqual(['service-a'])
 })

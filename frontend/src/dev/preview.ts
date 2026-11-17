@@ -20,6 +20,9 @@ for(const record of services.filter(a=>a.node_key===nodes[0].node_key&&['chatgpt
 const jobs:MonitorJob[]=airports.slice(0,2).map((a,i)=>({id:`demo-job-${i}`,name:i?'备用线路 · 定点观察':'日常线路 · 响应观察',profile_id:a.subscriptions![0].id,profile_name:a.name,nodes:nodes.filter(n=>n.profile_id===a.subscriptions![0].id),node_keys:nodes.filter(n=>n.profile_id===a.subscriptions![0].id).map(n=>n.node_key),probe_set:'latency_four_v1',sampling_tier:'normal',interval_seconds:300,timeout_seconds:10,state:i?'blocked':'paused',resume_on_launch:false,updated_at:at,...(i?{blocked_reason:'示例：订阅中一条节点配置已变更，请确认任务范围。'}:{})}))
 const monitorSamples:MonitorSample[]=jobs.flatMap((job,j)=>Array.from({length:36},(_,i)=>({...job.nodes[0],sample_id:`demo-monitor-${j}-${i}`,display_name_snapshot:job.nodes[0].display_name,timestamp:new Date(now-(36-i)*1800_000).toISOString(),target:latencyTargets[0].urls[0],probe_type:'http_latency',success:i!==22,latency:(42+j*30+i)*1e6,ttfb:(42+j*30+i)*1e6,sampling_tier:'normal',trigger_type:'scheduled'})))
 const batch={batch_id:'demo-batch',request_id:'demo-request',target_id:'all',state:'completed',requested_at:at,sample_count:6,item_count:tests.length,items:tests.map(t=>({...t,item_id:t.attempt_id,batch_id:'demo-batch',execution_state:'completed',result:t}))}
+const archivedAt=new Date(now-8*86400_000).toISOString()
+const archivedTest:LatencyTest={...tests[0],attempt_id:'archived-latency',node_key:'demo-archived-key',node_identity_key:'demo-archived-identity',config_revision_key:'demo-archived-revision',display_name:'香港 · 已移除线路',requested_at:archivedAt,finished_at:archivedAt,samples:tests[0].samples.map(sample=>({...sample,timestamp:archivedAt}))}
+const archivedBatch={...batch,batch_id:'demo-archived-batch',request_id:'demo-archived-request',requested_at:archivedAt,item_count:1,items:[{...archivedTest,item_id:archivedTest.attempt_id,batch_id:'demo-archived-batch',execution_state:'completed',result:archivedTest}]}
 const settings:Settings={preferred_browser:'default',airport_monthly_prices:{'demo-airport-0':30,'demo-airport-1':18},monitor_retention_policy:'90d',monitor_retention_custom_days:90,monitor_storage_warning_bytes:2**30,monitor_storage_hard_bytes:2**31,monitor_budget_max_concurrent:4,monitor_budget_response_bytes:65536,local_notifications:{enabled:false,failure_percent:50,remaining_percent:10,expiry_days:7},clash_connection:{mode:'auto',endpoint:'',secret:''},subscription_daily_update_enabled:false}
 const page=(items:unknown[],kind='tests')=>({[kind]:items,has_more:false,complete:true,next_cursor:''})
 function matching<T extends {profile_id:string;node_key:string;node_identity_key?:string;config_revision_key?:string}>(items:T[],q:URLSearchParams|Record<string,unknown>){const get=(k:string)=>q instanceof URLSearchParams?q.get(k):q[k];return items.filter(n=>(!get('profile_id')||n.profile_id===get('profile_id'))&&(!get('node_key')||n.node_key===get('node_key'))&&(!get('node_identity_key')||n.node_identity_key===get('node_identity_key'))&&(!get('config_revision_key')||n.config_revision_key===get('config_revision_key')))}
@@ -37,14 +40,15 @@ async function handle(url:URL,body:any,method:string):Promise<unknown>{
  if(p==='/api/clash/node-status')return {connected:false,loaded:false,name:'',endpoint:''}
  if(p==='/api/workbench/entries')return {entries:[],local_position:null}
  if(p==='/api/workbench/latency-tests/query')return body.nodes.map((n:any)=>page(matching(tests,n)))
- if(p==='/api/workbench/latency-tests')return page(matching(tests,q))
+ if(p==='/api/workbench/latency-tests')return page(matching([...tests,archivedTest],q))
  if(p==='/api/workbench/download-tests')return page(matching(downloads,q),'attempts')
  if(p==='/api/workbench/public-service-tests')return page(matching(services,q).filter(a=>!q.get('service_id')||a.service_id===q.get('service_id')),'attempts')
  if(p.endsWith('/previous'))return null
- if(p==='/api/history/node-revisions')return [...new Map(matching([...nodes,...tests,...downloads,...services],q).map(n=>[n.config_revision_key,{...n,last_observed_at:at}])).values()]
+ if(p==='/api/history/node-revisions')return [...new Map(matching([...nodes,...tests,archivedTest,...downloads,...services],q).map(n=>[n.config_revision_key,{...n,last_observed_at:at}])).values()]
  if(p==='/api/history/latency-scopes')return matching(nodes,q).filter(n=>n.display_name===q.get('display_name'))
- if(p==='/api/workbench/latency-batches')return [batch]
+ if(p==='/api/workbench/latency-batches')return [batch,archivedBatch]
  if(p==='/api/workbench/latency-batches/demo-batch')return batch
+ if(p==='/api/workbench/latency-batches/demo-archived-batch')return archivedBatch
  if(p==='/api/monitor/jobs')return jobs
  if(['/api/measurement-rounds','/api/subscription-refresh-jobs','/api/history','/api/auto-pick/reports','/api/monitor/runs','/api/clash/verge-subscriptions'].includes(p))return []
  if(p==='/api/monitor/samples'||p==='/api/monitor/samples/cursor')return page(matching(monitorSamples,q),'items')
