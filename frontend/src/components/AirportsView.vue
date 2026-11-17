@@ -6,11 +6,11 @@ import UiSelect from './UiSelect.vue'
 import {computed,onBeforeUnmount,onMounted,ref,watch} from 'vue'
 import {api,desktop,request,type SubscriptionRefreshItem,type SubscriptionRefreshJob} from '../api'
 import {useWorkspace} from '../workspace'
-import {bytes,date,subscriptionUsed,type Airport,type Subscription} from '../domain'
+import {bytes,date,isNotice,subscriptionUsed,type Airport,type Subscription} from '../domain'
 import Modal from './Modal.vue'
 import Icon from './Icon.vue'
 import SubscriptionUsageView from './SubscriptionUsageView.vue'
-import {airportAccounts,noticesForAccount,parseNoticeUsage} from '../airportViewing'
+import {airportAccounts,noticesForAccount,parseNoticeUsage,maintenanceNoticeLinks} from '../airportViewing'
 import {readUsage,usageRefreshError,shanghaiDay,shiftDay,type UsageSnapshot} from '../usageDaily'
 import UsageDays from './UsageDays.vue'
 const section=ref('manage'),vergeOpen=ref(false)
@@ -18,12 +18,17 @@ const noticeBalances=ref<Record<string,number|undefined>>({})
 interface SourceDraft {kind:'airport'|'subscription';airportId?:string;airportName?:string;subId?:string;name:string;url:string;website_url:string;backup_url:string;note:string;needsSource:boolean;sourceReady:boolean}
 const w=useWorkspace(),busy=ref(''),search=ref(''),form=ref<SourceDraft|null>(null),formError=ref(''),sourceLoading=ref(false),remove=ref<{airport:Airport;sub?:Subscription}|null>(null),maintenance=ref<{airport:Airport;settings:NonNullable<Airport['maintenance']>}|null>(null),refreshJob=ref<SubscriptionRefreshJob|null>(null),refreshProgressVisible=ref(false),refreshLoading=ref(false)
 const requestSettings=ref<{airport:Airport;sub:Subscription;userAgent:string}|null>(null),requestError=ref('')
+const maintenanceError=ref(''),maintenanceErrorAirport=ref(''),maintenanceNow=ref(new Date()),removeError=ref(''),removeLoading=ref(false),removeImpactError=ref('')
+const maintenanceMonth=computed(()=>`${maintenanceNow.value.getFullYear()}-${String(maintenanceNow.value.getMonth()+1).padStart(2,'0')}`)
+const removeProfiles=computed(()=>new Set(remove.value?(remove.value.sub?[remove.value.sub.id]:[remove.value.airport.id,...(remove.value.airport.subscriptions||[]).map(s=>s.id)]):[]))
+const affectedJobs=computed(()=>remove.value?w.jobs.value.filter(job=>removeProfiles.value.has(job.profile_id)):[])
 const formTitle=computed(()=>form.value?.kind==='airport'?(form.value.airportId?'编辑机场资料':'添加机场'):(form.value?.subId?'编辑订阅账户':'添加订阅账户'))
 const visible=computed(()=>w.airports.value.filter(a=>(a.name+' '+(a.note||'')).includes(search.value)))
 const viewingAirport=ref('')
 const focusedAirport=computed(()=>visible.value.find(a=>a.id===viewingAirport.value)||visible.value[0])
 const allSubscriptions=computed(()=>w.airports.value.flatMap(a=>a.subscriptions||[]))
-const totalAccounts=computed(()=>w.airports.value.reduce((n,x)=>n+(x.subscriptions?.length||1),0))
+const accountNotices=computed(()=>w.nodes.value.filter(isNotice))
+const totalAccounts=computed(()=>airportAccounts(w.airports.value).length)
 const totalNodes=computed(()=>w.airports.value.reduce((n,x)=>n+(x.node_count||0),0))
 const knownQuotaStats=computed(()=>{
   let sum=0,count=0
@@ -37,7 +42,7 @@ const knownQuotaStats=computed(()=>{
 })
 const expiringSoonCount=computed(()=>allSubscriptions.value.filter(s=>s.usage?.expire&&expireDays(s.usage.expire)<=7).length)
 const safeLink=(v?:string)=>/^https?:\/\//i.test(v||'')?v:undefined
-let refreshTimer:ReturnType<typeof setTimeout>|undefined,disposed=false,editGeneration=0
+let refreshTimer:ReturnType<typeof setTimeout>|undefined,maintenanceTimer:ReturnType<typeof setInterval>|undefined,disposed=false,editGeneration=0,removeGeneration=0
 function closeForm(){if(busy.value==='form')return;editGeneration++;form.value=null;sourceLoading.value=false}
 async function loadFormSource(){
  const f=form.value;if(!f?.airportId||!f.needsSource||sourceLoading.value)return
@@ -127,20 +132,63 @@ async function refreshUsage(a:Airport,s:Subscription){
 
 async function cancelRefresh(){const job=refreshJob.value;if(!job||job.state!=='running')return;clearTimeout(refreshTimer);try{mergeRefresh(await api.cancelRefresh(job.id))}catch(e){w.fail(e)}}
 async function retryRefresh(){const job=refreshJob.value;if(!job||job.failed===0||refreshLoading.value)return;refreshLoading.value=true;try{mergeRefresh(await api.startRefresh({request_id:refreshRequestID(),retry_of:job.id}),true)}catch(e){w.fail(e)}finally{refreshLoading.value=false}}
-async function deleteItem(){const item=remove.value;if(!item)return;busy.value='delete';try{await request(item.sub?`/api/airports/${item.airport.id}/subscriptions/${item.sub.id}`:`/api/airports/${item.airport.id}`,'DELETE',undefined,item.sub?'DeleteSubscription':'DeleteAirport',item.sub?[item.airport.id,item.sub.id]:[item.airport.id]);remove.value=null;await w.refreshNodes();await w.refreshJobs();w.notify('订阅已删除')}catch(e){w.fail(e)}finally{busy.value=''}}
-function openMaintenance(a:Airport){maintenance.value={airport:a,settings:JSON.parse(JSON.stringify(a.maintenance||{refresh_hours:0,links:[]}))}}
-async function saveMaintenance(){const m=maintenance.value;if(!m)return;busy.value='maintenance';try{await request(`/api/airports/${m.airport.id}/maintenance`,'PUT',m.settings,'SaveAirportMaintenance',[m.airport.id,m.settings]);await w.refreshNodes();maintenance.value=null;w.notify('维护设置已保存')}catch(e){w.fail(e)}finally{busy.value=''}}
+function closeRemove(){if(busy.value==='delete')return;removeGeneration++;remove.value=null;removeLoading.value=false}
+async function openRemove(airport:Airport,sub?:Subscription){
+ if(busy.value)return
+ const generation=++removeGeneration;remove.value={airport,sub};removeError.value='';removeImpactError.value='';removeLoading.value=true
+ try{await w.refreshJobs()}catch(e){if(generation===removeGeneration)removeImpactError.value=`未能读取关联监测：${e instanceof Error?e.message:String(e)}。任务不会随来源一起删除。`}
+ finally{if(generation===removeGeneration)removeLoading.value=false}
+}
+async function deleteItem(){
+ const item=remove.value;if(!item||busy.value||removeLoading.value)return
+ const profiles=new Set(removeProfiles.value);busy.value='delete';removeError.value=''
+ try{
+  await request(item.sub?`/api/airports/${item.airport.id}/subscriptions/${item.sub.id}`:`/api/airports/${item.airport.id}`,'DELETE',undefined,item.sub?'DeleteSubscription':'DeleteAirport',item.sub?[item.airport.id,item.sub.id]:[item.airport.id])
+  if(item.sub){
+   const current=w.airports.value.find(a=>a.id===item.airport.id)
+   if(current){current.subscriptions=(current.subscriptions||[]).filter(s=>s.id!==item.sub!.id);current.node_count=current.subscriptions.reduce((sum,s)=>sum+s.node_count,0);current.has_cache=current.subscriptions.some(s=>s.has_cache);current.url_display=current.subscriptions[0]?.url_display||''}
+  }else{w.airports.value=w.airports.value.filter(a=>a.id!==item.airport.id);if(w.selectedAirportIds.value)w.selectedAirportIds.value=w.selectedAirportIds.value.filter(id=>id!==item.airport.id)}
+  w.nodes.value=w.nodes.value.filter(node=>!profiles.has(node.profile_id))
+  if(profiles.has(w.subscription.value))w.subscription.value='all'
+  removeGeneration++;remove.value=null;w.notify(`${item.sub?'账户':'机场'}已删除，历史记录保留`)
+  const refreshed=await Promise.allSettled([w.refreshNodes(),w.refreshJobs()])
+  const failed=refreshed.flatMap((r,i)=>r.status==='rejected'?[`${i===0?'账户与节点':'监测任务'}：${r.reason instanceof Error?r.reason.message:String(r.reason)}`]:[])
+  if(failed.length)w.fail(`已删除，但部分列表刷新失败：${failed.join('；')}。无需重复删除。`)
+ }catch(e){removeError.value=e instanceof Error?e.message:String(e)}
+ finally{busy.value=''}
+}
+type Maintenance=NonNullable<Airport['maintenance']>
+function maintenanceCopy(a:Airport):Maintenance{return JSON.parse(JSON.stringify({...a.maintenance,refresh_hours:a.maintenance?.refresh_hours||0,links:a.maintenance?.links||[]}))}
+function openMaintenance(a:Airport){if(busy.value)return;maintenanceError.value='';maintenanceErrorAirport.value=a.id;maintenance.value={airport:a,settings:maintenanceCopy(a)}}
+function reminderDue(link:Maintenance['links'][number]){return link.monthly_day>0&&maintenanceNow.value.getDate()>=link.monthly_day&&link.done_month!==maintenanceMonth.value}
+function maintenanceTime(value?:string){return value&&!value.startsWith('0001')?date(value):'尚未安排'}
+function discoveredLinks(a:Airport){return maintenanceNoticeLinks(a,accountNotices.value)}
+async function persistMaintenance(a:Airport,value:Maintenance,message:string){
+ if(busy.value)return
+ const settings:Maintenance=JSON.parse(JSON.stringify(value));busy.value='maintenance';maintenanceError.value='';maintenanceErrorAirport.value=a.id
+ try{
+  await request(`/api/airports/${a.id}/maintenance`,'PUT',settings,'SaveAirportMaintenance',[a.id,settings])
+  const current=w.airports.value.find(item=>item.id===a.id)
+  if(current){const old=current.maintenance;current.maintenance={...old,refresh_hours:settings.refresh_hours,links:settings.links,next_refresh:old?.refresh_hours===settings.refresh_hours?old?.next_refresh:undefined}}
+  maintenance.value=null;w.notify(message)
+  try{await w.refreshNodes()}catch(e){w.fail(`已保存，但列表刷新失败：${e instanceof Error?e.message:String(e)}。无需重复保存。`)}
+ }catch(e){maintenanceError.value=e instanceof Error?e.message:String(e)}
+ finally{busy.value=''}
+}
+async function saveMaintenance(){const m=maintenance.value;if(m)await persistMaintenance(m.airport,m.settings,'维护设置已保存')}
+function toggleReminder(a:Airport,index:number){const next=maintenanceCopy(a),link=next.links[index];if(!link||busy.value)return;link.done_month=link.done_month===maintenanceMonth.value?'':maintenanceMonth.value;void persistMaintenance(a,next,link.done_month?'已标记本月完成':'已撤销本月完成')}
+function addDiscoveredLink(a:Airport,link:{label:string;url:string}){const next=maintenanceCopy(a);if(busy.value||next.links.length>=20)return;next.links.push({...link,monthly_day:0});void persistMaintenance(a,next,'已加入常用入口')}
 function used(s:Subscription){return subscriptionUsed(s.usage)}
 function remaining(s:Subscription){const amount=used(s);return s.usage?.total&&amount!==null?Math.max(0,s.usage.total-amount):null}
 function usagePercent(s:Subscription){return Math.min(100,(used(s)??0)/(s.usage?.total||1)*100)}
 // 订阅头没有用量时，退回到节点列表里的公告文字（标明来源，不当作订阅返回值）。
-function noticeUsage(a:Airport,s:Subscription){const parsed=parseNoticeUsage(noticesForAccount(w.notices.value,airportAccounts([a]).find(x=>x.subscription.id===s.id)));return noticeBalances.value[s.id]===undefined?parsed:{...parsed,remaining:noticeBalances.value[s.id]}}
+function noticeUsage(a:Airport,s:Subscription){const parsed=parseNoticeUsage(noticesForAccount(accountNotices.value,airportAccounts([a]).find(x=>x.subscription.id===s.id)));return noticeBalances.value[s.id]===undefined?parsed:{...parsed,remaining:noticeBalances.value[s.id]}}
 function expireDays(t:number){return Math.ceil((t*1000-Date.now())/86400000)}
 function expireLabel(t:number){const d=expireDays(t);return d<0?'已过期':d===0?'今天到期':`还剩 ${d} 天`}
 function expireTone(t:number){const d=expireDays(t);return d<0?'bad':d<=7?'warn':''}
 function browse(a:Airport,s?:Subscription){w.setAirports([a.id]);if(s)w.subscription.value=s.id;w.page.value='home'}
-onMounted(()=>void loadRefreshJobs())
-onBeforeUnmount(()=>{disposed=true;editGeneration++;clearTimeout(refreshTimer)})
+onMounted(()=>{void loadRefreshJobs();maintenanceTimer=setInterval(()=>{maintenanceNow.value=new Date()},60_000)})
+onBeforeUnmount(()=>{disposed=true;editGeneration++;removeGeneration++;clearTimeout(refreshTimer);clearInterval(maintenanceTimer)})
 </script>
 <template><section class="page-view airports-view">
 <div class="page-header airports-top-bar">
@@ -157,7 +205,7 @@ onBeforeUnmount(()=>{disposed=true;editGeneration++;clearTimeout(refreshTimer)})
     <div v-if="section==='manage'" class="button-group page-header-actions">
       <button v-if="refreshJob&&!refreshProgressVisible" class="button ghost" @click="refreshProgressVisible=true"><Icon name="refresh"/>查看刷新进度</button>
       <button class="button" :disabled="!!busy" @click="vergeOpen=true">从 Clash Verge 导入／同步</button>
-      <button class="button primary" @click="edit()"><Icon name="plus"/>添加机场</button>
+      <button class="button primary" :disabled="!!busy" @click="edit()"><Icon name="plus"/>添加机场</button>
     </div>
   </div>
 </div>
@@ -175,16 +223,27 @@ onBeforeUnmount(()=>{disposed=true;editGeneration++;clearTimeout(refreshTimer)})
   <label class="search-field"><Icon name="search"/><input v-model="search" placeholder="搜索机场名称或备注…" aria-label="搜索机场"></label>
   <span class="muted small">{{visible.length}} / {{w.airports.value.length}} 个机场</span>
 </div>
-<nav aria-label="查看机场账户"><button v-for="a in visible" :key="a.id" :aria-pressed="focusedAirport?.id===a.id" @click="viewingAirport=a.id"><span class="account-index-initial" aria-hidden="true">{{a.name.slice(0,1)}}</span><span><strong>{{a.name}}</strong><small>{{a.subscriptions?.length||1}} 个账户 · {{a.node_count}} 条配置</small></span><Icon name="chevron"/></button></nav>
+<nav aria-label="查看机场账户"><button v-for="a in visible" :key="a.id" :aria-pressed="focusedAirport?.id===a.id" @click="viewingAirport=a.id"><span class="account-index-initial" aria-hidden="true">{{a.name.slice(0,1)}}</span><span><strong>{{a.name}}</strong><small>{{airportAccounts([a]).length}} 个账户 · {{a.node_count}} 条配置<template v-if="a.maintenance?.links?.some(reminderDue)"> · 有待办</template></small></span><Icon name="chevron"/></button></nav>
 </aside>
 <div class="cst-ledger">
 <article v-for="a in focusedAirport?[focusedAirport]:[]" :key="a.id" class="airport-card cst-ledger-airport">
   <header class="cst-ledger-airport-head">
     <span class="cst-ledger-logo" aria-hidden="true">{{a.name.slice(0,1)}}</span>
-    <div class="cst-ledger-title"><h2>{{a.name}}</h2><small>{{a.subscriptions?.length||1}} 个订阅 · {{a.node_count}} 条配置 · {{a.maintenance?.refresh_hours?`每 ${a.maintenance.refresh_hours} 小时自动更新`:'手动更新'}}<template v-if="safeLink(a.website_url)"> · <a :href="safeLink(a.website_url)" target="_blank" rel="noopener noreferrer">官网 ↗</a></template><template v-if="safeLink(a.backup_url)"> · <a :href="safeLink(a.backup_url)" target="_blank" rel="noopener noreferrer">备用入口 ↗</a></template><template v-for="link in (a.maintenance?.links||[]).filter(l=>safeLink(l.url))" :key="link.url"> · <a :href="safeLink(link.url)" target="_blank" rel="noopener noreferrer">{{link.label||'入口'}} ↗</a></template></small></div>
-    <div class="button-group"><button class="button" :disabled="!!busy||refreshLoading||refreshJob?.state==='running'" @click="refresh(a)"><Icon name="refresh"/>{{busy===a.id||refreshJob?.state==='running'?'更新中…':'全部更新'}}</button><button class="button ghost" @click="openMaintenance(a)">更新与维护</button><button class="button ghost icon-button" :disabled="!!busy" aria-label="编辑机场" @click="edit(a)"><Icon name="edit"/></button><button class="button ghost icon-button" aria-label="删除机场" @click="remove={airport:a}"><Icon name="trash"/></button></div>
+    <div class="cst-ledger-title"><h2>{{a.name}}</h2><small>{{airportAccounts([a]).length}} 个订阅 · {{a.node_count}} 条配置 · {{a.maintenance?.refresh_hours?`每 ${a.maintenance.refresh_hours} 小时独立更新`:'未设独立更新计划'}}<template v-if="safeLink(a.website_url)"> · <a :href="safeLink(a.website_url)" target="_blank" rel="noopener noreferrer">官网 ↗</a></template><template v-if="safeLink(a.backup_url)"> · <a :href="safeLink(a.backup_url)" target="_blank" rel="noopener noreferrer">备用入口 ↗</a></template></small></div>
+    <div class="button-group"><button class="button" :disabled="!!busy||refreshLoading||refreshJob?.state==='running'||!airportAccounts([a]).length" @click="refresh(a)"><Icon name="refresh"/>{{busy===a.id||refreshJob?.state==='running'?'更新中…':'全部更新'}}</button><button class="button ghost" :disabled="!!busy" @click="openMaintenance(a)">更新与维护</button><button class="button ghost icon-button" :disabled="!!busy" aria-label="编辑机场" @click="edit(a)"><Icon name="edit"/></button><button class="button ghost icon-button" :disabled="!!busy" aria-label="删除机场" @click="openRemove(a)"><Icon name="trash"/></button></div>
   </header>
   <p v-if="a.note" class="airport-note">{{a.note}}</p>
+  <section v-if="a.maintenance?.links?.length||a.maintenance?.refresh_hours||a.maintenance?.last_result||discoveredLinks(a).length" class="airport-daily" aria-label="日常维护">
+   <header><h3>日常维护</h3><div class="maintenance-schedule"><span v-if="a.maintenance?.refresh_hours">下次更新 {{maintenanceTime(a.maintenance.next_refresh)}}</span><small v-if="a.maintenance?.last_result">{{a.maintenance.last_result}}<template v-if="a.maintenance.last_attempt&&!a.maintenance.last_attempt.startsWith('0001')"> · {{date(a.maintenance.last_attempt)}}</template></small></div></header>
+   <div v-for="(link,index) in a.maintenance?.links||[]" :key="index" class="maintenance-reminder" :class="{due:reminderDue(link)}">
+    <a v-if="safeLink(link.url)" :href="safeLink(link.url)" target="_blank" rel="noopener noreferrer">{{link.label}} ↗</a><strong v-else>{{link.label}}</strong>
+    <span :class="{warn:reminderDue(link),good:link.monthly_day>0&&link.done_month===maintenanceMonth}">{{!link.monthly_day?'常用入口':link.done_month===maintenanceMonth?'本月已完成':reminderDue(link)?'本月待处理':`每月 ${link.monthly_day} 日`}}</span>
+    <button v-if="link.monthly_day" class="text-button" :disabled="!!busy" @click="toggleReminder(a,index)">{{link.done_month===maintenanceMonth?'撤销完成':'标记完成'}}</button>
+   </div>
+   <div v-for="link in discoveredLinks(a)" :key="link.url" class="maintenance-discovered"><div><small>订阅发现</small><a :href="link.url" target="_blank" rel="noopener noreferrer">{{link.label}} ↗</a></div><button class="text-button" :disabled="!!busy||(a.maintenance?.links?.length||0)>=20" @click="addDiscoveredLink(a,link)">加入常用入口</button></div>
+   <p v-if="maintenanceError&&maintenanceErrorAirport===a.id&&!maintenance" class="inline-error" role="alert">{{maintenanceError}}</p>
+   <p v-if="busy==='maintenance'&&maintenanceErrorAirport===a.id&&!maintenance" class="small muted" role="status">正在保存…</p>
+  </section>
   <div v-if="a.subscriptions?.length" class="cst-ledger-cols" aria-hidden="true"><span>账户</span><span>套餐用量</span><span>到期</span><span>每日用量 · 近 14 天</span><span class="cst-col-actions">操作</span></div>
   <div v-for="s in a.subscriptions||[]" :key="s.id" class="cst-ledger-row">
     <div class="cst-ledger-account">
@@ -205,13 +264,13 @@ onBeforeUnmount(()=>{disposed=true;editGeneration++;clearTimeout(refreshTimer)})
       <button class="button ghost" :disabled="!!busy" @click="openRequestSettings(a,s)">请求设置</button>
       <button class="button ghost icon-button" :disabled="!!busy||refreshLoading||refreshJob?.state==='running'" aria-label="更新节点" title="更新节点与订阅用量" @click="refresh(a,s)"><Icon name="refresh"/></button>
       <button class="button ghost icon-button" :disabled="!!busy" aria-label="编辑订阅" @click="edit(a,s)"><Icon name="edit"/></button>
-      <button class="button ghost icon-button" aria-label="删除订阅" @click="remove={airport:a,sub:s}"><Icon name="trash"/></button>
+      <button class="button ghost icon-button" :disabled="!!busy" aria-label="删除订阅" @click="openRemove(a,s)"><Icon name="trash"/></button>
     </div>
   </div>
-  <footer class="cst-ledger-foot"><button class="text-button" @click="addSub(a)"><Icon name="plus"/>添加订阅</button></footer>
+  <footer class="cst-ledger-foot"><button class="text-button" :disabled="!!busy" @click="addSub(a)"><Icon name="plus"/>添加订阅</button></footer>
   <div v-if="!a.subscriptions?.length" class="compact-row"><span>{{a.url_display}}</span><button class="button" :disabled="!a.has_cache" @click="browse(a)">选为测量来源</button></div>
 </article>
-</div><div v-if="!visible.length" class="empty-state"><Icon name="layers"/><h3>{{search?'没有匹配的机场':'添加你的第一个机场'}}</h3><p>支持订阅地址或本地 Clash / Mihomo 配置。</p><button class="button primary" @click="edit()">添加机场</button></div>
+</div><div v-if="!visible.length" class="empty-state"><Icon name="layers"/><h3>{{search?'没有匹配的机场':'添加你的第一个机场'}}</h3><p>支持订阅地址或本地 Clash / Mihomo 配置。</p><button class="button primary" :disabled="!!busy" @click="edit()">添加机场</button></div>
 </div>
 </template>
 <Modal v-if="form" :title="formTitle" :closable="busy!=='form'" @close="closeForm"><form @submit.prevent="save">
@@ -231,12 +290,42 @@ onBeforeUnmount(()=>{disposed=true;editGeneration++;clearTimeout(refreshTimer)})
  <fieldset class="form-stack account-fields" :disabled="busy==='request-settings'"><label>客户端标识（User-Agent）<input v-model="requestSettings.userAgent" name="user_agent" autofocus autocomplete="off" spellcheck="false" placeholder="留空使用默认值"></label><p class="muted small">部分订阅服务会根据客户端标识返回不同配置。仅影响这个账户下次获取订阅；保存不会立即更新节点或用量。</p></fieldset>
  <p v-if="requestError" class="inline-error" role="alert">{{requestError}}</p><div class="form-actions"><button type="button" class="button" :disabled="!!busy" @click="requestSettings=null">取消</button><button type="submit" class="button primary" :disabled="!!busy">{{busy==='request-settings'?'保存中…':'保存设置'}}</button></div>
 </form></Modal>
-<Modal v-if="remove" title="删除订阅来源" @close="remove=null"><p>删除「{{remove.sub?.name||remove.airport.name}}」{{remove.sub?'这个订阅':'及其下的订阅'}}。已有检测历史保留，关联监测可能因来源缺失而停止。</p><template #footer><button class="button" @click="remove=null">返回</button><button class="button danger-fill" :disabled="!!busy" @click="deleteItem">删除</button></template></Modal>
-<Modal v-if="maintenance" title="更新与维护" wide @close="maintenance=null"><div class="form-grid"><label>自动更新订阅<UiSelect v-model.number="maintenance.settings.refresh_hours"><option :value="0">关闭</option><option v-for="h in [1,6,12,24,72,168]" :key="h" :value="h">每 {{h}} 小时</option></UiSelect></label></div><h3>快捷入口与每月提醒</h3><div v-for="(link,i) in maintenance.settings.links" :key="i" class="maintenance-link"><input v-model="link.label" aria-label="入口名称" placeholder="入口名称"><input v-model="link.url" aria-label="入口地址" placeholder="https://…"><label>每月<input v-model.number="link.monthly_day" type="number" min="0" max="28" aria-label="每月提醒日"></label><button class="button ghost icon-button" aria-label="移除入口" @click="maintenance.settings.links.splice(i,1)"><Icon name="close"/></button></div><p class="small muted">提醒日填 1–28；填 0 时只保留快捷入口。</p><button class="button" @click="maintenance.settings.links.push({label:'',url:'',monthly_day:0})"><Icon name="plus"/>添加入口</button><template #footer><button class="button" @click="maintenance=null">返回</button><button class="button primary" :disabled="!!busy" @click="saveMaintenance">保存</button></template></Modal>
+<Modal v-if="remove" :title="remove.sub?'删除订阅账户':'删除机场及其账户'" :closable="busy!=='delete'" @close="closeRemove">
+ <p class="removal-target">{{remove.airport.name}}<template v-if="remove.sub"> · <strong>{{remove.sub.name}}</strong></template></p>
+ <p>{{remove.sub?'移除这个账户的订阅来源和节点缓存。':`移除这个机场及其 ${remove.airport.subscriptions?.length||0} 个账户的来源和节点缓存。`}}历史记录保留。</p>
+ <p v-if="removeLoading" class="muted" role="status">正在读取关联监测…</p><p v-else-if="removeImpactError" class="inline-error" role="alert">{{removeImpactError}}</p>
+ <div v-else class="removal-impact"><h3>{{affectedJobs.length?`${affectedJobs.length} 项监测使用这个来源`:'没有关联监测任务'}}</h3><ul v-if="affectedJobs.length"><li v-for="job in affectedJobs" :key="job.id">{{job.name}}</li></ul><p v-if="affectedJobs.length" class="small muted">任务不会一并删除，也不会立即取消正在进行的检测。后续启动或恢复需要有效来源，可在“持续监测”中管理。</p></div>
+ <p v-if="removeError" class="inline-error" role="alert">{{removeError}}</p>
+ <template #footer><button class="button" :disabled="busy==='delete'" @click="closeRemove">保留</button><button class="button danger-fill" :disabled="!!busy||removeLoading" @click="deleteItem">{{busy==='delete'?'删除中…':remove.sub?'删除账户':'删除机场'}}</button></template>
+</Modal>
+<Modal v-if="maintenance" title="更新与维护" wide :closable="busy!=='maintenance'" @close="maintenance=null"><form id="airport-maintenance-editor" @submit.prevent="saveMaintenance">
+ <p class="source-context">{{maintenance.airport.name}}</p>
+ <fieldset class="account-fields maintenance-fields" :disabled="busy==='maintenance'">
+  <section class="maintenance-policy"><label>机场独立更新计划<UiSelect v-model.number="maintenance.settings.refresh_hours"><option :value="0">关闭</option><option v-for="h in [1,6,12,24,72,168]" :key="h" :value="h">每 {{h}} 小时</option><option v-if="maintenance.settings.refresh_hours&&![1,6,12,24,72,168].includes(maintenance.settings.refresh_hours)" :value="maintenance.settings.refresh_hours">每 {{maintenance.settings.refresh_hours}} 小时（已设置）</option></UiSelect></label><p class="small muted">程序运行时更新这个机场的全部账户，保存后按计划执行。全局自动更新另在“偏好设置”中管理。</p></section>
+  <header class="maintenance-editor-heading"><div><h3>常用入口与月度待办</h3><p class="small muted">提醒日填 1–28；填 0 只保存入口。到期后在台账中提醒，可标记本月完成。</p></div><small class="muted">{{maintenance.settings.links.length}} / 20</small></header>
+  <div v-for="(link,i) in maintenance.settings.links" :key="i" class="maintenance-editor-row">
+   <label>入口名称<input v-model="link.label" aria-label="入口名称" required maxlength="100" placeholder="例如：月度活动"></label><label>入口地址<input v-model="link.url" aria-label="入口地址" type="url" required maxlength="2048" placeholder="https://…"></label>
+   <label class="maintenance-day">每月提醒日<input v-model.number="link.monthly_day" type="number" min="0" max="28" required aria-label="每月提醒日"></label><button type="button" class="button ghost" aria-label="移除入口" @click="maintenance.settings.links.splice(i,1)">移除</button>
+  </div>
+  <p v-if="!maintenance.settings.links.length" class="small muted">还没有常用入口，可以添加公告、活动或续费页面。</p>
+  <button type="button" class="button" :disabled="maintenance.settings.links.length>=20" @click="maintenance.settings.links.push({label:'',url:'',monthly_day:0})"><Icon name="plus"/>添加入口</button>
+ </fieldset>
+ <p v-if="maintenanceError" class="inline-error" role="alert">{{maintenanceError}}</p>
+</form><template #footer><button type="button" class="button" :disabled="!!busy" @click="maintenance=null">取消</button><button type="submit" form="airport-maintenance-editor" class="button primary" :disabled="!!busy">{{busy==='maintenance'?'保存中…':'保存设置'}}</button></template></Modal>
 <Modal v-if="refreshJob&&refreshProgressVisible" title="订阅刷新进度" wide @close="refreshProgressVisible=false"><p class="muted">{{refreshJob.completed}} / {{refreshJob.items.length}} 项已完成 · {{refreshJob.success}} 成功 · {{refreshJob.failed}} 失败 · {{refreshJob.not_executed}} 未执行</p><p v-if="refreshJob.persistence_error" class="inline-error" role="alert">{{refreshJob.persistence_error}}</p><div class="refresh-progress-list"><article v-for="item in refreshJob.items" :key="item.airport_id+'|'+item.subscription_id"><strong>{{item.airport_name}} · {{item.subscription_name}}</strong><span class="badge" :class="item.state==='succeeded'?'good':item.state==='failed'?'bad':item.state==='not_executed'?'':'warn'">{{refreshState(item.state)}}</span><small v-if="item.stages?.length">{{item.stages.map(stage=>refreshState(stage.state)).join(' → ')}}</small><p v-if="refreshItemError(item)" class="inline-error">{{refreshItemError(item)}}</p><small v-if="item.duration_ms">{{item.duration_ms}} ms · {{item.node_count}} 条配置</small></article></div><template #footer><button v-if="refreshJob.failed>0" class="button" :disabled="refreshLoading||refreshJob.state==='running'" @click="retryRefresh">只重试失败项</button><button v-if="refreshJob.state==='running'" class="button danger-fill" aria-label="取消刷新任务" @click="cancelRefresh">取消刷新</button><button class="button primary" @click="refreshProgressVisible=false">关闭</button></template></Modal></section></template>
 <style src="./secondary-observatory.css" scoped></style>
 <style scoped>
 .account-fields{border:0;padding:0;margin:0;min-width:0}.source-context{margin:0 0 20px;color:var(--cst-muted);font-size:13px;line-height:1.7}
+.airport-daily{padding:20px 24px;border-bottom:1px solid var(--cst-line);background:var(--cst-panel)}
+.airport-daily>header{display:flex;align-items:baseline;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:12px}.airport-daily h3,.maintenance-editor-heading h3,.removal-impact h3{font-size:13px;font-weight:650;margin:0}
+.maintenance-schedule{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--cst-muted)}
+.maintenance-reminder{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:12px;padding:11px 0;border-top:1px solid var(--cst-line);font-size:12px}.maintenance-reminder>a{font-weight:550;overflow-wrap:anywhere}.maintenance-reminder>span{color:var(--cst-muted)}.maintenance-reminder.due{border-left:2px solid var(--cst-warn);padding-left:12px}
+.maintenance-discovered{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;font-size:12px}.maintenance-discovered>div{display:flex;gap:10px;min-width:0}.maintenance-discovered small{color:var(--cst-muted);flex-shrink:0}.maintenance-discovered a{overflow-wrap:anywhere}
+.maintenance-fields{display:grid;gap:18px}.maintenance-policy{display:grid;grid-template-columns:minmax(160px,.8fr) minmax(0,1.2fr);gap:28px;align-items:center;padding-bottom:20px;border-bottom:1px solid var(--cst-line)}.maintenance-policy label{display:grid;gap:8px;font-size:13px}.maintenance-policy p{line-height:1.8;margin:0}
+.maintenance-editor-heading{display:flex;align-items:baseline;justify-content:space-between;gap:14px}.maintenance-editor-heading p{margin:8px 0 0;line-height:1.7}
+.maintenance-editor-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.6fr) 88px auto;align-items:end;gap:12px;padding-bottom:18px;border-bottom:1px solid var(--cst-line)}.maintenance-editor-row label{display:grid;gap:8px;min-width:0;font-size:12px}.maintenance-fields>.button{justify-self:start}
+.removal-target{font-size:17px;line-height:1.7;margin:0 0 16px}.removal-impact{margin-top:20px;border-top:1px solid var(--cst-line);padding-top:16px}.removal-impact ul{padding-left:20px;font-size:13px}.removal-impact p{line-height:1.8}
+@media(max-width:720px){.maintenance-policy{grid-template-columns:minmax(0,1fr);gap:14px}.maintenance-editor-row{grid-template-columns:minmax(0,1fr) 88px}.maintenance-editor-row>label:nth-child(1),.maintenance-editor-row>label:nth-child(2){grid-column:1/-1}.maintenance-editor-row>.maintenance-day{display:flex;align-items:center;gap:12px}.maintenance-day input{width:80px}.maintenance-editor-row>.button{justify-self:end}.airport-daily{padding:16px}.maintenance-reminder{gap:8px}.maintenance-discovered>div{flex-direction:column;gap:3px}}
 .airports-top-bar{align-items:center;margin-bottom:20px;gap:16px}
 .airports-top-bar h1{font-size:22px;letter-spacing:-.02em}
 .airports-top-bar p{font-size:12px}

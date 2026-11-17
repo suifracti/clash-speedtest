@@ -42,11 +42,21 @@ const archivedTest:LatencyTest={...tests[0],attempt_id:'archived-latency',node_k
 const archivedBatch={...batch,batch_id:'demo-archived-batch',request_id:'demo-archived-request',requested_at:archivedAt,item_count:1,items:[{...archivedTest,item_id:archivedTest.attempt_id,batch_id:'demo-archived-batch',execution_state:'completed',result:archivedTest}]}
 const settings:Settings={preferred_browser:'default',airport_monthly_prices:{'demo-airport-0':30,'demo-airport-1':18},monitor_retention_policy:'90d',monitor_retention_custom_days:90,monitor_storage_warning_bytes:2**30,monitor_storage_hard_bytes:2**31,monitor_budget_max_concurrent:4,monitor_budget_response_bytes:65536,local_notifications:{enabled:false,failure_percent:50,remaining_percent:10,expiry_days:7},clash_connection:{mode:'auto',endpoint:'',secret:''},subscription_daily_update_enabled:false}
 const page=(items:unknown[],kind='tests')=>({[kind]:items,has_more:false,complete:true,next_cursor:''})
+if(accountScenario){
+ airports[0].maintenance={refresh_hours:6,next_refresh:new Date(now+6*3600_000).toISOString(),last_attempt:at,last_result:'定时刷新完成',links:[{label:'月度活动 · 示例',url:'https://example.invalid/activity',monthly_day:1},{label:'公告页 · 示例',url:'https://example.invalid/news',monthly_day:0}]}
+ nodes.push({...nodes[0],node_key:'preview-notice',node_identity_key:'preview-notice-identity',display_name:'官网：https://example.invalid/home',country_code:'OTHER'})
+}
 function matching<T extends {profile_id:string;node_key:string;node_identity_key?:string;config_revision_key?:string}>(items:T[],q:URLSearchParams|Record<string,unknown>){const get=(k:string)=>q instanceof URLSearchParams?q.get(k):q[k];return items.filter(n=>(!get('profile_id')||n.profile_id===get('profile_id'))&&(!get('node_key')||n.node_key===get('node_key'))&&(!get('node_identity_key')||n.node_identity_key===get('node_identity_key'))&&(!get('config_revision_key')||n.config_revision_key===get('config_revision_key')))}
 async function handle(url:URL,body:any,method:string):Promise<unknown>{
  const p=url.pathname,q=url.searchParams
  // Account editing fixture: mutations affect only these in-memory objects.
  if(accountScenario){
+  const maintenanceMatch=p.match(/^\/api\/airports\/([^/]+)\/maintenance$/)
+  if(maintenanceMatch&&method==='PUT'){
+   const a=airports.find(a=>a.id===maintenanceMatch[1]);if(!a)throw new Error('示例机场不存在')
+   await new Promise(resolve=>setTimeout(resolve,1200))
+   const old=a.maintenance;a.maintenance={...body,next_refresh:body.refresh_hours?old?.refresh_hours===body.refresh_hours?old?.next_refresh:new Date(Date.now()+body.refresh_hours*3600_000).toISOString():undefined,last_result:old?.last_result,last_attempt:old?.last_attempt};return {}
+  }
   if(p==='/api/airports'&&method==='POST'){
    await new Promise(resolve=>setTimeout(resolve,1200))
    const id=`preview-created-airport-${createdAccounts+1}`,sub=previewAccount(id,'默认订阅',body.url)
@@ -56,6 +66,14 @@ async function handle(url:URL,body:any,method:string):Promise<unknown>{
   if(match){
    const a=airports.find(a=>a.id===match[1]);if(!a)throw new Error('示例机场不存在')
    const sub=a.subscriptions?.find(s=>s.id===match[2])
+   if(method==='DELETE'){
+    await new Promise(resolve=>setTimeout(resolve,1200))
+    const removed=new Set(sub?[sub.id]:[a.id,...(a.subscriptions||[]).map(s=>s.id)])
+    if(sub){a.subscriptions=a.subscriptions!.filter(s=>s.id!==sub.id);a.node_count=a.subscriptions.reduce((n,s)=>n+s.node_count,0);a.has_cache=a.subscriptions.some(s=>s.has_cache);a.url_display=a.subscriptions[0]?.url_display||''}
+    else airports.splice(airports.indexOf(a),1)
+    for(let i=nodes.length-1;i>=0;i--)if(removed.has(nodes[i].profile_id))nodes.splice(i,1)
+    return {}
+   }
    if(method==='GET'&&match[3]==='url')return {url:accountURLs.get(sub?.id||a.subscriptions![0].id)}
    if(method==='POST'){const s=previewAccount(a.id,body.name,body.url);s.note=body.note;a.subscriptions!.push(s);return s}
    if(method==='PUT'){

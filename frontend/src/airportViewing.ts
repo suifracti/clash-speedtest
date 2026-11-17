@@ -22,6 +22,7 @@ export function airportNodeCounts(airports:Airport[],nodes?:NodeOption[]):Record
 export function airportAccounts(airports:Airport[]):AirportAccount[]{
   const accounts:AirportAccount[]=[]
   for(const airport of airports){
+    if(!airport.subscriptions?.length&&!airport.url_display&&!airport.has_cache)continue
     const subscriptions=airport.subscriptions?.length?airport.subscriptions:[{
       id:airport.id,airport_id:airport.id,name:'默认订阅',url_display:airport.url_display,
       url_configured:!!airport.url_display,node_count:airport.node_count,has_cache:airport.has_cache,
@@ -44,6 +45,24 @@ export function noticesForAccount(notices:NodeOption[],account:AirportAccount|un
 export function safeAirportLink(value?:string):string|undefined{
   if(!value)return undefined
   try{const link=new URL(value);return link.protocol==='http:'||link.protocol==='https:'?link.href:undefined}catch{return undefined}
+}
+
+// Read only cached notice text. Saving one of these shortcuts never visits it.
+export function maintenanceNoticeLinks(airport:Airport,notices:NodeOption[]):{label:string;url:string}[]{
+  const saved=new Set((airport.maintenance?.links||[]).map(link=>safeAirportLink(link.url)))
+  const found=new Map<string,{label:string;url:string}>()
+  for(const account of airportAccounts([airport]))for(const node of noticesForAccount(notices,account)){
+    const text=node.display_name||''
+    const candidates=[...(text.match(/https?:\/\/[^\s，,）)\]》>]+/gi)||[]),...Array.from(text.matchAll(/(?:^|[^\w/])((?:t\.me\/[a-zA-Z0-9_+]+|github\.com\/[a-zA-Z0-9_\-/]+))/gi),match=>'https://'+match[1])]
+    for(const candidate of candidates){
+      const raw=candidate.replace(/[.,;:!?)]+$/g,''),url=safeAirportLink(raw)
+      if(!url||saved.has(url)||found.has(url))continue
+      const parsed=new URL(url);if(parsed.username||parsed.password)continue
+      const label=text.replace(raw,'').replace(/[：:\s·—-]+$/g,'').trim()
+      found.set(url,{url,label:label&&label.length<=80?label:parsed.hostname})
+    }
+  }
+  return [...found.values()]
 }
 
 export function parseTrafficBytes(numStr:string,unitStr:string):number{

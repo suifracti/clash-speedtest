@@ -6,7 +6,7 @@ import type {Airport} from '../domain'
 const mocks=vi.hoisted(()=>({
   api:{refreshJobs:vi.fn(async():Promise<any[]>=>[]),startRefresh:vi.fn(),refreshJob:vi.fn(),cancelRefresh:vi.fn()},
   readUsage:vi.fn(async():Promise<any>=>({accounts:[]})),
-  workspace:{airports:{value:[] as Airport[]},notices:{value:[]},usageRefreshVersion:{value:0},maintenanceAirportId:{value:''},page:{value:'airports'},subscription:{value:'all'},setAirports:vi.fn(),refreshNodes:vi.fn(async()=>{}),refreshJobs:vi.fn(async()=>{}),notify:vi.fn(),fail:vi.fn()},
+  workspace:{airports:{value:[] as Airport[]},nodes:{value:[]},notices:{value:[]},usageRefreshVersion:{value:0},maintenanceAirportId:{value:''},page:{value:'airports'},subscription:{value:'all'},setAirports:vi.fn(),refreshNodes:vi.fn(async()=>{}),refreshJobs:vi.fn(async()=>{}),notify:vi.fn(),fail:vi.fn()},
   request:vi.fn(async()=>undefined),
 }))
 vi.mock('../api',async importOriginal=>{const actual=await importOriginal<typeof import('../api')>();return {...actual,request:mocks.request,desktop:()=>false,api:{...actual.api,...mocks.api}}})

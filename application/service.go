@@ -1350,13 +1350,16 @@ func (s *AppService) DeleteAirport(id string) error {
 	if removed == nil {
 		return fmt.Errorf("未找到指定机场")
 	}
+	if err := profiles.SaveStore(s.profilePaths.StoreFile(), store); err != nil {
+		return err
+	}
 	for _, sub := range removed.Subscriptions {
 		if sub != nil {
 			_ = os.Remove(s.profilePaths.CacheFile(sub.ID))
 		}
 	}
 	_ = os.Remove(s.profilePaths.CacheFile(removed.ID))
-	return profiles.SaveStore(s.profilePaths.StoreFile(), store)
+	return nil
 }
 
 func (s *AppService) RefreshAirport(id, userAgent string) (*AirportDTO, error) {
@@ -1565,8 +1568,11 @@ func (s *AppService) DeleteSubscription(airportID, subID string) error {
 	if removed == nil {
 		return fmt.Errorf("未找到指定订阅")
 	}
+	if err := profiles.SaveStore(s.profilePaths.StoreFile(), store); err != nil {
+		return err
+	}
 	_ = os.Remove(s.profilePaths.CacheFile(subID))
-	return profiles.SaveStore(s.profilePaths.StoreFile(), store)
+	return nil
 }
 
 // RefreshSubscription refreshes a single subscription.
