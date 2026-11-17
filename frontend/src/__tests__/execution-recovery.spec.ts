@@ -112,4 +112,42 @@ describe('execution recovery',()=>{
     onEvent('subscription_usage_updated',{});await flushPromises();expect(api.airports).not.toHaveBeenCalled()
     w.dispose();expect(w.connected.value).toBe(false)
   })
+  it('coalesces repeated startup reads while the first setup request is pending',async()=>{
+    let finishSetup!:(value:any)=>void
+    vi.mocked(api.setup).mockImplementationOnce(()=>new Promise(resolve=>finishSetup=resolve))
+    const w=createWorkspace();workspaces.push(w);const first=w.boot();await flushPromises();const second=w.boot();await flushPromises()
+    expect(api.auth).toHaveBeenCalledTimes(1);expect(api.setup).toHaveBeenCalledTimes(1)
+    finishSetup({state:'ready'});await Promise.all([first,second]);expect(events).toHaveBeenCalledTimes(1)
+  })
+  it('does not continue a disposed startup after its authentication response arrives',async()=>{
+    let finishAuth!:(value:any)=>void
+    vi.mocked(api.auth).mockImplementationOnce(()=>new Promise(resolve=>finishAuth=resolve))
+    const w=createWorkspace();workspaces.push(w);const first=w.boot();w.dispose()
+    finishAuth({auth_required:false,authenticated:true});await first
+    expect(api.setup).not.toHaveBeenCalled();expect(events).not.toHaveBeenCalled();expect(w.setup.value).toBe(null)
+  })
+  it('does not let a late setup response replace the workspace reopened after authentication',async()=>{
+    let finishSetup!:(value:any)=>void
+    vi.mocked(api.setup).mockImplementationOnce(()=>new Promise(resolve=>finishSetup=resolve))
+    const w=createWorkspace();workspaces.push(w);const first=w.boot();await flushPromises();w.dispose();await w.boot()
+    finishSetup({state:'needs_choice'});await first
+    expect(w.setup.value?.state).toBe('ready');expect(w.page.value).toBe('home');expect(events).toHaveBeenCalledTimes(1)
+  })
+  it('keeps newly loaded nodes and services when earlier startup reads finish late',async()=>{
+    let finishNodes!:(value:NodeOption[])=>void,finishCatalog!:(value:any[])=>void
+    vi.mocked(api.nodes).mockImplementationOnce(()=>new Promise(resolve=>finishNodes=resolve))
+    vi.mocked(api.catalog).mockImplementationOnce(()=>new Promise(resolve=>finishCatalog=resolve))
+    const w=createWorkspace();workspaces.push(w);const first=w.boot();await flushPromises();w.dispose()
+    const replacement={...node,node_key:'replacement',node_identity_key:'new-identity',config_revision_key:'new-revision'}
+    vi.mocked(api.nodes).mockResolvedValue([replacement]);vi.mocked(api.catalog).mockResolvedValue([{service_id:'current-service'}] as any);await w.boot()
+    finishNodes([node]);finishCatalog([{service_id:'old-service'}]);await first
+    expect(w.nodes.value).toEqual([replacement]);expect(w.catalog.value.map(s=>s.service_id)).toEqual(['current-service'])
+  })
+  it('does not restore a stale completed batch after a new workspace session has opened',async()=>{
+    const w=await workspace();w.pendingStart.value={kind:'latency',requestId:'old-request'}
+    vi.mocked(api.batches).mockResolvedValueOnce([batch('completed','old-request')]);let finishBatch!:(value:LatencyBatch)=>void
+    vi.mocked(api.batch).mockImplementationOnce(()=>new Promise(resolve=>finishBatch=resolve));const recovery=w.retryPending();await flushPromises()
+    w.dispose();w.pendingStart.value=null;await w.boot();finishBatch(batch('completed','old-request'));await recovery
+    expect(w.batches.value).toEqual([]);expect(w.latest(node)).toBeUndefined();expect(w.pendingStart.value).toBe(null)
+  })
 })

@@ -41,6 +41,10 @@ const utilities:{id:Page;label:string;icon:string}[]=[{id:'settings',label:'偏�
 const pageKeywords:Record<Page,string[]>={home:['线路','节点','测速'],recommend:['为你选线','推荐'],airports:['订阅','账户'],monitor:['监测','自动精选','定时检测'],history:['记录','报告','历史'],settings:['偏好','设置'],data:['数据','备份','恢复']}
 const palettePages=[...pages,...utilities].map(p=>({...p,keywords:pageKeywords[p.id]}))
 const palette=ref(false)
+const accessReady=computed(()=>!w.authRequired.value&&!loggingIn.value)
+const workspaceReady=computed(()=>accessReady.value&&w.booted.value&&w.nodesReady.value&&w.setup.value?.state==='ready')
+const dataReady=computed(()=>accessReady.value&&w.booted.value&&!!w.setup.value&&(w.setup.value.state!=='ready'||w.nodesReady.value))
+const startupBusy=computed(()=>w.loading.value||!w.booted.value&&!w.error.value)
 const runningJobs=computed(()=>w.jobs.value.filter(j=>j.state==='running').length)
 // 侧栏任务区只回答三件事：在做什么、已处理多少、有没有需要注意的。不写“成功”，未确认启动时不画进度。
 const task=computed(()=>{
@@ -55,12 +59,12 @@ const task=computed(()=>{
  if(total)return {state:attention||done<total?'attention':'idle',title:done<total?'检测已停止，部分项目没有运行完':attention?'检测已结束，部分结果需注意':'上一轮检测已结束',detail:`已处理 ${done}/${total}`,progress:null,attention}
  return {state:'empty',title:'没有进行中的检测',detail:'',progress:null,attention:''}
 })
-const connection=computed(()=>w.connected.value?{tone:'good',label:'本地服务已连接'}:w.loading.value?{tone:'warn',label:'正在连接本地服务'}:{tone:'bad',label:'本地服务未连接'})
-function paletteKey(e:KeyboardEvent){if(e.isComposing||!palette.value&&document.querySelector('dialog[open]'))return;if((e.metaKey||e.ctrlKey)&&!e.altKey&&e.key.toLowerCase()==='k'&&w.setup.value?.state==='ready'&&!w.authRequired.value){e.preventDefault();palette.value=!palette.value}}
+const connection=computed(()=>!accessReady.value?{tone:'warn',label:'需要访问密码'}:w.connected.value?{tone:'good',label:'本地服务已连接'}:w.loading.value?{tone:'warn',label:'正在连接本地服务'}:{tone:'bad',label:'本地服务未连接'})
+function paletteKey(e:KeyboardEvent){if(e.isComposing||!palette.value&&document.querySelector('dialog[open]'))return;if((e.metaKey||e.ctrlKey)&&!e.altKey&&e.key.toLowerCase()==='k'&&workspaceReady.value){e.preventDefault();palette.value=!palette.value}}
 let timer:ReturnType<typeof setInterval>|undefined
-function navigate(page:Page){w.page.value=page;window.scrollTo({top:0,behavior:'instant'})}
-function authExpired(){w.authRequired.value=true;w.dispose()}
-async function login(){loggingIn.value=true;loginError.value='';try{await api.login(password.value);password.value='';w.authRequired.value=false;await w.boot()}catch(e){loginError.value=e instanceof Error?e.message:String(e)}finally{loggingIn.value=false}}
+function navigate(page:Page){if(page==='data'?!dataReady.value:!workspaceReady.value)return;w.page.value=page;window.scrollTo({top:0,behavior:'instant'})}
+function authExpired(){palette.value=false;w.authRequired.value=true;w.dispose()}
+async function login(){if(loggingIn.value)return;loggingIn.value=true;loginError.value='';try{await api.login(password.value);password.value='';w.authRequired.value=false;await w.boot()}catch(e){loginError.value=e instanceof Error?e.message:String(e)}finally{loggingIn.value=false}}
 onMounted(()=>{document.addEventListener('visibilitychange',visibilityChanged);window.addEventListener('keydown',paletteKey);window.addEventListener('cst:theme',onThemeChanged);void w.boot();window.addEventListener('speedtest:auth-required',authExpired);timer=setInterval(()=>{if(w.busy.value&&!w.running.value&&document.visibilityState==='visible')void w.syncActive()},2500)})
 onBeforeUnmount(()=>{document.removeEventListener('visibilitychange',visibilityChanged);window.removeEventListener('keydown',paletteKey);window.removeEventListener('cst:theme',onThemeChanged);w.dispose();clearInterval(timer);window.removeEventListener('speedtest:auth-required',authExpired)})
 </script>
@@ -69,20 +73,20 @@ onBeforeUnmount(()=>{document.removeEventListener('visibilitychange',visibilityC
     <header class="cst-masthead">
       <a class="cst-brand" href="#" @click.prevent="navigate('home')"><span class="cst-brand-mark"><Icon name="pulse"/></span><span class="cst-brand-copy"><strong>CST</strong><small>线路检测</small></span></a>
       <nav class="cst-nav" aria-label="主导航">
-        <button v-for="p in pages" :key="p.id" type="button" :title="p.label" :aria-label="p.label" :aria-current="w.page.value===p.id?'page':undefined" @click="navigate(p.id)">
+        <button v-for="p in pages" :key="p.id" type="button" :disabled="!workspaceReady" :title="p.label" :aria-label="p.label" :aria-current="workspaceReady&&w.page.value===p.id?'page':undefined" @click="navigate(p.id)">
           <Icon :name="p.icon"/><span>{{navLabels[p.id]}}</span>
           <small v-if="p.id==='monitor'&&runningJobs" :aria-label="runningJobs+' 个监测任务运行中'">{{runningJobs}}</small>
         </button>
       </nav>
       <div class="cst-header-tools">
-        <button v-if="w.setup.value?.state==='ready'" class="cst-jump" type="button" aria-keyshortcuts="Control+K Meta+K" title="搜索页面、机场和节点" @click="palette=true"><Icon name="search"/><span>快速查找</span><kbd>{{shortcutLabel}}</kbd></button>
-        <nav class="cst-utilities" aria-label="工具"><button v-for="u in utilities" :key="u.id" type="button" :aria-label="u.label" :title="u.label" :aria-current="w.page.value===u.id?'page':undefined" @click="navigate(u.id)"><Icon :name="u.icon"/><span>{{u.id==='settings'?'偏好':'数据'}}</span></button></nav>
+        <button v-if="workspaceReady" class="cst-jump" type="button" aria-keyshortcuts="Control+K Meta+K" title="搜索页面、机场和节点" @click="palette=true"><Icon name="search"/><span>快速查找</span><kbd>{{shortcutLabel}}</kbd></button>
+        <nav class="cst-utilities" aria-label="工具"><button v-for="u in utilities" :key="u.id" type="button" :disabled="u.id==='data'?!dataReady:!workspaceReady" :aria-label="u.label" :title="u.label" :aria-current="dataReady&&w.page.value===u.id?'page':undefined" @click="navigate(u.id)"><Icon :name="u.icon"/><span>{{u.id==='settings'?'偏好':'数据'}}</span></button></nav>
         <button type="button" class="cst-theme-cycle" :title="`切换外观（当前：${themeMeta.label}）`" @click="cycleTheme"><Icon :name="themeMeta.icon"/><span>{{themeMeta.label}}</span></button>
       </div>
     </header>
     <div class="cst-status-strip">
       <div class="cst-connection" role="status" :class="connection.tone" :title="connection.label" :aria-label="connection.label"><span class="cst-dot"/><small>{{connection.label}}</small></div>
-        <button class="cst-task" type="button" :class="task.state" :disabled="!w.queue.value.length&&!w.busy.value&&!w.latestReportBatch.value" :aria-label="'检测任务：'+task.title+(task.detail?'，'+task.detail:'')+(task.attention?'，'+task.attention:'')" @click="w.latestReportBatch.value&&!w.busy.value?w.openLatencyReport(w.latestReportBatch.value):w.queueOpen.value=true">
+        <button v-if="workspaceReady" class="cst-task" type="button" :class="task.state" :disabled="!w.queue.value.length&&!w.busy.value&&!w.latestReportBatch.value" :aria-label="'检测任务：'+task.title+(task.detail?'，'+task.detail:'')+(task.attention?'，'+task.attention:'')" @click="w.latestReportBatch.value&&!w.busy.value?w.openLatencyReport(w.latestReportBatch.value):w.queueOpen.value=true">
           <span class="cst-task-title"><span v-if="task.state==='running'||task.state==='pending'" class="spinner"/>{{task.title}}</span>
           <span v-if="task.detail" class="cst-task-detail">{{task.detail}}</span>
           <span v-if="task.progress!==null" class="cst-task-bar"><i :style="{width:Math.round(task.progress*100)+'%'}"/></span>
@@ -91,9 +95,15 @@ onBeforeUnmount(()=>{document.removeEventListener('visibilitychange',visibilityC
         </button>
     </div>
     <main class="cst-main workspace-body">
-      <div v-if="w.error.value" class="app-error" role="alert"><span>{{w.error.value}}</span><div class="button-group"><button class="text-button" @click="w.boot()">重新读取</button><button class="button ghost icon-button" aria-label="关闭错误提示" @click="w.error.value=''"><Icon name="close"/></button></div></div>
-      <div v-if="w.loading.value&&!w.setup.value" class="app-loading"><span class="spinner"/><p>正在读取你的机场与记录…</p></div>
-      <template v-else-if="!w.authRequired.value">
+      <section v-if="!accessReady" class="cst-startup"><p class="cst-startup-caption">访问工作台</p><h1>验证后继续使用</h1><p>输入此服务的访问密码，继续查看机场与检测记录。</p></section>
+      <section v-else-if="!w.booted.value||!w.setup.value||w.setup.value.state==='ready'&&!w.nodesReady.value" class="cst-startup" :aria-busy="startupBusy">
+        <p class="cst-startup-caption"><span v-if="startupBusy" class="spinner"/>{{startupBusy?'打开工作台':'连接中断'}}</p>
+        <h1>{{startupBusy?(w.setup.value?'正在读取机场与记录…':'正在连接本地服务…'):'暂时无法打开工作台'}}</h1>
+        <p v-if="startupBusy" role="status">读取完成后显示你的线路、账户和最近检测。</p>
+        <template v-else><p>暂时未能读全工作台数据。确认本地服务仍在运行后，可以重新连接。</p><p class="cst-startup-error" role="alert">{{w.error.value}}</p><button class="button primary" @click="w.boot()"><Icon name="refresh"/>重试连接</button></template>
+      </section>
+      <template v-else>
+        <div v-if="w.error.value" class="app-error" role="alert"><span>{{w.error.value}}</span><div class="button-group"><button class="text-button" :disabled="w.loading.value" @click="w.boot()">{{w.loading.value?'正在读取…':'重新读取'}}</button><button class="button ghost icon-button" aria-label="关闭错误提示" @click="w.error.value=''"><Icon name="close"/></button></div></div>
         <HomeView v-if="w.setup.value?.state==='ready'" v-show="w.page.value==='home'"/>
         <AirportsView v-if="w.page.value==='airports'&&w.setup.value?.state==='ready'"/>
         <MonitorView v-if="w.page.value==='monitor'&&w.setup.value?.state==='ready'"/>
@@ -102,16 +112,18 @@ onBeforeUnmount(()=>{document.removeEventListener('visibilitychange',visibilityC
         <SettingsView v-if="w.page.value==='settings'&&w.setup.value?.state==='ready'"/>
         <DataView v-if="w.page.value==='data'||w.setup.value?.state!=='ready'"/>
       </template>
-      <button v-if="w.busy.value" class="running-pill cst-mobile-task" @click="w.queueOpen.value=true"><span class="spinner"/>检测进行中 · 查看进度</button>
+      <button v-if="workspaceReady&&w.busy.value" class="running-pill cst-mobile-task" @click="w.queueOpen.value=true"><span class="spinner"/>检测进行中 · 查看进度</button>
     </main>
     <Transition name="toast"><div v-if="w.toast.value" class="toast-message" role="status"><Icon name="check"/>{{w.toast.value}}</div></Transition>
+    <template v-if="workspaceReady">
     <CommandPalette v-if="palette" :pages="palettePages" @close="palette=false" @navigate="navigate"/>
     <TestPlanModal v-if="w.plan.value"/>
     <MonitorCreateModal v-if="w.monitorNodes.value"/>
     <QueueModal v-if="w.queueOpen.value"/>
     <AutoPickReportModal v-if="w.autoPickReportId.value" :key="w.autoPickReportId.value" :report-id="w.autoPickReportId.value" @close="w.autoPickReportId.value=''"/>
     <NodeDetailModal v-if="w.inspectNode.value" :key="w.inspectNode.value.profile_id+w.inspectNode.value.node_key" :node="w.inspectNode.value" :initial-service-id="w.inspectNode.value.historyServiceId" :initial-target-id="w.inspectNode.value.historyTargetId" :initial-project="w.inspectNode.value.historyProject" :initial-source="w.inspectNode.value.historySource" :initial-until="w.inspectNode.value.historyUntil" @close="w.inspectNode.value=null"/>
-    <Modal v-if="w.authRequired.value" title="访问此工作台" :closable="false"><form @submit.prevent="login"><p class="muted">输入此服务的访问密码。</p><label class="form-stack">访问密码<input v-model="password" type="password" autofocus autocomplete="current-password" required></label><p v-if="loginError" class="inline-error" role="alert">{{loginError}}</p><div class="form-actions"><button class="button primary" :disabled="loggingIn" type="submit">{{loggingIn?'正在登录…':'登录'}}</button></div></form></Modal>
+    </template>
+    <Modal v-if="w.authRequired.value||loggingIn" title="访问此工作台" :closable="false"><form @submit.prevent="login"><p class="muted">输入此服务的访问密码。</p><label class="form-stack">访问密码<input v-model="password" type="password" :disabled="loggingIn" autofocus autocomplete="current-password" required></label><p v-if="loginError" class="inline-error" role="alert">{{loginError}}</p><p v-if="loggingIn" role="status">正在验证并读取工作台…</p><div class="form-actions"><button class="button primary" :disabled="loggingIn" type="submit">{{loggingIn?'正在登录…':'登录'}}</button></div></form></Modal>
     <HoverTip/>
   </div>
 </template>

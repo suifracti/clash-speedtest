@@ -8,6 +8,9 @@ if (!import.meta.env.DEV) throw new Error('UI preview is development-only')
 const queueScenario=new URL(location.href).searchParams.get('scenario')==='queue'
 const planScenario=new URL(location.href).searchParams.get('scenario')==='plan'
 const searchScenario=new URL(location.href).searchParams.get('scenario')==='search'
+const startupScenario=new URL(location.href).searchParams.get('scenario')==='startup'
+const signinScenario=new URL(location.href).searchParams.get('scenario')==='signin'
+let startupReads=0,previewInitialized=!startupScenario,previewAuthenticated=!signinScenario
 const previewAttempts=new Map<string,Attempt>()
 const now=Date.now(),at=new Date(now-18*60_000).toISOString()
 const airports:Airport[]=['青屿','远山','白帆'].map((name,i)=>({id:`demo-airport-${i}`,name:`${name} · 示例`,url_display:'example.invalid',node_count:4,has_cache:true,updated_at:at,subscriptions:[{id:`demo-account-${i}`,airport_id:`demo-airport-${i}`,name:i===0?'日常套餐':i===1?'备用套餐':'旅行套餐',url_display:'https://example.invalid/…',url_configured:true,node_count:4,has_cache:true,updated_at:at,usage:{upload:i===2?null:3*2**30,download:(30+i*19)*2**30,total:200*2**30,expire:Math.floor(now/1000)+86400*(23-i*7),updated_at:at}}]}))
@@ -55,10 +58,12 @@ async function handle(url:URL,body:any,method:string):Promise<unknown>{
    }
   }
  }
- if(p==='/api/auth/status')return {auth_required:false,authenticated:true}
- if(p==='/api/profile/setup')return {state:'ready',initialized:true,data_root:'界面预览 · 内存数据',profile_dir:'不读取真实目录',history_dir:'不读取真实历史',settings_file:'仅当前预览',schema_version:11,migration:{state:'isolated',target_history_dir:''}}
- if(p==='/api/airports')return airports
- if(p==='/api/monitor/nodes')return nodes
+ if(p==='/api/auth/status'){if(startupScenario&&startupReads++===0)throw new Error('合成场景：本地服务尚未就绪');return {auth_required:signinScenario,authenticated:previewAuthenticated}}
+ if(p==='/api/auth/login'&&signinScenario){if(body.password!=='preview')throw new Error('合成场景：请输入 preview');previewAuthenticated=true;return {token:'synthetic-preview-only'}}
+ if(p==='/api/profile/setup/empty'&&startupScenario){previewInitialized=true;return {}}
+ if(p==='/api/profile/setup')return {state:previewInitialized?'ready':'needs_choice',initialized:previewInitialized,data_root:'界面预览 · 内存数据',profile_dir:'不读取真实目录',history_dir:'不读取真实历史',settings_file:'仅当前预览',schema_version:previewInitialized?11:undefined,migration:{state:'isolated',target_history_dir:''}}
+ if(p==='/api/airports')return startupScenario?[]:airports
+ if(p==='/api/monitor/nodes'){if(signinScenario)await new Promise(resolve=>setTimeout(resolve,6000));return startupScenario?[]:nodes}
  if(p==='/api/settings'){if(method!=='GET')Object.assign(settings,body);return settings}
  if(p==='/api/antigravity/status')return {has_token:false,source:'',preview:''}
  if(p==='/api/workbench/public-service-catalog')return catalog
@@ -76,10 +81,10 @@ async function handle(url:URL,body:any,method:string):Promise<unknown>{
  if(p.endsWith('/previous'))return null
  if(p==='/api/history/node-revisions')return [...new Map(matching([...nodes,...tests,archivedTest,...downloads,...services],q).map(n=>[n.config_revision_key,{...n,last_observed_at:at}])).values()]
  if(p==='/api/history/latency-scopes')return matching(nodes,q).filter(n=>n.display_name===q.get('display_name'))
- if(p==='/api/workbench/latency-batches')return [batch,archivedBatch]
+ if(p==='/api/workbench/latency-batches')return startupScenario?[]:[batch,archivedBatch]
  if(p==='/api/workbench/latency-batches/demo-batch')return batch
  if(p==='/api/workbench/latency-batches/demo-archived-batch')return archivedBatch
- if(p==='/api/monitor/jobs')return jobs
+ if(p==='/api/monitor/jobs')return startupScenario?[]:jobs
  if(['/api/measurement-rounds','/api/subscription-refresh-jobs','/api/history','/api/auto-pick/reports','/api/monitor/runs','/api/clash/verge-subscriptions'].includes(p))return []
  if(p==='/api/monitor/samples'||p==='/api/monitor/samples/cursor')return page(matching(monitorSamples,q),'items')
  if(p==='/api/monitor/facets')return {nodes:nodes.slice(0,8),profiles:airports.slice(0,2).map(a=>a.subscriptions![0].id),targets:[latencyTargets[0].urls[0]]}
@@ -113,6 +118,6 @@ window.fetch=async(input,init)=>{
 class PreviewEvents {onopen:((event:Event)=>void)|null=null;onerror=null;onmessage=null;constructor(){queueMicrotask(()=>this.onopen?.(new Event('open')))}close(){}}
 window.EventSource=PreviewEvents as unknown as typeof EventSource
 document.documentElement.dataset.uiPreview='true'
-const notice=document.createElement('div');notice.className='preview-notice';notice.textContent=queueScenario?'检测流程演示 · 仅使用内存中的合成结果':'界面预览 · 所有机场、节点和记录均为合成数据';document.body.append(notice)
+const notice=document.createElement('div');notice.className='preview-notice';notice.textContent=signinScenario?'访问演示 · 密码 preview · 仅内存合成数据':queueScenario?'检测流程演示 · 仅使用内存中的合成结果':'界面预览 · 所有机场、节点和记录均为合成数据';document.body.append(notice)
 const style=document.createElement('style');style.textContent='.preview-notice{position:fixed;bottom:10px;left:50%;transform:translateX(-50%);z-index:99999;font:11px system-ui;padding:6px 14px;border:1px solid #ccc;background:#fff9e7;color:#625230;border-radius:20px;pointer-events:none}';document.head.append(style)
 void import('../main')

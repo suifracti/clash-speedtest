@@ -27,6 +27,9 @@ kbd{font:10px var(--cst-font);padding:3px 5px;border:1px solid var(--cst-line-st
 .cst-side-airports button[aria-pressed=true]{background:var(--cst-accent-soft);border-color:color-mix(in srgb,var(--cst-accent) 20%,transparent);color:var(--cst-accent);font-weight:650}
 .cst-side-airports button[aria-pressed=true] small{background:var(--cst-accent);color:var(--cst-accent-ink)}
 
+/* 启动与连接 */
+.cst-startup{width:min(680px,100%);margin:clamp(48px,12vh,120px) auto;padding:0 32px 48px}.cst-startup-caption{display:flex;align-items:center;gap:10px;margin:0 0 16px;color:var(--cst-muted);font-size:12px}.cst-startup h1{font-size:clamp(24px,3vw,32px);font-weight:600;letter-spacing:-.02em;line-height:1.5;margin:0 0 16px}.cst-startup>p:not(.cst-startup-caption){font-size:14px;line-height:1.8;color:var(--cst-muted);margin:0 0 20px}.cst-startup .cst-startup-error{padding:14px 0;border-top:1px solid var(--cst-line);border-bottom:1px solid var(--cst-line);color:var(--cst-text)!important;overflow-wrap:anywhere}.cst-nav button:disabled,.cst-utilities button:disabled{opacity:.45;cursor:default}
+
 /* 快速跳转 */
 .modal.cst-palette{width:min(660px,calc(100vw - 32px));margin-top:12vh;max-height:min(620px,76vh);display:flex;flex-direction:column}
 .modal.cst-palette .modal-header{display:none}

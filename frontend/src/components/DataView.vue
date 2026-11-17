@@ -12,6 +12,7 @@ let dialogTrigger:HTMLElement|null=null
 function restoreFocus(){void nextTick(()=>{const target=dialogTrigger?.isConnected?dialogTrigger:refreshButton.value;target?.focus()})}
 const confirmation=ref<'import'|'migration'|null>(null)
 const locked=computed(()=>busy.value||w.loading.value)
+const emptyStart=computed(()=>w.setup.value?.state==='ready'&&!locked.value&&!pageError.value&&!w.airports.value.length)
 const pageError=computed(()=>error.value||w.setup.value?.error||w.error.value)
 const setupLabel=computed(()=>w.loading.value?'加载中':(w.setup.value?.error||(!w.setup.value&&pageError.value))?'读取失败':!w.setup.value?'尚未读取':({ready:'已就绪',uninitialized:'待初始化',needs_setup:'待初始化',needs_choice:'待初始化',error:'读取失败',failed:'读取失败'} as Record<string,string>)[w.setup.value.state]||`未确认 · ${w.setup.value.state}`)
 const migration=computed(()=>w.setup.value?.migration)
@@ -41,13 +42,14 @@ async function apply(){const kind=confirmation.value;if(!kind||locked.value)retu
       <p class="section-note">可直接从本机 Clash Verge 一键导入已有订阅，或创建空白存储后手动添加机场。</p>
       <div class="button-group"><button class="button primary" :disabled="locked||!!pageError" @click="vergeOpen=true">从 Clash Verge 导入／同步</button><button class="button" :disabled="locked||!!pageError" @click="initialize">创建空白存储</button></div>
     </section>
+    <section v-else-if="emptyStart" class="settings-section data-start-panel"><div class="section-heading"><h2>先添加一份机场订阅</h2></div><p class="section-note">存储已就绪。添加机场和订阅账户后，就可以查看线路并选择要检测的节点。</p><div class="button-group"><button class="button primary" :disabled="locked" @click="w.page.value='airports'">添加机场</button><button class="button" :disabled="locked||!!pageError" @click="vergeOpen=true">从 Clash Verge 导入／同步</button></div></section>
     <section class="settings-section data-storage-panel"><div class="section-heading"><h2>当前存储</h2><span class="badge" :class="{good:w.setup.value?.state==='ready'&&!pageError&&!w.loading.value}">{{setupLabel}}</span></div>
       <div class="data-storage-grid"><dl class="path-list"><div><dt>数据根目录</dt><dd>{{w.setup.value?.data_root||'尚未读取'}}</dd></div><div><dt>订阅目录</dt><dd>{{w.setup.value?.profile_dir||'尚未读取'}}</dd></div><div><dt>历史目录</dt><dd>{{w.setup.value?.history_dir||'尚未读取'}}</dd></div><div><dt>设置文件</dt><dd>{{w.setup.value?.settings_file||'尚未读取'}}</dd></div><div><dt>数据库版本</dt><dd>{{w.setup.value?.schema_version??'尚未读取'}}</dd></div><div><dt>最近备份</dt><dd><time v-if="w.setup.value?.last_backup_at" :datetime="w.setup.value.last_backup_at">{{date(w.setup.value.last_backup_at)}}</time><span v-else>尚未备份</span></dd></div></dl>
       <div class="data-backup-actions"><h3>保管一份完整备份</h3><div class="button-group"><button class="button" :disabled="locked||!w.setup.value?.data_root" @click="openFolder">打开数据目录</button><button class="button primary" :disabled="locked||!w.setup.value?.data_root" @click="exportBackup"><Icon name="download"/>导出备份</button></div>
       <p class="section-note">完整备份包含订阅、历史与设置；下方订阅导入仅导入配置来源。</p></div></div>
     </section>
     <div class="data-workflow-grid">
-    <section class="settings-section data-import-panel"><div class="section-heading"><h2>导入现有订阅</h2><button v-if="w.setup.value?.state==='ready'" class="button" :disabled="locked||!!pageError" @click="vergeOpen=true">从 Clash Verge 导入／同步</button></div><p class="section-note">选择目录 → 检查来源 → 确认导入，或从本机 Clash Verge 导入／同步。仅导入订阅来源，历史与设置迁移在下方单独确认。</p>
+    <section class="settings-section data-import-panel"><div class="section-heading"><h2>导入现有订阅</h2><button v-if="w.setup.value?.state==='ready'&&!emptyStart" class="button" :disabled="locked||!!pageError" @click="vergeOpen=true">从 Clash Verge 导入／同步</button></div><p class="section-note">选择目录 → 检查来源 → 确认导入，或从本机 Clash Verge 导入／同步。仅导入订阅来源，历史与设置迁移在下方单独确认。</p>
       <label class="source-label" for="profile-source">现有订阅数据目录</label><div class="source-controls"><input id="profile-source" v-model="source" :disabled="locked" placeholder="现有数据目录的绝对路径"><button v-if="desktop()" class="button" :disabled="locked" @click="browse"><Icon name="data"/>浏览目录</button><button class="button" :disabled="locked||!source.trim()" @click="inspect">检查来源</button></div>
       <p v-if="!desktop()" class="section-note">Web 模式不支持原生目录选择器，请输入服务器可访问的绝对路径。</p>
       <div v-if="inspected" class="source-inspection"><strong>{{inspected.label||inspected.path||inspectedPath}}</strong><p>{{count(inspected.profile_count)}} 个机场 · {{count(inspected.cache_count)}} 份缓存</p><p v-if="inspected.error" class="inline-error" role="alert">{{inspected.error}}</p><button class="button primary" :disabled="locked||!inspected.available" @click="confirm('import')">导入这个来源</button></div>

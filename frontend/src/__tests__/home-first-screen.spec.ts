@@ -215,3 +215,9 @@ it('clears all node filters and distinguishes an airport with no nodes',async()=
  await flushPromises();expect(wrapper.get('.hd-empty').text()).toContain('节点被筛选条件隐藏了');await wrapper.get('.hd-empty button').trigger('click');expect(workspace.search.value).toBe('');expect(workspace.region.value).toBe('all');expect(workspace.excludeRegion.value).toBe(false);expect(workspace.subscription.value).toBe('all');expect(workspace.downloadFullOnly.value).toBe(false)
  workspace.nodes.value=[];await flushPromises();expect(wrapper.get('.hd-empty').text()).toContain('这个机场还没有节点');await wrapper.get('.hd-empty button').trigger('click');expect(workspace.page.value).toBe('airports')
 })
+
+it('offers adding a subscription directly when the initialized store has no airports',async()=>{
+ const {wrapper,workspace}=attachHome({airports:[],nodes:[]});await flushPromises()
+ expect(wrapper.get('.hd-empty').text()).toContain('先添加一份机场订阅');expect(wrapper.get('.hd-empty button').text()).toBe('添加机场')
+ await wrapper.get('.hd-empty button').trigger('click');expect(workspace.page.value).toBe('airports');expect(wrapper.find('.airport-pick-list').exists()).toBe(false)
+})
