@@ -8,9 +8,10 @@ import Icon from './Icon.vue'
 
 const w=useWorkspace()
 const status=ref<AutoPickStatus|null>(null)
-const loading=ref(true),saving=ref(false),error=ref(''),notice=ref('')
+const loading=ref(true),saving=ref(false),starting=ref(false),error=ref(''),readError=ref(''),notice=ref('')
+let readGeneration=0,mounted=true,reading=false
 const emit=defineEmits<{state:[value:{status:AutoPickStatus|null;error:string}]}>()
-watch([status,error],()=>emit('state',{status:status.value,error:error.value}),{immediate:true})
+watch([status,error,readError],()=>emit('state',{status:status.value,error:readError.value||error.value}),{immediate:true})
 const confirmRun=ref(false),polling=ref<ReturnType<typeof setInterval>|null>(null)
 const expanded=reactive({ai:false,streaming:false})
 const form=reactive<AutoPickConfig>({enabled:false,schedule:'6h',daily_hour:6,airport_ids:[],region_filter:'',include_ai:false,include_streaming:false,ai_required:[...defaultRequiredServices.ai],streaming_required:[...defaultRequiredServices.streaming],min_response_rate:90,max_latency_ms:800,sample_count:6})
@@ -20,7 +21,7 @@ const airports=computed(()=>w.airports.value)
 const missingRequired=computed(()=>(form.include_ai&&!form.ai_required.length)||(form.include_streaming&&!form.streaming_required.length))
 const estimate=computed(()=>status.value?.estimate||null)
 const dirty=computed(()=>baseline.value!==''&&canonical(form)!==baseline.value)
-const canRun=computed(()=>!!status.value&&!status.value.running&&!saving.value&&!dirty.value&&(status.value.estimate?.nodes||0)>0)
+const canRun=computed(()=>!!status.value&&!status.value.running&&!saving.value&&!starting.value&&!loading.value&&!readError.value&&!dirty.value&&(status.value.estimate?.nodes||0)>0)
 
 // 只比较用户可编辑的字段；数组排序后再比，避免勾选顺序被当成修改。
 function canonical(cfg:AutoPickConfig):string{
@@ -43,48 +44,62 @@ function fillForm(cfg:AutoPickConfig){
   Object.assign(form,{...cfg,airport_ids:[...(cfg.airport_ids||[])],ai_required:[...(cfg.ai_required||defaultRequiredServices.ai)],streaming_required:[...(cfg.streaming_required||defaultRequiredServices.streaming)]})
   baseline.value=canonical(form)
 }
-function apply(next:AutoPickStatus){status.value=next;fillForm(next.config)}
 // 轮询只刷新运行状态与结果；用户正在编辑时不碰表单。
 function applyStatus(next:AutoPickStatus){status.value=next;if(!dirty.value)fillForm(next.config)}
 function errorMessage(e:unknown){return e instanceof Error?e.message:String(e)}
 async function load(){
-  loading.value=true;error.value=''
-  try{
-    const next=await api.autoPick()
-    apply(next)
-    if(next.running)startPolling()
-  }catch(e){error.value=errorMessage(e)}finally{loading.value=false}
+ if(reading||saving.value||starting.value)return
+ const token=++readGeneration;reading=true;loading.value=true
+ try{
+  const next=await api.autoPick()
+  if(!mounted||token!==readGeneration)return
+  applyStatus(next);readError.value=''
+  if(next.running)startPolling();else stopPolling()
+ }catch(e){if(mounted&&token===readGeneration)readError.value=errorMessage(e)}
+ finally{if(mounted&&token===readGeneration){loading.value=false;reading=false}}
 }
 async function save(){
-  if(saving.value)return
-  if(missingRequired.value){error.value='勾选的组至少要选一个必需服务';return}
-  saving.value=true;error.value='';notice.value=''
-  try{
-    const next=await api.saveAutoPick({...form,airport_ids:[...form.airport_ids],ai_required:[...form.ai_required],streaming_required:[...form.streaming_required],region_filter:form.region_filter||''})
-    apply(next);notice.value=next.config.enabled?'设置已保存，将按时间自动运行':'设置已保存，自动运行保持关闭'
-  }catch(e){error.value=errorMessage(e)}finally{saving.value=false}
+ if(saving.value||starting.value||!status.value)return
+ if(missingRequired.value){error.value='勾选的组至少要选一个必需服务';return}
+ const submitted=canonical(form),cfg={...form,airport_ids:[...form.airport_ids],ai_required:[...form.ai_required],streaming_required:[...form.streaming_required],region_filter:form.region_filter||''}
+ ++readGeneration;reading=false;loading.value=false;saving.value=true;error.value='';notice.value=''
+ try{
+  const next=await api.saveAutoPick(cfg)
+  if(!mounted)return
+  status.value=next;readError.value=''
+  if(canonical(form)===submitted)fillForm(next.config);else baseline.value=canonical(next.config)
+  notice.value=next.config.enabled?'设置已保存，将按时间自动运行':'设置已保存，自动运行保持关闭'
+  if(next.running)startPolling()
+ }catch(e){if(mounted)error.value=errorMessage(e)}finally{if(mounted)saving.value=false}
 }
 function askRun(){if(!canRun.value)return;confirmRun.value=true}
 async function run(){
-  if(dirty.value){error.value='设置有修改，请先保存';confirmRun.value=false;return}
-  if(!status.value||status.value.running){confirmRun.value=false;return}
-  confirmRun.value=false
-  error.value='';notice.value=''
-  try{
-    apply(await api.runAutoPick())
-    notice.value='已开始运行；完成后上一轮结果会更新'
-    startPolling()
-  }catch(e){error.value=errorMessage(e)}
+ if(starting.value)return
+ if(dirty.value){error.value='设置有修改，请先保存';confirmRun.value=false;return}
+ if(!canRun.value){confirmRun.value=false;return}
+ confirmRun.value=false;++readGeneration;reading=false;loading.value=false;starting.value=true
+ error.value='';notice.value=''
+ try{
+  const next=await api.runAutoPick()
+  if(!mounted)return
+  applyStatus(next);readError.value=''
+  notice.value=next.running?'已开始运行；完成后上一轮结果会更新':'运行请求已返回，当前未在运行，请查看报告'
+  if(next.running)startPolling()
+ }catch(e){if(mounted)error.value=errorMessage(e)}finally{if(mounted)starting.value=false}
 }
 function startPolling(){
-  if(polling.value)return
-  polling.value=setInterval(async()=>{
-    try{
-      const next=await api.autoPick()
-      applyStatus(next)
-      if(!next.running){stopPolling();notice.value='本轮已结束，可查看报告'}
-    }catch{/* 下一次轮询继续 */}
-  },3000)
+ if(polling.value)return
+ polling.value=setInterval(async()=>{
+  if(reading||saving.value||starting.value)return
+  const token=++readGeneration;reading=true
+  try{
+   const next=await api.autoPick()
+   if(!mounted||token!==readGeneration)return
+   applyStatus(next);readError.value=''
+   if(!next.running){stopPolling();notice.value='本轮已结束，可查看报告'}
+  }catch(e){if(mounted&&token===readGeneration)readError.value=errorMessage(e)}
+  finally{if(mounted&&token===readGeneration)reading=false}
+ },3000)
 }
 function stopPolling(){if(polling.value){clearInterval(polling.value);polling.value=null}}
 async function copyURL(){
@@ -98,19 +113,21 @@ async function copyURL(){
 }
 function openReport(id?:string){if(id)w.openAutoPickReport(id)}
 onMounted(()=>{void load()})
-onBeforeUnmount(stopPolling)
+onBeforeUnmount(()=>{mounted=false;readGeneration++;stopPolling()})
 </script>
 
 <template>
-<section class="settings-section auto-pick-card" :aria-busy="loading||saving">
+<section class="settings-section auto-pick-card" :aria-busy="loading||saving||starting">
   <div class="section-heading auto-pick-header">
     <div><h2>自动精选与本地订阅</h2><p class="muted small">按设定周期遴选低延迟高可用节点，自动生成本地 Clash 订阅供客户端拉取。</p></div>
     <div class="auto-pick-head-controls">
-      <label class="check-field auto-pick-toggle"><input v-model="form.enabled" type="checkbox">启用自动精选</label>
-      <span class="badge" :class="form.enabled?'good':''">{{form.enabled?'已开启':'已关闭'}}</span>
+      <label class="check-field auto-pick-toggle"><input v-model="form.enabled" type="checkbox" :disabled="!status||loading">启用自动精选</label>
+      <span class="badge" :class="readError?'warn':status?.config.enabled&&!dirty?'good':''">{{readError?(status?'状态需确认':'状态未知'):!status?'读取中…':dirty?'有待保存修改':status.config.enabled?'计划已开启':'计划已关闭'}}</span>
+      <button class="text-button" :disabled="loading||saving||starting" @click="load">{{loading?'读取中…':'刷新状态'}}</button>
     </div>
   </div>
   <p v-if="error" class="inline-error" role="alert">{{error}}</p>
+  <p v-if="readError" class="inline-warning" role="alert">状态读取失败{{status?'；以下保留上次读数':'，尚未确认配置与运行状态'}}：{{readError}}</p>
   <p v-if="notice" class="muted small auto-pick-notice" role="status">{{notice}}</p>
   <p v-if="status?.last_error" class="inline-warning" role="alert">上一轮错误：{{status.last_error}}</p>
 
@@ -191,27 +208,27 @@ onBeforeUnmount(stopPolling)
       <p v-if="dirty" class="inline-warning auto-pick-dirty" role="status">设置有修改，请先保存</p>
 
       <div class="auto-pick-actions">
-        <button class="button primary" :disabled="saving" @click="save">{{saving?'保存中…':'保存设置'}}</button>
-        <button class="button" :disabled="!canRun" :title="dirty?'先保存设置':''" @click="askRun">立即运行一次</button>
-        <span class="muted small">下次运行：{{status?.config.next_run_at?date(status.config.next_run_at):(form.enabled?'保存后计算':'未开启')}}</span>
+        <button class="button primary" :disabled="saving||starting||loading||!status" @click="save">{{saving?'保存中…':'保存设置'}}</button>
+        <button class="button" :disabled="!canRun" :title="dirty?'先保存设置':''" @click="askRun">{{starting?'启动中…':'立即运行一次'}}</button>
+        <span class="muted small">下次运行：{{status?.config.next_run_at?date(status.config.next_run_at):(!status?'尚未读取':status.config.enabled?'尚未排定':'未开启')}}</span>
       </div>
       <div v-if="confirmRun&&estimate" class="auto-pick-confirm">
         <p>将检测 {{estimate.nodes}} 个节点、共 {{estimate.requests}} 项检测，可能持续数分钟。</p>
         <div class="button-group"><button class="button primary" @click="run">确认运行</button><button class="button ghost" @click="confirmRun=false">取消</button></div>
       </div>
-      <p v-if="status?.running" class="auto-pick-running" role="status"><Icon name="refresh"/>正在运行本轮精选…</p>
+      <p v-if="status?.running" class="auto-pick-running" role="status"><Icon name="refresh"/>{{readError?'上次读取时正在运行本轮精选；当前状态需确认':'正在运行本轮精选…'}}</p>
 
       <div class="auto-pick-last">
         <template v-if="status?.last_report">
           <span><span class="badge" :class="status.last_report.kept_previous?'warn':status.last_report.status==='selected'?'good':''">{{reportStatusLabels[status.last_report.status]||status.last_report.status}}</span>{{status.last_report.summary}}</span>
           <button class="text-button" @click="openReport(status.last_report.report_id)">查看报告 ›</button>
         </template>
-        <span v-else class="muted small">还没有自动精选记录。</span>
+        <span v-else class="muted small">{{status?'还没有自动精选记录。':'尚未读取自动精选记录。'}}</span>
       </div>
 
       <div class="auto-pick-sub">
         <div class="auto-pick-sub-head"><strong>本地订阅地址</strong><button class="text-button" :disabled="!status?.subscription.exists" @click="copyURL">复制链接</button></div>
-        <code>{{status?.subscription.url||'正在读取…'}}</code>
+        <code>{{status?.subscription.url||(readError?'地址尚未确认':status?'尚未生成订阅地址':'正在读取…')}}</code>
         <p class="muted small">在 Clash Verge 里新建订阅，填这个地址，设成每 6 小时更新。</p>
         <p v-if="status&&!status.subscription.exists" class="muted small">首次成功运行后才会生成订阅文件。</p>
         <p v-else-if="status?.subscription.updated_at" class="muted small">文件更新于 {{date(status.subscription.updated_at)}} · {{status.subscription.node_count}} 个节点</p>
@@ -226,19 +243,19 @@ onBeforeUnmount(stopPolling)
 </template>
 
 <style scoped>
-.auto-pick-card{display:grid;gap:14px}
-.auto-pick-header{padding-bottom:12px;border-bottom:1px solid var(--cst-line)}
-.auto-pick-head-controls{display:flex;align-items:center;gap:12px}
+.auto-pick-card.settings-section{display:grid;gap:20px;margin:0;padding:0;border:0;border-radius:0;background:none;box-shadow:none}
+.auto-pick-header{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;padding-bottom:20px;border-bottom:1px solid var(--cst-line)}.auto-pick-header h2{font-size:18px;margin:0 0 8px}.auto-pick-header p{margin:0;line-height:1.7}
+.auto-pick-head-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .auto-pick-toggle{margin:0;font-weight:600;color:var(--cst-text)}
 .auto-pick-notice{padding:6px 10px;border-radius:7px;background:var(--cst-accent-soft);color:var(--cst-accent);margin:0}
-.auto-pick-bento{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(300px,1fr);gap:18px;align-items:start}
-@media(max-width:980px){.auto-pick-bento{grid-template-columns:1fr}}
-.auto-pick-form,.auto-pick-side{display:grid;gap:12px}
+.auto-pick-bento{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.8fr);gap:30px;align-items:start}
+@media(max-width:800px){.auto-pick-bento{grid-template-columns:1fr}.auto-pick-bento .auto-pick-side{border-left:0;border-top:1px solid var(--cst-line);padding:22px 0 0}}
+.auto-pick-form,.auto-pick-side{display:grid;gap:24px;min-width:0}.auto-pick-side{border-left:1px solid var(--cst-line);padding-left:26px}
 .auto-pick-schedule-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
 .auto-pick-field{display:grid;gap:5px;font-size:12px;font-weight:550;color:var(--cst-muted)}
 .auto-pick-field select,.auto-pick-field input[type=text],.auto-pick-field input[type=number]{min-height:34px;padding:6px 10px;border:1px solid var(--cst-line-strong);border-radius:8px;background:var(--cst-panel);color:var(--cst-text);font-size:13px}
-.auto-pick-scope,.auto-pick-projects{display:grid;gap:10px;border:1px solid var(--cst-line);border-radius:10px;padding:12px 14px;background:var(--cst-panel-2)}
-.auto-pick-scope legend,.auto-pick-projects legend{padding:0 6px;font-size:12px;font-weight:650;color:var(--cst-muted)}
+.auto-pick-scope,.auto-pick-projects{display:grid;gap:16px;min-width:0;margin:0;border:0;border-top:1px solid var(--cst-line);border-radius:0;padding:18px 0 0;background:none}
+.auto-pick-scope legend,.auto-pick-projects legend{padding:0 12px 0 0;font-size:12px;font-weight:650;color:var(--cst-muted)}
 .auto-pick-project-pills{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center}
 .auto-pick-group-head{display:flex;align-items:center;gap:8px}
 .auto-pick-services{display:flex;flex-wrap:wrap;gap:8px 16px;padding:10px 12px;border:1px dashed var(--cst-line-strong);border-radius:8px;background:var(--cst-panel)}
@@ -249,16 +266,16 @@ onBeforeUnmount(stopPolling)
 .auto-pick-rules .auto-pick-field{display:flex;align-items:center;gap:6px;white-space:nowrap}
 .auto-pick-rules input[type=number]{width:80px}
 .auto-pick-estimate-wrap{display:grid;gap:6px}
-.auto-pick-estimate{margin:0;padding:11px 14px;border-radius:9px;background:var(--cst-panel-2);border:1px solid var(--cst-line);font-size:13px}
+.auto-pick-estimate{margin:0;padding:0 0 12px;border-radius:0;background:none;border:0;border-bottom:2px solid var(--cst-text);font-size:14px;line-height:1.8}.auto-pick-estimate strong{font-size:24px;font-weight:600;font-variant-numeric:tabular-nums}
 .auto-pick-estimate.auto-pick-warn{border-color:var(--cst-warn);background:var(--cst-warn-bg);color:var(--cst-warn)}
 .auto-pick-sample,.auto-pick-dirty{margin:0}
 .auto-pick-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .auto-pick-confirm{padding:12px 14px;border:1px solid var(--cst-warn);border-radius:9px;background:var(--cst-warn-bg)}
 .auto-pick-confirm p{margin:0 0 8px}
 .auto-pick-running{display:flex;align-items:center;gap:8px;margin:0;color:var(--cst-accent);font-weight:550}
-.auto-pick-last{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 12px;border:1px solid var(--cst-line);border-radius:9px;background:var(--cst-panel-2);font-size:13px}
+.auto-pick-last{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:16px 0;border:0;border-top:1px solid var(--cst-line);border-radius:0;background:none;font-size:13px}
 .auto-pick-last .badge{margin-right:8px}
-.auto-pick-sub{display:grid;gap:6px;padding:12px 14px;border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel-2)}
+.auto-pick-sub{display:grid;gap:10px;padding:20px 0 0;border:0;border-top:1px solid var(--cst-line);border-radius:0;background:none}
 .auto-pick-sub-head{display:flex;justify-content:space-between;align-items:center}
 .auto-pick-sub code{word-break:break-all;font:12px/1.45 var(--cst-mono);background:var(--cst-panel);border:1px solid var(--cst-line);padding:7px 10px;border-radius:7px;color:var(--cst-accent)}
 .auto-pick-sub p{margin:0}

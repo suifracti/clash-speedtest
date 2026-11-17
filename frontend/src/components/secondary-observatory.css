@@ -157,59 +157,6 @@
   overflow-wrap: anywhere;
 }
 
-/* Monitor state, sampling configuration, and stored resource readings form one panel. */
-.monitor-view .monitor-sampling-panel :deep(.periodic-panel) {
-  margin-bottom: 15px;
-  box-shadow: var(--cst-shadow);
-}
-
-.monitor-view .monitor-sampling-panel :deep(.periodic-panel > header) {
-  padding-bottom: 13px;
-  border-bottom: 1px solid var(--line);
-}
-
-.monitor-view .monitor-sampling-panel :deep(.periodic-panel > header .badge.good) {
-  background: var(--secondary-signal-soft);
-  color: var(--secondary-signal);
-}
-
-.monitor-view .monitor-sampling-panel :deep(.periodic-fields) {
-  grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr));
-  gap: 10px;
-  padding: 13px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--surface-soft);
-}
-
-.monitor-view .monitor-sampling-panel :deep(.periodic-fields label) {
-  gap: 5px;
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.monitor-view .monitor-sampling-panel :deep(.periodic-progress) {
-  gap: 5px;
-  margin: 7px 0;
-  padding: 10px 12px;
-  border-left: 2px solid var(--secondary-signal);
-  border-radius: 0 6px 6px 0;
-  background: var(--surface-soft);
-  font-size: 11px;
-  overflow-wrap: anywhere;
-}
-
-.monitor-view .monitor-sampling-panel :deep(.periodic-progress strong) {
-  color: var(--ink);
-  font-size: 12px;
-}
-
-.monitor-view .monitor-sampling-panel :deep(details > summary) {
-  padding: 9px 0;
-  color: var(--secondary-signal);
-  cursor: pointer;
-}
-
 .monitor-view .monitor-resource-ledger {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

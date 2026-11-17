@@ -87,3 +87,36 @@ describe('auto-pick run guard',()=>{
     wrapper.unmount()
   })
 })
+
+function pending<T>(){let resolve!:(value:T)=>void;const promise=new Promise<T>(yes=>{resolve=yes});return {promise,resolve}}
+it('keeps a failed initial read unknown and blocks saving unobserved defaults',async()=>{
+ vi.mocked(api.autoPick).mockRejectedValue(new Error('read offline'))
+ const wrapper=mountCard();await flushPromises()
+ expect(wrapper.get('.auto-pick-head-controls .badge').text()).toContain('状态未知')
+ expect(wrapper.findAll('button.button').find(b=>b.text().includes('保存设置'))!.attributes('disabled')).toBeDefined()
+ wrapper.unmount()
+})
+it('shows polling failure and clears stale state when the next read succeeds',async()=>{
+ vi.useFakeTimers({toFake:['setInterval','clearInterval']})
+ const running={...clone(baseStatus),running:true}
+ vi.mocked(api.autoPick).mockResolvedValueOnce(running).mockRejectedValueOnce(new Error('poll offline')).mockResolvedValue(clone(baseStatus))
+ const wrapper=mountCard();await flushPromises();await vi.advanceTimersByTimeAsync(3000);await flushPromises()
+ expect(wrapper.text()).toContain('poll offline')
+ expect(wrapper.get('.auto-pick-running').text()).toContain('上次读取时')
+ await vi.advanceTimersByTimeAsync(3000);await flushPromises()
+ expect(wrapper.text()).not.toContain('poll offline')
+ expect(wrapper.find('.auto-pick-running').exists()).toBe(false)
+ wrapper.unmount()
+})
+it('preserves edits made while saving instead of overwriting them with the earlier response',async()=>{
+ const saved=pending<any>();vi.mocked(api.saveAutoPick).mockReturnValue(saved.promise)
+ const wrapper=mountCard();await flushPromises()
+ const field=wrapper.get('input[placeholder*="新加坡"]')
+ await field.setValue('Singapore')
+ await wrapper.findAll('button.button').find(b=>b.text().includes('保存设置'))!.trigger('click')
+ await field.setValue('Tokyo')
+ saved.resolve({...clone(baseStatus),config:{...baseStatus.config,region_filter:'Singapore'}});await flushPromises()
+ expect((field.element as HTMLInputElement).value).toBe('Tokyo')
+ expect(wrapper.find('.auto-pick-dirty').exists()).toBe(true)
+ wrapper.unmount()
+})

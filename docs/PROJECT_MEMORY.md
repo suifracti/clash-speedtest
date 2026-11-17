@@ -156,6 +156,8 @@ Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 
 
 `6128b16`、`fa74fc6` 在 `application/local_notifications.go` 中支持故障率、低余量、到期三类阈值提醒（包含 `completed_with_issues` / `completed_with_save_failures` 批次），仅在设置变更与每 5 分钟轮询检查，相同告警本机去重、恢复后才可再提醒；勾选开启时先调 `requestAuthorization`，系统拒绝则保持关闭并提示打开系统通知设置。
 
+2026-11-18 监测 UI 核对补充：首次巡检/精选读取失败必须显示状态未知，保留读数的后续失败标明旧状态，不能沿默认布尔值写“未启动/关闭”。保护暂停时 `config.enabled` 仍可能为真，停止按钮须允许关闭已保存计划。状态轮询与节点最后检测读取沿 generation 隔离，保存/停止或切节点后，旧响应不得覆盖新状态。自动精选保存时固定提交快照，等待期间继续编辑的表单保留；未成功读取配置前不可用默认值覆盖保存。离线回归先复现以上边界，相关 73 项通过。创建监测仍按独立订阅拆任务，部分成功续建不重复，冻结范围不随订阅更新扩张。
+
 ## L-013 解锁探测判据（Netflix / YouTube / AI / Disney+）与出口 IP 类型多数票
 
 适用：维护 `core/publicservice` 解锁规则、排查误判送中或 DoH 超时、解释出口 IP 类型（机房/家宽/移动、原生/广播）及机房限制提示。

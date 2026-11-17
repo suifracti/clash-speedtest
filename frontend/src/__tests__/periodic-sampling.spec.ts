@@ -6,7 +6,7 @@ vi.mock('../api',()=>({api:{periodicSampling:vi.fn(),configurePeriodicSampling:v
 const config={enabled:false,latency_interval_seconds:120,service_interval_seconds:300,download_interval_seconds:3600,download_mib:10,service_concurrency:16,include_antigravity:true}
 const status={config,running:false,node_count:258,service_count:82,monitor_job_ids:[],cycles:{}}
 let wrapper:VueWrapper|undefined
-afterEach(()=>{wrapper?.unmount();vi.clearAllMocks()})
+afterEach(()=>{wrapper?.unmount();vi.clearAllMocks();vi.useRealTimers()})
 describe('periodic sampling controls',()=>{
  it('saves all-node schedules and the selected byte bound through the service',async()=>{
   vi.mocked(api.periodicSampling).mockResolvedValue(status)
@@ -63,4 +63,46 @@ it('keeps missing last-check data unknown and shows competition beside real resu
  const rows=wrapper.findAll('tbody tr')
  expect(rows[0].text()).toContain('无实际结果');expect(rows[0].text()).toContain('未知');expect(rows[0].text()).not.toContain('matched')
  expect(rows[1].text()).toContain('matched');expect(rows[1].text()).toContain('竞争：download')
+})
+
+function pending<T>(){let resolve!:(value:T)=>void;const promise=new Promise<T>(yes=>{resolve=yes});return {promise,resolve}}
+it('keeps unread status unknown and provides a status retry',async()=>{
+ vi.mocked(api.periodicSampling).mockRejectedValueOnce(new Error('status offline')).mockResolvedValue(status)
+ wrapper=mount(PeriodicSamplingPanel);await flushPromises()
+ expect(wrapper.get('.periodic-head .badge').text()).toContain('状态未知')
+ await wrapper.get('[data-test="refresh-status"]').trigger('click');await flushPromises()
+ expect(wrapper.get('.periodic-head .badge').text()).toBe('未启动')
+})
+it('can disable a saved schedule while capacity protection has paused its runner',async()=>{
+ vi.mocked(api.periodicSampling).mockResolvedValue({...status,config:{...config,enabled:true},pause_reason:'storage protected'})
+ vi.mocked(api.configurePeriodicSampling).mockResolvedValue(status)
+ wrapper=mount(PeriodicSamplingPanel);await flushPromises()
+ expect(wrapper.get('[data-test="stop"]').attributes('disabled')).toBeUndefined()
+ await wrapper.get('[data-test="stop"]').trigger('click');await flushPromises()
+ expect(api.configurePeriodicSampling).toHaveBeenCalledWith(config)
+})
+it('ignores a pending status poll that returns after the schedule was stopped',async()=>{
+ vi.useFakeTimers({toFake:['setInterval','clearInterval']})
+ const running={...status,running:true,config:{...config,enabled:true}},old=pending<typeof status>()
+ vi.mocked(api.periodicSampling).mockResolvedValueOnce(running).mockReturnValueOnce(old.promise)
+ vi.mocked(api.configurePeriodicSampling).mockResolvedValue(status)
+ wrapper=mount(PeriodicSamplingPanel);await flushPromises();await vi.advanceTimersByTimeAsync(10000)
+ await wrapper.get('[data-test="stop"]').trigger('click');await flushPromises()
+ old.resolve(running);await flushPromises()
+ expect(wrapper.get('.periodic-head .badge').text()).toBe('未启动')
+})
+it('does not let an earlier node check replace a later selected node',async()=>{
+ vi.mocked(api.periodicSampling).mockResolvedValue(status)
+ const nodes=['a','b','c'].map(id=>({profile_id:'p',profile_name:'Account',node_key:id,node_identity_key:id,config_revision_key:'r',display_name:id,type:'http',country_code:'US',country_flag:''}))
+ const result=(i:number)=>({nodes,node:nodes[i],checks:[{service_id:'test',name:'Evidence '+nodes[i].node_key,last_detected_at:null,execution:'unknown',persistence:'not_applicable',outcome:'unknown'}]})
+ const old=pending<ReturnType<typeof result>>()
+ vi.mocked(api.periodicChecks).mockImplementation(async(_profile,node)=>node==='b'?old.promise:result(node==='c'?2:0))
+ wrapper=mount(PeriodicSamplingPanel);await flushPromises()
+ const detail=wrapper.get('details');detail.element.setAttribute('open','');await detail.trigger('toggle');await flushPromises()
+ await wrapper.get('.periodic-checks-toolbar select').setValue('p\u0000b')
+ await wrapper.get('.periodic-checks-toolbar select').setValue('p\u0000c');await flushPromises()
+ old.resolve(result(1));await flushPromises()
+ expect((wrapper.get('.periodic-checks-toolbar select').element as HTMLSelectElement).value).toBe('p\u0000c')
+ expect(wrapper.get('tbody').text()).toContain('Evidence c')
+ expect(wrapper.get('tbody').text()).not.toContain('Evidence b')
 })
