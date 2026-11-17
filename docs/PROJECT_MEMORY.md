@@ -75,7 +75,9 @@
 - **握手/连接与正文传输分离计时**：`download_stream.go` 不再共享单个 `http.Client.Timeout`，改为 `connectTimer`（`localClient.Do`）与 `bodyTimer`（进入 `response_body` 后启动）各自独立享有 `MaximumDuration`，同时将 `application/bounded_deadline.go` 的 `newWorkbenchDownloadLifecycleContext` 上限倍增至 `2 * MaximumDownloadStreamTimeout`、任务级超时传 `2 * timeoutSeconds`，防止冷启动建连/TLS 慢挤压有效响应体传输时间。
 - **稳态 / 峰值 / 全程均速并列展示**：`frontend/src/domain.ts` 将主速度 `downloadSpeed` 调整为优先取 `response_body` 后段稳态速率（当 `response_body >= 2s` 且有效采样点 $\ge 2$ 时，截取覆盖尾部至少 1.0 秒且占比 $\ge 40\%$ 总字节数的采样段去除 TCP 慢启动预热），并用 `downloadAverageSpeed`（全程均速 `bytes_read / response_body`）与 `downloadPeakSpeed`（采样切片峰值）分别呈现于工作台、`NodeInspector.vue` 与 `MeasurementResults.vue`，不回改旧历史库。
 
-证据边界截至 2026-11-02。保存的四次实网结果均为直接选择 OVH，HTTP 206 且各收到 10 MiB。403/429 后自动换源由离线测试覆盖，这四次实测不能替代该路径的现场验证。原生截图只确认选源页面，不能当作四节点结果截图。本轮只复读已有实现差异与脱敏记录，未重新测速或核实当前运行包。
+2026-11-18 补充（末尾停滞与推荐排序）：后端采样器仅在新增字节时写采样，最后一条采样的时间不一定是正文传输结束。原 `downloadSpeed` 用最后采样当尾部终点，导致 4 秒收到 10 MiB、再停滞 11 秒的 `time_limit` 记录仍展示停滞前的高速，并可能排在持续下载节点前面。现以 `response_body` 完整时长和最终 `bytes_read` 作为尾部窗口终点；保持去慢启动的窗口条件、全程均速、实际采样峰值和无采样旧记录回退，不补造采样或改历史库。离线速度用例与推荐排序用例先复现后修复，原慢启动用例保留；工作台、检查器、记录和推荐共同复用该函数。
+
+2026-11-02 历史证据边界：当时保存的四次实网结果均为直接选择 OVH，HTTP 206 且各收到 10 MiB。403/429 后自动换源由离线测试覆盖，这四次实测不能替代该路径的现场验证。原生截图只确认选源页面，不能当作四节点结果截图。11-15 证据见后续增量覆盖；11-18 本次仅离线验证，没有重新测速或核实当前运行包。
 
 ## L-005 从 Clash Verge 同步订阅时保留账户关联并支持同步名称
 

@@ -2,6 +2,20 @@ import {expect,it} from 'vitest'
 import {recommend} from '../recommendations'
 import {key,type Attempt,type LatencyTest,type NodeOption,type ServiceRule} from '../domain'
 import type {QualityEvidence} from '../nodeQuality'
+it('ranks continuous download ahead of an initial burst followed by a timeout stall',()=>{
+ const nodes=['burst','continuous'].map(id=>({profile_id:'p',node_key:id,node_identity_key:id,config_revision_key:'r',display_name:id,profile_name:'P',type:'ss',country_code:'',country_flag:''}) satisfies NodeOption)
+ const at='2026-11-18T00:00:00Z',mib=1048576
+ const data=Object.fromEntries(nodes.map((node,i)=>{
+  const download:Attempt={...node,attempt_id:node.node_key,request_id:node.node_key,requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://download.example/file',method:'GET',rule_version:3,maximum_bytes:20*mib,maximum_duration_ns:15e9},result:{outcome:'time_limit',finished_at:at,bytes_read:(i?15:10)*mib,phase_timings_ns:{response_body:15e9},samples:i?[
+   {elapsed_ns:5e9,cumulative_bytes:5*mib},{elapsed_ns:10e9,cumulative_bytes:10*mib},{elapsed_ns:15e9,cumulative_bytes:15*mib},
+  ]:[{elapsed_ns:1e9,cumulative_bytes:1*mib},{elapsed_ns:2e9,cumulative_bytes:10*mib}]}}
+  return [key(node),{tests:[],monitor:[],downloads:[download],services:[],reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true,since:at,until:at}]
+ })) as Record<string,QualityEvidence>
+ const result=recommend(nodes,data,[]).download
+ expect(result.map(c=>c.node.node_key)).toEqual(['continuous','burst'])
+ expect(result[0].score).toBeCloseTo(1)
+ expect(result[1].score).toBeCloseTo(10/15)
+})
 it('offers three evidenced AI candidates and drops unread or newly failed evidence',()=>{
  const nodes=Array.from({length:4},(_,i)=>({profile_id:'p',node_key:'n'+i,node_identity_key:'i'+i,config_revision_key:'r',display_name:'Node '+i,profile_name:'P',type:'ss',country_code:'',country_flag:''}) satisfies NodeOption)
  const at='2026-10-20T10:00:00Z',catalog=[{service_id:'ai',category:'AI 服务',name:'AI',result_kind:'account_availability'}] as ServiceRule[]

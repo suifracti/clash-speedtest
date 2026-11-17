@@ -69,10 +69,12 @@ export function downloadPeakSpeed(a:Attempt|undefined){
 export function downloadSpeed(a:Attempt|undefined){
   const avg=downloadAverageSpeed(a),r=a?.result,samples=r?.samples,bodyNS=r?.phase_timings_ns?.response_body
   if(avg===null||!r||!samples||samples.length<2||!bodyNS||bodyNS<2e9)return avg
-  const pts=[{t:0,b:0},...samples.map(s=>({t:s.elapsed_ns,b:s.cumulative_bytes}))],last=pts[pts.length-1]
+  // Samples only advance when bytes arrive. Use the full observed body interval
+  // as the tail endpoint, including time spent stalled before a timeout.
+  const last={t:Math.max(bodyNS,samples[samples.length-1].elapsed_ns),b:r.bytes_read}
   let best=avg
-  for(let i=1;i<pts.length-1;i++){
-    const dt=last.t-pts[i].t,db=last.b-pts[i].b
+  for(const sample of samples){
+    const dt=last.t-sample.elapsed_ns,db=last.b-sample.cumulative_bytes
     if(dt>=1e9&&db>=r.bytes_read*0.4){const v=db/1048576/(dt/1e9);if(v>best)best=v}
   }
   return best

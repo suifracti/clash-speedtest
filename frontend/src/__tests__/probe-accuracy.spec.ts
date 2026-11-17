@@ -26,6 +26,19 @@ it('calculates download speed using the recorded response body time',()=>{
  expect(downloadSpeed(slowStart)).toBeCloseTo(7.5)
  expect(downloadPeakSpeed(slowStart)).toBeCloseTo(7.5)
 })
+it('includes a stalled tail in sustained speed without erasing the measured peak',()=>{
+ const stalled:Attempt={...a,result:{...a.result!,outcome:'time_limit',bytes_read:10*1048576,phase_timings_ns:{response_body:15e9},samples:[
+  {elapsed_ns:1e9,cumulative_bytes:2.5*1048576},
+  {elapsed_ns:2e9,cumulative_bytes:5*1048576},
+  {elapsed_ns:3e9,cumulative_bytes:7.5*1048576},
+  {elapsed_ns:4e9,cumulative_bytes:10*1048576},
+ ]}}
+ // Constant 2.5 MiB/s for four seconds, then no bytes for the final 11 seconds.
+ expect(downloadAverageSpeed(stalled)).toBeCloseTo(10/15)
+ expect(downloadSpeed(stalled)).toBeCloseTo(10/15)
+ expect(downloadPeakSpeed(stalled)).toBeCloseTo(2.5)
+ expect(stalled.result!.samples).toHaveLength(4)
+})
 it('does not merge declared physical routing with actually verified socket routing',()=>{
  const verified={...a,result:{...a.result!,network_path:{method:'physical_socket_v1',dns_bind_verified:true,socket_bind_verified:true,tcp_bindings:1,udp_bindings:0}}}
  expect(downloadCondition(a)).not.toBe(downloadCondition(verified))
