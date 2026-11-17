@@ -67,11 +67,13 @@ it('shows the previous service result and reports a comparison read failure',asy
 
 it('shows the download speed change for the same conditions',async()=>{
   w.project.value='download'
-  const make=(id:string,size:number)=>({...attempt(id,'byte_limit'),node_type:'ss',rule:{target_url:'https://download.example',method:'GET',rule_version:1,maximum_bytes:10485760,maximum_duration_ns:10000000000,network_path_method:'physical_socket_v1',physical_interface:'en0',dns_mode:'physical'},result:{outcome:'byte_limit',bytes_read:size,duration_ns:1000000000,phase_timings_ns:{response_body:1000000000},finished_at:time,network_path:{method:'physical_socket_v1',interface:'en0',dns_mode:'physical',dns_bind_verified:true,socket_bind_verified:true,tcp_bindings:1,udp_bindings:0,address_family:'ipv4',address_source:'dns'}}})
+  const make=(id:string,size:number)=>({...attempt(id,'byte_limit'),trigger_type:'manual',round_id:'recorded-round',node_type:'ss',rule:{target_url:'https://download.example',method:'GET',rule_version:1,maximum_bytes:10485760,maximum_duration_ns:10000000000,network_path_method:'physical_socket_v1',physical_interface:'en0',dns_mode:'physical'},result:{outcome:'byte_limit',bytes_read:size,duration_ns:1000000000,phase_timings_ns:{response_body:1000000000},finished_at:time,network_path:{method:'physical_socket_v1',interface:'en0',dns_mode:'physical',dns_bind_verified:true,socket_bind_verified:true,tcp_bindings:1,udp_bindings:0,address_family:'ipv4',address_source:'dns'}}})
   vi.mocked(api.attemptHistory).mockResolvedValue({attempts:[make('now',2097152)],has_more:false,complete:true});vi.mocked(api.previousAttempt).mockResolvedValue(make('old',1048576))
   wrapper=mount(NodeDetailModal,{props:{node},attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
   Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(b=>b.textContent==='详情')!.click();await flushPromises()
   expect(document.querySelector('[aria-label="和上次比"]')?.textContent).toContain('增加 1.00 MiB/s')
+  expect(document.querySelector('.selected-record-meta')?.textContent).toContain('手动 · 轮次 recorded-round')
+  expect(document.querySelector('.measurement-detail')?.textContent).not.toContain('来源未知')
 })
 
 it('opens the requested service evidence without changing the workbench service selection',async()=>{
@@ -125,4 +127,47 @@ it.each(['manual','monitor'] as const)('opens the report time window and explici
  if(source==='manual'){expect(api.latencyHistory).toHaveBeenCalledWith(expect.objectContaining({profile_id:node.profile_id,config_revision_key:node.config_revision_key}),expect.objectContaining({until}));expect(api.monitorSamples).not.toHaveBeenCalled()}
  else{expect(api.monitorSamples).toHaveBeenCalledWith(expect.objectContaining({profile_id:node.profile_id,config_revision_key:node.config_revision_key,probe_type:'rtt',until}));expect(api.latencyHistory).not.toHaveBeenCalled()}
  expect(document.body.textContent).toContain('报告时段');expect(w.project.value).toBe('service');expect(w.serviceIds.value).toEqual(['service-a'])
+ Array.from(document.querySelectorAll<HTMLButtonElement>('dialog button')).find(b=>b.textContent?.trim()==='刷新')!.click();await flushPromises()
+ if(source==='manual')expect(api.latencyHistory).toHaveBeenLastCalledWith(expect.any(Object),expect.objectContaining({until}))
+ else expect(api.monitorSamples).toHaveBeenLastCalledWith(expect.objectContaining({until}))
+})
+
+
+it('offers the only saved older revision when the current configuration has no saved history',async()=>{
+ const older={...node,node_key:'older-key',config_revision_key:'older-only',last_observed_at:time}
+ w.nodes.value=[node]
+ vi.mocked(api.revisions).mockResolvedValue([older])
+ vi.mocked(api.attemptHistory).mockResolvedValue({attempts:[],has_more:false,complete:true})
+ wrapper=mount(NodeDetailModal,{props:{node},attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
+ const select=Array.from(document.querySelectorAll<HTMLSelectElement>('dialog select')).find(select=>Array.from(select.options).some(option=>option.value==='older-only'))
+ expect(select).toBeDefined()
+ select!.value='older-only';select!.dispatchEvent(new Event('change',{bubbles:true}));await flushPromises()
+ expect(api.attemptHistory).toHaveBeenLastCalledWith('service',expect.objectContaining({profile_id:node.profile_id,node_key:'older-key',node_identity_key:node.node_identity_key,config_revision_key:'older-only'}),expect.any(Object))
+ expect(document.body.textContent).toContain('正在看历史配置')
+})
+
+it('reports revision discovery failure and can retry without discarding available records',async()=>{
+ vi.mocked(api.revisions).mockRejectedValueOnce(new Error('revision list unavailable')).mockResolvedValueOnce([{...node,node_key:'older-key',config_revision_key:'older-only',last_observed_at:time}])
+ vi.mocked(api.attemptHistory).mockResolvedValue({attempts:[attempt('current','matched')],has_more:false,complete:true})
+ wrapper=mount(NodeDetailModal,{props:{node},attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
+ expect(document.body.textContent).toContain('revision list unavailable')
+ expect(wrapper.findComponent(TrendChart).props('points')).toHaveLength(1)
+ Array.from(document.querySelectorAll<HTMLButtonElement>('dialog button')).find(b=>b.textContent?.trim()==='重试读取配置')!.click();await flushPromises()
+ expect(document.body.textContent).not.toContain('revision list unavailable')
+ expect(Array.from(document.querySelectorAll<HTMLOptionElement>('dialog option')).some(option=>option.value==='older-only')).toBe(true)
+ expect(api.attemptHistory).toHaveBeenCalledTimes(1)
+})
+
+
+it('keeps a removed service label selectable and does not turn a history read failure into an empty history',async()=>{
+ vi.mocked(api.attemptHistory).mockRejectedValueOnce(new Error('saved records unavailable')).mockResolvedValueOnce({attempts:[attempt('old-service','matched')],has_more:false,complete:true})
+ wrapper=mount(NodeDetailModal,{props:{node},attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
+ expect(document.body.textContent).toContain('saved records unavailable')
+ expect(document.body.textContent).not.toContain('这个范围还没有检测记录')
+ expect(document.body.textContent).not.toContain('当前范围没有记录')
+ const select=document.querySelector<HTMLSelectElement>('select[aria-label="历史服务项目"]')!
+ expect(select.selectedOptions[0].textContent).toContain('service-a（历史项目）')
+ Array.from(document.querySelectorAll<HTMLButtonElement>('dialog button')).find(b=>b.textContent?.trim()==='刷新')!.click();await flushPromises()
+ expect(select.selectedOptions[0].textContent).toContain('Service A（历史项目）')
+ expect(wrapper.findComponent(TrendChart).props('points')).toHaveLength(1)
 })
