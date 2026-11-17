@@ -160,8 +160,9 @@ it('does not turn cancellation, missing results or save failure into successful 
  w.absorbBatch({batch_id:'batch-a',request_id:'request-a',state:'completed',requested_at:result.requested_at,item_count:3,items})
  attach(QueueModal)
  const badges=Array.from(document.querySelectorAll('.queue-row .badge'))
- expect(badges.map(b=>b.textContent)).toEqual(['已取消','已结束 · 无采样','保存失败'])
- expect(badges.every(b=>!b.classList.contains('good'))).toBe(true)
+ expect(badges.map(b=>b.textContent)).toEqual(['已取消','已结束 · 无采样','已响应 · 1/1'])
+ expect(badges.slice(0,2).every(b=>!b.classList.contains('good'))).toBe(true)
+ expect(document.querySelectorAll('.cst-queue-save')[2]?.textContent).toContain('保存失败')
  expect(document.querySelector('.queue-counts')?.textContent).toContain('保存失败 1')
  expect(document.body.textContent).toContain('重试保存')
 })
@@ -188,7 +189,7 @@ it('shows exact download outcomes and speeds instead of green task completion',(
  w.queue.value=[success,failed,timeout,rateLimited,saveFailed].map(a=>({id:a.attempt_id,node,project:'download',state:a.execution_state,attempt:a,error:a.persistence_error||a.result?.error_message}))
  attach(QueueModal)
  const rows=Array.from(document.querySelectorAll('.queue-row')).map(el=>new DOMWrapper(el))
- expect(rows).toHaveLength(4);expect(document.querySelector('.queue-counts')?.textContent).toContain('已成功 1')
+ expect(rows).toHaveLength(4);expect(document.querySelector('.queue-counts')?.textContent).toContain('已成功 2')
  expect(rows[0].find('.badge').text()).toBe('连接或读取失败 · 未确认')
  expect(rows[0].find('.badge').classes()).not.toContain('good')
  expect(rows[0].find('.badge').classes()).toContain('warn')
@@ -197,8 +198,8 @@ it('shows exact download outcomes and speeds instead of green task completion',(
  expect(rows[1].find('.badge').classes()).toContain('warn')
  expect(rows[2].find('.badge').text()).toBe('下载源限流')
  expect(rows[2].find('.badge').classes()).toContain('warn')
- expect(rows[3].find('.badge').text()).toBe('保存失败')
- expect(rows[3].find('.badge').classes()).toContain('bad')
+ expect(rows[3].find('.badge').text()).toContain('5.00 MiB/s')
+ expect(rows[3].find('.cst-queue-save').text()).toContain('保存失败')
  expect(rows[3].text()).toContain('重试保存')
 })
 
@@ -259,4 +260,54 @@ it('sends more than 200 nodes in one latency batch',async()=>{
  expect((vi.mocked(api.startLatency).mock.calls[0][0] as any).selections).toHaveLength(208)
  expect(w.latestReportBatch.value?.items).toHaveLength(208)
  expect(new Set(w.queue.value.map(q=>q.batchId))).toEqual(new Set(['one-batch']))
+})
+
+
+it('keeps completed measurements visible while saving and retains their result after a failed save',async()=>{
+ const at='2026-11-18T01:00:00Z'
+ const attempt:Attempt={...node,attempt_id:'saving-result',request_id:'saving-request',service_id:'cloudflare_204',requested_at:at,execution_state:'completed',persistence_state:'saving',rule:{target_url:'https://fixture.invalid/'},result:{outcome:'matched',bytes_read:0,http_status:204,finished_at:at}}
+ w.queue.value=[{id:attempt.request_id,node,project:'service',state:'completed',attempt}]
+ attach(QueueModal)
+ expect(document.querySelector('.queue-row .badge')?.textContent).toBe('通过')
+ expect(document.querySelector('.cst-queue-save')?.textContent).toContain('保存中')
+ w.queue.value[0].attempt={...attempt,persistence_state:'failed',persistence_error:'disk temporarily unavailable'}
+ w.queue.value[0].error='disk temporarily unavailable'
+ await flushPromises()
+ expect(document.querySelector('.queue-row .badge')?.textContent).toBe('通过')
+ expect(document.querySelector('.cst-queue-save')?.textContent).toContain('保存失败')
+ expect(document.querySelector('.cst-queue-save')?.textContent).toContain('disk temporarily unavailable')
+ expect(document.querySelector('.cst-queue-node')?.textContent).not.toContain('连接失败')
+ expect(api.startAttempt).not.toHaveBeenCalled()
+})
+
+it('allows reviewing queued and completed items without dispatching another measurement',async()=>{
+ const attempt:Attempt={...node,attempt_id:'complete',request_id:'complete',service_id:'cloudflare_204',requested_at:'2026-11-18T01:00:00Z',execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://fixture.invalid/'},result:{outcome:'matched',bytes_read:0,http_status:204,finished_at:'2026-11-18T01:00:01Z'}}
+ w.queue.value=[{id:'complete',node,project:'service',state:'completed',attempt},...Array.from({length:54},(_,i)=>({id:`waiting-${i}`,node:{...node,display_name:`Waiting ${i}`},project:'service' as const,state:'queued'}))]
+ attach(QueueModal)
+ expect(document.querySelectorAll('.queue-row')).toHaveLength(0)
+ button('全部项目').click();await flushPromises()
+ expect(document.querySelectorAll('.queue-row')).toHaveLength(50)
+ expect(document.querySelector('.queue-row')?.textContent).toContain('通过')
+ expect(document.body.textContent).toContain('Waiting 48')
+ button('下一页').click();await flushPromises()
+ expect(document.querySelectorAll('.queue-row')).toHaveLength(5)
+ expect(document.body.textContent).toContain('Waiting 53')
+ button('进行中与需留意').click();await flushPromises()
+ expect(document.querySelectorAll('.queue-row')).toHaveLength(0)
+ expect(api.startAttempt).not.toHaveBeenCalled();expect(api.startLatency).not.toHaveBeenCalled()
+})
+
+it('does not show a progress bar before latency admission is confirmed and separates the saving phase',async()=>{
+ w.running.value=true
+ w.queue.value=[{id:'unknown',node,project:'latency',state:'running'}]
+ w.pendingStart.value={kind:'latency',requestId:'unknown',body:{}}
+ attach(QueueModal)
+ expect(document.body.textContent).toContain('正在确认启动状态')
+ expect(document.querySelector('.progress-track')).toBeNull()
+ w.pendingStart.value=null;w.running.value=false
+ w.activeBatch.value={batch_id:'saving',request_id:'unknown',state:'saving',requested_at:'2026-11-18T01:00:00Z',item_count:1}
+ await flushPromises()
+ expect(document.body.textContent).toContain('正在保存结果')
+ expect(Array.from(document.querySelectorAll('dialog button')).some(b=>b.textContent?.includes('取消检测'))).toBe(false)
+ expect(document.querySelector('.progress-track')).not.toBeNull()
 })

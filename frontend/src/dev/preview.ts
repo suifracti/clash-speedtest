@@ -5,6 +5,8 @@ import type {Airport,NodeOption,LatencyTest,Attempt,Settings,MonitorJob,MonitorS
 import {latencyTargets} from '../latencyTargets'
 import {shanghaiDay,shiftDay} from '../usageDaily'
 if (!import.meta.env.DEV) throw new Error('UI preview is development-only')
+const queueScenario=new URL(location.href).searchParams.get('scenario')==='queue'
+const previewAttempts=new Map<string,Attempt>()
 const now=Date.now(),at=new Date(now-18*60_000).toISOString()
 const airports:Airport[]=['青屿','远山','白帆'].map((name,i)=>({id:`demo-airport-${i}`,name:`${name} · 示例`,url_display:'example.invalid',node_count:4,has_cache:true,updated_at:at,subscriptions:[{id:`demo-account-${i}`,airport_id:`demo-airport-${i}`,name:i===0?'日常套餐':i===1?'备用套餐':'旅行套餐',url_display:'https://example.invalid/…',url_configured:true,node_count:4,has_cache:true,updated_at:at,usage:{upload:i===2?null:3*2**30,download:(30+i*19)*2**30,total:200*2**30,expire:Math.floor(now/1000)+86400*(23-i*7),updated_at:at}}]}))
 const regions=['HK','JP','SG','US'],names=['香港 · 日常 01','日本 · 东京 02','新加坡 · 狮城 03','美国 · 西岸 04']
@@ -28,6 +30,24 @@ const page=(items:unknown[],kind='tests')=>({[kind]:items,has_more:false,complet
 function matching<T extends {profile_id:string;node_key:string;node_identity_key?:string;config_revision_key?:string}>(items:T[],q:URLSearchParams|Record<string,unknown>){const get=(k:string)=>q instanceof URLSearchParams?q.get(k):q[k];return items.filter(n=>(!get('profile_id')||n.profile_id===get('profile_id'))&&(!get('node_key')||n.node_key===get('node_key'))&&(!get('node_identity_key')||n.node_identity_key===get('node_identity_key'))&&(!get('config_revision_key')||n.config_revision_key===get('config_revision_key')))}
 async function handle(url:URL,body:any,method:string):Promise<unknown>{
  const p=url.pathname,q=url.searchParams
+ // Optional interactive queue demonstration; every result stays in memory.
+ if(queueScenario){
+  if(p==='/api/measurement-rounds'&&method==='POST')return body
+  if(p.startsWith('/api/measurement-rounds/')&&p.endsWith('/finish'))return {state:body.state}
+  if(p==='/api/workbench/download-tests'&&method==='POST'){
+   const n=matching(nodes,body)[0];if(!n)throw new Error('示例节点不存在')
+   const i=previewAttempts.size,finished=i<2,a:Attempt={...downloads[0],...n,attempt_id:`preview-attempt-${i}`,request_id:body.request_id,requested_at:new Date().toISOString(),execution_state:finished?'completed':'running',persistence_state:i===1?'failed':finished?'saved':'pending',persistence_error:i===1?'示例：暂时无法写入记录，测量结果仍保留':undefined,result:finished?{...downloads[0].result!,finished_at:new Date().toISOString()}:undefined}
+   previewAttempts.set(a.attempt_id,a);return a
+  }
+  if(p.startsWith('/api/workbench/download-tests/')){
+   const parts=p.split('/'),a=previewAttempts.get(decodeURIComponent(parts[4]||''))
+   if(a){
+    if(parts[5]==='retry-save'){a.persistence_state='saved';delete a.persistence_error}
+    if(parts[5]==='cancel'){a.execution_state='cancelled';a.persistence_state='saved';a.finished_at=new Date().toISOString();a.result={outcome:'user_cancelled',bytes_read:0,finished_at:a.finished_at}}
+    return a
+   }
+  }
+ }
  if(p==='/api/auth/status')return {auth_required:false,authenticated:true}
  if(p==='/api/profile/setup')return {state:'ready',initialized:true,data_root:'界面预览 · 内存数据',profile_dir:'不读取真实目录',history_dir:'不读取真实历史',settings_file:'仅当前预览',schema_version:11,migration:{state:'isolated',target_history_dir:''}}
  if(p==='/api/airports')return airports
@@ -41,7 +61,7 @@ async function handle(url:URL,body:any,method:string):Promise<unknown>{
  if(p==='/api/workbench/entries')return {entries:[],local_position:null}
  if(p==='/api/workbench/latency-tests/query')return body.nodes.map((n:any)=>page(matching(tests,n)))
  if(p==='/api/workbench/latency-tests')return page(matching([...tests,archivedTest],q))
- if(p==='/api/workbench/download-tests')return page(matching(downloads,q),'attempts')
+ if(p==='/api/workbench/download-tests')return page(matching([...previewAttempts.values(),...downloads],q),'attempts')
  if(p==='/api/workbench/public-service-tests')return page(matching(services,q).filter(a=>!q.get('service_id')||a.service_id===q.get('service_id')),'attempts')
  if(p.endsWith('/previous'))return null
  if(p==='/api/history/node-revisions')return [...new Map(matching([...nodes,...tests,archivedTest,...downloads,...services],q).map(n=>[n.config_revision_key,{...n,last_observed_at:at}])).values()]
@@ -83,6 +103,6 @@ window.fetch=async(input,init)=>{
 class PreviewEvents {onopen:((event:Event)=>void)|null=null;onerror=null;onmessage=null;constructor(){queueMicrotask(()=>this.onopen?.(new Event('open')))}close(){}}
 window.EventSource=PreviewEvents as unknown as typeof EventSource
 document.documentElement.dataset.uiPreview='true'
-const notice=document.createElement('div');notice.className='preview-notice';notice.textContent='界面预览 · 所有机场、节点和记录均为合成数据';document.body.append(notice)
+const notice=document.createElement('div');notice.className='preview-notice';notice.textContent=queueScenario?'检测流程演示 · 仅使用内存中的合成结果':'界面预览 · 所有机场、节点和记录均为合成数据';document.body.append(notice)
 const style=document.createElement('style');style.textContent='.preview-notice{position:fixed;bottom:10px;left:50%;transform:translateX(-50%);z-index:99999;font:11px system-ui;padding:6px 14px;border:1px solid #ccc;background:#fff9e7;color:#625230;border-radius:20px;pointer-events:none}';document.head.append(style)
 void import('../main')
