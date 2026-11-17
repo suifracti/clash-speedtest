@@ -35,7 +35,16 @@ async function compareWithClash(){
 }
 // Read the widest range once and filter for the selector locally, so switching
 // 24 hours / 7 days / 30 days never hits the history API again.
-watch([()=>props.node&&key(props.node),()=>props.series.flatMap(s=>s.points.map(p=>p.id)).join('|')],async()=>{if(!props.node)return;const token=++generation;loading.value=true;error.value='';try{const result=await readLatencyHistoryWithConfig(props.node,720);if(token===generation){saved.value=result.series;changes.value=result.changes}}catch(e){if(token===generation)error.value=e instanceof Error?e.message:String(e)}finally{if(token===generation)loading.value=false}},{immediate:true})
+watch([()=>props.node?`${key(props.node)}\u0000${props.node.node_key}\u0000${props.node.display_name}`:'',()=>props.series.flatMap(s=>s.points.map(p=>p.id)).join('|')],async(current,previous)=>{
+ const token=++generation,node=props.node
+ if(current[0]!==previous?.[0]){saved.value=null;changes.value=[]}
+ error.value=''
+ if(!node){loading.value=false;return}
+ loading.value=true
+ try{const result=await readLatencyHistoryWithConfig(node,720);if(token===generation){saved.value=result.series;changes.value=result.changes}}
+ catch(e){if(token===generation)error.value=e instanceof Error?e.message:String(e)}
+ finally{if(token===generation)loading.value=false}
+},{immediate:true})
 const historySeries=computed(()=>{const since=Date.now()-hours.value*3600000;return (saved.value||props.series).map(s=>({...s,points:s.points.filter(p=>Date.parse(p.time)>=since)}))})
 const visibleChanges=computed(()=>changes.value.filter(c=>Date.parse(c.time)>=Date.now()-hours.value*3600000))
 const combined=computed(()=>props.series.map(s=>({...s,points:[...new Map([...(saved.value?.find(v=>v.id===s.id)?.points||[]),...s.points.flatMap(p=>p.latencyTests?.length?p.latencyTests.map(t=>({...manualLatencyPoint(t,s.id),...(p.oldConfig?{oldConfig:true}:{})})):[p]),...(props.focus?[{...manualLatencyPoint(props.focus.test,s.id),id:props.focus.id,source:props.focus.test.source==='monitor'?'monitor' as const:'manual' as const}]:[])].map(p=>[p.id,p])).values()]})))

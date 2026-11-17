@@ -16,7 +16,7 @@
 | Clash Verge 更新订阅后不想重填链接；关联已有账户 | L-005；application/verge_subscriptions.go |
 | 某解锁服务只想测指定地区或排除指定地区；Antigravity 批量风险与连接耗时 | L-006；frontend/src/unlock.ts；core/autopick/autopick.go；frontend/src/components/QueueModal.vue |
 | 手动刷新被 30 分钟冷却拦住；订阅代理/直连/物理重试原因、换链接后今日与 14 天用量断掉 | L-007；application/subscription_refresh.go；application/subscription_usage.go；core/subscriptionusage/continuity.go |
-| 延迟大批量卡顿或分段；工作台/检查器/报告结论不一致；订阅更新后同名节点 7 天指标丢失；双栈回退后一直走 IPv6 | L-008；core/history/latency_batch_progress.go；frontend/src/latencyHistory.ts；frontend/src/latencyReport.ts；core/speedtester/physical_family_darwin.go |
+| 延迟大批量卡顿或分段；工作台/检查器/报告结论不一致；订阅更新后同名节点 7 天指标丢失、旧批次超过 30 条漏历史；双栈回退后一直走 IPv6 | L-008；core/history/latency_scopes.go；core/history/latency_batch_progress.go；frontend/src/latencyHistory.ts；frontend/src/latencyReport.ts；core/speedtester/physical_family_darwin.go |
 | Windows 启动报 build tags 或 WebView2 句柄错误；Node 26 跑前端测试报 localStorage；新数据目录显示本地服务未连接 | L-009；frontend/src/workspace.ts；scripts/prepare-legacy-assets.mjs |
 | SQLite 外键/busy_timeout 在连接池失效；Windows 盘符 URI 报错；v11 升级备份与历史清理中断 | L-010；core/history/db.go；core/history/sqlite_uri.go；core/history/upgrade_backup.go；cmd/history-orphans/main.go |
 | 同配置 YAML 别名节点在延迟批次被跳过；VLESS pcs/vcn 特殊 TLS 导出失真；推荐/体检漏读旧 revision | L-011；core/speedtester/speedtester.go；core/speedtester/vless_tls.go；application/export.go；frontend/src/nodeQuality.ts |
@@ -57,6 +57,8 @@
 下次检查：用已存记录及相关用例解释真正阶段、条件和未知项；不能为解释失败自动发起全量实网、付费调用或修改运行代理状态。真实个人配置/节点信息只留私人位置，公开记忆写脱敏行为要求。
 
 体检切换机场的异步读取需在启动时固定机场和节点范围，并沿用已有 generation 模式，只让最新请求写回数据、月费、错误和忙状态。旧机场响应晚到会覆盖当前结果，不能因此认定当前机场没有历史。`frontend/src/components/AirportReport.vue` 已处理，回归用例位于 `airport-report.spec.ts`，离线模拟新请求先完成、旧请求后返回。
+
+2026-11-18 同类边界：`home/InspectorLatency.vue` 原只阻止旧请求回写，却没有在切换节点时清除已经读取的 `saved` 历史，新请求等待或失败时会显示上一节点的数值。现在按完整节点范围及显示名切换清除旧历史和变化标记，无节点时也使旧 generation 失效；同节点刷新可保留已有历史。`inspector-latency-round.spec.ts` 已先复现“切到 B 仍显示 A 的 123 ms”再验证修复。
 
 ## L-004 下载短响应、计速与备用源要分开判断
 
@@ -109,7 +111,9 @@
 
 `4657444`、`ee35394`、`ccfb073`、`99a57f8` 移除前端 200 节点分段，每轮延迟作为单批次提交（后端上限 10000，默认并发 16）；运行中由 `core/history/latency_batch_progress.go` 的 `GetLatencyBatchProgress`（`GET /api/workbench/latency-batches/{batch_id}/progress`）只读汇总计数，SSE 批次事件不携带全量节点明细，批次结束后一次读取完整结果并弹出报告。`f9903a6` 在 `application/workbench_latency_batch.go` 中将内部取消记为 `context_cancelled`、超时记为 `deadline_exceeded`，仅用户点击停止记为 `user_cancelled`。
 
-`059fd63`、`2f08443`、`fb6abca` 在 `frontend/src/latencyHistory.ts` 的 `readLatencyHistoryWithConfig` 中汇总同机场同名节点跨 `node_identity_key` / `config_revision_key` 的历史轮次：工作台 7 天响应率、波动和中位延迟默认保留同名节点的跨配置历史参与显示、排序与筛选（`LatencyChart.vue` 在新配置首次测速处画竖线标记“配置已变化”），检查器同时通过 `latencyHistorySplit` 区分 `current` 与 `old` 轮次；节点改名不猜测合并，底层历史 scope 不改写。
+`059fd63`、`2f08443`、`fb6abca` 在 `frontend/src/latencyHistory.ts` 的 `readLatencyHistoryWithConfig` 中汇总同订阅账户（`profile_id`）同名节点跨 `node_identity_key` / `config_revision_key` 的历史轮次：工作台 7 天响应率、波动和中位延迟默认保留同名节点的跨配置历史参与显示、排序与筛选（`LatencyChart.vue` 在新配置首次测速处画竖线标记“配置已变化”），检查器同时通过 `latencyHistorySplit` 区分 `current` 与 `old` 轮次；节点改名不猜测合并，底层历史 scope 不改写。同机场下不同订阅账户不能只因同名合并。
+
+2026-11-18 修正发现旧身份的入口：原来读取全局最近 30 个批次再永久缓存，导致更早批次、无批次的已保存记录、仅监测的旧身份及打开应用后的再次换入口漏读；失败还会缓存为空。现由 `core/history/latency_scopes.go` 直接查询已保存延迟与 RTT 样本，以准确 `profile_id`、显示名和 `[since, until)` 时间窗返回完整 `node_key/identity/revision`。时间资格沿原始样本判断，跨上界结束的轮次仍保留窗内采样；预检未执行沿结束时间。新增 Web `GET /api/history/latency-scopes` 和 Wails `ListLatencyHistoryScopes`，前端每次历史读取重新发现范围，错误显式传给既有界面，去重和变化标记使用完整范围而非仅 revision。复用原分页读记录，不迁移库、不修改历史或节点身份。SQLite/HTTP 临时数据测试覆盖账户、改名、时间边界、重复范围；前端覆盖旧身份、读失败恢复、后续新记录和 legacy revision 冲突。
 
 `f9903a6`、`4febe64`、`6a3f74e`、`8845c67` 统一工作台（`homeModel.ts` 的 `latencyVerdict`）、检查器（`inspectorLatency.ts`）与批次报告（`latencyReport.ts`）的判定优先级：单站 6 次全失败且其余站有响应优先判为橙色“部分站点不通”（`partialLatencySites`）；响应比例统一用 `latencyResponseUnstable`（不足 5/6 为“不稳定”，其余有失败为“偶有失败”）；稳定延迟超过 `latencySlowThresholdMs`（1500 ms）统一判为“偏慢”；失败原因展示具体超时/被拒绝/被重置/被关闭，HTTP 状态码 ≥300 计为已连通并单独统计站点拒绝。`ff4b28b` 在 `core/speedtester/physical_family_darwin.go` 的 `DialContext` 中仅在 IPv4 或 IPv6 实际连接成功后才置 `settled=true`（IPv6 成功时才置 `selectedIPv6=true` 并关闭 IPv4 适配器），双栈均失败（`ipv6_failed`）时保留 IPv4 供后续采样继续先试 IPv4。
 

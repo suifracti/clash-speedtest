@@ -276,6 +276,7 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("GET /api/monitor/timeline", s.handleGetNodeTimelineSamples)
 	mux.HandleFunc("GET /api/monitor/facets", s.handleGetMonitorFacets)
 	mux.HandleFunc("GET /api/history/node-revisions", s.handleListNodeHistoryRevisions)
+	mux.HandleFunc("GET /api/history/latency-scopes", s.handleListLatencyHistoryScopes)
 
 	// Workbench: stable-identity, single-node latency history.
 	mux.HandleFunc("POST /api/workbench/latency-tests", s.handleRunWorkbenchLatencyTest)
@@ -1441,6 +1442,26 @@ func (s *Server) handleGetWorkbenchLatencyTest(w http.ResponseWriter, r *http.Re
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleListLatencyHistoryScopes(w http.ResponseWriter, r *http.Request) {
+	since, until, err := parseWorkbenchLatencyWindow(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	scopes, err := s.app.ListLatencyHistoryScopes(r.Context(), application.LatencyHistoryScopesQuery{
+		ProfileID: r.URL.Query().Get("profile_id"), DisplayName: r.URL.Query().Get("display_name"), Since: since, Until: until,
+	})
+	if err != nil {
+		if monitor.IsValidationError(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, scopes)
 }
 
 func (s *Server) handleListNodeHistoryRevisions(w http.ResponseWriter, r *http.Request) {

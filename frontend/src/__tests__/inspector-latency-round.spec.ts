@@ -1,10 +1,29 @@
-import {it,expect} from 'vitest'
-import {mount} from '@vue/test-utils'
+import {it,expect,vi} from 'vitest'
+import {flushPromises,mount} from '@vue/test-utils'
 import InspectorLatency from '../components/home/InspectorLatency.vue'
 import {manualLatencyPoint} from '../presentation'
-import {latencyRounds} from '../latencyHistory'
+import {latencyRounds,readLatencyHistoryWithConfig} from '../latencyHistory'
 import {activeLatencyTargets} from '../latencyTargets'
-import type {LatencyTest} from '../domain'
+import type {LatencyTest,NodeOption} from '../domain'
+import {api} from '../api'
+vi.mock('../latencyHistory',async original=>({...await original<typeof import('../latencyHistory')>(),readLatencyHistoryWithConfig:vi.fn()}))
+it('clears the previous node history while the next lookup is pending or fails',async()=>{
+ const node:NodeOption={profile_id:'account-a',node_key:'a',node_identity_key:'a',config_revision_key:'a',display_name:'A',profile_name:'Airport',type:'ss',country_code:'',country_flag:''}
+ const at=new Date().toISOString(),test:LatencyTest={...node,attempt_id:'old-node-round',display_name:'A',node_type:'ss',requested_at:at,finished_at:at,status:'completed',latency_ms:123,total_samples:8,success_samples:8,failure_samples:0,persistence_state:'saved',samples:activeLatencyTargets.flatMap(t=>[1,2].map(seq=>({seq,target:t.urls[0],timestamp:at,latency_ms:123,success:true})))}
+ const empty=activeLatencyTargets.map(t=>({...t,context:'',points:[]}))
+ vi.spyOn(api,'clashNodeStatus').mockResolvedValue({connected:false,loaded:false,name:'',endpoint:''})
+ let reject!:(error:Error)=>void
+ vi.mocked(readLatencyHistoryWithConfig).mockResolvedValueOnce({series:activeLatencyTargets.map(t=>({...t,context:'',points:[manualLatencyPoint(test,t.id)]})),changes:[]}).mockReturnValueOnce(new Promise((_,no)=>reject=no))
+ const wrapper=mount(InspectorLatency,{props:{node,series:empty}})
+ await flushPromises()
+ expect(wrapper.find('.latency-metrics').text()).toContain('123 ms')
+ await wrapper.setProps({node:{...node,node_key:'b',node_identity_key:'b',config_revision_key:'b',display_name:'B'}})
+ expect(wrapper.text()).not.toContain('123 ms')
+ reject(new Error('history unavailable'));await flushPromises()
+ expect(wrapper.text()).toContain('history unavailable')
+ expect(wrapper.text()).not.toContain('123 ms')
+ wrapper.unmount()
+})
 it('switches the current round from the history list and returns to latest',async()=>{
  const test=(id:string,ago:number,value:number):LatencyTest=>({profile_id:'p',node_key:'n',node_identity_key:'n',config_revision_key:'r',attempt_id:id,display_name:'Node',node_type:'Vless',requested_at:new Date(Date.now()-ago).toISOString(),finished_at:new Date(Date.now()-ago).toISOString(),status:'completed',latency_ms:value,total_samples:8,success_samples:8,failure_samples:0,persistence_state:'saved',samples:activeLatencyTargets.flatMap(t=>[900,value].map((latency_ms,i)=>({seq:i+1,target:t.urls[0],timestamp:new Date(Date.now()-ago).toISOString(),latency_ms,success:true})))})
  const old=test('old',3600000,200),latest=test('latest',1000,400),series=activeLatencyTargets.map(t=>({...t,context:'',points:[manualLatencyPoint(old,t.id),manualLatencyPoint(latest,t.id)]})),w=mount(InspectorLatency,{props:{series}})

@@ -231,6 +231,13 @@ func (a *App) RetrySaveWorkbenchDownloadTest(attemptID string, query application
 	return a.app.RetrySaveWorkbenchDownloadTest(a.context(), attemptID, query)
 }
 
+func (a *App) ListLatencyHistoryScopes(query application.LatencyHistoryScopesQuery) ([]history.LatencyHistoryScope, error) {
+	if a == nil || a.app == nil {
+		return nil, errAppNotInitialized
+	}
+	return a.app.ListLatencyHistoryScopes(a.context(), query)
+}
+
 func (a *App) ListNodeHistoryRevisions(profileID, nodeIdentityKey string) ([]history.NodeHistoryRevision, error) {
 	if a == nil || a.app == nil {
 		return nil, errAppNotInitialized

@@ -2,7 +2,7 @@ import {api} from './api'
 import {activeLatencyTargets} from './latencyTargets'
 import {manualLatencyPoint,monitorLatencyPoints,type TrendPoint} from './presentation'
 import {inspectorMedian,inspectorSamples,stableLatency} from './inspectorLatency'
-import {date,scope,type NodeOption,type LatencyTest,type MonitorSample,type NodeScope} from './domain'
+import {date,key,scope,type NodeOption,type LatencyTest,type MonitorSample} from './domain'
 export interface LatencySeries {id:string;name:string;points:TrendPoint[];context:string}
 export interface LatencyConfigChange {time:string;label:string;serverChanged?:boolean}
 export interface FailedSite {name:string;failures:number;total:number}
@@ -69,25 +69,6 @@ export function latencyHistorySplit(series:LatencySeries[]){
  return {all,current,old,allOld:all.total>0&&current.total===0}
 }
 export interface LatencyHistorySplit {all:LatencyHistoryStats;current:LatencyHistoryStats;old:LatencyHistoryStats;allOld:boolean}
-// Batch items keep the exact scope every saved test ran with, so an identity that
-// a subscription update replaced is still discoverable by the node's display name.
-let historicalScopesPromise:Promise<Map<string,NodeScope[]>>|null=null
-function historyKey(profileID:string,displayName:string){return profileID+'\u0000'+displayName}
-async function loadHistoricalScopes(){
- const batches=await api.batches(),details=await Promise.all(batches.map(batch=>api.batch(batch.batch_id).catch(()=>null))),map=new Map<string,NodeScope[]>()
- for(const batch of details)for(const item of batch?.items||[]){
-  if(!item.profile_id||!item.display_name)continue
-  const key=historyKey(item.profile_id,item.display_name),list=map.get(key)||[]
-  if(!list.some(s=>s.node_identity_key===item.node_identity_key))list.push({profile_id:item.profile_id,node_key:item.node_key,node_identity_key:item.node_identity_key,config_revision_key:item.config_revision_key})
-  map.set(key,list)
- }
- return map
-}
-function historicalScopes(node:NodeOption){
- if(!historicalScopesPromise)historicalScopesPromise=loadHistoricalScopes().catch(()=>new Map())
- return historicalScopesPromise.then(map=>map.get(historyKey(node.profile_id,node.display_name))||[])
-}
-async function revisionsFor(node:NodeOption){try{return await api.revisions(node)}catch{return []}}
 async function readScope(node:NodeOption,since:string,until:string){
  const [tests,monitor]=await Promise.all([(async()=>{const all:LatencyTest[]=[];let before={};for(;;){const page=await api.latencyHistory(node,{since,until,limit:100,...before});all.push(...(page.tests||[]));if(!page.has_more)break;const last=page.tests!.at(-1)!;before={before_finished_at:last.finished_at,before_attempt_id:last.attempt_id}}return all})(),(async()=>{const all:MonitorSample[]=[];let cursor:string|undefined;for(;;){const page=await api.monitorSamples({...scope(node),since,until,probe_type:'rtt',limit:100,order_desc:true,cursor});all.push(...(page.items||[]));if(!page.has_more)break;cursor=page.next_cursor}return all})()])
  return {tests,monitor}
@@ -96,18 +77,15 @@ async function readScope(node:NodeOption,since:string,until:string){
 // subscription replaced, and keep the current revision as the reference for tagging.
 export async function readLatencyHistoryWithConfig(node:NodeOption,hours:number):Promise<{series:LatencySeries[];changes:LatencyConfigChange[]}>{
  const until=new Date().toISOString(),since=new Date(Date.parse(until)-hours*3600000).toISOString()
- const saved=await historicalScopes(node)
- const identities=new Map<string,NodeOption>()
- for(const candidate of [node,...saved.map(s=>({...node,...s}))])identities.set(candidate.node_identity_key,candidate)
- const identityList=[...identities.values()],revisionLists=await Promise.all(identityList.map(identity=>revisionsFor(identity)))
+ const saved=await api.latencyHistoryScopes(node,{since,until})
+ const scopeKey=(n:NodeOption)=>key(n)+'\u0000'+n.node_key
  const scopes=new Map<string,NodeOption>()
- for(const candidate of [node,...saved.map(s=>({...node,...s}))])scopes.set(candidate.config_revision_key,candidate)
- identityList.forEach((identity,index)=>revisionLists[index].filter(revision=>revision.display_name===node.display_name).forEach(revision=>{scopes.set(revision.config_revision_key,{...identity,node_key:revision.node_key,config_revision_key:revision.config_revision_key})}))
- const loaded=await Promise.all([...scopes].map(async([revision,item])=>({old:revision!==node.config_revision_key,...await readScope(item,since,until)})))
+ for(const candidate of [node,...saved.map(s=>({...node,...s}))])scopes.set(scopeKey(candidate),candidate)
+ const loaded=await Promise.all([...scopes].map(async([id,item])=>({old:id!==scopeKey(node),...await readScope(item,since,until)})))
  const series=activeLatencyTargets.map(target=>({...target,context:'',points:loaded.flatMap(batch=>[...batch.tests.map(test=>({...manualLatencyPoint(test,target.id),...(batch.old?{oldConfig:true}:{})})),...monitorLatencyPoints(batch.monitor,target.id).map(point=>batch.old?{...point,oldConfig:true}:point)]).sort((a,b)=>Date.parse(a.time)-Date.parse(b.time))}))
- const rounds=loaded.flatMap(batch=>batch.tests.map(test=>({revision:test.config_revision_key,time:test.finished_at||test.requested_at}))).sort((a,b)=>Date.parse(a.time)-Date.parse(b.time))
+ const rounds=loaded.flatMap(batch=>batch.tests.map(test=>({scope:key(test)+'\u0000'+test.node_key,time:test.finished_at||test.requested_at}))).sort((a,b)=>Date.parse(a.time)-Date.parse(b.time))
  const changes:LatencyConfigChange[]=[]
- for(let i=1;i<rounds.length;i++)if(rounds[i].revision!==rounds[i-1].revision)changes.push({time:rounds[i].time,label:'配置已变化'})
+ for(let i=1;i<rounds.length;i++)if(rounds[i].scope!==rounds[i-1].scope)changes.push({time:rounds[i].time,label:'配置已变化'})
  return {series,changes}
 }
 export async function readLatencyHistory(node:NodeOption,hours:number):Promise<LatencySeries[]>{return (await readLatencyHistoryWithConfig(node,hours)).series}
