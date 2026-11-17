@@ -15,7 +15,10 @@ import {readUsage,usageRefreshError,shanghaiDay,shiftDay,type UsageSnapshot} fro
 import UsageDays from './UsageDays.vue'
 const section=ref('manage'),vergeOpen=ref(false)
 const noticeBalances=ref<Record<string,number|undefined>>({})
-const w=useWorkspace(),busy=ref(''),search=ref(''),form=ref<{kind:'airport'|'subscription';airportId?:string;subId?:string;name:string;url:string;website_url:string;backup_url:string;note:string}|null>(null),formError=ref(''),remove=ref<{airport:Airport;sub?:Subscription}|null>(null),maintenance=ref<{airport:Airport;settings:NonNullable<Airport['maintenance']>}|null>(null),refreshJob=ref<SubscriptionRefreshJob|null>(null),refreshProgressVisible=ref(false),refreshLoading=ref(false)
+interface SourceDraft {kind:'airport'|'subscription';airportId?:string;airportName?:string;subId?:string;name:string;url:string;website_url:string;backup_url:string;note:string;needsSource:boolean;sourceReady:boolean}
+const w=useWorkspace(),busy=ref(''),search=ref(''),form=ref<SourceDraft|null>(null),formError=ref(''),sourceLoading=ref(false),remove=ref<{airport:Airport;sub?:Subscription}|null>(null),maintenance=ref<{airport:Airport;settings:NonNullable<Airport['maintenance']>}|null>(null),refreshJob=ref<SubscriptionRefreshJob|null>(null),refreshProgressVisible=ref(false),refreshLoading=ref(false)
+const requestSettings=ref<{airport:Airport;sub:Subscription;userAgent:string}|null>(null),requestError=ref('')
+const formTitle=computed(()=>form.value?.kind==='airport'?(form.value.airportId?'编辑机场资料':'添加机场'):(form.value?.subId?'编辑订阅账户':'添加订阅账户'))
 const visible=computed(()=>w.airports.value.filter(a=>(a.name+' '+(a.note||'')).includes(search.value)))
 const viewingAirport=ref('')
 const focusedAirport=computed(()=>visible.value.find(a=>a.id===viewingAirport.value)||visible.value[0])
@@ -34,10 +37,55 @@ const knownQuotaStats=computed(()=>{
 })
 const expiringSoonCount=computed(()=>allSubscriptions.value.filter(s=>s.usage?.expire&&expireDays(s.usage.expire)<=7).length)
 const safeLink=(v?:string)=>/^https?:\/\//i.test(v||'')?v:undefined
-let refreshTimer:ReturnType<typeof setTimeout>|undefined,disposed=false
-async function edit(airport?:Airport,sub?:Subscription){formError.value='';if(!airport){form.value={kind:'airport',name:'',url:'',website_url:'',backup_url:'',note:''};return}busy.value=sub?.id||airport.id;try{const url=await request<{url:string}|string>(sub?`/api/airports/${airport.id}/subscriptions/${sub.id}/url`:`/api/airports/${airport.id}/url`,'GET',undefined,sub?'GetSubscriptionURL':'GetAirportURL',sub?[airport.id,sub.id]:[airport.id]);form.value={kind:sub?'subscription':'airport',airportId:airport.id,subId:sub?.id,name:sub?.name||airport.name,url:typeof url==='string'?url:url.url,website_url:airport.website_url||'',backup_url:airport.backup_url||'',note:sub?.note||airport.note||''}}catch(e){w.fail(e)}finally{busy.value=''}}
-function addSub(airport:Airport){formError.value='';form.value={kind:'subscription',airportId:airport.id,name:'',url:'',website_url:'',backup_url:'',note:''}}
-async function save(){const f=form.value;if(!f)return;formError.value='';if(!f.name.trim()||!f.url.trim()){formError.value='请填写名称和订阅地址或配置文件路径';return}busy.value='form';try{if(f.kind==='airport'){const body={name:f.name,url:f.url,website_url:f.website_url,backup_url:f.backup_url,note:f.note};await request(f.airportId?`/api/airports/${f.airportId}`:'/api/airports',f.airportId?'PUT':'POST',body,f.airportId?'UpdateFrontendAirport':'CreateFrontendAirport',f.airportId?[f.airportId,body]:[body])}else await request(`/api/airports/${f.airportId}/subscriptions${f.subId?'/'+f.subId:''}`,f.subId?'PUT':'POST',{name:f.name,url:f.url,note:f.note},f.subId?'UpdateSubscription':'AddSubscription',f.subId?[f.airportId,f.subId,f.name,f.url,f.note]:[f.airportId,f.name,f.url,f.note]);form.value=null;await w.refreshNodes();w.notify('订阅已保存')}catch(e){formError.value=e instanceof Error?e.message:String(e)}finally{busy.value=''}}
+let refreshTimer:ReturnType<typeof setTimeout>|undefined,disposed=false,editGeneration=0
+function closeForm(){if(busy.value==='form')return;editGeneration++;form.value=null;sourceLoading.value=false}
+async function loadFormSource(){
+ const f=form.value;if(!f?.airportId||!f.needsSource||sourceLoading.value)return
+ const generation=++editGeneration;sourceLoading.value=true;f.sourceReady=false;formError.value=''
+ try{
+  const result=await request<{url:string}|string>(f.subId?`/api/airports/${f.airportId}/subscriptions/${f.subId}/url`:`/api/airports/${f.airportId}/url`,'GET',undefined,f.subId?'GetSubscriptionURL':'GetAirportURL',f.subId?[f.airportId,f.subId]:[f.airportId])
+  if(disposed||generation!==editGeneration||form.value!==f)return
+  f.url=typeof result==='string'?result:result.url;f.sourceReady=true
+ }catch(e){if(!disposed&&generation===editGeneration)formError.value=e instanceof Error?e.message:String(e)}
+ finally{if(generation===editGeneration)sourceLoading.value=false}
+}
+function edit(airport?:Airport,sub?:Subscription){
+ if(busy.value)return
+ editGeneration++;formError.value='';sourceLoading.value=false
+ if(!airport){form.value={kind:'airport',name:'',url:'',website_url:'',backup_url:'',note:'',needsSource:true,sourceReady:true};return}
+ const needsSource=!!sub||!airport.subscriptions?.length&&!!airport.url_display
+ form.value={kind:sub?'subscription':'airport',airportId:airport.id,airportName:airport.name,subId:sub?.id,name:sub?sub.name:airport.name,url:'',website_url:airport.website_url||'',backup_url:airport.backup_url||'',note:sub?(sub.note||''):(airport.note||''),needsSource,sourceReady:!needsSource}
+ if(needsSource)void loadFormSource()
+}
+function addSub(airport:Airport){if(busy.value)return;editGeneration++;sourceLoading.value=false;formError.value='';form.value={kind:'subscription',airportId:airport.id,airportName:airport.name,name:'',url:'',website_url:'',backup_url:'',note:'',needsSource:true,sourceReady:true}}
+async function save(){
+ const draft=form.value;if(!draft||busy.value||!draft.sourceReady)return
+ const f={...draft};formError.value=''
+ if(!f.name.trim()||f.needsSource&&!f.url.trim()){formError.value=f.needsSource?'请填写名称和订阅地址或配置文件路径':'请填写机场名称';return}
+ busy.value='form'
+ try{
+  if(f.kind==='airport'){
+   const body={name:f.name,url:f.needsSource?f.url:'',website_url:f.website_url,backup_url:f.backup_url,note:f.note}
+   const result=await request<Airport>(f.airportId?`/api/airports/${f.airportId}`:'/api/airports',f.airportId?'PUT':'POST',body,f.airportId?'UpdateFrontendAirport':'CreateFrontendAirport',f.airportId?[f.airportId,body]:[body])
+   viewingAirport.value=result?.id||f.airportId||'';search.value=''
+  }else await request(`/api/airports/${f.airportId}/subscriptions${f.subId?'/'+f.subId:''}`,f.subId?'PUT':'POST',{name:f.name,url:f.url,note:f.note},f.subId?'UpdateSubscription':'AddSubscription',f.subId?[f.airportId,f.subId,f.name,f.url,f.note]:[f.airportId,f.name,f.url,f.note])
+  editGeneration++;form.value=null;w.notify(f.kind==='airport'&&f.airportId?'机场资料已保存':'订阅已保存')
+  try{await w.refreshNodes()}catch(e){w.fail(`已保存，但列表刷新失败：${e instanceof Error?e.message:String(e)}。可重新加载列表，无需重复保存。`)}
+ }catch(e){formError.value=e instanceof Error?e.message:String(e)}
+ finally{busy.value=''}
+}
+function openRequestSettings(airport:Airport,sub:Subscription){if(busy.value)return;requestError.value='';requestSettings.value={airport,sub,userAgent:sub.user_agent||''}}
+async function saveRequestSettings(){
+ const draft=requestSettings.value;if(!draft||busy.value)return
+ const {airport,sub}=draft,userAgent=draft.userAgent.trim();busy.value='request-settings';requestError.value=''
+ try{
+  const result=await request<Subscription>(`/api/airports/${airport.id}/subscriptions/${sub.id}/user-agent`,'PUT',{user_agent:userAgent},'SetSubscriptionUserAgent',[airport.id,sub.id,userAgent])
+  const current=w.airports.value.find(a=>a.id===airport.id)?.subscriptions?.find(s=>s.id===sub.id)
+  if(current)current.user_agent=result.user_agent||''
+  requestSettings.value=null;w.notify('请求设置已保存，下次获取订阅时生效')
+ }catch(e){requestError.value=e instanceof Error?e.message:String(e)}
+ finally{busy.value=''}
+}
 const refreshState=(state:string)=>({queued:'排队中',fetching:'抓取中',parsing:'解析中',saving:'保存中',succeeded:'成功',failed:'失败',cancelled:'已取消',not_executed:'未执行',interrupted:'中断'} as Record<string,string>)[state]||state
 const failedSnapshots=ref<UsageSnapshot[]>([])
 watch(()=>JSON.stringify([refreshProgressVisible.value,refreshJob.value?.id,refreshJob.value?.items.filter(item=>item.state==='failed').map(item=>[item.airport_id,item.subscription_id,item.finished_at])]),async(_,__,onCleanup)=>{
@@ -92,7 +140,7 @@ function expireLabel(t:number){const d=expireDays(t);return d<0?'已过期':d===
 function expireTone(t:number){const d=expireDays(t);return d<0?'bad':d<=7?'warn':''}
 function browse(a:Airport,s?:Subscription){w.setAirports([a.id]);if(s)w.subscription.value=s.id;w.page.value='home'}
 onMounted(()=>void loadRefreshJobs())
-onBeforeUnmount(()=>{disposed=true;clearTimeout(refreshTimer)})
+onBeforeUnmount(()=>{disposed=true;editGeneration++;clearTimeout(refreshTimer)})
 </script>
 <template><section class="page-view airports-view">
 <div class="page-header airports-top-bar">
@@ -154,6 +202,7 @@ onBeforeUnmount(()=>{disposed=true;clearTimeout(refreshTimer)})
     <div class="cst-ledger-actions">
       <button class="button" :disabled="!s.has_cache" title="在工作台把这个账户设为测量来源并查看节点" @click="browse(a,s)">选为测量来源</button>
       <button class="button ghost" :disabled="!!busy" aria-label="刷新用量" @click="refreshUsage(a,s)">刷新用量</button>
+      <button class="button ghost" :disabled="!!busy" @click="openRequestSettings(a,s)">请求设置</button>
       <button class="button ghost icon-button" :disabled="!!busy||refreshLoading||refreshJob?.state==='running'" aria-label="更新节点" title="更新节点与订阅用量" @click="refresh(a,s)"><Icon name="refresh"/></button>
       <button class="button ghost icon-button" :disabled="!!busy" aria-label="编辑订阅" @click="edit(a,s)"><Icon name="edit"/></button>
       <button class="button ghost icon-button" aria-label="删除订阅" @click="remove={airport:a,sub:s}"><Icon name="trash"/></button>
@@ -165,12 +214,29 @@ onBeforeUnmount(()=>{disposed=true;clearTimeout(refreshTimer)})
 </div><div v-if="!visible.length" class="empty-state"><Icon name="layers"/><h3>{{search?'没有匹配的机场':'添加你的第一个机场'}}</h3><p>支持订阅地址或本地 Clash / Mihomo 配置。</p><button class="button primary" @click="edit()">添加机场</button></div>
 </div>
 </template>
-<Modal v-if="form" :title="`${form.airportId&&form.kind==='airport'||form.subId?'编辑':'添加'}${form.kind==='airport'?'机场':'订阅'}`" @close="()=>{if(!busy)form=null}"><form @submit.prevent="save"><div class="form-stack"><label>名称<input v-model="form.name" autofocus required maxlength="100"></label><label>订阅地址或配置路径<input v-model="form.url" required autocomplete="off" spellcheck="false" placeholder="https://… 或本地文件路径"></label><template v-if="form.kind==='airport'"><label>官网地址<input v-model="form.website_url" placeholder="可选"></label><label>备用入口<input v-model="form.backup_url" placeholder="可选"></label></template><label>备注<textarea v-model="form.note" rows="3"/></label></div><p v-if="formError" class="inline-error" role="alert">{{formError}}</p><div class="form-actions"><button type="button" class="button" :disabled="!!busy" @click="form=null">取消</button><button class="button primary" type="submit" :disabled="!!busy">{{busy==='form'?'保存中…':'保存订阅'}}</button></div></form></Modal>
+<Modal v-if="form" :title="formTitle" :closable="busy!=='form'" @close="closeForm"><form @submit.prevent="save">
+ <p class="source-context">{{form.kind==='subscription'?`所属机场 · ${form.airportName}`:form.airportId?'机场名称、入口与备注':'填入第一个订阅，创建机场及其默认账户。之后可添加更多账户。'}}</p>
+ <p v-if="sourceLoading" role="status" class="muted">正在读取这个账户的订阅来源…</p>
+ <fieldset class="form-stack account-fields" :disabled="busy==='form'||!form.sourceReady">
+  <label>{{form.kind==='airport'?'机场名称':'账户名称'}}<input v-model="form.name" name="name" autofocus required maxlength="100"></label>
+  <label v-if="form.needsSource">订阅地址或配置路径<input v-model="form.url" name="url" required autocomplete="off" spellcheck="false" placeholder="https://… 或本地文件路径"></label>
+  <template v-if="form.kind==='airport'"><label>官网地址<input v-model="form.website_url" name="website_url" placeholder="可选"></label><label>备用入口<input v-model="form.backup_url" name="backup_url" placeholder="可选"></label></template>
+  <label>{{form.kind==='airport'?'机场备注':'账户备注'}}<textarea v-model="form.note" name="note" rows="3" placeholder="可选"/></label>
+ </fieldset>
+ <p v-if="formError" class="inline-error" role="alert">{{formError}}</p>
+ <div class="form-actions"><button v-if="!form.sourceReady&&!sourceLoading" type="button" class="button" @click="loadFormSource">重试读取</button><button type="button" class="button" :disabled="busy==='form'" @click="closeForm">取消</button><button class="button primary" type="submit" :disabled="!!busy||!form.sourceReady">{{busy==='form'?'保存中…':form.kind==='airport'&&form.airportId?'保存资料':'保存订阅'}}</button></div>
+</form></Modal>
+<Modal v-if="requestSettings" title="请求设置" :closable="busy!=='request-settings'" @close="requestSettings=null"><form @submit.prevent="saveRequestSettings">
+ <p class="source-context">{{requestSettings.airport.name}} · {{requestSettings.sub.name}}</p>
+ <fieldset class="form-stack account-fields" :disabled="busy==='request-settings'"><label>客户端标识（User-Agent）<input v-model="requestSettings.userAgent" name="user_agent" autofocus autocomplete="off" spellcheck="false" placeholder="留空使用默认值"></label><p class="muted small">部分订阅服务会根据客户端标识返回不同配置。仅影响这个账户下次获取订阅；保存不会立即更新节点或用量。</p></fieldset>
+ <p v-if="requestError" class="inline-error" role="alert">{{requestError}}</p><div class="form-actions"><button type="button" class="button" :disabled="!!busy" @click="requestSettings=null">取消</button><button type="submit" class="button primary" :disabled="!!busy">{{busy==='request-settings'?'保存中…':'保存设置'}}</button></div>
+</form></Modal>
 <Modal v-if="remove" title="删除订阅来源" @close="remove=null"><p>删除「{{remove.sub?.name||remove.airport.name}}」{{remove.sub?'这个订阅':'及其下的订阅'}}。已有检测历史保留，关联监测可能因来源缺失而停止。</p><template #footer><button class="button" @click="remove=null">返回</button><button class="button danger-fill" :disabled="!!busy" @click="deleteItem">删除</button></template></Modal>
 <Modal v-if="maintenance" title="更新与维护" wide @close="maintenance=null"><div class="form-grid"><label>自动更新订阅<UiSelect v-model.number="maintenance.settings.refresh_hours"><option :value="0">关闭</option><option v-for="h in [1,6,12,24,72,168]" :key="h" :value="h">每 {{h}} 小时</option></UiSelect></label></div><h3>快捷入口与每月提醒</h3><div v-for="(link,i) in maintenance.settings.links" :key="i" class="maintenance-link"><input v-model="link.label" aria-label="入口名称" placeholder="入口名称"><input v-model="link.url" aria-label="入口地址" placeholder="https://…"><label>每月<input v-model.number="link.monthly_day" type="number" min="0" max="28" aria-label="每月提醒日"></label><button class="button ghost icon-button" aria-label="移除入口" @click="maintenance.settings.links.splice(i,1)"><Icon name="close"/></button></div><p class="small muted">提醒日填 1–28；填 0 时只保留快捷入口。</p><button class="button" @click="maintenance.settings.links.push({label:'',url:'',monthly_day:0})"><Icon name="plus"/>添加入口</button><template #footer><button class="button" @click="maintenance=null">返回</button><button class="button primary" :disabled="!!busy" @click="saveMaintenance">保存</button></template></Modal>
 <Modal v-if="refreshJob&&refreshProgressVisible" title="订阅刷新进度" wide @close="refreshProgressVisible=false"><p class="muted">{{refreshJob.completed}} / {{refreshJob.items.length}} 项已完成 · {{refreshJob.success}} 成功 · {{refreshJob.failed}} 失败 · {{refreshJob.not_executed}} 未执行</p><p v-if="refreshJob.persistence_error" class="inline-error" role="alert">{{refreshJob.persistence_error}}</p><div class="refresh-progress-list"><article v-for="item in refreshJob.items" :key="item.airport_id+'|'+item.subscription_id"><strong>{{item.airport_name}} · {{item.subscription_name}}</strong><span class="badge" :class="item.state==='succeeded'?'good':item.state==='failed'?'bad':item.state==='not_executed'?'':'warn'">{{refreshState(item.state)}}</span><small v-if="item.stages?.length">{{item.stages.map(stage=>refreshState(stage.state)).join(' → ')}}</small><p v-if="refreshItemError(item)" class="inline-error">{{refreshItemError(item)}}</p><small v-if="item.duration_ms">{{item.duration_ms}} ms · {{item.node_count}} 条配置</small></article></div><template #footer><button v-if="refreshJob.failed>0" class="button" :disabled="refreshLoading||refreshJob.state==='running'" @click="retryRefresh">只重试失败项</button><button v-if="refreshJob.state==='running'" class="button danger-fill" aria-label="取消刷新任务" @click="cancelRefresh">取消刷新</button><button class="button primary" @click="refreshProgressVisible=false">关闭</button></template></Modal></section></template>
 <style src="./secondary-observatory.css" scoped></style>
 <style scoped>
+.account-fields{border:0;padding:0;margin:0;min-width:0}.source-context{margin:0 0 20px;color:var(--cst-muted);font-size:13px;line-height:1.7}
 .airports-top-bar{align-items:center;margin-bottom:20px;gap:16px}
 .airports-top-bar h1{font-size:22px;letter-spacing:-.02em}
 .airports-top-bar p{font-size:12px}

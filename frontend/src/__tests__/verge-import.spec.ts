@@ -30,8 +30,31 @@ it('associates a Verge subscription with the chosen existing account and keeps i
   button().click();await flushPromises()
   expect(sync).toHaveBeenCalledTimes(2)
   expect(sync).toHaveBeenLastCalledWith({uid:'remote-a',airport_id:'airport-a',subscription_id:'sub-a',name:'自定义同步名称'})
+  expect(document.querySelector('.verge-name strong')?.textContent).toBe('外部订阅')
   expect(refresh).toHaveBeenCalled()
  }finally{wrapper.unmount();w.dispose();list.mockRestore();sync.mockRestore();jobs.mockRestore();refresh.mockRestore()}
+})
+
+it('keeps the binding and reports import success when only the subsequent list reload fails',async()=>{
+ HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','')}
+ HTMLDialogElement.prototype.close=function(){this.removeAttribute('open')}
+ const list=vi.spyOn(api,'vergeSubscriptions').mockResolvedValue([{uid:'remote-reload',name:'源订阅',updated_at:'2026-11-18T01:00:00Z',linked:false,url_changed:false}])
+ const sync=vi.spyOn(api,'importVergeSubscription').mockResolvedValue({id:'sub-new',airport_id:'airport-new',name:'目标账户',node_count:4} as never)
+ const jobs=vi.spyOn(api,'refreshJobs').mockResolvedValue([])
+ const w=createWorkspace();w.airports.value=[]
+ const refresh=vi.spyOn(w,'refreshNodes').mockRejectedValue(new Error('synthetic reload unavailable'))
+ const notify=vi.spyOn(w,'notify')
+ const wrapper=mount(AirportsView,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w},stubs:{UsageDays:true,SubscriptionChanges:true}}})
+ try{
+  await wrapper.findAll('button').find(b=>b.text()==='从 Clash Verge 导入／同步')!.trigger('click');await flushPromises()
+  Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(b=>b.textContent?.trim()==='导入')!.click();await flushPromises()
+  expect(document.querySelector('[role=alert]')?.textContent).toContain('已导入，但列表刷新失败')
+  expect(document.body.textContent).toContain('已同步 4 个节点')
+  expect(notify).toHaveBeenCalledWith('已导入「目标账户」的 4 个节点')
+  expect(wrapper.findComponent(UiSelect).props('modelValue')).toBe('airport-new:sub-new')
+  expect(wrapper.findComponent(UiSelect).props('disabled')).toBe(true)
+  expect(document.querySelector('.verge-name strong')?.textContent).toBe('源订阅')
+ }finally{wrapper.unmount();w.dispose();list.mockRestore();sync.mockRestore();jobs.mockRestore();refresh.mockRestore();notify.mockRestore()}
 })
 
 it('imports a Verge subscription directly from initial setup in DataView and boots workspace',async()=>{

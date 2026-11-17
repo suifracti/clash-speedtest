@@ -1271,7 +1271,7 @@ func (s *AppService) UpdateAirport(id, name, rawURL, userAgent string, optionalL
 	}
 
 	rawURL = strings.TrimSpace(rawURL)
-	if rawURL == safeAirportURLDisplay(ap.URL) {
+	if rawURL != "" && rawURL == safeAirportURLDisplay(ap.URL) {
 		return nil, fmt.Errorf("更新机场时必须提供完整订阅链接")
 	}
 	if rawURL != "" {

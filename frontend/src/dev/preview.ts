@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 // Separate Vite development entry. Not imported by the application or emitted
 // by its production build. All application requests stay inside this fixture.
-import type {Airport,NodeOption,LatencyTest,Attempt,Settings,MonitorJob,MonitorSample} from '../domain'
+import type {Airport,Subscription,NodeOption,LatencyTest,Attempt,Settings,MonitorJob,MonitorSample} from '../domain'
 import {latencyTargets} from '../latencyTargets'
 import {shanghaiDay,shiftDay} from '../usageDaily'
 if (!import.meta.env.DEV) throw new Error('UI preview is development-only')
@@ -10,12 +10,17 @@ const planScenario=new URL(location.href).searchParams.get('scenario')==='plan'
 const searchScenario=new URL(location.href).searchParams.get('scenario')==='search'
 const startupScenario=new URL(location.href).searchParams.get('scenario')==='startup'
 const signinScenario=new URL(location.href).searchParams.get('scenario')==='signin'
+const accountScenario=new URL(location.href).searchParams.get('scenario')==='accounts'
 let startupReads=0,previewInitialized=!startupScenario,previewAuthenticated=!signinScenario
 const previewAttempts=new Map<string,Attempt>()
 const now=Date.now(),at=new Date(now-18*60_000).toISOString()
 const airports:Airport[]=['青屿','远山','白帆'].map((name,i)=>({id:`demo-airport-${i}`,name:`${name} · 示例`,url_display:'example.invalid',node_count:4,has_cache:true,updated_at:at,subscriptions:[{id:`demo-account-${i}`,airport_id:`demo-airport-${i}`,name:i===0?'日常套餐':i===1?'备用套餐':'旅行套餐',url_display:'https://example.invalid/…',url_configured:true,node_count:4,has_cache:true,updated_at:at,usage:{upload:i===2?null:3*2**30,download:(30+i*19)*2**30,total:200*2**30,expire:Math.floor(now/1000)+86400*(23-i*7),updated_at:at}}]}))
 const regions=['HK','JP','SG','US'],names=['香港 · 日常 01','日本 · 东京 02','新加坡 · 狮城 03','美国 · 西岸 04']
 const nodes:NodeOption[]=airports.flatMap((a,i)=>names.map((name,j)=>({profile_id:a.subscriptions![0].id,profile_name:`${a.name} / ${a.subscriptions![0].name}`,node_key:`demo-${i}-${j}`,node_identity_key:`identity-${i}-${j}`,config_revision_key:`revision-${i}-${j}`,display_name:name,type:j===2?'trojan':'ss',country_code:regions[j],country_flag:''})))
+const accountURLs=new Map<string,string>(airports.flatMap(a=>a.subscriptions!.map(s=>[s.id,`https://example.invalid/sub/${s.id}`] as const)))
+const vergeSources=[{uid:'preview-verge-one',name:'青屿 · Verge 本地来源',updated_at:at,airport_id:airports[0].id,subscription_id:airports[0].subscriptions![0].id,linked:true,url_changed:true,name_changed:true},{uid:'preview-verge-two',name:'漫游 · Verge 本地来源',updated_at:at,airport_id:'',subscription_id:'',linked:false,url_changed:false,name_changed:false}]
+let createdAccounts=0
+function previewAccount(airportId:string,name:string,url:string):Subscription{const s:Subscription={id:`preview-created-account-${++createdAccounts}`,airport_id:airportId,name,note:'',url_display:'https://example.invalid/…',url_configured:true,node_count:0,has_cache:false,updated_at:new Date().toISOString()};accountURLs.set(s.id,url);return s}
 if(searchScenario){
  const airport=airports[0],account={...airport.subscriptions![0],id:'demo-account-backup',name:'备用账户',node_count:45}
  airport.subscriptions!.push(account);airport.node_count+=45
@@ -40,6 +45,37 @@ const page=(items:unknown[],kind='tests')=>({[kind]:items,has_more:false,complet
 function matching<T extends {profile_id:string;node_key:string;node_identity_key?:string;config_revision_key?:string}>(items:T[],q:URLSearchParams|Record<string,unknown>){const get=(k:string)=>q instanceof URLSearchParams?q.get(k):q[k];return items.filter(n=>(!get('profile_id')||n.profile_id===get('profile_id'))&&(!get('node_key')||n.node_key===get('node_key'))&&(!get('node_identity_key')||n.node_identity_key===get('node_identity_key'))&&(!get('config_revision_key')||n.config_revision_key===get('config_revision_key')))}
 async function handle(url:URL,body:any,method:string):Promise<unknown>{
  const p=url.pathname,q=url.searchParams
+ // Account editing fixture: mutations affect only these in-memory objects.
+ if(accountScenario){
+  if(p==='/api/airports'&&method==='POST'){
+   await new Promise(resolve=>setTimeout(resolve,1200))
+   const id=`preview-created-airport-${createdAccounts+1}`,sub=previewAccount(id,'默认订阅',body.url)
+   const a:Airport={...body,id,url_display:'https://example.invalid/…',node_count:0,has_cache:false,subscriptions:[sub]};delete (a as any).url;airports.push(a);return a
+  }
+  const match=p.match(/^\/api\/airports\/([^/]+)(?:\/subscriptions(?:\/([^/]+))?)?(?:\/(url|user-agent))?$/)
+  if(match){
+   const a=airports.find(a=>a.id===match[1]);if(!a)throw new Error('示例机场不存在')
+   const sub=a.subscriptions?.find(s=>s.id===match[2])
+   if(method==='GET'&&match[3]==='url')return {url:accountURLs.get(sub?.id||a.subscriptions![0].id)}
+   if(method==='POST'){const s=previewAccount(a.id,body.name,body.url);s.note=body.note;a.subscriptions!.push(s);return s}
+   if(method==='PUT'){
+    await new Promise(resolve=>setTimeout(resolve,1200))
+    if(match[3]==='user-agent'&&sub){sub.user_agent=body.user_agent;return sub}
+    if(sub){sub.name=body.name;sub.note=body.note;accountURLs.set(sub.id,body.url);return sub}
+    Object.assign(a,{name:body.name,website_url:body.website_url,backup_url:body.backup_url,note:body.note});return a
+   }
+  }
+  if(p==='/api/clash/verge-subscriptions')return vergeSources
+  if(p==='/api/clash/verge-subscriptions/import'){
+   const source=vergeSources.find(s=>s.uid===body.uid);if(!source)throw new Error('示例来源不存在')
+   await new Promise(resolve=>setTimeout(resolve,1200))
+   let a=airports.find(a=>a.id===(body.airport_id||source.airport_id)),s=a?.subscriptions?.find(s=>s.id===(body.subscription_id||source.subscription_id))
+   if(!a){const id=`preview-created-airport-${createdAccounts+1}`;s=previewAccount(id,body.name||source.name,'https://example.invalid/verge');a={id,name:s.name,url_display:'example.invalid',node_count:0,has_cache:false,subscriptions:[s]};airports.push(a)}
+   if(!s)throw new Error('示例账户不存在');if(body.name||body.sync_name)s.name=body.name||source.name
+   source.airport_id=a.id;source.subscription_id=s.id;source.linked=true;source.url_changed=false;source.name_changed=source.name!==s.name
+   return s
+  }
+ }
  // Optional interactive queue demonstration; every result stays in memory.
  if(queueScenario){
   if(p==='/api/measurement-rounds'&&method==='POST')return body
@@ -95,7 +131,7 @@ async function handle(url:URL,body:any,method:string):Promise<unknown>{
  if(p==='/api/periodic-sampling/checks')return {nodes,node:nodes[0],checks:[]}
  if(p==='/api/subscription-usage'){
   const today=shanghaiDay(),account=q.get('account')
-  const accounts=airports.map((a,i)=>({account_key:`demo-usage-${i}`,airport_id:a.id,subscription_id:a.subscriptions![0].id,airport_name:a.name,subscription_name:a.subscriptions![0].name,captured_at:at,status:i===2?'partial':'ok',upload:a.subscriptions![0].usage!.upload,download:a.subscriptions![0].usage!.download,total:200*2**30,source:'subscription_header'}))
+  const accounts=airports.filter(a=>a.subscriptions?.[0]?.usage).map((a,i)=>({account_key:`demo-usage-${i}`,airport_id:a.id,subscription_id:a.subscriptions![0].id,airport_name:a.name,subscription_name:a.subscriptions![0].name,captured_at:at,status:i===2?'partial':'ok',upload:a.subscriptions![0].usage!.upload,download:a.subscriptions![0].usage!.download,total:200*2**30,source:'subscription_header'}))
   const selectedAccounts=account?accounts.filter(a=>a.account_key===account):accounts
   const intervals=Array.from({length:14},(_,i)=>({day:shiftDay(today,-i),offset:i})).filter(({day})=>day>=(q.get('from')||'')&&day<=(q.get('until')||today)).flatMap(({day,offset:i})=>selectedAccounts.map(a=>{
    const index=accounts.findIndex(other=>other.account_key===a.account_key),unknown=i===2||i===0&&index===2,value=unknown?null:Math.round((.4+((i*7)%13)/10)*2**30*(.7+.3*index))

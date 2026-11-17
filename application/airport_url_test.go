@@ -2,10 +2,13 @@ package application
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,6 +17,61 @@ import (
 )
 
 const fakeAirportSecret = "VERY_SECRET_TEST_TOKEN_12345"
+
+func TestAirportMetadataEditPreservesAccountSourcesAndCache(t *testing.T) {
+	var reads atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reads.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer upstream.Close()
+	for _, withAccounts := range []bool{false, true} {
+		t.Run(fmt.Sprintf("accounts=%t", withAccounts), func(t *testing.T) {
+			service, paths := newAirportURLTestService(t)
+			ap := &profiles.Airport{ID: "metadata-only", Name: "Before", Note: "Old note"}
+			if withAccounts {
+				ap.Subscriptions = []*profiles.Subscription{
+					{ID: "account-one", Name: "One", URL: upstream.URL + "/one", UserAgent: "Fixture/1", Note: "Account note", VergeUID: "fixture-uid"},
+					{ID: "account-two", Name: "Two", URL: upstream.URL + "/two"},
+				}
+			}
+			if err := profiles.SaveStore(paths.StoreFile(), &profiles.Store{Airports: []*profiles.Airport{ap}}); err != nil {
+				t.Fatal(err)
+			}
+			before, _ := json.Marshal(ap.Subscriptions)
+			cache := []byte("proxies: []\n")
+			for _, sub := range ap.Subscriptions {
+				if err := paths.WriteCache(sub.ID, cache); err != nil {
+					t.Fatal(err)
+				}
+			}
+			updated, err := service.UpdateAirport(ap.ID, "After", "", "Default/1", "https://example.invalid", "", "")
+			if err != nil {
+				t.Fatalf("metadata edit failed: %v", err)
+			}
+			if updated.Name != "After" || updated.Note != "" {
+				t.Fatalf("metadata not updated: %+v", updated)
+			}
+			store, err := profiles.LoadStore(paths.StoreFile())
+			if err != nil {
+				t.Fatal(err)
+			}
+			after, _ := json.Marshal(store.Get(ap.ID).Subscriptions)
+			if string(before) != string(after) {
+				t.Fatal("metadata edit changed account fields")
+			}
+			for _, sub := range ap.Subscriptions {
+				got, err := os.ReadFile(paths.CacheFile(sub.ID))
+				if err != nil || string(got) != string(cache) {
+					t.Fatalf("account cache changed: %v", err)
+				}
+			}
+			if reads.Load() != 0 {
+				t.Fatal("metadata edit fetched a subscription")
+			}
+		})
+	}
+}
 
 func TestAirportURLBoundaryKeepsOrdinaryDTOsSafeAndExplicitEditUsable(t *testing.T) {
 	var responseStatus = http.StatusOK
