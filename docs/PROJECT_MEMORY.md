@@ -186,6 +186,10 @@ Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 
 2. **订阅节点换端口不重复计入新增与下线**：机场常在保持节点显示名不变的情况下轮换入口域名或端口（导致 `node_identity_key` 变化）。`core/profiles/node_changes.go` 在按同一 `Identity` 匹配改名后，进一步抵消 `Removed` 与 `Added` 中的同名项，避免同一节点名同时出现在“新增”和“下线”列表中。
 3. **非 Darwin 同条件推荐与完整/部分下载同组排序**：在不伪造 `socket_bind_verified`/`dns_bind_verified` 的前提下，`frontend/src/recommendations.ts` 优先采用具备物理出口核验（`comparable=true`）的候选组；若当前平台无物理套接字核验（如 Windows），则允许同条件的当前工作台首字节延迟与有效下载记录进入对应用途候选，且下载推荐按同一 `downloadCondition` 聚合（不再因 `byte_limit` 完整下载与 `time_limit` 部分下载分属不同子键而导致慢节点多时反压快节点）。
 
+2026-11-18 推荐到历史的配置范围：原 `RecommendationView.inspect` 以时间戳在延迟/下载/服务中依次猜记录，遇到同一时间的不同项目会打开错误配置，且只覆盖 node_key/revision、未携带真实 identity。现由候选生成阶段携带对应用途的完整证据 scope、服务 ID，日常候选定位 Cloudflare；详情不修改工作台原来的服务勾选与显示站点。候选直接标注旧配置、混合配置或缺标识，导出仍使用当前节点。日常来源只计入选中条件组的实际观察，排除不参与推荐的旧条件，不改变非 Darwin 与下载同组排序算法。
+
+历史详情不能把“传入的配置”直接称作“当前配置”：以当前节点清单的完整 scope 确认；查看旧配置时显式标注，重新检测/监测仅使用可明确定位的现行配置，已不在清单中的配置只读历史。回归先复现同时间 AI 候选误开延迟配置，再验证完整 identity、服务定位、Cloudflare 定位、混合/未知标识、旧配置标签与新计划范围；相关 21 项通过，合成浏览器走通旧配置 AI 记录 → 当前配置计划，未开始检测。
+
 ## L-016 延迟 Keep-Alive 复用、Windows TUN Fake-IP DNS 绕过与轮次并发锁
 
 适用：与上游延迟实测出现稳态偏慢、物理入口 DNS 固定卡 ~5 秒（Windows 开启 TUN 时）、CLI TSV 重复行，或高并发写测量轮次偶现 `SQLITE_BUSY_SNAPSHOT`。

@@ -5,12 +5,12 @@ import TrendChart from '../components/TrendChart.vue'
 import {api} from '../api'
 import {createWorkspace,workspaceKey,type Workspace} from '../workspace'
 import {serviceAvailability} from '../sharedResults'
-import type {Attempt,NodeOption} from '../domain'
+import type {Attempt,NodeOption,LatencyTest} from '../domain'
 
 vi.hoisted(()=>{Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:()=>null,setItem:()=>{}}})})
 vi.mock('../api',async importOriginal=>{
   const actual=await importOriginal<typeof import('../api')>()
-  return {...actual,api:{...actual.api,measurementRounds:vi.fn(async()=>[]),revisions:vi.fn(async()=>[]),attemptHistory:vi.fn(),previousAttempt:vi.fn()}}
+  return {...actual,api:{...actual.api,measurementRounds:vi.fn(async()=>[]),revisions:vi.fn(async()=>[]),attemptHistory:vi.fn(),previousAttempt:vi.fn(),latencyHistory:vi.fn()}}
 })
 
 const node:NodeOption={profile_id:'profile',node_key:'node',node_identity_key:'identity',config_revision_key:'revision',profile_name:'Airport',display_name:'Node',type:'ss',country_code:'',country_flag:''}
@@ -72,4 +72,46 @@ it('shows the download speed change for the same conditions',async()=>{
   wrapper=mount(NodeDetailModal,{props:{node},attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
   Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(b=>b.textContent==='详情')!.click();await flushPromises()
   expect(document.querySelector('[aria-label="和上次比"]')?.textContent).toContain('增加 1.00 MiB/s')
+})
+
+it('opens the requested service evidence without changing the workbench service selection',async()=>{
+ const evidence={...attempt('recommended','matched'),service_id:'service-b',rule:{service_id:'service-b',name:'Service B',target_url:'https://example.invalid'}}
+ vi.mocked(api.attemptHistory).mockResolvedValue({attempts:[evidence],has_more:false,complete:true})
+ wrapper=mount(NodeDetailModal,{props:{node,initialServiceId:'service-b'},attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}})
+ await flushPromises()
+ expect(api.attemptHistory).toHaveBeenLastCalledWith('service',node,expect.objectContaining({service_id:'service-b'}))
+ expect(w.serviceIds.value).toEqual(['service-a'])
+ expect(wrapper.findComponent(TrendChart).props('points').map(point=>point.id)).toEqual(['recommended'])
+})
+
+it('opens the recommended Cloudflare evidence while preserving the workbench display target',async()=>{
+ w.project.value='latency';w.displayTarget.value='google'
+ const test:LatencyTest={...node,attempt_id:'recommended-latency',display_name:'Node',node_type:'ss',requested_at:time,finished_at:time,status:'completed',latency_ms:50,total_samples:2,success_samples:2,failure_samples:0,persistence_state:'saved',samples:[{seq:0,target:'https://speed.cloudflare.com/__down?bytes=1',timestamp:time,latency_ms:50,success:true},{seq:1,target:'https://www.gstatic.com/generate_204',timestamp:time,latency_ms:400,success:true}]}
+ vi.mocked(api.latencyHistory).mockResolvedValue({tests:[test],has_more:false,complete:true})
+ wrapper=mount(NodeDetailModal,{props:{node,initialTargetId:'cloudflare'},attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}})
+ await flushPromises()
+ expect(wrapper.findComponent(TrendChart).props('points')[0].value).toBe(50)
+ expect(w.displayTarget.value).toBe('google')
+})
+
+it('labels an archived revision truthfully and uses only the live configuration for a new plan',async()=>{
+ const old={...node,node_key:'older-key',config_revision_key:'older-revision'}
+ w.nodes.value=[node]
+ vi.mocked(api.revisions).mockResolvedValue([{...old,last_observed_at:time},{...node,last_observed_at:time}])
+ vi.mocked(api.attemptHistory).mockResolvedValue({attempts:[{...attempt('old','matched'),...old}],has_more:false,complete:true})
+ wrapper=mount(NodeDetailModal,{props:{node:old},attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
+ expect(document.querySelector('[role="status"]')?.textContent).toContain('正在看历史配置')
+ const selected=Array.from(document.querySelectorAll<HTMLSelectElement>('select')).find(select=>select.value==='older-revision')!
+ expect(selected.selectedOptions[0].textContent).toContain('历史配置')
+ const run=Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(button=>button.textContent?.includes('检测当前配置'))!
+ run.click();await flushPromises()
+ expect(w.plan.value?.nodes).toEqual([node])
+})
+it('retains archive reading but cannot start detection for a configuration absent from current nodes',async()=>{
+ vi.mocked(api.attemptHistory).mockResolvedValue({attempts:[attempt('archive','matched')],has_more:false,complete:true})
+ wrapper=mount(NodeDetailModal,{props:{node},attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
+ expect(document.querySelector('[role="status"]')?.textContent).toContain('此配置已不在当前节点清单')
+ const run=Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(button=>button.textContent?.includes('检测当前配置'))!
+ expect(run.disabled).toBe(true)
+ expect(wrapper.findComponent(TrendChart).props('points')).toHaveLength(1)
 })

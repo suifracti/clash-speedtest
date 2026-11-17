@@ -3,9 +3,9 @@ import {computed,onMounted,ref} from 'vue'
 import {useWorkspace} from '../workspace'
 import {api,saveFile} from '../api'
 import {date,isNotice,key,scope,type NodeOption} from '../domain'
-import {attemptObservedAt,type QualityEvidence} from '../nodeQuality'
+import {type QualityEvidence} from '../nodeQuality'
 import {readQualityBatch} from '../qualityBatch'
-import {recommend,purposes,type Purpose} from '../recommendations'
+import {recommend,purposes,type Purpose,type Candidate} from '../recommendations'
 import {nodeDisplayName} from '../nodePresentation'
 const w=useWorkspace(),loading=ref(false),error=ref(''),data=ref<Record<string,QualityEvidence>>({}),readAt=ref('')
 const nodes=computed(()=>w.nodes.value.filter(n=>!isNotice(n))),results=computed(()=>recommend(nodes.value,data.value,w.catalog.value))
@@ -15,10 +15,10 @@ const missing={streaming:'近 7 天没有流媒体站点通过的记录',ai:'近
 const purposeHints:Record<Purpose,string>={streaming:'Netflix / YouTube / Disney+ 等流媒体解锁优先',ai:'ChatGPT / Claude / Gemini 等大模型可用性优先',download:'同条件有效吞吐速度与稳定性优先',daily:'Cloudflare 稳定低延迟与高响应率优先'}
 async function refresh(){loading.value=true;error.value='';data.value={};const until=new Date().toISOString(),since=new Date(Date.parse(until)-7*86400000).toISOString();try{data.value=await readQualityBatch(nodes.value,since,until);readAt.value=until;if(Object.values(data.value).some(e=>!e.complete))error.value='部分历史读取不完整，仅展示依据完整的候选'}catch(e){error.value=e instanceof Error?e.message:String(e)}finally{loading.value=false}}
 async function exportCandidates(purpose:Purpose){try{const candidates=results.value[purpose],result=await api.exportClash(candidates.map(c=>scope(c.node)),purposes.find(p=>p.id===purpose)!.name+'候选');if(await saveFile(result.yaml_content,'speedtest-'+purpose+'.yaml','application/x-yaml'))w.notify(`已导出 ${result.node_count} 个候选节点`)}catch(e){w.fail(e)}}
-function inspect(node:NodeOption,at:string,purpose:Purpose){
- const e=data.value[key(node)],record=e.tests.find(t=>t.samples.some(s=>s.timestamp===at))||[...e.downloads,...e.services].find(a=>attemptObservedAt(a)===at)
+const configurationNote:Record<Candidate['configuration'],string>={current:'',historical:'依据来自旧配置，不代表当前配置可用',mixed:'依据含旧配置，各项目未必来自同一配置',unknown:'记录缺少完整配置标识，请核对历史依据'}
+function inspect(candidate:Candidate,purpose:Purpose){
  w.hours.value=168;w.project.value=purpose==='daily'?'latency':purpose==='download'?'download':'service'
- w.inspectNode.value=record?{...node,node_key:record.node_key,config_revision_key:record.config_revision_key}:node
+ w.inspectNode.value={...candidate.node,...candidate.inspectionScope,historyServiceId:candidate.inspectionServiceId,historyTargetId:purpose==='daily'?'cloudflare':undefined}
 }
 function openInWorkbench(node:NodeOption,purpose:Purpose){
  w.project.value=purpose==='daily'?'latency':purpose==='download'?'download':'service'
@@ -70,11 +70,12 @@ onMounted(()=>void refresh())
         <strong>{{nodeDisplayName(candidate.node)}}</strong>
         <span class="candidate-source">{{w.nodeAirportName(candidate.node)}} · {{w.nodeSubscriptionName(candidate.node)}}</span>
        </div>
-       <p class="small break-text cst-candidate-meta">{{candidate.basis}}</p>
+       <p v-if="configurationNote[candidate.configuration]" class="candidate-configuration">{{configurationNote[candidate.configuration]}}</p>
+        <p class="small break-text cst-candidate-meta">{{candidate.basis}}</p>
        <small class="muted">{{candidate.count}} {{purpose.id==='daily'?'次采样':'次已保存检测'}} · 最近 {{date(candidate.at)}}</small>
       </div>
       <div class="cst-candidate-actions">
-       <button class="text-button" @click="inspect(candidate.node,candidate.at,purpose.id)">查看记录 ›</button>
+       <button class="text-button" @click="inspect(candidate,purpose.id)">查看记录 ›</button>
        <button class="text-button" @click="openInWorkbench(candidate.node,purpose.id)">在工作台查看</button>
       </div>
      </article>
@@ -97,6 +98,7 @@ onMounted(()=>void refresh())
 .purpose-results .cst-purpose-title h2{font-size:23px;font-weight:600;letter-spacing:-.02em}.purpose-results .cst-purpose-title p{margin-top:8px;font-size:12px;line-height:1.7}
 .purpose-results .cst-candidate-list{gap:0}
 .purpose-results .cst-candidate-row{grid-template-columns:36px minmax(0,1fr);gap:14px;padding:24px 0;background:none;border:0;border-bottom:1px solid var(--cst-line);border-radius:0;align-items:start}
+.candidate-configuration{margin:0;font-size:12px;line-height:1.6;color:var(--cst-warn)}
 .candidate-order{font-size:23px;font-weight:400;font-variant-numeric:tabular-nums;color:var(--cst-muted);line-height:1.2}
 .purpose-results .cst-candidate-main{gap:10px}.purpose-results .cst-candidate-name{display:grid;gap:5px}.purpose-results .cst-candidate-name strong{font-size:17px;font-weight:600}.candidate-source{color:var(--cst-muted);font-size:12px}
 .purpose-results .cst-candidate-meta{font-size:13px;line-height:1.85;color:var(--cst-text);margin:0}.purpose-results .cst-candidate-main>small{font-size:12px}

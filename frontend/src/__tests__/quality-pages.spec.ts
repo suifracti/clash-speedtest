@@ -31,3 +31,16 @@ it('uses one empty card, and a single line for a missing purpose beside a real c
  vi.mocked(readQualityBatch).mockResolvedValueOnce({[key(nodes[0])]:{tests:[],monitor:[],downloads:[],services:[{service_id:'ai',finished_at:'2026-10-19T00:00:00Z',node_key:'old',config_revision_key:'old-revision',execution_state:'completed',rule:{name:'AI'},result:{outcome:'matched'}}],reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true} as unknown as QualityEvidence})
  wrapper=mount(RecommendationView,{global});await flushPromises();expect(wrapper.findAll('.recommendation-missing')).toHaveLength(3);expect(wrapper.findAll('.recommendation-missing button')).toHaveLength(0);expect(wrapper.text()).toContain('近 7 天没有流媒体站点通过的记录');await wrapper.get('article button').trigger('click');expect(w.inspectNode.value?.config_revision_key).toBe('old-revision');expect(w.hours.value).toBe(168);expect(w.project.value).toBe('service');wrapper.unmount()
 })
+
+it('opens the actual recommended service scope when an unrelated latency record has the same timestamp',async()=>{
+ const node={...nodes[0],node_key:'current-key',node_identity_key:'current-identity',config_revision_key:'current-revision'}
+ const at='2026-11-18T00:00:00Z',old={...node,node_key:'old-key',node_identity_key:'old-identity',config_revision_key:'old-revision'}
+ w.nodes.value=[node];w.catalog.value=[{service_id:'ai',category:'AI',name:'AI',result_kind:'account_availability'}]
+ vi.mocked(readQualityBatch).mockResolvedValueOnce({[key(node)]:{tests:[{...node,attempt_id:'unrelated-latency',samples:[{timestamp:at}]}],monitor:[],downloads:[],services:[{...old,attempt_id:'old-service',service_id:'ai',finished_at:at,execution_state:'completed',rule:{name:'AI'},result:{outcome:'matched'}}],reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true} as unknown as QualityEvidence})
+ const wrapper=mount(RecommendationView,{global});await flushPromises()
+ const ai=wrapper.findAll('.purpose-results').find(section=>section.get('h2').text()==='AI')!
+ await ai.get('article button').trigger('click')
+ expect(w.inspectNode.value).toMatchObject({profile_id:node.profile_id,node_key:'old-key',node_identity_key:'old-identity',config_revision_key:'old-revision',historyServiceId:'ai'})
+ expect(ai.get('article').text()).toContain('依据来自旧配置')
+ wrapper.unmount();w.nodes.value=nodes
+})
