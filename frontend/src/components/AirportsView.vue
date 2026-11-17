@@ -115,7 +115,7 @@ onBeforeUnmount(()=>{disposed=true;clearTimeout(refreshTimer)})
 </div>
 <ClashVergeImport v-if="vergeOpen" @close="vergeOpen=false"/>
 <SubscriptionUsageView v-if="section==='usage'"/>
-<AirportReport v-else-if="section==='report'"/>
+<AirportReport v-else-if="section==='report'" :initial-airport-id="focusedAirport?.id" @airport-change="viewingAirport=$event;search=''"/>
 <template v-else>
 <div v-if="w.airports.value.length" class="account-register-summary" aria-label="账户台账概览">
   <span :class="{warn:expiringSoonCount}">{{expiringSoonCount?`${expiringSoonCount} 个账户已过期或将在 7 天内到期`:'已知到期日中，没有近期到期账户'}}</span>

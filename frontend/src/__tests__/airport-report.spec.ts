@@ -65,3 +65,24 @@ it('keeps the selected airport report when an older airport read finishes later'
   expect((wrapper.get('[aria-label="机场月费"]').element as HTMLInputElement).value).toBe('20')
  }finally{wrapper.unmount();w.dispose();settings.mockRestore()}
 })
+
+it('saves the airport and price chosen before a delayed settings read even after switching airports',async()=>{
+ const make=(id:string)=>({profile_id:'p-'+id,node_key:id,node_identity_key:id,config_revision_key:'r',display_name:id,type:'ss'}) as NodeOption
+ const a=make('a'),b=make('b'),at='2026-11-18T00:00:00Z'
+ const history=Object.fromEntries([a,b].map(n=>[key(n),{tests:[{...n,attempt_id:n.node_key,requested_at:at,total_samples:1,success_samples:1,samples:[{seq:1,target:'https://speed.cloudflare.com/__down?bytes=1',timestamp:at,success:true,latency_ms:100}]}],monitor:[],reads:{latency:{complete:true},monitor:{complete:true}}}])) as unknown as Record<string,QualityEvidence>
+ vi.mocked(readQualityBatch).mockReset().mockResolvedValue(history)
+ const settings=vi.spyOn(api,'settings').mockResolvedValue({airport_monthly_prices:{a:10,b:20}} as never)
+ const save=vi.spyOn(api,'saveSettings').mockResolvedValue(undefined)
+ const w=createWorkspace();w.airports.value=[{id:'a',name:'A',subscriptions:[{id:'p-a',airport_id:'a'}]},{id:'b',name:'B',subscriptions:[{id:'p-b',airport_id:'b'}]}] as never;w.nodes.value=[a,b]
+ const wrapper=mount(AirportReport,{global:{provide:{[workspaceKey as symbol]:w},stubs:{TrendChart:true}}})
+ try{
+  await flushPromises();await wrapper.get('[aria-label="机场月费"]').setValue(35)
+  let finish!:(value:never)=>void;settings.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve}))
+  await wrapper.findAll('button').find(button=>button.text()==='保存月费')!.trigger('click')
+  wrapper.findAllComponents(UiSelect)[0]!.vm.$emit('update:modelValue','b');await flushPromises()
+  expect((wrapper.get('[aria-label="机场月费"]').element as HTMLInputElement).value).toBe('20')
+  finish({airport_monthly_prices:{a:10,b:20}} as never);await flushPromises()
+  expect(save).toHaveBeenCalledWith(expect.objectContaining({airport_monthly_prices:{a:35,b:20}}))
+  expect((wrapper.get('[aria-label="机场月费"]').element as HTMLInputElement).value).toBe('20')
+ }finally{wrapper.unmount();w.dispose();settings.mockRestore();save.mockRestore()}
+})

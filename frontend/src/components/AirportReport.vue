@@ -12,7 +12,8 @@ import {readUsage,shanghaiDay,shiftDay,type UsageReport} from '../usageDaily'
 import {hideHoverTip,showHoverTip} from '../hoverTip'
 import TrendChart from './TrendChart.vue'
 import UiSelect from './UiSelect.vue'
-const w=useWorkspace(),airport=ref(w.airports.value[0]?.id||''),data=ref<Record<string,QualityEvidence>>({}),usage=ref<UsageReport|null>(null),settings=ref<Settings|null>(null),price=ref(0),busy=ref(false),error=ref(''),selectedBeat=ref<AirportBeat|null>(null)
+const props=defineProps<{initialAirportId?:string}>(),emit=defineEmits<{'airport-change':[id:string]}>()
+const w=useWorkspace(),airport=ref(props.initialAirportId||w.airports.value[0]?.id||''),data=ref<Record<string,QualityEvidence>>({}),usage=ref<UsageReport|null>(null),settings=ref<Settings|null>(null),price=ref(0),savingPrice=ref(false),busy=ref(false),error=ref(''),selectedBeat=ref<AirportBeat|null>(null)
 const region=ref('all'),line=ref('all'),protocol=ref('all')
 const airportNodes=computed(()=>w.nodes.value.filter(n=>!isNotice(n)&&w.nodeAirportId(n)===airport.value))
 const nodes=computed(()=>filterAirportNodes(airportNodes.value,region.value,line.value,protocol.value))
@@ -43,7 +44,7 @@ function beatTitle(b:AirportBeat){const failed=b.nodes.filter(n=>!n.responded).m
 function selectBeat(b:AirportBeat){selectedBeat.value=b;hideHoverTip()}
 const traffic=computed(()=>{const accounts=new Set(usage.value?.accounts.filter(a=>a.airport_id===airport.value).map(a=>a.account_key));const values=usage.value?.intervals.filter(i=>accounts.has(i.account_key)&&i.bytes!==null).map(i=>i.bytes!)||[];return values.length?values.reduce((a,b)=>a+b,0):null})
 const cost=computed(()=>price.value>0&&traffic.value!==null&&traffic.value>0?price.value/(traffic.value/1e9):null)
-watch(airport,()=>{region.value='all';line.value='all';protocol.value='all';void refresh()})
+watch(airport,()=>{emit('airport-change',airport.value);region.value='all';line.value='all';protocol.value='all';void refresh()})
 let generation=0
 async function refresh(){
  const token=++generation,selectedAirport=airport.value,requestedNodes=airportNodes.value.slice()
@@ -58,11 +59,22 @@ async function refresh(){
  }catch(e){if(token===generation)error.value=e instanceof Error?e.message:String(e)}
  finally{if(token===generation)busy.value=false}
 }
-async function savePrice(){try{const current=await api.settings();current.airport_monthly_prices={...current.airport_monthly_prices,[airport.value]:price.value};await api.saveSettings(current);settings.value=current;w.notify('月费已保存到本机设置')}catch(e){w.fail(e)}}
+async function savePrice(){
+ const selectedAirport=airport.value,monthlyPrice=price.value,name=w.airports.value.find(a=>a.id===selectedAirport)?.name||'该机场'
+ if(savingPrice.value||!selectedAirport)return
+ if(!Number.isFinite(monthlyPrice)||monthlyPrice<0){w.fail(new Error('月费须为不小于 0 的数字'));return}
+ savingPrice.value=true
+ try{
+  const current=await api.settings(),next={...current,airport_monthly_prices:{...current.airport_monthly_prices,[selectedAirport]:monthlyPrice}}
+  await api.saveSettings(next)
+  if(airport.value===selectedAirport)settings.value=next
+  w.notify(name+'的月费已保存到本机设置')
+ }catch(e){w.fail(e)}finally{savingPrice.value=false}
+}
 onMounted(()=>void refresh())
 </script>
 <template>
- <section class="settings-section">
+ <section class="settings-section airport-health">
   <div class="section-heading"><div><h2>机场体检 · 近 30 天</h2><p class="muted small">同一订阅节点含历史配置的已保存记录。</p></div><div class="button-group"><UiSelect v-model="airport" aria-label="体检机场"><option v-for="a in w.airports.value" :key="a.id" :value="a.id">{{a.name}}</option></UiSelect><button class="button" :disabled="busy" @click="refresh">{{busy?'读取中…':'刷新报告'}}</button></div></div>
   <div class="report-filters">
    <label>地区<UiSelect v-model="region" aria-label="体检地区"><option value="all">全部地区</option><option v-for="code in regions" :key="code" :value="code">{{nodeRegionLabel(code)}}</option></UiSelect></label>
@@ -75,11 +87,13 @@ onMounted(()=>void refresh())
   <p v-if="busy" class="muted" role="status">正在读取历史…</p>
   <p v-else-if="!report.total" class="report-empty muted">{{filtered?'当前范围':'这个机场'}}近 30 天没有检测记录<span v-if="!filtered">已观测用量 {{traffic===null?'未知':bytes(traffic)}}</span></p>
   <template v-else>
-   <div class="report-metrics">
+   <div class="health-analysis">
+   <aside class="report-metrics" aria-label="体检摘要与成本">
     <div><small>响应率</small><strong>{{report.rate===null?'—':report.rate.toFixed(0)+'%'}} <small>（{{report.responses}}/{{report.samples}} 次）</small></strong><small>{{report.total}} 轮中 {{report.failedRounds}} 轮有失败</small></div>
     <div v-if="!filtered"><small>近 30 日已观测用量</small><strong>{{traffic===null?'未知':bytes(traffic)}}</strong><small>缺失时段未补零</small></div>
-    <div v-if="!filtered"><small>每 GB 成本估算</small><strong>{{cost===null?'—':'¥'+cost.toFixed(2)}}</strong><small>月费 ÷ 已观测 GB，记录不足时会偏高</small><div class="report-price"><label>月费（元）<input v-model.number="price" type="number" min="0" step="0.01" aria-label="机场月费"></label><button class="button" :disabled="!airport" @click="savePrice">保存月费</button></div></div>
-   </div>
+    <div v-if="!filtered"><small>每 GB 成本估算</small><strong>{{cost===null?'—':'¥'+cost.toFixed(2)}}</strong><small>月费 ÷ 已观测 GB，记录不足时会偏高</small><div class="report-price"><label>月费（元）<input v-model.number="price" type="number" min="0" step="0.01" aria-label="机场月费"></label><button class="button" :disabled="!airport||savingPrice" @click="savePrice">{{savingPrice?'保存中…':'保存月费'}}</button></div></div>
+   </aside>
+   <div class="health-observations">
    <h3>平均响应延迟走势</h3><p class="muted small">按天汇总有响应样本，站点和检测条件可能不同。</p><TrendChart :points="report.trend" unit="ms" label="近30日平均响应延迟"/>
    <h3>节点心跳</h3><p class="muted small">同一轮里先后保存的节点测试算一轮（间隔不超过 10 分钟，至少 2 个节点）；每格一轮，颜色是这轮有响应的节点比例。</p>
    <template v-if="pulse.beats.length">
@@ -92,11 +106,13 @@ onMounted(()=>void refresh())
    <p v-if="!pulse.faults.length" class="muted">已读取的记录里没有这两类故障。</p>
    <div v-else class="fault-list"><div v-for="(f,index) in pulse.faults" :key="index" class="fault-row"><span class="fault-kind" :class="f.kind">{{f.kind==='round'?'整轮故障':'节点连续离线'}}</span><span class="fault-time">{{date(f.start)}} – {{f.end?date(f.end):'仍在持续'}}</span><strong>{{f.nodes}} 个节点</strong><small>{{f.detail}}<template v-if="f.names.length"> · {{f.names.slice(0,3).join('、')}}{{f.names.length>3?' 等':''}}</template></small></div></div>
    <h3>失败类型</h3><p v-if="!report.failures.length" class="muted">已读取记录没有失败样本</p><div v-for="[kind,count] in report.failures" :key="kind" class="compact-row"><span>{{kind}}</span><strong>{{count}} 次</strong></div>
+   </div>
+   </div>
   </template>
   <section v-if="!busy" class="report-rank">
    <h3>节点排行</h3>
    <div class="rank-table-wrap"><table><thead><tr><th>节点</th><th v-for="col in rankColumns.slice(0,1)" :key="col.id" :aria-sort="rankField===col.id?(rankDescending?'descending':'ascending'):'none'"><button class="text-button" @click="sortRank(col.id)">{{col.label}}{{rankField===col.id?(rankDescending?' ↓':' ↑'):''}}</button></th><th>轮数</th><th v-for="col in rankColumns.slice(1)" :key="col.id" :aria-sort="rankField===col.id?(rankDescending?'descending':'ascending'):'none'"><button class="text-button" @click="sortRank(col.id)">{{col.label}}{{rankField===col.id?(rankDescending?' ↓':' ↑'):''}}</button></th></tr></thead>
-    <tbody><tr v-for="row in ranks" :key="key(row.node)"><td><button class="text-button rank-node" @click="inspectNode(row.node)">{{nodeDisplayName(row.node)}}</button></td><td :class="responseTone(row.responseRate)" :title="`${row.responses}/${row.samples} 次响应`">{{row.responseRate===null?'—':row.responseRate.toFixed(0)+'%'}}<small v-if="row.total<3" class="rank-low">轮数少</small></td><td>{{row.total}}</td><td>{{ms(row.median)}}</td><td title="慢的时候比快的时候多多少（P90−P10）；至少5轮有稳定延迟后显示">{{ms(row.volatility)}}</td><td :title="row.lastFailure?.detail">{{row.lastFailure?date(row.lastFailure.time):'—'}}</td></tr></tbody>
+    <tbody><tr v-for="row in ranks" :key="key(row.node)"><td><button class="text-button rank-node" @click="inspectNode(row.node)">{{nodeDisplayName(row.node)}}</button><small v-if="w.nodeSubscriptionName(row.node)" class="rank-account">{{w.nodeSubscriptionName(row.node)}}</small></td><td :class="responseTone(row.responseRate)" :title="`${row.responses}/${row.samples} 次响应`">{{row.responseRate===null?'—':row.responseRate.toFixed(0)+'%'}}<small v-if="row.total<3" class="rank-low">轮数少</small></td><td>{{row.total}}</td><td>{{ms(row.median)}}</td><td title="慢的时候比快的时候多多少（P90−P10）；至少5轮有稳定延迟后显示">{{ms(row.volatility)}}</td><td :title="row.lastFailure?.detail">{{row.lastFailure?date(row.lastFailure.time):'—'}}</td></tr></tbody>
    </table></div>
    <p v-if="!ranks.length" class="muted small">当前筛选范围没有节点。</p>
   </section>
@@ -105,4 +121,18 @@ onMounted(()=>void refresh())
 <style scoped>
 .rank-low{margin-left:6px;color:var(--cst-muted);font-size:11px;font-weight:500;padding:1px 5px;border-radius:4px;background:var(--cst-panel-2)}
 .report-filters{display:flex;align-items:end;gap:12px;flex-wrap:wrap;margin:14px 0;padding:12px 14px;background:var(--cst-panel-2);border:1px solid var(--cst-line);border-radius:var(--cst-radius-sm)}.report-filters label{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:550;color:var(--cst-muted)}.report-filters .small{margin-bottom:8px;margin-left:auto;font-weight:550}.report-rank{margin-top:22px;padding-top:18px;border-top:1px solid var(--cst-line)}.rank-table-wrap{overflow:auto;border:1px solid var(--cst-line);border-radius:var(--cst-radius-sm);background:var(--cst-panel);margin-top:10px}.report-rank table{width:100%;border-collapse:collapse;font-size:12.5px}.report-rank th,.report-rank td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--cst-line)}.report-rank th{white-space:nowrap;background:var(--cst-panel-2);font-weight:650;color:var(--cst-muted)}.report-rank tbody tr:hover{background:color-mix(in srgb,var(--cst-panel-2) 65%,var(--cst-panel))}.report-rank td:not(:first-child){white-space:nowrap;font-variant-numeric:tabular-nums}.rank-node{white-space:normal;text-align:left;font-weight:600}
-.report-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:16px 0}.report-metrics>div{display:flex;flex-direction:column;gap:6px;padding:14px 16px;background:var(--cst-panel-2);border:1px solid var(--cst-line);border-radius:var(--cst-radius-sm)}.report-metrics strong{font-size:22px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}.report-metrics strong small{font-size:12px;font-weight:450;color:var(--cst-muted)}.report-metrics small{color:var(--cst-muted);font-size:11.5px}.report-price{display:flex;align-items:end;gap:8px;margin-top:8px;padding-top:8px;border-top:1px dashed var(--cst-line)}.report-price label{font-size:12px;color:var(--cst-muted)}.report-price input{width:100px;display:block;margin-top:4px;min-height:32px;padding:4px 8px;border:1px solid var(--cst-line-strong);border-radius:7px;background:var(--cst-panel);color:var(--cst-text)}.report-empty{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:16px 0;padding:18px;border:1px dashed var(--cst-line-strong);border-radius:var(--cst-radius-sm);background:var(--cst-panel-2)}.airport-beats{display:flex;gap:3px;height:22px;margin:10px 0 8px;padding:3px;border-radius:7px;background:var(--cst-panel-2);border:1px solid var(--cst-line)}.beat-legend{margin:0 0 14px;font-size:11px;line-height:1.5;color:var(--cst-muted)}.beat-cell{flex:1 1 0;min-width:3px;padding:0;border:0;border-radius:3px;background:var(--cst-empty-bg);cursor:pointer;transition:transform .12s}.beat-cell:hover{transform:scaleY(1.12)}.beat-cell.good{background:var(--cst-good)}.beat-cell.warn{background:var(--cst-warn)}.beat-cell.bad{background:var(--cst-bad)}.beat-cell.selected{outline:2px solid var(--cst-accent);outline-offset:2px}.beat-detail{margin:0 0 14px;padding:8px 12px;border-radius:7px;background:var(--cst-accent-soft);color:var(--cst-accent);font-size:12px;font-weight:550;line-height:1.5}.fault-list{display:flex;flex-direction:column;margin:8px 0 16px;border:1px solid var(--cst-line);border-radius:var(--cst-radius-sm);overflow:hidden}.fault-row{display:grid;grid-template-columns:88px 164px 70px minmax(0,1fr);gap:10px;align-items:center;padding:9px 12px;border-top:1px solid var(--cst-line);font-size:12px;background:var(--cst-panel)}.fault-row:first-child{border-top:0}.fault-kind{display:inline-block;padding:2px 7px;border-radius:5px;font-size:11px;font-weight:600;text-align:center;white-space:nowrap}.fault-kind.round{background:var(--cst-bad-bg);color:var(--cst-bad)}.fault-kind.node{background:var(--cst-warn-bg);color:var(--cst-warn)}.fault-time{color:var(--cst-muted);white-space:nowrap;font-variant-numeric:tabular-nums}.fault-row strong{font-weight:650;font-variant-numeric:tabular-nums}.fault-row small{color:var(--cst-muted);line-height:1.5}@media(max-width:800px){.report-metrics{grid-template-columns:1fr}.fault-row{grid-template-columns:76px minmax(0,1fr) 56px}.fault-row small{grid-column:1/-1}}</style>
+.report-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:16px 0}.report-metrics>div{display:flex;flex-direction:column;gap:6px;padding:14px 16px;background:var(--cst-panel-2);border:1px solid var(--cst-line);border-radius:var(--cst-radius-sm)}.report-metrics strong{font-size:22px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}.report-metrics strong small{font-size:12px;font-weight:450;color:var(--cst-muted)}.report-metrics small{color:var(--cst-muted);font-size:11.5px}.report-price{display:flex;align-items:end;gap:8px;margin-top:8px;padding-top:8px;border-top:1px dashed var(--cst-line)}.report-price label{font-size:12px;color:var(--cst-muted)}.report-price input{width:100px;display:block;margin-top:4px;min-height:32px;padding:4px 8px;border:1px solid var(--cst-line-strong);border-radius:7px;background:var(--cst-panel);color:var(--cst-text)}.report-empty{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:16px 0;padding:18px;border:1px dashed var(--cst-line-strong);border-radius:var(--cst-radius-sm);background:var(--cst-panel-2)}.airport-beats{display:flex;gap:3px;height:22px;margin:10px 0 8px;padding:3px;border-radius:7px;background:var(--cst-panel-2);border:1px solid var(--cst-line)}.beat-legend{margin:0 0 14px;font-size:11px;line-height:1.5;color:var(--cst-muted)}.beat-cell{flex:1 1 0;min-width:3px;padding:0;border:0;border-radius:3px;background:var(--cst-empty-bg);cursor:pointer;transition:transform .12s}.beat-cell:hover{transform:scaleY(1.12)}.beat-cell.good{background:var(--cst-good)}.beat-cell.warn{background:var(--cst-warn)}.beat-cell.bad{background:var(--cst-bad)}.beat-cell.selected{outline:2px solid var(--cst-accent);outline-offset:2px}.beat-detail{margin:0 0 14px;padding:8px 12px;border-radius:7px;background:var(--cst-accent-soft);color:var(--cst-accent);font-size:12px;font-weight:550;line-height:1.5}.fault-list{display:flex;flex-direction:column;margin:8px 0 16px;border:1px solid var(--cst-line);border-radius:var(--cst-radius-sm);overflow:hidden}.fault-row{display:grid;grid-template-columns:88px 164px 70px minmax(0,1fr);gap:10px;align-items:center;padding:9px 12px;border-top:1px solid var(--cst-line);font-size:12px;background:var(--cst-panel)}.fault-row:first-child{border-top:0}.fault-kind{display:inline-block;padding:2px 7px;border-radius:5px;font-size:11px;font-weight:600;text-align:center;white-space:nowrap}.fault-kind.round{background:var(--cst-bad-bg);color:var(--cst-bad)}.fault-kind.node{background:var(--cst-warn-bg);color:var(--cst-warn)}.fault-time{color:var(--cst-muted);white-space:nowrap;font-variant-numeric:tabular-nums}.fault-row strong{font-weight:650;font-variant-numeric:tabular-nums}.fault-row small{color:var(--cst-muted);line-height:1.5}@media(max-width:800px){.report-metrics{grid-template-columns:1fr}.fault-row{grid-template-columns:76px minmax(0,1fr) 56px}.fault-row small{grid-column:1/-1}}
+.airport-health.settings-section{padding:22px 0;border:0;border-radius:0;box-shadow:none;background:none}
+.airport-health>.section-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}.airport-health>.section-heading h2{font-size:20px}.airport-health>.section-heading p{margin:6px 0 0}
+.airport-health .report-filters{background:none;border:0;border-bottom:1px solid var(--cst-line);border-radius:0;padding:12px 0 18px;margin:10px 0 24px}
+.health-analysis{display:grid;grid-template-columns:230px minmax(0,1fr);gap:32px;align-items:start}
+.health-analysis .report-metrics{display:block;margin:0;border-right:1px solid var(--cst-line);padding-right:24px;position:sticky;top:calc(var(--cst-nav-height,58px) + 20px)}
+.health-analysis .report-metrics>div{padding:18px 0;border:0;border-bottom:1px solid var(--cst-line);border-radius:0;background:none;gap:8px}
+.health-analysis .report-metrics>div:first-child{padding-top:0}.health-analysis .report-metrics strong{font-size:27px;font-weight:600}
+.health-analysis .report-metrics strong small{display:block;margin-top:6px}.health-analysis .report-price{flex-wrap:wrap;gap:8px;border:0;padding-top:4px}
+.health-observations{min-width:0}.health-observations h3{margin:22px 0 7px;font-size:14px}.health-observations h3:first-child{margin-top:0}.health-observations p{line-height:1.7}
+.health-observations .airport-beats{padding:0;border:0;border-radius:0;background:none;height:28px}.health-observations .beat-cell{max-width:36px;border-radius:2px}
+.airport-health .report-rank{margin-top:28px;padding-top:22px}.airport-health .rank-table-wrap{border-radius:0;border-left:0;border-right:0}.rank-account{display:block;font-size:11px;color:var(--cst-muted);margin-top:5px}.airport-health .rank-node{justify-content:flex-start}
+@media(max-width:1000px){.health-analysis{grid-template-columns:minmax(0,1fr);gap:24px}.health-analysis .report-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;position:static;border:0;padding:0}.health-analysis .report-metrics>div{padding-top:0}.health-analysis .report-metrics strong{font-size:23px}}
+@media(max-width:680px){.health-analysis .report-metrics{grid-template-columns:minmax(0,1fr)}.health-analysis .report-metrics>div{padding:12px 0}.health-analysis .report-price{flex-wrap:nowrap}}
+</style>

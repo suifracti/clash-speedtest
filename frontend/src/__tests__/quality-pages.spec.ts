@@ -44,3 +44,10 @@ it('opens the actual recommended service scope when an unrelated latency record 
  expect(ai.get('article').text()).toContain('依据来自旧配置')
  wrapper.unmount();w.nodes.value=nodes
 })
+
+it('starts an airport report with the airport already selected in the account ledger',async()=>{
+ vi.mocked(readQualityBatch).mockClear()
+ const wrapper=mount(AirportReport,{props:{initialAirportId:'b'},global});await flushPromises()
+ expect(readQualityBatch).toHaveBeenLastCalledWith([nodes[1]],expect.any(String),expect.any(String))
+ wrapper.unmount()
+})

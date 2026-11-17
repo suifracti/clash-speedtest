@@ -34,8 +34,8 @@ onBeforeUnmount(()=>{disposed=true;generation++;clearTimeout(refreshTimer)})
 <template><section class="subscription-usage" aria-label="订阅用量监测">
   <div class="usage-schedule">
     <div>
-      <h2>订阅更新与用量记录</h2>
-      <p>记录机场累计上传/下载或公告余额快照，按相邻差值追踪日、周、月消耗。</p>
+      <h2>用量账本</h2>
+      <p>按账户和日期查看消耗；每笔增量都能回到原始观测区间。</p>
       <div class="usage-schedule-controls">
         <label class="check-field"><input type="checkbox" :checked="settings?.subscription_daily_update_enabled??report?.daily_enabled" :disabled="!settings||saving" @change="saveDaily">自动更新订阅（每 2 小时）</label>
         <small v-if="report?.refresh">上次尝试 {{date(report.refresh.last_attempt)}} · {{report.daily_enabled?'下次 '+date(report.refresh.next_refresh):'自动更新已关闭'}} · {{report.refresh.message}}</small>
@@ -50,15 +50,39 @@ onBeforeUnmount(()=>{disposed=true;generation++;clearTimeout(refreshTimer)})
   <p v-if="error" class="inline-error" role="alert">{{error}} <button class="text-button" @click="load">重新读取</button></p>
   <p v-if="loading" class="muted" role="status">正在读取用量历史…</p>
   <template v-if="report">
+  <div class="usage-ledger">
+  <section class="usage-history" aria-label="所选范围用量汇总">
   <div class="usage-summary"><div><small>本范围已归属增量</small><strong>{{report.observed_bytes==null?'待积累':bytes(report.observed_bytes)}}</strong><span>{{report.from}} — {{report.until}}（上海时间）</span></div><div><small>跨期区间增量</small><strong>{{format(report.unallocated_bytes)}}</strong><span>未按天数摊分，详见观测记录</span></div><div><small>未知或基线记录</small><strong>{{report.unknown_intervals}}</strong><span>首次、重置、失败不当作零用量</span></div></div>
   <details class="cst-info-collapse usage-explanation"><summary>统计口径与采样说明</summary><div class="cst-info-collapse-body"><p>用量来自机场账户计数或订阅公告，不是本工作台探测流量。公告剩余量下降属于估算，无法拆分上传和下载；余额回升按重置或套餐变更处理。日用量为更新区间增量，近午夜更新归前一日并标注估算。漏采跨日和缺少用量字段均保留记录，周、月汇总也只累计能归属的观测区间。</p></div></details>
   <div class="usage-chart" role="img" :aria-label="`${period==='day'?'日':period==='week'?'周':'月'}用量观测柱状图；灰色表示无可归属数据`"><div v-for="b in [...report.buckets].reverse()" :key="b.date" class="usage-bar" :class="{unknown:b.bytes==null}" :title="`${b.date} · ${b.bytes==null?'暂无可归属数据':bytes(b.bytes)}${b.estimated_intervals?' · 含区间估算':''}`"><i :style="{height:b.bytes==null?'3px':`${Math.max(3,b.bytes/maximum*92)}px`}"/><small>{{period==='month'?b.date.slice(5):b.date.slice(5)}}</small></div></div>
   <div class="table-scroll"><table class="usage-buckets"><thead><tr><th>{{period==='day'?'日期':period==='week'?'周一开始':'月份'}}</th><th>已观测增量</th><th>上传</th><th>下载</th><th>记录范围</th></tr></thead><tbody><tr v-for="b in report.buckets" :key="b.date"><td>{{b.date}}</td><td>{{format(b.bytes)}}</td><td>{{format(b.upload)}}</td><td>{{format(b.download)}}</td><td>{{b.bytes==null?'暂无可归属数据':`${b.intervals} 个区间`}}<span v-if="b.estimated_intervals" class="badge">含 {{b.estimated_intervals}} 个估算区间</span></td></tr></tbody></table></div>
+  </section>
+  <aside class="usage-snapshots" aria-label="账户最近观测">
   <h3>账户最近观测</h3><div class="usage-accounts"><article v-for="a in report.accounts" :key="a.account_key" :title="a.raw_error"><strong>{{a.airport_name}} · {{a.subscription_name}}</strong><span>{{a.counter_kind==='notice_remaining'?'公告余额':label(a.status)}} · {{date(a.captured_at)}}</span><span v-if="a.counter_kind==='notice_remaining'&&a.remaining!=null">剩余 {{bytes(a.remaining)}}</span><span v-else-if="a.upload!=null&&a.download!=null">累计 {{bytes(a.upload+a.download)}}<template v-if="a.total"> / {{bytes(a.total)}}</template></span><span v-else>用量未知</span><small v-if="a.source==='cached_baseline'">来自已有缓存的旧快照，并非本次采集</small></article></div>
+  </aside>
+  <section class="usage-observations" aria-label="原始用量观测记录">
   <h3>观测记录</h3><div class="table-scroll"><table class="usage-intervals"><thead><tr><th>订阅账户</th><th>观测区间</th><th>增量</th><th>状态与说明</th></tr></thead><tbody><tr v-for="(i,index) in rows" :key="i.account_key+i.until+index"><td>{{i.name}}</td><td>{{i.from?date(i.from):'首次记录'}} → {{date(i.until)}}</td><td>{{i.estimated&&i.bytes!=null?'约 ':''}}{{format(i.bytes)}}</td><td>{{label(i.status)}}<span v-if="i.estimated"> · 估算</span><small v-if="i.message">{{i.message}}</small></td></tr></tbody></table></div><div v-if="!report.intervals.length" class="empty-state compact"><p>这个范围还没有用量记录。首次更新建立基线，后续才能计算增量。</p></div><div class="page-toolbar"><span class="small muted">{{report.intervals.length}} 条观测记录</span><div class="button-group"><button class="button" :disabled="page<=1" @click="page--">上一页</button><span>{{page}} / {{pages}}</span><button class="button" :disabled="page>=pages" @click="page++">下一页</button></div></div>
+  </section>
+  </div>
   </template>
 </section></template>
 <style scoped>
 .usage-update{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex:none}
 .usage-update small{max-width:300px;text-align:right;font-size:11px}
+
+.subscription-usage .usage-schedule{padding:20px 0;border:0;border-bottom:1px solid var(--cst-line);border-radius:0;background:none;margin:0 0 16px}
+.subscription-usage .usage-schedule h2{font-size:20px;margin-bottom:6px}.subscription-usage .usage-schedule p{font-size:12px;margin:0}.subscription-usage .usage-schedule-controls{margin-top:12px}.subscription-usage .usage-schedule small{margin-top:6px;font-size:11px}
+.subscription-usage .usage-toolbar{margin:0 0 20px;padding:10px 0;position:sticky;top:var(--cst-nav-height,58px);z-index:15;background:var(--cst-bg);border:0;box-shadow:none;border-radius:0}
+.usage-ledger{display:grid;grid-template-columns:minmax(0,1fr) 240px;gap:28px;align-items:start}
+.usage-history{min-width:0;padding:22px;background:var(--cst-panel);border-top:2px solid var(--cst-text)}
+.subscription-usage .usage-summary{display:flex;align-items:flex-start;gap:24px;flex-wrap:wrap;margin:0 0 20px;padding-bottom:18px;border-bottom:1px solid var(--cst-line)}
+.subscription-usage .usage-summary>div{border:0;border-radius:0;background:none;padding:0;gap:7px;flex:1 1 140px}.subscription-usage .usage-summary>div:first-child{flex:2 1 230px}
+.subscription-usage .usage-summary strong{font-size:24px;font-weight:600;font-variant-numeric:tabular-nums}.subscription-usage .usage-summary>div:first-child strong{font-size:32px}.subscription-usage .usage-summary small,.subscription-usage .usage-summary span{font-size:11px;line-height:1.6}
+.subscription-usage .usage-chart{border-bottom:1px solid var(--cst-line);margin:20px 0 8px}.subscription-usage .usage-bar i{border-radius:2px 2px 0 0}.subscription-usage .usage-bar.unknown i{background:none;border-top:1px dashed var(--cst-line-strong)}
+.subscription-usage .usage-explanation{border-radius:0;background:none;border:0}.subscription-usage .usage-explanation summary{padding-left:0}
+.usage-snapshots{min-width:0;border-top:2px solid var(--cst-line-strong);padding-top:20px}.usage-snapshots h3,.usage-observations h3{font-size:14px;margin:0 0 12px}
+.subscription-usage .usage-accounts{display:block;margin:0}.subscription-usage .usage-accounts article{border:0;border-bottom:1px solid var(--cst-line);padding:18px 0;border-radius:0;background:none;gap:8px}.subscription-usage .usage-accounts article:first-child{padding-top:4px}.subscription-usage .usage-accounts strong{font-size:13px;line-height:1.7}.subscription-usage .usage-accounts span,.subscription-usage .usage-accounts small{font-size:11px;line-height:1.7}
+.usage-observations{grid-column:1/-1;min-width:0;border-top:1px solid var(--cst-line);padding-top:24px}.subscription-usage .table-scroll{margin:14px 0 0;border-radius:0;border-left:0;border-right:0}.subscription-usage .usage-intervals{background:var(--cst-panel)}
+@media(max-width:1000px){.usage-ledger{grid-template-columns:minmax(0,1fr)}.usage-snapshots{padding-top:16px}.subscription-usage .usage-accounts{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:20px}.subscription-usage .usage-accounts article{padding-top:4px}.usage-history{padding:18px}}
+@media(max-width:640px){.subscription-usage .usage-toolbar{position:static;gap:12px}.subscription-usage .usage-schedule{padding:16px 0}.usage-update{align-items:flex-start}.subscription-usage .usage-summary{gap:18px}.subscription-usage .usage-summary>div:first-child{flex-basis:100%}.usage-history{padding:16px 12px}.usage-ledger{gap:20px}}
 </style>
