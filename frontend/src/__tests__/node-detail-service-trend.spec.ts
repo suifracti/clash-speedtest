@@ -126,13 +126,20 @@ it.each(['manual','monitor'] as const)('opens the report time window and explici
  wrapper=mount(NodeDetailModal,{props:{node,initialProject:'latency',initialSource:source,initialTargetId:'google',initialUntil:until},attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
  if(source==='manual'){expect(api.latencyHistory).toHaveBeenCalledWith(expect.objectContaining({profile_id:node.profile_id,config_revision_key:node.config_revision_key}),expect.objectContaining({until}));expect(api.monitorSamples).not.toHaveBeenCalled()}
  else{expect(api.monitorSamples).toHaveBeenCalledWith(expect.objectContaining({profile_id:node.profile_id,config_revision_key:node.config_revision_key,probe_type:'rtt',until}));expect(api.latencyHistory).not.toHaveBeenCalled()}
- expect(document.body.textContent).toContain('报告时段');expect(w.project.value).toBe('service');expect(w.serviceIds.value).toEqual(['service-a'])
+ expect(document.body.textContent).toContain('指定时段');expect(w.project.value).toBe('service');expect(w.serviceIds.value).toEqual(['service-a'])
  Array.from(document.querySelectorAll<HTMLButtonElement>('dialog button')).find(b=>b.textContent?.trim()==='刷新')!.click();await flushPromises()
  if(source==='manual')expect(api.latencyHistory).toHaveBeenLastCalledWith(expect.any(Object),expect.objectContaining({until}))
  else expect(api.monitorSamples).toHaveBeenLastCalledWith(expect.objectContaining({until}))
 })
 
 
+it('honors an explicit all-services history scope without inheriting the workbench service filter',async()=>{
+ vi.mocked(api.attemptHistory).mockResolvedValue({attempts:[],has_more:false,complete:true})
+ wrapper=mount(NodeDetailModal,{props:{node,initialProject:'service',initialServiceId:'',initialSource:'manual',initialUntil:time},attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
+ const query=vi.mocked(api.attemptHistory).mock.calls[0]
+ expect(query[0]).toBe('service');expect(query[1]).toEqual(expect.objectContaining(node));expect(query[2]).toEqual(expect.objectContaining({until:time}));expect(query[2]).not.toHaveProperty('service_id')
+ expect((document.querySelector('select[aria-label="历史服务项目"]') as HTMLSelectElement).value).toBe('');expect(w.serviceIds.value).toEqual(['service-a'])
+})
 it('offers the only saved older revision when the current configuration has no saved history',async()=>{
  const older={...node,node_key:'older-key',config_revision_key:'older-only',last_observed_at:time}
  w.nodes.value=[node]

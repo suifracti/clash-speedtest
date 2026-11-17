@@ -23,9 +23,10 @@ const w=useWorkspace(),inlineTab=ref<'round'|'history'>('round'),keepOpen=ref(fa
 const serviceDetail=ref<Attempt|null>(null)
 const serviceDetailPoint=computed<TrendPoint|null>(()=>serviceDetail.value?{id:serviceDetail.value.attempt_id,time:serviceDetail.value.finished_at||serviceDetail.value.requested_at,value:null,tone:attemptTone(serviceDetail.value),description:'已保存服务证据 · 端点响应不代表登录、播放或聊天可用',attempts:[serviceDetail.value],source:'manual',trigger:serviceDetail.value.trigger_type as TrendPoint['trigger']}:null)
 function shownService(n:NodeOption,id:string){const saved=latestServices([...(qualityData.value[key(n)]?.services||[]),...(w.services.value[key(n)]||[])]).find(a=>(a.service_id||a.rule.service_id)===id);return w.sort.value==='service'?w.summaryService(n,id)||saved:saved}
+function showServiceEvidence(attempt:Attempt){serviceDetail.value=attempt}
 function showService(n:NodeOption,id:string){const a=shownService(n,id);if(a)serviceDetail.value=a;else w.inspectNode.value=n}
 const nodeActivities=computed(()=>{const result:Record<string,{state:string;label:string}>={};for(const q of w.queue.value){const k=key(q.node),state=w.pendingStart.value&&(q.id===w.pendingStart.value.requestId||w.pendingStart.value.kind==='latency'&&q.project==='latency'&&q.state==='running'&&!q.batchId)?'unknown':q.attempt?.persistence_state==='saving'?'saving':q.attempt?.persistence_state==='failed'?'save_failed':q.state;const rank=(s:string)=>({running:6,cancelling:7,saving:5,queued:4,save_failed:3,failed:2,completed:1}[s]||0);if(!result[k]||rank(state)>rank(result[k].state))result[k]={state,label:({unknown:'启动待确认',running:'检测中',cancelling:'正在取消',saving:'结果已到 · 保存中',queued:'等待检测',save_failed:'保存失败 · 结果保留',failed:'检测已结束 · 查看结果',completed:'检测已结束',cancelled:'已取消',not_executed:'未执行'} as Record<string,string>)[state]||state}}return result})
-const qualityView=ref(true),compareOpen=ref(false),qualityGate=ref('all'),qualitySort=ref('existing'),protocolFilter=ref('all')
+const qualityView=ref(true),compareOpen=ref(false),compareTarget=ref(w.displayTarget.value),qualityGate=ref('all'),qualitySort=ref('existing'),protocolFilter=ref('all')
 const qualityData=ref<Record<string,QualityEvidence>>({}),qualityErrors=ref<Record<string,string>>({}),qualityLoading=ref(false),qualityCutoff=ref(new Date().toISOString())
 let qualityGeneration=0
 const siteTarget=ref('cloudflare'),siteSort=ref<SiteQualityMetric|'existing'>('existing'),siteGate=ref('all')
@@ -54,7 +55,7 @@ watch([savedQualityVersion,()=>w.busy.value],([version,busy])=>{
  const quick=qualityView.value,full=quick?(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing'):(siteSort.value!=='existing'||siteGate.value!=='all')
  if(quick||full||compareOpen.value)void readQualityNodes(full?w.proxyNodes.value:[...new Map([...pageNodes.value,...(compareOpen.value?qualityCompareNodes.value:[])].map(n=>[key(n),n])).values()])
 })
-const compareCompatible=computed(()=>{const g=qualityCompareNodes.value.map(n=>{const e=qualityData.value[key(n)];const g=e?qualityGroups(e.tests,e.monitor,w.displayTarget.value)[0]:undefined;return e&&latencyReadComplete(e,g)?g:undefined});return g.length>1&&g.every(v=>v?.comparable&&!v.insufficient&&v.key===g[0]?.key)})
+const compareCompatible=computed(()=>{const g=qualityCompareNodes.value.map(n=>{const e=qualityData.value[key(n)];const g=e?qualityGroups(e.tests,e.monitor,compareTarget.value)[0]:undefined;return e&&latencyReadComplete(e,g)?g:undefined});return g.length>1&&g.every(v=>v?.comparable&&!v.insufficient&&v.key===g[0]?.key)})
 const comparisonDownloadStatus=computed(()=>{
  const evidence=qualityCompareNodes.value.map(n=>qualityData.value[key(n)])
  if(evidence.some(e=>!e||!e.reads.download.complete))return '下载不可比较：读取尚未完整。'
@@ -65,9 +66,9 @@ const comparisonDownloadStatus=computed(()=>{
  if(attempts.some(a=>!a!.rule.method||a!.rule.rule_version===undefined||a!.rule.maximum_bytes===undefined||a!.rule.maximum_duration_ns===undefined||!a!.rule.network_path_method||!a!.rule.physical_interface||!a!.rule.dns_mode||!a!.node_type||a!.result?.network_path?.method!==a!.rule.network_path_method||a!.result?.network_path?.interface!==a!.rule.physical_interface||a!.result?.network_path?.dns_mode!==a!.rule.dns_mode||!a!.result?.network_path?.socket_bind_verified||!a!.result?.network_path?.dns_bind_verified||!a!.result?.network_path?.address_family||!a!.result?.network_path?.address_source))return '下载不可比较：方法、上限或出口证据不足。'
  return '历史有效速度条件一致；最近检测状态仍单独核对。'
 })
-// 比较就地展开在检查器位置；退出时恢复原来的滚动位置，查看中的节点不受影响。
+// 比较使用独立对照表；退出时恢复原来的滚动位置，查看中的节点不受影响。
 let compareScroll=0
-async function openComparison(){compareScroll=window.scrollY;compareOpen.value=true;await readQualityNodes(qualityCompareNodes.value)}
+async function openComparison(){compareTarget.value=w.displayTarget.value;compareScroll=window.scrollY;compareOpen.value=true;await readQualityNodes(qualityCompareNodes.value)}
 function closeComparison(){if(!compareOpen.value)return;compareOpen.value=false;void nextTick(()=>window.scrollTo({top:compareScroll}))}
 watch(()=>qualityCompareNodes.value.length,n=>{if(n<2)closeComparison()})
 const presentation=createPresentationCache(w,monitorData,monitorHTTPData)
@@ -181,7 +182,7 @@ watch(servicePage,closeHover)
 watch(servicePages,count=>servicePage.value=Math.min(servicePage.value,count))
 watch([()=>w.project.value,()=>w.hours.value,currentPage],closeHover)
 watch(()=>w.displayTarget.value,()=>{if(keepOpen.value&&hoverNode.value){activeRound.value=null;inlineTab.value='history'}else closeHover()})
-provide(homeModelKey,{readWeekly,weeklyStats,weeklyErrors,weeklySort,weeklyDescending,sortWeekly,compareOpen,compareNodes:qualityCompareNodes,compareCompatible,comparisonDownloadStatus,closeComparison,servicePoints:(n:NodeOption,id:string)=>presentation.points(n,'service',w.displayTarget.value,id),hiddenSelectedCount,qualityFiltersPending,monitorData,monitorErrors,monitorHTTPErrors,httpPoints,visibleServices,servicePage,servicePages,servicesPerPage,chosen,filterProfiles,protocolChoices,protocolFilter,qualityGate,qualitySort,qualityLoading,qualityErrors,qualityCutoff,allQualityReady,readQualityNodes,siteSummaries,pageSize,setPageSize,pageNodes,visibleNodes,runNodes,currentPage,totalPages,chosenNames,picker,filterRegions,qualityData,nodeActivities,displayServices,sourceLabel,metricPoint,siteMetric,siteContext,siteReason,sitePoints,rowPoints,downloadMetric,downloadMetricTone,downloadMetricContext,serviceMetric,serviceTone,shownService,showService,hoverNode,hoverMode,hoverTarget,hoverService,hoverPoints,activeRound,inlineTab,inlineHistorySource,keepOpen,inspectRound,openRound,leaveRound,keepRound,closeHover,expandHistory,openComparison,openCombinedPlan,runLabel})
+provide(homeModelKey,{readWeekly,weeklyStats,weeklyErrors,weeklySort,weeklyDescending,sortWeekly,compareOpen,compareTarget,compareNodes:qualityCompareNodes,compareCompatible,comparisonDownloadStatus,closeComparison,servicePoints:(n:NodeOption,id:string)=>presentation.points(n,'service',w.displayTarget.value,id),hiddenSelectedCount,qualityFiltersPending,monitorData,monitorErrors,monitorHTTPErrors,httpPoints,visibleServices,servicePage,servicePages,servicesPerPage,chosen,filterProfiles,protocolChoices,protocolFilter,qualityGate,qualitySort,qualityLoading,qualityErrors,qualityCutoff,allQualityReady,readQualityNodes,siteSummaries,pageSize,setPageSize,pageNodes,visibleNodes,runNodes,currentPage,totalPages,chosenNames,picker,filterRegions,qualityData,nodeActivities,displayServices,sourceLabel,metricPoint,siteMetric,siteContext,siteReason,sitePoints,rowPoints,downloadMetric,downloadMetricTone,downloadMetricContext,serviceMetric,serviceTone,shownService,showService,showServiceEvidence,hoverNode,hoverMode,hoverTarget,hoverService,hoverPoints,activeRound,inlineTab,inlineHistorySource,keepOpen,inspectRound,openRound,leaveRound,keepRound,closeHover,expandHistory,openComparison,openCombinedPlan,runLabel})
 onMounted(()=>monitorTimer=setInterval(()=>{if(w.page.value==='home'&&document.visibilityState==='visible')void readMonitor()},30000));onBeforeUnmount(()=>{qualityGeneration++;presentation.clear();monitorGeneration++;clearTimeout(hoverTimer);clearInterval(monitorTimer)})
 </script>
 <template>

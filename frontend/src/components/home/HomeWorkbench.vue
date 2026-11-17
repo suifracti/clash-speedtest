@@ -127,7 +127,7 @@ const detailsOverlay=ref(detailViewport?.matches??false)
 function updateDetailViewport(){detailsOverlay.value=detailViewport?.matches??false}
 onMounted(()=>detailViewport?.addEventListener('change',updateDetailViewport))
 onBeforeUnmount(()=>detailViewport?.removeEventListener('change',updateDetailViewport))
-function closeDetails(){if(m.compareOpen.value)m.compareOpen.value=false;else inspectorOpen.value=false}
+function closeDetails(){if(m.compareOpen.value)m.closeComparison();else inspectorOpen.value=false}
 const sourcesOpen=ref(false)
 const focusKey=ref<string|null>(null)
 const focusNode=computed(()=>m.pageNodes.value.find(n=>key(n)===focusKey.value)||m.pageNodes.value[0])
@@ -254,7 +254,7 @@ function keyNav(e:KeyboardEvent){
 
     <nav v-if="!exitMode&&w.project.value==='service'" class="hd-seg matrix-switch" aria-label="解锁结果视图"><button :aria-pressed="serviceView==='nodes'" @click="serviceView='nodes'">按节点</button><button :aria-pressed="serviceView==='services'" @click="serviceView='services'">按服务</button></nav>
     <UnlockServiceMatrix v-if="matrixMode"/>
-    <div v-else class="hd-body" :class="{'overview-mode':overviewMode,'exit-mode':exitMode,comparing:m.compareOpen.value&&!detailsOverlay,'compare-wide':m.compareOpen.value&&!detailsOverlay&&m.compareNodes.value.length>2,'full-table':detailsOverlay||!inspectorOpen&&!m.compareOpen.value}" :style="{'--hd-side-w':sideWidth+'px'}">
+    <div v-else class="hd-body" :class="{'overview-mode':overviewMode,'exit-mode':exitMode,'full-table':detailsOverlay||!inspectorOpen}" :style="{'--hd-side-w':sideWidth+'px'}">
       <div ref="table" class="hd-table" role="table" aria-label="节点列表" tabindex="0" :style="{'--hd-cols':columns}" @keydown="keyNav">
         <div class="hd-tr hd-th" role="row">
           <span role="columnheader"><input type="checkbox" :checked="allOnPage" aria-label="选择本页全部节点" @change="w.toggleAll(m.pageNodes.value)"></span>
@@ -288,13 +288,12 @@ function keyNav(e:KeyboardEvent){
         <div v-if="!m.pageNodes.value.length" class="hd-empty"><Icon name="layers"/><strong>{{!chosen.length?'先选择一个机场':hasSourceNodes?'节点被筛选条件隐藏了':'这个机场还没有节点'}}</strong><button class="hd-btn" @click="!chosen.length?m.picker.value=true:hasSourceNodes?clearFilters():w.page.value='airports'">{{!chosen.length?'选择机场':hasSourceNodes?'清除筛选':'管理订阅'}}</button></div>
       </div>
       <template v-if="!detailsOverlay">
-        <div v-if="inspectorOpen||m.compareOpen.value" class="hd-resize" role="separator" aria-orientation="vertical" aria-label="调整检查器宽度" :aria-valuenow="sideWidth" :aria-valuemin="SIDE_MIN" :aria-valuemax="SIDE_MAX" tabindex="0" @pointerdown="startResize" @keydown.left.prevent="setSide(sideWidth+24)" @keydown.right.prevent="setSide(sideWidth-24)" @dblclick="setSide(420)"/>
-        <NodeCompare v-if="m.compareOpen.value" class="hd-side"/>
-        <NodeInspector v-else-if="focusNode&&inspectorOpen" :key="key(focusNode)" class="hd-side" :node="focusNode" :exit-only="exitMode" :clash-usage="clashUsage" @collapse="inspectorOpen=false" @select-project="selectInspectorProject" @refresh-clash-usage="refreshClashUsage"/>
+        <div v-if="inspectorOpen" class="hd-resize" role="separator" aria-orientation="vertical" aria-label="调整检查器宽度" :aria-valuenow="sideWidth" :aria-valuemin="SIDE_MIN" :aria-valuemax="SIDE_MAX" tabindex="0" @pointerdown="startResize" @keydown.left.prevent="setSide(sideWidth+24)" @keydown.right.prevent="setSide(sideWidth-24)" @dblclick="setSide(420)"/>
+        <NodeInspector v-if="focusNode&&inspectorOpen" :key="key(focusNode)" class="hd-side" :node="focusNode" :exit-only="exitMode" :clash-usage="clashUsage" @collapse="inspectorOpen=false" @select-project="selectInspectorProject" @refresh-clash-usage="refreshClashUsage"/>
       </template>
     </div>
 
-    <Modal v-if="detailsOverlay&&!matrixMode&&(m.compareOpen.value||focusNode&&inspectorOpen)" :title="m.compareOpen.value?'比较所选节点':'节点详情'" wide variant="workbench-detail-modal" @close="closeDetails">
+    <Modal v-if="!matrixMode&&(m.compareOpen.value||detailsOverlay&&focusNode&&inspectorOpen)" :title="m.compareOpen.value?'比较所选节点':'节点详情'" wide :variant="m.compareOpen.value?'workbench-detail-modal comparison-modal':'workbench-detail-modal'" @close="closeDetails">
       <div class="hd hd-detail-sheet">
         <NodeCompare v-if="m.compareOpen.value"/>
         <NodeInspector v-else-if="focusNode" :key="key(focusNode)" :node="focusNode" :exit-only="exitMode" :clash-usage="clashUsage" @collapse="inspectorOpen=false" @select-project="selectInspectorProject" @refresh-clash-usage="refreshClashUsage"/>

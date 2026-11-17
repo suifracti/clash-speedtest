@@ -310,7 +310,35 @@ it('aligns two-node metrics by semantic row and keeps original history and selec
  const table=document.querySelector('.quality-compare table')!;expect(table).not.toBeNull();expect(table.querySelectorAll('thead th[scope=col]')).toHaveLength(3)
  expect([...table.querySelectorAll('tbody th[scope=row]')].map(e=>e.textContent?.trim())).toEqual(['延迟分布','成功率 / 样本','下载','服务结论','测量时间','完整证据','原始历史'])
  expect(table.textContent).toContain('未测');expect(document.querySelector('.quality-compare-status')?.textContent).toContain('不可比较');expect(document.querySelector('.comparison-scroll-hint')).toBeNull()
- const history=table.querySelector('tbody tr:last-child td button') as HTMLButtonElement;history.click();await flushPromises();expect(document.querySelector('.quality-compare')).toBeNull();expect(w.inspectNode.value).toEqual(a);expect(w.selectedKeys.value).toEqual([key(a),key(b)]);expect(api.startAttempt).not.toHaveBeenCalled();expect(api.startLatency).not.toHaveBeenCalled();w.dispose()
+ const history=table.querySelector('tbody tr:last-child td button') as HTMLButtonElement;history.click();await flushPromises();expect(document.querySelector('.quality-compare')).toBeNull();expect(w.inspectNode.value).toEqual(expect.objectContaining({...a,historyTargetId:'cloudflare',historyProject:'latency',historySource:'manual',historyUntil:expect.any(String)}));expect(w.selectedKeys.value).toEqual([key(a),key(b)]);expect(api.startAttempt).not.toHaveBeenCalled();expect(api.startLatency).not.toHaveBeenCalled();w.dispose()
+})
+it('switches comparison targets locally and opens history with the selected target and frozen cutoff',async()=>{
+ const at=new Date().toISOString(),path={method:'physical_socket_v1',interface:'en1',dns_mode:'physical_interface_dns_v1',socket_bind_verified:true,dns_bind_verified:true,tcp_bindings:1,udp_bindings:0,address_family:'IPv4',address_source:'A'}
+ vi.mocked(api.latencyHistory).mockImplementation(async node=>({tests:targets.slice(0,2).map((t,i)=>({...node,node_type:'trojan',display_name:'fixture',attempt_id:node.profile_id+t.id,requested_at:at,finished_at:at,status:'completed',latency_ms:80+i*200,total_samples:20,success_samples:20,failure_samples:0,persistence_state:'saved',source:'workbench',method:'http_get_via_proxy_first_byte',method_version:1,network_path:{...path,address_family:i&&node.profile_id===b.profile_id?'IPv6':'IPv4'},samples:Array.from({length:20},(_,seq)=>({seq:seq+1,target:t.urls[0],timestamp:at,latency_ms:80+i*200,success:true}))})),has_more:false,complete:true}))
+ const w=workspace(),ui=attach(HomeView,w);await flushPromises();w.toggleNode(a);w.toggleNode(b);await flushPromises()
+ await ui.findAll('button').find(b=>b.text()==='比较已选 2 个节点')!.trigger('click');await flushPromises()
+ const target=document.querySelector('select[aria-label="比较延迟站点"]') as HTMLSelectElement;expect(target).not.toBeNull()
+ expect([...target.options].map(o=>o.value)).toEqual(['cloudflare','google','github','apple','microsoft','firefox'])
+ expect(document.querySelector('.quality-compare-status')?.textContent).toContain('条件一致');expect(document.querySelector('.quality-compare')?.textContent).toContain('P95 80 ms')
+ target.value='google';target.dispatchEvent(new Event('change',{bubbles:true}));await flushPromises()
+ expect(w.displayTarget.value).toBe('cloudflare');expect(w.selectedKeys.value).toEqual([key(a),key(b)])
+ expect(document.querySelector('.quality-compare-status')?.textContent).toContain('不可比较');expect(document.querySelector('.quality-compare')?.textContent).toContain('P95 280 ms')
+ const cutoff=vi.mocked(api.latencyHistory).mock.calls.find(c=>c[0].profile_id===a.profile_id&&c[1]?.until)?.[1]?.until
+ ;(document.querySelector('.quality-compare tbody tr:last-child td button') as HTMLButtonElement).click();await flushPromises()
+ expect(w.inspectNode.value).toEqual({...a,historyTargetId:'google',historyProject:'latency',historySource:'manual',historyUntil:cutoff})
+ expect(api.startAttempt).not.toHaveBeenCalled();expect(api.startLatency).not.toHaveBeenCalled();w.dispose();vi.mocked(api.latencyHistory).mockResolvedValue({tests:[],has_more:false,complete:true})
+})
+it('aligns every saved service including retired rules and opens the exact comparison evidence',async()=>{
+ const saved={...oldService,...a,rule:{...oldService.rule,name:'Netflix'},result:{...oldService.result!,summary:'比较窗口内证据'}}
+ const retired={...saved,...b,service_id:'retired_probe',attempt_id:'retired-b',rule:{...saved.rule,name:'历史端点'}}
+ vi.mocked(api.attemptHistory).mockImplementation(async(kind,node)=>({attempts:kind==='service'?(node.profile_id===a.profile_id?[saved]:[retired,{...saved,...b,attempt_id:'saved-b'}]):[],has_more:false,complete:true}))
+ const w=workspace();w.services.value[key(a)]=[{...saved,attempt_id:'outside-window',result:{...saved.result!,finished_at:'2099-01-01T00:00:00Z',summary:'工作台较新证据'}}]
+ const ui=attach(HomeView,w);await flushPromises();w.toggleNode(a);w.toggleNode(b);await flushPromises();await ui.findAll('button').find(b=>b.text()==='比较已选 2 个节点')!.trigger('click');await flushPromises()
+ const rows=[...document.querySelectorAll('.quality-compare tbody tr')],netflix=rows.find(r=>r.querySelector('th')?.textContent==='Netflix'),legacy=rows.find(r=>r.querySelector('th')?.textContent==='历史端点')
+ expect(netflix).toBeDefined();expect(legacy).toBeDefined();expect(legacy!.querySelector('td')?.textContent).toContain('未测')
+ ;(netflix!.querySelector('td [role=button]') as HTMLElement).click();await flushPromises()
+ expect(document.querySelector('.measurement-results')?.textContent).toContain('比较窗口内证据');expect(document.querySelector('.measurement-results')?.textContent).not.toContain('工作台较新证据')
+ expect(document.querySelector('.quality-compare')).not.toBeNull();expect(w.selectedKeys.value).toEqual([key(a),key(b)]);expect(api.startAttempt).not.toHaveBeenCalled();expect(api.startLatency).not.toHaveBeenCalled();w.dispose();vi.mocked(api.attemptHistory).mockResolvedValue({attempts:[],has_more:false,complete:true})
 })
 it('keeps labels and a keyboard scroll region when comparing three selected nodes',async()=>{
  const w=workspace(),c={...b,node_key:'node-c',node_identity_key:'identity-c',display_name:'日本 01',country_code:'JP'};w.nodes.value=[a,b,c];const ui=attach(HomeView,w);await flushPromises()

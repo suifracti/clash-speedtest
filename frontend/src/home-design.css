@@ -137,6 +137,16 @@ body.cst-resizing{cursor:col-resize;user-select:none}
 .hd-side{position:sticky;top:calc(var(--cst-nav-height,58px) + 12px);max-height:calc(100vh - var(--cst-nav-height,58px) - 24px);overflow:auto}
 .workbench-detail-modal.wide{width:min(980px,calc(100vw - 40px));max-height:94vh}
 .workbench-detail-modal .modal-body{padding:0}
+/* Comparison keeps its controls in view; only the evidence table scrolls. */
+.modal.comparison-modal[open]{display:flex;flex-direction:column;width:min(1120px,calc(100vw - 40px));height:min(980px,94vh);overflow:hidden}
+.comparison-modal .modal-header{flex-shrink:0}
+.comparison-modal .modal-body{display:flex;flex:1;min-height:0;overflow:hidden}
+.comparison-modal .hd-detail-sheet{display:flex;flex:1;min-height:0;min-width:0}
+.comparison-modal .hd-compare{flex:1;min-height:0;overflow:hidden}
+.comparison-modal .hd-compare>*{flex-shrink:0}
+.comparison-modal .hd-compare .hd-compare-table{flex:1 1 auto;min-height:0;max-height:none;overflow:auto}
+.comparison-modal .hd-compare-rules[open]{max-height:140px;overflow:auto}
+
 .hd.hd-detail-sheet{padding:0;margin:0;min-height:0;gap:0;background:var(--hd-panel)}
 .hd-detail-sheet>.hd-inspector,.hd-detail-sheet>.hd-compare{border:0;border-radius:0;box-shadow:none;padding:20px 24px}
 .hd-detail-sheet .hd-ins-head{margin:-20px -24px 0;padding:16px 24px;background:var(--hd-panel)}

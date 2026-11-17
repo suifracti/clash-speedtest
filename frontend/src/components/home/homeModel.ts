@@ -67,6 +67,7 @@ export interface HomeModel {
  serviceTone:(n:NodeOption,id:string)=>string
  shownService:(n:NodeOption,id:string)=>Attempt|undefined
  showService:(n:NodeOption,id:string)=>void
+ showServiceEvidence:(attempt:Attempt)=>void
  hoverNode:Ref<NodeOption|null>
  hoverMode:Ref<Exclude<Project,'combined'>>
  hoverTarget:Ref<string>
@@ -84,6 +85,7 @@ export interface HomeModel {
  expandHistory:()=>void
  openComparison:()=>Promise<void>
  compareOpen:Ref<boolean>
+ compareTarget:Ref<string>
  compareNodes:ComputedRef<NodeOption[]>
  compareCompatible:ComputedRef<boolean>
  comparisonDownloadStatus:ComputedRef<string>

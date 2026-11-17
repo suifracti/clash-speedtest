@@ -13,7 +13,7 @@ import Icon from './Icon.vue'
 import Modal from './Modal.vue'
 import TrendChart from './TrendChart.vue'
 import MeasurementResults from './MeasurementResults.vue'
-const props=defineProps<{node:NodeOption;initialServiceId?:string;initialTargetId?:string;initialProject?:Exclude<Project,'combined'>;initialSource?:'manual'|'monitor';initialUntil?:string}>(),emit=defineEmits<{close:[]}>(),w=useWorkspace(),project=ref<Exclude<Project,'combined'>>(props.initialProject||(w.project.value==='combined'?'latency':w.project.value)),target=ref(props.initialTargetId||w.displayTarget.value),serviceId=ref(props.initialServiceId||w.serviceIds.value[0]||''),tests=ref<LatencyTest[]>([]),attempts=ref<Attempt[]>([]),loading=ref(false),error=ref(''),more=ref(false),raw=ref(false),samplePage=ref(1),revisions=ref<{config_revision_key:string;node_key:string;display_name:string;last_observed_at?:string}[]>([]),revision=ref(props.node.config_revision_key),record=ref<Attempt|null>(null)
+const props=defineProps<{node:NodeOption;initialServiceId?:string;initialTargetId?:string;initialProject?:Exclude<Project,'combined'>;initialSource?:'manual'|'monitor';initialUntil?:string}>(),emit=defineEmits<{close:[]}>(),w=useWorkspace(),project=ref<Exclude<Project,'combined'>>(props.initialProject||(w.project.value==='combined'?'latency':w.project.value)),target=ref(props.initialTargetId||w.displayTarget.value),serviceId=ref(props.initialServiceId??w.serviceIds.value[0]??''),tests=ref<LatencyTest[]>([]),attempts=ref<Attempt[]>([]),loading=ref(false),error=ref(''),more=ref(false),raw=ref(false),samplePage=ref(1),revisions=ref<{config_revision_key:string;node_key:string;display_name:string;last_observed_at?:string}[]>([]),revision=ref(props.node.config_revision_key),record=ref<Attempt|null>(null)
 const revisionError=ref(''),revisionLoading=ref(false)
 const source=ref<'manual'|'monitor'>(props.initialSource||(w.page.value==='monitor'?'monitor':'manual')),monitorProbe=ref('monitor_google_http'),monitorSamples=ref<MonitorSample[]>([]),monitorCursor=ref('')
 if(source.value==='monitor'&&project.value==='download')project.value='latency'
@@ -95,7 +95,7 @@ const comparison=computed(()=>{
       </div>
       <p v-if="revisionLoading" class="small muted">读取配置列表…</p>
       <div v-if="revisionError" class="history-revision-error" role="alert">配置列表读取失败：{{revisionError}}<button class="text-button" :disabled="revisionLoading" @click="loadRevisions">重试读取配置</button></div>
-      <div class="history-time-window"><span>{{props.initialUntil?'报告时段':'读取时段'}}</span><time>{{date(since)}}</time><span>至</span><time>{{date(until)}}</time></div>
+      <div class="history-time-window"><span>{{props.initialUntil?'指定时段':'读取时段'}}</span><time>{{date(since)}}</time><span>至</span><time>{{date(until)}}</time></div>
       <button class="button ghost history-refresh" :disabled="loading" @click="refreshHistory"><Icon name="refresh"/>刷新</button>
     </aside>
     <section class="node-history-content" aria-label="节点历史记录">
