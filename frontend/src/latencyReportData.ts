@@ -14,12 +14,28 @@ export function monitorLatencyBatch(run:MonitorReportRun,samples:MonitorSample[]
  })
  return {batch_id:run.run_id,request_id:run.run_id,target_id:'monitor-rtt',state:run.status,requested_at:run.started_at||run.scheduled_at,item_count:items.length,items}
 }
-export async function readLatencyReports(nodes:NodeOption[]):Promise<SavedLatencyReport[]>{
- const [batches,runs]=await Promise.all([readLatencyBatches(),request<MonitorReportRun[]>('/api/monitor/runs?limit=50','GET',undefined,'QueryMonitorRuns',['',50])])
- const monitoring=await mapLimited(runs||[],6,async run=>{
-  const samples:MonitorSample[]=[]
-  for(let offset=0;;offset+=1000){const page=await request<MonitorSample[]>(`/api/monitor/samples?run_id=${encodeURIComponent(run.run_id)}&limit=1000&offset=${offset}`,'GET',undefined,'QueryMonitorSamples',[{RunID:run.run_id,Limit:1000,Offset:offset}]);samples.push(...(page||[]));if(!page||page.length<1000)break}
-  return {batch:monitorLatencyBatch(run,samples,nodes),monitor:true}
- })
- return [...batches.map(batch=>({batch,monitor:false})),...monitoring.filter(r=>r.batch.items?.length)].sort((a,b)=>Date.parse(b.batch.requested_at)-Date.parse(a.batch.requested_at))
+export interface LatencyReportRead {reports:SavedLatencyReport[];errors:string[]}
+export async function readLatencyReports(nodes:NodeOption[]):Promise<LatencyReportRead>{
+ const reports:SavedLatencyReport[]=[],errors:string[]=[]
+ const failure=(source:string,e:unknown)=>errors.push(source+'：'+(e instanceof Error?e.message:String(e)))
+ const [manual,monitoring]=await Promise.allSettled([
+  (async()=>{
+   const batches=await api.batches()
+   await mapLimited(batches||[],6,async b=>{try{reports.push({batch:b.items?b:await api.batch(b.batch_id),monitor:false})}catch(e){failure('一份手动检测报告读取失败',e)}})
+  })(),
+  (async()=>{
+   const runs=await request<MonitorReportRun[]>('/api/monitor/runs?limit=50','GET',undefined,'QueryMonitorRuns',['',50])
+   await mapLimited(runs||[],6,async run=>{
+    try{
+     const samples:MonitorSample[]=[]
+     for(let offset=0;;offset+=1000){const page=await request<MonitorSample[]>(`/api/monitor/samples?run_id=${encodeURIComponent(run.run_id)}&limit=1000&offset=${offset}`,'GET',undefined,'QueryMonitorSamples',[{RunID:run.run_id,Limit:1000,Offset:offset}]);samples.push(...(page||[]));if(!page||page.length<1000)break}
+     const batch=monitorLatencyBatch(run,samples,nodes)
+     if(batch.items?.length)reports.push({batch,monitor:true})
+    }catch(e){failure('一份监测报告读取失败',e)}
+   })
+  })()
+ ])
+ if(manual.status==='rejected')failure('手动检测目录读取失败',manual.reason)
+ if(monitoring.status==='rejected')failure('监测报告目录读取失败',monitoring.reason)
+ return {reports:reports.sort((a,b)=>Date.parse(b.batch.requested_at)-Date.parse(a.batch.requested_at)),errors}
 }

@@ -4,7 +4,7 @@ import LatencyReportImage from './LatencyReportImage.vue'
 import ReportMs from './ReportMs.vue'
 import {saveReportImage} from '../reportImage'
 import {nodeDisplayName} from '../nodePresentation'
-import type {BatchItem,LatencyBatch} from '../domain'
+import {stateLabel,type BatchItem,type LatencyBatch} from '../domain'
 import {partialLatencyError} from '../inspectorLatency'
 import {partialLatencyLabel} from '../latencyTargets'
 import {buildLatencyReport,compareLatencyReports,latencyAirportSummary,latencyHttpNotices,latencySlowThresholdNote,type LatencyReportGroup,type LatencyReportRow} from '../latencyReport'
@@ -47,7 +47,7 @@ const issueItems=computed(()=>{
 const summaryLine=computed(()=>{
  const s=report.value.summary
  const places=s.airportNames.length===1?s.airportNames[0]:s.airportNames.length?`${s.airportNames.length} 个机场`:'机场未知'
- const plan=s.targetId==='all'?`四站各 ${s.sampleCountPerSite??'—'} 次`:s.sampleCountPerSite?`每站 ${s.sampleCountPerSite} 次`:'采样次数未知'
+ const plan=s.targetId==='all'?`多站各 ${s.sampleCountPerSite??'—'} 次`:s.sampleCountPerSite?`每站 ${s.sampleCountPerSite} 次`:'采样次数未知'
  return `${formatTime(s.requestedAt)} · ${places} ${s.nodeCount} 个节点 · ${plan} · 用时 ${formatDuration(s.durationMs)}`
 })
 const comparisonLine=computed(()=>{
@@ -64,6 +64,8 @@ const countCards=computed(()=>[
  {key:'no-response',label:'无响应',value:report.value.counts.noResponse,tone:'bad'},
  {key:'partial',label:'部分站点不通',value:report.value.counts.partial,tone:'warn'}
 ])
+
+const resultSegments=computed(()=>[...countCards.value,{key:'skipped',label:'未执行',value:report.value.counts.skipped,tone:'empty'}].filter(c=>c.value>0))
 
 function formatTime(value?:string){
  if(!value)return '时间未知'
@@ -105,15 +107,18 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
     <h2 ref="reportTitle" tabindex="-1" autofocus>{{props.monitor?'持续监测报告':'延迟检测报告'}}</h2>
     <p class="latency-report-meta">{{summaryLine}}</p>
    </div>
-   <span class="latency-report-state">{{props.batch.state==='completed'?'已完成':props.batch.state==='cancelling'?'正在取消':props.batch.state==='cancelled'?'已取消':props.batch.state==='failed'?'有项目失败':'检测结束'}}</span>
+   <span class="latency-report-state">{{stateLabel(props.batch.state)}}</span>
   </header>
 
-  <div class="latency-report-counts" aria-label="检测结果计数">
-   <article v-for="card in countCards" :key="card.key" class="latency-report-count" :class="card.tone">
-    <small>{{card.label}}</small><strong>{{card.value}}</strong>
-    <span v-if="card.key==='suspected'&&card.value">与其他结果重叠</span>
-   </article>
-  </div>
+  <section class="latency-report-overview" aria-label="本轮结果分布">
+   <div class="latency-report-verdict"><span>能用的节点</span><strong>{{report.counts.usable}}<small> / {{report.counts.total}}</small></strong><p>未执行与疑似检测问题单独说明</p></div>
+   <div class="latency-report-distribution">
+    <div v-if="report.counts.total" class="latency-report-distribution-bar" role="img" :aria-label="resultSegments.map(c=>c.label+' '+c.value+' 个').join('，')"><span v-for="segment in resultSegments" :key="segment.key" :class="segment.tone" :style="{width:segment.value/report.counts.total*100+'%'}" :title="segment.label+' '+segment.value+' 个'"/></div>
+    <div class="latency-report-counts" aria-label="检测结果计数">
+     <article v-for="card in countCards" :key="card.key" class="latency-report-count" :class="card.tone"><small>{{card.label}}</small><strong>{{card.value}}</strong></article>
+    </div>
+   </div>
+  </section>
   <p v-if="report.counts.suspected" class="latency-report-note">疑似检测问题 {{report.counts.suspected}} 项（与上方分类重叠）</p>
   <p v-if="report.counts.skipped" class="latency-report-note">
    未执行 {{report.counts.skipped}} 项（不计入无响应）
@@ -122,10 +127,10 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
   <p class="latency-report-compare">{{comparisonLine}}</p>
   <p v-for="notice in httpNotices" :key="notice" class="latency-report-http">{{notice}}</p>
 
-  <section v-if="airportSummary.length>1" class="airport-summary"><h3>按机场</h3><table><thead><tr><th>机场</th><th>节点数</th><th>能用</th><th>能用率</th><th>偏慢/不稳定</th><th>部分不通</th><th>无响应</th></tr></thead><tbody><tr v-for="a in airportSummary" :key="a.airport"><td>{{a.airport}}</td><td>{{a.total}}</td><td>{{a.usable}}</td><td>{{a.total?Math.round(a.usable/a.total*100):0}}%</td><td>{{a.slow}}</td><td>{{a.partial}}</td><td :class="{bad:a.noResponse>0}">{{a.noResponse}}</td></tr></tbody></table></section>
+  <section v-if="airportSummary.length>1" class="airport-summary"><h3>按机场</h3><div class="airport-summary-scroll"><table><thead><tr><th>机场</th><th>节点数</th><th>能用</th><th>能用率</th><th>偏慢/不稳定</th><th>部分不通</th><th>无响应</th></tr></thead><tbody><tr v-for="a in airportSummary" :key="a.airport"><td>{{a.airport}}</td><td>{{a.total}}</td><td>{{a.usable}}</td><td>{{a.total?Math.round(a.usable/a.total*100):0}}%</td><td>{{a.slow}}</td><td>{{a.partial}}</td><td :class="{bad:a.noResponse>0}">{{a.noResponse}}</td></tr></tbody></table></div></section>
   <div class="latency-report-columns">
    <section class="latency-report-panel">
-    <header><div><h3>最快 5 个</h3><small>按四站稳定中位延迟排序</small></div></header>
+    <header><div><h3>最快 5 个</h3><small>按已测站点的稳定中位值排序</small></div></header>
     <ol v-if="report.fastest5.length" class="latency-report-fastest">
      <li v-for="(row,index) in report.fastest5" :key="row.key">
       <span class="latency-report-rank">{{index+1}}</span>
@@ -133,7 +138,7 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
       <strong><ReportMs :value="row.stableMs"/></strong>
      </li>
     </ol>
-    <p v-else class="latency-report-empty">没有四站齐全的稳定延迟结果。</p>
+    <p v-else class="latency-report-empty">没有可计算的稳定延迟结果，需有首次之后的响应采样。</p>
    </section>
 
    <section class="latency-report-panel latency-report-problems">
@@ -169,7 +174,7 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
    <summary>查看逐个明细（{{report.rows.length}}）</summary>
    <div class="latency-report-table-wrap">
     <table>
-     <thead><tr><th>节点</th><th>结果</th><th class="number">首次四站中位</th><th class="number">稳定四站中位</th><th>各站稳定值</th><th>说明</th></tr></thead>
+     <thead><tr><th>节点</th><th>结果</th><th class="number">首次站点中位</th><th class="number">稳定站点中位</th><th>各站稳定值</th><th>说明</th></tr></thead>
      <tbody>
       <tr v-for="row in report.rows" :key="row.key">
        <td><button class="text-button" @click="emit('inspect',row.item)">{{nodeDisplayName(row.item)}}</button><span class="report-airport">{{row.airportName}}</span><small>{{row.airportName}} · {{row.nodeType}}</small></td>
@@ -192,27 +197,26 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
 .latency-report-head h2{margin:3px 0 4px;font-size:19px}
 .latency-report-meta{color:var(--cst-muted);font-size:12px;line-height:1.45}
 .latency-report-state{flex:none;border:1px solid var(--cst-line);border-radius:999px;padding:4px 9px;color:var(--cst-muted);font-size:11px}
-.latency-report-counts{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
-.latency-report-count{display:flex;min-height:70px;flex-direction:column;justify-content:center;gap:2px;border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel);padding:9px 12px}
-.latency-report-count small,.latency-report-count span{color:var(--cst-muted);font-size:11px}
-.latency-report-count strong{font-size:23px;line-height:1.1;font-variant-numeric:tabular-nums}
-.latency-report-count.good{background:color-mix(in srgb,var(--cst-good) 10%,var(--cst-panel))}.latency-report-count.warn{background:color-mix(in srgb,var(--cst-warn) 12%,var(--cst-panel))}.latency-report-count.bad{background:color-mix(in srgb,var(--cst-bad) 10%,var(--cst-panel))}.latency-report-count.good strong{color:var(--cst-good)}.latency-report-count.warn strong{color:var(--cst-warn)}.latency-report-count.bad strong{color:var(--cst-bad)}.latency-report-count.suspected strong{color:var(--cst-accent)}
+.latency-report-overview{display:grid;grid-template-columns:205px minmax(0,1fr);gap:28px;padding:20px 0 24px;border-top:2px solid var(--cst-text);border-bottom:1px solid var(--cst-line);align-items:center}
+.latency-report-verdict>span{font-size:12px;color:var(--cst-muted)}.latency-report-verdict>strong{display:block;margin:6px 0;font-size:42px;font-weight:550;line-height:1.1;font-variant-numeric:tabular-nums}.latency-report-verdict strong small{font-size:19px;color:var(--cst-muted);font-weight:400}.latency-report-verdict p{font-size:10px;color:var(--cst-muted);margin:8px 0 0}
+.latency-report-distribution-bar{display:flex;gap:3px;height:10px;margin-bottom:20px;border-radius:2px;overflow:hidden;background:var(--cst-panel-2)}.latency-report-distribution-bar span.good{background:var(--cst-good)}.latency-report-distribution-bar span.warn{background:var(--cst-warn)}.latency-report-distribution-bar span.bad{background:var(--cst-bad)}.latency-report-distribution-bar span.empty{background:var(--cst-line-strong)}
+.latency-report-counts{display:flex;gap:12px 24px;flex-wrap:wrap}.latency-report-count{display:flex;align-items:baseline;gap:7px;min-width:58px}.latency-report-count small{color:var(--cst-muted);font-size:11px}.latency-report-count strong{font-size:17px;line-height:1.1;font-weight:550;font-variant-numeric:tabular-nums}.latency-report-count.bad strong{color:var(--cst-bad)}.latency-report-count.warn strong{color:var(--cst-warn)}
 .latency-report-note{color:var(--cst-muted);font-size:11px;margin-top:-8px}
 .latency-report-http{color:var(--cst-muted);font-size:12px;margin:-4px 0 0}
-.latency-report-compare{border:1px solid var(--cst-line);border-radius:8px;background:var(--cst-panel);padding:9px 11px;font-size:12px;line-height:1.5}
-.latency-report-columns{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;align-items:start}
-.latency-report-panel{min-width:0;border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel);padding:11px}
+.latency-report-compare{border:0;border-left:2px solid var(--cst-line-strong);border-radius:0;background:none;padding:3px 12px;font-size:12px;line-height:1.7}
+.latency-report-columns{display:grid;grid-template-columns:minmax(220px,.8fr) minmax(0,1.2fr);gap:30px;align-items:start;padding:10px 0}
+.latency-report-panel{min-width:0;border:0;border-radius:0;background:none;padding:0}.latency-report-panel:first-child{padding-right:24px;border-right:1px solid var(--cst-line)}
 .latency-report-panel>header,.latency-report-group>header{display:flex;align-items:center;justify-content:space-between;gap:10px}
-.latency-report-panel h3{font-size:13px}.latency-report-panel header small{color:var(--cst-muted);font-size:10px}
+.latency-report-panel h3{font-size:14px;margin:0 0 6px}.latency-report-panel header small{color:var(--cst-muted);font-size:10px}
 .latency-report-fastest{list-style:none;padding:0;margin:8px 0 0}
-.latency-report-fastest li{display:flex;align-items:center;gap:9px;padding:7px 0;border-top:1px solid var(--cst-line)}
-.latency-report-rank{display:grid;place-items:center;width:22px;height:22px;flex:none;border-radius:7px;background:var(--cst-hover);color:var(--cst-muted);font-size:11px}
+.latency-report-fastest li{display:flex;align-items:center;gap:9px;padding:14px 0;border-top:1px solid var(--cst-line)}
+.latency-report-rank{width:20px;flex:none;color:var(--cst-muted);font-size:12px;font-variant-numeric:tabular-nums}
 .latency-report-node{display:flex;min-width:0;flex:1;flex-direction:column;align-items:flex-start}
 .latency-report-node .text-button,.latency-report-group li .text-button,.latency-report-table-wrap .text-button{max-width:100%;white-space:normal;text-align:left}
 .latency-report-node small{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--cst-muted)}
 .latency-report-fastest li>strong{flex:none;font-size:12px;font-variant-numeric:tabular-nums}
 .latency-report-empty{padding:12px 0 3px;color:var(--cst-muted);font-size:12px}
-.latency-report-groups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:8px}
+.latency-report-groups{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;margin-top:8px}
 .latency-report-group{border:0;border-top:1px solid var(--cst-line);border-radius:0;padding:10px 0}
 .latency-report-group>header h4{font-size:12px;font-weight:600}.latency-report-group>header h4 span{color:var(--cst-muted);font-weight:400}
 .latency-report-group>header small{display:block;margin-top:2px;color:var(--cst-muted)}.latency-report-group-note{margin:7px 0 0;padding:6px 8px;border-radius:6px;background:var(--cst-warn-bg);border:1px solid var(--cst-warn-line);color:var(--cst-warn);font-size:10px;line-height:1.55}.latency-report-group ul{display:flex;flex-direction:column;gap:4px;list-style:none;padding:0;margin:7px 0 0}
@@ -233,7 +237,7 @@ function siteLine(row:LatencyReportRow){return row.sites.map(site=>`${site.name}
 .latency-report-table-wrap td:first-child small,.latency-report-table-wrap td:nth-child(2) small,.latency-report-table-wrap td:last-child small{display:block;max-width:220px;margin-top:2px;color:var(--cst-muted);line-height:1.4}
 .latency-report-status{white-space:nowrap}.latency-report-status.usable{color:var(--cst-good)}.latency-report-note.partial,.latency-report-status.partial{color:var(--cst-warn)}.latency-report-status.partial{white-space:normal}.latency-report-status.slow{color:var(--cst-warn)}.latency-report-status.unstable{color:var(--cst-warn)}.latency-report-status.no-response{color:var(--cst-bad)}.latency-report-status.incomplete,.latency-report-status.skipped{color:var(--cst-muted)}
 .latency-report-suspected{color:var(--cst-accent)!important}
-@media(max-width:760px){.latency-report-groups{grid-template-columns:minmax(0,1fr)}.latency-report-counts{grid-template-columns:repeat(2,minmax(0,1fr))}.latency-report-columns{grid-template-columns:minmax(0,1fr)}.latency-report-head{gap:8px}.latency-report-meta{max-width:58vw}.latency-report-group li{align-items:flex-start;flex-direction:column;gap:1px}.latency-report-group li small{text-align:left}.latency-report-actions{justify-content:stretch}.latency-report-actions .button{flex:1}}
-.latency-report-problems{border:0;background:transparent;padding:0;overflow:visible;max-height:none}.latency-report-groups,.latency-report-group,.latency-report-group ul{max-height:none;overflow:visible}.report-airport{font-size:10px;color:var(--cst-muted)}.airport-summary table{width:100%;border-collapse:collapse;font-size:12px}.airport-summary th,.airport-summary td{padding:7px;border-bottom:1px solid var(--cst-line);text-align:left}
+@media(max-width:760px){.latency-report-overview{grid-template-columns:minmax(0,1fr);gap:20px}.latency-report-verdict>strong{font-size:34px}.latency-report-panel:first-child{padding-right:0;border-right:0}.latency-report-groups{grid-template-columns:minmax(0,1fr)}.latency-report-counts{grid-template-columns:repeat(2,minmax(0,1fr))}.latency-report-columns{grid-template-columns:minmax(0,1fr)}.latency-report-head{gap:8px}.latency-report-meta{max-width:58vw}.latency-report-group li{align-items:flex-start;flex-direction:column;gap:1px}.latency-report-group li small{text-align:left}.latency-report-actions{justify-content:stretch}.latency-report-actions .button{flex:1}}
+.latency-report-problems{border:0;background:transparent;padding:0;overflow:visible;max-height:none}.latency-report-groups,.latency-report-group,.latency-report-group ul{max-height:none;overflow:visible}.report-airport{font-size:10px;color:var(--cst-muted)}.airport-summary-scroll{overflow:auto}.airport-summary h3{font-size:13px;margin:10px 0}.airport-summary table{min-width:540px;width:100%;border-collapse:collapse;font-size:12px}.airport-summary th,.airport-summary td{padding:7px;border-bottom:1px solid var(--cst-line);text-align:left}
 .latency-report-head h2:focus{outline:none}.latency-report-group{min-width:0}.latency-report-group li>span{min-width:0}
 </style>
