@@ -4,7 +4,7 @@ import type {EntryResult,LocalPosition,NodeEntry} from './entryPath'
 import {computed,inject,reactive,ref,watch,type InjectionKey} from 'vue'
 import {api,events,mapLimited,saveFile} from './api'
 import {key,scope,isNotice,isReputationRule,sameHistoryRecords,latencyFor,sampleFor,downloadSpeed,downloadTone,outcomeTone,monitorGroups,targets,type MeasurementRound,type Airport,type Attempt,type HistoryPage,type LatencyBatch,type LatencyBatchProgress,type LatencyTest,type MonitorJob,type NodeOption,type Page,type Plan,type Project,type QueueItem,type ServiceRule,type Settings,type Setup,type TokenStatus} from './domain'
-import {compareNodes,nodeDisplayName,nodeRegion,nodeSourceIndex,sourceForNode} from './nodePresentation'
+import {compareNodes,nodeDisplayName,nodeRegion,nodeSourceIndex,sourceForNode,uniqueAirportNodes} from './nodePresentation'
 import {downloadGroup,latencyComparisonGroup,serviceAvailabilitySummary,serviceComparisonGroup} from './sharedResults'
 import {readSortSnapshot,type SortResult} from './sortSnapshot'
 import {clearUsageCache} from './usageDaily'
@@ -82,16 +82,7 @@ export function createWorkspace(){
       }
       return !q||(n.display_name+' '+nodeDisplayName(n)+' '+n.profile_name+' '+nodeAirportName(n)+' '+nodeSubscriptionName(n)+' '+n.country_code).toLowerCase().includes(q);
     });
-    if(subscription.value==='all'){
-      const seen=new Set<string>();
-      visible=visible.filter(n=>{
-        if(!n.node_identity_key)return true;
-        const duplicateKey=JSON.stringify([nodeAirportId(n),n.node_identity_key,n.display_name.trim().toLowerCase()]);
-        if(seen.has(duplicateKey))return false;
-        seen.add(duplicateKey);
-        return true;
-      });
-    }
+    if(subscription.value==='all')visible=uniqueAirportNodes(visible,nodeSources.value)
     return visible.sort((a,b)=>{if(sort.value==='latency'){const x=latencyComparisonGroup(sortSnapshots.value[key(a)]?.latency),y=latencyComparisonGroup(sortSnapshots.value[key(b)]?.latency);if(x.valid!==y.valid)return x.valid?-1:1;if(x.key!==y.key)return x.key.localeCompare(y.key)}if(sort.value==='download'){const x=downloadGroup(summaryDownload(a)),y=downloadGroup(summaryDownload(b));if(x.comparable!==y.comparable)return x.comparable?-1:1;if(x.key!==y.key)return x.kind==='invalid'?1:y.kind==='invalid'?-1:x.key.localeCompare(y.key)}if(sort.value==='service'){const group=(n:NodeOption)=>serviceComparisonGroup(displayServiceIds.value.map(id=>summaryService(n,id)),displayServiceIds.value);const x=group(a),y=group(b);if(x.complete!==y.complete)return x.complete?-1:1;if(x.key!==y.key)return x.key.localeCompare(y.key)}return compareNodes(a,b,nodeSources.value,sort.value,priorityAirportId.value,sortMetric)})})
   const activeBatchProgress=ref<LatencyBatchProgress|null>(null)
   const busy=computed(()=>running.value||!!pendingStart.value||!!activeBatch.value&&!terminal(activeBatch.value.state)||!!activeAttempt.value&&(!terminal(activeAttempt.value.attempt.execution_state)||activeAttempt.value.attempt.persistence_state==='saving'))
@@ -287,7 +278,7 @@ export function createWorkspace(){
     if(!projects.length)throw new Error('请选择节点和检测项目')
     const serviceList=[...new Set([...(frozen.projects.includes('service')?regularServices:[]),...(frozen.includeReputation?reputationServices:[])])]
     const servicesByNode=new Map(frozen.nodes.map(n=>[key(n),allowedUnlockServices(n,serviceList)]))
-    const validateScope=()=>{const available=new Map(proxyNodes.value.map(n=>[key(n),n.node_key]));if(frozen.nodes.some(n=>available.get(key(n))!==n.node_key))throw new Error('部分节点配置已变化，请重新选择')}
+    const validateScope=()=>{const available=new Map(nodes.value.filter(n=>!isNotice(n)).map(n=>[key(n),n.node_key]));if(frozen.nodes.some(n=>available.get(key(n))!==n.node_key))throw new Error('部分节点配置已变化，请重新选择')}
     validateScope()
     if(projects.length===1&&projects[0]==='service'&&![...servicesByNode.values()].some(ids=>ids.length))throw new Error('所选服务都被适用地区规则跳过，请调整服务或地区规则')
     const preparation=++preparationGeneration

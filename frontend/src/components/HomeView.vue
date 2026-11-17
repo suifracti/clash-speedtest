@@ -13,7 +13,8 @@ import HomeWorkbench from './home/HomeWorkbench.vue'
 import {homeModelKey} from './home/homeModel'
 import {useWorkspace} from '../workspace'
 import {api} from '../api'
-import {date,isReputationRule,sameHistoryRecords,downloadSpeed,downloadPeakSpeed,downloadTone,downloadOutcome,downloadConnectionSeconds,downloadSourceName,isNotice,key,outcomeLabel,type NodeOption,type Project,type Attempt} from '../domain'
+import {date,isReputationRule,sameHistoryRecords,downloadSpeed,downloadPeakSpeed,downloadTone,downloadOutcome,downloadConnectionSeconds,downloadSourceName,key,outcomeLabel,type NodeOption,type Project,type Attempt} from '../domain'
+import {airportNodeCount as countAirportNodes} from '../airportViewing'
 import {attemptStatus,downloadNoDataReason,triggerLabel} from '../measurementRounds'
 import {latencyPointLabel,createPresentationCache,monitorHTTPServices,type TrendPoint} from '../presentation'
 import Modal from './Modal.vue'
@@ -125,7 +126,7 @@ const visibleServices=computed(()=>displayServices.value.slice((servicePage.valu
 const visibleServiceIds=computed(()=>visibleServices.value.map(s=>s.service_id))
 const chosenNames=computed(()=>chosen.value.map(a=>a.name).join(' · '))
 function sourceLabel(n:NodeOption){return w.nodeAirportName(n)+' · '+w.nodeSubscriptionName(n)}
-function airportNodeCount(id:string){return w.nodes.value.filter(n=>w.nodeAirportId(n)===id&&!isNotice(n)).length}
+function airportNodeCount(id:string){return countAirportNodes(w.airports.value.find(a=>a.id===id),w.nodes.value)}
 function serviceMetric(n:NodeOption,id:string){const a=shownService(n,id);if(!a)return '未测';if(!a.result)return attemptStatus(a);const o=a.result.outcome;if(o==='flapping')return serviceAvailability(a)===0?'检测结论不一致':'未确认';if(['matched','unlocked'].includes(o)&&!servicePassed(a))return '未确认';return outcomeLabel(o)}
 function serviceTone(n:NodeOption,id:string){const a=shownService(n,id);return a?.result?.outcome==='reachable'?'reachable':a?attemptTone(a):'empty'}
 function hoveredDownloadPoint(n:NodeOption){return hoverMode.value==='download'&&hoverNode.value&&key(hoverNode.value)===key(n)?activeRound.value:null}

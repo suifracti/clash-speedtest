@@ -112,3 +112,12 @@ it('shows regional exclusions and does not start an empty service plan',async()=
  expect(document.querySelector('[role=alert]')?.textContent).toContain('所选服务都被适用地区规则跳过')
  expect(w.plan.value).not.toBe(null);expect(api.entries).not.toHaveBeenCalled();expect(api.createRound).not.toHaveBeenCalled()
 })
+
+it('can explicitly test a current node outside the workbench viewing scope without changing that scope',async()=>{
+ const outside={...node,profile_id:'account-b',node_key:'node-b',node_identity_key:'identity-b',config_revision_key:'revision-b',profile_name:'Airport B / Account B'}
+ w.airports.value.push({id:'airport-b',name:'Airport B',node_count:1,has_cache:true,url_display:'',subscriptions:[{id:'account-b',airport_id:'airport-b',name:'Account B',node_count:1,has_cache:true,url_display:'',url_configured:true}]})
+ w.nodes.value.push(outside);w.selectedKeys.value=[key(node)];w.openPlan([outside]);w.plan.value!.includeReputation=false
+ await w.runPlan()
+ expect(api.startLatency).toHaveBeenCalledWith(expect.objectContaining({selections:[expect.objectContaining({profile_id:'account-b',node_key:'node-b',node_identity_key:'identity-b',config_revision_key:'revision-b'})]}))
+ expect(w.selectedAirportIds.value).toEqual(['airport-a']);expect(w.selectedKeys.value).toEqual([key(node)])
+})

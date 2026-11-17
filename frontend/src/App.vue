@@ -38,6 +38,8 @@ const pages=[...primaryPages,...managePages]
 const navLabels:Record<string,string>={home:'线路',recommend:'为你选线',airports:'订阅',monitor:'监测',history:'记录'}
 const shortcutLabel=/Mac|iPhone|iPad/.test(navigator.platform)?'⌘ K':'Ctrl K'
 const utilities:{id:Page;label:string;icon:string}[]=[{id:'settings',label:'偏好设置',icon:'settings'},{id:'data',label:'数据与备份',icon:'data'}]
+const pageKeywords:Record<Page,string[]>={home:['线路','节点','测速'],recommend:['为你选线','推荐'],airports:['订阅','账户'],monitor:['监测','自动精选','定时检测'],history:['记录','报告','历史'],settings:['偏好','设置'],data:['数据','备份','恢复']}
+const palettePages=[...pages,...utilities].map(p=>({...p,keywords:pageKeywords[p.id]}))
 const palette=ref(false)
 const runningJobs=computed(()=>w.jobs.value.filter(j=>j.state==='running').length)
 // 侧栏任务区只回答三件事：在做什么、已处理多少、有没有需要注意的。不写“成功”，未确认启动时不画进度。
@@ -54,7 +56,7 @@ const task=computed(()=>{
  return {state:'empty',title:'没有进行中的检测',detail:'',progress:null,attention:''}
 })
 const connection=computed(()=>w.connected.value?{tone:'good',label:'本地服务已连接'}:w.loading.value?{tone:'warn',label:'正在连接本地服务'}:{tone:'bad',label:'本地服务未连接'})
-function paletteKey(e:KeyboardEvent){if((e.metaKey||e.ctrlKey)&&!e.altKey&&e.key.toLowerCase()==='k'&&w.setup.value?.state==='ready'&&!w.authRequired.value){e.preventDefault();palette.value=!palette.value}}
+function paletteKey(e:KeyboardEvent){if(e.isComposing||!palette.value&&document.querySelector('dialog[open]'))return;if((e.metaKey||e.ctrlKey)&&!e.altKey&&e.key.toLowerCase()==='k'&&w.setup.value?.state==='ready'&&!w.authRequired.value){e.preventDefault();palette.value=!palette.value}}
 let timer:ReturnType<typeof setInterval>|undefined
 function navigate(page:Page){w.page.value=page;window.scrollTo({top:0,behavior:'instant'})}
 function authExpired(){w.authRequired.value=true;w.dispose()}
@@ -103,7 +105,7 @@ onBeforeUnmount(()=>{document.removeEventListener('visibilitychange',visibilityC
       <button v-if="w.busy.value" class="running-pill cst-mobile-task" @click="w.queueOpen.value=true"><span class="spinner"/>检测进行中 · 查看进度</button>
     </main>
     <Transition name="toast"><div v-if="w.toast.value" class="toast-message" role="status"><Icon name="check"/>{{w.toast.value}}</div></Transition>
-    <CommandPalette v-if="palette" :pages="[...pages,...utilities]" @close="palette=false" @navigate="navigate"/>
+    <CommandPalette v-if="palette" :pages="palettePages" @close="palette=false" @navigate="navigate"/>
     <TestPlanModal v-if="w.plan.value"/>
     <MonitorCreateModal v-if="w.monitorNodes.value"/>
     <QueueModal v-if="w.queueOpen.value"/>

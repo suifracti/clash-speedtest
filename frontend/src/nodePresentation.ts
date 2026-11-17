@@ -17,6 +17,18 @@ export function sourceForNode(node:NodeOption,sources:Map<string,NodeSource>):No
   return sources.get(node.profile_id)||{airportId:node.profile_id,airportName:node.profile_name,subscriptionId:node.profile_id,subscriptionName:node.profile_name}
 }
 
+// Combined browsing can collapse a shared endpoint across accounts; account
+// histories and explicitly selected measurement scopes remain independent.
+export function uniqueAirportNodes(nodes:NodeOption[],sources:Map<string,NodeSource>):NodeOption[]{
+  const seen=new Set<string>()
+  return nodes.filter(n=>{
+    if(!n.node_identity_key)return true
+    const identity=JSON.stringify([sourceForNode(n,sources).airportId,n.node_identity_key,n.display_name.trim().toLowerCase()])
+    if(seen.has(identity))return false
+    seen.add(identity);return true
+  })
+}
+
 export function nodeRegion(node:NodeOption){const code=node.country_code?.trim().toUpperCase();return /^[A-Z]{2}$/.test(code||'')&&!['XX','ZZ'].includes(code)?code:'unknown'}
 
 const regionLabels:Record<string,string>={HK:'香港',MO:'澳门',TW:'台湾',JP:'日本',SG:'新加坡',US:'美国',KR:'韩国',UK:'英国',GB:'英国',DE:'德国',FR:'法国',NL:'荷兰',AU:'澳大利亚',CA:'加拿大',RU:'俄罗斯',TH:'泰国',MY:'马来西亚',VN:'越南',PH:'菲律宾',ID:'印尼',IN:'印度',TR:'土耳其',AE:'阿联酋',CN:'中国',AR:'阿根廷',BR:'巴西',IT:'意大利',ES:'西班牙',SE:'瑞典',CH:'瑞士',PL:'波兰',ZA:'南非',KH:'柬埔寨',EG:'埃及',NG:'尼日利亚',PK:'巴基斯坦'}

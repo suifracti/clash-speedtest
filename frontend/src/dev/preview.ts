@@ -7,11 +7,17 @@ import {shanghaiDay,shiftDay} from '../usageDaily'
 if (!import.meta.env.DEV) throw new Error('UI preview is development-only')
 const queueScenario=new URL(location.href).searchParams.get('scenario')==='queue'
 const planScenario=new URL(location.href).searchParams.get('scenario')==='plan'
+const searchScenario=new URL(location.href).searchParams.get('scenario')==='search'
 const previewAttempts=new Map<string,Attempt>()
 const now=Date.now(),at=new Date(now-18*60_000).toISOString()
 const airports:Airport[]=['青屿','远山','白帆'].map((name,i)=>({id:`demo-airport-${i}`,name:`${name} · 示例`,url_display:'example.invalid',node_count:4,has_cache:true,updated_at:at,subscriptions:[{id:`demo-account-${i}`,airport_id:`demo-airport-${i}`,name:i===0?'日常套餐':i===1?'备用套餐':'旅行套餐',url_display:'https://example.invalid/…',url_configured:true,node_count:4,has_cache:true,updated_at:at,usage:{upload:i===2?null:3*2**30,download:(30+i*19)*2**30,total:200*2**30,expire:Math.floor(now/1000)+86400*(23-i*7),updated_at:at}}]}))
 const regions=['HK','JP','SG','US'],names=['香港 · 日常 01','日本 · 东京 02','新加坡 · 狮城 03','美国 · 西岸 04']
 const nodes:NodeOption[]=airports.flatMap((a,i)=>names.map((name,j)=>({profile_id:a.subscriptions![0].id,profile_name:`${a.name} / ${a.subscriptions![0].name}`,node_key:`demo-${i}-${j}`,node_identity_key:`identity-${i}-${j}`,config_revision_key:`revision-${i}-${j}`,display_name:name,type:j===2?'trojan':'ss',country_code:regions[j],country_flag:''})))
+if(searchScenario){
+ const airport=airports[0],account={...airport.subscriptions![0],id:'demo-account-backup',name:'备用账户',node_count:45}
+ airport.subscriptions!.push(account);airport.node_count+=45
+ nodes.push(...Array.from({length:45},(_,i)=>({...nodes[0],profile_id:account.id,profile_name:`${airport.name} / ${account.name}`,node_key:`demo-backup-${i}`,node_identity_key:`backup-identity-${i}`,config_revision_key:`backup-revision-${i}`,display_name:i===0?names[0]:`香港 · 备用 ${String(i+1).padStart(2,'0')}`})))
+}
 const path={method:'physical_socket_auto_family_v1',interface:'示例网卡',dns_mode:'physical_interface_dns_v1',dns_bind_verified:false,socket_bind_verified:false,tcp_bindings:0,udp_bindings:0,address_family:'ipv4',address_source:'dns'}
 const tests:LatencyTest[]=nodes.slice(0,10).map((n,i)=>({...n,attempt_id:`latency-${i}`,node_type:n.type,requested_at:at,finished_at:at,status:i===6?'failed':'completed',latency_ms:35+i*19,total_samples:24,success_samples:i===6?0:24,failure_samples:i===6?24:0,persistence_state:'saved',method:'http_ttfb',method_version:1,network_path:path,samples:latencyTargets.slice(0,4).flatMap((t,k)=>Array.from({length:6},(_,s)=>({seq:k*6+s,target:t.urls[0],timestamp:new Date(now-18*60_000+s*1000).toISOString(),latency_ms:i===6?0:35+i*19+k*8+s*3,success:i!==6,...(i===6?{error:'示例：连接超时'}:{})})))}))
 const downloads:Attempt[]=nodes.slice(0,8).map((n,i)=>({...n,node_type:n.type,attempt_id:`download-${i}`,request_id:`request-${i}`,requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://example.invalid/download',method:'bounded_get',rule_version:4,maximum_bytes:20*2**20,maximum_duration_ns:15e9},result:{outcome:'byte_limit',bytes_read:20*2**20,phase_timings_ns:{response_body:(1+i*.32)*1e9,connection:140e6},network_path:path,finished_at:at}}))
