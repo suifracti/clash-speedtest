@@ -6,6 +6,7 @@ import {latencyTargets} from '../latencyTargets'
 import {shanghaiDay,shiftDay} from '../usageDaily'
 if (!import.meta.env.DEV) throw new Error('UI preview is development-only')
 const queueScenario=new URL(location.href).searchParams.get('scenario')==='queue'
+const planScenario=new URL(location.href).searchParams.get('scenario')==='plan'
 const previewAttempts=new Map<string,Attempt>()
 const now=Date.now(),at=new Date(now-18*60_000).toISOString()
 const airports:Airport[]=['青屿','远山','白帆'].map((name,i)=>({id:`demo-airport-${i}`,name:`${name} · 示例`,url_display:'example.invalid',node_count:4,has_cache:true,updated_at:at,subscriptions:[{id:`demo-account-${i}`,airport_id:`demo-airport-${i}`,name:i===0?'日常套餐':i===1?'备用套餐':'旅行套餐',url_display:'https://example.invalid/…',url_configured:true,node_count:4,has_cache:true,updated_at:at,usage:{upload:i===2?null:3*2**30,download:(30+i*19)*2**30,total:200*2**30,expire:Math.floor(now/1000)+86400*(23-i*7),updated_at:at}}]}))
@@ -58,7 +59,10 @@ async function handle(url:URL,body:any,method:string):Promise<unknown>{
  if(p==='/api/subscription-usage/state')return {state:'idle',last_attempt:at,next_refresh:'',message:''}
  if(p==='/api/clash/usage')return []
  if(p==='/api/clash/node-status')return {connected:false,loaded:false,name:'',endpoint:''}
- if(p==='/api/workbench/entries')return {entries:[],local_position:null}
+ if(p==='/api/workbench/entries'){
+  if(planScenario&&body?.refresh)await new Promise(resolve=>setTimeout(resolve,8000))
+  return {nodes:[]}
+ }
  if(p==='/api/workbench/latency-tests/query')return body.nodes.map((n:any)=>page(matching(tests,n)))
  if(p==='/api/workbench/latency-tests')return page(matching([...tests,archivedTest],q))
  if(p==='/api/workbench/download-tests')return page(matching([...previewAttempts.values(),...downloads],q),'attempts')

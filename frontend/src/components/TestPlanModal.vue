@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {computed,ref} from 'vue'
+import {computed,ref,watch} from 'vue'
 import {nodeDisplayName} from '../nodePresentation'
 import {bytes,isReputationRule,projectNames,targets,type Project} from '../domain'
 import {useWorkspace} from '../workspace'
@@ -7,9 +7,9 @@ import UiSelect from './UiSelect.vue'
 import Modal from './Modal.vue'
 import ServicePicker from './ServicePicker.vue'
 import UnlockPicker from './UnlockPicker.vue'
-import {antigravityBatchRisk} from '../unlock'
+import {antigravityBatchRisk,unlockServiceSkipReason} from '../unlock'
 
-const w=useWorkspace(),submitting=ref(false),validation=ref('')
+const w=useWorkspace(),validation=ref('')
 const isReputationId=(id:string)=>isReputationRule(w.catalog.value.find(rule=>rule.service_id===id)||{service_id:id})
 const standardCatalog=computed(()=>w.catalog.value.filter(rule=>!isReputationRule(rule)))
 const reputationCatalog=computed(()=>w.catalog.value.filter(rule=>isReputationRule(rule)&&!rule.service_id.startsWith('ipok_')))
@@ -28,7 +28,28 @@ const selectedServiceIds=computed(()=>{
   return [...new Set([...(p.projects.includes('service')?p.serviceIds.filter(id=>!isReputationId(id)):[]),...(p.includeReputation?(p.reputationServiceIds||[]).filter(isReputationId):[])])]
 })
 const plannedRequests=computed(()=>{const p=w.plan.value;if(!p)return 0;return p.nodes.length*p.repeats*((p.projects.includes('latency')?(p.target==='all'?targets.length:1)*p.samples:0)+(p.projects.includes('download')?1:0))+p.nodes.reduce((sum,n)=>sum+w.allowedUnlockServices(n,selectedServiceIds.value).length,0)*p.repeats*(p.serviceSamples??4)})
+const plannedKinds=computed(()=>{const p=w.plan.value;return [...(p?.projects.includes('latency')?['延迟采样']:[]),...(selectedServiceIds.value.length?['服务观察']:[]),...(p?.projects.includes('download')?['每节点 1 次下载']:[])].join(' + ')})
 const groups=computed(()=>[...new Map(w.plan.value?.nodes.map(n=>[n.profile_id,{id:n.profile_id,name:n.profile_name,count:w.plan.value!.nodes.filter(x=>x.profile_id===n.profile_id).length}])||[]).values()])
+const selectedSections=computed(()=>[...(w.plan.value?.projects||[]),...(w.plan.value?.includeReputation?['reputation']:[])])
+const expanded=ref(new Set(selectedSections.value.slice(0,1)))
+watch(selectedSections,(current,previous)=>{for(const id of current)if(!previous.includes(id))expanded.value.add(id)})
+function toggleSection(id:string,event:Event){if((event.target as HTMLDetailsElement).open)expanded.value.add(id);else expanded.value.delete(id)}
+const skippedServices=computed(()=>{
+  const names=new Map(w.catalog.value.map(s=>[s.service_id,s.name])),groups=new Map<string,{id:string;name:string;reason:string;count:number;accounts:Map<string,{name:string;count:number}>}>()
+  for(const node of w.plan.value?.nodes||[]){
+    const region=w.nodeUnlockRegion(node)
+    for(const id of selectedServiceIds.value){
+      const reason=unlockServiceSkipReason(id,region,w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions)
+      if(!reason)continue
+      const groupKey=id+'|'+reason
+      if(!groups.has(groupKey))groups.set(groupKey,{id:groupKey,name:names.get(id)||id,reason,count:0,accounts:new Map()})
+      const group=groups.get(groupKey)!;group.count++
+      const account=group.accounts.get(node.profile_id)||{name:node.profile_name,count:0};account.count++;group.accounts.set(node.profile_id,account)
+    }
+  }
+  return [...groups.values()]
+})
+const skippedCount=computed(()=>skippedServices.value.reduce((sum,s)=>sum+s.count,0))
 
 // 预设只设置延迟参数和轮数（并确保勾上延迟），不动用户已勾的下载/服务/信誉项；这些项仍在名称旁列出。
 type Preset={id:string;label:string;hint:string;target:string;samples:number;timeout:number;repeats:number}
@@ -53,15 +74,15 @@ async function submit(){
   if(!p.projects.length&&!p.includeReputation){validation.value='至少选择一个检测项目';return}
   if(p.projects.includes('service')&&!standardServiceIds.value.length){validation.value='至少选择一个服务';return}
   if(p.includeReputation&&!reputationServiceIds.value.length){validation.value='至少选择一个 IP 信誉/纯净度项目';return}
-  submitting.value=true
-  try{await w.runPlan()}catch(e){validation.value=e instanceof Error?e.message:String(e)}finally{submitting.value=false}
+  try{await w.runPlan()}catch(e){if(w.plan.value===p)validation.value=e instanceof Error?e.message:String(e)}
 }
 </script>
 
 <template>
   <Modal v-if="w.plan.value" title="配置这次检测" wide variant="cst-plan" @close="w.plan.value=null">
+    <p v-if="w.preparingPlan.value" class="plan-preparing" role="status"><span class="spinner"/>正在准备检测 · 解析节点入口；此时取消不会启动检测</p>
     <div class="plan-layout">
-      <div class="plan-editor">
+      <fieldset class="plan-editor" :disabled="w.preparingPlan.value" aria-label="检测项目与参数">
     <section class="cst-plan-step" aria-labelledby="plan-project-title">
       <h3 id="plan-project-title">检测项目</h3>
       <div class="cst-presets" role="group" aria-label="检测预设">
@@ -76,41 +97,44 @@ async function submit(){
 
     <section class="cst-plan-step" aria-labelledby="plan-param-title">
       <h3 id="plan-param-title">检测参数</h3>
-      <div v-if="w.plan.value.projects.includes('latency')" class="plan-section">
-        <h4>延迟检测</h4>
+      <details v-if="w.plan.value.projects.includes('latency')" class="plan-section" :open="expanded.has('latency')" @toggle="toggleSection('latency',$event)">
+        <summary><strong>延迟检测</strong><span>{{w.plan.value.target==='all'?'四站':targets.find(t=>t.id===w.plan.value!.target)?.name||w.plan.value.target}} · 每站 {{w.plan.value.samples}} 次 · {{w.plan.value.timeout}} 秒超时</span></summary>
         <div class="form-grid">
           <label>检测站点<UiSelect v-model="w.plan.value.target"><option value="all">四站综合检测</option><option v-for="target in targets" :key="target.id" :value="target.id">{{target.name}}</option></UiSelect></label>
           <label>每站采样次数<UiSelect v-model.number="w.plan.value.samples"><option v-for="n in [1,3,6,10,20]" :key="n" :value="n">{{n}} 次</option></UiSelect></label>
           <label>请求超时<UiSelect v-model.number="w.plan.value.timeout"><option v-for="n in [3,5,10,20,30]" :key="n" :value="n">{{n}} 秒</option></UiSelect></label>
           <label>节点并发<UiSelect v-model.number="w.plan.value.concurrency"><option v-for="n in [1,4,8,16]" :key="n" :value="n">{{n}} 个节点</option></UiSelect></label>
         </div>
-      </div>
-      <div v-if="w.plan.value.projects.includes('download')" class="plan-section">
-        <h4>下载测速</h4><p class="muted small">Cloudflare 与 OVH；遇到 403／429 自动换另一源一次。连接握手与正文传输独立计时。</p>
+      </details>
+      <details v-if="w.plan.value.projects.includes('download')" class="plan-section" :open="expanded.has('download')" @toggle="toggleSection('download',$event)">
+        <summary><strong>下载测速</strong><span>{{w.plan.value.downloadSource==='ovh'?'OVH':'Cloudflare'}} · {{w.plan.value.downloadMiB}} MiB / 节点 · {{w.plan.value.downloadSeconds}} 秒正文</span></summary>
+        <p class="muted small">Cloudflare 与 OVH；遇到 403／429 自动换另一源一次。连接握手与正文传输独立计时。</p>
         <div class="form-grid">
           <label>首选测速源<UiSelect :model-value="w.plan.value.downloadSource||'cloudflare'" @update:model-value="w.plan.value.downloadSource=String($event)"><option value="cloudflare">Cloudflare</option><option value="ovh">OVH</option></UiSelect></label>
           <label>每节点最多读取<UiSelect v-model.number="w.plan.value.downloadMiB"><option v-for="n in [5,10,20,50,100]" :key="n" :value="n">{{n}} MiB</option></UiSelect></label>
           <label>每节点下载时长<UiSelect v-model.number="w.plan.value.downloadSeconds"><option v-for="n in [5,10,15,20,30]" :key="n" :value="n">{{n}} 秒</option></UiSelect></label>
         </div>
         <p class="muted small">逐个下载，避免抢占带宽。连接另计时，每节点连接与下载合计最多 {{w.plan.value.downloadSeconds*2}} 秒（含换源）。</p>
-      </div>
-      <div v-if="w.plan.value.projects.includes('service')" class="plan-section">
-        <h4>解锁检测</h4>
-        <label class="inline-field">每服务采样次数<UiSelect v-model.number="w.plan.value.serviceSamples"><option v-for="n in [1,2,4]" :key="n" :value="n">{{n}} 次</option></UiSelect></label>
-        <p class="muted small">每项共用15秒总时限；1次只代表本次观察，多次未完成会保留已取得的样本。</p>
+      </details>
+      <details v-if="w.plan.value.projects.includes('service')" class="plan-section" :open="expanded.has('service')" @toggle="toggleSection('service',$event)">
+        <summary><strong>解锁检测</strong><span>{{standardServiceIds.length?`已选 ${standardServiceIds.length} 项`:'尚未选择服务'}} · 每项 {{w.plan.value.serviceSamples??4}} 次</span></summary>
         <UnlockPicker v-model="standardServiceIds" :catalog="standardCatalog"/>
         <p v-if="standardServiceIds.includes('antigravity')" class="inline-warning">Antigravity 会用已绑定账号发起真实模型请求，可能消耗额度。</p>
         <p class="muted small">连接复用按实际观测记录。关闭 HTTP 空闲连接不等于节点重连，也不能保证出口稳定。</p>
-      </div>
-      <div v-if="w.plan.value.includeReputation" class="plan-section reputation-section">
-        <h4>IP信誉/纯净度</h4>
+      </details>
+      <details v-if="w.plan.value.includeReputation" class="plan-section reputation-section" :open="expanded.has('reputation')" @toggle="toggleSection('reputation',$event)">
+        <summary><strong>IP信誉/纯净度</strong><span>已选 {{reputationServiceIds.length}} 项 · 每项 {{w.plan.value.serviceSamples??4}} 次</span></summary>
         <ServicePicker v-model="reputationServiceIds" :catalog="reputationCatalog"/>
         <p class="muted small">IPPure 包含 IPv4 风险、Cloudflare 请求环境系数和 ASN 人机流量比。IPPure 本身不提供 IPv6 风险分；各项结果独立保存。</p>
+      </details>
+      <div class="plan-repetition">
+        <label v-if="w.plan.value.projects.includes('service')||w.plan.value.includeReputation" class="inline-field">每服务采样次数<UiSelect v-model.number="w.plan.value.serviceSamples"><option v-for="n in [1,2,4]" :key="n" :value="n">{{n}} 次</option></UiSelect></label>
+        <label class="inline-field">重复检测<UiSelect v-model.number="w.plan.value.repeats"><option v-for="n in [1,2,3,5]" :key="n" :value="n">{{n}} 轮</option></UiSelect></label>
+        <p v-if="w.plan.value.projects.includes('service')||w.plan.value.includeReputation" class="muted small">服务与 IP 检测使用同一采样次数；每项共用 15 秒总时限，未完成会保留已取得的样本。</p>
       </div>
-      <label class="inline-field">重复检测<UiSelect v-model.number="w.plan.value.repeats"><option v-for="n in [1,2,3,5]" :key="n" :value="n">{{n}} 轮</option></UiSelect></label>
     </section>
 
-      </div>
+      </fieldset>
       <aside class="plan-receipt" aria-label="本次检测范围与预计用量">
     <section class="cst-plan-step" aria-labelledby="plan-scope-title">
       <h3 id="plan-scope-title">本次范围</h3>
@@ -122,23 +146,43 @@ async function submit(){
       <h3 id="plan-budget-title">预计用量</h3>
       <dl class="cst-budget">
         <div v-if="w.plan.value.projects.includes('latency')"><dt>延迟</dt><dd><strong>{{latencySamples}}</strong> 次计划采样<small>{{w.plan.value.nodes.length}} 节点 × {{w.plan.value.target==='all'?targets.length+' 站':'1 站'}} × {{w.plan.value.samples}} 次 × {{w.plan.value.repeats}} 轮</small></dd></div>
-        <div v-if="selectedServiceIds.length"><dt>服务与 IP</dt><dd><strong>{{serviceObservations}}</strong> 次计划观察<small>{{selectedServiceIds.length}} 项 · 服务采样 {{w.plan.value.serviceSamples??4}} 次/项；多请求服务（如 Netflix 一次观察约 5 个请求）、跳转和协议开销另计</small></dd></div>
+        <div v-if="selectedServiceIds.length"><dt>服务与 IP</dt><dd><strong>{{serviceObservations}}</strong> 次计划观察<small>{{selectedServiceIds.length}} 项 · 服务采样 {{w.plan.value.serviceSamples??4}} 次/项；服务内部步骤、跳转和协议开销另计<template v-if="w.plan.value.projects.includes('service')&&standardServiceIds.includes('netflix_unlock')">（Netflix 一次观察约 5 个请求）</template></small></dd></div>
         <div v-if="w.plan.value.projects.includes('download')"><dt>下载</dt><dd>最多读取正文 <strong>{{bytes(downloadVolume)}}</strong><small>实际扣费还受机场倍率和协议开销影响</small></dd></div>
         <div v-if="modelServices.length" class="warn"><dt>模型类</dt><dd>会用已绑定账号发起真实请求<small>可能消耗账号额度，单独计算</small></dd></div>
       </dl>
-      <p class="muted small">合计 {{plannedRequests}} 次计划采样（延迟采样 + 服务观察{{w.plan.value.projects.includes('download')?' + 每节点 1 次下载':''}}）；这是计划次数，不是实际请求总数。</p>
+      <details v-if="skippedCount" class="plan-skipped"><summary>地区规则跳过 {{skippedCount}} 个节点/服务组合</summary><p v-for="item in skippedServices" :key="item.id"><strong>{{item.name}} · 跳过 {{item.count}} 个节点</strong><small>{{item.reason}}</small><small v-for="[id,account] in item.accounts" :key="id">{{account.name}} · {{account.count}}</small></p></details>
+      <p class="muted small">合计 {{plannedRequests}} 次计划采样<template v-if="plannedKinds">（{{plannedKinds}}）</template>；这是计划次数，不是实际请求总数。</p>
     </section>
       </aside>
     </div>
-    <p v-if="validation" class="inline-error" role="alert">{{validation}}</p>
-    <p v-if="modelRisk" class="inline-warning">{{modelRisk}}</p>
-    <template #footer><button class="button" @click="w.plan.value=null">返回调整</button><button class="button primary" :disabled="submitting||w.busy.value" @click="submit">开始检测 {{w.plan.value.nodes.length}} 个节点</button></template>
+    <template #footer><div v-if="validation||modelRisk" class="plan-feedback"><p v-if="validation" class="inline-error" role="alert">{{validation}}</p><p v-if="modelRisk" class="inline-warning">{{modelRisk}}</p></div><button class="button" @click="w.plan.value=null">{{w.preparingPlan.value?'取消准备':'返回调整'}}</button><button class="button primary" :disabled="w.busy.value||w.preparingPlan.value" @click="submit">{{w.preparingPlan.value?'正在准备…':`开始检测 ${w.plan.value.nodes.length} 个节点`}}</button></template>
   </Modal>
 </template>
 
 <style scoped>
 .plan-layout{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:28px;align-items:start}
-.plan-editor{min-width:0}
+.plan-editor{min-width:0;margin:0;padding:0;border:0}
+.plan-editor[disabled]{opacity:.7}
+.plan-preparing{display:flex;align-items:center;gap:9px;margin:0 0 16px;padding:10px 0;color:var(--cst-accent);font-size:12px}
+.plan-section>summary{display:flex;align-items:baseline;justify-content:space-between;gap:12px;list-style:none;padding:12px 0;color:var(--cst-text)}
+.plan-section>summary::-webkit-details-marker{display:none}
+.plan-section>summary:before{content:'›';font-size:18px;color:var(--cst-muted)}
+.plan-section[open]>summary:before{transform:rotate(90deg)}
+.plan-section>summary strong{font-size:13px;margin-right:auto;white-space:nowrap}
+.plan-section>summary span{font-size:11px;color:var(--cst-muted);text-align:right}
+.plan-section[open]>summary{padding-bottom:18px}
+.plan-editor details.plan-section{padding:0;margin:0;border-top:1px solid var(--cst-line)}
+.plan-editor details.plan-section[open]{padding-bottom:18px}
+.plan-repetition{border-top:1px solid var(--cst-line);display:flex;align-items:center;flex-wrap:wrap;gap:0 24px;padding-top:4px}
+.plan-repetition .inline-field{margin:12px 0}
+.plan-repetition>p{flex-basis:100%;line-height:1.7}
+.plan-skipped{margin:12px 0;font-size:11px}
+.plan-skipped>summary{line-height:1.6}
+.plan-skipped p{padding:8px 0;border-bottom:1px solid var(--cst-line);line-height:1.6}
+.plan-skipped small{display:block;color:var(--cst-muted)}
+.plan-feedback{flex-basis:100%}
+.plan-feedback p{margin:0}
+.plan-feedback p+p{margin-top:8px}
 .plan-receipt{position:sticky;top:0;min-width:0;border-left:1px solid var(--cst-line);padding-left:22px}
 .plan-receipt .plan-scope{display:flex;flex-direction:column;align-items:flex-start;gap:5px}
 .plan-receipt .plan-scope strong{font-size:24px;line-height:1.3;margin-bottom:4px}
@@ -157,7 +201,6 @@ async function submit(){
 .plan-editor .cst-preset-state{grid-column:1/-1;padding-top:8px}
 .plan-editor .plan-projects{gap:12px 18px}
 .plan-editor .plan-projects label{border:0;border-radius:0;background:none;color:var(--cst-text);padding:0;min-height:30px}
-.plan-editor .plan-section+.plan-section{border-top:1px solid var(--cst-line);margin-top:10px;padding-top:18px}
 @media(max-width:850px){.plan-layout{grid-template-columns:minmax(0,1fr)}.plan-receipt{position:static;border-left:0;border-top:1px solid var(--cst-line);padding:18px 0 0;display:grid;grid-template-columns:1fr 1fr;gap:20px}.plan-receipt .plan-budget{border:0;padding:0}.plan-receipt .plan-scope strong{font-size:20px}}
 @media(max-width:560px){.plan-receipt{grid-template-columns:1fr}.plan-editor .cst-presets{grid-template-columns:1fr}.plan-editor .cst-preset{flex-direction:row;align-items:center;justify-content:space-between;padding:10px 6px}.plan-editor .cst-preset small{font-size:11px}}
 </style>
