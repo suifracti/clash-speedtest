@@ -94,9 +94,9 @@ async function submit(){
         <div class="form-grid">
           <label>首选测速源<UiSelect :model-value="w.plan.value.downloadSource||'cloudflare'" @update:model-value="w.plan.value.downloadSource=String($event)"><option value="cloudflare">Cloudflare</option><option value="ovh">OVH</option></UiSelect></label>
           <label>每节点最多读取<UiSelect v-model.number="w.plan.value.downloadMiB"><option v-for="n in [5,10,20,50,100]" :key="n" :value="n">{{n}} MiB</option></UiSelect></label>
-          <label>每节点最多持续<UiSelect v-model.number="w.plan.value.downloadSeconds"><option v-for="n in [5,10,15,20,30]" :key="n" :value="n">{{n}} 秒</option></UiSelect></label>
+          <label>每节点下载时长<UiSelect v-model.number="w.plan.value.downloadSeconds"><option v-for="n in [5,10,15,20,30]" :key="n" :value="n">{{n}} 秒</option></UiSelect></label>
         </div>
-        <p class="muted small">逐个下载，避免抢占带宽。</p>
+        <p class="muted small">逐个下载，避免抢占带宽。连接另计时，每节点连接与下载合计最多 {{w.plan.value.downloadSeconds*2}} 秒（含换源）。</p>
       </div>
       <div v-if="w.plan.value.projects.includes('service')" class="plan-section">
         <h4>解锁检测</h4>

@@ -38,8 +38,25 @@ func (d *DB) PreviousWorkbenchDownloadAttempt(ctx context.Context, current *Work
 		return nil, err
 	}
 	where = strings.TrimSuffix(where, previousAttemptOrder)
-	where += ` AND COALESCE(NULLIF(json_extract(COALESCE(r.result_json,a.staged_result_json),'$.target_url'),''),json_extract(a.rule_snapshot_json,'$.target_url')) IS ?` + previousAttemptOrder
+	where += ` AND COALESCE(NULLIF(json_extract(COALESCE(r.result_json,a.staged_result_json),'$.target_url'),''),json_extract(a.rule_snapshot_json,'$.target_url')) IS ?`
 	args = append(args, target)
+	where += ` AND a.node_type = ?`
+	args = append(args, current.NodeType)
+	// Planned routing can settle on different families or verification results.
+	// Use the observed path too, matching the frontend's download conditions.
+	var path any
+	if current.Result != nil {
+		path = current.Result.NetworkPath
+	}
+	pathJSON, err := json.Marshal(path)
+	if err != nil {
+		return nil, err
+	}
+	for _, field := range strings.Fields("method interface dns_mode dns_bind_verified socket_bind_verified address_family address_source") {
+		where += ` AND json_extract(COALESCE(r.result_json,a.staged_result_json),'$.network_path.` + field + `') IS json_extract(?,'$.` + field + `')`
+		args = append(args, string(pathJSON))
+	}
+	where += previousAttemptOrder
 	previous, err := d.getWorkbenchDownloadAttempt(ctx, where, args...)
 	if err == ErrWorkbenchDownloadAttemptNotFound {
 		return nil, nil

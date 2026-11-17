@@ -7,7 +7,8 @@ export function downloadCondition(a:Attempt){return JSON.stringify([downloadTarg
 export function downloadConditionLabel(a:Attempt){
  const p=a.result?.network_path,method=p?.method||a.rule.network_path_method,physical=['physical_socket_v1','physical_socket_auto_family_v1'].includes(method||'')
  const path=physical?`${p?.interface||a.rule.physical_interface||'接口未知'} · ${p?.socket_bind_verified?'绑定已核验':'绑定未核验'}（实际流向未验证）`:'旧出口未验证'
- return `${downloadTarget(a)} · ${a.rule.method||'方法未知'} / v${a.rule.rule_version??'?'} · 上限 ${a.rule.maximum_bytes===undefined?'未知':a.rule.maximum_bytes/1048576+' MiB'} · ${a.rule.maximum_duration_ns===undefined?'时限未知':a.rule.maximum_duration_ns/1e9+' 秒'} · 出口 ${path} · ${p?.address_family||'地址族未知'} / ${p?.address_source||'地址来源未知'}`
+ const duration=a.rule.maximum_duration_ns===undefined?'时限未知':a.rule.rule_version===4?`建连与下载各最多 ${a.rule.maximum_duration_ns/1e9} 秒`:`${a.rule.maximum_duration_ns/1e9} 秒（旧规则）`
+ return `${downloadTarget(a)} · ${a.rule.method||'方法未知'} / v${a.rule.rule_version??'?'} · 上限 ${a.rule.maximum_bytes===undefined?'未知':a.rule.maximum_bytes/1048576+' MiB'} · ${duration} · 出口 ${path} · ${p?.address_family||'地址族未知'} / ${p?.address_source||'地址来源未知'}`
 }
 export function attemptTone(a:Attempt):HealthTone {if(!a.result||!serviceExecuted(a)||a.result.details?.execution_status==='not_executed'||['not_executed','cancelled','interrupted'].includes(a.execution_state))return 'empty';const tone=outcomeTone(a.result.outcome);return tone==='good'&&a.persistence_state==='failed'?'warn':tone}
 export function serviceConclusion(a:Attempt){

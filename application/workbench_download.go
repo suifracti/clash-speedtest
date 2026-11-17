@@ -15,7 +15,9 @@ import (
 	"github.com/faceair/clash-speedtest/core/speedtester"
 )
 
-const workbenchDownloadRuleVersion = 3
+// Version 4 distinguishes independent connection/body budgets from historical
+// version 3 snapshots, which also included the former shared deadline policy.
+const workbenchDownloadRuleVersion = 4
 const workbenchDownloadBackupURL = "https://proof.ovh.net/files/100Mb.dat"
 
 type workbenchDownloadRuntime struct {
