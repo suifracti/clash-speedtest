@@ -11,6 +11,8 @@ const searchScenario=new URL(location.href).searchParams.get('scenario')==='sear
 const startupScenario=new URL(location.href).searchParams.get('scenario')==='startup'
 const signinScenario=new URL(location.href).searchParams.get('scenario')==='signin'
 const accountScenario=new URL(location.href).searchParams.get('scenario')==='accounts'
+const monitorTransferScenario=new URL(location.href).searchParams.get('scenario')==='monitor-transfer'
+let monitorImportFailure=true
 let startupReads=0,previewInitialized=!startupScenario,previewAuthenticated=!signinScenario
 const previewAttempts=new Map<string,Attempt>()
 const now=Date.now(),at=new Date(now-18*60_000).toISOString()
@@ -34,8 +36,8 @@ const services:Attempt[]=nodes.slice(0,9).flatMap((n,i)=>catalog.slice(0,5).map(
 // Include an old configuration at the same timestamp as current latency, so
 // recommendation provenance and its history link can be inspected in the UI.
 for(const record of services.filter(a=>a.node_key===nodes[0].node_key&&['chatgpt_unlock','claude_unlock','gemini_unlock'].includes(a.service_id||''))){record.node_key='demo-old-key';record.config_revision_key='demo-old-revision'}
-const jobs:MonitorJob[]=airports.slice(0,2).map((a,i)=>({id:`demo-job-${i}`,name:i?'备用线路 · 定点观察':'日常线路 · 响应观察',profile_id:a.subscriptions![0].id,profile_name:a.name,nodes:nodes.filter(n=>n.profile_id===a.subscriptions![0].id),node_keys:nodes.filter(n=>n.profile_id===a.subscriptions![0].id).map(n=>n.node_key),probe_set:'latency_four_v1',sampling_tier:'normal',interval_seconds:300,timeout_seconds:10,state:i?'blocked':'paused',resume_on_launch:false,updated_at:at,...(i?{blocked_reason:'示例：订阅中一条节点配置已变更，请确认任务范围。'}:{})}))
-const monitorSamples:MonitorSample[]=jobs.flatMap((job,j)=>Array.from({length:36},(_,i)=>({...job.nodes[0],sample_id:`demo-monitor-${j}-${i}`,display_name_snapshot:job.nodes[0].display_name,timestamp:new Date(now-(36-i)*1800_000).toISOString(),target:latencyTargets[0].urls[0],probe_type:'http_latency',success:i!==22,latency:(42+j*30+i)*1e6,ttfb:(42+j*30+i)*1e6,sampling_tier:'normal',trigger_type:'scheduled'})))
+const jobs:MonitorJob[]=airports.slice(0,2).map((a,i)=>({id:`demo-job-${i}`,name:i?'备用线路 · 定点观察':'日常线路 · 响应观察',profile_id:a.subscriptions![0].id,profile_name:a.name,nodes:nodes.filter(n=>n.profile_id===a.subscriptions![0].id),node_keys:nodes.filter(n=>n.profile_id===a.subscriptions![0].id).map(n=>n.node_key),probe_set:'latency_four_v1',sampling_tier:'regular',interval_seconds:300,timeout_seconds:10,state:i?'blocked':'paused',resume_on_launch:false,updated_at:at,...(i?{blocked_reason:'示例：订阅中一条节点配置已变更，请确认任务范围。'}:{})}))
+const monitorSamples:MonitorSample[]=jobs.flatMap((job,j)=>Array.from({length:36},(_,i)=>({...job.nodes[0],sample_id:`demo-monitor-${j}-${i}`,display_name_snapshot:job.nodes[0].display_name,timestamp:new Date(now-(36-i)*1800_000).toISOString(),target:latencyTargets[0].urls[0],probe_type:'http_latency',success:i!==22,latency:(42+j*30+i)*1e6,ttfb:(42+j*30+i)*1e6,sampling_tier:'regular',trigger_type:'scheduled'})))
 const batch={batch_id:'demo-batch',request_id:'demo-request',target_id:'all',state:'completed',requested_at:at,sample_count:6,item_count:tests.length,items:tests.map(t=>({...t,item_id:t.attempt_id,batch_id:'demo-batch',execution_state:'completed',result:t}))}
 const archivedAt=new Date(now-8*86400_000).toISOString()
 const archivedTest:LatencyTest={...tests[0],attempt_id:'archived-latency',node_key:'demo-archived-key',node_identity_key:'demo-archived-identity',config_revision_key:'demo-archived-revision',display_name:'香港 · 已移除线路',requested_at:archivedAt,finished_at:archivedAt,samples:tests[0].samples.map(sample=>({...sample,timestamp:archivedAt}))}
@@ -138,7 +140,15 @@ async function handle(url:URL,body:any,method:string):Promise<unknown>{
  if(p==='/api/workbench/latency-batches')return startupScenario?[]:[batch,archivedBatch]
  if(p==='/api/workbench/latency-batches/demo-batch')return batch
  if(p==='/api/workbench/latency-batches/demo-archived-batch')return archivedBatch
- if(p==='/api/monitor/jobs')return startupScenario?[]:jobs
+ if(p==='/api/monitor/jobs'){
+  if(monitorTransferScenario&&method==='POST'){
+   await new Promise(resolve=>setTimeout(resolve,900))
+   if(body.name==='旅行线路 · 导入示例'&&monitorImportFailure){monitorImportFailure=false;throw new Error('示例：配置写入失败，可重试剩余任务')}
+   const selected=nodes.filter(node=>node.profile_id===body.profile_id&&body.node_keys.includes(node.node_key))
+   const job:MonitorJob={...body,id:`demo-imported-${jobs.length}`,profile_name:selected[0]?.profile_name||body.profile_id,nodes:selected,state:'stopped',resume_on_launch:false,updated_at:new Date().toISOString()};jobs.push(job);return job
+  }
+  return startupScenario?[]:jobs
+ }
  if(['/api/measurement-rounds','/api/subscription-refresh-jobs','/api/history','/api/auto-pick/reports','/api/monitor/runs','/api/clash/verge-subscriptions'].includes(p))return []
  if(p==='/api/monitor/samples'||p==='/api/monitor/samples/cursor')return page(matching(monitorSamples,q),'items')
  if(p==='/api/monitor/facets')return {nodes:nodes.slice(0,8),profiles:airports.slice(0,2).map(a=>a.subscriptions![0].id),targets:[latencyTargets[0].urls[0]]}

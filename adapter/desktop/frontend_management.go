@@ -34,6 +34,14 @@ func (a *App) UpdateFrontendAirport(id string, req FrontendAirportRequest) (*app
 }
 
 func (a *App) OpenDataFolder() error {
+	return a.openDataFolder(false)
+}
+
+func (a *App) OpenMonitorDataFolder() error {
+	return a.openDataFolder(true)
+}
+
+func (a *App) openDataFolder(monitor bool) error {
 	if a == nil || a.app == nil {
 		return fmt.Errorf("应用服务未初始化")
 	}
@@ -41,18 +49,22 @@ func (a *App) OpenDataFolder() error {
 	if err != nil {
 		return err
 	}
-	info, err := os.Stat(setup.DataRoot)
+	path := setup.DataRoot
+	if monitor {
+		path = setup.HistoryDir
+	}
+	info, err := os.Stat(path)
 	if err != nil || !info.IsDir() {
 		return fmt.Errorf("数据目录不存在")
 	}
 	var command *exec.Cmd
 	switch runtime.GOOS {
 	case "windows":
-		command = exec.Command("explorer.exe", setup.DataRoot)
+		command = exec.Command("explorer.exe", path)
 	case "darwin":
-		command = exec.Command("open", setup.DataRoot)
+		command = exec.Command("open", path)
 	default:
-		command = exec.Command("xdg-open", setup.DataRoot)
+		command = exec.Command("xdg-open", path)
 	}
 	if err := command.Start(); err != nil {
 		return fmt.Errorf("无法打开文件夹，请复制路径手动打开: %w", err)

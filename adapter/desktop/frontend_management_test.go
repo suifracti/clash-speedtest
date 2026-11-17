@@ -30,6 +30,9 @@ func TestFrontendManagementNilAppDefense(t *testing.T) {
 			if err := a.OpenDataFolder(); err == nil || !strings.Contains(err.Error(), "应用服务未初始化") {
 				t.Fatalf("OpenDataFolder: unexpected err %v", err)
 			}
+			if err := a.OpenMonitorDataFolder(); err == nil || !strings.Contains(err.Error(), "应用服务未初始化") {
+				t.Fatalf("OpenMonitorDataFolder: unexpected err %v", err)
+			}
 			if _, err := a.AddSubscription("ap-1", "name", "url", "note"); err == nil || !strings.Contains(err.Error(), "应用服务未初始化") {
 				t.Fatalf("AddSubscription: unexpected err %v", err)
 			}

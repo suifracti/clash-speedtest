@@ -6,6 +6,7 @@ import {useWorkspace} from '../workspace'
 import {bytes,date,stateLabel,type MonitorJob,type NodeOption} from '../domain'
 import Icon from './Icon.vue'
 import MonitorTimeBand from './MonitorTimeBand.vue'
+import MonitorTransfer from './MonitorTransfer.vue'
 import PeriodicSamplingPanel from './PeriodicSamplingPanel.vue'
 import AutoPickCard from './AutoPickCard.vue'
 import Modal from './Modal.vue'
@@ -206,6 +207,7 @@ onBeforeUnmount(()=>{mounted=false;reloadGeneration++;runsGeneration++;clearInte
     <div v-show="mode==='auto'" class="monitor-sampling-panel"><AutoPickCard @state="autoState=$event"/></div>
 
     <section v-show="mode==='jobs'" aria-label="节点监测任务">
+    <div class="monitor-task-tools"><p>每项任务使用创建时冻结的节点范围。</p><MonitorTransfer @imported="void reload()"/></div>
     <div v-if="!jobsReadAt&&!w.jobs.value.length" class="loading-state" :class="{'inline-warning':!!jobsError}" :role="jobsError?'alert':'status'">
       {{jobsError?'任务列表尚未读取，无法确认是否有任务。':'正在读取监测任务…'}}
     </div>
@@ -304,6 +306,7 @@ onBeforeUnmount(()=>{mounted=false;reloadGeneration++;runsGeneration++;clearInte
 
 <style scoped>
 .page-header h1{font-size:22px}.page-header p{font-size:12px}
+.monitor-task-tools{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px}.monitor-task-tools p{font-size:12px;color:var(--cst-muted);margin:0}
 .monitor-modes{display:flex;gap:28px;border-bottom:1px solid var(--cst-line);margin:8px 0 24px;overflow:auto}
 .monitor-modes button{display:flex;align-items:baseline;gap:10px;border:0;border-bottom:2px solid transparent;border-radius:0;padding:12px 2px;background:none;white-space:nowrap;color:var(--cst-muted)}
 .monitor-modes button[aria-pressed=true]{border-bottom-color:var(--cst-accent);color:var(--cst-text)}.monitor-modes strong{font-size:15px;font-weight:600}.monitor-modes small{font-size:11px}
