@@ -17,6 +17,8 @@ const section=ref('manage'),vergeOpen=ref(false)
 const noticeBalances=ref<Record<string,number|undefined>>({})
 const w=useWorkspace(),busy=ref(''),search=ref(''),form=ref<{kind:'airport'|'subscription';airportId?:string;subId?:string;name:string;url:string;website_url:string;backup_url:string;note:string}|null>(null),formError=ref(''),remove=ref<{airport:Airport;sub?:Subscription}|null>(null),maintenance=ref<{airport:Airport;settings:NonNullable<Airport['maintenance']>}|null>(null),refreshJob=ref<SubscriptionRefreshJob|null>(null),refreshProgressVisible=ref(false),refreshLoading=ref(false)
 const visible=computed(()=>w.airports.value.filter(a=>(a.name+' '+(a.note||'')).includes(search.value)))
+const viewingAirport=ref('')
+const focusedAirport=computed(()=>visible.value.find(a=>a.id===viewingAirport.value)||visible.value[0])
 const allSubscriptions=computed(()=>w.airports.value.flatMap(a=>a.subscriptions||[]))
 const totalAccounts=computed(()=>w.airports.value.reduce((n,x)=>n+(x.subscriptions?.length||1),0))
 const totalNodes=computed(()=>w.airports.value.reduce((n,x)=>n+(x.node_count||0),0))
@@ -96,7 +98,7 @@ onBeforeUnmount(()=>{disposed=true;clearTimeout(refreshTimer)})
 <div class="page-header airports-top-bar">
   <div class="airports-title-group">
     <h1>机场与账户</h1>
-    <p>集中管理订阅来源、套餐余量、每日消耗与近 30 天稳定性体检。</p>
+    <p>{{w.airports.value.length}} 个机场 · {{totalAccounts}} 个独立账户 · {{totalNodes}} 条缓存配置</p>
   </div>
   <div class="airports-header-right">
     <div class="subscription-view-tabs" role="group" aria-label="机场订阅视图">
@@ -115,34 +117,20 @@ onBeforeUnmount(()=>{disposed=true;clearTimeout(refreshTimer)})
 <SubscriptionUsageView v-if="section==='usage'"/>
 <AirportReport v-else-if="section==='report'"/>
 <template v-else>
-<div v-if="w.airports.value.length" class="cst-kpi-strip" aria-label="账户台账概览">
-  <div class="cst-kpi-card">
-    <div class="cst-kpi-head"><span>已接入机场</span><span class="cst-kpi-icon"><Icon name="layers"/></span></div>
-    <strong class="cst-kpi-value">{{w.airports.value.length}}</strong>
-    <span class="cst-kpi-sub">共 {{totalAccounts}} 个订阅账户</span>
-  </div>
-  <div class="cst-kpi-card">
-    <div class="cst-kpi-head"><span>缓存节点总数</span><span class="cst-kpi-icon good"><Icon name="gauge"/></span></div>
-    <strong class="cst-kpi-value">{{totalNodes}}</strong>
-    <span class="cst-kpi-sub">已解析并缓存至本地</span>
-  </div>
-  <div class="cst-kpi-card">
-    <div class="cst-kpi-head"><span>已知剩余配额</span><span class="cst-kpi-icon"><Icon name="activity"/></span></div>
-    <strong class="cst-kpi-value">{{knownQuotaStats.sum!==null?bytes(knownQuotaStats.sum):'未知'}}</strong>
-    <span class="cst-kpi-sub">{{knownQuotaStats.count?`${knownQuotaStats.count} 个账户已报告配额`:'机场尚未返回配额头'}}</span>
-  </div>
-  <div class="cst-kpi-card">
-    <div class="cst-kpi-head"><span>效期提醒</span><span class="cst-kpi-icon" :class="expiringSoonCount?'warn':'good'"><Icon name="clock"/></span></div>
-    <strong class="cst-kpi-value">{{expiringSoonCount?`${expiringSoonCount} 项`:'正常'}}</strong>
-    <span class="cst-kpi-sub">{{expiringSoonCount?'7 天内到期或已过期':'无近期到期账户'}}</span>
-  </div>
+<div v-if="w.airports.value.length" class="account-register-summary" aria-label="账户台账概览">
+  <span :class="{warn:expiringSoonCount}">{{expiringSoonCount?`${expiringSoonCount} 个账户已过期或将在 7 天内到期`:'已知到期日中，没有近期到期账户'}}</span>
+  <span>{{knownQuotaStats.count}} 个账户有剩余量记录 <strong>{{knownQuotaStats.sum!==null?bytes(knownQuotaStats.sum):'未知'}}</strong><small> 各账户独立使用</small></span>
 </div>
+<div class="account-register">
+<aside class="account-register-index" aria-label="机场索引">
 <div class="page-toolbar">
   <label class="search-field"><Icon name="search"/><input v-model="search" placeholder="搜索机场名称或备注…" aria-label="搜索机场"></label>
-  <span class="cst-ledger-summary muted small">显示 {{visible.length}} / {{w.airports.value.length}} 个机场 · {{totalAccounts}} 个账户</span>
+  <span class="muted small">{{visible.length}} / {{w.airports.value.length}} 个机场</span>
 </div>
+<nav aria-label="查看机场账户"><button v-for="a in visible" :key="a.id" :aria-pressed="focusedAirport?.id===a.id" @click="viewingAirport=a.id"><span class="account-index-initial" aria-hidden="true">{{a.name.slice(0,1)}}</span><span><strong>{{a.name}}</strong><small>{{a.subscriptions?.length||1}} 个账户 · {{a.node_count}} 条配置</small></span><Icon name="chevron"/></button></nav>
+</aside>
 <div class="cst-ledger">
-<article v-for="a in visible" :key="a.id" class="airport-card cst-ledger-airport">
+<article v-for="a in focusedAirport?[focusedAirport]:[]" :key="a.id" class="airport-card cst-ledger-airport">
   <header class="cst-ledger-airport-head">
     <span class="cst-ledger-logo" aria-hidden="true">{{a.name.slice(0,1)}}</span>
     <div class="cst-ledger-title"><h2>{{a.name}}</h2><small>{{a.subscriptions?.length||1}} 个订阅 · {{a.node_count}} 条配置 · {{a.maintenance?.refresh_hours?`每 ${a.maintenance.refresh_hours} 小时自动更新`:'手动更新'}}<template v-if="safeLink(a.website_url)"> · <a :href="safeLink(a.website_url)" target="_blank" rel="noopener noreferrer">官网 ↗</a></template><template v-if="safeLink(a.backup_url)"> · <a :href="safeLink(a.backup_url)" target="_blank" rel="noopener noreferrer">备用入口 ↗</a></template><template v-for="link in (a.maintenance?.links||[]).filter(l=>safeLink(l.url))" :key="link.url"> · <a :href="safeLink(link.url)" target="_blank" rel="noopener noreferrer">{{link.label||'入口'}} ↗</a></template></small></div>
@@ -156,12 +144,12 @@ onBeforeUnmount(()=>{disposed=true;clearTimeout(refreshTimer)})
       <small><span v-if="s.last_attempt_failed" class="muted">上次刷新 {{hm(s.last_attempt_at)}}</span><span v-else :class="s.status==='error'?'bad':''">{{s.status==='error'?'更新失败':s.has_cache?'已缓存':'尚未更新'}}</span> · {{s.node_count}} 条配置 · {{date(s.updated_at)}}</small>
       <code :title="s.url_display">{{s.url_display}}</code><SubscriptionChanges :airport-id="a.id" :subscription="s"/>
     </div>
-    <div class="cst-ledger-quota">
+    <div class="cst-ledger-quota"><small class="account-field-label">套餐用量</small>
       <template v-if="s.usage&&(used(s)!==null||noticeUsage(a,s).remaining==null&&noticeUsage(a,s).used==null)"><span><strong>{{used(s)===null?'已用未知':bytes(used(s)!)}}</strong><template v-if="s.usage.total"> / {{bytes(s.usage.total)}}</template></span><div v-if="s.usage.total&&used(s)!==null" class="cst-meter" role="meter" aria-label="套餐已用比例" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Math.round(usagePercent(s))"><i :class="{warn:usagePercent(s)>85}" :style="{width:`${usagePercent(s)}%`}"/></div><small v-if="s.usage.total">{{remaining(s)===null?'剩余未知':'剩余 '+bytes(remaining(s)!)}}</small><small v-else>机场未返回总量</small></template>
       <template v-else-if="noticeUsage(a,s).remaining!=null||noticeUsage(a,s).used!=null"><span><strong>{{noticeUsage(a,s).remaining!=null?'剩余 '+bytes(noticeUsage(a,s).remaining):'已用 '+bytes(noticeUsage(a,s).used)}}</strong><template v-if="noticeUsage(a,s).total"> / {{bytes(noticeUsage(a,s).total)}}</template></span><small>公告识别 · 订阅未返回用量头</small></template>
       <small v-else class="muted">机场未返回套餐用量</small>
     </div>
-    <div class="cst-ledger-expire"><template v-if="s.usage?.expire"><strong :class="expireTone(s.usage.expire)">{{expireLabel(s.usage.expire)}}</strong><small>{{new Date(s.usage.expire*1000).toLocaleDateString('zh-CN')}}</small></template><template v-else-if="noticeUsage(a,s).expireText"><strong>{{noticeUsage(a,s).expireText}}</strong><small>公告识别</small></template><template v-else-if="s.usage?.total!=null||noticeUsage(a,s).total!==undefined"><strong>长期有效</strong><small>机场未提供到期日</small></template><small v-else class="muted">未提供</small></div>
+    <div class="cst-ledger-expire"><small class="account-field-label">到期时间</small><template v-if="s.usage?.expire"><strong :class="expireTone(s.usage.expire)">{{expireLabel(s.usage.expire)}}</strong><small>{{new Date(s.usage.expire*1000).toLocaleDateString('zh-CN')}}</small></template><template v-else-if="noticeUsage(a,s).expireText"><strong>{{noticeUsage(a,s).expireText}}</strong><small>公告识别</small></template><template v-else-if="s.usage?.total!=null||noticeUsage(a,s).total!==undefined"><strong>未提供到期日</strong><small>有效期未知</small></template><small v-else class="muted">未提供</small></div>
     <UsageDays :airport-id="a.id" :subscription-id="s.id" :days="14" :refresh-version="w.usageRefreshVersion.value" chart @account="noticeBalances[s.id]=$event?.remaining"/>
     <div class="cst-ledger-actions">
       <button class="button" :disabled="!s.has_cache" title="在工作台把这个账户设为测量来源并查看节点" @click="browse(a,s)">选为测量来源</button>
@@ -175,6 +163,7 @@ onBeforeUnmount(()=>{disposed=true;clearTimeout(refreshTimer)})
   <div v-if="!a.subscriptions?.length" class="compact-row"><span>{{a.url_display}}</span><button class="button" :disabled="!a.has_cache" @click="browse(a)">选为测量来源</button></div>
 </article>
 </div><div v-if="!visible.length" class="empty-state"><Icon name="layers"/><h3>{{search?'没有匹配的机场':'添加你的第一个机场'}}</h3><p>支持订阅地址或本地 Clash / Mihomo 配置。</p><button class="button primary" @click="edit()">添加机场</button></div>
+</div>
 </template>
 <Modal v-if="form" :title="`${form.airportId&&form.kind==='airport'||form.subId?'编辑':'添加'}${form.kind==='airport'?'机场':'订阅'}`" @close="()=>{if(!busy)form=null}"><form @submit.prevent="save"><div class="form-stack"><label>名称<input v-model="form.name" autofocus required maxlength="100"></label><label>订阅地址或配置路径<input v-model="form.url" required autocomplete="off" spellcheck="false" placeholder="https://… 或本地文件路径"></label><template v-if="form.kind==='airport'"><label>官网地址<input v-model="form.website_url" placeholder="可选"></label><label>备用入口<input v-model="form.backup_url" placeholder="可选"></label></template><label>备注<textarea v-model="form.note" rows="3"/></label></div><p v-if="formError" class="inline-error" role="alert">{{formError}}</p><div class="form-actions"><button type="button" class="button" :disabled="!!busy" @click="form=null">取消</button><button class="button primary" type="submit" :disabled="!!busy">{{busy==='form'?'保存中…':'保存订阅'}}</button></div></form></Modal>
 <Modal v-if="remove" title="删除订阅来源" @close="remove=null"><p>删除「{{remove.sub?.name||remove.airport.name}}」{{remove.sub?'这个订阅':'及其下的订阅'}}。已有检测历史保留，关联监测可能因来源缺失而停止。</p><template #footer><button class="button" @click="remove=null">返回</button><button class="button danger-fill" :disabled="!!busy" @click="deleteItem">删除</button></template></Modal>
@@ -182,38 +171,51 @@ onBeforeUnmount(()=>{disposed=true;clearTimeout(refreshTimer)})
 <Modal v-if="refreshJob&&refreshProgressVisible" title="订阅刷新进度" wide @close="refreshProgressVisible=false"><p class="muted">{{refreshJob.completed}} / {{refreshJob.items.length}} 项已完成 · {{refreshJob.success}} 成功 · {{refreshJob.failed}} 失败 · {{refreshJob.not_executed}} 未执行</p><p v-if="refreshJob.persistence_error" class="inline-error" role="alert">{{refreshJob.persistence_error}}</p><div class="refresh-progress-list"><article v-for="item in refreshJob.items" :key="item.airport_id+'|'+item.subscription_id"><strong>{{item.airport_name}} · {{item.subscription_name}}</strong><span class="badge" :class="item.state==='succeeded'?'good':item.state==='failed'?'bad':item.state==='not_executed'?'':'warn'">{{refreshState(item.state)}}</span><small v-if="item.stages?.length">{{item.stages.map(stage=>refreshState(stage.state)).join(' → ')}}</small><p v-if="refreshItemError(item)" class="inline-error">{{refreshItemError(item)}}</p><small v-if="item.duration_ms">{{item.duration_ms}} ms · {{item.node_count}} 条配置</small></article></div><template #footer><button v-if="refreshJob.failed>0" class="button" :disabled="refreshLoading||refreshJob.state==='running'" @click="retryRefresh">只重试失败项</button><button v-if="refreshJob.state==='running'" class="button danger-fill" aria-label="取消刷新任务" @click="cancelRefresh">取消刷新</button><button class="button primary" @click="refreshProgressVisible=false">关闭</button></template></Modal></section></template>
 <style src="./secondary-observatory.css" scoped></style>
 <style scoped>
-.airports-top-bar{align-items:center;margin-bottom:18px;padding-bottom:16px;border-bottom:1px solid var(--cst-line)}
+.airports-top-bar{align-items:center;margin-bottom:20px;gap:16px}
+.airports-top-bar h1{font-size:22px;letter-spacing:-.02em}
+.airports-top-bar p{font-size:12px}
 .airports-header-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-left:auto}
 .airports-top-bar .subscription-view-tabs{margin-bottom:0}
-.cst-ledger-summary{padding:4px 10px;border-radius:999px;background:var(--cst-panel);border:1px solid var(--cst-line);font-weight:500;font-variant-numeric:tabular-nums}
-.cst-ledger{display:flex;flex-direction:column;gap:16px}
-.cst-ledger-airport{padding:0;overflow:hidden;border:1px solid var(--cst-line);border-radius:var(--cst-radius);box-shadow:var(--cst-shadow-card)}
-.cst-ledger-airport-head{display:flex;align-items:center;gap:14px;padding:16px 20px;background:linear-gradient(180deg,var(--cst-panel),var(--cst-panel-2));border-bottom:1px solid var(--cst-line);flex-wrap:wrap}
-.cst-ledger-logo{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;background:var(--cst-accent-soft);border:1px solid color-mix(in srgb,var(--cst-accent) 22%,transparent);color:var(--cst-accent);font-size:15px;font-weight:750;flex:none}
-.cst-ledger-title{flex:1;min-width:200px;display:flex;flex-direction:column;gap:2px}
-.cst-ledger-title h2{margin:0;font-size:16px;font-weight:700}
-.cst-ledger-title small{color:var(--cst-muted);font-size:12px}
-.cst-ledger-airport .airport-note{margin:0;padding:9px 20px;color:var(--cst-muted);font-size:12px;background:var(--cst-panel-2);border-bottom:1px solid var(--cst-line)}
-.cst-ledger-cols,.cst-ledger-row{display:grid;grid-template-columns:minmax(200px,1.25fr) minmax(175px,1.1fr) minmax(104px,.65fr) minmax(240px,1.45fr) auto;gap:20px;align-items:center;padding:0 20px}
-.cst-ledger-cols{padding-top:9px;padding-bottom:8px;font-size:11.5px;font-weight:650;color:var(--cst-muted);background:var(--cst-panel-2);border-bottom:1px solid var(--cst-line);letter-spacing:.01em}
-.cst-col-actions{text-align:right;padding-right:4px}
-.cst-ledger-row{padding-top:16px;padding-bottom:16px;border-bottom:1px solid var(--cst-line);transition:background .12s}
-.cst-ledger-row:hover{background:color-mix(in srgb,var(--cst-panel-2) 65%,var(--cst-panel))}
-.cst-ledger-account{display:flex;flex-direction:column;gap:4px;min-width:0}
-.cst-ledger-account strong{font-size:14px;font-weight:650;color:var(--cst-text)}
+.account-register-summary{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 0;border-top:1px solid var(--cst-line);color:var(--cst-muted);font-size:12px}
+.account-register-summary strong{color:var(--cst-text);font-weight:600;margin-left:8px}
+.account-register-summary small{font-size:11px}
+.account-register{display:grid;grid-template-columns:210px minmax(0,1fr);gap:28px;align-items:start;margin-top:12px}
+.account-register-index{position:sticky;top:calc(var(--cst-nav-height,58px) + 20px);min-width:0}
+.account-register-index .page-toolbar{display:grid;gap:12px;margin:0 0 16px;padding:0}
+.account-register-index .search-field{width:100%;min-width:0;box-sizing:border-box}
+.account-register-index nav{display:grid;gap:4px}
+.account-register-index nav>button{display:flex;align-items:center;gap:10px;width:100%;padding:12px 10px;border:0;border-left:3px solid transparent;background:transparent;text-align:left;border-radius:0;color:var(--cst-muted)}
+.account-register-index nav>button[aria-pressed=true]{border-left-color:var(--cst-accent);background:var(--cst-panel);color:var(--cst-text)}
+.account-register-index nav>button:hover{background:var(--cst-panel)}
+.account-index-initial{display:grid;place-items:center;width:28px;height:28px;background:var(--cst-panel-2);font-size:12px;flex:none}
+.account-register-index nav strong{display:block;font-size:13px;font-weight:600;overflow-wrap:anywhere}
+.account-register-index nav small{display:block;font-size:11px;color:var(--cst-muted);margin-top:4px}
+.account-register-index nav .icon{margin-left:auto;width:12px;flex:none}
+.cst-ledger{min-width:0}
+.cst-ledger-airport{padding:0;border:0;border-radius:0;background:var(--cst-panel);box-shadow:none;overflow:visible}
+.cst-ledger-airport-head{display:flex;align-items:center;gap:14px;padding:22px 24px;border-bottom:2px solid var(--cst-text);flex-wrap:wrap;background:var(--cst-panel)}
+.cst-ledger-logo{width:42px;height:42px;display:grid;place-items:center;border:1px solid var(--cst-line-strong);color:var(--cst-text);font-size:20px;flex:none}
+.cst-ledger-title{flex:1;min-width:200px;display:grid;gap:6px}
+.cst-ledger-title h2{margin:0;font-size:22px;font-weight:600;letter-spacing:-.02em}
+.cst-ledger-title small{color:var(--cst-muted);font-size:12px;line-height:1.8}
+.cst-ledger-airport-head>.button-group{margin-left:auto;flex-wrap:wrap}
+.cst-ledger-airport .airport-note{margin:0;padding:12px 24px;color:var(--cst-muted);font-size:12px;border-bottom:1px solid var(--cst-line)}
+.cst-ledger-cols{display:none}
+.cst-ledger-row{display:grid;grid-template-columns:minmax(150px,1fr) minmax(100px,.7fr) minmax(210px,1.4fr);gap:24px 20px;align-items:start;padding:24px;border-bottom:1px solid var(--cst-line)}
+.cst-ledger-account{grid-column:1/-1;display:grid;gap:5px;min-width:0}
+.cst-ledger-account strong{font-size:16px;font-weight:600;color:var(--cst-text)}
 .cst-ledger-account small{color:var(--cst-muted);font-size:12px}
-.cst-ledger-account small .bad{color:var(--cst-bad);font-weight:600}
-.cst-ledger-account code{font:11px/1.4 var(--cst-mono);color:var(--cst-muted);background:var(--cst-panel-2);border:1px solid var(--cst-line);border-radius:5px;padding:2px 7px;width:fit-content;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.cst-ledger-quota,.cst-ledger-expire{display:flex;flex-direction:column;gap:5px;font-variant-numeric:tabular-nums;min-width:0}
-.cst-ledger-quota strong,.cst-ledger-expire strong{font-size:13.5px;font-weight:650;color:var(--cst-text)}
-.cst-ledger-quota small,.cst-ledger-expire small{color:var(--cst-muted);font-size:11.5px}
-.cst-ledger-expire strong.warn{color:var(--cst-warn)}
-.cst-ledger-expire strong.bad{color:var(--cst-bad)}
-.cst-meter{height:7px;border-radius:999px;background:var(--cst-accent-soft);overflow:hidden}
-.cst-meter i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--cst-accent),color-mix(in srgb,var(--cst-accent) 80%,#38bdf8))}
-.cst-meter i.warn{background:var(--cst-warn)}
-.cst-ledger-actions{display:flex;align-items:center;gap:6px;justify-content:flex-end}
-.cst-ledger-foot{padding:10px 20px;background:var(--cst-panel-2)}
-@media(max-width:1100px){.cst-ledger-cols{display:none}.cst-ledger-row{grid-template-columns:1fr 1fr;row-gap:12px}.cst-ledger-account{grid-column:1/-1}.cst-ledger-actions{grid-column:1/-1;justify-content:flex-start}}
-@media(max-width:560px){.cst-ledger-row{grid-template-columns:1fr}}
+.cst-ledger-account code{font:11px/1.5 var(--cst-mono);color:var(--cst-muted);max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:none;border:0;padding:0}
+.cst-ledger-quota,.cst-ledger-expire{display:flex;flex-direction:column;gap:8px;font-variant-numeric:tabular-nums;min-width:0}
+.cst-ledger-quota strong,.cst-ledger-expire strong{font-size:15px;font-weight:600;color:var(--cst-text)}
+.cst-ledger-quota small,.cst-ledger-expire small{color:var(--cst-muted);font-size:12px}
+.cst-ledger-expire strong.warn{color:var(--cst-warn)}.cst-ledger-expire strong.bad{color:var(--cst-bad)}
+.account-field-label{margin-bottom:2px}
+.cst-meter{height:4px;background:var(--cst-line);overflow:hidden;margin:4px 0}
+.cst-meter i{display:block;height:100%;background:var(--cst-accent)}.cst-meter i.warn{background:var(--cst-warn)}
+.cst-ledger-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;grid-column:1/-1;padding-top:2px}
+.cst-ledger-foot{padding:16px 24px}
+@media(min-width:1450px){.cst-ledger-row{grid-template-columns:minmax(230px,1.1fr) minmax(150px,.8fr) minmax(110px,.65fr) minmax(240px,1.4fr)}.cst-ledger-account{grid-column:auto}.cst-ledger-actions{justify-content:flex-end}}
+@media(max-width:1100px){.account-register{grid-template-columns:180px minmax(0,1fr);gap:20px}.cst-ledger-row{grid-template-columns:1fr 1fr}.cst-ledger-row>:deep(.cst-usage-days){grid-column:1/-1}.cst-ledger-row>.cst-usage-days{grid-column:1/-1}}
+@media(max-width:760px){.account-register{grid-template-columns:minmax(0,1fr);gap:16px}.account-register-index{position:static}.account-register-index nav{display:flex;overflow:auto;gap:8px}.account-register-index nav>button{min-width:180px}.account-register-index .page-toolbar{grid-template-columns:minmax(0,1fr) auto;align-items:center}.cst-ledger-airport-head,.cst-ledger-row{padding:18px}.airports-header-right{margin-left:0}.cst-ledger-account code{white-space:normal;overflow-wrap:anywhere}}
 </style>

@@ -51,6 +51,8 @@ describe('node selection through DOM controls',()=>{
     expect(w.jobs.value).toEqual([])
     expect(api.monitorSamples).toHaveBeenCalledWith(expect.objectContaining({profile_id:'sub-a-one',node_identity_key:'identity-a',config_revision_key:'revision-a',probe_type:'rtt',target:undefined,limit:480}))
     expect(cells(wrapper)).toEqual(['—','超时','未测'])
+    expect(wrapper.find('.latency-combined').exists()).toBe(false)
+    await wrapper.get('.hd-node').trigger('click');await flushPromises()
     expect(wrapper.findAll('.hd-latency .health-cell')).toHaveLength(0)
     expect(wrapper.find('.latency-spark').exists()).toBe(false)
     expect(wrapper.get('.latency-combined').attributes('aria-label')).toContain('本轮实际采样')
@@ -67,6 +69,7 @@ describe('node selection through DOM controls',()=>{
     const github:MonitorSample={...google,sample_id:'http-github-1',probe_type:'service_github',target:'https://api.github.com'}
     vi.mocked(api.monitorSamples).mockImplementation(async q=>({items:q.config_revision_key!=='revision-a'?[]:q.probe_type==='service_google'?[{...google,sample_id:'http-google-2',run_id:'http-run-2',timestamp:'2026-10-03T06:35:00Z',success:false,error_class:'timeout',error_detail:'network timeout'},google]:q.probe_type==='service_github'?[github]:[],has_more:false,next_cursor:''}))
     const {w,wrapper}=attach([a],['airport-a']);w.catalog.value=[{service_id:'google_204',name:'Google 204 连通性',category:'基础网络',description:'',result_kind:'connectivity',success_criterion:'exact 204',timeout_seconds:10}];w.displayServiceIds.value=['google_204'];w.project.value='service';await flushPromises()
+    await wrapper.get('.hd-node').trigger('click');await flushPromises()
     expect(w.jobs.value).toEqual([])
     expect(wrapper.findAll('.hd-http .hd-site-value').map(m=>m.text())).toEqual(['失败','HTTP 可达'])
     expect(wrapper.findAll('.hd-svc-cell').map(m=>m.text())).toEqual(['未测','未测','—'])

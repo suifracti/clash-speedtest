@@ -60,14 +60,10 @@ async function submit(){
 
 <template>
   <Modal v-if="w.plan.value" title="配置这次检测" wide variant="cst-plan" @close="w.plan.value=null">
-    <section class="cst-plan-step" aria-labelledby="plan-scope-title">
-      <h3 id="plan-scope-title"><span>1</span>范围</h3>
-      <div class="plan-scope"><strong>{{w.plan.value.nodes.length}} 个节点</strong><span v-for="g in groups" :key="g.id">{{g.name}} · {{g.count}}</span><small class="muted">范围已冻结，检测中不会随筛选变化</small></div>
-      <details class="selection-details"><summary>核对所选 {{w.plan.value.nodes.length}} 个节点</summary><div v-for="n in w.plan.value.nodes" :key="n.profile_id+n.node_key" class="compact-row"><span>{{nodeDisplayName(n)}}</span><small>{{n.profile_name}}</small></div></details>
-    </section>
-
+    <div class="plan-layout">
+      <div class="plan-editor">
     <section class="cst-plan-step" aria-labelledby="plan-project-title">
-      <h3 id="plan-project-title"><span>2</span>项目</h3>
+      <h3 id="plan-project-title">检测项目</h3>
       <div class="cst-presets" role="group" aria-label="检测预设">
         <button v-for="x in presets" :key="x.id" type="button" class="cst-preset" :aria-pressed="activePreset?.id===x.id" @click="applyPreset(x)"><strong>{{x.label}}</strong><small>{{x.hint}}</small></button>
         <p class="cst-preset-state" role="status">当前：<strong>{{activePreset?.label||'自定义'}}</strong><template v-if="extras.length"> · 另含 {{extras.join('、')}}</template><template v-if="modelServices.length"> · <span class="warn">含模型类服务</span></template></p>
@@ -79,7 +75,7 @@ async function submit(){
     </section>
 
     <section class="cst-plan-step" aria-labelledby="plan-param-title">
-      <h3 id="plan-param-title"><span>3</span>参数</h3>
+      <h3 id="plan-param-title">检测参数</h3>
       <div v-if="w.plan.value.projects.includes('latency')" class="plan-section">
         <h4>延迟检测</h4>
         <div class="form-grid">
@@ -114,8 +110,16 @@ async function submit(){
       <label class="inline-field">重复检测<UiSelect v-model.number="w.plan.value.repeats"><option v-for="n in [1,2,3,5]" :key="n" :value="n">{{n}} 轮</option></UiSelect></label>
     </section>
 
+      </div>
+      <aside class="plan-receipt" aria-label="本次检测范围与预计用量">
+    <section class="cst-plan-step" aria-labelledby="plan-scope-title">
+      <h3 id="plan-scope-title">本次范围</h3>
+      <div class="plan-scope"><strong>{{w.plan.value.nodes.length}} 个节点</strong><span v-for="g in groups" :key="g.id">{{g.name}} · {{g.count}}</span><small class="muted">范围已冻结，检测中不会随筛选变化</small></div>
+      <details class="selection-details"><summary>核对所选 {{w.plan.value.nodes.length}} 个节点</summary><div v-for="n in w.plan.value.nodes" :key="n.profile_id+n.node_key" class="compact-row"><span>{{nodeDisplayName(n)}}</span><small>{{n.profile_name}}</small></div></details>
+    </section>
+
     <section class="cst-plan-step plan-budget" aria-labelledby="plan-budget-title">
-      <h3 id="plan-budget-title"><span>4</span>预算确认</h3>
+      <h3 id="plan-budget-title">预计用量</h3>
       <dl class="cst-budget">
         <div v-if="w.plan.value.projects.includes('latency')"><dt>延迟</dt><dd><strong>{{latencySamples}}</strong> 次计划采样<small>{{w.plan.value.nodes.length}} 节点 × {{w.plan.value.target==='all'?targets.length+' 站':'1 站'}} × {{w.plan.value.samples}} 次 × {{w.plan.value.repeats}} 轮</small></dd></div>
         <div v-if="selectedServiceIds.length"><dt>服务与 IP</dt><dd><strong>{{serviceObservations}}</strong> 次计划观察<small>{{selectedServiceIds.length}} 项 · 服务采样 {{w.plan.value.serviceSamples??4}} 次/项；多请求服务（如 Netflix 一次观察约 5 个请求）、跳转和协议开销另计</small></dd></div>
@@ -124,8 +128,36 @@ async function submit(){
       </dl>
       <p class="muted small">合计 {{plannedRequests}} 次计划采样（延迟采样 + 服务观察{{w.plan.value.projects.includes('download')?' + 每节点 1 次下载':''}}）；这是计划次数，不是实际请求总数。</p>
     </section>
+      </aside>
+    </div>
     <p v-if="validation" class="inline-error" role="alert">{{validation}}</p>
     <p v-if="modelRisk" class="inline-warning">{{modelRisk}}</p>
     <template #footer><button class="button" @click="w.plan.value=null">返回调整</button><button class="button primary" :disabled="submitting||w.busy.value" @click="submit">开始检测 {{w.plan.value.nodes.length}} 个节点</button></template>
   </Modal>
 </template>
+
+<style scoped>
+.plan-layout{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:28px;align-items:start}
+.plan-editor{min-width:0}
+.plan-receipt{position:sticky;top:0;min-width:0;border-left:1px solid var(--cst-line);padding-left:22px}
+.plan-receipt .plan-scope{display:flex;flex-direction:column;align-items:flex-start;gap:5px}
+.plan-receipt .plan-scope strong{font-size:24px;line-height:1.3;margin-bottom:4px}
+.plan-receipt .selection-details{margin:12px 0 0}
+.plan-receipt .selection-details[open]{max-height:240px;overflow:auto}
+.plan-receipt .compact-row{display:flex;flex-direction:column;align-items:flex-start;gap:2px;overflow-wrap:anywhere;padding:7px 0}
+.plan-receipt .cst-budget{display:block}
+.plan-receipt .cst-budget>div{border:0;border-radius:0;border-bottom:1px solid var(--cst-line);background:none;padding:10px 0}
+.plan-receipt .cst-budget>div:first-child{padding-top:0}
+.plan-receipt .cst-budget>div.warn{border-left:2px solid var(--cst-warn);padding-left:10px;margin-top:10px}
+.plan-receipt .cst-budget dd strong{font-size:21px;font-weight:650}
+.plan-editor .cst-presets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;border-bottom:1px solid var(--cst-line);padding-bottom:12px;margin-bottom:14px}
+.plan-editor .cst-preset{min-width:0;border:0;border-radius:0;box-shadow:none;background:none;padding:8px;gap:4px;border-bottom:2px solid transparent}
+.plan-editor .cst-preset[aria-pressed=true]{border-bottom-color:var(--cst-accent);background:var(--cst-accent-soft)}
+.plan-editor .cst-preset small{font-size:10px}
+.plan-editor .cst-preset-state{grid-column:1/-1;padding-top:8px}
+.plan-editor .plan-projects{gap:12px 18px}
+.plan-editor .plan-projects label{border:0;border-radius:0;background:none;color:var(--cst-text);padding:0;min-height:30px}
+.plan-editor .plan-section+.plan-section{border-top:1px solid var(--cst-line);margin-top:10px;padding-top:18px}
+@media(max-width:850px){.plan-layout{grid-template-columns:minmax(0,1fr)}.plan-receipt{position:static;border-left:0;border-top:1px solid var(--cst-line);padding:18px 0 0;display:grid;grid-template-columns:1fr 1fr;gap:20px}.plan-receipt .plan-budget{border:0;padding:0}.plan-receipt .plan-scope strong{font-size:20px}}
+@media(max-width:560px){.plan-receipt{grid-template-columns:1fr}.plan-editor .cst-presets{grid-template-columns:1fr}.plan-editor .cst-preset{flex-direction:row;align-items:center;justify-content:space-between;padding:10px 6px}.plan-editor .cst-preset small{font-size:11px}}
+</style>

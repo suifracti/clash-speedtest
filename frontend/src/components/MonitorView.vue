@@ -9,10 +9,17 @@ import MonitorTimeBand from './MonitorTimeBand.vue'
 import PeriodicSamplingPanel from './PeriodicSamplingPanel.vue'
 import AutoPickCard from './AutoPickCard.vue'
 import Modal from './Modal.vue'
+import type {AutoPickStatus} from '../autoPick'
+import type {PeriodicSamplingStatus} from '../periodicSampling'
 
 type ReadState={value:Record<string,any>|null;readAt:string;error:string}
 const initialReadState=():ReadState=>({value:null,readAt:'',error:''})
 const w=useWorkspace()
+const mode=ref<'jobs'|'auto'|'periodic'>('jobs')
+const autoState=ref<{status:AutoPickStatus|null;error:string}>({status:null,error:''})
+const periodicState=ref<{status:PeriodicSamplingStatus|null;error:string}>({status:null,error:''})
+const autoLabel=computed(()=>autoState.value.error?'状态需确认':!autoState.value.status?'读取中':autoState.value.status.running?'正在精选':autoState.value.status.config.enabled?'已启用计划':'未开启计划')
+const periodicLabel=computed(()=>periodicState.value.error?'状态需确认':!periodicState.value.status?'读取中':periodicState.value.status.pause_reason?'保护暂停':periodicState.value.status.running?'巡检中':'未启动')
 const busyJobs=ref(new Set<string>()),actionErrors=ref<Record<string,string>>({}),actionWarnings=ref<Record<string,string>>({})
 const deleteErrors=ref<Record<string,string>>({})
 const remove=ref<MonitorJob|null>(null),budgetState=ref<ReadState>(initialReadState()),storageState=ref<ReadState>(initialReadState())
@@ -190,9 +197,15 @@ onBeforeUnmount(()=>{mounted=false;reloadGeneration++;runsGeneration++;clearInte
       <button class="text-button" @click="w.page.value='settings'">调整监测与保存策略</button>
     </div>
     <p v-if="resourceWarning" class="inline-warning">{{resourceWarning}}</p>
-    <div class="monitor-sampling-panel"><PeriodicSamplingPanel/></div>
-    <div class="monitor-sampling-panel"><AutoPickCard/></div>
+    <nav class="monitor-modes" aria-label="自动运行方式">
+      <button :aria-pressed="mode==='jobs'" @click="mode='jobs'"><strong>节点监测</strong><small>{{jobsError?'状态需确认':jobsReadAt?active+' 运行 / '+w.jobs.value.length+' 任务':'读取中'}}</small></button>
+      <button :aria-pressed="mode==='auto'" @click="mode='auto'"><strong>自动精选</strong><small :class="{warn:autoState.error}">{{autoLabel}}</small></button>
+      <button :aria-pressed="mode==='periodic'" @click="mode='periodic'"><strong>全部节点巡检</strong><small :class="{warn:periodicState.error||periodicState.status?.pause_reason}">{{periodicLabel}}</small></button>
+    </nav>
+    <div v-show="mode==='periodic'" class="monitor-sampling-panel"><PeriodicSamplingPanel @state="periodicState=$event"/></div>
+    <div v-show="mode==='auto'" class="monitor-sampling-panel"><AutoPickCard @state="autoState=$event"/></div>
 
+    <section v-show="mode==='jobs'" aria-label="节点监测任务">
     <div v-if="!jobsReadAt&&!w.jobs.value.length" class="loading-state" :class="{'inline-warning':!!jobsError}" :role="jobsError?'alert':'status'">
       {{jobsError?'任务列表尚未读取，无法确认是否有任务。':'正在读取监测任务…'}}
     </div>
@@ -261,6 +274,7 @@ onBeforeUnmount(()=>{mounted=false;reloadGeneration++;runsGeneration++;clearInte
       </article>
     </div>
 
+    </section>
     <Modal v-if="remove" title="删除监测任务" :closable="!isBusy(remove.id)" @close="cancelDelete">
       <p>删除「{{remove.name}}」并停止后续监测，已经保存的原始记录保留。</p>
       <p v-if="deleteErrors[remove.id]" class="inline-error" role="alert">删除失败：{{deleteErrors[remove.id]}}</p>
@@ -289,6 +303,12 @@ onBeforeUnmount(()=>{mounted=false;reloadGeneration++;runsGeneration++;clearInte
 </template>
 
 <style scoped>
+.page-header h1{font-size:22px}.page-header p{font-size:12px}
+.monitor-modes{display:flex;gap:28px;border-bottom:1px solid var(--cst-line);margin:8px 0 24px;overflow:auto}
+.monitor-modes button{display:flex;align-items:baseline;gap:10px;border:0;border-bottom:2px solid transparent;border-radius:0;padding:12px 2px;background:none;white-space:nowrap;color:var(--cst-muted)}
+.monitor-modes button[aria-pressed=true]{border-bottom-color:var(--cst-accent);color:var(--cst-text)}.monitor-modes strong{font-size:15px;font-weight:600}.monitor-modes small{font-size:11px}
+@media(max-width:760px){.monitor-modes{gap:20px}.monitor-modes button{align-items:flex-start;flex-direction:column;gap:6px}}
+
 .monitor-resource-values{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(340px,100%),1fr));gap:6px 18px;flex:1;min-width:0}
 .monitor-resource-item{display:flex;align-items:baseline;gap:5px 10px;flex-wrap:wrap;min-width:0}
 .monitor-resource-item small{overflow-wrap:anywhere}

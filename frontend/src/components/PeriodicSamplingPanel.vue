@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import {onBeforeUnmount,onMounted,reactive,ref} from 'vue'
+import {onBeforeUnmount,onMounted,reactive,ref,watch} from 'vue'
 import {api} from '../api'
 import {bytes,date} from '../domain'
 import type {PeriodicSamplingConfig,PeriodicSamplingStatus,PeriodicChecks} from '../periodicSampling'
 const status=ref<PeriodicSamplingStatus|null>(null),error=ref(''),readError=ref(''),busy=ref(false)
+const emit=defineEmits<{state:[value:{status:PeriodicSamplingStatus|null;error:string}]}>()
+watch([status,error,readError],()=>emit('state',{status:status.value,error:readError.value||error.value}),{immediate:true})
 const form=reactive({latency:2,service:5,download:60,mib:10,concurrency:16,antigravity:true})
 const checks=ref<PeriodicChecks|null>(null),checksError=ref(''),checksOpen=ref(false),checkNode=ref('')
 async function loadChecks(){try{const [profile,node]=checkNode.value.split('\u0000');checks.value=await api.periodicChecks(profile||'',node||'');checkNode.value=checks.value.node.profile_id+'\u0000'+checks.value.node.node_key;checksError.value=''}catch(e){checksError.value=e instanceof Error?e.message:String(e)}}

@@ -28,10 +28,11 @@ function evidence(node:NodeOption,value:number,complete=true):QualityEvidence{
 beforeEach(()=>{localStorageItems.clear();localStorageItems.set('speedtest-home-view','quick');window.sessionStorage.clear();vi.clearAllMocks();HTMLDialogElement.prototype.showModal=vi.fn();HTMLDialogElement.prototype.close=vi.fn();vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}})})
 afterEach(()=>{wrapper?.unmount();w?.dispose();wrapper=undefined;w=undefined;document.body.innerHTML='';vi.unstubAllGlobals();vi.useRealTimers()})
 
-function attachSavedSnapshot(){
+async function attachSavedSnapshot(){
  vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-10-10T00:00:00Z'))
  w=createWorkspace();w.project.value='latency';w.airports.value=[{id:'airport-b',name:'机场 B',url_display:'',node_count:1,has_cache:true,subscriptions:[{id:'sub-b',airport_id:'airport-b',name:'默认',url_display:'',url_configured:true,node_count:1,has_cache:true}]}];w.nodes.value=[fresh[0]];w.setAirports(['airport-b'])
  wrapper=mount(HomeView,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}})
+ await flushPromises();await wrapper.get('.hd-node-open').trigger('click');await flushPromises()
 }
 function latency(){return wrapper!.get('.hd-latency').text()}
 function windowStats(){return wrapper!.findAll('.hd-latency .hd-site-value').map(e=>e.attributes('title')||'').filter(text=>text.includes('次响应')||text.includes('读取失败')).join(' ')}
@@ -40,7 +41,7 @@ function emptyEvidence(node:NodeOption){const e=evidence(node,40);e.tests=[];ret
 it('refreshes the completed saved round without a manual click, but not while the frozen plan is running',async()=>{
  let saved=false
  readQualityMock.mockImplementation(async(node:NodeOption,_since:string,until:string)=>saved&&Date.parse(until)>=Date.parse('2026-10-10T00:01:00Z')?evidence(node,980):emptyEvidence(node))
- attachSavedSnapshot();await flushPromises();expect(latency()).toContain('暂无采样');expect(windowStats()).toBe('')
+ await attachSavedSnapshot();await flushPromises();expect(latency()).toContain('暂无采样');expect(windowStats()).toBe('')
  const snapshot={fixture:{services:[]}};w!.sortSnapshots.value=snapshot
  w!.running.value=true;vi.setSystemTime(new Date('2026-10-10T00:01:00Z'));saved=true
  const test={...evidence(fresh[0],980).tests[0],finished_at:'2026-10-10T00:01:00Z'}
@@ -71,7 +72,7 @@ it('refreshes after real runPlan polling and raw measurement-round readback befo
  // separate ListMeasurementRoundNodes API returns history.LatencyTest without it.
  const {persistence_state:_,...rawResult}=saved
  vi.mocked(api.measurementRounds).mockImplementation(async()=>available?[{round_id:'native-round',trigger_type:'manual',started_at:at,state:'finished',items:[{...node,request_id:requestId,project:'latency',execution_state:'completed',persistence_state:'saved',latency:rawResult as LatencyTest}]}]:[])
- attachSavedSnapshot();await flushPromises()
+ await attachSavedSnapshot();await flushPromises()
  expect(windowStats()).toContain('0/7 次响应')
  const previousReads=readQualityMock.mock.calls.length
  vi.useFakeTimers({toFake:['Date','setTimeout','clearTimeout']})
@@ -93,7 +94,7 @@ it('refreshes a later successful save without treating a failed save as saved ev
  let saved=false
  readQualityMock.mockImplementation(async(node:NodeOption)=>{const e=emptyEvidence(node);if(saved)e.downloads=[attempt];return e})
  const attempt:Attempt={...fresh[0],attempt_id:'new-download',request_id:'new-download',requested_at:'2026-10-10T00:01:00Z',finished_at:'2026-10-10T00:01:01Z',execution_state:'failed',persistence_state:'failed',rule:{method:'GET',target_url:'https://example.test/'},result:{outcome:'failed',bytes_read:0,error_message:'EOF',finished_at:'2026-10-10T00:01:01Z'}}
- attachSavedSnapshot();w!.project.value='download';await flushPromises()
+ await attachSavedSnapshot();w!.project.value='download';await flushPromises()
  w!.mergeAttempt('download',attempt);await flushPromises()
  expect(wrapper!.get('.hd-download').text()).toContain('EOF')
  vi.setSystemTime(new Date('2026-10-10T00:01:02Z'));saved=true
@@ -106,7 +107,7 @@ it('refreshes a later successful save without treating a failed save as saved ev
 it('reads the invalidated snapshot on returning home after a background save, without restarting a test',async()=>{
  let saved=false
  readQualityMock.mockImplementation(async(node:NodeOption)=>saved?evidence(node,50):emptyEvidence(node))
- attachSavedSnapshot();await flushPromises();w!.page.value='history';await flushPromises()
+ await attachSavedSnapshot();await flushPromises();w!.page.value='history';await flushPromises()
  vi.setSystemTime(new Date('2026-10-10T00:01:00Z'));saved=true;w!.mergeLatency(evidence(fresh[0],50).tests[0]);await flushPromises()
  w!.page.value='home';await flushPromises()
  expect(windowStats()).toContain('53 ms')
@@ -115,7 +116,7 @@ it('reads the invalidated snapshot on returning home after a background save, wi
 
 it('shows a refresh read error instead of reusing an old successful value after a new saved result',async()=>{
  readQualityMock.mockImplementation(async(node:NodeOption)=>evidence(node,40))
- attachSavedSnapshot();await flushPromises();expect(windowStats()).toContain('43 ms')
+ await attachSavedSnapshot();await flushPromises();expect(windowStats()).toContain('43 ms')
  readQualityMock.mockRejectedValue(new Error('history unavailable'))
  vi.setSystemTime(new Date('2026-10-10T00:01:00Z'));w!.mergeLatency(evidence(fresh[0],100).tests[0]);await flushPromises()
  expect(windowStats()).toContain('读取失败')
@@ -129,7 +130,7 @@ it('replaces a previous service success with the newly saved failure and rejects
  const old=emptyEvidence(fresh[0]);old.services=[service]
  const pending=new Promise<QualityEvidence>(resolve=>resolveOld=resolve)
  readQualityMock.mockImplementation(async()=>latest?{...emptyEvidence(fresh[0]),services:[{...service,attempt_id:'new-service',requested_at:'2026-10-10T00:01:00Z',execution_state:'failed',result:{outcome:'failed',bytes_read:0,finished_at:'2026-10-10T00:01:01Z'}}]}:pending)
- attachSavedSnapshot();w!.catalog.value=[{service_id:'cloudflare_204',name:'Cloudflare 204',category:'基础网络',description:'',result_kind:'connectivity',success_criterion:'exact 204',timeout_seconds:10}];w!.displayServiceIds.value=['cloudflare_204'];w!.project.value='service';await flushPromises()
+ await attachSavedSnapshot();w!.catalog.value=[{service_id:'cloudflare_204',name:'Cloudflare 204',category:'基础网络',description:'',result_kind:'connectivity',success_criterion:'exact 204',timeout_seconds:10}];w!.displayServiceIds.value=['cloudflare_204'];w!.project.value='service';await flushPromises()
  latest=true;vi.setSystemTime(new Date('2026-10-10T00:01:02Z'))
  w!.mergeAttempt('service',{...service,attempt_id:'new-service',requested_at:'2026-10-10T00:01:00Z',execution_state:'failed',result:{outcome:'failed',bytes_read:0,finished_at:'2026-10-10T00:01:01Z'}});await flushPromises()
  expect(wrapper!.get('.hd-service-row .unlock-state').text()).toContain('无法判断')

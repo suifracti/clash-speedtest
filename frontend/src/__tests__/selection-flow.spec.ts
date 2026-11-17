@@ -53,7 +53,7 @@ describe('shared node selection',()=>{
     const w=workspace(),node={...a,country_code:'CA',display_name:samples[1][0]},originalKey=key(node)
     w.nodes.value=[node]
     vi.mocked(api.latencySummaries).mockResolvedValueOnce([{tests:[],has_more:false,complete:true}])
-    const wrapper=attach(HomeView,w);await flushPromises()
+    const wrapper=attach(HomeView,w);await flushPromises();await wrapper.get('.hd-node-open').trigger('click');await flushPromises()
     expect(wrapper.find('.hd-flag').text()).toBe('CA')
     expect(wrapper.find('.hd-node strong').text()).toBe('加拿大 · 01 · 流媒体解锁 · AI · 移动优化')
     expect(wrapper.find('.hd-node').attributes('title')).toContain('🇨🇦加拿大01|流媒体解锁|AI|移动优化')
@@ -163,7 +163,7 @@ describe('shared node selection',()=>{
     vi.useFakeTimers()
     const w=workspace(),at=new Date().toISOString(),more=Array.from({length:23},(_,i)=>({...b,node_key:'extra-'+i,node_identity_key:'identity-extra-'+i,display_name:'Extra '+i}));w.nodes.value=[a,b,...more];w.project.value='download';w.toggleNode(b)
     w.downloads.value[key(a)]=[{...a,attempt_id:'download-a',request_id:'req-a',requested_at:at,finished_at:at,execution_state:'byte_limit',persistence_state:'saved',rule:{target_url:''},result:{outcome:'byte_limit',bytes_read:20971520,duration_ns:2000000000,phase_timings_ns:{response_body:2000000000},finished_at:at}}]
-    const wrapper=attach(HomeView,w);await flushPromises()
+    const wrapper=attach(HomeView,w);await flushPromises();await wrapper.get('.hd-node-open').trigger('click');await flushPromises()
     const panel=()=>wrapper.find('.hd-ins-detail')
     await wrapper.get('.hd-download h3 .hd-link').trigger('click');await flushPromises()
     expect(wrapper.findAll('.hd-tr:not(.hd-th)')).toHaveLength(20)
@@ -194,7 +194,7 @@ describe('shared node selection',()=>{
     const w=workspace(),at=new Date().toISOString();w.project.value='service'
     w.catalog.value.push({...w.catalog.value[0],service_id:'youtube',name:'YouTube'});w.serviceIds.value=['netflix_unlock','youtube'];w.displayServiceIds.value=['netflix_unlock','youtube']
     w.services.value[key(a)]=['netflix_unlock','youtube'].map((id,i)=>({...a,attempt_id:'service-'+id,request_id:'round:r:'+id,service_id:id,display_name:a.display_name,requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',rule:{name:i?'YouTube':'Netflix',target_url:''},result:{outcome:i?'transport_error':'unlocked',bytes_read:0,finished_at:at,error_message:i?'connection refused':undefined}}))
-    const wrapper=attach(HomeView,w);await flushPromises()
+    const wrapper=attach(HomeView,w);await flushPromises();await wrapper.get('.hd-node-open').trigger('click');await flushPromises()
     const rows=wrapper.findAll('.hd-service-row')
     expect(rows).toHaveLength(2)
     expect(rows[0].text()).toContain('Netflix')
@@ -210,7 +210,7 @@ describe('shared node selection',()=>{
   it('shows only actual service squares and opens the selected service evidence',async()=>{
     const w=workspace(),at=new Date().toISOString();w.project.value='combined'
     w.services.value[key(a)]=[{...a,attempt_id:'netflix-a',request_id:'netflix-round',service_id:'netflix_unlock',requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',rule:{name:'Netflix',target_url:''},result:{outcome:'matched',bytes_read:0,finished_at:at}}]
-    const wrapper=attach(HomeView,w);await flushPromises()
+    const wrapper=attach(HomeView,w);await flushPromises();await wrapper.get('.hd-node-open').trigger('click');await flushPromises()
     expect(wrapper.findAll('.recorded-mark')).toHaveLength(1)
     expect(wrapper.get('.recorded-mark').attributes('aria-label')).toContain('可用')
     await wrapper.get('.hd-service-row .hd-site-name').trigger('click');await flushPromises()
@@ -218,7 +218,7 @@ describe('shared node selection',()=>{
     expect(w.serviceIds.value).toEqual(['netflix_unlock'])
   })
   it('makes both individual and filtered-range test entry points use the displayed project',async()=>{
-    const w=workspace(),wrapper=attach(HomeView,w);await flushPromises()
+    const w=workspace(),wrapper=attach(HomeView,w);await flushPromises();await wrapper.get('.hd-node-open').trigger('click');await flushPromises()
     await wrapper.findAll('.hd-tr:not(.hd-th)')[1].trigger('click');await flushPromises()
     await wrapper.get('.hd-ins-actions .primary').trigger('click')
     expect(w.plan.value?.projects).toEqual(['latency','download','service']);expect(w.plan.value?.nodes.map(n=>n.node_key)).toEqual(['node-b'])
@@ -230,7 +230,7 @@ describe('shared node selection',()=>{
   it('shows a human download failure and selects another source without starting a measurement',async()=>{
     const w=workspace(),at=new Date().toISOString();w.project.value='download'
     w.downloads.value[key(a)]=[{...a,attempt_id:'limited',request_id:'limited',requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://speed.cloudflare.com/__down'},result:{outcome:'http_error',http_status:429,bytes_read:0,finished_at:at}}]
-    const wrapper=attach(HomeView,w);await flushPromises()
+    const wrapper=attach(HomeView,w);await flushPromises();await wrapper.get('.hd-node-open').trigger('click');await flushPromises()
     expect(wrapper.get('.download-failure').text()).toContain('不是节点问题')
     await wrapper.get('.download-failure button').trigger('click')
     expect(w.plan.value?.downloadSource).toBe('ovh')
@@ -241,7 +241,7 @@ describe('shared node selection',()=>{
   it('updates the saved download summary and clears it when switching nodes',async()=>{
     const w=workspace(),at=new Date().toISOString();w.project.value='download'
     w.downloads.value[key(a)]=[{...a,attempt_id:'latest',request_id:'latest',requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://download.example'},result:{outcome:'byte_limit',bytes_read:10485760,duration_ns:1000000000,phase_timings_ns:{response_body:1000000000},finished_at:at}}]
-    const wrapper=attach(HomeView,w);await flushPromises()
+    const wrapper=attach(HomeView,w);await flushPromises();await wrapper.get('.hd-node-open').trigger('click');await flushPromises()
     expect(wrapper.get('.download-success').text()).toBe('10.00 MiB/s')
     expect(wrapper.find('.download-spark').exists()).toBe(false)
     w.downloads.value[key(a)][0].result!.phase_timings_ns!.response_body=2000000000;await flushPromises()
@@ -273,7 +273,7 @@ it('quality download filter survives unrelated incomplete latency history and id
  window.sessionStorage.clear()
  vi.mocked(api.latencyHistory).mockResolvedValue({tests:[],has_more:false,complete:false})
  vi.mocked(api.attemptHistory).mockImplementation(async(kind,node)=>({attempts:kind==='download'&&node.profile_id===a.profile_id?[oldDownload,newDownload]:[],has_more:false,complete:true}))
- const w=workspace(),wrapper=attach(HomeView,w);await flushPromises()
+ const w=workspace(),wrapper=attach(HomeView,w);await flushPromises();await wrapper.get('.hd-node-open').trigger('click');await flushPromises()
  await wrapper.get('select[aria-label="质量证据筛选"]').setValue('download');await flushPromises()
  expect(wrapper.findAll('.hd-node strong').map(e=>e.text())).toEqual(['香港 · 01'])
  expect(wrapper.get('.hd-saved-download').attributes('title')).toContain('历史有效速度 2.00 MiB/s');expect(wrapper.get('.download-failure').text()).toContain('超时')
@@ -342,7 +342,7 @@ it('permits like-for-like historical download comparison only when condition and
 
 it('adapts the inspector to the project tab and keeps other projects as a one-line summary (synthetic data)',async()=>{
  window.sessionStorage.clear()
- const w=workspace();w.project.value='service';const ui=attach(HomeView,w);await flushPromises()
+ const w=workspace();w.project.value='service';const ui=attach(HomeView,w);await flushPromises();await ui.get('.hd-node-open').trigger('click');await flushPromises()
  expect(ui.find('.hd-inspector .hd-latency').exists()).toBe(false)
  expect(ui.find('.hd-inspector .hd-download').exists()).toBe(false)
  expect(ui.find('.hd-inspector .hd-services-block').exists()).toBe(true)

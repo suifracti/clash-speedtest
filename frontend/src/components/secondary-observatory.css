@@ -51,19 +51,6 @@
   gap: 7px;
 }
 
-.history-view .history-record-list .history-batch-row {
-  margin: 0;
-  padding: 13px 15px;
-  border: 1px solid var(--line);
-  border-left: 2px solid var(--secondary-signal);
-  border-radius: 8px;
-  background: var(--surface);
-}
-
-.history-view .history-record-list .history-batch-row:hover {
-  background: var(--surface-soft);
-}
-
 .history-view .history-sample-records {
   display: grid;
   gap: 9px;
@@ -231,9 +218,8 @@
   margin-bottom: 22px;
   padding: 13px 16px;
   border: 1px solid var(--line);
-  border-left: 2px solid var(--secondary-signal);
-  border-radius: 8px;
-  background: linear-gradient(105deg, var(--surface), var(--surface-soft));
+  border-radius: 0;
+  background: transparent;
 }
 
 .monitor-view .monitor-resource-values {
@@ -284,15 +270,17 @@
 }
 
 .monitor-view .monitor-card:not(.periodic-panel) {
-  border-color: var(--cst-line);
+  border: 0;
+  border-left: 3px solid var(--cst-line-strong);
+  border-radius: 0;
+  box-shadow: none;
+  padding: 22px 24px;
 }
 
 .monitor-view .monitor-spec span {
-  padding: 5px 8px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: var(--surface-soft);
-  font-size: 11px;
+  padding: 0 12px 0 0;
+  border-right: 1px solid var(--line);
+  font-size: 12px;
 }
 
 .monitor-view .monitor-nodes {
@@ -464,51 +452,17 @@
 }
 
 /* Data custody keeps live locations, backup, and import steps easy to scan. */
-.data-view .data-storage-panel {
-  border-color: var(--cst-line);
-}
-
-.data-view .data-storage-panel .path-list {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px 14px;
-  margin: 14px 0;
-}
-
-.data-view .data-storage-panel .path-list > div {
-  display: grid;
-  grid-template-columns: 82px minmax(0, 1fr);
-  align-items: start;
-  gap: 8px;
-  min-width: 0;
-  padding: 9px 10px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface-soft);
-}
-
-.data-view .data-storage-panel .path-list dt {
-  font-size: 11px;
-}
-
-.data-view .data-storage-panel .path-list dd {
-  font: 11px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-variant-numeric: tabular-nums;
-}
-
-.data-view .data-backup-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px 20px;
-  flex-wrap: wrap;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-}
-
-.data-view .data-backup-actions .section-note {
-  flex: 1 1 350px;
-  margin: 0;
-}
+.data-view .settings-section{border:0;border-radius:0;box-shadow:none;padding:24px}
+.data-view .data-storage-panel{border-top:2px solid var(--cst-text)}
+.data-storage-grid{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(230px,1fr);gap:32px;align-items:start}
+.data-view .data-storage-panel .path-list{grid-template-columns:minmax(0,1fr);gap:0;margin:10px 0 0}
+.data-view .data-storage-panel .path-list>div{display:grid;grid-template-columns:90px minmax(0,1fr);align-items:baseline;gap:12px;min-width:0;padding:12px 0;border:0;border-bottom:1px solid var(--cst-line);border-radius:0;background:transparent}
+.data-view .data-storage-panel .path-list dt{font-size:12px;font-weight:400}
+.data-view .data-storage-panel .path-list dd{font:12px/1.7 var(--cst-font);overflow-wrap:anywhere}
+.data-view .data-backup-actions{display:flex;flex-direction:column;align-items:flex-start;gap:18px;flex-wrap:wrap;margin:10px 0 0;padding:12px 0 12px 24px;border:0;border-left:1px solid var(--cst-line)}
+.data-view .data-backup-actions h3{font-size:15px;font-weight:600;margin:0}
+.data-view .data-backup-actions .section-note{margin:0;line-height:1.8}
+@media(max-width:800px){.data-storage-grid{grid-template-columns:minmax(0,1fr);gap:16px}.data-view .data-backup-actions{padding:18px 0 0;border-left:0;border-top:1px solid var(--cst-line)}}
 
 .data-view .data-workflow-grid {
   display: grid;
@@ -532,7 +486,8 @@
 
 .data-view .data-migration-panel {
   border-color: color-mix(in srgb, var(--amber) 38%, var(--cst-line));
-  background: linear-gradient(145deg, var(--surface), color-mix(in srgb, var(--amber-soft) 42%, var(--surface)));
+  background: var(--surface);
+  border-top: 2px solid var(--cst-warn);
 }
 
 .data-view .data-start-panel {

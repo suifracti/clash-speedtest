@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {computed,onBeforeUnmount,onMounted,reactive,ref} from 'vue'
+import {computed,onBeforeUnmount,onMounted,reactive,ref,watch} from 'vue'
 import {api} from '../api'
 import {useWorkspace} from '../workspace'
 import {date} from '../domain'
@@ -9,6 +9,8 @@ import Icon from './Icon.vue'
 const w=useWorkspace()
 const status=ref<AutoPickStatus|null>(null)
 const loading=ref(true),saving=ref(false),error=ref(''),notice=ref('')
+const emit=defineEmits<{state:[value:{status:AutoPickStatus|null;error:string}]}>()
+watch([status,error],()=>emit('state',{status:status.value,error:error.value}),{immediate:true})
 const confirmRun=ref(false),polling=ref<ReturnType<typeof setInterval>|null>(null)
 const expanded=reactive({ai:false,streaming:false})
 const form=reactive<AutoPickConfig>({enabled:false,schedule:'6h',daily_hour:6,airport_ids:[],region_filter:'',include_ai:false,include_streaming:false,ai_required:[...defaultRequiredServices.ai],streaming_required:[...defaultRequiredServices.streaming],min_response_rate:90,max_latency_ms:800,sample_count:6})

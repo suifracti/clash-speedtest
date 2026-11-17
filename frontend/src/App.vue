@@ -22,7 +22,6 @@ import AutoPickReportModal from './components/AutoPickReportModal.vue'
 import CommandPalette from './components/CommandPalette.vue'
 import HoverTip from './components/HoverTip.vue'
 import {projectNames} from './domain'
-import AirportSidebar from './components/AirportSidebar.vue'
 import {applyTheme,savedThemePreference,type ThemePreference} from './theme'
 const w=createWorkspace();provide(workspaceKey,w);useLocalNotifications(w)
 const windowHidden=ref(document.hidden)
@@ -36,6 +35,8 @@ async function cycleTheme(){const next=themeOrder[(themeOrder.indexOf(themePref.
 const primaryPages:{id:Page;label:string;icon:string}[]=[{id:'home',label:'线路工作台',icon:'home'},{id:'recommend',label:'现在用哪个',icon:'pulse'}]
 const managePages:{id:Page;label:string;icon:string}[]=[{id:'airports',label:'机场与账户',icon:'layers'},{id:'monitor',label:'持续监测',icon:'monitor'},{id:'history',label:'检测记录',icon:'history'}]
 const pages=[...primaryPages,...managePages]
+const navLabels:Record<string,string>={home:'线路',recommend:'为你选线',airports:'订阅',monitor:'监测',history:'记录'}
+const shortcutLabel=/Mac|iPhone|iPad/.test(navigator.platform)?'⌘ K':'Ctrl K'
 const utilities:{id:Page;label:string;icon:string}[]=[{id:'settings',label:'偏好设置',icon:'settings'},{id:'data',label:'数据与备份',icon:'data'}]
 const palette=ref(false)
 const runningJobs=computed(()=>w.jobs.value.filter(j=>j.state==='running').length)
@@ -63,37 +64,30 @@ onBeforeUnmount(()=>{document.removeEventListener('visibilitychange',visibilityC
 </script>
 <template>
   <div class="cst-shell observatory-app" :class="{'window-hidden':windowHidden}">
-    <aside class="cst-side" aria-label="侧栏">
-      <a class="cst-brand" href="#" @click.prevent="navigate('home')"><span class="cst-brand-mark"><Icon name="pulse"/></span><span class="cst-brand-copy"><strong>CST<span class="brand-period">.</span></strong><small>线路观测台</small></span></a>
-      <button v-if="w.setup.value?.state==='ready'" class="cst-jump" type="button" aria-keyshortcuts="Meta+K" title="快速跳转（⌘K）" @click="palette=true"><Icon name="search"/><span>快速跳转</span><kbd>⌘K</kbd></button>
+    <header class="cst-masthead">
+      <a class="cst-brand" href="#" @click.prevent="navigate('home')"><span class="cst-brand-mark"><Icon name="pulse"/></span><span class="cst-brand-copy"><strong>CST</strong><small>线路检测</small></span></a>
       <nav class="cst-nav" aria-label="主导航">
-        <span class="cst-nav-group-label">测速与选线</span>
-        <button v-for="p in primaryPages" :key="p.id" type="button" :title="p.label" :aria-current="w.page.value===p.id?'page':undefined" @click="navigate(p.id)">
-          <Icon :name="p.icon"/><span>{{p.label}}</span>
-        </button>
-        <span class="cst-nav-group-label">管理与记录</span>
-        <button v-for="p in managePages" :key="p.id" type="button" :title="p.label" :aria-current="w.page.value===p.id?'page':undefined" @click="navigate(p.id)">
-          <Icon :name="p.icon"/><span>{{p.label}}</span>
+        <button v-for="p in pages" :key="p.id" type="button" :title="p.label" :aria-label="p.label" :aria-current="w.page.value===p.id?'page':undefined" @click="navigate(p.id)">
+          <Icon :name="p.icon"/><span>{{navLabels[p.id]}}</span>
           <small v-if="p.id==='monitor'&&runningJobs" :aria-label="runningJobs+' 个监测任务运行中'">{{runningJobs}}</small>
         </button>
       </nav>
-      <AirportSidebar @select="id=>{w.viewAirport(id);navigate('home')}"/>
-      <div class="cst-side-foot">
+      <div class="cst-header-tools">
+        <button v-if="w.setup.value?.state==='ready'" class="cst-jump" type="button" aria-keyshortcuts="Control+K Meta+K" title="搜索页面、机场和节点" @click="palette=true"><Icon name="search"/><span>快速查找</span><kbd>{{shortcutLabel}}</kbd></button>
+        <nav class="cst-utilities" aria-label="工具"><button v-for="u in utilities" :key="u.id" type="button" :aria-label="u.label" :title="u.label" :aria-current="w.page.value===u.id?'page':undefined" @click="navigate(u.id)"><Icon :name="u.icon"/><span>{{u.id==='settings'?'偏好':'数据'}}</span></button></nav>
+        <button type="button" class="cst-theme-cycle" :title="`切换外观（当前：${themeMeta.label}）`" @click="cycleTheme"><Icon :name="themeMeta.icon"/><span>{{themeMeta.label}}</span></button>
+      </div>
+    </header>
+    <div class="cst-status-strip">
+      <div class="cst-connection" role="status" :class="connection.tone" :title="connection.label" :aria-label="connection.label"><span class="cst-dot"/><small>{{connection.label}}</small></div>
         <button class="cst-task" type="button" :class="task.state" :disabled="!w.queue.value.length&&!w.busy.value&&!w.latestReportBatch.value" :aria-label="'检测任务：'+task.title+(task.detail?'，'+task.detail:'')+(task.attention?'，'+task.attention:'')" @click="w.latestReportBatch.value&&!w.busy.value?w.openLatencyReport(w.latestReportBatch.value):w.queueOpen.value=true">
           <span class="cst-task-title"><span v-if="task.state==='running'||task.state==='pending'" class="spinner"/>{{task.title}}</span>
           <span v-if="task.detail" class="cst-task-detail">{{task.detail}}</span>
           <span v-if="task.progress!==null" class="cst-task-bar"><i :style="{width:Math.round(task.progress*100)+'%'}"/></span>
           <span v-if="task.attention" class="cst-task-attention">{{task.attention}}</span>
+          <Icon v-if="task.state!=='empty'" name="arrowRight"/>
         </button>
-        <nav class="cst-utilities" aria-label="工具">
-          <button v-for="u in utilities" :key="u.id" type="button" :aria-label="u.label" :title="u.label" :aria-current="w.page.value===u.id?'page':undefined" @click="navigate(u.id)"><Icon :name="u.icon"/><span>{{u.label}}</span></button>
-        </nav>
-        <div class="cst-side-status-row">
-          <div class="cst-connection" role="status" :class="connection.tone" :title="connection.label" :aria-label="connection.label"><span class="cst-dot"/><small>{{connection.label}}</small></div>
-          <button type="button" class="cst-theme-cycle" :title="`切换外观（当前：${themeMeta.label}）`" @click="cycleTheme"><Icon :name="themeMeta.icon"/><span>{{themeMeta.label}}</span></button>
-        </div>
-      </div>
-    </aside>
+    </div>
     <main class="cst-main workspace-body">
       <div v-if="w.error.value" class="app-error" role="alert"><span>{{w.error.value}}</span><div class="button-group"><button class="text-button" @click="w.boot()">重新读取</button><button class="button ghost icon-button" aria-label="关闭错误提示" @click="w.error.value=''"><Icon name="close"/></button></div></div>
       <div v-if="w.loading.value&&!w.setup.value" class="app-loading"><span class="spinner"/><p>正在读取你的机场与记录…</p></div>

@@ -25,6 +25,7 @@
 | 自动精选端口被占后 Verge 订阅失效、运行期改设置被覆盖或报告丢用途；入口超 100 地址丢国家；Clash/Verge 本机对照与报告导图 | L-014；application/auto_pick.go；application/auto_pick_subscription.go；core/entry/lookup.go；application/clash_comparison.go；frontend/src/components/LatencyReportImage.vue |
 | Windows Clash Verge 命名管道、同名节点换端口变更抵消与非 Darwin 场景推荐 | L-015；adapter/controller/mihomo/dial_windows.go；core/profiles/node_changes.go；frontend/src/recommendations.ts |
 | 延迟 Keep-Alive 复用失效、Windows TUN Fake-IP DNS 拖慢物理出口、测量轮次并发锁竞争 | L-016；core/speedtester/speedtester.go；core/speedtester/physical_entry_other.go；core/history/measurement_round.go |
+| UI 像 AI 通用模板、只换皮、重构漏功能；每个功能块开工前要读记忆 | L-017；docs/ui-rebuild-20261118.md；Obsidian 项目 UI 研究与 Decisions |
 
 ## 默认自动执行：不等用户提醒
 
@@ -192,6 +193,14 @@ Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 
 1. **延迟测速首字节计时后排空短响应保持 Keep-Alive 复用**：`core/speedtester/speedtester.go` 的 `testLatencyWithClientContext` 原在 `io.CopyN(io.Discard, resp.Body, 1)` 后立即 `resp.Body.Close()`，导致 >1B 的探测响应（如 Apple 68B、GitHub ~42B、Microsoft 22B、Firefox 8B）因未读到 `io.EOF` 而被迫关闭连接，第 2–6 次“稳定延迟”退化为重复 TCP+TLS 握手（实测曾偏慢 10–35 ms）。现先记录首字节 TTFB `dur := time.Since(start)`，开启 Keep-Alive 时再最多排空 512 字节使短响应到达 `EOF`；若 `serverModeDirectDownload` 直测大文件 URL，额外附加 `Range: bytes=0-0` 请求头；CLI `--tsv` 通过新增 `TestProxiesFinalUntil` 只输出每节点最终一轮结果，避免同节点重复多行。
 2. **Windows 开启 TUN 时跳过 Fake-IP DNS 服务器**：Clash Verge 等内核在 Windows 开启 TUN 后常把虚拟适配器 DNS（`198.18.0.2:53`）设进系统默认首选 DNS，导致 `ResolvePhysicalHost` 经物理网卡拨 `198.18.0.2:53` 等满 5 秒超时。`core/speedtester/physical_entry_other.go` 与 `interface.go` 显式调用 Mihomo `resolver.AddSystemDnsBlacklist("198.18.0.1", "198.18.0.2", "fdfe:dcba:9876::1", "fdfe:dcba:9876::2")`，并在自定义 `net.Resolver.Dial` 遇到 Fake-IP DNS 地址时直接报错跳过，必要时回退 `resolver.LookupIPv4`（将入口 DNS 解析由 5 秒降至几十毫秒）。
 3. **测量轮次状态更新统一持锁串行写库**：`core/history/measurement_round.go` 的 `FinishMeasurementRound`、`ReconcileMeasurementRounds`、`MarkMeasurementNotExecuted` 与 `FinishAutomaticMeasurementRound` 补齐 `d.mu.Lock()` / `defer d.mu.Unlock()`，消除高频并发更新轮次状态时的 `SQLITE_BUSY_SNAPSHOT` 竞争。
+
+## L-017 UI 必须从本项目使用流程形成构图，不能用模板换皮替代重构
+
+2026-11-18 用户授权全面重做导航、工作台与全部功能的界面组织，由当前代理自行决定；要求好用、符合人的习惯、看起来好、有辨识度，反对“程序员审美”和千篇一律的 AI 模板。开工必须先看 Obsidian 项目记忆；每个新的功能块开始前再次读对应条目和现有实现，不能用一次泛读覆盖后续全部改动。
+
+本轮首稿的纸白/青绿、顶部导航、大标题加常规表格预览被用户明确否定为难用、模板化。**未获认可，不作为新视觉基线**；不能再以换品牌色、圆角、侧栏/顶栏或口号声称真正重构。Obsidian 原 UI 研究已记录用户“给我们这个项目定制一套属于我们这个项目的 UI，而不是一个公共的模板……深度定制集成”的要求，另项目拍卖图录的经验只用于理解领域构图，不机械复用其颜色与造型。
+
+功能保留需核对实际入口、接线与行为，不是复制组件名。范围/账户、节点 identity/revision、站点与完整服务目录、地区正反规则、历史/多轮/比较/导出、预算、取消、保存重试、Clash/Verge、监测/自动精选、通知、设置与数据入口均须有迁移位置。当前源码日常站点与历史兼容站点分别保持，旧记忆的站点数量不用于反改现行目录。功能迁移及本轮完成证据在 [UI 重构记录](ui-rebuild-20261118.md)，浏览器合成预览不等于原生/实网或用户视觉认可。
 
 ## 维护方法
 

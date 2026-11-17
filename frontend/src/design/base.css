@@ -4,11 +4,11 @@ h1{font-size:22px;font-weight:700;letter-spacing:-.45px;color:var(--cst-text)}
 h2{font-size:16px;font-weight:650;letter-spacing:-.2px;color:var(--cst-text)}
 :focus-visible{outline:2px solid var(--cst-accent);outline-offset:2px}
 ::selection{background:var(--cst-accent-soft)}
-/* 按钮：主要=实心微光，次要=描边微投影，ghost/文字=轻盈无框 */
-.button{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--cst-line-strong);border-radius:var(--cst-radius-sm);background:var(--cst-panel);color:var(--cst-text);min-height:34px;padding:6px 13px;font-size:13px;font-weight:500;box-shadow:var(--cst-shadow);transition:background .14s ease,border-color .14s ease,color .14s ease,box-shadow .14s ease,transform .1s ease}
+/* 按钮：实色主操作、描边次操作与轻量文字操作。 */
+.button{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--cst-line-strong);border-radius:var(--cst-radius-sm);background:var(--cst-panel);color:var(--cst-text);min-height:34px;padding:6px 13px;font-size:13px;font-weight:500;box-shadow:none;transition:background .14s ease,border-color .14s ease,color .14s ease,box-shadow .14s ease,transform .1s ease}
 .button:hover:not(:disabled){background:var(--cst-hover);border-color:color-mix(in srgb,var(--cst-accent) 30%,var(--cst-line-strong))}
 .button:active:not(:disabled){transform:translateY(.5px)}
-.button.primary,:root[data-theme=dark] .button.primary{background:linear-gradient(180deg,color-mix(in srgb,var(--cst-accent) 92%,#fff),var(--cst-accent));border-color:var(--cst-accent);color:var(--cst-accent-ink);font-weight:600;box-shadow:0 1px 3px color-mix(in srgb,var(--cst-accent) 30%,transparent),inset 0 1px 0 rgba(255,255,255,.18)}
+.button.primary,:root[data-theme=dark] .button.primary{background:var(--cst-accent);border-color:var(--cst-accent);color:var(--cst-accent-ink);font-weight:600;box-shadow:none}
 .button.primary:hover:not(:disabled){background:var(--cst-accent-hover);border-color:var(--cst-accent-hover)}
 .button.ghost{background:transparent;border-color:transparent;color:var(--cst-muted);box-shadow:none}
 .button.ghost:hover:not(:disabled){background:var(--cst-hover);color:var(--cst-text);border-color:transparent}

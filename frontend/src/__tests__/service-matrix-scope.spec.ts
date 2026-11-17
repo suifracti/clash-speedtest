@@ -23,6 +23,7 @@ it('uses one remembered selection for columns, overview and detection without st
  expect(w.serviceIds.value).toEqual(['chatgpt_unlock','netflix_unlock','abema_unlock'])
  await wrapper.get('.hd-run').trigger('click');expect(w.plan.value?.serviceIds).toEqual(w.serviceIds.value);w.plan.value=null
  const reopened=createWorkspace();expect(reopened.serviceIds.value).toEqual(w.serviceIds.value);reopened.dispose()
+ await wrapper.get('.hd-node-open').trigger('click');await flushPromises()
  expect(wrapper.get('.unlock-group.legacy summary').text()).toContain('其他（旧检测项）')
  expect(wrapper.get('.unlock-group.legacy').attributes('open')).toBeUndefined()
  expect(api.startAttempt).not.toHaveBeenCalled();expect(api.startLatency).not.toHaveBeenCalled();vi.unstubAllGlobals()

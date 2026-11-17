@@ -137,6 +137,21 @@ describe('AirportsView manual refresh jobs',()=>{
 })
 
 describe('AirportsView account ledger (synthetic data)',()=>{
+  it('switches the account ledger without changing the measurement source and keeps absent expiry unknown',async()=>{
+    mocks.workspace.airports.value=[airports[0],{id:'airport-b',name:'B',node_count:1,has_cache:true,url_display:'',subscriptions:[{id:'account-b1',airport_id:'airport-b',name:'B1',url_display:'',url_configured:true,node_count:1,has_cache:true,usage:{upload:1024,download:2048,total:8192}}]}]
+    wrapper=mount(AirportsView);await flushPromises()
+    expect(wrapper.get('.cst-ledger').text()).toContain('A1')
+    await wrapper.get('[aria-label="查看机场账户"]').findAll('button')[1].trigger('click');await flushPromises()
+    expect(wrapper.get('.cst-ledger').text()).toContain('B1')
+    expect(wrapper.get('.cst-ledger').text()).not.toContain('A1')
+    expect(wrapper.get('.cst-ledger-expire').text()).toContain('有效期未知')
+    expect(wrapper.get('.cst-ledger-expire').text()).not.toContain('长期有效')
+    expect(mocks.workspace.setAirports).not.toHaveBeenCalled()
+    expect(mocks.workspace.subscription.value).toBe('all')
+    await wrapper.get('.cst-ledger-actions .button').trigger('click')
+    expect(mocks.workspace.setAirports).toHaveBeenCalledWith(['airport-b'])
+    expect(mocks.workspace.subscription.value).toBe('account-b1')
+  })
   it('shows quota, expiry and three-day usage per account without turning unknown into zero',async()=>{
     const soon=Math.floor(Date.now()/1000)+3*86400
     mocks.workspace.airports.value=[{...airports[0],subscriptions:[
