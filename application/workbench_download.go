@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/faceair/clash-speedtest/core/history"
@@ -23,6 +24,7 @@ const workbenchDownloadBackupURL = "https://proof.ovh.net/files/100Mb.dat"
 const workbenchAdaptiveDownloadURL = "https://proof.ovh.net/files/1Gb.dat"
 
 type workbenchDownloadRuntime struct {
+	bytesRead       atomic.Int64
 	timingNS        map[string]int64
 	physicalEgress  *speedtester.PhysicalDownloadEgress
 	preparePhysical func(context.Context, *speedtester.CProxy) (*speedtester.CProxy, *speedtester.PhysicalDownloadEgress, error)
@@ -363,11 +365,12 @@ func (s *AppService) executeWorkbenchDownload(runtime *workbenchDownloadRuntime)
 					TargetURL: target, UseRange: target == workbenchDownloadBackupURL, MaximumBytes: runtime.rule.MaximumBytes,
 					MaximumDuration:  time.Duration(runtime.rule.MaximumDurationNS),
 					SampleEveryBytes: runtime.rule.SampleEveryBytes, SampleEveryDuration: time.Duration(runtime.rule.SampleEveryNS),
+					ObserveBytes: runtime.bytesRead.Store,
 				}
 				return runtime.engine.MeasureDownloadStream(runtime.ctx, client, options, func(sample speedtester.DownloadStreamSample, bytesRead int64) {
 					if s.emitter != nil {
 						s.emitter.Emit(Event{Type: "workbench_download_progress", Payload: map[string]any{
-							"attempt_id": runtime.attemptID, "bytes_read": bytesRead, "sample": sample,
+							"attempt_id": runtime.attemptID, "request_id": runtime.requestID, "bytes_read": bytesRead, "sample": sample,
 						}})
 					}
 				})
@@ -660,7 +663,17 @@ func (s *AppService) GetWorkbenchDownloadAttempt(ctx context.Context, attemptID 
 	if err != nil {
 		return nil, err
 	}
-	return s.historyStore.GetWorkbenchDownloadAttempt(ctx, strings.TrimSpace(attemptID), filter)
+	attempt, err := s.historyStore.GetWorkbenchDownloadAttempt(ctx, strings.TrimSpace(attemptID), filter)
+	if err != nil || attempt.Result != nil {
+		return attempt, err
+	}
+	s.workbenchMu.Lock()
+	runtime := s.workbenchActiveDownload
+	s.workbenchMu.Unlock()
+	if runtime != nil && runtime.attemptID == attempt.AttemptID {
+		attempt.LiveBytesRead = runtime.bytesRead.Load()
+	}
+	return attempt, nil
 }
 
 func (s *AppService) ListWorkbenchDownloadTests(ctx context.Context, query WorkbenchDownloadHistoryQuery) (WorkbenchDownloadHistoryResult, error) {

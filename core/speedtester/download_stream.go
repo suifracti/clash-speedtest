@@ -43,6 +43,7 @@ type DownloadStreamOptions struct {
 	MaximumDuration     time.Duration
 	SampleEveryBytes    int64
 	SampleEveryDuration time.Duration
+	ObserveBytes        func(int64)
 }
 
 type DownloadStreamSample struct {
@@ -350,6 +351,9 @@ func (st *SpeedTester) measureDownloadStream(ctx context.Context, client *http.C
 				responsePrefix = append(responsePrefix, readBuffer[:min(read, 4096-len(responsePrefix))]...)
 			}
 			result.BytesRead += int64(read)
+			if options.ObserveBytes != nil {
+				options.ObserveBytes(result.BytesRead)
+			}
 			current := now()
 			atByteLimit := !options.Adaptive && result.BytesRead >= options.MaximumBytes
 			if options.Adaptive {

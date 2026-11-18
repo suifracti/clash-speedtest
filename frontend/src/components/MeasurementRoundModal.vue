@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {computed,onBeforeUnmount,onMounted,ref} from 'vue'
 import {api} from '../api'
-import {date,stateLabel,type ManualRoundDetail,type ManualRoundSummary,type MeasurementRoundItem} from '../domain'
+import {bytes,date,stateLabel,type ManualRoundDetail,type ManualRoundSummary,type MeasurementRoundItem} from '../domain'
 import {attemptStatus,manualRoundCount,manualRoundLabel,manualRoundState,serviceConclusion} from '../measurementRounds'
 import {nodeDisplayName,nodeSourceIndex} from '../nodePresentation'
 import {useWorkspace} from '../workspace'
@@ -67,7 +67,10 @@ function evidence(item:MeasurementRoundItem){
       <tr v-for="(item,index) in detail.items" :key="offset+index">
        <td><strong>{{projectName(item)}}</strong><small :title="`配置 ${item.config_revision_key}`">{{nodeName(item)}} · {{accountName(item)}}</small></td>
        <td>{{stateLabel(item.execution_state)}}</td>
-       <td>{{resultText(item)}}<small v-if="evidence(item)">{{evidence(item)}}</small></td>
+       <td>{{resultText(item)}}
+        <small v-if="item.download?.result&&item.download.result.bytes_read>0" :title="item.download.result.bytes_read+' 字节'">已读 {{bytes(item.download.result.bytes_read)}}</small>
+        <small v-if="evidence(item)">{{evidence(item)}}</small>
+       </td>
        <td>{{stateLabel(item.persistence_state)}}<small v-if="item.service?.persistence_error||item.download?.persistence_error">{{item.service?.persistence_error||item.download?.persistence_error}}</small></td>
       </tr>
      </tbody>

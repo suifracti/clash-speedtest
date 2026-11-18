@@ -3,7 +3,7 @@ import {nodeDisplayName} from '../nodePresentation'
 import {computed,ref,watch,nextTick,onMounted} from 'vue'
 import {api,saveFile} from '../api'
 import {readLatencyBatches} from '../latencyReportData'
-import {key,targets,type BatchItem,type LatencyBatch} from '../domain'
+import {bytes,key,targets,type BatchItem,type LatencyBatch} from '../domain'
 import LatencyReport from './LatencyReport.vue'
 import {latencySampleState} from '../presentation'
 import {downloadNoDataReason} from '../measurementRounds'
@@ -46,6 +46,13 @@ const counts=computed(()=>{
  const rows=w.queue.value,unknown=w.pendingStart.value?rows.filter(q=>q.id===w.pendingStart.value?.requestId||w.pendingStart.value?.kind==='latency'&&q.project==='latency'&&q.state==='running'&&!q.batchId).length:0
  return {queued:rows.filter(q=>q.state==='queued').length,running:Math.max(0,rows.filter(q=>['running','cancelling'].includes(q.state)).length-unknown),unknown,notRun:rows.filter(q=>['not_executed','cancelled'].includes(q.state)||resultStatus(q)?.notExecuted).length,saveFailed:rows.filter(saveFailed).length,saving:rows.filter(q=>persistenceState(q)==='saving').length}
 })
+function downloadBytes(q:QueueItem){return q.attempt?.result?.bytes_read??q.downloadBytesRead}
+const downloadTransfer=computed(()=>{
+ const rows=w.queue.value.filter(q=>q.project==='download')
+ const active=rows.find(q=>['running','cancelling'].includes(q.state))
+ return {visible:rows.length>0,active,activeBytes:active?downloadBytes(active):undefined,
+   total:rows.reduce((sum,q)=>sum+(downloadBytes(q)??0),0),recovered:rows.some(q=>q.recovered)}
+})
 const isAntigravity=(q:QueueItem)=>q.project==='service'&&(q.serviceId||q.attempt?.service_id)==='antigravity'
 const modelConfirmed=(q:QueueItem)=>q.attempt?.result?.outcome==='matched'&&q.attempt.result.details?.antigravity_progress==='真实模型已回答'
 const antigravitySummary=computed(()=>{
@@ -71,7 +78,10 @@ function resultStatus(q:QueueItem):{label:string;tone:string;notExecuted?:boolea
   if(!a||!result)return {label:'已结束 · 无结果',tone:''}
   const outcome=result.outcome
   if(result.error_message?.includes('备用源'))return {label:result.error_message,tone:'warn'}
-  if(['not_executed','cancelled','user_cancelled','interrupted'].includes(outcome))return {label:stateLabel(outcome==='user_cancelled'?'cancelled':outcome),tone:'',notExecuted:true}
+  if(['not_executed','cancelled','user_cancelled','interrupted'].includes(outcome)){
+   const read=result.bytes_read>0?` · 已读 ${bytes(result.bytes_read)}`:''
+   return {label:stateLabel(outcome==='user_cancelled'?'cancelled':outcome)+read,tone:'',notExecuted:true}
+  }
   if(downloadNoDataReason(a))return {label:downloadNoDataReason(a),tone:'warn'}
   if(downloadOutcome(a)==='response_too_short')return {label:outcomeLabel('response_too_short'),tone:'bad'}
   const reading=downloadReading(a)
@@ -168,6 +178,20 @@ async function retry(q:QueueItem){retrying.value=q.id;try{if(q.batchId&&q.itemId
   <p v-if="w.pendingStart.value" class="queue-notice muted">后台还没确认这次启动；确认前不显示进度，也不会重复启动。</p>
   <div v-else class="progress-track" role="progressbar" aria-label="已处理检测项目" :aria-valuenow="compactLatency?progress.processed:w.done.value" :aria-valuemax="compactLatency?progress.total:w.queue.value.length" aria-valuemin="0"><i :style="{width:compactLatency?(progress.total?`${progress.processed/progress.total*100}%`:'0%'):(w.queue.value.length?`${w.done.value/w.queue.value.length*100}%`:'0%')}"/></div>
   <p v-if="w.error.value" class="inline-error" role="alert">{{w.error.value}}</p>
+  <dl v-if="downloadTransfer.visible" class="queue-download-transfer" aria-label="下载测速读量">
+    <div v-if="downloadTransfer.active" class="queue-transfer-node">
+      <dt>正在测速</dt>
+      <dd>{{nodeDisplayName(downloadTransfer.active.node)}}<small v-if="downloadTransfer.active.node.profile_name">{{downloadTransfer.active.node.profile_name}}</small></dd>
+    </div>
+    <div v-if="downloadTransfer.active">
+      <dt>当前已读</dt>
+      <dd :title="downloadTransfer.activeBytes===undefined?undefined:downloadTransfer.activeBytes+' 字节'">{{downloadTransfer.activeBytes===undefined?'等待下载数据':bytes(downloadTransfer.activeBytes)}}</dd>
+    </div>
+    <div>
+      <dt>{{downloadTransfer.recovered?'已恢复测速读取':'本轮下载正文'}}</dt>
+      <dd :title="downloadTransfer.total+' 字节'">{{bytes(downloadTransfer.total)}}</dd>
+    </div>
+  </dl>
   <template v-if="compactLatency">
     <div v-if="!w.pendingStart.value" class="compact-progress-counts"><span>全部响应 <strong>{{progress.all_success}}</strong></span><span>部分响应 <strong>{{progress.partial_response}}</strong></span><span>无响应 <strong>{{progress.no_response}}</strong></span><span v-if="progress.not_executed">未执行/取消 <strong>{{progress.not_executed}}</strong></span></div>
     <p v-if="progress.save_failed" class="inline-warning" role="alert">保存失败 {{progress.save_failed}} 项；结束后可在报告重试保存。</p>
@@ -198,6 +222,11 @@ async function retry(q:QueueItem){retrying.value=q.id;try{if(q.batchId&&q.itemId
 .cst-queue-head strong{font-size:20px;line-height:1.4;color:var(--cst-text)}
 .cst-queue-head span{color:var(--cst-muted);font-size:13px}
 .cst-queue-actions{display:flex;gap:6px;flex-wrap:wrap}
+.queue-download-transfer{display:flex;align-items:baseline;flex-wrap:wrap;gap:10px 28px;margin:8px 0 13px;padding:12px 0;border-block:1px solid var(--cst-line)}
+.queue-download-transfer>div{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 9px;min-width:0}
+.queue-download-transfer dt,.queue-download-transfer small{font-size:12px;color:var(--cst-muted)}
+.queue-download-transfer dd{margin:0;font-size:13px;font-weight:600;color:var(--cst-text);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.queue-transfer-node small{margin-inline-start:8px;font-weight:400}
 .progress-track{height:4px;border-radius:0;margin:8px 0 16px;background:var(--cst-line)}
 .progress-track i{background:var(--cst-accent);border-radius:0}
 .compact-progress-counts{display:flex;flex-wrap:wrap;gap:22px 36px;padding:16px 0 24px;border-bottom:1px solid var(--cst-line)}

@@ -17,6 +17,34 @@ beforeEach(()=>{vi.useFakeTimers();vi.resetAllMocks();vi.mocked(api.measurementR
 afterEach(()=>{workspaces.splice(0).forEach(w=>w.dispose());vi.useRealTimers()})
 
 describe('execution recovery',()=>{
+  it('links early download progress to the original request and reconciles it with the final cancelled result',async()=>{
+    const w=await workspace();w.plan.value={...plan}
+    let admit!:(value:Attempt)=>void
+    vi.mocked(api.startAttempt).mockImplementation(()=>new Promise(resolve=>{admit=resolve}))
+    const running=w.runPlan();await flushPromises()
+    const row=w.queue.value[0]
+    const accepted={...attempt(),request_id:row.id,live_bytes_read:512}
+    const sample={request_id:row.id,attempt_id:accepted.attempt_id}
+    onEvent('workbench_download_progress',{...sample,request_id:'another-request',bytes_read:524288})
+    expect(row.downloadBytesRead).toBeUndefined()
+    onEvent('workbench_download_progress',{...sample,bytes_read:1024})
+    admit(accepted);await flushPromises()
+    expect(row.downloadBytesRead).toBe(1024)
+    onEvent('workbench_download_progress',{...sample,attempt_id:'another-attempt',bytes_read:524288})
+    expect(row.downloadBytesRead).toBe(1024)
+    vi.mocked(api.attempt).mockResolvedValue({...accepted,live_bytes_read:2048})
+    w.page.value='history';await w.syncActive()
+    expect(row.downloadBytesRead).toBe(2048)
+    const cancelled={...attempt('user_cancelled'),request_id:row.id,result:{...attempt('completed').result!,outcome:'user_cancelled',bytes_read:3072}}
+    vi.mocked(api.attemptAction).mockResolvedValue(cancelled)
+    await w.cancelTests()
+    onEvent('workbench_download_progress',{...sample,bytes_read:524288})
+    await vi.advanceTimersByTimeAsync(1000);await running
+    expect(row.downloadBytesRead).toBe(2048)
+    expect(row.attempt?.result?.bytes_read).toBe(3072)
+    expect(row.state).toBe('user_cancelled')
+  })
+
   it('polls only counters while latency is running and reads the full batch once finished',async()=>{
     const w=await workspace();w.plan.value={...plan,projects:['latency']}
     vi.mocked(api.startLatency).mockImplementation(async(body:any)=>batch('running',body.request_id))
@@ -44,6 +72,7 @@ describe('execution recovery',()=>{
     const running=first.runPlan();await flushPromises();const accepted=first.queue.value[0].attempt!;expect(JSON.parse(window.sessionStorage.getItem('speedtest.active-work')!).serviceId).toBe('google_204');first.dispose()
     vi.mocked(api.attempt).mockResolvedValue({...accepted,execution_state:'running'})
     const restored=await workspace();expect(restored.activeAttempt.value?.kind).toBe('service');expect(restored.activeAttempt.value?.attempt.attempt_id).toBe(accepted.attempt_id);expect(restored.busy.value).toBe(true);expect(vi.mocked(api.attempt).mock.calls[0][2]).toMatchObject({service_id:'google_204'})
+    expect(restored.queue.value[0].node.display_name).toBe(node.display_name)
     onEvent('workbench_public_service_attempt_updated',{...accepted,execution_state:'completed',persistence_state:'saved'});await vi.advanceTimersByTimeAsync(1000);await running;expect(restored.busy.value).toBe(false)
   })
   it('absorbs results when the initial latency response is already terminal and attributes a rejected start to its queue item',async()=>{

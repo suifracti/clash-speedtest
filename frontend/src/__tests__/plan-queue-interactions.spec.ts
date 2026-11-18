@@ -222,6 +222,28 @@ it('shows exact download outcomes and speeds instead of green task completion',(
  expect(rows[3].text()).toContain('重试保存')
 })
 
+it('totals download bodies without adding a live sample twice or counting service results',async()=>{
+  const mib=2**20,finished_at='2026-10-15T09:27:25Z'
+  const finished:Attempt={...node,attempt_id:'saved-attempt',request_id:'saved',requested_at:finished_at,execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://proof.ovh.net'},result:{outcome:'completed',bytes_read:2*mib,finished_at}}
+  w.queue.value=[
+    {id:'saved',node,project:'download',state:'completed',attempt:finished,downloadBytesRead:mib},
+    {id:'service',node,project:'service',state:'completed',attempt:finished},
+    {id:'active',node:{...node,display_name:'Next node'},project:'download',state:'running',downloadBytesRead:mib},
+  ]
+  attach(QueueModal)
+  const reads=()=>document.querySelector('.queue-download-transfer')!
+  expect(reads().textContent).toContain('Next node')
+  expect(reads().textContent).toContain('当前已读1.0 MiB')
+  expect(reads().textContent).toContain('本轮下载正文3.0 MiB')
+  const active=w.queue.value[2]
+  active.state='user_cancelled'
+  active.attempt={...finished,attempt_id:'active-attempt',request_id:'active',execution_state:'user_cancelled',result:{...finished.result!,outcome:'user_cancelled',bytes_read:1.5*mib}}
+  await flushPromises()
+  expect(reads().textContent).not.toContain('当前已读')
+  expect(reads().textContent).toContain('本轮下载正文3.5 MiB')
+  expect(document.body.textContent).toContain('已取消 · 已读 1.5 MiB')
+})
+
 it('shows a failed download state in Chinese',()=>{
  const attempt:Attempt={...node,attempt_id:'download-failure',request_id:'request-failure',requested_at:'2026-10-15T09:27:25Z',execution_state:'connection_failed',persistence_state:'saved',rule:{target_url:'https://example.test/'},result:{outcome:'connection_failed',bytes_read:0,finished_at:'2026-10-15T09:27:26Z'}}
  w.queue.value=[{id:attempt.attempt_id,node,project:'download',state:attempt.execution_state,attempt}]

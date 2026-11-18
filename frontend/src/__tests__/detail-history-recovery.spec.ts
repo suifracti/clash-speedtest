@@ -90,6 +90,19 @@ it('shows measured latency errors separately from reasons a node was skipped',as
  expect(rows[1].textContent).toContain('配置已变化，请重新选择')
 })
 
+it('shows bytes from a saved cancelled download when reopening a round',async()=>{
+ const started_at='2026-11-18T06:54:00Z'
+ const summary={round_id:'cancelled-round',started_at,state:'interrupted',node_count:1,latency_count:0,download_count:1,service_count:0}
+ const download:Attempt={...node,request_id:'actual',attempt_id:'download-attempt',requested_at:started_at,execution_state:'user_cancelled',persistence_state:'saved',rule:{target_url:'https://proof.ovh.net',mode:'adaptive'},result:{outcome:'user_cancelled',bytes_read:3145728,finished_at:started_at}}
+ vi.mocked(api.manualRound).mockResolvedValue({...summary,trigger_type:'manual',items:[
+  {...node,request_id:download.request_id,project:'download',execution_state:'user_cancelled',persistence_state:'saved',download},
+ ]})
+ wrapper=mount(MeasurementRoundModal,{props:{summary},attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
+ const row=document.querySelector('dialog tbody tr')!
+ expect(row.textContent).toContain('已取消')
+ expect(row.querySelector('[title="3145728 字节"]')?.textContent).toBe('已读 3.0 MiB')
+})
+
 it.each(['saved','rejected'])('ignores a late %s save response after changing the displayed project',async outcome=>{
   let resolveRetry!:(a:Attempt)=>void,rejectRetry!:(e:Error)=>void
   vi.mocked(api.attemptAction).mockImplementationOnce(()=>new Promise((resolve,reject)=>{resolveRetry=resolve;rejectRetry=reject}))

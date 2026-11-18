@@ -234,8 +234,16 @@ func TestWorkbenchDownloadCancelAbortsRequestAndBlocksOtherWorkbenchStarts(t *te
 	app, store, _ := newWorkbenchDownloadApplication(t)
 	defer store.Close()
 	entered := make(chan struct{})
+	progress := make(chan map[string]any, 1)
+	app.emitter.(*MemoryEventEmitter).Subscribe(func(event Event) {
+		if event.Type == "workbench_download_progress" {
+			progress <- event.Payload.(map[string]any)
+		}
+	})
+	const prefix = "received before pausing"
 	configureDownloadResponse(app, func(r *http.Request) (*http.Response, error) {
-		return downloadResponse(r, &downloadBlockingBody{ctx: r.Context(), entered: entered}), nil
+		body := io.MultiReader(strings.NewReader(prefix), &downloadBlockingBody{ctx: r.Context(), entered: entered})
+		return downloadResponse(r, io.NopCloser(body)), nil
 	})
 	started, err := app.StartWorkbenchDownloadTest(context.Background(), downloadRequest("blocking-download"))
 	if err != nil {
@@ -245,6 +253,10 @@ func TestWorkbenchDownloadCancelAbortsRequestAndBlocksOtherWorkbenchStarts(t *te
 	case <-entered:
 	case <-time.After(time.Second):
 		t.Fatal("download response body read did not start")
+	}
+	current, err := app.GetWorkbenchDownloadAttempt(context.Background(), started.AttemptID, downloadQuery())
+	if err != nil || current.LiveBytesRead != int64(len(prefix)) || current.Result != nil {
+		t.Fatalf("active attempt must report exact transferred bytes before it has a result: %+v %v", current, err)
 	}
 	if _, err := app.RunWorkbenchLatencyTest(context.Background(), WorkbenchLatencyTestRequest{ProfileID: "profile-a", NodeKey: "node-a", TestProject: WorkbenchLatencyProject, TimeoutSeconds: 1}); err == nil || !strings.Contains(err.Error(), "下载测量正在运行") {
 		t.Fatalf("latency single test must be refused during download: %v", err)
@@ -264,8 +276,16 @@ func TestWorkbenchDownloadCancelAbortsRequestAndBlocksOtherWorkbenchStarts(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if completed.ExecutionState != "user_cancelled" || completed.Result == nil || completed.Result.BytesRead != 0 {
+	if completed.ExecutionState != "user_cancelled" || completed.Result == nil || completed.Result.BytesRead != int64(len(prefix)) || completed.LiveBytesRead != 0 {
 		t.Fatalf("user cancellation must abort the body request: %+v", completed)
+	}
+	select {
+	case event := <-progress:
+		if event["request_id"] != started.RequestID || event["attempt_id"] != started.AttemptID || event["bytes_read"] != int64(len(prefix)) {
+			t.Fatalf("unexpected download progress event: %+v", event)
+		}
+	default:
+		t.Fatal("missing progress for the cancelled download")
 	}
 }
 

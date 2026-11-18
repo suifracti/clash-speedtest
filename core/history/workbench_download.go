@@ -84,6 +84,7 @@ type WorkbenchDownloadAttempt struct {
 	PersistenceError  string                        `json:"persistence_error,omitempty"`
 	Rule              WorkbenchDownloadRuleSnapshot `json:"rule"`
 	Result            *WorkbenchDownloadMeasurement `json:"result,omitempty"`
+	LiveBytesRead     int64                         `json:"live_bytes_read,omitempty"` // In-memory progress, populated only when reading the active attempt.
 }
 
 type WorkbenchDownloadFilter struct {
