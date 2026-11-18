@@ -214,6 +214,8 @@ Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 
 
 2026-11-18 修复（`cfe04fc`）：`checkIPify` 直接保留 `boundedGET` 已判明的请求失败，正常响应中的格式或地址族不符仍标未确认。Hulu 使用的 `readPage` 在非 2xx 正文读取失败时保留 HTTP 状态与正文失败阶段，主动取消优先，2xx 读取失败仍按传输异常处理，原挑战判据沿用。Netflix 的 `prepareTargetIPv4` 按阶段快照分别计算 Fast.com 前置、DoH 与目标请求，只有 DNS 自己的时限触发时才记录 `target_dns_deadline`，整项与传输超时仍用原值。Prime Video 缺失服务限制标记时保留未确认。
 
+2026-11-18 全量复测后修复（`39b4783`）：Netflix 的 Fast.com 结论只属于当前一次观察，后续采样重新请求。每次可选前置最多用剩余时限的三分之一且不超过 5 秒，为备用片目检查保留时间。首次需要片目时才经同一节点查询 DoH，整次检测只解析一次，前置请求计数也排除在片目之外。片目已收到 HTTP 拒绝且正文读取失败时保留状态与读取阶段，证据不足以确认封禁。离线先复现一次请求报多次一致、前置耗尽整项时限和片目 403 被覆盖，修复后验证混合前置/片目、一次解析及准确计数。隔离实网验证多次观察及前置超时后进入片目。
+
 ## L-014 自动精选本地订阅与设置保护、入口百条分批画像、Clash 双轮对照与报告导图
 
 适用：自动精选（`auto-pick`）配置/运行/本地订阅、物理网卡解析节点入口、本机 Clash/Verge 实时对照、延迟报告导出 PNG。
@@ -249,6 +251,8 @@ Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 
 3. **测量轮次状态更新统一持锁串行写库**：`core/history/measurement_round.go` 的 `FinishMeasurementRound`、`ReconcileMeasurementRounds`、`MarkMeasurementNotExecuted` 与 `FinishAutomaticMeasurementRound` 补齐 `d.mu.Lock()` / `defer d.mu.Unlock()`，消除高频并发更新轮次状态时的 `SQLITE_BUSY_SNAPSHOT` 竞争。
 
 2026-11-18 修复（`cfe04fc`）：`testLatencyWithClientContext` 在最多 512 字节的可选补读前确认首字节时延，补读失败不再推翻已测样本。首字节读取超时、取消、空正文和 HTTP 响应时延语义沿用。旧实网样本的请求级 deadline 在收到响应前发生，需按实际传输阶段排查。
+
+2026-11-18 全量复测后修复（`60aa631`）：`readMeasurementLatency` 读取批次错误时按实际执行状态填充。已采样的部分响应或全部超时将错误放入 `execution_error`，真正未执行/配置变化使用 `not_executed_reason`。轮次详情显示原样本和原因，旧快照仍可读，SQLite 无迁移。隔离生产版验证同一轮次的全部计划项和翻页。
 
 ## L-017 UI 必须从本项目使用流程形成构图，不能用模板换皮替代重构
 
