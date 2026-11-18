@@ -96,6 +96,8 @@
 
 2026-11-02 历史证据边界：当时保存的四次实网结果均为直接选择 OVH，HTTP 206 且各收到 10 MiB。403/429 后自动换源由离线测试覆盖，这四次实测不能替代该路径的现场验证。原生截图只确认原生选源页面，不能当作四节点结果截图。11-15 证据见后续增量覆盖；11-18 本次仅离线验证，没有重新测速或核实当前运行包。
 
+2026-11-18 核查（待处理）：`application/workbench_download.go` 的 `normalizeUnverifiedPathFailure` 在 Windows 默认路径没有物理绑定证明时，会把明确的请求失败改写为 `local_path_unverified` 并替换错误原文。诊断优先读取 `failure_phase`、`error_class`、HTTP 状态和实际正文大小。路径是否核实与本次请求失败阶段各自记录，单次跨源差异不足以认定限流或彻底排除节点问题。现有改写测试保护不作确定归因，后续须保留这个边界。
+
 ## L-005 从 Clash Verge 同步订阅时保留账户关联并支持同步名称
 
 适用：本机 Verge 已更新订阅或修改链接，或首次在“数据与备份”初始配置页／“机场与账户”页点击“从 Clash Verge 导入／同步”。从标准配置目录的 `profiles.yaml` 读取 remote 项及其本地节点缓存，以 `uid` 关联 `Subscription.VergeUID`，后续按该绑定更新原 CST 订阅 ID。首次只对唯一完整 URL 相同的账户建议关联；尚无机场时默认预选“新建机场”，已有账户且链接不同时由用户选择已有账户或新建，名字相同不自动合并；每行提供可编辑的“同步名称”输入框与“同步名字”开关（新建机场默认使用该名称，关联或同步已有账户时勾选或修改名称即同步更新订阅名与单订阅机场名，Verge 侧改名时标记 `name_changed`）。
@@ -210,6 +212,8 @@ Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 
 - **Prime Video（`prime_video` v3，`checker.go` & `probes.go`）**：此前 `streamingRule` 设为 64 KiB 且 `checkPrimeVideo` 调用 `readPage` 漏传 `rule.MaximumBodyBytes` 导致约 489 KB 首页恒遭截断；改为 `MaximumWebDocumentBytes`（2 MiB）并透传 `rule.MaximumBodyBytes`，同时严格保留“无 `isServiceRestricted` 不推断可用”诚实口径。
 - **目标固定 DNS 预算（`core/publicservice/target_ipv4.go`）**：`prepareTargetIPv4` 原硬编码 `5s` 子超时在高延迟/并发代理上易在 DoH TLS 握手阶段超时，改为按父 `ctx` 剩余期限动态分配至 `min(8s, remaining-2s)`（保底 `5s`，不延长检查总限）。
 
+2026-11-18 核查（待处理）：`checkIPify` 会把 `boundedGET` 已判明的超时、TLS 错误及 HTTP 拒绝存成 `unknown`。新版判据应保留请求结果，收到有效响应却取不到匹配地址时仍保留未确认。Hulu 的共用 `readPage` 先读取拒绝正文，正文超时会使已观察到的 HTTP 403 退成超时；需同时保留拒绝状态和读取阶段，并保留已有验证挑战识别。Netflix 的 `prepareTargetIPv4` 把 Fast.com 前置请求累计到 DoH 次数，子超时也可误报为整项超时。后续记录前置、DoH 与目标请求的实际计数和时限分别核对。Prime Video 在完整正文只有地区字段时应保留未确认。
+
 ## L-014 自动精选本地订阅与设置保护、入口百条分批画像、Clash 双轮对照与报告导图
 
 适用：自动精选（`auto-pick`）配置/运行/本地订阅、物理网卡解析节点入口、本机 Clash/Verge 实时对照、延迟报告导出 PNG。
@@ -243,6 +247,8 @@ Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 
 1. **延迟测速首字节计时后排空短响应保持 Keep-Alive 复用**：`core/speedtester/speedtester.go` 的 `testLatencyWithClientContext` 原在 `io.CopyN(io.Discard, resp.Body, 1)` 后立即 `resp.Body.Close()`，导致 >1B 的探测响应（如 Apple 68B、GitHub ~42B、Microsoft 22B、Firefox 8B）因未读到 `io.EOF` 而被迫关闭连接，第 2–6 次“稳定延迟”退化为重复 TCP+TLS 握手（实测曾偏慢 10–35 ms）。现先记录首字节 TTFB `dur := time.Since(start)`，开启 Keep-Alive 时再最多排空 512 字节使短响应到达 `EOF`；若 `serverModeDirectDownload` 直测大文件 URL，额外附加 `Range: bytes=0-0` 请求头；CLI `--tsv` 通过新增 `TestProxiesFinalUntil` 只输出每节点最终一轮结果，避免同节点重复多行。
 2. **Windows 开启 TUN 时跳过 Fake-IP DNS 服务器**：Clash Verge 等内核在 Windows 开启 TUN 后常把虚拟适配器 DNS（`198.18.0.2:53`）设进系统默认首选 DNS，导致 `ResolvePhysicalHost` 经物理网卡拨 `198.18.0.2:53` 等满 5 秒超时。`core/speedtester/physical_entry_other.go` 与 `interface.go` 显式调用 Mihomo `resolver.AddSystemDnsBlacklist("198.18.0.1", "198.18.0.2", "fdfe:dcba:9876::1", "fdfe:dcba:9876::2")`，并在自定义 `net.Resolver.Dial` 遇到 Fake-IP DNS 地址时直接报错跳过，必要时回退 `resolver.LookupIPv4`（将入口 DNS 解析由 5 秒降至几十毫秒）。
 3. **测量轮次状态更新统一持锁串行写库**：`core/history/measurement_round.go` 的 `FinishMeasurementRound`、`ReconcileMeasurementRounds`、`MarkMeasurementNotExecuted` 与 `FinishAutomaticMeasurementRound` 补齐 `d.mu.Lock()` / `defer d.mu.Unlock()`，消除高频并发更新轮次状态时的 `SQLITE_BUSY_SNAPSHOT` 竞争。
+
+2026-11-18 核查（待处理）：第一字节已读、后续补读拖到 deadline 的离线响应会被记作丢包，因为 `testLatencyWithClientContext` 在补读后才判断请求上下文。修正时保留已测首字节、未收到首字节的超时/取消以及空正文的合法响应；同时保留允许短响应复用的行为。实网样本的请求级 deadline 落在收到响应前，不能用这个复现解释原始超时。
 
 ## L-017 UI 必须从本项目使用流程形成构图，不能用模板换皮替代重构
 
