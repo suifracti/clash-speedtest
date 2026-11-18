@@ -49,7 +49,7 @@ function resultText(item:MeasurementRoundItem){
 }
 function evidence(item:MeasurementRoundItem){
  const result=item.service?.result||item.download?.result
- return [result?.http_status?`HTTP ${result.http_status}`:'',result?.error_message||result?.summary||item.not_executed_reason].filter(Boolean).join(' · ')
+ return [result?.http_status?`HTTP ${result.http_status}`:'',result?.error_message||result?.summary||item.execution_error||item.latency?.error_message||item.not_executed_reason].filter(Boolean).join(' · ')
 }
 </script>
 

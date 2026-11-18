@@ -2,6 +2,7 @@ import {afterEach,beforeEach,expect,it,vi} from 'vitest'
 import {flushPromises,mount,type VueWrapper} from '@vue/test-utils'
 import NodeDetailModal from '../components/NodeDetailModal.vue'
 import HistoryView from '../components/HistoryView.vue'
+import MeasurementRoundModal from '../components/MeasurementRoundModal.vue'
 import MonitorView from '../components/MonitorView.vue'
 import {createWorkspace,workspaceKey,type Workspace} from '../workspace'
 import {api,request} from '../api'
@@ -72,6 +73,21 @@ it('opens previously saved unlock rounds from both directories even when the nod
  table=document.querySelector('dialog table')!
  expect(table.querySelectorAll('tbody tr')).toHaveLength(2)
  expect(api.manualRound).toHaveBeenLastCalledWith(round.round_id,0)
+})
+
+it('shows measured latency errors separately from reasons a node was skipped',async()=>{
+ const started_at='2026-11-18T06:54:00Z'
+ const summary={round_id:'mixed-round',started_at,state:'finished',node_count:2,latency_count:2,download_count:0,service_count:0}
+ const latency:LatencyTest={...node,attempt_id:'actual-test',node_type:'ss',requested_at:started_at,finished_at:started_at,status:'failed',latency_ms:0,total_samples:1,success_samples:0,failure_samples:1,persistence_state:'saved',samples:[]}
+ vi.mocked(api.manualRound).mockResolvedValue({round_id:summary.round_id,started_at,trigger_type:'manual',state:'finished',items:[
+  {...node,request_id:'actual',project:'latency',execution_state:'failed',persistence_state:'saved',execution_error:'已发送采样，等待响应超时',latency},
+  {...node,request_id:'skipped',project:'latency',execution_state:'skipped_config',persistence_state:'not_applicable',not_executed_reason:'配置已变化，请重新选择'},
+ ]})
+ wrapper=mount(MeasurementRoundModal,{props:{summary},attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
+ const rows=document.querySelectorAll('dialog tbody tr')
+ expect(rows[0].textContent).toContain('0/1 次响应')
+ expect(rows[0].textContent).toContain('已发送采样，等待响应超时')
+ expect(rows[1].textContent).toContain('配置已变化，请重新选择')
 })
 
 it.each(['saved','rejected'])('ignores a late %s save response after changing the displayed project',async outcome=>{

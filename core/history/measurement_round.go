@@ -29,6 +29,7 @@ type MeasurementRoundItem struct {
 	ConfigRevisionKey string                    `json:"config_revision_key"`
 	DisplayName       string                    `json:"display_name,omitempty"`
 	ExecutionState    string                    `json:"execution_state"`
+	ExecutionError    string                    `json:"execution_error,omitempty"`
 	PersistenceState  string                    `json:"persistence_state"`
 	NotExecutedReason string                    `json:"not_executed_reason,omitempty"`
 	Download          *WorkbenchDownloadAttempt `json:"download,omitempty"`
@@ -274,7 +275,17 @@ func (d *DB) readMeasurementLatency(ctx context.Context, item *MeasurementRoundI
 	}
 	item.Latency = child.Result
 	item.ExecutionState, item.PersistenceState = child.ExecutionState, child.PersistenceState
-	item.NotExecutedReason = child.ErrorMessage
+	switch child.ExecutionState {
+	case "not_executed", "skipped_config":
+		if child.ErrorMessage != "" {
+			item.NotExecutedReason = child.ErrorMessage
+		}
+	case "queued":
+		// The plan can still carry an explicit skip before the child starts.
+	default:
+		item.NotExecutedReason = ""
+		item.ExecutionError = child.ErrorMessage
+	}
 	return nil
 }
 

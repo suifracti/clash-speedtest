@@ -120,6 +120,58 @@ func TestManualRoundDirectoryPagesResultsAndPreservesExactAccounts(t *testing.T)
 	}
 }
 
+func TestManualRoundSeparatesMeasuredLatencyErrorsFromUnexecutedReasons(t *testing.T) {
+	db, err := OpenDB(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	at := time.Now().UTC()
+	round := MeasurementRound{RoundID: "mixed-latency", TriggerType: "manual", StartedAt: at}
+	batch := &LatencyBatch{BatchID: "batch", RequestID: "latency-request", TestProject: "latency", RequestedAt: at, State: "completed_with_issues"}
+	for _, state := range []string{"completed", "failed", "skipped_config"} {
+		planned := MeasurementRoundItem{RequestID: batch.RequestID, Project: "latency", ProfileID: "profile-a", NodeKey: state, NodeIdentityKey: state, ConfigRevisionKey: "rev"}
+		child := LatencyBatchItem{ItemID: "child-" + state, ProfileID: planned.ProfileID, NodeKey: state, NodeIdentityKey: state,
+			ConfigRevisionKey: "rev", ExecutionState: state, PersistenceState: "not_applicable", ErrorMessage: "reason-" + state}
+		if state != "skipped_config" {
+			child.AttemptID, child.PersistenceState = "attempt-"+state, "saved"
+			measured := &LatencyTest{AttemptID: child.AttemptID, ProfileID: child.ProfileID, NodeKey: state, NodeIdentityKey: state,
+				ConfigRevisionKey: "rev", TestProject: "latency", RequestedAt: at, StartedAt: at, FinishedAt: at,
+				Status: state, ErrorMessage: child.ErrorMessage, TotalSamples: 1, FailureSamples: 1,
+				Samples: []LatencyTestSample{{Seq: 1, Timestamp: at, Error: "timeout"}}}
+			if state == "completed" {
+				measured.TotalSamples, measured.SuccessSamples = 2, 1
+				measured.Samples = append(measured.Samples, LatencyTestSample{Seq: 2, Timestamp: at, LatencyMs: 13, Success: true})
+			}
+			if err := db.SaveLatencyTest(ctx, measured); err != nil {
+				t.Fatal(err)
+			}
+		}
+		round.Items = append(round.Items, planned)
+		batch.Items = append(batch.Items, child)
+	}
+	if err := db.CreateMeasurementRound(ctx, round); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateLatencyBatch(ctx, batch); err != nil {
+		t.Fatal(err)
+	}
+	result, err := db.ReadManualRound(ctx, round.RoundID, 0)
+	if err != nil || len(result.Items) != 3 {
+		t.Fatalf("incomplete round page: %v", err)
+	}
+	for _, item := range result.Items {
+		if item.ExecutionState == "skipped_config" {
+			if item.Latency != nil || item.NotExecutedReason != "reason-skipped_config" {
+				t.Fatalf("lost the real reason this node was skipped: %+v", item)
+			}
+		} else if item.Latency == nil || len(item.Latency.Samples) == 0 || item.NotExecutedReason != "" || item.ExecutionError != "reason-"+item.ExecutionState {
+			t.Errorf("measured latency carrying an unexecuted reason: %+v", item)
+		}
+	}
+}
+
 func TestMeasurementRoundSaveRetryChangesOnlyPersistenceAndLeavesLegacyUnknown(t *testing.T) {
 	db, err := OpenDB(t.TempDir())
 	if err != nil {
