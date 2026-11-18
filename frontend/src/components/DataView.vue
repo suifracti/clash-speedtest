@@ -24,7 +24,7 @@ async function refresh(){await perform('刷新状态',async()=>{await w.boot();i
 async function inspectPath(path:string){inspected.value=null;inspectedPath.value='';const result=await api.inspect(path);inspected.value=result;inspectedPath.value=path;feedback.value=result.available?'来源检查完成，请核对后确认导入':'来源不可用，请查看检查结果'}
 async function inspect(){const path=source.value.trim();if(!path)return;await perform('检查来源',()=>inspectPath(path))}
 async function browse(){await perform('选择来源',async()=>{const chosen=await selectProfileSourceDirectory();if(!chosen){feedback.value='已取消选择目录，当前来源保持不变';return}source.value=chosen;await inspectPath(chosen)})}
-async function exportBackup(){await perform('导出备份',async()=>{feedback.value=await backup()?'备份已导出':'已取消备份导出';if(feedback.value==='备份已导出'){w.notify(feedback.value);w.setup.value=await api.setup()}})}
+async function exportBackup(){await perform('导出备份',async()=>{feedback.value=await backup()?'备份已导出':'已取消备份导出';if(feedback.value==='备份已导出'){w.notify(feedback.value);try{w.setup.value=await api.setup()}catch(cause){error.value=`备份已导出，但状态刷新失败：${cause instanceof Error?cause.message:String(cause)}。可刷新状态，无需再次导出。`}}})}
 async function openFolder(){await perform('打开数据目录',async()=>{await request('/api/data/open-folder','POST',undefined,'OpenDataFolder');feedback.value='已请求打开数据目录'})}
 async function refreshAfterMutation(){await w.boot();if(w.error.value)error.value=`操作已完成，但部分状态刷新失败：${w.error.value}`}
 async function initialize(){await perform('创建空白存储',async()=>{await api.initialize();feedback.value='空白存储已创建';await refreshAfterMutation()})}

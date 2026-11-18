@@ -24,10 +24,14 @@ export async function request<T>(path:string,method='GET',body?:unknown,desktopM
   if(desktop()&&desktopMethod){const fn=window.go!.desktop!.App![desktopMethod];if(!fn)throw new Error('当前桌面版本需要更新才能使用此功能');try{return await fn(...args)}catch(e){
     const raw=e instanceof Error?e.message:String(e)
     if(raw.startsWith('CST_START_ERROR:'))try{const detail=JSON.parse(raw.slice('CST_START_ERROR:'.length));if(detail.admission==='not_accepted'&&detail.status===400&&typeof detail.message==='string')throw Object.assign(new Error(detail.message),{status:400,admission:detail.admission})}catch(decoded){if((decoded as {admission?:string})?.admission==='not_accepted')throw decoded}
+    if(desktopMethod==='ApplyRetention'&&raw.startsWith('CST_RETENTION_ERROR:')){
+      let details:any;try{details=JSON.parse(raw.slice('CST_RETENTION_ERROR:'.length))}catch{}
+      if(details?.partial===true&&typeof details.error==='string')throw Object.assign(new Error(details.error),{details})
+    }
     throw e instanceof Error?e:new Error(raw)
   }}
   const headers:Record<string,string>={};if(token)headers.Authorization=`Bearer ${token}`;if(body!==undefined)headers['Content-Type']='application/json'
-  const res=await fetch(path,{method,headers,body:body===undefined?undefined:JSON.stringify(body)});if(!res.ok){if(res.status===401)window.dispatchEvent(new Event('speedtest:auth-required'));const raw=await res.text();let message=raw;try{message=JSON.parse(raw).error||raw}catch{}throw Object.assign(new Error(message||`请求失败 (${res.status})`),{status:res.status})}const raw=await res.text();return raw?JSON.parse(raw):undefined
+  const res=await fetch(path,{method,headers,body:body===undefined?undefined:JSON.stringify(body)});if(!res.ok){if(res.status===401)window.dispatchEvent(new Event('speedtest:auth-required'));const raw=await res.text();let message=raw,details:unknown;try{details=JSON.parse(raw);message=(details as {error?:string})?.error||raw}catch{}throw Object.assign(new Error(message||`请求失败 (${res.status})`),{status:res.status,details})}const raw=await res.text();return raw?JSON.parse(raw):undefined
 }
 const attemptPath=(k:'download'|'service')=>`/api/workbench/${k==='service'?'public-service':'download'}-tests`
 function attemptScope(kind:'download'|'service',n:NodeScope&{service_id?:string},serviceId=n.service_id){if(kind==='service'&&!serviceId)throw new Error('服务检测详情缺少服务标识，请刷新后重试');return {...scope(n),...(kind==='service'?{service_id:serviceId}:{})}}

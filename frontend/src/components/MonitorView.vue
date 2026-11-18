@@ -195,7 +195,7 @@ onBeforeUnmount(()=>{mounted=false;reloadGeneration++;runsGeneration++;clearInte
           <small :class="{'inline-error':!!storageState.error}" :role="storageState.error?'alert':undefined">{{resourceMessage(storageState,'存储')}}</small>
         </div>
       </div>
-      <button class="text-button" @click="w.page.value='settings'">调整监测与保存策略</button>
+      <button class="text-button" @click="w.settingsSection.value='storage';w.page.value='settings'">调整监测与保存策略</button>
     </div>
     <p v-if="resourceWarning" class="inline-warning">{{resourceWarning}}</p>
     <nav class="monitor-modes" aria-label="自动运行方式">

@@ -706,7 +706,24 @@ func (a *App) ApplyRetention(req monitor.RetentionRequest) (*monitor.RetentionRe
 	if a == nil || a.app == nil {
 		return nil, errAppNotInitialized
 	}
-	return a.app.ApplyRetention(a.context(), req)
+	result, err := a.app.ApplyRetention(a.context(), req)
+	// Wails rejects the promise on error and otherwise discards the returned
+	// value. Preserve committed partial progress on that error boundary.
+	if err != nil && result != nil && result.Partial {
+		message := result.ErrorMessage
+		if message == "" {
+			message = err.Error()
+		}
+		detail, encodeErr := json.Marshal(map[string]any{
+			"error": message, "partial": true,
+			"samples_deleted": result.SamplesDeleted, "runs_deleted": result.RunsDeleted,
+			"policy": result.Policy, "cutoff": result.Cutoff,
+		})
+		if encodeErr == nil {
+			return nil, fmt.Errorf("CST_RETENTION_ERROR:%s", detail)
+		}
+	}
+	return result, err
 }
 
 func (a *App) PreviewMonitorRetention(req monitor.RetentionRequest) (*monitor.RetentionPreview, error) {

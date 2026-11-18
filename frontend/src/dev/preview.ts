@@ -12,7 +12,9 @@ const startupScenario=new URL(location.href).searchParams.get('scenario')==='sta
 const signinScenario=new URL(location.href).searchParams.get('scenario')==='signin'
 const accountScenario=new URL(location.href).searchParams.get('scenario')==='accounts'
 const monitorTransferScenario=new URL(location.href).searchParams.get('scenario')==='monitor-transfer'
+const storageScenario=new URL(location.href).searchParams.get('scenario')==='storage'
 let monitorImportFailure=true
+let retentionRemaining=1200,retentionRuns=2,retentionPartial=true
 let startupReads=0,previewInitialized=!startupScenario,previewAuthenticated=!signinScenario
 const previewAttempts=new Map<string,Attempt>()
 const now=Date.now(),at=new Date(now-18*60_000).toISOString()
@@ -43,6 +45,7 @@ const archivedAt=new Date(now-8*86400_000).toISOString()
 const archivedTest:LatencyTest={...tests[0],attempt_id:'archived-latency',node_key:'demo-archived-key',node_identity_key:'demo-archived-identity',config_revision_key:'demo-archived-revision',display_name:'香港 · 已移除线路',requested_at:archivedAt,finished_at:archivedAt,samples:tests[0].samples.map(sample=>({...sample,timestamp:archivedAt}))}
 const archivedBatch={...batch,batch_id:'demo-archived-batch',request_id:'demo-archived-request',requested_at:archivedAt,item_count:1,items:[{...archivedTest,item_id:archivedTest.attempt_id,batch_id:'demo-archived-batch',execution_state:'completed',result:archivedTest}]}
 const settings:Settings={preferred_browser:'default',airport_monthly_prices:{'demo-airport-0':30,'demo-airport-1':18},monitor_retention_policy:'90d',monitor_retention_custom_days:90,monitor_storage_warning_bytes:2**30,monitor_storage_hard_bytes:2**31,monitor_budget_max_concurrent:4,monitor_budget_response_bytes:65536,local_notifications:{enabled:false,failure_percent:50,remaining_percent:10,expiry_days:7},clash_connection:{mode:'auto',endpoint:'',secret:''},subscription_daily_update_enabled:false}
+function previewStorage(){const database_bytes=storageScenario?1800*2**20:196608,wal_bytes=storageScenario?300*2**20:57344,shared_memory_bytes=32768,total_bytes=database_bytes+wal_bytes+shared_memory_bytes;return {database_bytes,wal_bytes,shared_memory_bytes,total_bytes,warning_bytes:settings.monitor_storage_warning_bytes,hard_bytes:settings.monitor_storage_hard_bytes,warning:total_bytes>=settings.monitor_storage_warning_bytes!,protected:total_bytes>=settings.monitor_storage_hard_bytes!}}
 const page=(items:unknown[],kind='tests')=>({[kind]:items,has_more:false,complete:true,next_cursor:''})
 if(accountScenario){
  airports[0].maintenance={refresh_hours:6,next_refresh:new Date(now+6*3600_000).toISOString(),last_attempt:at,last_result:'定时刷新完成',links:[{label:'月度活动 · 示例',url:'https://example.invalid/activity',monthly_day:1},{label:'公告页 · 示例',url:'https://example.invalid/news',monthly_day:0}]}
@@ -152,7 +155,13 @@ async function handle(url:URL,body:any,method:string):Promise<unknown>{
  if(['/api/measurement-rounds','/api/subscription-refresh-jobs','/api/history','/api/auto-pick/reports','/api/monitor/runs','/api/clash/verge-subscriptions'].includes(p))return []
  if(p==='/api/monitor/samples'||p==='/api/monitor/samples/cursor')return page(matching(monitorSamples,q),'items')
  if(p==='/api/monitor/facets')return {nodes:nodes.slice(0,8),profiles:airports.slice(0,2).map(a=>a.subscriptions![0].id),targets:[latencyTargets[0].urls[0]]}
- if(p==='/api/monitor/storage')return {total_bytes:286720,sample_count:monitorSamples.length,warning_bytes:2**30,hard_limit_bytes:2**31}
+ if(p==='/api/monitor/storage')return previewStorage()
+ if(storageScenario&&p==='/api/monitor/retention/preview'){await new Promise(resolve=>setTimeout(resolve,500));const days=body.policy==='custom'?body.custom_days:parseInt(body.policy);return {policy:body.policy,cutoff:body.cutoff_time||new Date(Date.now()-days*86400_000).toISOString(),samples_to_delete:retentionRemaining,runs_to_delete:retentionRuns,storage:previewStorage()}}
+ if(storageScenario&&p==='/api/monitor/retention'){
+  await new Promise(resolve=>setTimeout(resolve,1000))
+  if(retentionPartial){retentionPartial=false;retentionRemaining=200;throw Object.assign(new Error('示例：第三批写入中断'),{details:{error:'示例：第三批写入中断',partial:true,samples_deleted:1000,runs_deleted:0,cutoff:body.cutoff_time,policy:body.policy}})}
+  const result={policy:body.policy,cutoff:body.cutoff_time,samples_deleted:retentionRemaining,runs_deleted:retentionRuns,partial:false};retentionRemaining=0;retentionRuns=0;return result
+ }
  if(p==='/api/monitor/budget')return {usage:{requests_used:72,bytes_used:49152},active_requests:0,max_concurrent:4,max_response_bytes:65536}
  if(p==='/api/auto-pick')return {config:{enabled:false,schedule:'daily',daily_hour:8,airport_ids:airports.map(a=>a.id),include_ai:true,include_streaming:true,ai_required:['chatgpt_unlock','claude_unlock'],streaming_required:['netflix_unlock'],min_response_rate:90,max_latency_ms:500,sample_count:6},running:false,estimate:{nodes:12,projects:4,requests:72,warn:false},subscription:{url:'',path:'',exists:false,node_count:0}}
  if(p==='/api/periodic-sampling')return {config:{enabled:false,latency_interval_seconds:120,service_interval_seconds:300,download_interval_seconds:3600,download_mib:10,service_concurrency:16,include_antigravity:false},running:false,node_count:nodes.length,service_count:catalog.length,monitor_job_ids:[],cycles:{}}
@@ -177,7 +186,7 @@ async function handle(url:URL,body:any,method:string):Promise<unknown>{
 }
 window.fetch=async(input,init)=>{
  const url=new URL(typeof input==='string'?input:input instanceof URL?input.href:input.url,location.href)
- try{if(url.origin!==location.origin||!url.pathname.startsWith('/api/'))throw new Error('合成预览已阻止外部请求');const value=await handle(url,typeof init?.body==='string'?JSON.parse(init.body):undefined,init?.method||'GET');return new Response(JSON.stringify(value),{status:200,headers:{'Content-Type':'application/json'}})}catch(e){return new Response(JSON.stringify({error:String(e)}),{status:409})}
+ try{if(url.origin!==location.origin||!url.pathname.startsWith('/api/'))throw new Error('合成预览已阻止外部请求');const value=await handle(url,typeof init?.body==='string'?JSON.parse(init.body):undefined,init?.method||'GET');return new Response(JSON.stringify(value),{status:200,headers:{'Content-Type':'application/json'}})}catch(e){const details=(e as {details?:unknown}).details;return new Response(JSON.stringify(details||{error:String(e)}),{status:details?500:409})}
 }
 class PreviewEvents {onopen:((event:Event)=>void)|null=null;onerror=null;onmessage=null;constructor(){queueMicrotask(()=>this.onopen?.(new Event('open')))}close(){}}
 window.EventSource=PreviewEvents as unknown as typeof EventSource
