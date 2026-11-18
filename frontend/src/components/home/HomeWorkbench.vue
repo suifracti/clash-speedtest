@@ -119,7 +119,7 @@ const filterSummary=computed(()=>[
  m.protocolFilter.value==='all'?'':m.protocolFilter.value,
  m.qualityGate.value==='all'?'':gates.find(g=>g.id===m.qualityGate.value)?.label,
  m.qualitySort.value==='existing'?'':qualitySorts.find(q=>q.id===m.qualitySort.value)?.label,
- w.downloadFullOnly.value&&w.project.value==='download'?'只看完整读取':''].filter(Boolean).join(' · '))
+ w.downloadFullOnly.value&&w.project.value==='download'?'只看达到结束条件':''].filter(Boolean).join(' · '))
 const more=ref<HTMLDetailsElement>(),moreSummary=ref<HTMLElement>()
 function closeMore(){if(!more.value?.open)return;more.value.open=false;moreSummary.value?.focus({preventScroll:true})}
 // 按机场筛选时，页头和来源带都切到这个机场，不再显示全部机场的汇总。
@@ -295,7 +295,7 @@ function keyNav(e:KeyboardEvent){
             <div class="hd-more-grid">
               <label v-if="tabGates.length>2">只看<UiSelect v-model="m.qualityGate.value" aria-label="质量证据筛选"><option v-for="g in tabGates" :key="g.id" :value="g.id">{{g.label}}</option></UiSelect></label>
               <label v-else-if="tabGates.length===2" class="hd-check"><input type="checkbox" :checked="m.qualityGate.value===tabGates[1].id" @change="m.qualityGate.value=($event.target as HTMLInputElement).checked?tabGates[1].id:'all'">只看{{tabGates[1].short}}</label>
-              <label v-if="!exitMode&&w.project.value==='download'" class="hd-check"><input v-model="w.downloadFullOnly.value" type="checkbox">只看完整读完的测速</label>
+              <label v-if="!exitMode&&w.project.value==='download'" class="hd-check"><input v-model="w.downloadFullOnly.value" type="checkbox">只看达到结束条件的测速</label>
               <template v-if="latencyTab">
                 <label>延迟排序<UiSelect v-model="m.qualitySort.value" aria-label="质量分组排序"><option v-for="q in qualitySorts" :key="q.id" :value="q.id">{{q.label}}</option></UiSelect></label>
                 <label>延迟按哪个站点算<UiSelect v-model="w.displayTarget.value" aria-label="质量统计站点"><option v-for="s in targets" :key="s.id" :value="s.id">{{s.name}}</option></UiSelect></label>

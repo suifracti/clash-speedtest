@@ -21,7 +21,9 @@ const reputationServiceIds=computed({
   get:()=>w.plan.value?.reputationServiceIds?.filter(isReputationId)||[],
   set:(ids:string[])=>{if(w.plan.value)w.plan.value.reputationServiceIds=[...new Set(ids.filter(isReputationId))]}
 })
-const downloadVolume=computed(()=>w.plan.value?.projects.includes('download')?w.plan.value.nodes.length*w.plan.value.downloadMiB*1048576*w.plan.value.repeats:0)
+const adaptiveDownload=computed(()=>w.plan.value?.downloadMode==='adaptive')
+const preferredDownloadSource=computed(()=>w.plan.value?.downloadSource||(adaptiveDownload.value?'ovh':'cloudflare'))
+const downloadVolume=computed(()=>w.plan.value?.projects.includes('download')&&!adaptiveDownload.value?w.plan.value.nodes.length*w.plan.value.downloadMiB*1048576*w.plan.value.repeats:0)
 const selectedServiceIds=computed(()=>{
   const p=w.plan.value
   if(!p)return []
@@ -107,14 +109,16 @@ async function submit(){
         </div>
       </details>
       <details v-if="w.plan.value.projects.includes('download')" class="plan-section" :open="expanded.has('download')" @toggle="toggleSection('download',$event)">
-        <summary><strong>下载测速</strong><span>{{w.plan.value.downloadSource==='ovh'?'OVH':'Cloudflare'}} · {{w.plan.value.downloadMiB}} MiB / 节点 · {{w.plan.value.downloadSeconds}} 秒正文</span></summary>
-        <p class="muted small">Cloudflare 与 OVH；遇到 403／429 自动换另一源一次。连接握手与正文传输独立计时。</p>
+        <summary><strong>下载测速</strong><span>{{preferredDownloadSource==='ovh'?'OVH':'Cloudflare'}} · {{adaptiveDownload?'速度稳定后结束':w.plan.value.downloadMiB+' MiB / 节点'}} · {{w.plan.value.downloadSeconds}} 秒正文上限</span></summary>
         <div class="form-grid">
-          <label>首选测速源<UiSelect :model-value="w.plan.value.downloadSource||'cloudflare'" @update:model-value="w.plan.value.downloadSource=String($event)"><option value="cloudflare">Cloudflare</option><option value="ovh">OVH</option></UiSelect></label>
-          <label>每节点最多读取<UiSelect v-model.number="w.plan.value.downloadMiB"><option v-for="n in [5,10,20,50,100]" :key="n" :value="n">{{n}} MiB</option></UiSelect></label>
-          <label>每节点下载时长<UiSelect v-model.number="w.plan.value.downloadSeconds"><option v-for="n in [5,10,15,20,30]" :key="n" :value="n">{{n}} 秒</option></UiSelect></label>
+          <label>结束条件<UiSelect :model-value="w.plan.value.downloadMode||'fixed'" @update:model-value="w.plan.value.downloadMode=$event==='adaptive'?'adaptive':'fixed'"><option value="adaptive">速度稳定后结束</option><option value="fixed">达到指定流量</option></UiSelect></label>
+          <label>首选测速源<UiSelect :model-value="preferredDownloadSource" @update:model-value="w.plan.value.downloadSource=String($event)"><option value="cloudflare">Cloudflare</option><option value="ovh">OVH</option></UiSelect></label>
+          <label v-if="!adaptiveDownload">每节点最多读取<UiSelect v-model.number="w.plan.value.downloadMiB"><option v-for="n in [5,10,20,50,100]" :key="n" :value="n">{{n}} MiB</option></UiSelect></label>
+          <label>正文时长上限<UiSelect v-model.number="w.plan.value.downloadSeconds"><option v-for="n in [5,10,15,20,30]" :key="n" :value="n">{{n}} 秒</option></UiSelect></label>
         </div>
-        <p class="muted small">节点逐个测速。达到流量或时长上限即停止；正文不足 2 秒会标为短测均速。连接另计时，含换源每节点最多 {{w.plan.value.downloadSeconds*2}} 秒。</p>
+        <p v-if="adaptiveDownload" class="muted small">节点逐个测速。启动后连续三个约 1 秒的读数相差不超过中间值的 10% 就结束。连续 5 秒无数据会停止。{{preferredDownloadSource==='cloudflare'?'Cloudflare 的文件可能先传完。':''}}</p>
+        <p v-else class="muted small">节点逐个测速。达到流量或时长上限即停止，正文不足 2 秒会标为短测均速。</p>
+        <p class="muted small">遇到 403／429 自动换源一次。连接另计时，含换源每节点最多 {{w.plan.value.downloadSeconds*2}} 秒。</p>
       </details>
       <details v-if="w.plan.value.projects.includes('service')" class="plan-section" :open="expanded.has('service')" @toggle="toggleSection('service',$event)">
         <summary><strong>解锁检测</strong><span>{{standardServiceIds.length?`已选 ${standardServiceIds.length} 项`:'尚未选择服务'}} · 每项 {{w.plan.value.serviceSamples??4}} 次</span></summary>
@@ -147,7 +151,7 @@ async function submit(){
       <dl class="cst-budget">
         <div v-if="w.plan.value.projects.includes('latency')"><dt>延迟</dt><dd><strong>{{latencySamples}}</strong> 次计划采样<small>{{w.plan.value.nodes.length}} 节点 × {{w.plan.value.target==='all'?targets.length+' 站':'1 站'}} × {{w.plan.value.samples}} 次 × {{w.plan.value.repeats}} 轮</small></dd></div>
         <div v-if="selectedServiceIds.length"><dt>服务与 IP</dt><dd><strong>{{serviceObservations}}</strong> 次计划观察<small>{{selectedServiceIds.length}} 项 · 服务采样 {{w.plan.value.serviceSamples??4}} 次/项；服务内部步骤、跳转和协议开销另计<template v-if="w.plan.value.projects.includes('service')&&standardServiceIds.includes('netflix_unlock')">（Netflix 一次观察约 5 个请求）</template></small></dd></div>
-        <div v-if="w.plan.value.projects.includes('download')"><dt>下载</dt><dd>最多读取正文 <strong>{{bytes(downloadVolume)}}</strong><small>实际扣费还受机场倍率和协议开销影响</small></dd></div>
+        <div v-if="w.plan.value.projects.includes('download')"><dt>下载</dt><dd v-if="adaptiveDownload">流量随实测速度与下载时长变化<small>实际扣费还受机场倍率和协议开销影响</small></dd><dd v-else>最多读取正文 <strong>{{bytes(downloadVolume)}}</strong><small>实际扣费还受机场倍率和协议开销影响</small></dd></div>
         <div v-if="modelServices.length" class="warn"><dt>模型类</dt><dd>会用已绑定账号发起真实请求<small>可能消耗账号额度，单独计算</small></dd></div>
       </dl>
       <details v-if="skippedCount" class="plan-skipped"><summary>地区规则跳过 {{skippedCount}} 个节点/服务组合</summary><p v-for="item in skippedServices" :key="item.id"><strong>{{item.name}} · 跳过 {{item.count}} 个节点</strong><small>{{item.reason}}</small><small v-for="[id,account] in item.accounts" :key="id">{{account.name}} · {{account.count}}</small></p></details>

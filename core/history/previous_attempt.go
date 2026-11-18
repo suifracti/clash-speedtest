@@ -33,7 +33,7 @@ func (d *DB) PreviousWorkbenchDownloadAttempt(ctx context.Context, current *Work
 	if current.Result != nil && current.Result.TargetURL != "" {
 		target = current.Result.TargetURL
 	}
-	where, args, err := previousAttemptWhere(current.ProfileID, current.NodeKey, current.NodeIdentityKey, current.ConfigRevisionKey, current.Source, current.AttemptID, at, current.Rule, strings.Fields("rule_version method maximum_bytes maximum_duration_ns sample_every_bytes sample_every_ns network_path_method physical_interface dns_mode"))
+	where, args, err := previousAttemptWhere(current.ProfileID, current.NodeKey, current.NodeIdentityKey, current.ConfigRevisionKey, current.Source, current.AttemptID, at, current.Rule, strings.Fields("rule_version method mode maximum_bytes maximum_duration_ns sample_every_bytes sample_every_ns network_path_method physical_interface dns_mode"))
 	if err != nil {
 		return nil, err
 	}

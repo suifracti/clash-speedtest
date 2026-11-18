@@ -37,9 +37,10 @@ export function serviceAvailabilitySummary(attempts:(Attempt|undefined)[]){
 }
 export function downloadGroup(a?:Attempt){
  const valid=!!a?.result&&downloadSpeed(a)!==null&&a.result.http_status!==429&&!['not_executed','cancelled','interrupted'].includes(a.execution_state)
- const kind=!valid?'invalid':a!.result!.outcome==='time_limit'?'partial':'full'
- const path=a?.result?.network_path,comparable=valid&&!!a!.rule.method&&a!.rule.rule_version!==undefined&&a!.rule.maximum_bytes!==undefined&&a!.rule.maximum_duration_ns!==undefined&&!!a!.rule.network_path_method&&!!a!.rule.physical_interface&&!!a!.rule.dns_mode&&!!a!.node_type&&path?.method===a!.rule.network_path_method&&path.interface===a!.rule.physical_interface&&path.dns_mode===a!.rule.dns_mode&&path.dns_bind_verified===true&&path.socket_bind_verified===true&&!!path.address_family&&path.address_family!=='unknown'&&!!path.address_source&&path.address_source!=='unknown'
- return {kind,key:valid?downloadCondition(a!)+'|'+kind:'invalid',comparable,label:valid?(kind==='partial'?'有效部分下载':'完整读取')+' · '+downloadConditionLabel(a!)+(comparable?'':' · 出口条件证据不足'):'未测／无有效速度'}
+ const adaptive=a?.rule.mode==='adaptive'
+ const kind=!valid?'invalid':(adaptive?a.result?.end_reason!=='speed_stable':a.result?.outcome==='time_limit')?'partial':'full'
+ const path=a?.result?.network_path,comparable=valid&&!!a!.rule.method&&a!.rule.rule_version!==undefined&&(adaptive?kind==='full':a!.rule.maximum_bytes!==undefined)&&a!.rule.maximum_duration_ns!==undefined&&!!a!.rule.network_path_method&&!!a!.rule.physical_interface&&!!a!.rule.dns_mode&&!!a!.node_type&&path?.method===a!.rule.network_path_method&&path.interface===a!.rule.physical_interface&&path.dns_mode===a!.rule.dns_mode&&path.dns_bind_verified===true&&path.socket_bind_verified===true&&!!path.address_family&&path.address_family!=='unknown'&&!!path.address_source&&path.address_source!=='unknown'
+ return {kind,key:valid?downloadCondition(a!)+'|'+kind:'invalid',comparable,label:valid?(adaptive?(kind==='full'?'速度已稳定':'未稳定均速'):(kind==='partial'?'有效部分下载':'完整读取'))+' · '+downloadConditionLabel(a!)+(comparable?'':adaptive&&kind==='partial'?' · 仅供参考':' · 出口条件证据不足'):'未测／无有效速度'}
 }
 
 export function serviceComparisonGroup(attempts:(Attempt|undefined)[],ids:string[]){

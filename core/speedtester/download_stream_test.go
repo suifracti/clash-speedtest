@@ -29,6 +29,91 @@ func newDownloadStreamTester(t *testing.T) *SpeedTester {
 	return st
 }
 
+type clockedDownloadBody struct {
+	now       *time.Time
+	chunks    []int
+	readCount int
+}
+
+func (b *clockedDownloadBody) Read(p []byte) (int, error) {
+	if b.readCount == len(b.chunks) {
+		return 0, io.EOF
+	}
+	n := b.chunks[b.readCount]
+	b.readCount++
+	*b.now = b.now.Add(time.Second)
+	clear(p[:n])
+	return n, nil
+}
+
+func (b *clockedDownloadBody) Close() error { return nil }
+
+func TestAdaptiveDownloadStopsOnMeasuredStabilityAtDifferentSpeeds(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		chunks []int
+		reads  int
+		rate   float64
+	}{
+		{"slow", []int{20, 20, 10, 10, 10, 800}, 5, 80e-6},
+		{"ramp then stable", []int{100, 500, 1000, 2000, 3000, 2800, 3100, 63000}, 7, 0.024},
+		{"source ends while changing", []int{100, 500, 1000, 2000, 3000}, 5, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Unix(1000, 0)
+			body := &clockedDownloadBody{now: &now, chunks: tc.chunks}
+			client := &http.Client{Transport: downloadRoundTripper(func(r *http.Request) (*http.Response, error) {
+				if r.Header.Get("Range") != "" || r.Header.Get("Accept-Encoding") != "identity" {
+					t.Fatal("adaptive download must make one unbounded local read from the selected source")
+				}
+				return &http.Response{StatusCode: http.StatusOK, Body: body, Request: r}, nil
+			})}
+			result := newDownloadStreamTester(t).measureDownloadStream(context.Background(), client,
+				DownloadStreamOptions{Adaptive: true, TargetURL: "https://source.test/large.bin", MaximumDuration: time.Second},
+				nil, func() time.Time { return now })
+			if body.readCount != tc.reads || result.Outcome != "completed" || len(result.Samples) != tc.reads {
+				t.Fatalf("unexpected stopping point: reads=%d result=%+v", body.readCount, result)
+			}
+			if tc.rate == 0 {
+				if result.EndReason != "source_exhausted" || !result.PartialMeasurement || result.StableSpeedMbps != nil {
+					t.Fatalf("EOF must preserve the unfinished reading: %+v", result)
+				}
+			} else if result.EndReason != "speed_stable" || result.PartialMeasurement || result.StableSpeedMbps == nil || *result.StableSpeedMbps != tc.rate {
+				t.Fatalf("unexpected stable measurement: %+v", result)
+			}
+		})
+	}
+}
+
+func TestAdaptiveDownloadDoesNotTreatGapsAsStableWindows(t *testing.T) {
+	var stability downloadStability
+	started := time.Unix(1000, 0)
+	for _, elapsed := range []time.Duration{0, 1, 2, 5, 6, 7} {
+		if rate := stability.observe(started.Add(elapsed*time.Second), int64(elapsed)*1000+10); rate != 0 {
+			t.Fatalf("reported stable speed before three consecutive windows: %v", rate)
+		}
+	}
+	if rate := stability.observe(started.Add(8*time.Second), 8010); rate != .008 {
+		t.Fatalf("three windows after the gap must establish their actual speed: %v", rate)
+	}
+}
+
+func TestAdaptiveDownloadIdleCancelsAStalledHTTPBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write([]byte("first chunk"))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	result := newDownloadStreamTester(t).MeasureDownloadStream(context.Background(), server.Client(),
+		DownloadStreamOptions{Adaptive: true, TargetURL: server.URL, MaximumDuration: 10 * time.Second}, nil)
+	if result.Outcome != "time_limit" || result.EndReason != "idle_timeout" || !result.PartialMeasurement ||
+		result.BytesRead != 11 || result.StableSpeedMbps != nil || result.ErrorClass != "timeout" {
+		t.Fatalf("stalled body did not preserve a partial read and its stop reason: %+v", result)
+	}
+}
+
 func TestMeasureDownloadStreamRejectsShortResponse(t *testing.T) {
 	st := newDownloadStreamTester(t)
 	client := &http.Client{Transport: downloadRoundTripper(func(r *http.Request) (*http.Response, error) {

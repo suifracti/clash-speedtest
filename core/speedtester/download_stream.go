@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptrace"
@@ -31,7 +32,11 @@ const (
 
 const defaultDownloadSampleInterval = 100 * time.Millisecond
 
+var errDownloadTimeLimit = errors.New("download time limit")
+var errDownloadIdle = errors.New("download body idle")
+
 type DownloadStreamOptions struct {
+	Adaptive            bool
 	TargetURL           string
 	UseRange            bool
 	MaximumBytes        int64
@@ -49,6 +54,7 @@ type DownloadStreamSample struct {
 }
 
 type DownloadStreamResult struct {
+	StableSpeedMbps    *float64               `json:"stable_speed_mbps,omitempty"`
 	ContentType        string                 `json:"content_type,omitempty"`
 	ResponseSummary    string                 `json:"response_summary,omitempty"`
 	PhaseTimingsNS     map[string]int64       `json:"phase_timings_ns,omitempty"`
@@ -139,8 +145,10 @@ func (st *SpeedTester) measureDownloadStream(ctx context.Context, client *http.C
 			result.PhaseTimingsNS[k] = v
 		}
 		phaseMu.Unlock()
-		result.EndReason = result.Outcome
-		result.PartialMeasurement = result.Outcome == "time_limit" && result.BytesRead > 0
+		if result.EndReason == "" {
+			result.EndReason = result.Outcome
+		}
+		result.PartialMeasurement = result.BytesRead > 0 && (result.Outcome == "time_limit" || result.EndReason == "source_exhausted")
 		ended := now()
 		result.FinishedAt = ended.UTC()
 		result.DurationNS = ended.Sub(started).Nanoseconds()
@@ -158,7 +166,7 @@ func (st *SpeedTester) measureDownloadStream(ctx context.Context, client *http.C
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if options.MaximumBytes < 1 || options.MaximumBytes > MaximumDownloadStreamBytes {
+	if !options.Adaptive && (options.MaximumBytes < 1 || options.MaximumBytes > MaximumDownloadStreamBytes) {
 		result.Outcome = "connection_failed"
 		result.FailurePhase = "request_setup"
 		result.ErrorMessage = "下载读取上限无效"
@@ -176,30 +184,33 @@ func (st *SpeedTester) measureDownloadStream(ctx context.Context, client *http.C
 		result.ErrorMessage = "无法建立节点隔离下载连接"
 		return finish()
 	}
-	if options.SampleEveryBytes <= 0 {
+	if options.Adaptive {
+		options.SampleEveryBytes = math.MaxInt64
+		options.UseRange = false
+	} else if options.SampleEveryBytes <= 0 {
 		options.SampleEveryBytes = DefaultDownloadSampleBytes
 	}
 	if options.SampleEveryDuration <= 0 {
 		options.SampleEveryDuration = defaultDownloadSampleInterval
 	}
-	target, err := st.DownloadStreamTarget(options.MaximumBytes)
-	if err != nil {
+	target := options.TargetURL
+	var err error
+	if !options.Adaptive {
+		target, err = st.DownloadStreamTarget(options.MaximumBytes)
+		if options.TargetURL != "" {
+			target = options.TargetURL
+		}
+	}
+	if err != nil || target == "" {
 		result.Outcome = "connection_failed"
 		result.FailurePhase = "request_setup"
-		result.ErrorMessage = "无法创建固定下载目标"
+		result.ErrorMessage = "无法创建下载目标"
 		return finish()
 	}
-	if options.TargetURL != "" {
-		target = options.TargetURL
-	}
 	result.TargetURL = target
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	var timedOut atomic.Bool
-	connectTimer := time.AfterFunc(options.MaximumDuration, func() {
-		timedOut.Store(true)
-		cancel()
-	})
+	runCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	connectTimer := time.AfterFunc(options.MaximumDuration, func() { cancel(errDownloadTimeLimit) })
 	defer connectTimer.Stop()
 	localClient := *client
 	localClient.Timeout = 0
@@ -250,18 +261,19 @@ func (st *SpeedTester) measureDownloadStream(ctx context.Context, client *http.C
 	response, err := localClient.Do(request)
 	connectTimer.Stop()
 	if err != nil {
+		timedOut := context.Cause(runCtx) == errDownloadTimeLimit
 		result.ErrorClass = downloadErrorClass(err)
-		if timedOut.Load() && result.ErrorClass == "cancelled" {
+		if timedOut {
 			result.ErrorClass = "timeout"
 		}
 		if result.ErrorClass == "tls" || result.ErrorClass == "dns" {
 			setPhase(result.ErrorClass)
 		}
-		if ctx.Err() == context.Canceled || (!timedOut.Load() && errors.Is(err, context.Canceled)) {
+		if ctx.Err() == context.Canceled || (!timedOut && errors.Is(err, context.Canceled)) {
 			result.Outcome = "user_cancelled"
 			result.FailurePhase = "cancelled"
 			result.ErrorMessage = "下载已由用户取消"
-		} else if timedOut.Load() || runCtx.Err() == context.DeadlineExceeded || errors.Is(err, context.DeadlineExceeded) {
+		} else if timedOut || runCtx.Err() == context.DeadlineExceeded || errors.Is(err, context.DeadlineExceeded) {
 			result.Outcome = "time_limit"
 			result.FailurePhase = getPhase()
 			result.ErrorMessage = "达到下载时长上限"
@@ -309,100 +321,101 @@ func (st *SpeedTester) measureDownloadStream(ctx context.Context, client *http.C
 	}
 
 	setPhase("response_body")
-	bodyTimer := time.AfterFunc(options.MaximumDuration, func() {
-		timedOut.Store(true)
-		cancel()
-	})
+	bodyTimer := time.AfterFunc(options.MaximumDuration, func() { cancel(errDownloadTimeLimit) })
 	defer bodyTimer.Stop()
+	var stability downloadStability
+	var lastByte atomic.Int64
+	idleStarted := time.Now()
+	if options.Adaptive {
+		go watchDownloadIdle(runCtx, idleStarted, &lastByte, downloadIdleLimit, cancel)
+	}
+	contentType := response.Header.Get("Content-Type")
+	typeLower := strings.ToLower(contentType)
+	unexpectedPayload := options.Adaptive && (strings.HasPrefix(typeLower, "text/") || strings.Contains(typeLower, "json") || strings.Contains(typeLower, "xml"))
 	var responsePrefix []byte
 	sampler := downloadStreamSampler{started: now(), everyBytes: options.SampleEveryBytes, everyDuration: options.SampleEveryDuration}
 	buffer := make([]byte, 64*1024)
 	for {
-		remaining := options.MaximumBytes - result.BytesRead
-		if remaining <= 0 {
-			result.Outcome = "byte_limit"
-			result.FailurePhase = ""
-			result.ErrorMessage = ""
-			cancel()
-			break
-		}
 		readBuffer := buffer
-		if int64(len(readBuffer)) > remaining {
+		if remaining := options.MaximumBytes - result.BytesRead; !options.Adaptive && int64(len(readBuffer)) > remaining {
 			readBuffer = readBuffer[:int(remaining)]
 		}
 		read, readErr := response.Body.Read(readBuffer)
+		var stableSpeed float64
 		if read > 0 {
+			if options.Adaptive {
+				lastByte.Store(time.Since(idleStarted).Nanoseconds())
+			}
 			if len(responsePrefix) < 4096 {
 				responsePrefix = append(responsePrefix, readBuffer[:min(read, 4096-len(responsePrefix))]...)
 			}
 			result.BytesRead += int64(read)
 			current := now()
-			if sample, ok := sampler.add(result.BytesRead, current, result.BytesRead >= options.MaximumBytes); ok {
+			atByteLimit := !options.Adaptive && result.BytesRead >= options.MaximumBytes
+			if options.Adaptive {
+				stableSpeed = stability.observe(current, result.BytesRead)
+			}
+			if sample, ok := sampler.add(result.BytesRead, current, atByteLimit || stableSpeed > 0); ok && !unexpectedPayload {
 				result.Samples = append(result.Samples, sample)
 				if progress != nil {
 					progress(sample, result.BytesRead)
 				}
 			}
-			if result.BytesRead >= options.MaximumBytes {
+			if atByteLimit {
 				result.Outcome = "byte_limit"
 				result.FailurePhase = ""
 				result.ErrorMessage = ""
-				cancel()
+				cancel(nil)
 				break
 			}
 		}
-		if readErr != nil {
-			if !errors.Is(readErr, io.EOF) {
-				result.ErrorClass = downloadErrorClass(readErr)
-				if timedOut.Load() && result.ErrorClass == "cancelled" {
-					result.ErrorClass = "timeout"
-				}
-			}
-			if ctx.Err() == context.Canceled || (!timedOut.Load() && errors.Is(readErr, context.Canceled)) {
-				result.Outcome = "user_cancelled"
-				result.FailurePhase = "cancelled"
-				result.ErrorMessage = "下载已由用户取消"
-			} else if timedOut.Load() || runCtx.Err() == context.DeadlineExceeded || errors.Is(readErr, context.DeadlineExceeded) {
-				result.Outcome = "time_limit"
-				result.FailurePhase = "time_limit"
-				result.ErrorMessage = "达到下载时长上限"
-			} else if errors.Is(readErr, io.EOF) {
-				result.Outcome = "response_too_short"
-				result.FailurePhase = "response_body"
-				result.ErrorMessage = "测速源返回内容过短"
-				result.ContentType = response.Header.Get("Content-Type")
-				result.ResponseSummary = shortResponseSummary(responsePrefix, result.ContentType)
-				result.Samples = nil
-				break
-			} else if errors.Is(readErr, context.Canceled) {
-				result.Outcome = "user_cancelled"
-				result.FailurePhase = "cancelled"
-				result.ErrorMessage = "下载已取消"
-			} else {
-				result.Outcome = "transfer_interrupted"
-				result.FailurePhase = "response_body"
-				result.ErrorMessage = "下载响应在传输中断开"
-			}
-			break
-		}
-		if ctx.Err() == context.Canceled {
+		cause := context.Cause(runCtx)
+		switch {
+		case ctx.Err() == context.Canceled || (cause == nil && errors.Is(readErr, context.Canceled)):
 			result.Outcome = "user_cancelled"
 			result.FailurePhase = "cancelled"
+			if readErr != nil && !errors.Is(readErr, io.EOF) {
+				result.ErrorClass = downloadErrorClass(readErr)
+			}
 			result.ErrorMessage = "下载已由用户取消"
-			break
-		}
-		if timedOut.Load() || runCtx.Err() == context.DeadlineExceeded {
+		case unexpectedPayload && (read > 0 || errors.Is(readErr, io.EOF)):
+			result.Outcome = "response_too_short"
+			result.FailurePhase = "response_body"
+			result.ErrorMessage = "测速源返回了非测速文件"
+			result.ContentType = contentType
+			result.ResponseSummary = shortResponseSummary(responsePrefix, contentType)
+		case cause == errDownloadIdle:
+			result.Outcome, result.EndReason = "time_limit", "idle_timeout"
+			result.FailurePhase, result.ErrorClass = "response_body", "timeout"
+			result.ErrorMessage = "连续 5 秒未收到下载数据"
+		case cause == errDownloadTimeLimit || runCtx.Err() == context.DeadlineExceeded || errors.Is(readErr, context.DeadlineExceeded):
 			result.Outcome = "time_limit"
 			result.FailurePhase = "time_limit"
+			result.ErrorClass = "timeout"
 			result.ErrorMessage = "达到下载时长上限"
+		case stableSpeed > 0 && (readErr == nil || errors.Is(readErr, io.EOF)):
+			result.Outcome, result.EndReason = "completed", "speed_stable"
+			result.StableSpeedMbps = &stableSpeed
+			cancel(nil)
+		case errors.Is(readErr, io.EOF) && options.Adaptive &&
+			(stability.measured || (response.ContentLength >= DefaultDownloadSampleBytes && result.BytesRead == response.ContentLength)):
+			result.Outcome, result.EndReason = "completed", "source_exhausted"
+		case errors.Is(readErr, io.EOF):
+			result.Outcome = "response_too_short"
+			result.FailurePhase = "response_body"
+			result.ErrorMessage = "测速源返回内容过短"
+			result.ContentType = contentType
+			result.ResponseSummary = shortResponseSummary(responsePrefix, contentType)
+			result.Samples = nil
+		case readErr != nil:
+			result.Outcome = "transfer_interrupted"
+			result.FailurePhase = "response_body"
+			result.ErrorClass = downloadErrorClass(readErr)
+			result.ErrorMessage = "下载响应在传输中断开"
+		}
+		if result.Outcome != "" {
 			break
 		}
-		if read == 0 {
-			continue
-		}
-	}
-	if result.Outcome == "" {
-		result.Outcome = "completed"
 	}
 	if sample, ok := sampler.add(result.BytesRead, now(), true); ok && result.Outcome != "response_too_short" {
 		result.Samples = append(result.Samples, sample)

@@ -16,6 +16,7 @@ var ErrWorkbenchDownloadAttemptNotFound = errors.New("Workbench download attempt
 const WorkbenchDownloadSource = "workbench_manual_download"
 
 type WorkbenchDownloadRuleSnapshot struct {
+	Mode              string `json:"mode,omitempty"`
 	NetworkPathMethod string `json:"network_path_method,omitempty"`
 	PhysicalInterface string `json:"physical_interface,omitempty"`
 	DNSMode           string `json:"dns_mode,omitempty"`
@@ -37,6 +38,7 @@ type WorkbenchDownloadSample struct {
 }
 
 type WorkbenchDownloadMeasurement struct {
+	StableSpeedMbps    *float64                         `json:"stable_speed_mbps,omitempty"`
 	ContentType        string                           `json:"content_type,omitempty"`
 	ResponseSummary    string                           `json:"response_summary,omitempty"`
 	TimingNS           map[string]int64                 `json:"timing_ns,omitempty"`

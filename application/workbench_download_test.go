@@ -64,6 +64,43 @@ func configureDownloadResponse(app *AppService, roundTrip func(*http.Request) (*
 	}
 }
 
+func TestWorkbenchAdaptiveDownloadPersistsActualSourceAndUnstableEOF(t *testing.T) {
+	app, _, _ := newWorkbenchDownloadApplication(t)
+	configureDownloadResponse(app, func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() != workbenchAdaptiveDownloadURL || r.Header.Get("Range") != "" {
+			t.Errorf("adaptive request must use the full OVH stream: %s", r.URL)
+		}
+		payload := strings.Repeat("d", 300<<10)
+		response := downloadResponse(r, io.NopCloser(strings.NewReader(payload)))
+		response.ContentLength = int64(len(payload))
+		return response, nil
+	})
+	req := downloadRequest("adaptive-round")
+	req.Mode, req.MaximumBytes = "adaptive", 0
+	started, err := app.StartWorkbenchDownloadTest(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.workbenchWG.Wait()
+	saved, err := app.GetWorkbenchDownloadAttempt(context.Background(), started.AttemptID, downloadQuery())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.PersistenceState != "saved" || saved.Rule.Mode != "adaptive" || saved.Rule.RuleVersion != 5 || saved.Rule.MaximumBytes != 0 ||
+		saved.Result == nil || saved.Result.TargetURL != workbenchAdaptiveDownloadURL || saved.Result.BytesRead != 300<<10 ||
+		saved.Result.EndReason != "source_exhausted" || !saved.Result.PartialMeasurement || saved.Result.StableSpeedMbps != nil {
+		t.Fatalf("unexpected persisted adaptive attempt: %+v", saved)
+	}
+	req.MaximumBytes = 1024
+	if _, err := app.StartWorkbenchDownloadTest(context.Background(), req); err == nil {
+		t.Fatal("adaptive mode accepted a fixed byte limit")
+	}
+	req.Mode = "fixed"
+	if _, err := app.StartWorkbenchDownloadTest(context.Background(), req); err == nil {
+		t.Fatal("the adaptive request ID was reused with a fixed-byte rule")
+	}
+}
+
 func TestWorkbenchDownloadSaveRetryAndReopenReuseAttemptWithoutRequest(t *testing.T) {
 	app, store, paths := newWorkbenchDownloadApplication(t)
 	var requests atomic.Int32

@@ -124,11 +124,15 @@ function retryDownload(maximumMiB?:number){
  plan.includeReputation=false
  plan.reputationServiceIds=[]
  if(maximumMiB){
+  plan.downloadMode='fixed'
   plan.downloadSource=downloadSource.value==='OVH'?'ovh':'cloudflare'
   plan.downloadMiB=maximumMiB
   const seconds=(downloadLatest.value?.rule.maximum_duration_ns||0)/1e9
   if([5,10,15,20,30].includes(seconds))plan.downloadSeconds=seconds
- }else plan.downloadSource=downloadSource.value==='OVH'?'cloudflare':'ovh'
+ }else{
+  plan.downloadMode=downloadLatest.value?.rule.mode==='adaptive'?'adaptive':'fixed'
+  plan.downloadSource=downloadSource.value==='OVH'?'cloudflare':'ovh'
+ }
 }
 function windowText(id:string){
  if(readError.value)return '已保存记录读取失败'

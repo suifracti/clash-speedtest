@@ -29,7 +29,7 @@ watch(pageCount,count=>page.value=Math.min(page.value,count))
     <dl v-if="project==='download'">
       <div><dt>{{downloadReading(a)?.label||'下载速度'}}</dt><dd>{{downloadReading(a)?downloadReading(a)?.value.toFixed(2)+' MiB/s':'—'}}</dd></div>
       <div v-if="downloadPeakSpeed(a)!==null"><dt>峰值速度</dt><dd>{{downloadPeakSpeed(a)?.toFixed(2)+' MiB/s'}}</dd></div>
-      <div v-if="downloadReading(a)?.label==='后段估算'"><dt>全程均速</dt><dd>{{downloadAverageSpeed(a)?.toFixed(2)}} MiB/s</dd></div>
+      <div v-if="['后段估算','稳定速度'].includes(downloadReading(a)?.label||'')"><dt>全程均速</dt><dd>{{downloadAverageSpeed(a)?.toFixed(2)}} MiB/s</dd></div>
       <div><dt>读取数据</dt><dd>{{bytes(a.result?.bytes_read)}}</dd></div>
       <div><dt>传输耗时</dt><dd>{{a.result?.phase_timings_ns?.response_body?(a.result.phase_timings_ns.response_body/1e9).toFixed(2)+' 秒':'—'}}</dd></div>
       <div><dt>连接耗时</dt><dd>{{downloadConnectionSeconds(a)===null?'—':downloadConnectionSeconds(a)?.toFixed(2)+' 秒'}}</dd></div>

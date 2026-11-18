@@ -195,7 +195,7 @@ function downloadMetric(n:NodeOption){
   if((a.result.phase||a.result.failure_phase||'').includes('handshake'))return '代理握手失败'
   return outcomeLabel(downloadOutcome(a))
  }
- if(value!==null)return `${value<.01?'<0.01':value.toFixed(value<1?2:1)} MiB/s${reading?.label==='短测均速'?' · 短测':''}`
+ if(value!==null)return `${value<.01?'<0.01':value.toFixed(value<1?2:1)} MiB/s${reading?.label==='短测均速'?' · 短测':reading?.label==='未稳定均速'?' · 未稳定':''}`
  return a?attemptStatus(a,true):'未测'
 }
 function downloadMetricTone(n:NodeOption){const point=hoveredDownloadPoint(n),a=point?.attempts?.[0]||w.summaryDownload(n);return point?point.tone:a?downloadTone(a):'empty'}

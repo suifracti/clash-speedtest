@@ -5,9 +5,17 @@ import RoundResults from '../components/RoundResults.vue'
 import MeasurementResults from '../components/MeasurementResults.vue'
 import {attemptStatus,downloadCondition} from '../measurementRounds'
 import {createPresentationCache} from '../presentation'
-import {downloadSpeed,downloadAverageSpeed,downloadPeakSpeed,key,type Attempt,type MonitorSample,type NodeOption} from '../domain'
+import {downloadReading,downloadSpeed,downloadAverageSpeed,downloadPeakSpeed,key,type Attempt,type MonitorSample,type NodeOption} from '../domain'
 const n:NodeOption={profile_id:'p',node_key:'n',node_identity_key:'i',config_revision_key:'r',profile_name:'p',display_name:'n',type:'ss',country_code:'',country_flag:''}
 const a:Attempt={...n,attempt_id:'a',request_id:'q',display_name:'n',requested_at:'2026-10-07T00:00:00Z',execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://speed.cloudflare.com/__down?bytes=10485761',method:'GET',maximum_bytes:10485760,network_path_method:'physical_socket_v1'},result:{outcome:'byte_limit',bytes_read:10485760,duration_ns:1e9,phase_timings_ns:{response_body:1e9},finished_at:'2026-10-07T00:00:01Z'}}
+it('uses measured stable speed and labels an unfinished adaptive download as an average',()=>{
+ const stable:Attempt={...a,rule:{...a.rule,mode:'adaptive',rule_version:5,maximum_bytes:0},result:{...a.result!,outcome:'completed',end_reason:'speed_stable',stable_speed_mbps:3*8*1048576/1e6,phase_timings_ns:{response_body:5e9}}}
+ expect(downloadReading(stable)).toEqual({value:3,label:'稳定速度'})
+ expect(attemptStatus(stable,true)).toBe('速度已稳定')
+ const partial={...stable,result:{...stable.result!,outcome:'time_limit',end_reason:'idle_timeout',stable_speed_mbps:undefined,partial_measurement:true}}
+ expect(downloadReading(partial)).toEqual({value:2,label:'未稳定均速'})
+ expect(attemptStatus(partial,true)).toBe('传输停滞')
+})
 it('labels a full bounded download as normal completion and includes partial conditions',()=>{
  expect(attemptStatus(a,true)).toBe('完成·10 MiB')
  const short={...a,result:{...a.result!,outcome:'completed',bytes_read:25}};expect(downloadSpeed(short)).toBeNull();expect(attemptStatus(short,true)).toBe('测速源返回内容过短')

@@ -277,7 +277,7 @@ export function createWorkspace(){
   function nodeUnlockRegion(n:NodeOption){return exitLanding(n,[...(landingEvidence.value[key(n)]||[]),...(services.value[key(n)]||[])]).consensusRegion}
   function allowedUnlockServices(n:NodeOption,ids:string[]){return ids.filter(id=>unlockServiceAllowed(id,nodeUnlockRegion(n),skipByApplicableRegions.value,settings.value?.unlock_service_regions))}
   function defaultReputation(){const ids=[...new Set(catalog.value.filter(rule=>isReputationRule(rule)&&!rule.service_id.startsWith('ipok_')).map(rule=>rule.service_id))];return {includeReputation:ids.length>0,reputationServiceIds:ids}}
-  function openPlan(list=selectedNodes.value){if(!list.length){notify('先选择要检测的节点');return}plan.value={nodes:list.map(n=>({...n})),projects:project.value==='combined'?['latency','download','service']:[project.value],target:'all',samples:6,timeout:5,concurrency:16,downloadMiB:list.length===1?50:20,downloadSeconds:15,serviceIds:[...new Set(serviceIds.value.filter(id=>!isReputationServiceId(id)))],serviceSamples:1,repeats:1,...defaultReputation()}}
+  function openPlan(list=selectedNodes.value){if(!list.length){notify('先选择要检测的节点');return}plan.value={nodes:list.map(n=>({...n})),projects:project.value==='combined'?['latency','download','service']:[project.value],target:'all',samples:6,timeout:5,concurrency:16,downloadMode:'adaptive',downloadMiB:list.length===1?50:20,downloadSeconds:15,serviceIds:[...new Set(serviceIds.value.filter(id=>!isReputationServiceId(id)))],serviceSamples:1,repeats:1,...defaultReputation()}}
   function openReputationPlan(list=selectedNodes.value){if(!list.length){openPlan(list);return}openPlan(list);if(!plan.value)return;plan.value.projects=[]}
   async function refreshBatchProgress(batch:LatencyBatch){
     const version=lifetime,progress=await api.batchProgress(batch.batch_id)
@@ -353,7 +353,8 @@ export function createWorkspace(){
         const runEntry=async(q:QueueItem)=>{
           if(cancelRequested.value||!alive(version))return
           starting.push(q);q.state='running'
-          const body={...scope(q.node),request_id:q.id,...(p==='download'?{maximum_bytes:frozen.downloadMiB*1048576,timeout_seconds:frozen.downloadSeconds,...(frozen.downloadSource?{source_id:frozen.downloadSource}:{})}:{service_id:q.serviceId,timeout_seconds:15,drift_samples:frozen.serviceSamples??4})}
+          const downloadBudget=frozen.downloadMode==='adaptive'?{mode:'adaptive'}:{maximum_bytes:frozen.downloadMiB*1048576}
+          const body={...scope(q.node),request_id:q.id,...(p==='download'?{...downloadBudget,timeout_seconds:frozen.downloadSeconds,...(frozen.downloadSource?{source_id:frozen.downloadSource}:{})}:{service_id:q.serviceId,timeout_seconds:15,drift_samples:frozen.serviceSamples??4})}
           pendingStart.value={kind:p,requestId:q.id,node:q.node,body,serviceId:q.serviceId};remember(pendingStart.value)
           try{const a=await api.startAttempt(p,body);if(!alive(version))return;q.attempt=a;starting=starting.filter(item=>item!==q);await pollAttempt(p,q.node,a)}catch(e){if(!alive(version))return;if(!startRejected(e))throw e;q.state='not_executed';q.error=e instanceof Error?e.message:String(e);if(pendingStart.value?.requestId===q.id)pendingStart.value=null;forget(q.id);starting=starting.filter(item=>item!==q)}
         }

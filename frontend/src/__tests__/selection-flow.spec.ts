@@ -303,7 +303,7 @@ it('freezes the visible quick-filter scope before the combination shortcut chang
 it('keeps the full-download filter explicit and freezes its one-node scope when opening combination settings',async()=>{
  window.sessionStorage.clear()
  const w=workspace();w.mergeAttempt('download',{...oldDownload,...a});w.project.value='download';w.downloadFullOnly.value=true
- const wrapper=attach(HomeView,w);await flushPromises();expect(wrapper.findAll('.hd-node strong').map(e=>e.text())).toEqual(['香港 · 01']);expect(wrapper.get('details.hd-more summary').text()).toContain('只看完整读取')
+ const wrapper=attach(HomeView,w);await flushPromises();expect(wrapper.findAll('.hd-node strong').map(e=>e.text())).toEqual(['香港 · 01']);expect(wrapper.get('details.hd-more summary').text()).toContain('只看达到结束条件')
  await wrapper.get('.hd-run-combined').trigger('click');await flushPromises();expect(w.plan.value?.nodes).toEqual([a]);w.dispose()
 })
 

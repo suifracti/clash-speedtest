@@ -29,11 +29,25 @@ beforeEach(()=>{
 })
 afterEach(()=>{wrapper?.unmount();wrapper=undefined;w.dispose();document.body.innerHTML=''})
 
-it('suggests a larger byte cap for a single download and keeps the batch cap bounded',()=>{
+it('uses adaptive downloads by default and keeps suggested caps for manual fixed-volume tests',()=>{
  w.project.value='download'
- w.openPlan([node]);expect(w.plan.value?.downloadMiB).toBe(50)
+ w.openPlan([node]);expect(w.plan.value).toMatchObject({downloadMode:'adaptive',downloadMiB:50})
  w.openPlan([node,{...node,node_key:'node-b',node_identity_key:'identity-b'}])
- expect(w.plan.value?.downloadMiB).toBe(20)
+ expect(w.plan.value).toMatchObject({downloadMode:'adaptive',downloadMiB:20})
+})
+
+it('uses the adaptive plan through the dialog with no fixed byte budget',async()=>{
+ w.project.value='download';w.openPlan([node]);attach()
+ const dialog=document.querySelector('dialog')!
+ expect(dialog.textContent).toContain('速度稳定后结束')
+ expect(dialog.textContent).toContain('OVH')
+ expect(dialog.textContent).not.toContain('每节点最多读取')
+ button('开始检测').click();await flushPromises()
+ const downloads=vi.mocked(api.startAttempt).mock.calls.filter(([kind])=>kind==='download')
+ expect(downloads).toHaveLength(1)
+ const [,body]=downloads[0]
+ expect(body).toMatchObject({mode:'adaptive',timeout_seconds:15})
+ expect(body).not.toHaveProperty('maximum_bytes')
 })
 
 it('cancels preparation from the dialog without dispatching a late test or clearing earlier results',async()=>{

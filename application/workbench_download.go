@@ -18,7 +18,9 @@ import (
 // Version 4 distinguishes independent connection/body budgets from historical
 // version 3 snapshots, which also included the former shared deadline policy.
 const workbenchDownloadRuleVersion = 4
+const workbenchAdaptiveDownloadRuleVersion = 5
 const workbenchDownloadBackupURL = "https://proof.ovh.net/files/100Mb.dat"
+const workbenchAdaptiveDownloadURL = "https://proof.ovh.net/files/1Gb.dat"
 
 type workbenchDownloadRuntime struct {
 	timingNS        map[string]int64
@@ -77,16 +79,27 @@ func (s *AppService) StartWorkbenchDownloadTest(ctx context.Context, req Workben
 	if timeoutSeconds < 1 || timeoutSeconds > int64(speedtester.MaximumDownloadStreamTimeout.Seconds()) {
 		return nil, monitor.NewValidationError("下载时长上限必须在 1 到 30 秒之间")
 	}
+	mode := req.Mode
 	maximumBytes := req.MaximumBytes
-	if maximumBytes == 0 {
-		maximumBytes = speedtester.DefaultDownloadStreamBytes
-	}
-	if maximumBytes < 1 || maximumBytes > speedtester.MaximumDownloadStreamBytes {
-		return nil, monitor.NewValidationError("下载响应体读取上限必须在 1 字节到 100 MiB 之间")
+	switch mode {
+	case "", "fixed":
+		mode = "" // Keep legacy fixed-budget snapshots and replays compatible.
+		if maximumBytes == 0 {
+			maximumBytes = speedtester.DefaultDownloadStreamBytes
+		}
+		if maximumBytes < 1 || maximumBytes > speedtester.MaximumDownloadStreamBytes {
+			return nil, monitor.NewValidationError("下载响应体读取上限必须在 1 字节到 100 MiB 之间")
+		}
+	case "adaptive":
+		if maximumBytes != 0 {
+			return nil, monitor.NewValidationError("按速度停止的下载检测不能设置流量上限")
+		}
+	default:
+		return nil, monitor.NewValidationError("下载模式无效")
 	}
 	prior, err := s.historyStore.GetWorkbenchDownloadAttemptByRequestID(context.Background(), requestID)
 	if err == nil {
-		if err := validateWorkbenchDownloadRequest(prior, profileID, nodeKey, identityKey, revisionKey, maximumBytes, timeoutSeconds); err != nil {
+		if err := validateWorkbenchDownloadRequest(prior, profileID, nodeKey, identityKey, revisionKey, mode, maximumBytes, timeoutSeconds); err != nil {
 			return nil, err
 		}
 		return prior, nil
@@ -121,19 +134,30 @@ func (s *AppService) StartWorkbenchDownloadTest(ctx context.Context, req Workben
 	if err != nil {
 		return nil, fmt.Errorf("初始化固定下载目标失败；未发出请求: %w", err)
 	}
-	target, err := engine.DownloadStreamTarget(maximumBytes)
+	sourceBytes := maximumBytes
+	fallbackTarget := workbenchDownloadBackupURL
+	preferOVH := req.SourceID == "ovh"
+	ruleVersion, sampleEveryBytes := workbenchDownloadRuleVersion, speedtester.DefaultDownloadSampleBytes
+	if mode == "adaptive" {
+		// Cloudflare requires a response size. This is a source parameter,
+		// never a local read limit or evidence of reaching a stable rate.
+		sourceBytes = 50 << 20
+		fallbackTarget = workbenchAdaptiveDownloadURL
+		preferOVH = req.SourceID != "cloudflare"
+		ruleVersion, sampleEveryBytes = workbenchAdaptiveDownloadRuleVersion, 0
+	}
+	target, err := engine.DownloadStreamTarget(sourceBytes)
 	if err != nil {
 		return nil, fmt.Errorf("初始化固定下载目标失败；未发出请求: %w", err)
 	}
-	fallbackTarget := workbenchDownloadBackupURL
-	if req.SourceID == "ovh" {
+	if preferOVH {
 		target, fallbackTarget = fallbackTarget, target
 	}
 	now := time.Now().UTC()
 	rule := history.WorkbenchDownloadRuleSnapshot{
-		RuleVersion: workbenchDownloadRuleVersion, TargetURL: target, Method: http.MethodGet,
+		Mode: mode, RuleVersion: ruleVersion, TargetURL: target, Method: http.MethodGet,
 		MaximumBytes: maximumBytes, MaximumDurationNS: int64(time.Duration(timeoutSeconds) * time.Second),
-		SampleEveryBytes: speedtester.DefaultDownloadSampleBytes, SampleEveryNS: int64(100 * time.Millisecond),
+		SampleEveryBytes: sampleEveryBytes, SampleEveryNS: int64(100 * time.Millisecond),
 	}
 	runCtx, cancel := newWorkbenchDownloadLifecycleContext(ctx, 2*time.Duration(timeoutSeconds)*time.Second)
 	runtime := &workbenchDownloadRuntime{timingNS: probeTiming(ctx), networkDone: make(chan struct{}),
@@ -157,7 +181,7 @@ func (s *AppService) StartWorkbenchDownloadTest(ctx context.Context, req Workben
 		if err != nil {
 			return nil, fmt.Errorf("相同 request_id 的下载检测未能建立: %w", err)
 		}
-		if err := validateWorkbenchDownloadRequest(prior, profileID, nodeKey, identityKey, revisionKey, maximumBytes, timeoutSeconds); err != nil {
+		if err := validateWorkbenchDownloadRequest(prior, profileID, nodeKey, identityKey, revisionKey, mode, maximumBytes, timeoutSeconds); err != nil {
 			return nil, err
 		}
 		return prior, nil
@@ -172,7 +196,7 @@ func (s *AppService) StartWorkbenchDownloadTest(ctx context.Context, req Workben
 	prior, err = s.historyStore.GetWorkbenchDownloadAttemptByRequestID(context.Background(), requestID)
 	if err == nil {
 		abortStart()
-		if err := validateWorkbenchDownloadRequest(prior, profileID, nodeKey, identityKey, revisionKey, maximumBytes, timeoutSeconds); err != nil {
+		if err := validateWorkbenchDownloadRequest(prior, profileID, nodeKey, identityKey, revisionKey, mode, maximumBytes, timeoutSeconds); err != nil {
 			return nil, err
 		}
 		return prior, nil
@@ -220,9 +244,9 @@ func (s *AppService) StartWorkbenchDownloadTest(ctx context.Context, req Workben
 	return attempt, nil
 }
 
-func validateWorkbenchDownloadRequest(prior *history.WorkbenchDownloadAttempt, profileID, nodeKey, identityKey, revisionKey string, maximumBytes, timeoutSeconds int64) error {
+func validateWorkbenchDownloadRequest(prior *history.WorkbenchDownloadAttempt, profileID, nodeKey, identityKey, revisionKey, mode string, maximumBytes, timeoutSeconds int64) error {
 	if prior.ProfileID != profileID || prior.NodeKey != nodeKey || prior.NodeIdentityKey != identityKey || prior.ConfigRevisionKey != revisionKey ||
-		prior.Rule.MaximumBytes != maximumBytes || prior.Rule.MaximumDurationNS != (time.Duration(timeoutSeconds)*time.Second).Nanoseconds() {
+		prior.Rule.Mode != mode || prior.Rule.MaximumBytes != maximumBytes || prior.Rule.MaximumDurationNS != (time.Duration(timeoutSeconds)*time.Second).Nanoseconds() {
 		return monitor.NewValidationError("request_id 已用于另一组下载检测参数")
 	}
 	return nil
@@ -335,6 +359,7 @@ func (s *AppService) executeWorkbenchDownload(runtime *workbenchDownloadRuntime)
 		} else {
 			measure := func(target string) speedtester.DownloadStreamResult {
 				options := speedtester.DownloadStreamOptions{
+					Adaptive:  runtime.rule.Mode == "adaptive",
 					TargetURL: target, UseRange: target == workbenchDownloadBackupURL, MaximumBytes: runtime.rule.MaximumBytes,
 					MaximumDuration:  time.Duration(runtime.rule.MaximumDurationNS),
 					SampleEveryBytes: runtime.rule.SampleEveryBytes, SampleEveryDuration: time.Duration(runtime.rule.SampleEveryNS),
@@ -484,7 +509,8 @@ func workbenchDownloadMeasurement(result speedtester.DownloadStreamResult) histo
 		})
 	}
 	return history.WorkbenchDownloadMeasurement{
-		ContentType: result.ContentType, ResponseSummary: result.ResponseSummary,
+		StableSpeedMbps: result.StableSpeedMbps,
+		ContentType:     result.ContentType, ResponseSummary: result.ResponseSummary,
 		Phase: result.Phase, ErrorClass: result.ErrorClass, EndReason: result.EndReason, PartialMeasurement: result.PartialMeasurement, RetryAfterSeconds: result.RetryAfterSeconds,
 		Outcome: result.Outcome, TargetURL: result.TargetURL, HTTPStatus: result.HTTPStatus, BytesRead: result.BytesRead,
 		StartedAt: result.StartedAt.UTC(), FinishedAt: result.FinishedAt.UTC(), DurationNS: result.DurationNS,
