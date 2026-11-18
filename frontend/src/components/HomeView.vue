@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {exitLanding} from '../exitLanding'
 import {inspectorSamples,stableLatency} from '../inspectorLatency'
-import {readLatencyHistoryWithConfig,latencyHistorySplit,type LatencyHistorySplit} from '../latencyHistory'
+import {readLatencyHistoryWithConfig,latencyHistorySplit} from '../latencyHistory'
 import {sortSiteRows} from '../siteQualityView'
 import {latestServices,readQuality,multiSiteQuality,qualityGroups,downloadEvidence,latencyReadComplete,qualityMatchesGate,type QualityEvidence,type SiteQualityMetric} from '../nodeQuality'
 import {mapLimited} from '../api'
@@ -10,7 +10,7 @@ import {serviceAvailability,downloadGroup,servicePassed} from '../sharedResults'
 import {attemptTone} from '../measurementRounds'
 import {computed,nextTick,onBeforeUnmount,onMounted,provide,ref,watch} from 'vue'
 import HomeWorkbench from './home/HomeWorkbench.vue'
-import {homeModelKey} from './home/homeModel'
+import {homeModelKey,weeklyHistoryKey,weeklySummary,type WeeklySummary} from './home/homeModel'
 import {useWorkspace} from '../workspace'
 import {api} from '../api'
 import {date,isReputationRule,sameHistoryRecords,downloadSpeed,downloadPeakSpeed,downloadTone,downloadOutcome,downloadConnectionSeconds,downloadSourceName,key,outcomeLabel,type NodeOption,type Project,type Attempt} from '../domain'
@@ -86,19 +86,29 @@ const siteRows=computed(()=>{
  return list.map(node=>({node,summary:selectedSite(node)}))
 })
 const siteSortResult=computed(()=>sortSiteRows(siteRows.value,siteSort.value==='existing'?'p50':siteSort.value))
-const weeklyStats=ref<Record<string,LatencyHistorySplit>>({}),weeklyErrors=ref<Record<string,string>>({}),weeklySort=ref(''),weeklyDescending=ref(true)
-const weeklyReady=computed(()=>w.proxyNodes.value.every(n=>weeklyStats.value[key(n)]||weeklyErrors.value[key(n)]))
-let weeklyGeneration=0
-async function readWeekly(refresh=false){const token=++weeklyGeneration;if(refresh){weeklyStats.value={};weeklyErrors.value={}}await mapLimited(w.proxyNodes.value.filter(n=>!weeklyStats.value[key(n)]&&!weeklyErrors.value[key(n)]),6,async n=>{try{const history=await readLatencyHistoryWithConfig(n,168);if(token===weeklyGeneration)weeklyStats.value[key(n)]=latencyHistorySplit(history.series)}catch(e){if(token===weeklyGeneration)weeklyErrors.value[key(n)]=e instanceof Error?e.message:String(e)}})}
+const weeklyStats=ref<Record<string,WeeklySummary>>({}),weeklyErrors=ref<Record<string,string>>({})
+const weeklySort=ref(''),weeklyDescending=ref(true),weeklyUntil=ref(new Date().toISOString())
+const usesWeeklyHistory=computed(()=>['latency','combined'].includes(w.project.value)||qualityGate.value==='response')
+const weeklyFullScope=computed(()=>qualityGate.value==='response'||['responseRate','volatility'].includes(weeklySort.value))
+function weeklyRead(id:string){return !!(weeklyStats.value[id]||weeklyErrors.value[id])}
+const weeklyReady=computed(()=>w.proxyNodes.value.every(n=>weeklyRead(weeklyHistoryKey(n))))
 function sortWeekly(metric:string){weeklyDescending.value=weeklySort.value===metric?!weeklyDescending.value:['responseRate','purity'].includes(metric);weeklySort.value=metric;currentPage.value=1;if(metric==='purity')void readQualityNodes(w.proxyNodes.value)}
-watch([()=>w.project.value,qualityGate,qualityScopeKey],()=>{if(['latency','combined'].includes(w.project.value)||qualityGate.value==='response')void readWeekly()},{immediate:true})
 watch(()=>w.sort.value,()=>weeklySort.value='')
-watch(()=>w.busy.value,(busy,previous)=>{if(previous&&!busy&&(['latency','combined'].includes(w.project.value)||qualityGate.value==='response'))void readWeekly(true)})
 const visibleNodes=computed(()=>{let list=w.filteredNodes.value;if(!qualityView.value)return (siteSort.value!=='existing'&&allQualityReady.value?siteSortResult.value.rows:siteRows.value).map(r=>r.node);list=list.filter(n=>protocolFilter.value==='all'||n.type===protocolFilter.value)
- if(qualityGate.value==='response'&&weeklyReady.value)list=list.filter(n=>{const s=weeklyStats.value[key(n)];return !!s&&(s.all.responseRate??-1)>=90})
+ if(qualityGate.value==='response'&&weeklyReady.value)list=list.filter(n=>(weeklyStats.value[weeklyHistoryKey(n)]?.all.responseRate??-1)>=90)
  else if(qualityGate.value!=='all'&&qualityGate.value!=='response'&&allQualityReady.value)list=list.filter(n=>qualityMatchesGate(qualityData.value[key(n)],qualitySummaries.value[key(n)],qualityGate.value,qualityCutoff.value))
  if(qualitySort.value!=='existing'&&allQualityReady.value)list=[...list].sort((a,b)=>{const ga=qualitySummaries.value[key(a)],gb=qualitySummaries.value[key(b)],ea=qualityData.value[key(a)],eb=qualityData.value[key(b)];const valid=(g:typeof ga,e:QualityEvidence|undefined)=>!!g&&!!e&&latencyReadComplete(e,g)&&g.comparable&&(qualitySort.value==='observed'?g.success>=1:!g.insufficient)&&(qualitySort.value!=='p95'||g.success>=20);const av=valid(ga,ea),bv=valid(gb,eb);if(av!==bv)return av?-1:1;if(!av)return 0;const group=ga.key.localeCompare(gb.key);if(group)return group;return qualitySort.value==='rate'?(gb.successRate||0)-(ga.successRate||0):(qualitySort.value==='p95'?ga.p95! -gb.p95!:ga.p50! -gb.p50!)})
- if(['latency','combined'].includes(w.project.value)&&weeklySort.value)list=[...list].sort((a,b)=>{const metric=weeklySort.value as 'responseRate'|'volatility',value=(n:NodeOption)=>{if(weeklySort.value==='purity')return exitLanding(n,[...(qualityData.value[key(n)]?.services||[]),...(w.services.value[key(n)]||[])]).purity.score;const s=weeklyStats.value[key(n)];return !s?null:s.all[metric]},av=value(a),bv=value(b);return av==null?(bv==null?0:1):bv==null?-1:(av-bv)*(weeklyDescending.value?-1:1)})
+ if(['latency','combined'].includes(w.project.value)&&weeklySort.value&&(weeklySort.value==='purity'||weeklyReady.value)){
+  const metric=weeklySort.value as 'responseRate'|'volatility'|'purity'
+  function value(n:NodeOption){
+   if(metric==='purity')return exitLanding(n,[...(qualityData.value[key(n)]?.services||[]),...(w.services.value[key(n)]||[])]).purity.score
+   return weeklyStats.value[weeklyHistoryKey(n)]?.all[metric]??null
+  }
+  list=[...list].sort((a,b)=>{
+   const av=value(a),bv=value(b)
+   return av==null?(bv==null?0:1):bv==null?-1:(av-bv)*(weeklyDescending.value?-1:1)
+  })
+ }
  return list})
 watch([qualityGate,qualitySort],()=>{currentPage.value=1;if(qualityGate.value==='download'&&w.project.value!=='combined')w.project.value='download';else if(qualityGate.value==='service'&&w.project.value!=='combined')w.project.value='service';if(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing')void readQualityNodes(w.proxyNodes.value)})
 watch(protocolFilter,()=>currentPage.value=1)
@@ -109,6 +119,50 @@ const pageSize=ref(20)
 function setPageSize(size:number){pageSize.value=size;currentPage.value=1;try{window.localStorage.setItem('speedtest-page-size',String(size))}catch{}}
 try{const raw=window.localStorage?.getItem('speedtest-page-size');if(raw!==null&&raw!==''){const s=Number(raw);if([10,20,50,100,0].includes(s))pageSize.value=s}}catch{}
 const chosen=computed(()=>w.airports.value.filter(a=>w.selectedAirportIds.value?.includes(a.id))),totalPages=computed(()=>pageSize.value<=0?1:Math.max(1,Math.ceil(visibleNodes.value.length/pageSize.value))),pageNodes=computed(()=>pageSize.value<=0?visibleNodes.value.slice():visibleNodes.value.slice((currentPage.value-1)*pageSize.value,currentPage.value*pageSize.value))
+
+const weeklyDemand=computed(()=>{
+ const nodes=w.page.value!=='home'||!usesWeeklyHistory.value?[]:weeklyFullScope.value?w.proxyNodes.value:pageNodes.value
+ return new Map(nodes.map(node=>[weeklyHistoryKey(node),node]))
+})
+const weeklyProgress=computed(()=>{
+ let processed=0,failed=0
+ for(const id of weeklyDemand.value.keys()){
+  if(weeklyRead(id))processed++
+  if(weeklyErrors.value[id])failed++
+ }
+ return {full:weeklyFullScope.value,total:weeklyDemand.value.size,processed,failed,until:weeklyUntil.value}
+})
+let weeklyGeneration=0
+let weeklyWaiting=new Map<string,NodeOption>()
+const weeklyInFlight=new Map<string,number>()
+function fillWeeklySlots(){
+ for(const [id,node] of weeklyWaiting){
+  if(weeklyInFlight.size>=6)break
+  if(!weeklyDemand.value.has(id)){weeklyWaiting.delete(id);continue}
+  if(weeklyInFlight.has(id))continue
+  weeklyWaiting.delete(id)
+  const generation=weeklyGeneration
+  weeklyInFlight.set(id,generation)
+  void readLatencyHistoryWithConfig(node,168,weeklyUntil.value).then(history=>{
+   if(generation===weeklyGeneration)weeklyStats.value[id]=weeklySummary(latencyHistorySplit(history.series))
+  }).catch(error=>{
+   if(generation===weeklyGeneration)weeklyErrors.value[id]=(error instanceof Error?error.message:String(error??''))||'读取失败'
+  }).finally(()=>{weeklyInFlight.delete(id);fillWeeklySlots()})
+ }
+}
+function scheduleWeeklyReads(demand:Map<string,NodeOption>){
+ weeklyWaiting=new Map([...demand].filter(([id])=>!weeklyRead(id)&&weeklyInFlight.get(id)!==weeklyGeneration))
+ fillWeeklySlots()
+}
+function refreshWeekly(){
+ weeklyGeneration++
+ weeklyUntil.value=new Date().toISOString()
+ weeklyStats.value={}
+ weeklyErrors.value={}
+ scheduleWeeklyReads(weeklyDemand.value)
+}
+watch(weeklyDemand,scheduleWeeklyReads,{immediate:true,flush:'post'})
+watch(()=>w.busy.value,(busy,previous)=>{if(previous&&!busy)refreshWeekly()})
 
 const hoverTarget=ref(w.displayTarget.value),hoverService=ref(''),servicePage=ref(1),servicesPerPage=computed(()=>w.project.value==='service'?12:3)
 const inlineHistorySource=computed(()=>activeRound.value?.source||(hoverNode.value&&(hoverMode.value==='latency'&&presentation.monitor(hoverNode.value,hoverTarget.value).length&&!presentation.points(hoverNode.value,'latency',hoverTarget.value).some(p=>p.tone!=='empty')||hoverMode.value==='service'&&httpPoints(hoverNode.value).length&&!presentation.services(hoverNode.value,visibleServiceIds.value).length)?'monitor':'manual'))
@@ -182,8 +236,8 @@ watch(servicePage,closeHover)
 watch(servicePages,count=>servicePage.value=Math.min(servicePage.value,count))
 watch([()=>w.project.value,()=>w.hours.value,currentPage],closeHover)
 watch(()=>w.displayTarget.value,()=>{if(keepOpen.value&&hoverNode.value){activeRound.value=null;inlineTab.value='history'}else closeHover()})
-provide(homeModelKey,{readWeekly,weeklyStats,weeklyErrors,weeklySort,weeklyDescending,sortWeekly,compareOpen,compareTarget,compareNodes:qualityCompareNodes,compareCompatible,comparisonDownloadStatus,closeComparison,servicePoints:(n:NodeOption,id:string)=>presentation.points(n,'service',w.displayTarget.value,id),hiddenSelectedCount,qualityFiltersPending,monitorData,monitorErrors,monitorHTTPErrors,httpPoints,visibleServices,servicePage,servicePages,servicesPerPage,chosen,filterProfiles,protocolChoices,protocolFilter,qualityGate,qualitySort,qualityLoading,qualityErrors,qualityCutoff,allQualityReady,readQualityNodes,siteSummaries,pageSize,setPageSize,pageNodes,visibleNodes,runNodes,currentPage,totalPages,picker,filterRegions,qualityData,nodeActivities,displayServices,sourceLabel,metricPoint,siteMetric,siteContext,siteReason,sitePoints,rowPoints,downloadMetric,downloadMetricTone,downloadMetricContext,serviceMetric,serviceTone,shownService,showService,showServiceEvidence,hoverNode,hoverMode,hoverTarget,hoverService,hoverPoints,activeRound,inlineTab,inlineHistorySource,keepOpen,inspectRound,openRound,leaveRound,keepRound,closeHover,expandHistory,openComparison,openCombinedPlan,runLabel})
-onMounted(()=>monitorTimer=setInterval(()=>{if(w.page.value==='home'&&document.visibilityState==='visible')void readMonitor()},30000));onBeforeUnmount(()=>{qualityGeneration++;presentation.clear();monitorGeneration++;clearTimeout(hoverTimer);clearInterval(monitorTimer)})
+provide(homeModelKey,{refreshWeekly,weeklyStats,weeklyErrors,weeklyProgress,weeklyReady,weeklySort,weeklyDescending,sortWeekly,compareOpen,compareTarget,compareNodes:qualityCompareNodes,compareCompatible,comparisonDownloadStatus,closeComparison,servicePoints:(n:NodeOption,id:string)=>presentation.points(n,'service',w.displayTarget.value,id),hiddenSelectedCount,qualityFiltersPending,monitorData,monitorErrors,monitorHTTPErrors,httpPoints,visibleServices,servicePage,servicePages,servicesPerPage,chosen,filterProfiles,protocolChoices,protocolFilter,qualityGate,qualitySort,qualityLoading,qualityErrors,qualityCutoff,allQualityReady,readQualityNodes,siteSummaries,pageSize,setPageSize,pageNodes,visibleNodes,runNodes,currentPage,totalPages,picker,filterRegions,qualityData,nodeActivities,displayServices,sourceLabel,metricPoint,siteMetric,siteContext,siteReason,sitePoints,rowPoints,downloadMetric,downloadMetricTone,downloadMetricContext,serviceMetric,serviceTone,shownService,showService,showServiceEvidence,hoverNode,hoverMode,hoverTarget,hoverService,hoverPoints,activeRound,inlineTab,inlineHistorySource,keepOpen,inspectRound,openRound,leaveRound,keepRound,closeHover,expandHistory,openComparison,openCombinedPlan,runLabel})
+onMounted(()=>monitorTimer=setInterval(()=>{if(w.page.value==='home'&&document.visibilityState==='visible')void readMonitor()},30000));onBeforeUnmount(()=>{weeklyGeneration++;weeklyWaiting.clear();qualityGeneration++;presentation.clear();monitorGeneration++;clearTimeout(hoverTimer);clearInterval(monitorTimer)})
 </script>
 <template>
   <section class="home-view">

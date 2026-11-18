@@ -1,19 +1,30 @@
 import {activeLatencyTargets,partialLatencySites,partialLatencyLabel} from '../../latencyTargets'
 import {latencyResponseUnstable,latencySlowThresholdMs} from '../../latencyReport'
 import {inspectorMedian,mainLatencyFailure} from '../../inspectorLatency'
-import type {LatencyHistorySplit} from '../../latencyHistory'
+import type {LatencyHistorySplit,LatencyHistoryStats} from '../../latencyHistory'
 import type {ComputedRef,InjectionKey,Ref} from 'vue'
 import type {Attempt,MonitorSample,NodeOption,Project} from '../../domain'
 import type {QualityEvidence,SiteQualitySummary} from '../../nodeQuality'
 import type {Airport} from '../../domain'
 import type {HealthTone,TrendPoint} from '../../presentation'
+import {key} from '../../domain'
+
+type WeeklyMetrics=Pick<LatencyHistoryStats,'total'|'responseRate'|'volatility'>
+export type WeeklySummary={all:WeeklyMetrics;current:WeeklyMetrics;old:WeeklyMetrics;allOld:boolean}
+export function weeklySummary({all,current,old,allOld}:LatencyHistorySplit):WeeklySummary{
+ const metrics=({total,responseRate,volatility}:LatencyHistoryStats)=>({total,responseRate,volatility})
+ return {all:metrics(all),current:metrics(current),old:metrics(old),allOld}
+}
+export function weeklyHistoryKey(node:NodeOption){return JSON.stringify([key(node),node.node_key,node.display_name])}
 
 // HomeView keeps all state, loading and history logic; the redesigned layers
 // only read it through this model so behaviour stays identical across designs.
 export interface HomeModel {
- readWeekly:(refresh?:boolean)=>Promise<void>
- weeklyStats:Ref<Record<string,LatencyHistorySplit>>
+ refreshWeekly:()=>void
+ weeklyStats:Ref<Record<string,WeeklySummary>>
  weeklyErrors:Ref<Record<string,string>>
+ weeklyProgress:ComputedRef<{full:boolean;total:number;processed:number;failed:number;until:string}>
+ weeklyReady:ComputedRef<boolean>
  weeklySort:Ref<string>
  weeklyDescending:Ref<boolean>
  sortWeekly:(metric:string)=>void

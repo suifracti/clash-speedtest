@@ -3,7 +3,8 @@ import {flushPromises,mount,type VueWrapper} from '@vue/test-utils'
 import HomeView from '../components/HomeView.vue'
 import {createWorkspace,workspaceKey} from '../workspace'
 import {api,type SubscriptionRefreshJob} from '../api'
-import type {Airport,NodeOption,MonitorSample} from '../domain'
+import {key} from '../domain'
+import type {Airport,LatencyTest,NodeOption,MonitorSample} from '../domain'
 
 vi.hoisted(()=>{
   const items=new Map<string,string>()
@@ -14,7 +15,7 @@ vi.mock('../api',async importOriginal=>{
   const actual=await importOriginal<typeof import('../api')>()
   return {...actual,api:{...actual.api,
     refreshJobs:vi.fn(async()=>[]),refreshJob:vi.fn(),startRefresh:vi.fn(),cancelRefresh:vi.fn(),
-    latencyHistory:vi.fn(async()=>({tests:[],has_more:false,complete:true})),
+    latencyHistoryScopes:vi.fn(async()=>[]),latencyHistory:vi.fn(async()=>({tests:[],has_more:false,complete:true})),
     measurementRounds:vi.fn(async()=>[]),monitorSamples:vi.fn(async()=>({items:[] as MonitorSample[],has_more:false,next_cursor:''})),
     latencySummaries:vi.fn(async()=>[]),attemptHistory:vi.fn(async()=>({attempts:[],has_more:false,complete:true})),
     startLatency:vi.fn(),startAttempt:vi.fn(),createRound:vi.fn(),finishRound:vi.fn(),createJob:vi.fn(),jobAction:vi.fn()
@@ -68,12 +69,78 @@ function attachHome(options:{airports?:Airport[];nodes?:NodeOption[]}={}){
 
 beforeEach(()=>{
   window.localStorage.clear();window.localStorage.setItem('speedtest-home-view','detailed');window.sessionStorage.clear();vi.clearAllMocks()
+  vi.mocked(api.latencyHistoryScopes).mockResolvedValue([])
+  vi.mocked(api.latencyHistory).mockResolvedValue({tests:[],has_more:false,complete:true})
   vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}})
 })
 afterEach(()=>{
   wrappers.forEach(wrapper=>wrapper.unmount());wrappers.length=0
   workspaces.forEach(workspace=>workspace.dispose());workspaces.length=0
   document.body.innerHTML='';vi.unstubAllGlobals()
+})
+
+it('reads seven-day history for visible pages and reuses it when returning to a read page',async()=>{
+  const {workspace,wrapper}=attachHome();await flushPromises()
+  const reads=vi.mocked(api.latencyHistoryScopes)
+  expect(reads).toHaveBeenCalledTimes(20)
+  await wrapper.get('[aria-label="下一页"]').trigger('click');await flushPromises()
+  expect(reads).toHaveBeenCalledTimes(40)
+  expect(new Set(reads.mock.calls.map(([node])=>node.node_key)).size).toBe(40)
+  expect(new Set(reads.mock.calls.map(([,window])=>window.until)).size).toBe(1)
+  await wrapper.get('[aria-label="上一页"]').trigger('click');await flushPromises()
+  expect(reads).toHaveBeenCalledTimes(40)
+  workspace.page.value='history';workspace.running.value=true;await flushPromises()
+  workspace.running.value=false;await flushPromises()
+  expect(reads).toHaveBeenCalledTimes(40)
+  workspace.page.value='home';await flushPromises()
+  expect(reads).toHaveBeenCalledTimes(60)
+})
+
+it('stops starting reads for an abandoned page while keeping one shared request limit',async()=>{
+  const release:(()=>void)[]=[]
+  const reads=vi.mocked(api.latencyHistoryScopes)
+  reads.mockImplementation(()=>release.length<6?new Promise(resolve=>{release.push(()=>resolve([]))}):Promise.resolve([]))
+  const {wrapper}=attachHome();await flushPromises()
+  expect(reads).toHaveBeenCalledTimes(6)
+  await wrapper.get('[aria-label="下一页"]').trigger('click');await flushPromises()
+  expect(reads).toHaveBeenCalledTimes(6)
+  for(const finish of release)finish()
+  await flushPromises()
+  const pageKeys=wrapper.findAll('.hd-row-scroll [data-node-key]').map(row=>row.attributes('data-node-key'))
+  expect(reads).toHaveBeenCalledTimes(26)
+  expect(reads.mock.calls.slice(6).map(([node])=>key(node))).toEqual(pageKeys)
+})
+
+it('waits for the full seven-day sort and filter range before applying the known results',async()=>{
+  const fixture=nodes().filter(n=>n.profile_id===profileIds[0]).slice(0,25)
+  const best=fixture.at(-1)!,unreadable=fixture[2]!
+  const at=new Date(Date.now()-60_000).toISOString()
+  const saved:LatencyTest={...best,attempt_id:'later-page-good',node_type:best.type,requested_at:at,finished_at:at,status:'completed',latency_ms:34,total_samples:2,success_samples:2,failure_samples:0,persistence_state:'saved',samples:[1,2].map(seq=>({seq,target:'https://speed.cloudflare.com/__down?bytes=1',timestamp:at,latency_ms:34,success:true}))}
+  vi.mocked(api.latencyHistory).mockImplementation(async n=>({tests:n.node_key===best.node_key?[saved]:[],has_more:false,complete:true}))
+  let release!:()=>void
+  vi.mocked(api.latencyHistoryScopes).mockImplementation(n=>{
+    if(n.node_key===best.node_key)return new Promise(resolve=>{release=()=>resolve([])})
+    if(n.node_key===unreadable.node_key)return Promise.reject(new Error('synthetic history unavailable'))
+    return Promise.resolve([])
+  })
+  const {workspace,wrapper}=attachHome({nodes:fixture});workspace.project.value='latency';await flushPromises()
+  const first=wrapper.get('.hd-row-scroll [role="row"] .hd-node-open').text()
+  const sort=wrapper.findAll('.history-sort').find(button=>button.text().includes('7 天响应率'))!
+  await sort.trigger('click');await flushPromises()
+  expect(wrapper.text()).toContain('正在读取近 7 天记录')
+  expect(sort.element.parentElement?.getAttribute('aria-sort')).toBe('none')
+  expect(wrapper.get('.hd-row-scroll [role="row"] .hd-node-open').text()).toBe(first)
+  await wrapper.get('select[aria-label="质量证据筛选"]').setValue('response');await flushPromises()
+  expect(wrapper.get('.hd-run').attributes('disabled')).toBeDefined()
+  workspace.toggleNode(fixture[0]!);await flushPromises()
+  expect(wrapper.get('.hd-run').attributes('disabled')).toBeUndefined()
+  workspace.cancelSelection();await flushPromises()
+  release();await flushPromises()
+  expect(vi.mocked(api.latencyHistoryScopes)).toHaveBeenCalledTimes(25)
+  expect(sort.element.parentElement?.getAttribute('aria-sort')).toBe('descending')
+  expect(wrapper.findAll('.hd-row-scroll [data-node-key]').map(row=>row.attributes('data-node-key'))).toEqual([key(best)])
+  expect(wrapper.text()).toContain('1 个节点读取失败')
+  expect(wrapper.get('.hd-run').attributes('disabled')).toBeUndefined()
 })
 
 describe('synthetic 256-node home first screen',()=>{

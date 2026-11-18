@@ -142,6 +142,8 @@
 
 `f9903a6`、`4febe64`、`6a3f74e`、`8845c67` 统一工作台（`homeModel.ts` 的 `latencyVerdict`）、检查器（`inspectorLatency.ts`）与批次报告（`latencyReport.ts`）的判定优先级：单站 6 次全失败且其余站有响应优先判为橙色“部分站点不通”（`partialLatencySites`）；响应比例统一用 `latencyResponseUnstable`（不足 5/6 为“不稳定”，其余有失败为“偶有失败”）；稳定延迟超过 `latencySlowThresholdMs`（1500 ms）统一判为“偏慢”；失败原因展示具体超时/被拒绝/被重置/被关闭，HTTP 状态码 ≥300 计为已连通并单独统计站点拒绝。`ff4b28b` 在 `core/speedtester/physical_family_darwin.go` 的 `DialContext` 中仅在 IPv4 或 IPv6 实际连接成功后才置 `settled=true`（IPv6 成功时才置 `selectedIPv6=true` 并关闭 IPv4 适配器），双栈均失败（`ipv6_failed`）时保留 IPv4 供后续采样继续先试 IPv4。
 
+2026-11-18 工作台七天摘要按需读取。普通浏览只读取当前页，显式按七天响应率或波动排序、按响应率过滤时读取当前机场范围全部节点。各页共享读数截止时间，列表按账户、身份、revision、node_key 和准确名称缓存汇总值，详情仍按原接口读取原始轮次。工作台共用六个节点读取位置，翻页或离开时不再启动已不需要的读取，刷新后丢弃旧返回。全范围读取结束才应用排序/筛选，失败单列；筛选待定时允许操作明确勾选的节点，按筛选范围启动检测等确认后开放。合成 256 节点、每页 20 条时，范围发现首屏由 256 次降到 20 次。更多证据见 UI 重构记录。
+
 ## L-009 Windows 平台适配、本地构建、Node 26 测试与未初始化数据页连接状态
 
 适用：Windows 环境拉起桌面端或 Web 服务、连接本机 Clash Verge 控制器、读取 Windows 系统代理与物理网卡、运行前端 Vitest、首次打开空数据目录（尚未初始化存储）看到侧栏状态异常。

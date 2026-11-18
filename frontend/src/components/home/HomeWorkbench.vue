@@ -20,7 +20,7 @@ import NodeReaderNav from './NodeReaderNav.vue'
 import NodeCompare from './NodeCompare.vue'
 import Modal from '../Modal.vue'
 import {stableLatency} from '../../inspectorLatency'
-import {homeModelKey,latencyVerdict,type Verdict} from './homeModel'
+import {homeModelKey,latencyVerdict,weeklyHistoryKey,type Verdict} from './homeModel'
 import {exitLanding} from '../../exitLanding'
 import {entryCountry,isAnycast,lineLabel,routeKind,routeLabel,routeTone} from '../../entryPath'
 import {unlockGroups,unlockGroupSummary,unlockSummary} from '../../unlock'
@@ -64,18 +64,19 @@ const exitColumns=['线路','出口 IP','真实落地','IP 类型','风险']
 const exitFields=['line','ip','label','ipTag','riskLabel'] as const
 const sites=computed(()=>targets.filter(t=>w.displayTargets.value.includes(t.id)))
 // 同名节点的七天统计包含配置变化前后的历史。
-function weeklyStat(n:NodeOption){return m.weeklyStats.value[key(n)]}
+const weeklyProgress=m.weeklyProgress
+function weeklyStat(n:NodeOption){return m.weeklyStats.value[weeklyHistoryKey(n)]}
 function weeklyOld(n:NodeOption){return !!weeklyStat(n)?.allOld}
 function weeklyText(n:NodeOption,metric:'responseRate'|'volatility'){
  const s=weeklyStat(n)
- if(!s)return m.weeklyErrors.value[key(n)]?'读取失败':'读取中'
+ if(!s)return m.weeklyErrors.value[weeklyHistoryKey(n)]?'读取失败':'读取中'
  const value=s.all[metric]
  if(metric==='responseRate')return value!=null?Math.round(value)+'%':'未测'
  return value!=null?Math.round(value)+' ms':'—'
 }
 function weeklyTone(n:NodeOption){const s=weeklyStat(n);return !s||s.all.responseRate==null?'empty':s.all.responseRate>=90?'good':'warn'}
 function weeklyTitle(n:NodeOption,metric:'responseRate'|'volatility'){
- const s=weeklyStat(n),error=m.weeklyErrors.value[key(n)]
+ const s=weeklyStat(n),error=m.weeklyErrors.value[weeklyHistoryKey(n)]
  if(error)return error
  if(metric==='volatility'&&(!s||s.all.volatility==null))return '满 5 轮后显示'
  if(!s)return '近 7 天 · 0 轮'
@@ -109,7 +110,8 @@ const resultHint=computed(()=>({combined:'按已保存的检测记录筛选和�
 watch(()=>w.project.value,p=>{if(!tabGateIds[p].includes(m.qualityGate.value))m.qualityGate.value='all';if(!['combined','latency'].includes(p)&&m.qualitySort.value!=='existing')m.qualitySort.value='existing'})
 const qualitySorts=[{id:'existing',label:'不额外排序（用上方排序）'},{id:'observed',label:'最近一次延迟，低到高（仅供参考）'},{id:'p50',label:'典型延迟（中位数），低到高'},{id:'p95',label:'慢的时候（P95），低到高'},{id:'rate',label:'成功率，高到低'}]
 const moreActive=computed(()=>[w.airportFilter.value!=='all',w.subscription.value!=='all',w.excludeRegion.value,m.protocolFilter.value!=='all',m.qualityGate.value!=='all',m.qualitySort.value!=='existing',w.downloadFullOnly.value&&w.project.value==='download'].filter(Boolean).length)
-const scopeLabel=computed(()=>w.selectedNodes.value.length?`已选 ${w.selectedNodes.value.length} 个节点`:`筛选 ${m.runNodes.value.length} 个`)
+const filterScopePending=computed(()=>!w.selectedNodes.value.length&&m.qualityFiltersPending.value)
+const scopeLabel=computed(()=>w.selectedNodes.value.length?`已选 ${w.selectedNodes.value.length} 个节点`:filterScopePending.value?'正在确认筛选范围':`筛选 ${m.runNodes.value.length} 个`)
 const filterSummary=computed(()=>[
  w.airportFilter.value==='all'?'':chosen.value.find(a=>a.id===w.airportFilter.value)?.name,
  w.subscription.value==='all'?'':m.filterProfiles.value.find(([id])=>id===w.subscription.value)?.[1],
@@ -196,7 +198,7 @@ function selected(n:NodeOption){return w.selectedKeys.value.includes(key(n))}
 const verdicts=computed<Record<string,Verdict>>(()=>Object.fromEntries(m.pageNodes.value.map(n=>[key(n),latencyVerdict(sites.value.map(s=>m.metricPoint(n,s.id)),stableLatency(sites.value.map(s=>({id:s.id,points:[m.metricPoint(n,s.id)].filter((p):p is NonNullable<typeof p>=>!!p)}))),weeklyStat(n)?.allOld?null:weeklyStat(n)?.all.responseRate,sites.value.map(s=>s.name))])))
 function groupSummary(n:NodeOption,id:string){return unlockGroupSummary(id,catalog.value,serviceId=>m.shownService(n,serviceId),w.nodeUnlockRegion(n),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions,exitRows.value[key(n)]?.ipKind.type)}
 function services(n:NodeOption){const summary=unlockSummary(catalog.value,id=>m.shownService(n,id),w.nodeUnlockRegion(n),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions,exitRows.value[key(n)]?.ipKind.type);return {...summary,label:summary.tone==='empty'?'未测':summary.label}}
-function run(){if(exitMode.value){m.closeHover();w.openReputationPlan([...m.runNodes.value]);return}if(w.project.value==='combined')m.openCombinedPlan();else{m.closeHover();w.openPlan([...m.runNodes.value])}}
+function run(){if(filterScopePending.value)return;if(exitMode.value){m.closeHover();w.openReputationPlan([...m.runNodes.value]);return}if(w.project.value==='combined')m.openCombinedPlan();else{m.closeHover();w.openPlan([...m.runNodes.value])}}
 const showVerdict=computed(()=>!exitMode.value&&['combined','latency'].includes(w.project.value))
 const overviewMode=computed(()=>!exitMode.value&&w.project.value==='combined')
 const showSites=computed(()=>!exitMode.value&&w.project.value==='latency')
@@ -267,8 +269,8 @@ function keyNav(e:KeyboardEvent){
         <div class="hd-toolbar-actions">
           <button class="hd-btn ghost" :disabled="w.loading.value" title="重新载入节点列表" @click="w.refreshNodes().catch(w.fail)"><Icon name="refresh"/>重新载入</button>
           <button v-if="exitMode" class="hd-btn" :disabled="w.busy.value||!m.runNodes.value.length" title="只解析节点入口地址，不经过节点，不算一次真实检测" @click="w.resolveEntries(m.runNodes.value)">解析入口</button>
-          <button v-if="!exitMode&&w.project.value!=='combined'" class="hd-btn hd-run-combined" :disabled="w.busy.value||!m.runNodes.value.length" title="按当前显示的节点范围打开组合检测" @click="m.openCombinedPlan()">组合检测</button>
-          <button class="hd-btn primary hd-run" :disabled="w.busy.value||!m.runNodes.value.length" @click="run"><Icon name="play"/>{{exitMode?'检测出口与信誉':m.runLabel(w.project.value)}} · {{scopeLabel}}</button>
+          <button v-if="!exitMode&&w.project.value!=='combined'" class="hd-btn hd-run-combined" :disabled="w.busy.value||!m.runNodes.value.length||filterScopePending" title="按当前显示的节点范围打开组合检测" @click="m.openCombinedPlan()">组合检测</button>
+          <button class="hd-btn primary hd-run" :disabled="w.busy.value||!m.runNodes.value.length||filterScopePending" @click="run"><Icon name="play"/>{{exitMode?'检测出口与信誉':m.runLabel(w.project.value)}} · {{scopeLabel}}</button>
         </div>
       </div>
       <div class="hd-toolbar-filters">
@@ -299,7 +301,7 @@ function keyNav(e:KeyboardEvent){
                 <label>延迟按哪个站点算<UiSelect v-model="w.displayTarget.value" aria-label="质量统计站点"><option v-for="s in targets" :key="s.id" :value="s.id">{{s.name}}</option></UiSelect></label>
               </template>
             </div>
-            <p class="hd-muted hd-more-note">数据截止 {{date(m.qualityCutoff.value)}} · 各项分别测量，不作综合打分<button class="hd-link" :disabled="m.qualityLoading.value" @click="m.qualityGate.value==='response'?m.readWeekly(true):m.readQualityNodes(qualityFiltering?w.proxyNodes.value:m.pageNodes.value,true)">{{m.qualityLoading.value?'读取中…':'更新质量记录'}}</button></p>
+            <p class="hd-muted hd-more-note">数据截止 {{date(m.qualityGate.value==='response'?weeklyProgress.until:m.qualityCutoff.value)}} · 各项分别测量，不作综合打分<button class="hd-link" :disabled="m.qualityGate.value==='response'?weeklyProgress.processed<weeklyProgress.total:m.qualityLoading.value" @click="m.qualityGate.value==='response'?m.refreshWeekly():m.readQualityNodes(qualityFiltering?w.proxyNodes.value:m.pageNodes.value,true)">{{m.qualityLoading.value?'读取中…':'更新质量记录'}}</button></p>
             <p v-if="qualityFiltering" class="hd-muted" role="status">{{m.qualityGate.value==='response'?(m.qualityFiltersPending.value?'正在读取近 7 天延迟历史…':`按近 7 天采样响应率 ≥90% 筛选 · 当前符合 ${m.visibleNodes.value.length} 个`):m.allQualityReady.value?`已读固定范围 ${w.proxyNodes.value.length} 个节点 · 当前符合 ${m.visibleNodes.value.length} 个 · 读取失败 ${Object.keys(m.qualityErrors.value).length} 个 · 存在缺页/读取错误 ${Object.values(m.qualityData.value).filter(e=>!e.complete).length} 个（只限制对应类型的证据）`:`正在读取全部 ${w.proxyNodes.value.length} 个节点的历史记录（已读 ${Object.keys(m.qualityData.value).length}）；读取完成后应用条件筛选与排序`}}</p>
           </section>
           <section class="hd-more-group" aria-labelledby="more-view">
@@ -317,6 +319,11 @@ function keyNav(e:KeyboardEvent){
       </div>
     </div>
     <p v-if="['latency','download','service'].includes(w.sort.value)" class="hd-muted hd-sort-status" role="status">{{w.sortLoading.value?`读取全部节点 ${w.sortReadCount.value}/${w.proxyNodes.value.length}…`:w.sortError.value||(w.sortAt.value?'排序截止 '+date(w.sortAt.value)+' · 翻页不改变排名':'尚未读取全部节点，仅按已读记录排序')}}<button class="hd-link" :disabled="w.sortLoading.value" @click="w.refreshSort()">更新排序</button></p>
+    <p v-if="!exitMode&&weeklyProgress.total&&(weeklyProgress.full||weeklyProgress.failed)" class="hd-muted hd-sort-status" role="status">
+      {{weeklyProgress.processed<weeklyProgress.total?`正在读取近 7 天记录 ${weeklyProgress.processed}/${weeklyProgress.total}`:`近 7 天记录已读 ${weeklyProgress.processed-weeklyProgress.failed}/${weeklyProgress.total} · 截至 ${date(weeklyProgress.until)}`}}
+      <template v-if="weeklyProgress.failed"> · {{weeklyProgress.failed}} 个节点读取失败</template>
+      <button v-if="weeklyProgress.processed===weeklyProgress.total" class="hd-link" @click="m.refreshWeekly()">更新七天记录</button>
+    </p>
 
     <nav v-if="!exitMode&&w.project.value==='service'" class="hd-seg matrix-switch" aria-label="解锁结果视图"><button :aria-pressed="serviceView==='nodes'" @click="serviceView='nodes'">按节点</button><button :aria-pressed="serviceView==='services'" @click="serviceView='services'">按服务</button></nav>
     <UnlockServiceMatrix v-if="matrixMode"/>
@@ -329,7 +336,11 @@ function keyNav(e:KeyboardEvent){
           <span v-for="s in overviewMode?sites:[]" :key="s.id" role="columnheader" class="hd-station-head" :title="s.name+' · 已保存的 HTTP 延迟'">{{s.name}}</span>
           <span v-if="showVerdict&&!overviewMode" role="columnheader">结论</span>
           <span v-if="showVerdict&&!overviewMode" role="columnheader" :aria-sort="m.weeklySort.value==='purity'?(m.weeklyDescending.value?'descending':'ascending'):'none'"><button class="hd-link" @click="m.sortWeekly('purity')">纯净度 {{m.weeklySort.value==='purity'?(m.weeklyDescending.value?'↓':'↑'):''}}</button></span>
-          <template v-if="!exitMode&&w.project.value==='latency'"><span v-for="[metric,label] in [['responseRate','7 天响应率'],['volatility','波动幅度']]" :key="metric" role="columnheader" :aria-sort="m.weeklySort.value===metric?(m.weeklyDescending.value?'descending':'ascending'):'none'"><button class="hd-link history-sort" @click="m.sortWeekly(metric)">{{label}} {{m.weeklySort.value===metric?(m.weeklyDescending.value?'↓':'↑'):''}}</button></span></template>
+          <template v-if="!exitMode&&w.project.value==='latency'">
+            <span v-for="[metric,label] in [['responseRate','7 天响应率'],['volatility','波动幅度']]" :key="metric" role="columnheader" :aria-sort="m.weeklySort.value===metric&&m.weeklyReady.value?(m.weeklyDescending.value?'descending':'ascending'):'none'">
+              <button class="hd-link history-sort" @click="m.sortWeekly(metric)">{{label}} {{m.weeklySort.value===metric&&m.weeklyReady.value?(m.weeklyDescending.value?'↓':'↑'):''}}</button>
+            </span>
+          </template>
           <template v-if="showSites"><span v-for="s in sites" :key="s.id" role="columnheader">{{s.name}}</span></template>
           <span v-if="showDownload" role="columnheader">下载</span>
           <span v-if="!exitMode&&w.project.value==='download'" role="columnheader">测量时间</span>

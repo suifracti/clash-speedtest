@@ -76,8 +76,8 @@ async function readScope(node:NodeOption,since:string,until:string){
 }
 // Read every saved revision of the same subscription node, including identities the
 // subscription replaced, and keep the current revision as the reference for tagging.
-export async function readLatencyHistoryWithConfig(node:NodeOption,hours:number):Promise<{series:LatencySeries[];changes:LatencyConfigChange[]}>{
- const until=new Date().toISOString(),since=new Date(Date.parse(until)-hours*3600000).toISOString()
+export async function readLatencyHistoryWithConfig(node:NodeOption,hours:number,until=new Date().toISOString()):Promise<{series:LatencySeries[];changes:LatencyConfigChange[]}>{
+ const since=new Date(Date.parse(until)-hours*3600000).toISOString()
  const saved=await api.latencyHistoryScopes(node,{since,until})
  const scopeKey=(n:NodeOption)=>key(n)+'\u0000'+n.node_key
  const scopes=new Map<string,NodeOption>()
