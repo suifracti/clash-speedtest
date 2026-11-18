@@ -961,3 +961,9 @@ Verge 的来源名与目标账户名分开，保留 UID/唯一完整 URL 关联�
   - `prime_video`（v3，`core/publicservice/checker.go` & `probes.go`）：将规则体上限从 64 KiB 扩为 `MaximumWebDocumentBytes`（2 MiB）并透传给 `readPage`，修复约 489 KB 首页必遭截断问题，仍保持缺失 `isServiceRestricted` 时不推断可用的诚实边界。
   - `target_ipv4.go`：`prepareTargetIPv4` 的 DoH 查解析子超时由固定 5s 改为按 `ctx` 剩余时限动态计算（`min(8s, remaining-2s)`，保底 5s），降低高延迟代理在 TLS 握手阶段的 `target_dns` 超时。
 - **验证**：补齐 `TestGeminiSupportsEscapedBootstrapFlagWithoutRelaxingCountryBlock`、`TestTikTokSlardarWAFClassifiedAsChallenge`、`TestUNextApolloHeadersAndRegionStatus`、`TestDMMGraphQLRegionCheck` 与 `TestPrimeVideoReadsLargeHomepageBeyond64KiB`；`go vet ./...`、`go test ./core/publicservice/... ./application/... -count=1`、前端 73 文件 451 项 `npm test` 与 `npm run build` 全部通过；重启 `127.0.0.1:8999` 后经受控双节点实网复验（跳过 `antigravity`），`gemini_unlock`、`tiktok_unlock`、`unext_unlock`、`dmm_unlock` 与 `abema_unlock` 均按新判据给出准确结论，无控制台或服务端接口报错。
+
+### 延迟曲线与历史读数
+
+按 L-008/017 和 Vault 原测量语义核对延迟详情。曲线与站点范围改用从零开始的共享自动量程，保留慢响应完整范围，移除与判据不符的 300/800 ms 背景色；实际统计和 1500 ms 偏慢规则不变。失败不冒充零延迟，历史首次响应不足以计算稳定值时单独标样本不足，未测保持未测。合并同次四站读数，保留响应/原因与配置变化；数值解释当前轮次，站点名称保留整个查看范围的统计和读取失败提示。原生 dialog 内的全局悬浮提示现在进入同一顶层，不再被遮住。完整变化与验证边界见 UI 重构记录。
+
+新增 9 条行为回归，最终 **88 文件/609 项前端全量通过**，vue-tsc/生产构建通过。全量曾拦住范围统计提示丢失，恢复独立入口后保留原刷新/读取失败/S5 断言。合成浏览器核对普通/640px、四类历史、慢响应范围、悬浮读数及关闭清理，最终 error/warn=[]；14 项能力保留。本轮无 Go 改动，证据约 2.8 MiB，C / D 约余 46.3 / 122.7 GiB，不构建安装包、生产备份或实网探测，仍无用户视觉/原生验收。

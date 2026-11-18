@@ -35,7 +35,9 @@ async function attachSavedSnapshot(){
  await flushPromises();await wrapper.get('.hd-node-open').trigger('click');await flushPromises()
 }
 function latency(){return wrapper!.get('.hd-latency').text()}
-function windowStats(){return wrapper!.findAll('.hd-latency .hd-site-value').map(e=>e.attributes('title')||'').filter(text=>text.includes('次响应')||text.includes('读取失败')).join(' ')}
+// Period-wide evidence belongs to the site name; the adjacent numeric value
+// describes the selected round and must not silently inherit that aggregation.
+function windowStats(){return wrapper!.findAll('.hd-latency .hd-site-name').map(e=>e.attributes('title')||'').filter(text=>text.includes('次响应')||text.includes('读取失败')).join(' ')}
 function emptyEvidence(node:NodeOption){const e=evidence(node,40);e.tests=[];return e}
 
 it('refreshes the completed saved round without a manual click, but not while the frozen plan is running',async()=>{

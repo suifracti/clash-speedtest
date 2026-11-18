@@ -1,6 +1,7 @@
-import {reactive} from 'vue'
+import {reactive,shallowRef} from 'vue'
 
 export const hoverTip = reactive({visible: false, text: '', x: 0, y: 0})
+export const hoverTipHost = shallowRef<Element|null>(null)
 
 function place(event: MouseEvent) {
  const maxWidth = 340, maxHeight = 120, pad = 10
@@ -9,6 +10,10 @@ function place(event: MouseEvent) {
 }
 
 export function showHoverTip(event: MouseEvent, text: string) {
+ // A tooltip attached to body paints below a native modal's top layer.
+ // Keep the readout with the element it describes, including SVG samples.
+ const target=event.currentTarget instanceof Element?event.currentTarget:event.target
+ hoverTipHost.value=target instanceof Element?target.closest('dialog[open]'):null
  hoverTip.text = text
  hoverTip.visible = true
  place(event)
@@ -16,6 +21,7 @@ export function showHoverTip(event: MouseEvent, text: string) {
 
 export function hideHoverTip() {
  hoverTip.visible = false
+ hoverTipHost.value = null
 }
 
 // Saved reasons can be a whole error chain or a generated round summary; the tip

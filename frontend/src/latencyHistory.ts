@@ -50,7 +50,8 @@ export function roundSiteDetails(round: LatencyRound): RoundSiteDetail[] {
 }
 export interface LatencyMedianPoint {id:string;time:string;value:number|null;details:RoundSiteDetail[]}
 // The history chart keeps one point per round: the median of the four sites'
-// stable latencies. A round where no site produced a stable value is a failure.
+// stable latencies. A null stable value can mean all samples failed or only
+// first-connection responses exist; the accompanying details distinguish them.
 export function latencyMedianPoints(series: LatencySeries[]): LatencyMedianPoint[] {
  return latencyRounds(series).map(round => ({id: round.id, time: round.time, value: round.stable, details: roundSiteDetails(round)}))
 }

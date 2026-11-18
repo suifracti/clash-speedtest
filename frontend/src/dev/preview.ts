@@ -14,6 +14,7 @@ const accountScenario=new URL(location.href).searchParams.get('scenario')==='acc
 const monitorTransferScenario=new URL(location.href).searchParams.get('scenario')==='monitor-transfer'
 const storageScenario=new URL(location.href).searchParams.get('scenario')==='storage'
 const backupScenario=new URL(location.href).searchParams.get('scenario')==='backup'
+const latencyReadingScenario=new URL(location.href).searchParams.get('scenario')==='latency-reading'
 let monitorImportFailure=true
 let retentionRemaining=1200,retentionRuns=2,retentionPartial=true
 let startupReads=0,previewInitialized=!startupScenario,previewAuthenticated=!signinScenario
@@ -33,6 +34,14 @@ if(searchScenario){
 }
 const path={method:'physical_socket_auto_family_v1',interface:'示例网卡',dns_mode:'physical_interface_dns_v1',dns_bind_verified:false,socket_bind_verified:false,tcp_bindings:0,udp_bindings:0,address_family:'ipv4',address_source:'dns'}
 const tests:LatencyTest[]=nodes.slice(0,10).map((n,i)=>({...n,attempt_id:`latency-${i}`,node_type:n.type,requested_at:at,finished_at:at,status:i===6?'failed':'completed',latency_ms:35+i*19,total_samples:24,success_samples:i===6?0:24,failure_samples:i===6?24:0,persistence_state:'saved',method:'http_ttfb',method_version:1,network_path:path,samples:latencyTargets.slice(0,4).flatMap((t,k)=>Array.from({length:6},(_,s)=>({seq:k*6+s,target:t.urls[0],timestamp:new Date(now-18*60_000+s*1000).toISOString(),latency_ms:i===6?0:35+i*19+k*8+s*3,success:i!==6,...(i===6?{error:'示例：连接超时'}:{})})))}))
+if(latencyReadingScenario){
+ for(const [kind,ago] of [['slow',3*3600_000],['first-only',2*3600_000],['failed',3600_000]] as const){
+  const time=new Date(now-ago).toISOString(),base=tests[0]
+  const samples=(kind==='first-only'?base.samples.filter((_,i)=>i%6===0):base.samples).map((sample,i)=>({...sample,timestamp:time,latency_ms:kind==='slow'?1800+i*100:kind==='first-only'?40+i*10:0,success:kind!=='failed',...(kind==='failed'?{error:'示例：连接超时'}:{})}))
+  const success_samples=samples.filter(s=>s.success).length
+  tests.push({...base,attempt_id:'preview-'+kind,requested_at:time,finished_at:time,status:kind==='failed'?'failed':'completed',samples,total_samples:samples.length,success_samples,failure_samples:samples.length-success_samples})
+ }
+}
 const downloads:Attempt[]=nodes.slice(0,8).map((n,i)=>({...n,node_type:n.type,attempt_id:`download-${i}`,request_id:`request-${i}`,requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://example.invalid/download',method:'bounded_get',rule_version:4,maximum_bytes:20*2**20,maximum_duration_ns:15e9},result:{outcome:'byte_limit',bytes_read:20*2**20,phase_timings_ns:{response_body:(1+i*.32)*1e9,connection:140e6},network_path:path,finished_at:at}}))
 const catalog=[['netflix_unlock','Netflix','流媒体'],['youtube_premium','YouTube Premium','流媒体'],['chatgpt_unlock','ChatGPT','AI'],['claude_unlock','Claude','AI'],['gemini_unlock','Gemini','AI'],['exit_ipv4','出口 IPv4','Network'],['ping0_ip_quality','Ping0 IP 质量','Network']].map(([service_id,name,category])=>({service_id,name,category,description:'仅用于界面预览的合成记录',result_kind:service_id.includes('exit')?'exit_profile':'unlock',success_criterion:'依据示例记录展示',timeout_seconds:15}))
 const services:Attempt[]=nodes.slice(0,9).flatMap((n,i)=>catalog.slice(0,5).map((s,j)=>({...n,node_type:n.type,attempt_id:`service-${i}-${j}`,request_id:`service-request-${i}-${j}`,service_id:s.service_id,requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',rule:{service_id:s.service_id,name:s.name,target_url:'https://example.invalid/service',rule_version:1},result:{outcome:i===4?'region_blocked':'unlocked',bytes_read:220,finished_at:at,summary:i===4?'示例：地区受限':'示例：判据通过',details:{region:n.country_code}}})))
