@@ -4,7 +4,7 @@ import {createWorkspace,workspaceKey} from '../workspace'
 import QueueModal from '../components/QueueModal.vue'
 import {downloadGroup,servicePassed,serviceExecuted,serviceComparisonGroup} from '../sharedResults'
 import {durableRoundPoints,serviceConclusion,attemptTone,attemptStatus,downloadNoDataReason,downloadConditionLabel} from '../measurementRounds'
-import {downloadSpeed,type Attempt,type NodeOption} from '../domain'
+import {downloadSpeed,downloadTone,type Attempt,type NodeOption} from '../domain'
 const n:NodeOption={profile_id:'p',node_key:'n',node_identity_key:'i',config_revision_key:'r',profile_name:'p',display_name:'n',type:'ss',country_code:'',country_flag:''}
 const a:Attempt={...n,attempt_id:'a',request_id:'q',requested_at:'2026-10-09T00:00:00Z',execution_state:'completed',persistence_state:'failed',rule:{target_url:'https://example.test/data',method:'GET',maximum_bytes:10485760},result:{outcome:'time_limit',bytes_read:5242880,duration_ns:1e9,phase_timings_ns:{response_body:1e9},finished_at:'2026-10-09T00:00:01Z'}}
 it('retains staged effective partial speed and separates it from full and invalid measurements',()=>{
@@ -67,4 +67,17 @@ it('identifies a zero-byte TLS timeout as no download rather than a completed ti
 it('recognizes the current physical-family method without claiming packet route verification',()=>{
  const current={...a,rule:{...a.rule,network_path_method:'physical_socket_auto_family_v1',physical_interface:'en1'},result:{...a.result!,network_path:{method:'physical_socket_auto_family_v1',interface:'en1',socket_bind_verified:true,dns_bind_verified:true,tcp_bindings:1,udp_bindings:0,address_family:'ipv4'}}}
  const label=downloadConditionLabel(current);expect(label).toContain('en1 · 绑定已核验');expect(label).toContain('实际流向未验证');expect(label).not.toContain('旧出口未验证')
+})
+
+it('shows a download failure phase alongside unverified path evidence in saved records',()=>{
+ const result={...a.result!,outcome:'local_path_unverified',bytes_read:0,failure_phase:'tls',error_class:'tls'}
+ const latest={...a,persistence_state:'saved',result:{...result,end_reason:'connection_failed',error_message:'无法通过所选节点建立下载连接'}}
+ const historical={...a,persistence_state:'saved',result:{...result,end_reason:'local_path_unverified'}}
+ for(const attempt of [latest,historical]){
+  expect(attemptStatus(attempt,true)).toBe('TLS 握手失败 · 物理出口未确认')
+  expect(downloadTone(attempt)).toBe('empty')
+  expect(downloadSpeed(attempt)).toBeNull()
+ }
+ const unobserved={...latest,result:{...latest.result,failure_phase:'local_egress'}}
+ expect(attemptStatus(unobserved,true)).toBe('物理出口未确认')
 })

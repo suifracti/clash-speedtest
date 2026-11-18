@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -145,5 +146,21 @@ func TestLatencyCancellationBetweenSamplesPreservesCompletedSample(t *testing.T)
 		}
 	case <-time.After(75 * time.Millisecond):
 		t.Fatal("cancellation did not interrupt the 100ms interval")
+	}
+}
+
+func TestLatencyKeepsFirstByteWhenOptionalDrainTimesOut(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("x"))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	client := server.Client()
+	client.Timeout = 500 * time.Millisecond
+	tester := &SpeedTester{config: &Config{LatencyTargetURL: server.URL}}
+	result := tester.testLatencyWithClientContext(context.Background(), client, 1)
+	if len(result.samples) != 1 || !result.samples[0].Success || result.packetLoss != 0 {
+		t.Fatalf("the observed first byte was lost after drain timeout: %+v", result.samples)
 	}
 }

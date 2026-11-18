@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"math/big"
@@ -28,7 +29,9 @@ type netflixDNSFixture struct {
 	mu                   sync.Mutex
 	addresses            []string
 	dnsCalls, titleCalls int
+	fastCalls            int
 	dnsStatus            int
+	dnsStall             bool
 	titleStatus          int
 	abema                bool
 	abemaWeb             bool
@@ -42,7 +45,7 @@ func newNetflixDNSFixture(t *testing.T) *netflixDNSFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), DNSNames: []string{"www.netflix.com", "cloudflare-dns.com", "api.abema.io", "abema.tv"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), DNSNames: []string{"www.netflix.com", "cloudflare-dns.com", "api.abema.io", "abema.tv", "api.fast.com"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
 		t.Fatal(err)
@@ -58,11 +61,22 @@ func newNetflixDNSFixture(t *testing.T) *netflixDNSFixture {
 			t.Error("original TLS identity/HTTP Host was changed")
 		}
 		f.mu.Lock()
+		if r.Host == "api.fast.com" {
+			f.fastCalls++
+			f.mu.Unlock()
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
 		if r.Host == "cloudflare-dns.com" {
 			f.dnsCalls++
 			status := f.dnsStatus
 			bad := f.badAddress
+			stall := f.dnsStall
 			f.mu.Unlock()
+			if stall {
+				<-r.Context().Done()
+				return
+			}
 			if r.URL.Query().Get("name") != func() string {
 				if f.abemaWeb {
 					return "abema.tv"
@@ -127,7 +141,7 @@ func newNetflixDNSFixture(t *testing.T) *netflixDNSFixture {
 		f.mu.Lock()
 		f.addresses = append(f.addresses, address)
 		f.mu.Unlock()
-		if address != "cloudflare-dns.com:443" && address != "8.8.8.8:443" && address != "www.netflix.com:443" {
+		if address != "cloudflare-dns.com:443" && address != "8.8.8.8:443" && address != "www.netflix.com:443" && address != "api.fast.com:443" {
 			return nil, errors.New("unexpected fixture destination")
 		}
 		// All traffic ends at the in-process test server; public addresses are metadata only.
@@ -439,5 +453,49 @@ func TestNetflixFastSettlesBeforePinnedDNS(t *testing.T) {
 	}
 	if dnsCalls != 0 || titleCalls != 0 || result.Details["target_dns_skipped"] != "fast_api_decided" {
 		t.Fatalf("pinned DNS still ran: dns=%d titles=%d details=%v", dnsCalls, titleCalls, result.Details)
+	}
+}
+
+func TestNetflixSeparatesPrecheckDNSAndTitleRequests(t *testing.T) {
+	rule, _ := RuleFor("netflix_unlock")
+	for _, dnsStatus := range []int{http.StatusOK, http.StatusForbidden} {
+		f := newNetflixDNSFixture(t)
+		f.dnsStatus = dnsStatus
+		checker := Checker{DriftSamples: 1, ClientFactory: func(monitor.MonitoredNode, time.Duration) (*http.Client, error) { return f.client, nil }}
+		got := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, 2*time.Second)
+		f.mu.Lock()
+		fast, dns, title := f.fastCalls, f.dnsCalls, f.titleCalls
+		f.mu.Unlock()
+		expectedTitle, expectedOutcome := 2, "unlocked"
+		if dnsStatus == http.StatusForbidden {
+			expectedTitle, expectedOutcome = 0, "unknown"
+		}
+		if fast != 1 || dns != 1 || title != expectedTitle || got.Outcome != expectedOutcome || got.RequestCount != fast+dns+title ||
+			got.Details["target_precheck_http_attempts"] != "1" || got.Details["target_dns_http_attempts"] != "1" ||
+			got.Details["target_http_attempts"] != fmt.Sprint(expectedTitle) || got.Details["target_http_requests_written"] != fmt.Sprint(expectedTitle) {
+			t.Fatalf("request phases disagree with the observed traffic: fast=%d DNS=%d title=%d result=%+v", fast, dns, title, got)
+		}
+	}
+}
+
+func TestTargetDNSDeadlineOrigin(t *testing.T) {
+	rule, _ := RuleFor("netflix_unlock_ipv4")
+	for _, tc := range []struct {
+		timeout time.Duration
+		origin  string
+	}{
+		{500 * time.Millisecond, "checker_deadline"},
+		{6 * time.Second, "target_dns_deadline"},
+	} {
+		t.Run(tc.origin, func(t *testing.T) {
+			f := newNetflixDNSFixture(t)
+			f.dnsStall = true
+			f.client.Timeout = 0
+			checker := Checker{DriftSamples: 1, ClientFactory: func(monitor.MonitoredNode, time.Duration) (*http.Client, error) { return f.client, nil }}
+			got := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, tc.timeout)
+			if got.Outcome != "unknown" || got.FailurePhase != "target_dns" || got.Details["timeout_origin"] != tc.origin || got.Details["target_http_attempts"] != "0" {
+				t.Fatalf("wrong DNS deadline or target request evidence: %+v", got)
+			}
+		})
 	}
 }

@@ -46,6 +46,11 @@ export function serviceConclusion(a:Attempt){
 }
 export function downloadNoDataReason(a?:Attempt){
  const r=a?.result
+ if(r?.outcome==='local_path_unverified'){
+  const phase=r.failure_phase||r.phase||''
+  const label=({proxy_setup:'代理准备',proxy_connect_and_handshake:'代理建连／握手',proxy_handshake:'代理协议握手',connection:'建连',dns:'DNS 查询',tls:'TLS 握手',response_headers:'等待响应头',response_body:'读取响应体'} as Record<string,string>)[phase]
+  if(label)return `${label}${r.error_class==='timeout'?'超时':'失败'} · 物理出口未确认`
+ }
 	if(r&&r.bytes_read>0&&['completed','byte_limit','time_limit'].includes(downloadOutcome(a)||'')&&downloadSpeed(a)===null)return '传输耗时未记录'
  if(!r||r.bytes_read>0||!['time_limit','timed_out'].includes(r.outcome))return ''
  const phase=r.failure_phase||r.phase||''

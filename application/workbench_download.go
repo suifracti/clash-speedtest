@@ -461,12 +461,9 @@ func normalizeUnverifiedPathFailure(result *speedtester.DownloadStreamResult, pa
 	if result.Outcome != "connection_failed" && result.Outcome != "transfer_interrupted" {
 		return
 	}
+	// Keep path attribution unconfirmed while retaining the observed
+	// transport outcome in EndReason and the original diagnostic text.
 	result.Outcome = "local_path_unverified"
-	result.EndReason = "local_path_unverified"
-	if result.FailurePhase == "" {
-		result.FailurePhase = "local_egress"
-	}
-	result.ErrorMessage = "本机物理出口未能确认；不作为节点故障或有效速度读数"
 }
 
 func (s *AppService) workbenchDownloadHTTPClient(engine *speedtester.SpeedTester, proxy *speedtester.CProxy, timeout time.Duration) (*http.Client, error) {

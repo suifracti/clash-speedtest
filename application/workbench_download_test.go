@@ -495,7 +495,7 @@ func TestUnverifiedPhysicalPathDoesNotTurnConnectionFailureIntoNodeFailure(t *te
 	}
 	path := speedtester.DownloadNetworkPath{Method: "legacy_default_binding_unverified", FailureReason: "physical_binding_unavailable"}
 	normalizeUnverifiedPathFailure(&result, path)
-	if result.Outcome != "local_path_unverified" || result.EndReason != "local_path_unverified" || result.ErrorClass != "tls" || result.FailurePhase != "tls" {
+	if result.Outcome != "local_path_unverified" || result.EndReason != "connection_failed" || result.ErrorClass != "tls" || result.FailurePhase != "tls" || result.ErrorMessage != "TLS setup failed" {
 		t.Fatalf("unknown local egress was misclassified as node failure or lost its TLS evidence: %+v", result)
 	}
 	rateLimited := speedtester.DownloadStreamResult{Outcome: "source_rate_limited", EndReason: "source_rate_limited"}

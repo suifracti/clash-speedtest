@@ -1137,14 +1137,9 @@ rounds:
 					}
 					return
 				}
+				defer resp.Body.Close()
 				_, readErr := io.CopyN(io.Discard, resp.Body, 1)
 				dur := time.Since(start)
-				if readErr == nil && requestCtx.Err() == nil {
-					if transport, ok := probeClient.Transport.(*http.Transport); !ok || !transport.DisableKeepAlives {
-						_, _ = io.CopyN(io.Discard, resp.Body, 512)
-					}
-				}
-				resp.Body.Close()
 				if err := requestCtx.Err(); err != nil {
 					sample.Error = err.Error()
 					return
@@ -1156,6 +1151,13 @@ rounds:
 				sample.Duration, sample.LatencyMs, sample.Success = dur, dur.Milliseconds(), true
 				if resp.StatusCode >= 300 {
 					sample.Error = fmt.Sprintf("HTTP %d；响应时延已测，业务／地区解锁未确认", resp.StatusCode)
+				}
+				// A short drain can keep the connection reusable. Its result
+				// cannot change the already observed first-byte latency.
+				if readErr == nil && requestCtx.Err() == nil {
+					if transport, ok := probeClient.Transport.(*http.Transport); !ok || !transport.DisableKeepAlives {
+						_, _ = io.CopyN(io.Discard, resp.Body, 512)
+					}
 				}
 			}(targetIndex, probeURL)
 		}

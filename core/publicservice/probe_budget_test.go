@@ -3,6 +3,7 @@ package publicservice
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"reflect"
 	"sync"
@@ -135,6 +136,41 @@ func TestExitAddressHasExplicitAddressOnlySourceWithoutBorrowedGeography(t *test
 			if !tc.ok && result.Details["exit_observed_at"] != "" {
 				t.Fatal("failed lookup has confirmed exit time")
 			}
+			if !tc.ok && result.Outcome != "unknown" {
+				t.Fatalf("a valid response containing the wrong address family must remain unknown: %+v", result)
+			}
 		})
+	}
+}
+
+func TestExitAddressPreservesRequestFailure(t *testing.T) {
+	tests := []struct {
+		name, outcome, phase string
+		err                  error
+		status               int
+	}{
+		{name: "timeout", outcome: "timed_out", phase: "timeout", err: context.DeadlineExceeded},
+		{name: "TLS", outcome: "transport_error", phase: "tls_handshake", err: atRequestPhase(io.EOF, "tls_handshake")},
+		{name: "HTTP rejection", outcome: "http_rejected", phase: "http_status", status: http.StatusForbidden},
+	}
+	for _, id := range []string{"exit_ipv4", "exit_ipv6"} {
+		rule, _ := RuleFor(id)
+		for _, tc := range tests {
+			t.Run(id+"/"+tc.name, func(t *testing.T) {
+				checker := Checker{DriftSamples: 1, ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+					if tc.err != nil {
+						return nil, tc.err
+					}
+					return fixtureResponse(req, tc.status, "text/plain", ""), nil
+				})}
+				got := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, time.Second)
+				if got.Outcome != tc.outcome || got.FailurePhase != tc.phase || got.Details["exit_observed_at"] != "" {
+					t.Fatalf("request failure reclassified or exit address fabricated: %+v", got)
+				}
+				if tc.status != 0 && (got.HTTPStatus == nil || *got.HTTPStatus != tc.status) {
+					t.Fatalf("observed HTTP status lost: %+v", got)
+				}
+			})
+		}
 	}
 }

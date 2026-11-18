@@ -53,6 +53,36 @@ func TestServiceEvidenceDoesNotConfuseAccessWithAvailability(t *testing.T) {
 	}
 }
 
+type failedPageBody struct{ err error }
+
+func (b failedPageBody) Read([]byte) (int, error) { return 0, b.err }
+func (b failedPageBody) Close() error             { return nil }
+
+func TestPageBodyFailureKeepsKnownHTTPRejection(t *testing.T) {
+	rule, _ := RuleFor("hulu_jp_unlock")
+	for _, tc := range []struct {
+		name, outcome, phase string
+		status               int
+		err                  error
+	}{
+		{"forbidden with stalled body", "http_rejected", "http_status", 403, context.DeadlineExceeded},
+		{"successful response with stalled body", "timed_out", "timeout", 200, context.DeadlineExceeded},
+		{"cancelled body read", "cancelled", "cancelled", 403, context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checker := Checker{DriftSamples: 1, ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+				response := fixtureResponse(req, tc.status, "text/html", "")
+				response.Body = failedPageBody{tc.err}
+				return response, nil
+			})}
+			got := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, time.Second)
+			if got.Outcome != tc.outcome || got.FailurePhase != tc.phase || got.HTTPStatus == nil || *got.HTTPStatus != tc.status || got.Details["request_failure_phase"] != "response_read" {
+				t.Fatalf("HTTP or body evidence lost: %+v", got)
+			}
+		})
+	}
+}
+
 func TestMissingIPQualityFieldsStayUnknown(t *testing.T) {
 	for _, id := range []string{"ping0_ip_quality", "ippure_ip_quality"} {
 		rule, _ := RuleFor(id)
