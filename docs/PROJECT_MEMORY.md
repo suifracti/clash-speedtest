@@ -96,7 +96,7 @@
 
 2026-11-02 历史证据边界：当时保存的四次实网结果均为直接选择 OVH，HTTP 206 且各收到 10 MiB。403/429 后自动换源由离线测试覆盖，这四次实测不能替代该路径的现场验证。原生截图只确认原生选源页面，不能当作四节点结果截图。11-15 证据见后续增量覆盖；11-18 本次仅离线验证，没有重新测速或核实当前运行包。
 
-2026-11-18 核查（待处理）：`application/workbench_download.go` 的 `normalizeUnverifiedPathFailure` 在 Windows 默认路径没有物理绑定证明时，会把明确的请求失败改写为 `local_path_unverified` 并替换错误原文。诊断优先读取 `failure_phase`、`error_class`、HTTP 状态和实际正文大小。路径是否核实与本次请求失败阶段各自记录，单次跨源差异不足以认定限流或彻底排除节点问题。现有改写测试保护不作确定归因，后续须保留这个边界。
+2026-11-18 修复（`cfe04fc`）：`normalizeUnverifiedPathFailure` 保留 `local_path_unverified` 作为归因状态，并保存实际 `end_reason`、`failure_phase`、`error_class` 和原错误说明。工作台、队列与记录的共用结果文案同时显示观测到的失败和出口未确认。历史已有阶段也可显示；旧错误原文未写入时无需补猜。未知出口无有效速度，单次跨源差异也不足以认定限流。
 
 ## L-005 从 Clash Verge 同步订阅时保留账户关联并支持同步名称
 
@@ -212,7 +212,7 @@ Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 
 - **Prime Video（`prime_video` v3，`checker.go` & `probes.go`）**：此前 `streamingRule` 设为 64 KiB 且 `checkPrimeVideo` 调用 `readPage` 漏传 `rule.MaximumBodyBytes` 导致约 489 KB 首页恒遭截断；改为 `MaximumWebDocumentBytes`（2 MiB）并透传 `rule.MaximumBodyBytes`，同时严格保留“无 `isServiceRestricted` 不推断可用”诚实口径。
 - **目标固定 DNS 预算（`core/publicservice/target_ipv4.go`）**：`prepareTargetIPv4` 原硬编码 `5s` 子超时在高延迟/并发代理上易在 DoH TLS 握手阶段超时，改为按父 `ctx` 剩余期限动态分配至 `min(8s, remaining-2s)`（保底 `5s`，不延长检查总限）。
 
-2026-11-18 核查（待处理）：`checkIPify` 会把 `boundedGET` 已判明的超时、TLS 错误及 HTTP 拒绝存成 `unknown`。新版判据应保留请求结果，收到有效响应却取不到匹配地址时仍保留未确认。Hulu 的共用 `readPage` 先读取拒绝正文，正文超时会使已观察到的 HTTP 403 退成超时；需同时保留拒绝状态和读取阶段，并保留已有验证挑战识别。Netflix 的 `prepareTargetIPv4` 把 Fast.com 前置请求累计到 DoH 次数，子超时也可误报为整项超时。后续记录前置、DoH 与目标请求的实际计数和时限分别核对。Prime Video 在完整正文只有地区字段时应保留未确认。
+2026-11-18 修复（`cfe04fc`）：`checkIPify` 直接保留 `boundedGET` 已判明的请求失败，正常响应中的格式或地址族不符仍标未确认。Hulu 使用的 `readPage` 在非 2xx 正文读取失败时保留 HTTP 状态与正文失败阶段，主动取消优先，2xx 读取失败仍按传输异常处理，原挑战判据沿用。Netflix 的 `prepareTargetIPv4` 按阶段快照分别计算 Fast.com 前置、DoH 与目标请求，只有 DNS 自己的时限触发时才记录 `target_dns_deadline`，整项与传输超时仍用原值。Prime Video 缺失服务限制标记时保留未确认。
 
 ## L-014 自动精选本地订阅与设置保护、入口百条分批画像、Clash 双轮对照与报告导图
 
@@ -248,7 +248,7 @@ Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 
 2. **Windows 开启 TUN 时跳过 Fake-IP DNS 服务器**：Clash Verge 等内核在 Windows 开启 TUN 后常把虚拟适配器 DNS（`198.18.0.2:53`）设进系统默认首选 DNS，导致 `ResolvePhysicalHost` 经物理网卡拨 `198.18.0.2:53` 等满 5 秒超时。`core/speedtester/physical_entry_other.go` 与 `interface.go` 显式调用 Mihomo `resolver.AddSystemDnsBlacklist("198.18.0.1", "198.18.0.2", "fdfe:dcba:9876::1", "fdfe:dcba:9876::2")`，并在自定义 `net.Resolver.Dial` 遇到 Fake-IP DNS 地址时直接报错跳过，必要时回退 `resolver.LookupIPv4`（将入口 DNS 解析由 5 秒降至几十毫秒）。
 3. **测量轮次状态更新统一持锁串行写库**：`core/history/measurement_round.go` 的 `FinishMeasurementRound`、`ReconcileMeasurementRounds`、`MarkMeasurementNotExecuted` 与 `FinishAutomaticMeasurementRound` 补齐 `d.mu.Lock()` / `defer d.mu.Unlock()`，消除高频并发更新轮次状态时的 `SQLITE_BUSY_SNAPSHOT` 竞争。
 
-2026-11-18 核查（待处理）：第一字节已读、后续补读拖到 deadline 的离线响应会被记作丢包，因为 `testLatencyWithClientContext` 在补读后才判断请求上下文。修正时保留已测首字节、未收到首字节的超时/取消以及空正文的合法响应；同时保留允许短响应复用的行为。实网样本的请求级 deadline 落在收到响应前，不能用这个复现解释原始超时。
+2026-11-18 修复（`cfe04fc`）：`testLatencyWithClientContext` 在最多 512 字节的可选补读前确认首字节时延，补读失败不再推翻已测样本。首字节读取超时、取消、空正文和 HTTP 响应时延语义沿用。旧实网样本的请求级 deadline 在收到响应前发生，需按实际传输阶段排查。
 
 ## L-017 UI 必须从本项目使用流程形成构图，不能用模板换皮替代重构
 
