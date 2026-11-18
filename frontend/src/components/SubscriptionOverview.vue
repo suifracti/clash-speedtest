@@ -392,6 +392,8 @@ defineExpose({usageRatio})
 
     <span v-if="rowMode&&jobsReadState!=='ready'" class="status-read muted">{{jobsReadState==='loading'?'刷新状态读取中…':'刷新状态未知'}}</span>
 
+    <slot name="additional-actions"/>
+
     <Modal v-if="noticeOpen&&selected" title="订阅公告" @close="noticeOpen=false">
       <div v-for="notice in accountNotices" :key="notice.profile_id+'|'+notice.node_identity_key+'|'+notice.config_revision_key" class="notice-row">
         <small>{{selected.airport.name}} · {{selected.subscription.name}}</small>

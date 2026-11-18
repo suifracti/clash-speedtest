@@ -7,6 +7,8 @@ import {date,type LatencyBatch} from '../domain'
 const emit=defineEmits<{select:[id:string]}>(),w=useWorkspace(),search=ref(''),collapsed=ref(false),batches=ref<LatencyBatch[]>([])
 const counts=computed(()=>airportNodeCounts(w.airports.value,w.nodes.value)),total=computed(()=>Object.values(counts.value).reduce((a,b)=>a+b,0))
 const visible=computed(()=>w.airports.value.filter(a=>a.name.toLowerCase().includes(search.value.trim().toLowerCase())))
+const inScope=computed(()=>new Set(w.selectedAirportIds.value||[]))
+const excluded=computed(()=>w.airports.value.some(a=>!inScope.value.has(a.id)))
 const cache=new Map<string,LatencyBatch>()
 watch(()=>w.batches.value,async(rows,_,onCleanup)=>{
  let cancelled=false;onCleanup(()=>cancelled=true)
@@ -32,8 +34,8 @@ const health=computed(()=>Object.fromEntries(w.airports.value.map(a=>{
 <template><section v-if="w.airports.value.length" class="cst-side-airports" aria-label="机场快捷切换">
  <button class="airport-heading" :aria-expanded="!collapsed" @click="collapsed=!collapsed"><span>机场</span><small>{{collapsed?'展开':'收起'}}</small></button>
  <template v-if="!collapsed"><input v-model="search" class="airport-search" placeholder="搜索机场" aria-label="搜索侧栏机场">
- <button type="button" :aria-pressed="w.airportFilter.value==='all'" @click="emit('select','all')"><span>全部机场</span><small>{{total}}</small></button>
- <button v-for="a in visible" :key="a.id" type="button" :title="health[a.id].label" :aria-pressed="w.airportFilter.value===a.id" @click="emit('select',a.id)"><i class="airport-health" :class="health[a.id].tone" :aria-label="health[a.id].label"/><span>{{a.name}}</span><small>{{counts[a.id]||0}}</small></button>
+ <button type="button" :aria-pressed="!excluded&&w.airportFilter.value==='all'" @click="emit('select','all')"><span>{{excluded?'纳入全部机场':'全部机场'}}</span><small>{{total}}</small></button>
+ <button v-for="a in visible" :key="a.id" type="button" :title="`${a.name} · ${health[a.id].label}`" :aria-pressed="w.airportFilter.value===a.id" @click="emit('select',a.id)"><i class="airport-health" :class="health[a.id].tone" :aria-label="health[a.id].label"/><span>{{a.name}}</span><small v-if="!inScope.has(a.id)">纳入范围</small><small v-else>{{counts[a.id]||0}}</small></button>
  <p v-if="!visible.length" class="muted small">没有匹配机场</p></template>
 </section></template>
 <style scoped>

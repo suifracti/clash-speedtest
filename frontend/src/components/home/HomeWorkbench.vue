@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {computed,inject,nextTick,onBeforeUnmount,onMounted,ref,useId,watch} from 'vue'
 import '../../home-design.css'
+import './workbench-layout.css'
 import {useWorkspace} from '../../workspace'
 import {date,isReputationRule,key,projectNames,targets,type NodeOption,type Project} from '../../domain'
 import {api,type ClashUsage} from '../../api'
@@ -125,12 +126,18 @@ const filteredAirportNodes=computed(()=>airportNodeCount(w.airports.value.find(a
 const qualityFiltering=computed(()=>m.qualityGate.value!=='all'||m.qualitySort.value!=='existing')
 const inspectorOpen=ref(false)
 const detailViewport=typeof window.matchMedia==='function'?window.matchMedia('(max-width: 1439px)'):undefined
-const detailsOverlay=ref(detailViewport?.matches??false)
-function updateDetailViewport(){detailsOverlay.value=detailViewport?.matches??false}
+const detailViewportNarrow=ref(detailViewport?.matches??false)
+const workAreaWidth=ref(0)
+// Leave enough of the list visible beside the reader, including its fixed identity column.
+const MIN_LIST_WIDTH=640
+const INLINE_READER_WIDTH=1080
+const DIVIDER_WIDTH=12
+const detailsOverlay=computed(()=>workAreaWidth.value>0?workAreaWidth.value<INLINE_READER_WIDTH:detailViewportNarrow.value)
+function updateDetailViewport(){detailViewportNarrow.value=detailViewport?.matches??false}
 onMounted(()=>detailViewport?.addEventListener('change',updateDetailViewport))
 onBeforeUnmount(()=>detailViewport?.removeEventListener('change',updateDetailViewport))
 function closeDetails(){if(m.compareOpen.value)m.closeComparison();else{inspectorOpen.value=false;void nextTick(focusReadingRow)}}
-const sourcesOpen=ref(false)
+const sourcesOpen=ref(false),ledgerExpanded=ref(false)
 const focusKey=ref<string|null>(null)
 const focusNode=computed(()=>m.pageNodes.value.find(n=>key(n)===focusKey.value)||m.pageNodes.value[0])
 const readingNode=ref<NodeOption|null>(null),readingNodes=ref<NodeOption[]>([]),readerBody=ref<HTMLElement>()
@@ -157,9 +164,11 @@ function toggleDetails(){if(inspectorOpen.value)closeDetails();else if(focusNode
 const SIDE_MIN=340,SIDE_MAX=680
 function savedSide(){try{const v=Number(window.localStorage.getItem('cst.inspector-width'));return v>=SIDE_MIN&&v<=SIDE_MAX?v:420}catch{return 420}}
 const sideWidth=ref(savedSide())
-function setSide(v:number){sideWidth.value=Math.round(Math.min(SIDE_MAX,Math.max(SIDE_MIN,v)));try{window.localStorage.setItem('cst.inspector-width',String(sideWidth.value))}catch{/* 只影响记忆 */}}
+const maxSideWidth=computed(()=>workAreaWidth.value>0?Math.max(SIDE_MIN,Math.min(SIDE_MAX,Math.floor(workAreaWidth.value-MIN_LIST_WIDTH-DIVIDER_WIDTH))):SIDE_MAX)
+const visibleSideWidth=computed(()=>Math.min(sideWidth.value,maxSideWidth.value))
+function setSide(v:number){sideWidth.value=Math.round(Math.max(SIDE_MIN,Math.min(maxSideWidth.value,v)));try{window.localStorage.setItem('cst.inspector-width',String(sideWidth.value))}catch{/* 只影响记忆 */}}
 function startResize(e:PointerEvent){
- const start=e.clientX,width=sideWidth.value,el=e.currentTarget as HTMLElement
+ const start=e.clientX,width=visibleSideWidth.value,el=e.currentTarget as HTMLElement
  el.setPointerCapture?.(e.pointerId)
  const move=(ev:PointerEvent)=>setSide(width+start-ev.clientX)
  const up=()=>{el.removeEventListener('pointermove',move);el.removeEventListener('pointerup',up);document.body.classList.remove('cst-resizing')}
@@ -167,11 +176,11 @@ function startResize(e:PointerEvent){
 }
 // ⌘K「查看节点」：只改查看中的节点和页码，不勾选、不动筛选；被筛掉的节点改用详情弹窗查看。
 const table=ref<HTMLElement>()
-const rowScroller=ref<HTMLElement>(),toolbar=ref<HTMLElement>(),toolbarHeight=ref(0),horizontalScroll=ref(0)
+const rowScroller=ref<HTMLElement>(),toolbar=ref<HTMLElement>(),workArea=ref<HTMLElement>(),toolbarHeight=ref(0),horizontalScroll=ref(0)
 let toolbarObserver:ResizeObserver|undefined
 function syncTableHeading(){horizontalScroll.value=rowScroller.value?.scrollLeft||0}
-function measureToolbar(){toolbarHeight.value=toolbar.value?.getBoundingClientRect().height||0;void nextTick(syncTableHeading)}
-onMounted(()=>{measureToolbar();if(typeof ResizeObserver!=='undefined'&&toolbar.value){toolbarObserver=new ResizeObserver(measureToolbar);toolbarObserver.observe(toolbar.value)}})
+function measureToolbar(){toolbarHeight.value=toolbar.value?.getBoundingClientRect().height||0;workAreaWidth.value=workArea.value?.getBoundingClientRect().width||0;void nextTick(syncTableHeading)}
+onMounted(()=>{measureToolbar();if(typeof ResizeObserver!=='undefined'&&toolbar.value){toolbarObserver=new ResizeObserver(measureToolbar);toolbarObserver.observe(toolbar.value);if(workArea.value)toolbarObserver.observe(workArea.value)}})
 onBeforeUnmount(()=>toolbarObserver?.disconnect())
 watch(()=>w.viewRequest.value,async n=>{
  if(!n)return
@@ -213,12 +222,12 @@ function keyNav(e:KeyboardEvent){
 }
 </script>
 <template>
-  <section class="hd" :style="{'--hd-toolbar-size':toolbarHeight+'px'}">
+  <section class="hd hd-workbench-layout" :style="{'--hd-toolbar-size':toolbarHeight+'px'}">
     <header class="hd-head">
       <div class="hd-title">
         <h1>线路工作台</h1>
-        <p v-if="filteredAirport"><strong class="hd-head-airport">{{filteredAirport.name}}</strong> · {{filteredAirportNodes}} 个节点 · <button class="hd-link" @click="w.viewAirport('all')">看全部 {{chosen.length}} 个机场</button></p>
-        <p v-else><button class="hd-link" @click="m.picker.value=true">{{chosen.length?m.chosenNames.value:'选择机场'}}</button> · {{chosenNodeCount}} 个节点</p>
+        <p v-if="filteredAirport"><strong class="hd-head-airport">{{filteredAirport.name}}</strong> · {{filteredAirportNodes}} 个节点 · <button class="hd-link" @click="w.airportFilter.value='all'">看全部 {{chosen.length}} 个机场</button></p>
+        <p v-else><button class="hd-link" @click="m.picker.value=true">{{chosen.length?chosen.length+' 个机场':'选择机场'}}</button> · {{chosenNodeCount}} 个节点</p>
         <button v-if="dominantClashUsage" class="hd-clash-usage" :disabled="!dominantClashNode" title="查看正在用的节点；按当前连接累计流量排序，每 30 秒更新" @click="inspectClashUsage"><span class="hd-clash-usage-dot" aria-hidden="true"></span>Clash 正在用：<strong>{{dominantClashName}}</strong><template v-if="dominantClashChains">（经 {{dominantClashChains}}）</template></button>
       </div>
       <div class="hd-head-actions">
@@ -227,12 +236,31 @@ function keyNav(e:KeyboardEvent){
       </div>
     </header>
 
-    <section class="hd-source" aria-label="机场选择">
-      <div class="hd-scope-line"><span class="hd-scope-label">查看范围</span><button class="hd-scope-chip" :aria-pressed="w.airportFilter.value==='all'" @click="w.viewAirport('all')">全部机场 <small>{{chosenNodeCount}}</small></button><button v-for="a in chosen" :key="a.id" class="hd-scope-chip" :aria-pressed="w.airportFilter.value===a.id" @click="w.viewAirport(a.id)">{{a.name}}<small>{{airportNodeCount(a,w.nodes.value)}}</small></button><button class="hd-link" @click="m.picker.value=true">管理范围</button><button class="hd-source-toggle" :aria-expanded="sourcesOpen" @click="sourcesOpen=!sourcesOpen">机场状态 <span aria-hidden="true">{{sourcesOpen?'−':'+'}}</span></button></div>
-      <SubscriptionOverview :airports="chosen" :notices="w.notices.value" :airport-id="w.airportFilter.value" @viewed="id=>{w.airportFilter.value=id}"/>
+    <div class="hd-workspace">
+    <section class="hd-source" :class="{'ledger-expanded':ledgerExpanded}" aria-label="机场选择">
+      <header class="hd-source-heading">
+        <h2>来源与套餐</h2>
+        <button class="hd-link" @click="m.picker.value=true">管理范围</button>
+      </header>
+      <label class="hd-source-scope">
+        <span>查看机场</span>
+        <UiSelect v-model="w.airportFilter.value" aria-label="查看机场">
+          <option value="all">{{chosen.length===w.airports.value.length?'全部机场':'范围内全部机场'}} · {{chosenNodeCount}} 个节点</option>
+          <option v-for="a in chosen" :key="a.id" :value="a.id">{{a.name}} · {{airportNodeCount(a,w.nodes.value)}} 个节点</option>
+        </UiSelect>
+      </label>
+      <SubscriptionOverview :airports="chosen" :notices="w.notices.value" :airport-id="w.airportFilter.value" @viewed="id=>{w.airportFilter.value=id}">
+        <template #additional-actions>
+          <div class="hd-source-tools">
+            <button class="hd-ledger-toggle hd-link" :aria-expanded="ledgerExpanded" @click="ledgerExpanded=!ledgerExpanded">{{ledgerExpanded?'收起用量明细':'展开用量明细'}}</button>
+            <button class="hd-source-toggle" :aria-expanded="sourcesOpen" @click="sourcesOpen=!sourcesOpen">机场检测状态 <span aria-hidden="true">{{sourcesOpen?'−':'+'}}</span></button>
+          </div>
+        </template>
+      </SubscriptionOverview>
       <div v-if="sourcesOpen" class="hd-source-details"><AirportSidebar @select="id=>w.viewAirport(id)"/></div>
     </section>
 
+    <div ref="workArea" class="hd-results" aria-label="线路对照区">
     <div ref="toolbar" class="hd-toolbar">
       <div class="hd-toolbar-top">
         <nav class="hd-seg" aria-label="检测项目"><button v-for="p in projects" :key="p" :aria-pressed="!exitMode&&w.project.value===p" @click="exitMode=false;w.project.value=p">{{projectNames[p]}}</button><button :aria-pressed="exitMode" @click="selectExit">出口与信誉</button></nav>
@@ -294,7 +322,7 @@ function keyNav(e:KeyboardEvent){
 
     <nav v-if="!exitMode&&w.project.value==='service'" class="hd-seg matrix-switch" aria-label="解锁结果视图"><button :aria-pressed="serviceView==='nodes'" @click="serviceView='nodes'">按节点</button><button :aria-pressed="serviceView==='services'" @click="serviceView='services'">按服务</button></nav>
     <UnlockServiceMatrix v-if="matrixMode"/>
-    <div v-if="!matrixMode" class="hd-body" :class="{'overview-mode':overviewMode,'exit-mode':exitMode,'full-table':detailsOverlay||!inspectorOpen}" :style="{'--hd-side-w':sideWidth+'px','--hd-overview-width':overviewMinWidth+'px'}">
+    <div v-if="!matrixMode" class="hd-body" :class="{'overview-mode':overviewMode,'exit-mode':exitMode,'full-table':detailsOverlay||!inspectorOpen}" :style="{'--hd-side-w':visibleSideWidth+'px','--hd-overview-width':overviewMinWidth+'px'}">
       <div ref="table" class="hd-table" role="table" aria-label="节点列表" :aria-describedby="latencyTab?readingHintId:undefined" tabindex="0" :style="{'--hd-cols':columns,'--hd-horizontal-offset':horizontalScroll+'px'}" @keydown="keyNav">
         <div class="hd-table-head" role="rowgroup">
         <div class="hd-tr hd-th" role="row">
@@ -332,7 +360,7 @@ function keyNav(e:KeyboardEvent){
         </div>
       </div>
       <template v-if="!detailsOverlay">
-        <div v-if="inspectorOpen" class="hd-resize" role="separator" aria-orientation="vertical" aria-label="调整检查器宽度" :aria-valuenow="sideWidth" :aria-valuemin="SIDE_MIN" :aria-valuemax="SIDE_MAX" tabindex="0" @pointerdown="startResize" @keydown.left.prevent="setSide(sideWidth+24)" @keydown.right.prevent="setSide(sideWidth-24)" @dblclick="setSide(420)"/>
+        <div v-if="inspectorOpen" class="hd-resize" role="separator" aria-orientation="vertical" aria-label="调整检查器宽度" :aria-valuenow="visibleSideWidth" :aria-valuemin="SIDE_MIN" :aria-valuemax="maxSideWidth" tabindex="0" @pointerdown="startResize" @keydown.left.prevent="setSide(visibleSideWidth+24)" @keydown.right.prevent="setSide(visibleSideWidth-24)" @dblclick="setSide(420)"/>
         <NodeInspector v-if="readingNode&&inspectorOpen" :key="key(readingNode)+readingNode.node_key" class="hd-side" :node="readingNode" :exit-only="exitMode" :clash-usage="clashUsage" :read-only="!readingCurrent" :context-notice="readingNotice" @collapse="closeDetails" @select-project="selectInspectorProject" @refresh-clash-usage="refreshClashUsage"><template #navigation><NodeReaderNav :index="readingIndex" :count="readingNodes.length" :selected-count="w.selectedNodes.value.length" :previous="readerLabel(-1)" :next="readerLabel(1)" @previous="moveReading(-1)" @next="moveReading(1)" @compare="m.openComparison()"/></template></NodeInspector>
       </template>
     </div>
@@ -361,6 +389,8 @@ function keyNav(e:KeyboardEvent){
       <span class="hd-legend"><span class="good">正常</span><span class="warn">部分</span><span class="bad">失败</span><span class="empty">未测</span></span>
       <span class="hd-pages"><button class="hd-btn ghost icon" :disabled="m.currentPage.value<=1" aria-label="上一页" @click="m.currentPage.value--">‹</button>{{m.currentPage.value}} / {{m.totalPages.value}}<button class="hd-btn ghost icon" :disabled="m.currentPage.value>=m.totalPages.value" aria-label="下一页" @click="m.currentPage.value++">›</button></span>
     </footer>
+    </div>
+    </div>
   </section>
 </template>
 
@@ -369,7 +399,7 @@ function keyNav(e:KeyboardEvent){
 .history-sort{font-size:11px;white-space:nowrap;text-align:left}
 .old-tag{margin-left:2px;padding:0 2px;border-radius:2px;background:var(--hd-soft);color:var(--hd-muted);font-size:9px;font-weight:600}
 .hd-clash-usage{display:inline-flex;align-items:center;gap:5px;margin-top:5px;padding:3px 7px;border:1px solid var(--hd-line);border-radius:999px;background:var(--hd-panel);font-size:11px;line-height:1.4;color:var(--hd-muted)}.hd-clash-usage{cursor:pointer}.hd-clash-usage:hover{border-color:var(--hd-accent)}.hd-clash-usage strong{color:var(--hd-text)}.hd-clash-usage-dot,.hd-clash-node-dot{display:inline-block;flex:none;width:7px;height:7px;border-radius:50%;background:var(--hd-good)}.hd-clash-node-dot{width:6px;height:6px;margin-right:5px;vertical-align:middle}
-.hd-body.exit-mode .hd-tr{padding-top:9px;padding-bottom:9px}.hd-body.exit-mode .hd-exit-cell.good{color:var(--hd-good)}.hd-source{display:block}.hd-exit-cell{font-size:11px;white-space:normal;line-height:1.4}.hd-exit-cell.bad{color:var(--hd-bad);font-weight:600}.hd-exit-cell.warn{color:var(--hd-warn)}
+.hd-body.exit-mode .hd-tr{padding-top:9px;padding-bottom:9px}.hd-body.exit-mode .hd-exit-cell.good{color:var(--hd-good)}.hd-exit-cell{font-size:11px;white-space:normal;line-height:1.4}.hd-exit-cell.bad{color:var(--hd-bad);font-weight:600}.hd-exit-cell.warn{color:var(--hd-warn)}
 .hd .hd-svc-cell.empty{color:var(--hd-empty);font-weight:400}.hd .hd-svc-cell.warn{color:var(--hd-warn)}
 </style>
 

@@ -47,7 +47,6 @@ export interface HomeModel {
  runNodes:ComputedRef<NodeOption[]>
  currentPage:Ref<number>
  totalPages:ComputedRef<number>
- chosenNames:ComputedRef<string>
  picker:Ref<boolean>
  filterRegions:ComputedRef<string[]>
  qualityData:Ref<Record<string,QualityEvidence>>

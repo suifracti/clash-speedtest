@@ -179,6 +179,29 @@ describe('synthetic 256-node home first screen',()=>{
 })
 
 describe('airport filter keeps the header and source strip on that airport (synthetic data)',()=>{
+  it('changes the viewed airport through the source selector without widening the chosen scope',async()=>{
+    const {workspace,wrapper}=attachHome()
+    const selectedAirports=['airport-1','airport-3']
+    workspace.setAirports(selectedAirports)
+    await flushPromises()
+    const selectedNode=workspace.filteredNodes.value[0]!
+    workspace.toggleNode(selectedNode)
+    const selector=wrapper.get<HTMLSelectElement>('select[aria-label="查看机场"]')
+    expect([...selector.element.options].map(option=>option.value)).toEqual(['all',...selectedAirports])
+    await selector.setValue('airport-3')
+    expect(workspace.filteredNodes.value).toHaveLength(64)
+    await selector.setValue('all')
+    expect(workspace.selectedAirportIds.value).toEqual(selectedAirports)
+    expect(workspace.filteredNodes.value).toHaveLength(128)
+    expect(workspace.selectedNodes.value).toEqual([selectedNode])
+    await selector.setValue('airport-3')
+    await wrapper.findAll('.hd-title button').find(button=>button.text()==='看全部 2 个机场')!.trigger('click')
+    expect(workspace.selectedAirportIds.value).toEqual(selectedAirports)
+    expect(workspace.filteredNodes.value).toHaveLength(128)
+    expect(api.startLatency).not.toHaveBeenCalled()
+    expect(api.startRefresh).not.toHaveBeenCalled()
+  })
+
   it('shows airport summary rows when switching to all airports',async()=>{
     const {workspace,wrapper}=attachHome();workspace.viewAirport('airport-2');await flushPromises()
     workspace.viewAirport('all');await flushPromises()
