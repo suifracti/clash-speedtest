@@ -2,7 +2,7 @@
 import {unlockGroups,unlockGroup,unlockResult} from '../unlock'
 import UiSelect from './UiSelect.vue'
 import {computed,ref,watch} from 'vue'
-import {bytes,date,downloadTarget,downloadReading,downloadAverageSpeed,downloadPeakSpeed,downloadTone,downloadOutcome,downloadConnectionSeconds,outcomeLabel,outcomeTone,stateLabel} from '../domain'
+import {bytes,date,downloadTarget,downloadReading,downloadAverageSpeed,downloadPeakSpeed,downloadTone,downloadOutcome,downloadConnectionSeconds,downloadSourceName,outcomeLabel,outcomeTone,stateLabel} from '../domain'
 import {attemptStatus,attemptTone,triggerLabel,downloadConditionLabel} from '../measurementRounds'
 import {monitorHTTPServices,type TrendPoint} from '../presentation'
 const phaseLabels:Record<string,string>={request_setup:'请求准备',address_resolution:'地址解析（可含缓存）',dns:'DNS 查询',connection:'到节点的连接',proxy_connect_and_handshake:'代理建连／握手（组合观测）',proxy_handshake:'代理协议握手',tls:'目标 TLS',response_headers:'等待响应头',response_status:'HTTP 状态',response_body:'读取响应体',cancelled:'已取消',time_limit:'达到时间上限',local_egress:'本机出口',proxy_setup:'代理准备',application_exit:'应用退出',queue_wait_ns:'调度队列投递等待',download_exclusion_wait_ns:'下载／服务带宽互斥等待',admission_wait_ns:'启动资源等待',start_setup_ns:'启动与身份登记',network_ns:'测量总时长（不与阶段重复相加）',stage_save_lock_wait_ns:'暂存写锁等待',commit_save_lock_wait_ns:'保存写锁等待'}
@@ -35,6 +35,7 @@ watch(pageCount,count=>page.value=Math.min(page.value,count))
       <div><dt>连接耗时</dt><dd>{{downloadConnectionSeconds(a)===null?'—':downloadConnectionSeconds(a)?.toFixed(2)+' 秒'}}</dd></div>
     </dl>
     <p v-if="project==='download'&&downloadReading(a)?.label==='短测均速'&&a.result?.outcome==='byte_limit'" class="small muted">达到流量上限时，正文传输不足 2 秒。</p>
+    <p v-if="project==='download'&&a.result?.fallback_from_http_status" class="small muted">首选源返回 HTTP {{a.result.fallback_from_http_status}} · 实际由 {{downloadSourceName(a)}} 测速</p>
     <p v-if="project==='download'&&a.result?.response_summary" class="small muted">返回内容：{{a.result.response_summary}} · {{a.result.content_type||'类型未提供'}}</p>
     <p v-if="a.result?.network_path?.socket_bind_verified&&(a.result.network_path.dns_bind_verified||a.result.network_path.dns_mode==='node_literal_no_dns')" class="small muted">已绕开本机 TUN（{{a.result.network_path.interface}}）</p>
     <p v-if="project==='download'&&a.result?.network_path" class="small muted">物理出口：{{a.result.network_path.interface||'未知'}} · 节点 socket {{a.result.network_path.socket_bind_verified?'绑定已核验':'未确认'}}（TCP {{a.result.network_path.tcp_bindings}}／UDP {{a.result.network_path.udp_bindings}}） · DNS {{a.result.network_path.dns_bind_verified?'物理网卡绑定已核验':'无已核验的查询'}} · 出口准备 {{((a.result.network_path.preparation_duration_ns||0)/1e9).toFixed(2)}} 秒（不计入下载时间）。</p>

@@ -58,6 +58,8 @@ type WorkbenchDownloadMeasurement struct {
 	FailurePhase       string                           `json:"failure_phase,omitempty"`
 	ErrorMessage       string                           `json:"error_message,omitempty"`
 	Samples            []WorkbenchDownloadSample        `json:"samples"`
+
+	FallbackFromHTTPStatus *int `json:"fallback_from_http_status,omitempty"`
 }
 
 type WorkbenchDownloadAttempt struct {

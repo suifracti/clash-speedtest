@@ -14,11 +14,13 @@ it('labels a full bounded download as normal completion and includes partial con
  expect(attemptStatus({...a,result:{...a.result!,outcome:'time_limit',bytes_read:5242880,duration_ns:11e9,phase_timings_ns:{response_body:10e9}}},true)).toContain('5.0 MiB / 10.00 秒')
 })
 it('labels a byte-capped one-second reading as a short average in the round details',()=>{
- const point={id:'short-read',time:a.requested_at,value:10,tone:'good' as const,description:'',attempts:[a]}
+ const fallback={...a,result:{...a.result!,fallback_from_http_status:403,target_url:'https://proof.ovh.net/files/1Gb.dat',http_status:206}}
+ const point={id:'short-read',time:a.requested_at,value:10,tone:'good' as const,description:'',attempts:[fallback]}
  const ui=mount(MeasurementResults,{props:{point,project:'download'}})
  expect(ui.find('dt').text()).toBe('短测均速')
  expect(ui.find('dd').text()).toBe('10.00 MiB/s')
  expect(ui.text()).not.toContain('稳态速度')
+ expect(ui.text()).toContain('首选源返回 HTTP 403 · 实际由 OVH 测速')
  ui.unmount()
 })
 it('calculates download speed using the recorded response body time',()=>{

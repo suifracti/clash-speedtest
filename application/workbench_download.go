@@ -305,6 +305,7 @@ func (s *AppService) executeWorkbenchDownload(runtime *workbenchDownloadRuntime)
 	finishActivity := s.probeActivity.begin("download")
 	defer finishActivity()
 	var result speedtester.DownloadStreamResult
+	var fallbackFromStatus *int
 	started := time.Now().UTC()
 	var preparationErr error
 	if err := runtime.ctx.Err(); err != nil {
@@ -348,10 +349,10 @@ func (s *AppService) executeWorkbenchDownload(runtime *workbenchDownloadRuntime)
 			}
 			result = measure(runtime.rule.TargetURL)
 			if downloadSourceLimited(result) && runtime.fallbackTarget != "" && runtime.ctx.Err() == nil {
-				firstStatus := *result.HTTPStatus
+				fallbackFromStatus = result.HTTPStatus
 				result = measure(runtime.fallbackTarget)
 				if runtime.ctx.Err() == nil && !downloadSourceHasData(result) {
-					result.ErrorMessage = downloadSourcesFailure(firstStatus, result)
+					result.ErrorMessage = downloadSourcesFailure(*fallbackFromStatus, result)
 				}
 			}
 		}
@@ -380,6 +381,7 @@ func (s *AppService) executeWorkbenchDownload(runtime *workbenchDownloadRuntime)
 		executionState = "interrupted"
 	}
 	measurement := workbenchDownloadMeasurement(result)
+	measurement.FallbackFromHTTPStatus = fallbackFromStatus
 	measurement.PhaseTimingsNS = result.PhaseTimingsNS
 	if runtime.timingNS == nil {
 		runtime.timingNS = make(map[string]int64)

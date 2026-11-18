@@ -44,6 +44,10 @@ func TestWorkbenchDownloadSwitchesAfter429AndComparesActualTarget(t *testing.T) 
 	if len(targets) != 2 || targets[0] != "https://speed.cloudflare.com/__down?bytes=1001" || targets[1] != workbenchDownloadBackupURL || got.Result.TargetURL != targets[1] || got.Result.Outcome != "byte_limit" {
 		t.Fatalf("fallback result mismatch: requests=%v result=%+v", targets, got.Result)
 	}
+	if got.Rule.TargetURL != targets[0] || got.Result.FallbackFromHTTPStatus == nil || *got.Result.FallbackFromHTTPStatus != http.StatusTooManyRequests ||
+		got.Result.HTTPStatus == nil || *got.Result.HTTPStatus != http.StatusPartialContent {
+		t.Fatalf("saved fallback lost the primary rejection or its own HTTP response: rule=%+v result=%+v", got.Rule, got.Result)
+	}
 	next := *got
 	next.AttemptID, next.RequestedAt = "next", got.RequestedAt.Add(time.Minute)
 	next.FinishedAt = &next.RequestedAt
