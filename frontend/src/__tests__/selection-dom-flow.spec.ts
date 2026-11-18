@@ -1,9 +1,10 @@
-import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
+import {afterEach,beforeEach,describe,expect,it,onTestFinished,vi} from 'vitest'
 import {DOMWrapper,flushPromises,mount,type VueWrapper} from '@vue/test-utils'
 import HomeView from '../components/HomeView.vue'
 import {createWorkspace,workspaceKey} from '../workspace'
 import {api} from '../api'
 import {key,type MonitorSample,type NodeOption,type Plan} from '../domain'
+import {nodeDisplayName} from '../nodePresentation'
 
 vi.hoisted(()=>{const items=new Map<string,string>();Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:(k:string)=>items.get(k)||null,setItem:(k:string,v:string)=>items.set(k,v),clear:()=>items.clear()}})})
 vi.mock('../api',async importOriginal=>{const actual=await importOriginal<typeof import('../api')>();return {...actual,api:{...actual.api,latencyHistoryScopes:vi.fn(async()=>[]),batches:vi.fn(async()=>[]),revisions:vi.fn(async()=>[]),refreshJobs:vi.fn(async()=>[]),latencyHistory:vi.fn(async()=>({tests:[],has_more:false,complete:true})),measurementRounds:vi.fn(async()=>[]),createRound:vi.fn(async()=>undefined),finishRound:vi.fn(async()=>undefined),latencySummaries:vi.fn(async(nodes:NodeOption[])=>nodes.map(()=>({tests:[],complete:true,has_more:false}))),attemptHistory:vi.fn(async()=>({attempts:[],complete:true,has_more:false})),monitorSamples:vi.fn(async()=>({items:[],has_more:false,next_cursor:''})),startLatency:vi.fn(),startAttempt:vi.fn(),createJob:vi.fn()}}})
@@ -30,6 +31,86 @@ beforeEach(()=>{window.localStorage.clear();window.sessionStorage.clear();vi.cle
 afterEach(()=>{expect(vi.mocked(fetch).mock.calls.filter(([url,options])=>!((String(url)==='/api/clash/node-status'&&options?.method==='POST')||(String(url)==='/api/clash/usage'&&options?.method==='GET')))).toEqual([]);wrapper?.unmount();w?.dispose();wrapper=undefined;w=undefined;document.body.innerHTML='';vi.unstubAllGlobals()})
 
 describe('node selection through DOM controls',()=>{
+  it('keeps reading outside the airport scope without adding an invisible selection or expanding that scope',async()=>{
+    const {w,wrapper}=attach([a,aTwo,b],['airport-a','airport-b']);await flushPromises()
+    await wrapper.get('.hd-node-open').trigger('click');await flushPromises()
+    w.setAirports(['airport-b']);await flushPromises()
+    expect(wrapper.get('.hd-inspector h2').text()).toBe(nodeDisplayName(a))
+    expect(wrapper.get('input[aria-label="选择这个节点"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('input[aria-label="选择这个节点"]').trigger('change');await flushPromises()
+    expect(w.selectedKeys.value).toEqual([]);expect(w.selectedAirportIds.value).toEqual(['airport-b'])
+    await wrapper.get('.hd-ins-actions .primary').trigger('click');await flushPromises()
+    expect(w.plan.value?.nodes).toEqual([a]);expect(w.selectedAirportIds.value).toEqual(['airport-b'])
+    expect(api.startLatency).not.toHaveBeenCalled();expect(api.startAttempt).not.toHaveBeenCalled()
+  })
+
+  it('selects nodes while reading, compares that selection, and configures only the explicitly viewed node',async()=>{
+    vi.stubGlobal('matchMedia',vi.fn(()=>({matches:true,addEventListener:vi.fn(),removeEventListener:vi.fn()})))
+    const {w,wrapper}=attach([a,aTwo,b],['airport-a','airport-b']);await flushPromises()
+    ;(wrapper.get('.hd-node-open').element as HTMLElement).focus()
+    await wrapper.get('.hd-node-open').trigger('click');await flushPromises()
+    await dialog().get('input[aria-label="选择这个节点"]').setValue(true)
+    await dialog().get('button[aria-label="查看下一条节点"]').trigger('click');await flushPromises()
+    await dialog().get('input[aria-label="选择这个节点"]').setValue(true);await flushPromises()
+    expect(w.selectedKeys.value).toEqual([key(a),key(aTwo)])
+    await button(dialog(),'.hd-reader-nav button','比较已选 2');await flushPromises()
+    expect(dialog().find('.hd-compare').exists()).toBe(true)
+    expect(dialog().get('.modal-header h2').text()).toBe('比较所选节点')
+    await dialog().get('.modal-header button[aria-label="关闭"]').trigger('click');await flushPromises()
+    expect(dialog().get('.hd-inspector h2').text()).toBe(nodeDisplayName(aTwo))
+    expect(wrapper.get('.hd-tr.focus .hd-node-open').text()).toBe(nodeDisplayName(aTwo))
+    expect(dialog().get('input[aria-label="选择这个节点"]').element).toHaveProperty('checked',true)
+    await dialog().get('.hd-ins-actions .primary').trigger('click');await flushPromises()
+    expect(w.plan.value?.nodes).toEqual([aTwo]);expect(w.selectedKeys.value).toEqual([key(a),key(aTwo)])
+    expect(api.startLatency).not.toHaveBeenCalled();expect(api.startAttempt).not.toHaveBeenCalled()
+  })
+
+  it('opens exit details from cached entry data and resolves only after an explicit action',async()=>{
+    const entries=vi.spyOn(api,'entries').mockResolvedValue({nodes:[]});onTestFinished(()=>entries.mockRestore())
+    const {wrapper}=attach([a],['airport-a']);await flushPromises()
+    await button(wrapper,'.hd-seg button','出口与信誉');await wrapper.get('.hd-node-open').trigger('click');await flushPromises()
+    expect(entries).toHaveBeenCalled();expect(entries.mock.calls.every(([,refresh])=>refresh===false)).toBe(true)
+    expect(wrapper.get('.hd-entry-read').text()).toContain('入口尚未解析')
+    await wrapper.get('.hd-entry-read button').trigger('click');await flushPromises()
+    expect(entries).toHaveBeenLastCalledWith([a],true)
+    expect(api.startLatency).not.toHaveBeenCalled();expect(api.startAttempt).not.toHaveBeenCalled()
+  })
+
+  it('keeps the open node identity when filters hide it or its current configuration changes',async()=>{
+    vi.stubGlobal('matchMedia',vi.fn(()=>({matches:true,addEventListener:vi.fn(),removeEventListener:vi.fn()})))
+    const {w,wrapper}=attach([a,aTwo,b],['airport-a','airport-b']);w.selectedKeys.value=[key(a)];await flushPromises()
+    await wrapper.findAll('.hd-node-open').find(button=>button.text()===nodeDisplayName(b))!.trigger('click');await flushPromises()
+    w.search.value='Node A One';await flushPromises()
+    expect(dialog().get('.hd-inspector h2').text()).toBe(nodeDisplayName(b))
+    expect(dialog().text()).toContain('当前筛选之外')
+    w.nodes.value=[a,aTwo,{...b,node_key:'replacement-key',display_name:'Changed B'}];await flushPromises()
+    expect(dialog().get('.hd-inspector h2').text()).toBe(nodeDisplayName(b))
+    expect(dialog().text()).toContain('配置已变化')
+    expect(dialog().get('.hd-ins-actions .primary').attributes('disabled')).toBeDefined()
+    expect(w.selectedKeys.value).toEqual([key(a)])
+    expect(w.plan.value).toBeNull();expect(api.startLatency).not.toHaveBeenCalled();expect(api.startAttempt).not.toHaveBeenCalled()
+  })
+
+  it('reads adjacent nodes across pages in the opening order without changing the selected detection scope',async()=>{
+    vi.stubGlobal('matchMedia',vi.fn(()=>({matches:true,addEventListener:vi.fn(),removeEventListener:vi.fn()})))
+    window.localStorage.setItem('speedtest-page-size','10')
+    const nodes=Array.from({length:11},(_,i)=>({...a,node_key:'node-'+i,node_identity_key:'identity-'+i,display_name:'Node '+String(i+1).padStart(2,'0')}))
+    const {w,wrapper}=attach(nodes,['airport-a']);w.selectedKeys.value=[key(nodes[0]!)];await flushPromises()
+    await wrapper.findAll('.hd-node-open').at(-1)!.trigger('click');await flushPromises()
+    expect(dialog().get('.hd-inspector h2').text()).toBe(nodeDisplayName(nodes[9]!))
+    w.nodes.value=[{...nodes[0]!,node_key:'new',node_identity_key:'new',display_name:'Node 00'},...nodes];await flushPromises()
+    await dialog().get('button[aria-label="查看下一条节点"]').trigger('click');await flushPromises()
+    expect(dialog().get('.hd-inspector h2').text()).toBe(nodeDisplayName(nodes[10]!))
+    expect(dialog().get('.hd-reader-nav').text()).toContain('11 / 11')
+    expect(dialog().get('button[aria-label="查看下一条节点"]').attributes('disabled')).toBeDefined()
+    await dialog().get('button[aria-label="查看上一条节点"]').trigger('click');await flushPromises()
+    expect(dialog().get('.hd-inspector h2').text()).toBe(nodeDisplayName(nodes[9]!))
+    expect(w.selectedKeys.value).toEqual([key(nodes[0]!)])
+    expect(w.plan.value).toBeNull();expect(api.startLatency).not.toHaveBeenCalled();expect(api.startAttempt).not.toHaveBeenCalled()
+    await dialog().get('.modal-header button[aria-label="关闭"]').trigger('click');await flushPromises()
+    expect((document.activeElement as HTMLElement).getAttribute('aria-label')).toContain('查看 '+nodeDisplayName(nodes[9]!))
+  })
+
   it('browses rows with arrow keys without opening a sheet or changing the selected detection scope',async()=>{
     vi.stubGlobal('matchMedia',vi.fn(()=>({matches:true,addEventListener:vi.fn(),removeEventListener:vi.fn()})))
     const {w,wrapper}=attach([a,aTwo,b],['airport-a','airport-b']);w.selectedKeys.value=[key(b)];await flushPromises()
@@ -119,6 +200,8 @@ describe('node selection through DOM controls',()=>{
     expect(wrapper.findAll('[role=alert]').some(alert=>alert.text().includes('监测 HTTP 记录读取失败'))).toBe(true)
     vi.mocked(api.monitorSamples).mockResolvedValue({items:[],has_more:false,next_cursor:''})
     w.nodes.value=[{...a,config_revision_key:'revision-new'}];await flushPromises()
+    expect(wrapper.get('.hd-reader-notice').text()).toContain('配置已变化')
+    await wrapper.get('.hd-node-open').trigger('click');await flushPromises()
     expect(wrapper.find('.hd-http').exists()).toBe(false)
     expect(wrapper.findAll('.health-cell.has-record')).toHaveLength(0)
   })

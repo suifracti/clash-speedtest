@@ -9,7 +9,7 @@ import {latencyRounds,latencyHistorySplit,readLatencyHistoryWithConfig,roundSite
 import {hourBuckets,hourConclusion,hourTitle,slowestHours} from '../../historyPulse'
 import {hideHoverTip,shortReason,showHoverTip} from '../../hoverTip'
 import LatencyChart from './LatencyChart.vue'
-const props=defineProps<{series:LatencySeries[];node?:NodeOption;focus?:{id:string;test:LatencyTest}}>()
+const props=defineProps<{series:LatencySeries[];node?:NodeOption;focus?:{id:string;test:LatencyTest};readOnly?:boolean}>()
 const emit=defineEmits<{(e:'round-change',series:LatencySeries[]):void;(e:'return-latest'):void}>()
 const hours=ref(168),saved=ref<LatencySeries[]|null>(null),changes=ref<LatencyConfigChange[]>([]),loading=ref(false),error=ref(''),selectedId=ref(''),expandedId=ref(''),expanded=ref(false)
 const clashStatus=ref<ClashNodeStatus|null>(null),clashStatusLoading=ref(false),clashStatusError=ref(''),clashComparison=ref<ClashCompareResult|null>(null),clashCompareLoading=ref(false),clashCompareError=ref('')
@@ -27,7 +27,7 @@ watch(()=>props.node?`${key(props.node)}\u0000${props.node.node_key}`:'',async()
 },{immediate:true,flush:'sync'})
 async function compareWithClash(){
  const node=props.node,token=clashGeneration
- if(!node||!clashStatus.value?.loaded||clashCompareLoading.value)return
+ if(props.readOnly||!node||!clashStatus.value?.loaded||clashCompareLoading.value)return
  clashComparison.value=null;clashCompareError.value='';clashCompareLoading.value=true
  try{const result=await api.compareClashNode(node);if(token===clashGeneration)clashComparison.value=result}
  catch(e){if(token===clashGeneration)clashCompareError.value=e instanceof Error?e.message:String(e)}
@@ -99,7 +99,7 @@ const ms=(v:number|null|undefined)=>v==null?'—':Math.round(v).toLocaleString()
   </div>
   <div class="range-scale"><div class="range-axis"><span v-for="v in [0,500,1000,1500]" :key="v" :style="{left:pct(v)}">{{v}}{{v===1500?' ms':''}}</span></div></div>
   <section class="clash-comparison" aria-label="和 Clash 对照">
-   <div class="clash-comparison-head"><span :title="clashStatus?.endpoint">Clash 内核{{clashStatusLoading?'连接中':clashStatus?.connected?'已连接':'未连接'}}</span><button class="hd-btn" :disabled="clashStatusLoading||!clashStatus?.loaded||clashCompareLoading" :title="clashStatus&&!clashStatus.loaded?'Clash 当前没有加载这个节点':undefined" @click="compareWithClash">{{clashCompareLoading?'正在对照…':'和 Clash 对照'}}</button></div>
+   <div class="clash-comparison-head"><span :title="clashStatus?.endpoint">Clash 内核{{clashStatusLoading?'连接中':clashStatus?.connected?'已连接':'未连接'}}</span><button class="hd-btn" :disabled="readOnly||clashStatusLoading||!clashStatus?.loaded||clashCompareLoading" :title="clashStatus&&!clashStatus.loaded?'Clash 当前没有加载这个节点':undefined" @click="compareWithClash">{{clashCompareLoading?'正在对照…':'和 Clash 对照'}}</button></div>
    <p v-if="clashCompareError||clashStatusError" class="clash-status warn" role="alert">{{clashCompareError||clashStatusError}}</p>
    <div v-if="clashComparison" class="clash-comparison-body" aria-live="polite">
     <table class="clash-result-table"><thead><tr><th></th><th>第 1 次</th><th>第 2 次</th></tr></thead><tbody><tr v-for="side in ['cst','clash'] as const" :key="side"><th>{{side==='cst'?'CST':'Clash'}}</th><td v-for="(sample,index) in clashComparison[side]" :key="index" :class="sample.success?'good':'bad'" :title="sample.error">{{sample.success?ms(sample.latency_ms):sample.error||'失败'}}</td></tr></tbody></table>

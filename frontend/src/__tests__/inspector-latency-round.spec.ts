@@ -1,4 +1,4 @@
-import {it,expect,vi} from 'vitest'
+import {it,expect,vi,onTestFinished} from 'vitest'
 import {flushPromises,mount} from '@vue/test-utils'
 import InspectorLatency from '../components/home/InspectorLatency.vue'
 import {manualLatencyPoint} from '../presentation'
@@ -7,6 +7,20 @@ import {activeLatencyTargets} from '../latencyTargets'
 import type {LatencyTest,NodeOption} from '../domain'
 import {api} from '../api'
 vi.mock('../latencyHistory',async original=>({...await original<typeof import('../latencyHistory')>(),readLatencyHistoryWithConfig:vi.fn()}))
+it('keeps historical reading available but requires a current configuration before a Clash comparison',async()=>{
+ const node:NodeOption={profile_id:'account-a',node_key:'a',node_identity_key:'a',config_revision_key:'a',display_name:'A',profile_name:'Airport',type:'ss',country_code:'',country_flag:''}
+ const series=activeLatencyTargets.map(t=>({...t,context:'',points:[]}))
+ const status=vi.spyOn(api,'clashNodeStatus').mockResolvedValue({connected:true,loaded:true,name:'A',endpoint:'synthetic'})
+ const compare=vi.spyOn(api,'compareClashNode').mockRejectedValue(new Error('synthetic comparison response'))
+ vi.mocked(readLatencyHistoryWithConfig).mockResolvedValue({series,changes:[]})
+ const wrapper=mount(InspectorLatency,{props:{node,series,readOnly:true}})
+ onTestFinished(()=>{wrapper.unmount();compare.mockRestore();status.mockRestore()})
+ await flushPromises();expect(wrapper.find('.latency-history').exists()).toBe(true)
+ expect(wrapper.get('.clash-comparison-head button').attributes('disabled')).toBeDefined()
+ await wrapper.get('.clash-comparison-head button').trigger('click');expect(compare).not.toHaveBeenCalled()
+ await wrapper.setProps({readOnly:false});await wrapper.get('.clash-comparison-head button').trigger('click');await flushPromises()
+ expect(compare).toHaveBeenCalledTimes(1);expect(compare).toHaveBeenCalledWith(node)
+})
 it('clears the previous node history while the next lookup is pending or fails',async()=>{
  const node:NodeOption={profile_id:'account-a',node_key:'a',node_identity_key:'a',config_revision_key:'a',display_name:'A',profile_name:'Airport',type:'ss',country_code:'',country_flag:''}
  const at=new Date().toISOString(),test:LatencyTest={...node,attempt_id:'old-node-round',display_name:'A',node_type:'ss',requested_at:at,finished_at:at,status:'completed',latency_ms:123,total_samples:8,success_samples:8,failure_samples:0,persistence_state:'saved',samples:activeLatencyTargets.flatMap(t=>[1,2].map(seq=>({seq,target:t.urls[0],timestamp:at,latency_ms:123,success:true})))}

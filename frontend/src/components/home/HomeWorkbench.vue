@@ -15,6 +15,7 @@ import SiteDisplayPicker from '../SiteDisplayPicker.vue'
 import UnlockServiceMatrix from './UnlockServiceMatrix.vue'
 import NodeInspector from './NodeInspector.vue'
 import NodeResponseStrip from './NodeResponseStrip.vue'
+import NodeReaderNav from './NodeReaderNav.vue'
 import NodeCompare from './NodeCompare.vue'
 import Modal from '../Modal.vue'
 import {stableLatency} from '../../inspectorLatency'
@@ -128,11 +129,30 @@ const detailsOverlay=ref(detailViewport?.matches??false)
 function updateDetailViewport(){detailsOverlay.value=detailViewport?.matches??false}
 onMounted(()=>detailViewport?.addEventListener('change',updateDetailViewport))
 onBeforeUnmount(()=>detailViewport?.removeEventListener('change',updateDetailViewport))
-function closeDetails(){if(m.compareOpen.value)m.closeComparison();else inspectorOpen.value=false}
+function closeDetails(){if(m.compareOpen.value)m.closeComparison();else{inspectorOpen.value=false;void nextTick(focusReadingRow)}}
 const sourcesOpen=ref(false)
 const focusKey=ref<string|null>(null)
 const focusNode=computed(()=>m.pageNodes.value.find(n=>key(n)===focusKey.value)||m.pageNodes.value[0])
-function focus(n:NodeOption){inspectorOpen.value=true;w.latencyReportFocus.value=null;m.closeHover();focusKey.value=key(n)}
+const readingNode=ref<NodeOption|null>(null),readingNodes=ref<NodeOption[]>([]),readerBody=ref<HTMLElement>()
+const sameReadingNode=(a:NodeOption,b:NodeOption)=>key(a)===key(b)&&a.node_key===b.node_key
+const readingIndex=computed(()=>readingNode.value?readingNodes.value.findIndex(n=>sameReadingNode(n,readingNode.value!)):-1)
+const readingCurrent=computed(()=>!!readingNode.value&&w.nodes.value.some(n=>sameReadingNode(n,readingNode.value!)))
+const readingNotice=computed(()=>{
+ const n=readingNode.value;if(!n)return ''
+ if(!readingCurrent.value)return w.nodes.value.some(v=>v.profile_id===n.profile_id&&(v.node_key===n.node_key||v.node_identity_key===n.node_identity_key))?'配置已变化，保留打开时的记录；检测请回到列表选择当前配置。':'节点已不在当前清单，保留打开时的记录。'
+ return m.visibleNodes.value.some(v=>sameReadingNode(v,n))?'':'这条节点在当前筛选之外，保留本次浏览。'
+})
+function readerLabel(offset:number){const n=readingNodes.value[readingIndex.value+offset];return n?nodeDisplayName(n)+' · '+m.sourceLabel(n):undefined}
+function focusReadingRow(){const n=readingNode.value;if(!n)return;const row=readingCurrent.value?Array.from(table.value?.querySelectorAll<HTMLElement>('[data-node-key]')||[]).find(row=>row.dataset.nodeKey===key(n)):undefined;if(!row){table.value?.focus({preventScroll:true});return}row.querySelector<HTMLButtonElement>('.hd-node-open')?.focus({preventScroll:true});row.scrollIntoView?.({block:'nearest',inline:'nearest'})}
+function showReadingNode(n:NodeOption){
+ readingNode.value={...n};focusKey.value=key(n);m.closeHover()
+ const index=m.visibleNodes.value.findIndex(v=>sameReadingNode(v,n));if(index>=0)m.currentPage.value=m.pageSize.value>0?Math.floor(index/m.pageSize.value)+1:1
+ void nextTick(()=>readerBody.value?.closest<HTMLElement>('.modal-body')?.scrollTo?.({top:0}))
+}
+function startReading(n:NodeOption,clearReport=true){readingNodes.value=m.visibleNodes.value.map(n=>({...n}));if(clearReport)w.latencyReportFocus.value=null;showReadingNode(n);inspectorOpen.value=true}
+function focus(n:NodeOption){startReading(n)}
+function moveReading(offset:number){const n=readingNodes.value[readingIndex.value+offset];if(!n)return;w.latencyReportFocus.value=null;showReadingNode(n)}
+function toggleDetails(){if(inspectorOpen.value)closeDetails();else if(focusNode.value)startReading(focusNode.value)}
 // 检查器宽度可拖动（或用 ←→），记在本机。
 const SIDE_MIN=340,SIDE_MAX=680
 function savedSide(){try{const v=Number(window.localStorage.getItem('cst.inspector-width'));return v>=SIDE_MIN&&v<=SIDE_MAX?v:420}catch{return 420}}
@@ -157,12 +177,12 @@ watch(()=>w.viewRequest.value,async n=>{
  if(!n)return
  w.viewRequest.value=null
  if(w.latencyReportFocus.value?.nodeKey===key(n)){exitMode.value=false;m.qualityGate.value='all';m.protocolFilter.value='all';m.qualitySort.value='existing';m.weeklySort.value='';await nextTick()}
- const k=key(n),i=m.visibleNodes.value.findIndex(v=>key(v)===k)
+ const i=m.visibleNodes.value.findIndex(v=>sameReadingNode(v,n))
  if(i<0){w.inspectNode.value=n;return}
- inspectorOpen.value=true;m.currentPage.value=m.pageSize.value>0?Math.floor(i/m.pageSize.value)+1:1;m.closeHover();focusKey.value=k
+ startReading(n,false)
  void nextTick(()=>table.value?.querySelector<HTMLElement>('.hd-tr.focus')?.scrollIntoView?.({block:'nearest'}))
 },{immediate:true})
-function isFocus(n:NodeOption){return !!focusNode.value&&key(focusNode.value)===key(n)}
+function isFocus(n:NodeOption){const current=inspectorOpen.value&&readingNode.value?readingNode.value:focusNode.value;return !!current&&sameReadingNode(current,n)}
 function selected(n:NodeOption){return w.selectedKeys.value.includes(key(n))}
 const verdicts=computed<Record<string,Verdict>>(()=>Object.fromEntries(m.pageNodes.value.map(n=>[key(n),latencyVerdict(sites.value.map(s=>m.metricPoint(n,s.id)),stableLatency(sites.value.map(s=>({id:s.id,points:[m.metricPoint(n,s.id)].filter((p):p is NonNullable<typeof p>=>!!p)}))),weeklyStat(n)?.allOld?null:weeklyStat(n)?.all.responseRate,sites.value.map(s=>s.name))])))
 function groupSummary(n:NodeOption,id:string){return unlockGroupSummary(id,catalog.value,serviceId=>m.shownService(n,serviceId),w.nodeUnlockRegion(n),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions,exitRows.value[key(n)]?.ipKind.type)}
@@ -184,7 +204,7 @@ function keyNav(e:KeyboardEvent){
  const list=m.pageNodes.value,i=list.findIndex(isFocus)
  const next=e.key==='ArrowDown'?list[Math.min(i+1,list.length-1)]:e.key==='ArrowUp'?list[Math.max(i-1,0)]:e.key==='Home'?list[0]:e.key==='End'?list.at(-1):undefined
  if(next){
-  e.preventDefault();m.closeHover();w.latencyReportFocus.value=null;focusKey.value=key(next)
+  e.preventDefault();m.closeHover();w.latencyReportFocus.value=null;focusKey.value=key(next);if(inspectorOpen.value)startReading(next)
   void nextTick(()=>{
    const row=Array.from(table.value?.querySelectorAll<HTMLElement>('[data-node-key]')||[]).find(row=>row.dataset.nodeKey===key(next))
    row?.querySelector<HTMLButtonElement>('.hd-node-open')?.focus({preventScroll:true});row?.scrollIntoView?.({block:'nearest',inline:'nearest'})
@@ -203,7 +223,7 @@ function keyNav(e:KeyboardEvent){
       </div>
       <div class="hd-head-actions">
         <button class="hd-btn ghost hd-nav-shortcut" @click="w.page.value='recommend'">帮我选一条<Icon name="arrowRight"/></button>
-        <button v-if="!matrixMode&&!m.compareOpen.value" class="hd-btn" :aria-pressed="inspectorOpen" :title="inspectorOpen?'收起详情，全宽显示节点表':'展开节点详情'" @click="inspectorOpen=!inspectorOpen"><Icon name="panel"/>{{inspectorOpen?'全宽列表':'展开详情'}}</button>
+        <button v-if="!matrixMode&&!m.compareOpen.value" class="hd-btn" :aria-pressed="inspectorOpen" :title="inspectorOpen?'收起详情，全宽显示节点表':'展开节点详情'" @click="toggleDetails"><Icon name="panel"/>{{inspectorOpen?'全宽列表':'展开详情'}}</button>
       </div>
     </header>
 
@@ -313,14 +333,15 @@ function keyNav(e:KeyboardEvent){
       </div>
       <template v-if="!detailsOverlay">
         <div v-if="inspectorOpen" class="hd-resize" role="separator" aria-orientation="vertical" aria-label="调整检查器宽度" :aria-valuenow="sideWidth" :aria-valuemin="SIDE_MIN" :aria-valuemax="SIDE_MAX" tabindex="0" @pointerdown="startResize" @keydown.left.prevent="setSide(sideWidth+24)" @keydown.right.prevent="setSide(sideWidth-24)" @dblclick="setSide(420)"/>
-        <NodeInspector v-if="focusNode&&inspectorOpen" :key="key(focusNode)" class="hd-side" :node="focusNode" :exit-only="exitMode" :clash-usage="clashUsage" @collapse="inspectorOpen=false" @select-project="selectInspectorProject" @refresh-clash-usage="refreshClashUsage"/>
+        <NodeInspector v-if="readingNode&&inspectorOpen" :key="key(readingNode)+readingNode.node_key" class="hd-side" :node="readingNode" :exit-only="exitMode" :clash-usage="clashUsage" :read-only="!readingCurrent" :context-notice="readingNotice" @collapse="closeDetails" @select-project="selectInspectorProject" @refresh-clash-usage="refreshClashUsage"><template #navigation><NodeReaderNav :index="readingIndex" :count="readingNodes.length" :selected-count="w.selectedNodes.value.length" :previous="readerLabel(-1)" :next="readerLabel(1)" @previous="moveReading(-1)" @next="moveReading(1)" @compare="m.openComparison()"/></template></NodeInspector>
       </template>
     </div>
 
-    <Modal v-if="!matrixMode&&(m.compareOpen.value||detailsOverlay&&focusNode&&inspectorOpen)" :title="m.compareOpen.value?'比较所选节点':'节点详情'" wide :variant="m.compareOpen.value?'workbench-detail-modal comparison-modal':'workbench-detail-modal'" @close="closeDetails">
-      <div class="hd hd-detail-sheet">
+    <Modal v-if="!matrixMode&&(m.compareOpen.value||detailsOverlay&&readingNode&&inspectorOpen)" :key="m.compareOpen.value?'comparison':'node-reader'" :title="m.compareOpen.value?'比较所选节点':'节点详情'" wide :variant="m.compareOpen.value?'workbench-detail-modal comparison-modal':'workbench-detail-modal node-reader-modal'" @close="closeDetails">
+      <template #header-tools><NodeReaderNav v-if="!m.compareOpen.value" :index="readingIndex" :count="readingNodes.length" :selected-count="w.selectedNodes.value.length" :previous="readerLabel(-1)" :next="readerLabel(1)" @previous="moveReading(-1)" @next="moveReading(1)" @compare="m.openComparison()"/></template>
+      <div ref="readerBody" class="hd hd-detail-sheet">
         <NodeCompare v-if="m.compareOpen.value"/>
-        <NodeInspector v-else-if="focusNode" :key="key(focusNode)" :node="focusNode" :exit-only="exitMode" :clash-usage="clashUsage" @collapse="inspectorOpen=false" @select-project="selectInspectorProject" @refresh-clash-usage="refreshClashUsage"/>
+        <NodeInspector v-else-if="readingNode" :key="key(readingNode)+readingNode.node_key" :node="readingNode" :exit-only="exitMode" :clash-usage="clashUsage" :read-only="!readingCurrent" :context-notice="readingNotice" autofocus-title @collapse="closeDetails" @select-project="selectInspectorProject" @refresh-clash-usage="refreshClashUsage"/>
       </div>
     </Modal>
 
