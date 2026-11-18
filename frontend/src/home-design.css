@@ -94,9 +94,8 @@
 .hd-more>p{margin:0 14px 10px;font-size:12px}
 .hd-more-note .hd-link,.hd-sort-status .hd-link{margin-left:10px}
 .hd-sort-status{font-size:12px}
-.hd-selection,.hd-live{display:flex;align-items:center;gap:10px;padding:8px 14px;border-radius:var(--hd-radius);background:var(--hd-panel);border:1px solid var(--hd-accent)}
+.hd-selection{display:flex;align-items:center;gap:10px;padding:8px 14px;border-radius:var(--hd-radius);background:var(--hd-panel);border:1px solid var(--hd-accent)}
 .hd-selection{position:sticky;bottom:14px;z-index:25;flex-wrap:wrap;box-shadow:var(--cst-shadow-pop)}
-.hd-live{border-color:var(--hd-line)}
 
 /* 正文与页脚 */
 .hd-body{display:grid;grid-template-columns:minmax(0,1fr) 8px var(--hd-side-w,420px);align-items:start;gap:2px;flex:1}

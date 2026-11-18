@@ -26,7 +26,7 @@ function showMore(){const firstNew=items.value.length-1;nodeLimit.value+=40;void
 const items=computed<Item[]>(()=>{
  const out:Item[]=[]
  for(const p of props.pages)if(matches([p.label,...(p.keywords||[])].join(' ')))out.push({id:'page:'+p.id,group:'页面',label:p.label,meta:w.page.value===p.id?'当前页面':'',icon:p.icon,run:()=>emit('navigate',p.id)})
- if(w.queue.value.length&&matches('检测队列 进度'))out.push({id:'queue',group:'页面',label:'检测队列',meta:`已处理 ${w.done.value}/${w.queue.value.length}`,icon:'select',run:()=>{w.queueOpen.value=true}})
+ if(w.queue.value.length&&matches('检测队列 进度'))out.push({id:'queue',group:'页面',label:'检测队列',meta:`已处理 ${w.done.value}/${w.queue.value.length}`,icon:'select',run:w.openQueue})
  for(const a of w.airports.value)if(matches(a.name))out.push({id:'airport:'+a.id,group:'机场',label:a.name,meta:`${counts.value[a.id]||0} 个节点 · 在工作台只看此机场`,icon:'layers',run:()=>{if(w.airportFilter.value!==a.id)w.viewAirport(a.id);emit('navigate','home')}})
  for(const row of nodeMatches.value.slice(0,nodeLimit.value))out.push({id:'node:'+JSON.stringify(scope(row.node)),group:'节点',label:row.label,meta:row.meta,icon:'globe',run:()=>viewNode(row.node)})
  if(nodeMatches.value.length>nodeLimit.value)out.push({id:'nodes:more',group:'节点',label:'显示更多节点',meta:`已显示 ${nodeLimit.value} / ${nodeMatches.value.length} · 可继续输入缩小范围`,icon:'arrowRight',keepOpen:true,run:showMore})

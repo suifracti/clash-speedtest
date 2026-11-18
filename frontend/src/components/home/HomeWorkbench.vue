@@ -318,8 +318,6 @@ function keyNav(e:KeyboardEvent){
     </div>
     <p v-if="['latency','download','service'].includes(w.sort.value)" class="hd-muted hd-sort-status" role="status">{{w.sortLoading.value?`读取全部节点 ${w.sortReadCount.value}/${w.proxyNodes.value.length}…`:w.sortError.value||(w.sortAt.value?'排序截止 '+date(w.sortAt.value)+' · 翻页不改变排名':'尚未读取全部节点，仅按已读记录排序')}}<button class="hd-link" :disabled="w.sortLoading.value" @click="w.refreshSort()">更新排序</button></p>
 
-    <div v-if="w.busy.value" class="hd-live"><span class="spinner"/>检测进行中{{w.queue.value.length?` · ${w.done.value}/${w.queue.value.length}`:''}}<button class="hd-link" @click="w.queueOpen.value=true">查看进度</button><button class="hd-link bad" @click="w.cancelTests()">{{w.cancelRequested.value?'正在取消…':'取消'}}</button></div>
-
     <nav v-if="!exitMode&&w.project.value==='service'" class="hd-seg matrix-switch" aria-label="解锁结果视图"><button :aria-pressed="serviceView==='nodes'" @click="serviceView='nodes'">按节点</button><button :aria-pressed="serviceView==='services'" @click="serviceView='services'">按服务</button></nav>
     <UnlockServiceMatrix v-if="matrixMode"/>
     <div v-if="!matrixMode" class="hd-body" :class="{'overview-mode':overviewMode,'exit-mode':exitMode,'full-table':detailsOverlay||!inspectorOpen}" :style="{'--hd-side-w':visibleSideWidth+'px','--hd-overview-width':overviewMinWidth+'px'}">

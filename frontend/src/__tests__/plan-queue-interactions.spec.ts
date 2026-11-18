@@ -4,7 +4,7 @@ import TestPlanModal from '../components/TestPlanModal.vue'
 import QueueModal from '../components/QueueModal.vue'
 import {createWorkspace,workspaceKey,type Workspace} from '../workspace'
 import {api} from '../api'
-import {key,type Attempt,type NodeOption,type LatencyTest} from '../domain'
+import {key,type Attempt,type LatencyBatch,type NodeOption,type LatencyTest} from '../domain'
 
 vi.hoisted(()=>{Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:()=>null,setItem:()=>{}}})})
 vi.mock('../api',async importOriginal=>{
@@ -259,7 +259,34 @@ it('sends more than 200 nodes in one latency batch',async()=>{
  expect(api.startLatency).toHaveBeenCalledTimes(1)
  expect((vi.mocked(api.startLatency).mock.calls[0][0] as any).selections).toHaveLength(208)
  expect(w.latestReportBatch.value?.items).toHaveLength(208)
+ expect(w.reportSelection.value?.batch.batch_id).toBe('one-batch')
  expect(new Set(w.queue.value.map(q=>q.batchId))).toEqual(new Set(['one-batch']))
+})
+
+const completedBatch=(requestId:string):LatencyBatch=>({batch_id:'synthetic-report',request_id:requestId,state:'completed',requested_at:'2026-11-18T01:00:00Z',item_count:1,items:[{...node,batch_id:'synthetic-report',item_id:'synthetic-item',execution_state:'completed',persistence_state:'saved'}]})
+
+it('keeps mixed queue results and retry visible after the latency portion finishes',async()=>{
+ w.project.value='combined';w.openPlan([node])
+ Object.assign(w.plan.value!,{projects:['latency','download'],includeReputation:false})
+ vi.mocked(api.startLatency).mockImplementation(async body=>completedBatch((body as {request_id:string}).request_id))
+ vi.mocked(api.startAttempt).mockImplementation(async(_kind,body:any)=>({...savedDownload(body),persistence_state:'failed',persistence_error:'synthetic disk write failure'}))
+ await w.runPlan()
+ expect(w.latestReportBatch.value?.batch_id).toBe('synthetic-report')
+ expect(w.queue.value.find(q=>q.project==='download')?.attempt?.persistence_state).toBe('failed')
+ expect(w.queueOpen.value).toBe(true)
+ expect(w.reportSelection.value).toBeNull()
+})
+
+it('leaves the task window closed when a watched run finishes in the background',async()=>{
+ w.project.value='latency';w.openPlan([node]);w.plan.value!.includeReputation=false
+ let finish!:()=>void
+ vi.mocked(api.startLatency).mockImplementation(body=>new Promise(resolve=>{finish=()=>resolve(completedBatch((body as {request_id:string}).request_id))}))
+ const running=w.runPlan();await flushPromises()
+ expect(w.queueOpen.value).toBe(true)
+ w.queueOpen.value=false;w.page.value='history';finish();await running
+ expect(w.latestReportBatch.value?.batch_id).toBe('synthetic-report')
+ expect(w.queueOpen.value).toBe(false)
+ expect(w.reportSelection.value).toBeNull()
 })
 
 

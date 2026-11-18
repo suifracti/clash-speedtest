@@ -9,7 +9,7 @@ import {downloadGroup,latencyComparisonGroup,serviceAvailabilitySummary,serviceC
 import {readSortSnapshot,type SortResult} from './sortSnapshot'
 import {clearUsageCache} from './usageDaily'
 const startRejected=(e:unknown)=>{const status=(e as {status?:number})?.status;return !!status&&status>=400&&status<500}
-const terminal=(state:string)=>!['queued','running','cancelling','saving'].includes(state)
+export const terminal=(state:string)=>!['queued','running','cancelling','saving'].includes(state)
 const delay=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms))
 const uid=()=>crypto.randomUUID?.()||`request-${Date.now()}-${Math.random().toString(16).slice(2)}`
 function savedSources():string[]|null{try{const value=JSON.parse(window.localStorage.getItem('speedtest.circle-airports')||'null');return Array.isArray(value)?value:null}catch{return null}}
@@ -34,6 +34,7 @@ export function createWorkspace(){
   const reportSelection=ref<{batch:LatencyBatch;monitor:boolean;previous:LatencyBatch[]}|null>(null)
   const autoPickReportId=ref('')
   function openAutoPickReport(id:string){autoPickReportId.value=id}
+  function openQueue(){reportSelection.value=null;queueOpen.value=true}
   function openLatencyReport(batch:LatencyBatch,monitor=false,previous:LatencyBatch[]=[]){reportSelection.value={batch,monitor,previous};queueOpen.value=true}
   const latestReportBatch=computed(()=>{const ids=new Set(queue.value.filter(q=>q.project==='latency').map(q=>q.batchId));return batches.value.find(b=>terminal(b.state)&&b.items?.length&&(!queue.value.length||ids.has(b.batch_id)))})
   const page=ref<Page>('home'),project=ref<Project>('combined'),airports=ref<Airport[]>([]),nodes=ref<NodeOption[]>([]),catalog=ref<ServiceRule[]>([]),jobs=ref<MonitorJob[]>([]),batches=ref<LatencyBatch[]>([]),setup=ref<Setup|null>(null),settings=ref<Settings|null>(null),token=ref<TokenStatus|null>(null)
@@ -364,13 +365,30 @@ export function createWorkspace(){
       }
     }}if(alive(version))notify(cancelRequested.value?'检测已取消，已完成结果保留':'检测队列已结束，查看结果与未执行原因')
     }catch(e){if(!alive(version))return;fail(e);const rejected=startRejected(e);if(rejected){pendingStart.value=null;forget()}for(const q of starting)if(!q.attempt&&!q.batchId){q.state=rejected?'not_executed':'running';q.error=rejected?error.value:`启动结果尚未确认：${error.value}。请刷新进度继续查询；暂不启动新测试。`};if(pendingStart.value)error.value=`启动结果尚未确认：${error.value}。请刷新进度继续查询；暂不启动新测试。`
-    }finally{if(alive(version)){for(const q of queue.value)if(q.state==='queued')q.state=cancelRequested.value?'cancelled':'not_executed';for(const id of plans.keys())try{await api.finishRound(id,pendingStart.value||cancelRequested.value||error.value?'interrupted':'finished')}catch(e){fail(e)};await loadMeasurementRounds(frozen.nodes,true);running.value=false;resumePolling();if(!pendingStart.value&&latestReportBatch.value)openLatencyReport(latestReportBatch.value)}}}
+    }finally{
+      if(alive(version)){
+        for(const q of queue.value)if(q.state==='queued')q.state=cancelRequested.value?'cancelled':'not_executed'
+        for(const id of plans.keys())try{await api.finishRound(id,pendingStart.value||cancelRequested.value||error.value?'interrupted':'finished')}catch(e){fail(e)}
+        await loadMeasurementRounds(frozen.nodes,true)
+        if(alive(version)){
+          running.value=false
+          resumePolling()
+          // A latency report is a useful closeout for an open latency-only task.
+          // Mixed tasks and save failures still need their queue and retry controls.
+          const report=latestReportBatch.value
+          const latencyOnly=queue.value.length>0&&queue.value.every(q=>q.project==='latency')
+          const needsAttention=queue.value.some(q=>['cancelled','not_executed','interrupted'].includes(q.state)||q.error?.startsWith('保存失败'))
+          if(report&&latencyOnly&&!needsAttention&&queueOpen.value&&!reportSelection.value&&!pendingStart.value)openLatencyReport(report)
+        }
+      }
+    }
+  }
   async function retryPending(){if(disposed||running.value||retryingStart.value||!pendingStart.value)return;const version=lifetime;retryingStart.value=true;try{await recoverActive()}finally{if(alive(version))retryingStart.value=false}}
   async function cancelTests(){const version=lifetime;if(!alive(version))return;if(preparingPlan.value){plan.value=null;return}cancelRequested.value=true;try{await recoverActive();if(!alive(version))return;if(pendingStart.value){error.value='尚未找到该检测的后台任务，无法确认取消。可刷新进度继续查询后取消。';return}if(activeBatch.value&&['queued','running','cancelling'].includes(activeBatch.value.state)){const updated=await api.cancelBatch(activeBatch.value.batch_id);if(!alive(version))return;activeBatch.value={...activeBatch.value,state:terminal(updated.state)?'cancelling':updated.state}}if(activeAttempt.value&&!terminal(activeAttempt.value.attempt.execution_state)){const a=activeAttempt.value,updated=await api.attemptAction(a.kind,a.attempt.attempt_id,serviceScope(a.node,a.attempt.service_id),'cancel');if(!alive(version))return;mergeAttempt(a.kind,updated)}}catch(e){if(alive(version))fail(e)}}
   async function syncActive(){const version=lifetime;if(!alive(version))return;try{await recoverActive();if(!alive(version))return;if(activeBatch.value&&!terminal(activeBatch.value.state)){await refreshBatchProgress(activeBatch.value);if(!alive(version))return}if(activeAttempt.value&&(!terminal(activeAttempt.value.attempt.execution_state)||activeAttempt.value.attempt.persistence_state==='saving')){const a=activeAttempt.value,updated=await api.attempt(a.kind,a.attempt.attempt_id,serviceScope(a.node,a.attempt.service_id));if(!alive(version))return;mergeAttempt(a.kind,updated)}resumePolling()}catch(e){if(alive(version))fail(e)}}
   async function exportSelection(){const selected=selectedNodes.value;if(!selected.length)return;const result=await api.exportClash(selected);if(await saveFile(result.yaml_content,'speedtest-selected.yaml','application/x-yaml'))notify(`已导出 ${result.node_count} 个节点`)}
   function dispose(){disposed=true;bootTask=null;booted.value=false;nodesReady.value=false;loading.value=false;preparationGeneration++;preparingPlan.value=false;sortGeneration++;lifetime++;polling=0;running.value=false;retryingStart.value=false;for(const q of queue.value)if(q.state==='queued')q.state='not_executed';unsubscribe?.();unsubscribe=null;connected.value=false;clearTimeout(toastTimer)}
-  return {booted,nodesReady,settingsSection,activeBatchProgress,latencyReportFocus,reportSelection,autoPickReportId,openAutoPickReport,openLatencyReport,latestReportBatch,landingEvidence,entries,localPosition,entryPending,entryErrors,readEntries,ensureEntry,entryFor,resolveEntries,skipByApplicableRegions,nodeUnlockRegion,allowedUnlockServices,downloadFullOnly,sortSnapshots,sortLoading,sortError,sortAt,sortReadCount,refreshSort,summaryDownload,summaryService,page,project,airports,nodes,catalog,jobs,batches,setup,settings,token,selectedAirportIds,selectedKeys,multiSelect,search,region,excludeRegion,subscription,airportFilter,priorityAirportId,sort,hours,displayTarget,displayTargets,serviceIds,displayServiceIds,usageRefreshVersion,loading,authRequired,connected,error,toast,inspectNode,viewRequest,historyNode,plan,preparingPlan,monitorNodes,queueOpen,queue,running,cancelRequested,activeBatch,activeAttempt,pendingStart,retryingStart,retryPending,measurementRounds,loadMeasurementRounds,latency,downloads,services,readErrors,historyReadError,pendingReads,historyMoreCount,loadMoreHistory,sourceNodes,proxyNodes,notices,selectedNodes,filteredNodes,nodeAirportId,nodeAirportName,nodeSubscriptionName,busy,done,notify,fail,latest,latestForTarget,latestService,toggleNode,cancelSelection,toggleAll,setAirports,viewAirport,refreshNodes,refreshJobs,absorbUsageRefresh,boot,ensureHistory,openPlan,openReputationPlan,runPlan,cancelTests,syncActive,mergeLatency,mergeAttempt,absorbBatch,exportSelection,dispose,monitorGroups}
+  return {booted,nodesReady,settingsSection,activeBatchProgress,latencyReportFocus,reportSelection,autoPickReportId,openAutoPickReport,openQueue,openLatencyReport,latestReportBatch,landingEvidence,entries,localPosition,entryPending,entryErrors,readEntries,ensureEntry,entryFor,resolveEntries,skipByApplicableRegions,nodeUnlockRegion,allowedUnlockServices,downloadFullOnly,sortSnapshots,sortLoading,sortError,sortAt,sortReadCount,refreshSort,summaryDownload,summaryService,page,project,airports,nodes,catalog,jobs,batches,setup,settings,token,selectedAirportIds,selectedKeys,multiSelect,search,region,excludeRegion,subscription,airportFilter,priorityAirportId,sort,hours,displayTarget,displayTargets,serviceIds,displayServiceIds,usageRefreshVersion,loading,authRequired,connected,error,toast,inspectNode,viewRequest,historyNode,plan,preparingPlan,monitorNodes,queueOpen,queue,running,cancelRequested,activeBatch,activeAttempt,pendingStart,retryingStart,retryPending,measurementRounds,loadMeasurementRounds,latency,downloads,services,readErrors,historyReadError,pendingReads,historyMoreCount,loadMoreHistory,sourceNodes,proxyNodes,notices,selectedNodes,filteredNodes,nodeAirportId,nodeAirportName,nodeSubscriptionName,busy,done,notify,fail,latest,latestForTarget,latestService,toggleNode,cancelSelection,toggleAll,setAirports,viewAirport,refreshNodes,refreshJobs,absorbUsageRefresh,boot,ensureHistory,openPlan,openReputationPlan,runPlan,cancelTests,syncActive,mergeLatency,mergeAttempt,absorbBatch,exportSelection,dispose,monitorGroups}
 }
 export type Workspace=ReturnType<typeof createWorkspace>
 export const workspaceKey:InjectionKey<Workspace>=Symbol('workspace')
