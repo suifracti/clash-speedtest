@@ -39,6 +39,15 @@ beforeEach(()=>{
 afterEach(()=>{wrapper?.unmount();wrapper=undefined;vi.clearAllMocks()})
 
 describe('HomeView subscription account integration',()=>{
+  it('does not infer a perpetual plan from a known quota and a missing expiry',async()=>{
+    const workspace=createWorkspace(),single={...airport,subscriptions:[{...airport.subscriptions![0]!,usage:{upload:1024,download:0,total:4096}}]}
+    workspace.airports.value=[single]
+    wrapper=mount(SubscriptionOverview,{props:{airports:[single],notices:[],airportId:single.id},global:{provide:{[workspaceKey as symbol]:workspace}}});await flushPromises()
+    expect(wrapper.get('.subscription-expiry').text()).toContain('到期时间未知')
+    expect(wrapper.get('.subscription-expiry').text()).not.toContain('长期有效')
+    workspace.dispose()
+  })
+
   it('shows one row per subscription and refreshes only the row account',async()=>{
     const workspace=createWorkspace();workspace.airports.value=[airport,airportB];workspace.selectedAirportIds.value=['airport-a','airport-b'];workspace.airportFilter.value='airport-a'
     refreshMocks.startRefresh.mockResolvedValue({id:'one',state:'finished',created_at:'2026-10-20T00:00:00Z',items:[],success:0})

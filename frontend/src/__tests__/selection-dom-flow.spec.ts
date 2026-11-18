@@ -30,6 +30,33 @@ beforeEach(()=>{window.localStorage.clear();window.sessionStorage.clear();vi.cle
 afterEach(()=>{expect(vi.mocked(fetch).mock.calls.filter(([url,options])=>!((String(url)==='/api/clash/node-status'&&options?.method==='POST')||(String(url)==='/api/clash/usage'&&options?.method==='GET')))).toEqual([]);wrapper?.unmount();w?.dispose();wrapper=undefined;w=undefined;document.body.innerHTML='';vi.unstubAllGlobals()})
 
 describe('node selection through DOM controls',()=>{
+  it('browses rows with arrow keys without opening a sheet or changing the selected detection scope',async()=>{
+    vi.stubGlobal('matchMedia',vi.fn(()=>({matches:true,addEventListener:vi.fn(),removeEventListener:vi.fn()})))
+    const {w,wrapper}=attach([a,aTwo,b],['airport-a','airport-b']);w.selectedKeys.value=[key(b)];await flushPromises()
+    const first=wrapper.findAll('.hd-node-open')[0]!,second=wrapper.findAll('.hd-node-open')[1]!
+    ;(first.element as HTMLElement).focus();await first.trigger('keydown',{key:'ArrowDown'});await flushPromises()
+    expect(document.querySelector('dialog')).toBeNull()
+    expect(document.activeElement).toBe(second.element)
+    expect(w.selectedKeys.value).toEqual([key(b)])
+    expect(w.plan.value).toBeNull();expect(api.startLatency).not.toHaveBeenCalled();expect(api.startAttempt).not.toHaveBeenCalled()
+    await second.trigger('click');await flushPromises()
+    expect(document.querySelector('dialog')?.textContent).toContain(aTwo.display_name)
+  })
+
+  it('leaves selection inputs to their native keys and keeps row browsing within the current page',async()=>{
+    const {w,wrapper}=attach([a,aTwo,b],['airport-a','airport-b']);await flushPromises()
+    const check=wrapper.get('.hd-tr:not(.hd-th) input[type=checkbox]')
+    ;(check.element as HTMLElement).focus();await check.trigger('keydown',{key:'ArrowDown'});await flushPromises()
+    expect(wrapper.find('.hd-inspector').exists()).toBe(false)
+    expect(document.activeElement).toBe(check.element)
+    const first=wrapper.findAll('.hd-node-open')[0]!,last=wrapper.findAll('.hd-node-open').at(-1)!
+    ;(first.element as HTMLElement).focus();await first.trigger('keydown',{key:'End'});await flushPromises()
+    expect(document.activeElement).toBe(last.element)
+    await last.trigger('keydown',{key:'Home'});await flushPromises()
+    expect(document.activeElement).toBe(first.element)
+    expect(w.selectedKeys.value).toEqual([])
+  })
+
   it('opens the Clash active node after clearing the workbench scope and keeps unqueried exit compact',async()=>{
     const usage=vi.spyOn(api,'clashUsage').mockResolvedValue([{name:b.display_name,bytes:100,chains:['AI','Airport B']}])
     const {w,wrapper}=attach([a,aTwo,b],['airport-a']);w.search.value='missing';w.region.value='JP';w.airportFilter.value='airport-a';w.subscription.value='sub-a-one';w.project.value='combined'

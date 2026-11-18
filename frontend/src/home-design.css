@@ -184,7 +184,11 @@ body.cst-resizing{cursor:col-resize;user-select:none}
 .hd-ins-detail>header span{display:flex;gap:12px}
 
 /* 节点表 */
-.hd-table{background:var(--hd-panel);border:1px solid var(--cst-line-strong);border-radius:14px;box-shadow:var(--hd-shadow);overflow:auto}
+.hd-table{background:var(--hd-panel);border:1px solid var(--cst-line-strong);border-radius:14px;box-shadow:var(--hd-shadow);min-width:0}
+.hd-table-head{position:sticky;top:calc(var(--cst-nav-height,58px) + var(--hd-toolbar-size,0px) + 8px);z-index:20;overflow:hidden;background:var(--hd-panel-2);border-radius:inherit}
+.hd-row-scroll{overflow:auto;min-width:0;border-radius:inherit}
+.hd-table-head .hd-th{position:relative;top:auto;transform:translateX(calc(-1 * var(--hd-horizontal-offset,0px)))}
+.overview-mode .hd-table-head .hd-th>:first-child,.overview-mode .hd-table-head .hd-th>:nth-child(2){transform:translateX(var(--hd-horizontal-offset,0px))}
 .hd-tr{display:grid;grid-template-columns:var(--hd-cols);align-items:center;gap:0 10px;padding:0 14px;min-height:48px;border-top:1px solid var(--hd-line);cursor:pointer;transition:background .12s}
 .hd-th{position:sticky;top:0;min-height:38px;border-top:0;background:var(--hd-panel-2);color:var(--hd-muted);font-size:11.5px;font-weight:700;letter-spacing:.02em;cursor:default;z-index:2;border-bottom:1px solid var(--cst-line-strong)}
 .hd-th .hd-link{color:var(--hd-text);font-weight:700}
@@ -214,6 +218,7 @@ body.cst-resizing{cursor:col-resize;user-select:none}
   .hd-source-details{grid-template-columns:1fr}.hd-scope-line{gap:4px}.hd-source-toggle{margin-left:0}.hd-eyebrow{font-size:10px}.hd-title h1{font-size:26px}.hd-seg{max-width:100%;overflow:auto}.hd-seg button{white-space:nowrap;padding:8px 11px}.hd-head-actions{flex-wrap:wrap}
   .hd{padding:14px 12px;margin:0}
   .hd-toolbar{margin:0 -12px;padding:8px 12px;position:static}
+  .hd-table-head{top:var(--cst-nav-height,58px)}
   .hd-toolbar-actions{width:100%;justify-content:flex-end}.hd-run{margin-left:0;flex:1;width:auto;justify-content:center}
 
 
@@ -245,12 +250,34 @@ body.cst-resizing{cursor:col-resize;user-select:none}
 
 .hd-ins-others time{font-size:10px;color:var(--hd-muted);font-variant-numeric:tabular-nums}
 
-/* 综合线路记录：按节点成组读响应、下载与服务；原始站点列留在延迟页。 */
-.overview-mode .hd-tr:not(.hd-th){min-height:88px;padding-top:12px;padding-bottom:12px}
-.overview-mode .hd-tr{column-gap:14px}.overview-mode .hd-th{min-height:40px}.overview-mode .hd-th small{font-size:11px;font-weight:400;color:var(--hd-muted);margin-left:7px}
+/* Station columns share one scale and retain their identity while reading rows. */
+.hd-view-options{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.hd-view-options:empty{display:none}
+.hd-reading-hint{margin:0;font-size:11px;color:var(--hd-muted)}.hd-view-options>.site-display-picker{margin-left:auto}
+.overview-mode .hd-table{border-radius:0;border-left:0;border-right:0;border-top:2px solid var(--hd-text);box-shadow:none}
+.overview-mode .hd-tr:not(.hd-th){min-height:74px;padding-top:9px;padding-bottom:9px}
+.overview-mode .hd-tr{column-gap:10px;min-width:var(--hd-overview-width);background:var(--hd-panel)}.overview-mode .hd-th{min-height:40px;background:var(--hd-panel-2)}
+.overview-mode .hd-tr.focus{background:var(--hd-focus-bg)}.overview-mode .hd-tr:not(.hd-th):hover{background:var(--hd-panel-2)}
+.overview-mode .hd-tr>:first-child,.overview-mode .hd-tr>:nth-child(2){position:sticky;left:14px;z-index:1;background:inherit;align-self:stretch;display:flex;align-items:center}
+.overview-mode .hd-tr>:nth-child(2){left:52px}.overview-mode .hd-th>:first-child,.overview-mode .hd-th>:nth-child(2){z-index:3}
+.hd-station-head{padding-left:10px;border-left:1px solid var(--hd-line);align-self:stretch;display:flex;align-items:center;font-size:11px;font-weight:500}
 .hd-route-verdict{font-size:10px;color:var(--hd-muted);margin-top:3px}.hd-route-verdict.bad{color:var(--hd-bad)}.hd-route-verdict.warn{color:var(--hd-warn)}
 .hd-overview-services{display:grid;gap:4px;min-width:0}.hd-overview-services>span{display:flex;gap:12px;align-items:center;min-width:0}.hd-overview-services small{font-size:10px;color:var(--hd-muted);width:38px;flex:none}.hd-overview-services b{font-size:11px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.hd-overview-services .good b{color:var(--hd-text)}.hd-overview-services .empty b{color:var(--hd-muted)}.hd-overview-services .bad b{color:var(--hd-bad)}.hd-overview-services .warn b{color:var(--hd-warn)}
-.overview-mode .hd-flag{width:34px;height:34px;border:0;background:var(--hd-panel-2);border-radius:50%;font-size:11px;font-weight:500}.overview-mode .hd-node{gap:12px}.overview-mode .hd-node strong{font-size:13px;font-weight:600}
+.overview-mode .hd-flag{width:26px;height:auto;border:0;background:transparent;border-radius:0;font-size:11px;font-weight:500}.overview-mode .hd-node{gap:9px}.overview-mode .hd-node strong{font-size:13px;font-weight:600}
 @media(max-width:760px){.hd{padding:12px}.hd-title h1{font-size:18px}.hd-title{gap:7px}.hd-scope-label{display:none}.hd-scope-line{flex-wrap:nowrap;overflow:auto;padding:2px 0 6px}.hd-scope-chip{white-space:nowrap}.hd-source-toggle,.hd-scope-line>.hd-link{white-space:nowrap;flex:none}}
 
 .hd-detail-sheet .hd-ins-collapse{display:none}
+
+@media(min-width:900px){
+ .hd .subscription-overview.all-airports{grid-template-columns:minmax(0,1fr) 150px;column-gap:16px;align-items:start}
+ .hd .subscription-overview.all-airports>.subscription-all-main{display:contents}
+ .hd .subscription-overview.all-airports .subscription-airport-list{grid-column:1;grid-row:1 / span 2}
+ .hd .subscription-overview.all-airports .all-daily{grid-column:2;grid-row:1}
+ .hd .subscription-overview.all-airports>.subscription-actions{grid-column:2;grid-row:2;justify-content:center;margin:0;padding:0;border:0}
+}
+@media(max-width:899px){
+ .hd .subscription-overview.all-airports{grid-template-columns:minmax(0,1fr) auto;align-items:center}
+ .hd .subscription-overview.all-airports>.subscription-all-main{display:contents}
+ .hd .subscription-overview.all-airports .subscription-airport-list{grid-column:1/-1}
+ .hd .subscription-overview.all-airports .all-daily{grid-column:1;width:auto}
+ .hd .subscription-overview.all-airports>.subscription-actions{grid-column:2;grid-row:2;margin:0;padding:0;border:0}
+}
