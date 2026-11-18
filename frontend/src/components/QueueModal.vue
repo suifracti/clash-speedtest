@@ -136,6 +136,11 @@ function shortError(raw:string){
  if(/cancel/i.test(raw))return '已取消'
  return raw&&/[a-z]{3}/i.test(raw)?'连接失败':raw
 }
+function queueErrorLabel(q:QueueItem){
+ const raw=errorText(q)
+ if(q.project==='service'&&!['timed_out','transport_error','connection_failed'].includes(q.attempt?.result?.outcome||''))return raw
+ return q.project==='download'?downloadNoDataReason(q.attempt)||shortError(raw):shortError(raw)
+}
 const queueView=ref<'focus'|'all'>('focus'),queuePage=ref(1),pageSize=50
 const attentionQueue=computed(()=>w.queue.value.filter(q=>!['queued','completed'].includes(q.state)||unknownStart(q)||saveFailed(q)||persistenceState(q)==='saving'||!!q.error||q.state==='completed'&&resultStatus(q)?.tone!=='good'))
 const filteredQueue=computed(()=>queueView.value==='all'?w.queue.value:attentionQueue.value)
@@ -174,7 +179,7 @@ async function retry(q:QueueItem){retrying.value=q.id;try{if(q.batchId&&q.itemId
     <div v-if="w.queue.value.length" class="queue-list-tools"><div class="queue-views" role="group" aria-label="检测项目范围"><button :aria-pressed="queueView==='focus'" @click="queueView='focus'">进行中与需留意 <span>{{attentionQueue.length}}</span></button><button :aria-pressed="queueView==='all'" @click="queueView='all'">全部项目 <span>{{w.queue.value.length}}</span></button></div><small>检测结果与保存状态分别列出</small></div>
     <div v-if="visibleQueue.length" class="cst-queue-cols" aria-hidden="true"><span>节点与项目</span><span>执行</span><span>检测结果</span><span>保存</span></div>
     <div v-for="q in visibleQueue" :key="q.id" class="queue-row cst-queue-row">
-      <div class="cst-queue-node"><strong>{{nodeDisplayName(q.node)}}</strong><small>{{q.node.profile_name}} · {{projectNames[q.project]}}<template v-if="q.serviceId"> · {{w.catalog.value.find(s=>s.service_id===q.serviceId)?.name||q.serviceId}}</template></small><p v-if="errorText(q)" class="bad small" :title="errorText(q)">{{q.project==='download'?downloadNoDataReason(q.attempt)||shortError(errorText(q)):shortError(errorText(q))}}</p><p v-if="servicePhaseNote(q)" class="muted small">{{servicePhaseNote(q)}}</p><details v-if="antigravityDetails(q).length" class="small muted"><summary>执行详情</summary><p v-for="detail in antigravityDetails(q)" :key="detail">{{detail}}</p></details></div>
+      <div class="cst-queue-node"><strong>{{nodeDisplayName(q.node)}}</strong><small>{{q.node.profile_name}} · {{projectNames[q.project]}}<template v-if="q.serviceId"> · {{w.catalog.value.find(s=>s.service_id===q.serviceId)?.name||q.serviceId}}</template></small><p v-if="errorText(q)" class="bad small" :title="errorText(q)">{{queueErrorLabel(q)}}</p><p v-if="servicePhaseNote(q)" class="muted small">{{servicePhaseNote(q)}}</p><details v-if="antigravityDetails(q).length" class="small muted"><summary>执行详情</summary><p v-for="detail in antigravityDetails(q)" :key="detail">{{detail}}</p></details></div>
       <span class="cst-queue-exec" :class="{warn:unknownStart(q)}"><i class="cst-queue-dot" :class="unknownStart(q)?'warn':['queued'].includes(q.state)?'empty':['running','cancelling'].includes(q.state)?'running':'done'"/>{{unknownStart(q)?'启动未知':stateLabel(q.state)}}</span>
       <div class="queue-state"><span v-if="resultStatus(q)&&!unknownStart(q)" class="badge" :class="resultStatus(q)!.tone">{{resultStatus(q)!.label}}</span><span v-else-if="!unknownStart(q)&&!['queued','running','cancelling'].includes(q.state)" class="badge" :class="q.state==='completed'?'good':q.state==='failed'?'bad':''">{{stateLabel(q.state)}}</span><span v-else class="cst-queue-pending">{{unknownStart(q)?'待确认':'等待结果'}}</span></div>
       <div class="cst-queue-save" :class="saveState(q).tone"><span>{{saveState(q).label}}</span><small v-if="saveFailed(q)&&persistenceError(q)" class="queue-save-error">{{persistenceError(q)}}</small><button v-if="saveFailed(q)&&retryable(q)" class="text-button" :disabled="retrying===q.id" @click="retry(q)">重试保存</button><small v-else-if="saveFailed(q)&&!retryable(q)" class="muted">原结果无法恢复</small></div>

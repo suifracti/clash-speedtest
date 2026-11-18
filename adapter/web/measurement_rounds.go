@@ -1,10 +1,13 @@
 package web
 
 import (
+	"database/sql"
 	"encoding/json"
-	"github.com/faceair/clash-speedtest/core/history"
+	"errors"
 	"net/http"
 	"strconv"
+
+	"github.com/faceair/clash-speedtest/core/history"
 )
 
 func (s *Server) handleMeasurementRounds(w http.ResponseWriter, r *http.Request) {
@@ -16,6 +19,35 @@ func (s *Server) handleMeasurementRounds(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, 200, result)
+}
+func (s *Server) handleListManualMeasurementRounds(w http.ResponseWriter, r *http.Request) {
+	page, err := s.app.ListManualMeasurementRounds(r.Context(), r.URL.Query().Get("before"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
+}
+func (s *Server) handleReadManualMeasurementRound(w http.ResponseWriter, r *http.Request) {
+	offset := 0
+	if raw := r.URL.Query().Get("offset"); raw != "" {
+		var err error
+		offset, err = strconv.Atoi(raw)
+		if err != nil || offset < 0 {
+			writeError(w, http.StatusBadRequest, "invalid item offset")
+			return
+		}
+	}
+	detail, err := s.app.ReadManualMeasurementRound(r.Context(), r.PathValue("id"), offset)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "measurement round not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
 }
 func (s *Server) handleCreateMeasurementRound(w http.ResponseWriter, r *http.Request) {
 	var plan history.MeasurementRound

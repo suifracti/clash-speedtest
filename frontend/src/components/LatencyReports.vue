@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import {computed,onBeforeUnmount,onMounted,ref} from 'vue'
 import {useWorkspace} from '../workspace'
-import {date} from '../domain'
+import {date,type ManualRoundSummary} from '../domain'
+import {manualRoundCount,manualRoundLabel,manualRoundState} from '../measurementRounds'
 import {api} from '../api'
 import {readLatencyReports,type SavedLatencyReport} from '../latencyReportData'
 import {buildLatencyReport,latencyReportText} from '../latencyReport'
 import type {AutoPickReportMeta} from '../autoPick'
+const props=withDefaults(defineProps<{manualRounds?:ManualRoundSummary[];manualLoading?:boolean;manualError?:boolean}>(),{manualRounds:()=>[]})
+const emit=defineEmits<{'open-round':[round:ManualRoundSummary]}>()
 const w=useWorkspace(),rows=ref<SavedLatencyReport[]>([]),autoPickRows=ref<AutoPickReportMeta[]>([])
 type Source='latency'|'auto'
 const reading=ref<Record<Source,boolean>>({latency:false,auto:false}),errors=ref<Record<Source,string>>({latency:'',auto:''})
@@ -21,11 +24,12 @@ async function load(source:Source){
 }
 onMounted(()=>{void load('latency');void load('auto')})
 onBeforeUnmount(()=>{mounted=false})
-const loading=computed(()=>reading.value.latency||reading.value.auto)
-const hasError=computed(()=>!!errors.value.latency||!!errors.value.auto)
+const loading=computed(()=>reading.value.latency||reading.value.auto||props.manualLoading)
+const hasError=computed(()=>!!errors.value.latency||!!errors.value.auto||props.manualError)
 const reports=computed(()=>[
- ...rows.value.map(row=>({id:(row.monitor?'monitor:':'manual:')+row.batch.batch_id,at:row.batch.requested_at,kind:row.monitor?'监测报告':'手动检测',summary:latencyReportText(row.batch),issue:buildLatencyReport(row.batch).issues.length>0,row,auto:null as AutoPickReportMeta|null})),
- ...autoPickRows.value.map(auto=>({id:'auto:'+auto.report_id,at:auto.created_at,kind:'自动精选',summary:auto.summary,issue:auto.kept_previous||auto.status!=='selected',row:null as SavedLatencyReport|null,auto}))
+ ...rows.value.map(row=>({id:(row.monitor?'monitor:':'manual:')+row.batch.batch_id,at:row.batch.requested_at,kind:row.monitor?'监测报告':'手动检测',summary:latencyReportText(row.batch),issue:buildLatencyReport(row.batch).issues.length>0,row,auto:null,round:null})),
+ ...autoPickRows.value.map(auto=>({id:'auto:'+auto.report_id,at:auto.created_at,kind:'自动精选',summary:auto.summary,issue:auto.kept_previous||auto.status!=='selected',row:null,auto,round:null})),
+ ...props.manualRounds.map(round=>({id:'round:'+round.round_id,at:round.started_at,kind:manualRoundLabel(round),summary:`${round.node_count} 个节点 · ${manualRoundCount(round)} 项 · ${manualRoundState(round.state)}`,issue:round.state==='interrupted',row:null,auto:null,round}))
 ].sort((a,b)=>(Date.parse(b.at)||0)-(Date.parse(a.at)||0)))
 const days=computed(()=>{
  const groups:{day:string;rows:typeof reports.value}[]=[]
@@ -33,6 +37,11 @@ const days=computed(()=>{
  return groups
 })
 function open(r:SavedLatencyReport){w.openLatencyReport(r.batch,r.monitor,rows.value.filter(v=>v.monitor===r.monitor).map(v=>v.batch))}
+function openReport(report:(typeof reports.value)[number]){
+ if(report.row)open(report.row)
+ else if(report.auto)w.openAutoPickReport(report.auto.report_id)
+ else if(report.round)emit('open-round',report.round)
+}
 function time(at:string){const d=new Date(at);return Number.isFinite(d.getTime())?d.toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hour12:false}):'—'}
 </script>
 <template>
@@ -42,7 +51,7 @@ function time(at:string){const d=new Date(at);return Number.isFinite(d.getTime()
   <section v-for="group in days" :key="group.day" class="report-day">
    <header><h3>{{group.day}}</h3><small>{{group.rows.length}} 份</small></header>
    <div class="report-day-rows">
-    <button v-for="r in group.rows" :key="r.id" class="report-row" @click="r.row?open(r.row):w.openAutoPickReport(r.auto!.report_id)">
+    <button v-for="r in group.rows" :key="r.id" class="report-row" @click="openReport(r)">
      <time :datetime="r.at" :title="date(r.at)">{{time(r.at)}}</time>
      <span class="report-summary"><small>{{r.kind}}</small><strong>{{r.summary}}</strong></span>
      <span v-if="r.issue" class="report-attention">有待留意</span><span class="report-open" aria-hidden="true">查看 ›</span>

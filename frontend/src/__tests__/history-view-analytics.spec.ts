@@ -5,14 +5,14 @@ import {createWorkspace,workspaceKey,type Workspace} from '../workspace'
 import {api} from '../api'
 import type {MonitorSample} from '../domain'
 vi.hoisted(()=>{Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:()=>null,setItem:()=>{}}})})
-vi.mock('../api',async original=>{const a=await original<typeof import('../api')>();return {...a,api:{...a.api,batches:vi.fn(),monitorFacets:vi.fn(),monitorSamples:vi.fn()}}})
+vi.mock('../api',async original=>{const a=await original<typeof import('../api')>();return {...a,api:{...a.api,batches:vi.fn(),manualRounds:vi.fn(),monitorFacets:vi.fn(),monitorSamples:vi.fn()}}})
 let w:Workspace,wrapper:VueWrapper
 const sample=(id:string,hours=1):MonitorSample=>({sample_id:id,profile_id:'deleted-profile',node_key:'old-key',node_identity_key:'old-identity',config_revision_key:'old-revision',display_name_snapshot:'Deleted Node',target:'site',probe_type:'rtt',success:true,latency:20e6,ttfb:0,sampling_tier:'regular',run_id:'one-round',timestamp:new Date(Date.now()-hours*3600000).toISOString()})
 const facets={nodes:[{profile_id:'deleted-profile',node_identity_key:'old-identity',node_key:'old-key',display_name:'Deleted Node'}],profiles:['deleted-profile'],targets:['site'],truncated:true}
 function deferred<T>(){let resolve!:(v:T)=>void;const promise=new Promise<T>(r=>resolve=r);return {promise,resolve}}
 async function monitor(){wrapper=mount(HistoryView,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises();await wrapper.findAll('.project-tabs button').find(b=>b.text()==='持续监测')!.trigger('click');await flushPromises()}
 function button(label:string){return wrapper.findAll('button').find(b=>b.text()===label)!}
-beforeEach(()=>{w=createWorkspace();vi.mocked(api.batches).mockResolvedValue([]);vi.mocked(api.monitorFacets).mockResolvedValue(facets);vi.mocked(api.monitorSamples).mockResolvedValue({items:[sample('new'),sample('older',3)],has_more:true,next_cursor:'cursor-1'});HTMLDialogElement.prototype.showModal=vi.fn();HTMLDialogElement.prototype.close=vi.fn()})
+beforeEach(()=>{w=createWorkspace();vi.mocked(api.batches).mockResolvedValue([]);vi.mocked(api.manualRounds).mockResolvedValue({rounds:[]});vi.mocked(api.monitorFacets).mockResolvedValue(facets);vi.mocked(api.monitorSamples).mockResolvedValue({items:[sample('new'),sample('older',3)],has_more:true,next_cursor:'cursor-1'});HTMLDialogElement.prototype.showModal=vi.fn();HTMLDialogElement.prototype.close=vi.fn()})
 afterEach(()=>{wrapper?.unmount();w.dispose();document.body.innerHTML='';vi.resetAllMocks()})
 it('shows loaded statistics, true time spacing, focus/hover freeze and raw JSON without inventing a current node',async()=>{
  await monitor()

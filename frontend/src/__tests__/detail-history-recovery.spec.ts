@@ -8,13 +8,13 @@ import {api,request} from '../api'
 import type {Attempt,LatencyBatch,LatencyTest,NodeOption,MonitorSample,MonitorJob} from '../domain'
 
 vi.hoisted(()=>{Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:()=>null,setItem:()=>{}}})})
-vi.mock('../api',async importOriginal=>{const actual=await importOriginal<typeof import('../api')>();return {...actual,request:vi.fn(),api:{...actual.api,measurementRounds:vi.fn(async()=>[]),createRound:vi.fn(async()=>undefined),finishRound:vi.fn(async()=>undefined),revisions:vi.fn(),attemptHistory:vi.fn(),attemptAction:vi.fn(),batches:vi.fn(),batch:vi.fn(),retryBatch:vi.fn(),latencyHistory:vi.fn(),monitorSamples:vi.fn(),monitorFacets:vi.fn(),jobs:vi.fn(),budget:vi.fn(),storage:vi.fn(),autoPick:vi.fn(async()=>({config:{enabled:false,schedule:'6h',daily_hour:6,airport_ids:[],include_ai:false,include_streaming:false,min_response_rate:90,max_latency_ms:800,sample_count:6},running:false,estimate:{nodes:0,projects:1,requests:0,warn:false},subscription:{url:'http://127.0.0.1:17891/sub/test.yaml',path:'',exists:false,node_count:0}})),autoPickReports:vi.fn(async()=>[])}}})
+vi.mock('../api',async importOriginal=>{const actual=await importOriginal<typeof import('../api')>();return {...actual,request:vi.fn(),api:{...actual.api,measurementRounds:vi.fn(async()=>[]),manualRounds:vi.fn(),manualRound:vi.fn(),createRound:vi.fn(async()=>undefined),finishRound:vi.fn(async()=>undefined),revisions:vi.fn(),attemptHistory:vi.fn(),attemptAction:vi.fn(),batches:vi.fn(),batch:vi.fn(),retryBatch:vi.fn(),latencyHistory:vi.fn(),monitorSamples:vi.fn(),monitorFacets:vi.fn(),jobs:vi.fn(),budget:vi.fn(),storage:vi.fn(),autoPick:vi.fn(async()=>({config:{enabled:false,schedule:'6h',daily_hour:6,airport_ids:[],include_ai:false,include_streaming:false,min_response_rate:90,max_latency_ms:800,sample_count:6},running:false,estimate:{nodes:0,projects:1,requests:0,warn:false},subscription:{url:'http://127.0.0.1:17891/sub/test.yaml',path:'',exists:false,node_count:0}})),autoPickReports:vi.fn(async()=>[])}}})
 const autoPickStatus:any={config:{enabled:false,schedule:'6h',daily_hour:6,airport_ids:[],include_ai:false,include_streaming:false,min_response_rate:90,max_latency_ms:800,sample_count:6},running:false,estimate:{nodes:0,projects:1,requests:0,warn:false},subscription:{url:'http://127.0.0.1:17891/sub/test.yaml',path:'',exists:false,node_count:0}}
 const node:NodeOption={profile_id:'sub-a',node_key:'node-a',node_identity_key:'identity-a',config_revision_key:'revision-a',profile_name:'Airport A',display_name:'Node A',type:'ss',country_code:'SG',country_flag:''}
 const failed:Attempt={...node,attempt_id:'service-a',request_id:'request-a',service_id:'cloudflare_204',requested_at:'2026-10-02T12:00:00Z',execution_state:'completed',persistence_state:'failed',persistence_error:'save failed',rule:{name:'Cloudflare service',target_url:'https://cp.cloudflare.com/generate_204'},result:{outcome:'matched',bytes_read:0,http_status:204,finished_at:'2026-10-02T12:00:01Z'}}
 let wrapper:VueWrapper|undefined,w:Workspace
 beforeEach(()=>{
-  vi.resetAllMocks();vi.mocked(api.autoPick).mockResolvedValue(autoPickStatus);vi.mocked(api.measurementRounds).mockResolvedValue([]);vi.mocked(api.createRound).mockResolvedValue(undefined);vi.mocked(api.finishRound).mockResolvedValue(undefined);window.sessionStorage.clear()
+  vi.resetAllMocks();vi.mocked(api.autoPick).mockResolvedValue(autoPickStatus);vi.mocked(api.measurementRounds).mockResolvedValue([]);vi.mocked(api.manualRounds).mockResolvedValue({rounds:[]});vi.mocked(api.createRound).mockResolvedValue(undefined);vi.mocked(api.finishRound).mockResolvedValue(undefined);window.sessionStorage.clear()
   HTMLDialogElement.prototype.showModal=vi.fn();HTMLDialogElement.prototype.close=vi.fn()
   vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}})
   vi.mocked(api.revisions).mockResolvedValue([])
@@ -46,6 +46,32 @@ it('does not label an unrecorded not-executed cause as a physical-egress failure
   await flushPromises()
   expect(document.body.textContent).toContain('原因未记录')
   expect(document.body.textContent).not.toContain('物理出口预检失败')
+})
+
+it('opens previously saved unlock rounds from both directories even when the nodes are no longer current',async()=>{
+ const started_at='2026-11-18T06:54:00Z'
+ const round={round_id:'unlock-round',started_at,state:'finished',node_count:1,latency_count:0,download_count:0,service_count:2,service_ids:['chatgpt_unlock','hulu_jp_unlock']}
+ const ai:Attempt={...failed,attempt_id:'ai',request_id:'ai',service_id:'chatgpt_unlock',persistence_state:'saved',persistence_error:undefined,rule:{name:'ChatGPT',target_url:'https://fixture.invalid'},result:{outcome:'unlocked',bytes_read:1,finished_at:started_at}}
+ const hulu:Attempt={...ai,attempt_id:'hulu',request_id:'hulu',service_id:'hulu_jp_unlock',rule:{name:'Hulu Japan',target_url:'https://fixture.invalid'},result:{outcome:'http_rejected',http_status:403,bytes_read:1,finished_at:started_at,error_message:'Hulu HTTP 403'}}
+ vi.mocked(api.batches).mockResolvedValue([])
+ vi.mocked(api.manualRounds).mockResolvedValue({rounds:[round]})
+ vi.mocked(api.manualRound).mockResolvedValue({round_id:round.round_id,started_at,trigger_type:'manual',state:'finished',items:[ai,hulu].map(service=>({...node,request_id:service.request_id,project:'service',service_id:service.service_id,execution_state:service.execution_state,persistence_state:service.persistence_state,service}))})
+ wrapper=mount(HistoryView,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
+ expect(api.manualRound).not.toHaveBeenCalled()
+ const batch=wrapper.findAll('.history-batch-row').find(row=>row.text().includes('解锁检测'))!
+ await batch.trigger('click');await flushPromises()
+ let table=document.querySelector('dialog table')!
+ expect(table.querySelectorAll('tbody tr')).toHaveLength(2)
+ expect(table.textContent).toContain('历史账户 sub-a')
+ expect(table.textContent).toContain('Hulu HTTP 403')
+ expect(table.textContent).not.toContain('播放未验证')
+ ;(document.querySelector('dialog button[aria-label="关闭"]') as HTMLButtonElement).click();await flushPromises()
+ bodyButton('报告').click();await flushPromises()
+ const report=wrapper.findAll('.report-row').find(row=>row.text().includes('解锁检测'))!
+ await report.trigger('click');await flushPromises()
+ table=document.querySelector('dialog table')!
+ expect(table.querySelectorAll('tbody tr')).toHaveLength(2)
+ expect(api.manualRound).toHaveBeenLastCalledWith(round.round_id,0)
 })
 
 it.each(['saved','rejected'])('ignores a late %s save response after changing the displayed project',async outcome=>{

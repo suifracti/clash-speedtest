@@ -162,6 +162,7 @@ async function handle(url:URL,body:any,method:string):Promise<unknown>{
   }
   return startupScenario?[]:jobs
  }
+ if(p==='/api/measurement-rounds/manual')return {rounds:[]}
  if(['/api/measurement-rounds','/api/subscription-refresh-jobs','/api/history','/api/auto-pick/reports','/api/monitor/runs','/api/clash/verge-subscriptions'].includes(p))return []
  if(p==='/api/monitor/samples'||p==='/api/monitor/samples/cursor')return page(matching(monitorSamples,q),'items')
  if(p==='/api/monitor/facets')return {nodes:nodes.slice(0,8),profiles:airports.slice(0,2).map(a=>a.subscriptions![0].id),targets:[latencyTargets[0].urls[0]]}

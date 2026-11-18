@@ -102,6 +102,25 @@ it('separates Antigravity processing from model confirmation and labels shared t
 })
 
 function downloadPlan(){const nodes=[node,{...node,node_key:'node-b',node_identity_key:'identity-b',display_name:'Node B'},{...node,node_key:'node-c',node_identity_key:'identity-c',display_name:'Node C'}];w.nodes.value=nodes;w.project.value='download';w.openPlan(nodes);return nodes}
+
+it('keeps service evidence distinct from transport errors in saved queue rows',()=>{
+ const at='2026-11-18T06:55:00Z'
+ const cases=[
+  ['dmm_unlock','completed','region_blocked','DMM TV 限制地区','DMM TV 限制地区'],
+  ['hulu_jp_unlock','completed','http_rejected','Hulu HTTP 403','Hulu HTTP 403'],
+  ['antigravity','not_executed','credentials_required','Antigravity 凭据未配置','Antigravity 凭据未配置'],
+  ['chatgpt_unlock','completed','transport_error','connection reset by peer','连接被重置'],
+ ]
+ w.queue.value=cases.map(([serviceId,state,outcome,reason])=>{
+  const attempt:Attempt={...node,attempt_id:serviceId,request_id:serviceId,service_id:serviceId,requested_at:at,execution_state:state,persistence_state:'saved',rule:{target_url:'https://fixture.invalid'},result:{outcome,bytes_read:0,finished_at:at,error_message:reason}}
+  return {id:serviceId,node,project:'service',serviceId,state,attempt}
+ })
+ attach(QueueModal)
+ const rows=[...document.querySelectorAll('.queue-row')]
+ expect(rows.map(row=>row.querySelector('p.bad')?.textContent)).toEqual(cases.map(row=>row[4]))
+ expect(rows.every(row=>row.textContent?.includes('已保存'))).toBe(true)
+})
+
 function savedDownload(body:any):Attempt{return {...body,attempt_id:body.request_id,requested_at:'2026-10-12T01:00:00Z',execution_state:'completed',persistence_state:'saved',result:{outcome:'completed'}}}
 it('continues after one explicitly rejected admission without counting it as a measurement failure',async()=>{
  downloadPlan();vi.mocked(api.startAttempt).mockImplementation(async(_kind,body:any)=>{if(body.node_key==='node-b')throw Object.assign(new Error('configuration no longer available'),{status:400,admission:'not_accepted'});return savedDownload(body)})

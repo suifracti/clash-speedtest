@@ -1,8 +1,22 @@
-import {bytes,date,downloadTarget,downloadSpeed,downloadTone,downloadOutcome,key,median,sampleFor,outcomeLabel,outcomeTone,stateLabel,type Attempt,type MeasurementRound,type NodeOption,type Project} from './domain'
-import {downloadGroup,servicePassed,serviceExecuted,serviceAvailability,serviceAvailabilitySummary} from './sharedResults'
+import {bytes,date,downloadTarget,downloadSpeed,downloadTone,downloadOutcome,key,median,sampleFor,outcomeLabel,outcomeTone,stateLabel,type Attempt,type ManualRoundSummary,type MeasurementRound,type NodeOption,type Project} from './domain'
+import {downloadGroup,servicePassed,serviceExecuted,serviceAvailability,serviceAvailabilitySummary,serviceIsProfile} from './sharedResults'
 import {groupSamples,latencySampleState,type TrendPoint,type SamplePoint,type HealthTone} from './presentation'
+import {unlockGroup} from './unlock'
 export type Trigger='manual'|'scheduled'|'diagnostic'|'auto_pick'|'unknown'
 export const triggerLabel=(trigger?:string)=>({manual:'手动',scheduled:'定时',diagnostic:'有限诊断',auto_pick:'自动精选',unknown:'来源未知'}[trigger||'unknown']||'来源未知')
+export function manualRoundLabel(round:ManualRoundSummary){
+ const ids=round.service_ids||[],profiles=ids.filter(id=>serviceIsProfile(undefined,id)).length
+ const labels=[]
+ if(round.latency_count)labels.push('延迟')
+ if(round.download_count)labels.push('下载')
+ if(profiles)labels.push('出口与信誉')
+ if(round.service_count&&(!ids.length||profiles<ids.length))labels.push(ids.some(id=>unlockGroup(id)!=='legacy')?'解锁':'服务')
+ if(labels.length>1)return `组合检测 · ${labels.join('、')}`
+ if(labels[0]==='下载')return '下载测速'
+ return labels[0]==='出口与信誉'?'出口与信誉':`${labels[0]||'手动'}检测`
+}
+export const manualRoundCount=(round:ManualRoundSummary)=>round.latency_count+round.download_count+round.service_count
+export const manualRoundState=(state:string)=>state==='finished'?'已结束':stateLabel(state)
 export function downloadCondition(a:Attempt){return JSON.stringify([downloadTarget(a),a.rule.method||'GET',a.rule.rule_version??'unknown',a.rule.maximum_bytes??'unknown',a.rule.maximum_duration_ns??'unknown',a.rule.sample_every_bytes??'unknown',a.rule.sample_every_ns??'unknown',a.rule.network_path_method??'unverified',a.rule.physical_interface??'unknown',a.rule.dns_mode??'unknown',a.result?.network_path?.method??'unknown',a.result?.network_path?.interface??'unknown',a.result?.network_path?.dns_mode??'unknown',a.result?.network_path?.dns_bind_verified??'unknown',a.result?.network_path?.socket_bind_verified??'unknown',a.result?.network_path?.address_family??'unknown',a.result?.network_path?.address_source??'unknown',a.node_type??'unknown'])}
 export function downloadConditionLabel(a:Attempt){
  const p=a.result?.network_path,method=p?.method||a.rule.network_path_method,physical=['physical_socket_v1','physical_socket_auto_family_v1'].includes(method||'')
@@ -19,7 +33,13 @@ export function serviceConclusion(a:Attempt){
  if(r.outcome==='reachable')return 'HTTP 可达（业务／解锁未验证）'
  if(['matched','unlocked'].includes(r.outcome)&&!servicePassed(a))return '未确认（部分采样未确认或未完成）'
  if(r.outcome==='matched')return r.details?.sample_total?`探针规则通过（${r.details.sample_success}/${r.details.sample_total} 一致）`:'探针规则通过（仅此端点）'
- if(r.outcome==='unlocked')return r.details?.sample_total?`解锁规则通过（${r.details.sample_success}/${r.details.sample_total} 一致，播放未验证）`:'解锁规则通过（播放未验证）'
+ if(r.outcome==='unlocked'){
+  const group=unlockGroup(a.service_id||a.rule.service_id||'')
+  const notes=[]
+  if(r.details?.sample_total)notes.push(`${r.details.sample_success}/${r.details.sample_total} 一致`)
+  if(a.rule.result_kind==='streaming_unlock'||group==='streaming'||group==='japan')notes.push('播放未验证')
+  return notes.length?`解锁规则通过（${notes.join('，')}）`:'解锁规则通过'
+ }
  if(r.outcome==='profiled')return '已获取端点画像'
  if(serviceAvailability(a)===0)return '判据未通过（'+outcomeLabel(r.outcome)+'）'
  return '未确认（'+outcomeLabel(r.outcome)+'）'

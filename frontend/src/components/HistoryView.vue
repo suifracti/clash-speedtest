@@ -5,14 +5,31 @@ import UiSelect from './UiSelect.vue'
 import {computed,onBeforeUnmount,ref,watch} from 'vue'
 import {api,request,saveFile} from '../api'
 import {useWorkspace} from '../workspace'
-import {date,stateLabel,type LatencyBatch,type MonitorSample,type NodeOption} from '../domain'
+import {date,stateLabel,type LatencyBatch,type ManualRoundSummary,type MonitorSample,type NodeOption} from '../domain'
+import {manualRoundCount,manualRoundLabel,manualRoundState} from '../measurementRounds'
 import LatencyReports from './LatencyReports.vue'
+import MeasurementRoundModal from './MeasurementRoundModal.vue'
 import HistoryAnalyticsPanel from './HistoryAnalyticsPanel.vue'
 import {compareLatencyItem,type LatencyDelta} from '../historyCompare'
 import Icon from './Icon.vue'
 import Modal from './Modal.vue'
 const w=useWorkspace(),tab=ref('batch'),batch=ref<LatencyBatch|null>(null),loading=ref(false),error=ref(''),nodeId=ref(''),profile=ref(''),target=ref(''),cursor=ref(''),hasMore=ref(false),samples=ref<MonitorSample[]>([]),facets=ref<{nodes:{node_key:string;node_identity_key:string;profile_id:string;display_name:string}[];profiles:string[];targets:string[]}>({nodes:[],profiles:[],targets:[]}),legacy=ref<Record<string,any>[]>([]),legacyDetail=ref<Record<string,any>|null>(null)
 const reportVersion=ref(0)
+const manualRounds=ref<ManualRoundSummary[]>([]),manualBefore=ref(''),manualError=ref(''),readingManual=ref(false),manualDetail=ref<ManualRoundSummary>()
+let manualGeneration=0
+async function loadManualRounds(append=false){
+ const before=append?manualBefore.value:''
+ if(append&&(!before||readingManual.value))return
+ const token=++manualGeneration
+ readingManual.value=true;manualError.value=''
+ try{
+  const page=await api.manualRounds(before)
+  if(token!==manualGeneration)return
+  manualRounds.value=append?[...new Map([...manualRounds.value,...page.rounds].map(r=>[r.round_id,r])).values()]:page.rounds
+  manualBefore.value=page.next_before||''
+ }catch(e){if(token===manualGeneration)manualError.value=e instanceof Error?e.message:String(e)}
+ finally{if(token===manualGeneration)readingManual.value=false}
+}
 const monitorNode=ref(''),facetLoading=ref(false),facetsTruncated=ref(false),facetError=ref('')
 let facetGeneration=0
 async function readFacets(){
@@ -30,8 +47,8 @@ const batchTests=computed(()=>batch.value?.items?.flatMap(i=>i.result?[i.result]
 const batchContext=computed(()=>{const times=batchTests.value.flatMap(t=>t.samples.map(s=>Date.parse(s.timestamp))).filter(Number.isFinite);return {since:new Date(times.length?Math.min(...times):Date.parse(batch.value?.requested_at||until.value)).toISOString(),until:new Date(times.length?Math.max(...times):Date.parse(batch.value?.requested_at||until.value)).toISOString(),hasMore:false}})
 let generation=0;const until=ref(new Date().toISOString()),since=computed(()=>new Date(Date.parse(until.value)-w.hours.value*3600000).toISOString())
 async function refresh(){loading.value=true;error.value='';const gen=++generation,mode=tab.value;try{
-  if(mode==='report')reportVersion.value++
-  if(mode==='batch'){const result=await api.batches();if(gen===generation)w.batches.value=(result||[]).map(b=>({...b,items:b.items||w.batches.value.find(old=>old.batch_id===b.batch_id)?.items}))}
+  if(mode==='report'){reportVersion.value++;await loadManualRounds()}
+  if(mode==='batch')await Promise.all([loadManualRounds(),api.batches().then(result=>{if(gen===generation)w.batches.value=(result||[]).map(b=>({...b,items:b.items||w.batches.value.find(old=>old.batch_id===b.batch_id)?.items}))})])
   if(mode==='monitor'){until.value=new Date().toISOString();await readFacets();if(gen!==generation)return;await readSamples(false)}
   if(mode==='legacy'){const result=await request<Record<string,any>[]>('/api/history','GET',undefined,'ListHistory');if(gen===generation)legacy.value=result||[]}
 }catch(e){if(gen===generation)error.value=e instanceof Error?e.message:String(e)}finally{if(gen===generation)loading.value=false}}
@@ -50,19 +67,21 @@ async function readSamples(append=false){
   cursor.value=result.next_cursor||''
  }catch(e){if(gen===generation)error.value=e instanceof Error?e.message:String(e)}finally{if(gen===generation)loading.value=false}
 }
-function cancelRead(){generation++;facetGeneration++;loading.value=false;facetLoading.value=false;error.value='读取已取消；仅保留已读样本，统计不完整'}
+function cancelRead(){generation++;facetGeneration++;manualGeneration++;loading.value=false;facetLoading.value=false;readingManual.value=false;error.value=tab.value==='monitor'?'读取已取消；仅保留已读样本，统计不完整':'读取已取消；仅保留已读记录'}
 let detailGeneration=0
-function closeDetails(){detailGeneration++;batch.value=null;legacyDetail.value=null;olderLoaded.value=[];compareReading.value=false}
+function closeDetails(){detailGeneration++;batch.value=null;manualDetail.value=undefined;legacyDetail.value=null;olderLoaded.value=[];compareReading.value=false}
+function openManualRound(round:ManualRoundSummary){closeDetails();manualDetail.value=round}
 async function openBatch(id:string){const token=++detailGeneration;try{const result=await api.batch(id);if(token===detailGeneration){batch.value=result;detailCache.set(result.batch_id,result);void loadPrevious(result,token)}}catch(e){if(token===detailGeneration)w.fail(e)}}
 // 按天分组的时间线（上海时间）。
 const dayKey=(v:string)=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(v))
 const timeOf=(v:string)=>new Date(v).toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit'})
 const dayGroups=computed(()=>{
- const today=dayKey(new Date().toISOString()),yesterday=dayKey(new Date(Date.now()-86400000).toISOString()),groups:{key:string;label:string;rows:LatencyBatch[]}[]=[]
- for(const b of [...w.batches.value].sort((x,y)=>Date.parse(y.requested_at)-Date.parse(x.requested_at))){
-  const k=dayKey(b.requested_at);let g=groups.find(x=>x.key===k)
+ const rows=[...w.batches.value.map(b=>({id:'latency:'+b.batch_id,at:b.requested_at,batch:b,round:null})),...manualRounds.value.map(r=>({id:'manual:'+r.round_id,at:r.started_at,batch:null,round:r}))]
+ const today=dayKey(new Date().toISOString()),yesterday=dayKey(new Date(Date.now()-86400000).toISOString()),groups:{key:string;label:string;rows:typeof rows}[]=[]
+ for(const row of rows.sort((x,y)=>Date.parse(y.at)-Date.parse(x.at))){
+  const k=dayKey(row.at);let g=groups.find(x=>x.key===k)
   if(!g)groups.push(g={key:k,label:k===today?'今天':k===yesterday?'昨天':k.slice(5).replace('-','/'),rows:[]})
-  g.rows.push(b)
+  g.rows.push(row)
  }
  return groups
 })
@@ -90,14 +109,32 @@ function accountLabel(profileId:string){const a=w.airports.value.find(a=>a.subsc
 function detailFromItem(item:NonNullable<LatencyBatch['items']>[number]):NodeOption{return {...item,display_name:item.display_name,profile_name:w.nodes.value.find(n=>n.profile_id===item.profile_id)?.profile_name||'历史订阅',type:item.result?.node_type||'',country_code:'',country_flag:''}}
 async function openLegacy(id:string){const token=++detailGeneration;try{const result=await request<Record<string,any>>(`/api/history/${encodeURIComponent(id)}`,'GET',undefined,'GetHistory',[id]);if(token===detailGeneration)legacyDetail.value=result}catch(e){if(token===detailGeneration)w.fail(e)}}
 function openNode(){const n=w.nodes.value.find(n=>n.profile_id+'|'+n.node_key===nodeId.value);if(n)w.inspectNode.value=n}
-watch(profile,()=>{monitorNode.value=''},{flush:'sync'});watch(tab,()=>{facetGeneration++;closeDetails();void refresh()},{immediate:true});watch([profile,target,monitorNode,()=>w.hours.value],(_next,previous)=>{if(tab.value==='monitor'){until.value=new Date().toISOString();if(w.hours.value!==previous[3])void refresh();else void readSamples(false)}})
-onBeforeUnmount(()=>{generation++;facetGeneration++;detailGeneration++})
+watch(profile,()=>{monitorNode.value=''},{flush:'sync'});watch(tab,()=>{facetGeneration++;manualGeneration++;readingManual.value=false;closeDetails();void refresh()},{immediate:true});watch([profile,target,monitorNode,()=>w.hours.value],(_next,previous)=>{if(tab.value==='monitor'){until.value=new Date().toISOString();if(w.hours.value!==previous[3])void refresh();else void readSamples(false)}})
+onBeforeUnmount(()=>{generation++;facetGeneration++;manualGeneration++;detailGeneration++})
 </script>
-<template><section class="page-view history-view"><div class="page-header history-top-bar"><div><h1>检测记录</h1><p>按检测轮次找记录，再查看节点与前次的差异。</p></div><div class="history-header-right"><button class="button ghost" :disabled="loading" @click="refresh"><Icon name="refresh"/>刷新</button></div></div><nav class="project-tabs history-sections" aria-label="记录类型"><button v-for="[id,label] in [['report','报告'],['batch','批量检测'],['node','节点记录'],['monitor','持续监测'],['legacy','旧版记录']]" :key="id" :aria-selected="tab===id" @click="tab=id">{{label}}</button></nav><p v-if="error" class="inline-error" role="alert">{{error}} <button class="text-button" :disabled="loading" @click="refresh">重新读取</button></p><LatencyReports v-if="tab==='report'" :key="reportVersion"/><div v-if="tab==='batch'" class="cst-history" :class="{open:!!batch}"><div class="history-batches history-record-list cst-timeline"><section v-for="g in dayGroups" :key="g.key" class="cst-day"><h3>{{g.label}}<small>{{g.rows.length}} 轮</small></h3><button v-for="b in g.rows" :key="b.batch_id" class="history-batch-row cst-tl-row" :aria-current="batch?.batch_id===b.batch_id?'true':undefined" @click="openBatch(b.batch_id)"><time>{{timeOf(b.requested_at)}}</time><span><strong>{{b.target_id==='all'?'多站延迟检测':'延迟检测'}} · {{b.item_count}} 个节点</strong><small>{{date(b.requested_at)}}<template v-if="b.sample_count"> · 计划每站 {{b.sample_count}} 次</template></small></span><span class="badge" :class="b.state==='completed'?'good':''">{{stateLabel(b.state)}}</span></button></section><div v-if="!loading&&!w.batches.value.length" class="empty-state">还没有批量检测记录。</div></div>
+<template><section class="page-view history-view"><div class="page-header history-top-bar"><div><h1>检测记录</h1><p>按检测轮次找记录，再查看节点与前次的差异。</p></div><div class="history-header-right"><button class="button ghost" :disabled="loading" @click="refresh"><Icon name="refresh"/>刷新</button></div></div><nav class="project-tabs history-sections" aria-label="记录类型"><button v-for="[id,label] in [['report','报告'],['batch','批量检测'],['node','节点记录'],['monitor','持续监测'],['legacy','旧版记录']]" :key="id" :aria-selected="tab===id" @click="tab=id">{{label}}</button></nav><p v-if="error" class="inline-error" role="alert">{{error}} <button class="text-button" :disabled="loading" @click="refresh">重新读取</button></p><p v-if="manualError&&(tab==='batch'||tab==='report')" class="inline-warning" role="alert">手动轮次读取失败：{{manualError}} <button class="text-button" :disabled="readingManual" @click="loadManualRounds()">重新读取轮次</button></p>
+<LatencyReports v-if="tab==='report'" :key="reportVersion" :manual-rounds="manualRounds" :manual-loading="readingManual" :manual-error="!!manualError" @open-round="openManualRound"/>
+<div v-if="tab==='batch'" class="cst-history" :class="{open:!!batch}">
+ <div class="history-batches history-record-list cst-timeline">
+  <section v-for="g in dayGroups" :key="g.key" class="cst-day">
+   <h3>{{g.label}}<small>{{g.rows.length}} 轮</small></h3>
+   <template v-for="row in g.rows" :key="row.id">
+    <button v-if="row.batch" class="history-batch-row cst-tl-row" :aria-current="batch?.batch_id===row.batch.batch_id?'true':undefined" @click="openBatch(row.batch.batch_id)">
+     <time>{{timeOf(row.at)}}</time><span><strong>{{row.batch.target_id==='all'?'多站延迟检测':'延迟检测'}} · {{row.batch.item_count}} 个节点</strong><small>{{date(row.at)}}<template v-if="row.batch.sample_count"> · 计划每站 {{row.batch.sample_count}} 次</template></small></span><span class="badge" :class="row.batch.state==='completed'?'good':''">{{stateLabel(row.batch.state)}}</span>
+    </button>
+    <button v-else-if="row.round" class="history-batch-row cst-tl-row" @click="openManualRound(row.round)">
+     <time>{{timeOf(row.at)}}</time><span><strong>{{manualRoundLabel(row.round)}} · {{row.round.node_count}} 个节点</strong><small>{{date(row.at)}} · {{manualRoundCount(row.round)}} 项</small></span><span class="badge">{{manualRoundState(row.round.state)}}</span>
+    </button>
+   </template>
+  </section>
+  <div v-if="!loading&&!readingManual&&!error&&!manualError&&!dayGroups.length" class="empty-state">还没有批量检测记录。</div>
+ </div>
 <aside v-if="batch" class="cst-record" aria-label="批次记录单" @keydown.esc="closeDetails"><header class="cst-record-head"><div><h2>批次记录</h2><p class="muted">{{date(batch.requested_at)}} · {{batch.item_count}} 个节点 · {{stateLabel(batch.state)}}</p></div><button class="button ghost icon-button" aria-label="关闭记录单" @click="closeDetails"><Icon name="close"/></button></header>
 <section class="cst-record-compare"><h3>和上次比</h3><p class="muted small">{{compareReading?`正在读取更早的批次（已读 ${compareReadCount}）…`:compareError?'':`对比对象：已读取范围内同一节点、同一检测目标的最近一次记录（已读 ${compareReadCount} 个更早批次）`}}<span v-if="compareError" class="bad">更早批次读取失败：{{compareError}}</span></p><p class="muted small">下载与服务的“和上次比”请在节点记录详情中查看。</p></section>
 <div v-for="item in batch.items" :key="item.item_id" class="compact-row cst-record-item"><div class="record-node-label"><button class="text-button" @click="w.inspectNode.value=detailFromItem(item);closeDetails()">{{nodeDisplayName(item)}}</button><small title="账户名称按当前订阅显示">{{accountLabel(item.profile_id)}}</small></div><div class="button-group"><span>{{stateLabel(item.execution_state)}} · {{stateLabel(item.persistence_state)}}</span><button v-if="item.persistence_state==='failed'&&item.result" class="text-button" @click="retryBatchItem(item.item_id)">重试保存</button><small v-else-if="item.persistence_state==='failed'" class="warn">原结果无法恢复</small></div><p v-if="item.result" class="small muted">实际采样 {{item.result.total_samples}} 次 · 成功 {{item.result.success_samples}} 次</p><p v-if="deltas[item.item_id]" class="cst-delta" :class="deltas[item.item_id].tone">{{deltas[item.item_id].text}}<small v-if="deltas[item.item_id].previousAt"> · 上次 {{date(deltas[item.item_id].previousAt)}}</small></p><p v-if="partialLatencyError(item.result)" class="muted small">{{partialLatencyError(item.result)}}</p><p v-else-if="item.error_message||item.persistence_error" class="bad small">{{item.error_message||item.persistence_error}}</p></div>
-<HistoryAnalyticsPanel :samples="[]" :tests="batchTests" :context="batchContext"/><div class="button-group"><button class="text-button" @click="saveFile(JSON.stringify(batch,null,2),'speedtest-batch-history.json','application/json').catch(w.fail)">导出批次记录</button></div><details><summary>批次原始 JSON</summary><pre class="record-json">{{JSON.stringify(batch,null,2)}}</pre></details></aside><aside v-else-if="w.batches.value.length" class="record-placeholder"><Icon name="history"/><h2>选择一轮检测</h2><p>查看实际采样、保存状态，以及同条件的前次记录。</p></aside></div><div v-if="tab==='node'" class="settings-section"><h2>按节点查看三类检测</h2><p class="muted">延迟、下载和服务记录在节点详情中切换。</p><div class="inline-field"><UiSelect v-model="nodeId" aria-label="选择历史节点"><option value="">选择节点</option><option v-for="n in w.nodes.value" :key="n.profile_id+n.node_key" :value="n.profile_id+'|'+n.node_key">{{n.profile_name}} · {{nodeDisplayName(n)}}</option></UiSelect><button class="button primary" :disabled="!nodeId" @click="openNode">查看记录</button></div></div><template v-if="tab==='monitor'"><div class="history-filter-row"><label>历史范围<UiSelect v-model.number="w.hours.value"><option :value="6">最近 6 小时</option><option :value="24">最近 24 小时</option><option :value="168">最近 7 天</option><option :value="720">最近 30 天</option></UiSelect></label><label>订阅<UiSelect v-model="profile"><option value="">全部订阅</option><option v-for="id in facets.profiles" :key="id" :value="id">{{labels[id]||id}}</option></UiSelect></label><label>节点<UiSelect v-model="monitorNode" aria-label="监测历史节点"><option value="">全部节点</option><option v-for="n in facets.nodes.filter(n=>!profile||n.profile_id===profile)" :key="n.profile_id+n.node_identity_key+n.node_key" :value="facetNodeValue(n)" :disabled="!n.node_identity_key">{{nodeDisplayName(n)}}{{!n.node_identity_key?' · 身份缺失，暂不能检索':!w.nodes.value.some(current=>current.profile_id===n.profile_id&& current.node_identity_key===n.node_identity_key)?' · 历史节点（当前订阅中不存在）':''}}</option></UiSelect></label><label>目标<UiSelect v-model="target"><option value="">全部目标</option><option v-for="t in facets.targets" :key="t" :value="t">{{t}}</option></UiSelect></label><button class="button ghost" @click="saveFile(JSON.stringify(samples,null,2),'speedtest-monitor-samples.json','application/json').then(saved=>{if(saved)w.notify('样本已导出')}).catch(w.fail)">导出已读样本</button></div><p v-if="facetLoading" class="small muted">读取历史筛选项…</p><p v-if="facetError" class="small warn" role="alert">筛选项读取失败：{{facetError}} <button class="text-button" @click="readFacets">重试筛选项</button></p><p v-if="facetsTruncated" class="small warn">筛选项已截断；节点／订阅／目标列表并非全部历史。</p><p class="small muted">机场标签仅为当前订阅归属，历史机场归属未记录；缺少历史身份的已删除节点暂不能检索。</p><HistoryAnalyticsPanel :samples="samples" :context="context" :profile-labels="labels"/><div class="history-sample-records" role="list" aria-label="持续监测样本">
+<HistoryAnalyticsPanel :samples="[]" :tests="batchTests" :context="batchContext"/><div class="button-group"><button class="text-button" @click="saveFile(JSON.stringify(batch,null,2),'speedtest-batch-history.json','application/json').catch(w.fail)">导出批次记录</button></div><details><summary>批次原始 JSON</summary><pre class="record-json">{{JSON.stringify(batch,null,2)}}</pre></details></aside><aside v-else-if="dayGroups.length" class="record-placeholder"><Icon name="history"/><h2>选择一轮检测</h2><p>查看实际采样、保存状态，以及同条件的前次记录。</p></aside></div><MeasurementRoundModal v-if="manualDetail" :key="manualDetail.round_id" :summary="manualDetail" @close="closeDetails"/>
+<button v-if="manualBefore&&(tab==='report'||tab==='batch'&&!batch)" class="button history-more" :disabled="readingManual" @click="loadManualRounds(true)">{{readingManual?'读取中…':'读取更早的手动轮次'}}</button>
+<div v-if="tab==='node'" class="settings-section"><h2>按节点查看三类检测</h2><p class="muted">延迟、下载和服务记录在节点详情中切换。</p><div class="inline-field"><UiSelect v-model="nodeId" aria-label="选择历史节点"><option value="">选择节点</option><option v-for="n in w.nodes.value" :key="n.profile_id+n.node_key" :value="n.profile_id+'|'+n.node_key">{{n.profile_name}} · {{nodeDisplayName(n)}}</option></UiSelect><button class="button primary" :disabled="!nodeId" @click="openNode">查看记录</button></div></div><template v-if="tab==='monitor'"><div class="history-filter-row"><label>历史范围<UiSelect v-model.number="w.hours.value"><option :value="6">最近 6 小时</option><option :value="24">最近 24 小时</option><option :value="168">最近 7 天</option><option :value="720">最近 30 天</option></UiSelect></label><label>订阅<UiSelect v-model="profile"><option value="">全部订阅</option><option v-for="id in facets.profiles" :key="id" :value="id">{{labels[id]||id}}</option></UiSelect></label><label>节点<UiSelect v-model="monitorNode" aria-label="监测历史节点"><option value="">全部节点</option><option v-for="n in facets.nodes.filter(n=>!profile||n.profile_id===profile)" :key="n.profile_id+n.node_identity_key+n.node_key" :value="facetNodeValue(n)" :disabled="!n.node_identity_key">{{nodeDisplayName(n)}}{{!n.node_identity_key?' · 身份缺失，暂不能检索':!w.nodes.value.some(current=>current.profile_id===n.profile_id&& current.node_identity_key===n.node_identity_key)?' · 历史节点（当前订阅中不存在）':''}}</option></UiSelect></label><label>目标<UiSelect v-model="target"><option value="">全部目标</option><option v-for="t in facets.targets" :key="t" :value="t">{{t}}</option></UiSelect></label><button class="button ghost" @click="saveFile(JSON.stringify(samples,null,2),'speedtest-monitor-samples.json','application/json').then(saved=>{if(saved)w.notify('样本已导出')}).catch(w.fail)">导出已读样本</button></div><p v-if="facetLoading" class="small muted">读取历史筛选项…</p><p v-if="facetError" class="small warn" role="alert">筛选项读取失败：{{facetError}} <button class="text-button" @click="readFacets">重试筛选项</button></p><p v-if="facetsTruncated" class="small warn">筛选项已截断；节点／订阅／目标列表并非全部历史。</p><p class="small muted">机场标签仅为当前订阅归属，历史机场归属未记录；缺少历史身份的已删除节点暂不能检索。</p><HistoryAnalyticsPanel :samples="samples" :context="context" :profile-labels="labels"/><div class="history-sample-records" role="list" aria-label="持续监测样本">
   <article v-for="s in samples" :key="s.sample_id" class="history-sample-record" role="listitem">
     <header class="history-sample-head">
       <time class="history-sample-time">{{date(s.timestamp)}}</time>

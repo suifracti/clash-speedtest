@@ -241,6 +241,8 @@ func (s *Server) buildHandler() http.Handler {
 	// 24/7 Monitor REST routes
 	mux.HandleFunc("GET /api/monitor/nodes", s.handleListMonitorNodeOptions)
 	mux.HandleFunc("GET /api/measurement-rounds", s.handleMeasurementRounds)
+	mux.HandleFunc("GET /api/measurement-rounds/manual", s.handleListManualMeasurementRounds)
+	mux.HandleFunc("GET /api/measurement-rounds/manual/{id}", s.handleReadManualMeasurementRound)
 	mux.HandleFunc("POST /api/measurement-rounds", s.handleCreateMeasurementRound)
 	mux.HandleFunc("POST /api/measurement-rounds/{id}/finish", s.handleFinishMeasurementRound)
 	mux.HandleFunc("GET /api/periodic-sampling", s.handleGetPeriodicSampling)

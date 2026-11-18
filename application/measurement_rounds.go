@@ -98,6 +98,18 @@ func (s *AppService) ListMeasurementRoundNodes(ctx context.Context, profile, nod
 	}
 	return s.historyStore.DB().QueryMeasurementRoundNodes(ctx, profile, node, nid, rev, limit)
 }
+func (s *AppService) ListManualMeasurementRounds(ctx context.Context, before string) (history.ManualRoundPage, error) {
+	if s == nil || s.historyStore == nil || s.historyStore.DB() == nil {
+		return history.ManualRoundPage{}, fmt.Errorf("history store is not initialized")
+	}
+	return s.historyStore.DB().ListManualRounds(ctx, before)
+}
+func (s *AppService) ReadManualMeasurementRound(ctx context.Context, id string, offset int) (history.ManualRoundDetail, error) {
+	if s == nil || s.historyStore == nil || s.historyStore.DB() == nil {
+		return history.ManualRoundDetail{}, fmt.Errorf("history store is not initialized")
+	}
+	return s.historyStore.DB().ReadManualRound(ctx, id, offset)
+}
 func (s *AppService) FinishManualMeasurementRound(ctx context.Context, id, state string) error {
 	if s == nil || s.historyStore == nil || s.historyStore.DB() == nil {
 		return fmt.Errorf("history store is not initialized")

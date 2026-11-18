@@ -1,7 +1,7 @@
 import type {PeriodicSamplingConfig,PeriodicSamplingStatus,PeriodicChecks} from './periodicSampling'
 import type {AutoPickConfig,AutoPickReport,AutoPickReportMeta,AutoPickStatus} from './autoPick'
 import type {EntryResult,NodeEntry} from './entryPath'
-import type {MeasurementRound,Airport,Attempt,HistoryPage,LatencyBatch,LatencyTest,MonitorCreate,MonitorJob,MonitorSample,NodeOption,NodeScope,ServiceRule,Settings,Setup,TokenStatus} from './domain'
+import type {ManualRoundPage,ManualRoundDetail,MeasurementRound,Airport,Attempt,HistoryPage,LatencyBatch,LatencyTest,MonitorCreate,MonitorJob,MonitorSample,NodeOption,NodeScope,ServiceRule,Settings,Setup,TokenStatus} from './domain'
 import {scope} from './domain'
 export interface ClashNodeStatus {connected:boolean;loaded:boolean;name:string;endpoint:string}
 export interface ClashCompareSide {success:boolean;latency_ms:number;error?:string}
@@ -37,6 +37,8 @@ const attemptPath=(k:'download'|'service')=>`/api/workbench/${k==='service'?'pub
 function attemptScope(kind:'download'|'service',n:NodeScope&{service_id?:string},serviceId=n.service_id){if(kind==='service'&&!serviceId)throw new Error('服务检测详情缺少服务标识，请刷新后重试');return {...scope(n),...(kind==='service'?{service_id:serviceId}:{})}}
 export const api={
  measurementRounds:(n:NodeScope,limit=16)=>request<MeasurementRound[]>(`/api/measurement-rounds?${query({...scope(n),limit})}`,'GET',undefined,'ListMeasurementRoundNodes',[n.profile_id,n.node_key,n.node_identity_key,n.config_revision_key,limit]),
+ manualRounds:(before='')=>request<ManualRoundPage>(`/api/measurement-rounds/manual?${query({before})}`,'GET',undefined,'ListManualMeasurementRounds',[before]),
+ manualRound:(id:string,offset=0)=>request<ManualRoundDetail>(`/api/measurement-rounds/manual/${encodeURIComponent(id)}?${query({offset})}`,'GET',undefined,'ReadManualMeasurementRound',[id,offset]),
  createRound:(body:unknown)=>request('/api/measurement-rounds','POST',body,'CreateManualMeasurementRound',[body]),
  finishRound:(id:string,state='finished')=>request(`/api/measurement-rounds/${encodeURIComponent(id)}/finish`,'POST',{state},'FinishManualMeasurementRound',[id,state]),
  periodicChecks:(profile='',node='')=>request<PeriodicChecks>(`/api/periodic-sampling/checks?${query({profile_id:profile,node_key:node})}`,'GET',undefined,'GetPeriodicServiceChecks',[profile,node]),

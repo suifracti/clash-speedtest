@@ -118,6 +118,8 @@ func (d *DB) UpdateLatencyBatchState(ctx context.Context, batchID, state string)
 	return nil
 }
 
+const latencyBatchItemColumns = `item_id,batch_id,ordinal,profile_id,node_key,node_identity_key,config_revision_key,display_name,node_type,execution_state,persistence_state,attempt_id,requested_at,started_at,finished_at,error_message,persistence_error,result_json`
+
 func (d *DB) GetLatencyBatch(ctx context.Context, batchID string) (*LatencyBatch, error) {
 	if d == nil || d.db == nil {
 		return nil, fmt.Errorf("history database is closed")
@@ -128,7 +130,7 @@ func (d *DB) GetLatencyBatch(ctx context.Context, batchID string) (*LatencyBatch
 		return nil, fmt.Errorf("get latency batch %s: %w", batchID, err)
 	}
 	batch.RequestedAt = batch.RequestedAt.UTC()
-	rows, err := d.db.QueryContext(ctx, `SELECT item_id,batch_id,ordinal,profile_id,node_key,node_identity_key,config_revision_key,display_name,node_type,execution_state,persistence_state,attempt_id,requested_at,started_at,finished_at,error_message,persistence_error,result_json FROM workbench_latency_batch_items WHERE batch_id=? ORDER BY ordinal`, batchID)
+	rows, err := d.db.QueryContext(ctx, `SELECT `+latencyBatchItemColumns+` FROM workbench_latency_batch_items WHERE batch_id=? ORDER BY ordinal`, batchID)
 	if err != nil {
 		return nil, fmt.Errorf("query latency batch items: %w", err)
 	}
@@ -144,19 +146,29 @@ func (d *DB) GetLatencyBatch(ctx context.Context, batchID string) (*LatencyBatch
 		return nil, err
 	}
 	for i := range batch.Items {
-		item := &batch.Items[i]
-		if item.AttemptID != "" {
-			if test, err := d.GetLatencyTest(ctx, item.AttemptID); err == nil {
-				item.Result = test
-				item.ResultStaged = false
-				item.PersistenceState = "saved"
-				item.PersistenceError = ""
-			} else if !errors.Is(err, sql.ErrNoRows) {
-				return nil, fmt.Errorf("load attempt %s for batch item %s: %w", item.AttemptID, item.ItemID, err)
-			}
+		if err := d.loadSavedLatencyBatchResult(ctx, &batch.Items[i]); err != nil {
+			return nil, err
 		}
 	}
 	return batch, nil
+}
+
+func (d *DB) loadSavedLatencyBatchResult(ctx context.Context, item *LatencyBatchItem) error {
+	if item.AttemptID == "" {
+		return nil
+	}
+	test, err := d.GetLatencyTest(ctx, item.AttemptID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("load attempt %s for batch item %s: %w", item.AttemptID, item.ItemID, err)
+	}
+	item.Result = test
+	item.ResultStaged = false
+	item.PersistenceState = "saved"
+	item.PersistenceError = ""
+	return nil
 }
 
 func scanLatencyBatchItem(scanner interface{ Scan(...any) error }) (*LatencyBatchItem, error) {

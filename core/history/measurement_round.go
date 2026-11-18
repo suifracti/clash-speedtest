@@ -184,80 +184,98 @@ func (d *DB) QueryMeasurementRoundNodes(ctx context.Context, profile, node, nid,
 	}
 	for k := range out {
 		r := &out[k]
-		rows, err = d.db.QueryContext(ctx, `SELECT request_id,project,service_id,display_name,not_executed_reason FROM measurement_round_items WHERE round_id=? AND profile_id=? AND node_key=? AND node_identity_key=? AND config_revision_key=? ORDER BY project,service_id,request_id`, r.RoundID, profile, node, nid, rev)
+		r.Items, err = d.readMeasurementItems(ctx, `WHERE round_id=? AND profile_id=? AND node_key=? AND node_identity_key=? AND config_revision_key=? ORDER BY project,service_id,request_id`, r.RoundID, profile, node, nid, rev)
 		if err != nil {
 			return nil, err
 		}
-		for rows.Next() {
-			i := MeasurementRoundItem{ProfileID: profile, NodeKey: node, NodeIdentityKey: nid, ConfigRevisionKey: rev, ExecutionState: "queued", PersistenceState: "not_started"}
-			if err = rows.Scan(&i.RequestID, &i.Project, &i.ServiceID, &i.DisplayName, &i.NotExecutedReason); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			r.Items = append(r.Items, i)
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
+		if err = d.readMeasurementResults(ctx, r); err != nil {
 			return nil, err
-		}
-		batches := map[string]*LatencyBatch{}
-		for j := range r.Items {
-			i := &r.Items[j]
-			switch i.Project {
-			case "service":
-				a, e := d.GetPublicServiceAttemptByRequestID(ctx, i.RequestID)
-				if e == nil {
-					if a.ProfileID != profile || a.NodeIdentityKey != nid || a.ConfigRevisionKey != rev || a.NodeKey != node || a.ServiceID != i.ServiceID {
-						return nil, fmt.Errorf("round child scope differs")
-					}
-					i.Service = a
-					i.ExecutionState = a.ExecutionState
-					i.PersistenceState = a.PersistenceState
-				} else if !errors.Is(e, ErrPublicServiceAttemptNotFound) {
-					return nil, e
-				}
-			case "download":
-				a, e := d.GetWorkbenchDownloadAttemptByRequestID(ctx, i.RequestID)
-				if e == nil {
-					if a.ProfileID != profile || a.NodeIdentityKey != nid || a.ConfigRevisionKey != rev || a.NodeKey != node {
-						return nil, fmt.Errorf("round child scope differs")
-					}
-					i.Download = a
-					i.ExecutionState = a.ExecutionState
-					i.PersistenceState = a.PersistenceState
-				} else if !errors.Is(e, ErrWorkbenchDownloadAttemptNotFound) {
-					return nil, e
-				}
-			case "latency":
-				b, ok := batches[i.RequestID]
-				if !ok {
-					b, err = d.FindLatencyBatchByRequestID(ctx, i.RequestID)
-					if err != nil {
-						return nil, err
-					}
-					batches[i.RequestID] = b
-				}
-				if b != nil {
-					for _, child := range b.Items {
-						if child.ProfileID == profile && child.NodeKey == node && child.NodeIdentityKey == nid && child.ConfigRevisionKey == rev {
-							i.Latency = child.Result
-							i.ExecutionState = child.ExecutionState
-							i.PersistenceState = child.PersistenceState
-							i.NotExecutedReason = child.ErrorMessage
-						}
-					}
-				}
-			}
-			if i.ExecutionState == "queued" && (i.NotExecutedReason != "" || r.State != "running") {
-				i.ExecutionState = "not_executed"
-				if i.NotExecutedReason == "" {
-					i.NotExecutedReason = "轮次结束或中断前未启动该项"
-				}
-			}
 		}
 	}
 	return out, nil
+}
+
+func (d *DB) readMeasurementItems(ctx context.Context, clause string, args ...any) ([]MeasurementRoundItem, error) {
+	rows, err := d.db.QueryContext(ctx, `SELECT request_id,project,service_id,profile_id,node_key,node_identity_key,config_revision_key,display_name,not_executed_reason FROM measurement_round_items `+clause, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []MeasurementRoundItem{}
+	for rows.Next() {
+		item := MeasurementRoundItem{ExecutionState: "queued", PersistenceState: "not_started"}
+		if err := rows.Scan(&item.RequestID, &item.Project, &item.ServiceID, &item.ProfileID, &item.NodeKey, &item.NodeIdentityKey, &item.ConfigRevisionKey, &item.DisplayName, &item.NotExecutedReason); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (d *DB) readMeasurementResults(ctx context.Context, round *MeasurementRound) error {
+	for index := range round.Items {
+		item := &round.Items[index]
+		switch item.Project {
+		case "service":
+			attempt, err := d.GetPublicServiceAttemptByRequestID(ctx, item.RequestID)
+			if err == nil {
+				if !item.matchesNode(attempt.ProfileID, attempt.NodeKey, attempt.NodeIdentityKey, attempt.ConfigRevisionKey) || attempt.ServiceID != item.ServiceID {
+					return fmt.Errorf("round child scope differs")
+				}
+				item.Service = attempt
+				item.ExecutionState, item.PersistenceState = attempt.ExecutionState, attempt.PersistenceState
+			} else if !errors.Is(err, ErrPublicServiceAttemptNotFound) {
+				return err
+			}
+		case "download":
+			attempt, err := d.GetWorkbenchDownloadAttemptByRequestID(ctx, item.RequestID)
+			if err == nil {
+				if !item.matchesNode(attempt.ProfileID, attempt.NodeKey, attempt.NodeIdentityKey, attempt.ConfigRevisionKey) {
+					return fmt.Errorf("round child scope differs")
+				}
+				item.Download = attempt
+				item.ExecutionState, item.PersistenceState = attempt.ExecutionState, attempt.PersistenceState
+			} else if !errors.Is(err, ErrWorkbenchDownloadAttemptNotFound) {
+				return err
+			}
+		case "latency":
+			if err := d.readMeasurementLatency(ctx, item); err != nil {
+				return err
+			}
+		}
+		if item.ExecutionState == "queued" && (item.NotExecutedReason != "" || round.State != "running") {
+			item.ExecutionState = "not_executed"
+			if item.NotExecutedReason == "" {
+				item.NotExecutedReason = "轮次结束或中断前未启动该项"
+			}
+		}
+	}
+	return nil
+}
+
+func (item *MeasurementRoundItem) matchesNode(profile, node, identity, revision string) bool {
+	return item.ProfileID == profile && item.NodeKey == node && item.NodeIdentityKey == identity && item.ConfigRevisionKey == revision
+}
+
+func (d *DB) readMeasurementLatency(ctx context.Context, item *MeasurementRoundItem) error {
+	row := d.db.QueryRowContext(ctx, `SELECT `+latencyBatchItemColumns+` FROM workbench_latency_batch_items
+		WHERE batch_id=(SELECT batch_id FROM workbench_latency_batches WHERE request_id=?)
+		AND profile_id=? AND node_key=? AND node_identity_key=? AND config_revision_key=? ORDER BY ordinal DESC LIMIT 1`,
+		item.RequestID, item.ProfileID, item.NodeKey, item.NodeIdentityKey, item.ConfigRevisionKey)
+	child, err := scanLatencyBatchItem(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := d.loadSavedLatencyBatchResult(ctx, child); err != nil {
+		return err
+	}
+	item.Latency = child.Result
+	item.ExecutionState, item.PersistenceState = child.ExecutionState, child.PersistenceState
+	item.NotExecutedReason = child.ErrorMessage
+	return nil
 }
 
 func (d *DB) FinishManualMeasurementRound(ctx context.Context, id, state string) error {

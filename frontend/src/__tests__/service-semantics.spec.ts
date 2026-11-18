@@ -19,6 +19,13 @@ it('does not turn legacy mixed unknown samples into evidenced business failure',
   expect(durableRoundPoints([round([a])],'service')[0].value).toBeNull();expect(serviceConclusion(a)).not.toMatch(/漂移/);expect(JSON.stringify(a)).toBe(raw)
  }
 })
+it('limits playback wording to media unlock results, including older saved rules',()=>{
+ const ai=attempt('chatgpt_unlock','unlocked')
+ ai.result!.details={sample_total:'1',sample_success:'1'}
+ expect(serviceConclusion(ai)).toBe('解锁规则通过（1/1 一致）')
+ expect(serviceConclusion(attempt('claude_unlock','unlocked'))).toBe('解锁规则通过')
+ expect(serviceConclusion(attempt('netflix_unlock','unlocked'))).toBe('解锁规则通过（播放未验证）')
+})
 it('retains observed business rejection in legacy and versioned mixed results',()=>{
  for(const details of [{observed_outcomes:'matched, region_blocked'}, {observed_outcomes:'challenge, service_rejected'}, {sample_semantics_version:'2',sample_total:'2',sample_success:'1',sample_failure:'1',sample_confirmed:'2',sample_completion:'complete'}]){
   const a=attempt('netflix_unlock','flapping');a.result!.details=details
