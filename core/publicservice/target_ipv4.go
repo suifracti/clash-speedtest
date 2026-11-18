@@ -47,15 +47,16 @@ var errTargetDNSDeadline = errors.New("target DNS deadline exceeded")
 // One lookup belongs to one checker/selected node. It is never a global DNS
 // override, an exit IP, or a cache shared across nodes and historical attempts.
 type targetIPv4Evidence struct {
-	host                                     string
-	phases                                   *requestPhases
-	passthrough                              []string
-	ip                                       string
-	ttl                                      uint32
-	expires                                  time.Time
-	dnsBytes                                 int64
-	precheckAttempts, dnsAttempts, dnsStatus int
-	targetStartAttempts, targetStartWritten  int
+	host                                        string
+	phases                                      *requestPhases
+	passthrough                                 []string
+	ip                                          string
+	ttl                                         uint32
+	expires                                     time.Time
+	dnsBytes                                    int64
+	precheckAttempts, dnsAttempts, dnsStatus    int
+	targetStartAttempts, targetStartWritten     int
+	laterPrecheckAttempts, laterPrecheckWritten int
 }
 
 func (e *targetIPv4Evidence) address(address string) (string, error) {
@@ -88,9 +89,10 @@ func (e *targetIPv4Evidence) attach(result *Result) {
 	d["target_dns_mode"] = "selected_node_doh_ipv4_v1"
 	d["target_dns_source"] = selectedNodeDNS + e.host + "&type=A"
 	d["target_dns_http_attempts"] = strconv.Itoa(e.dnsAttempts)
-	if e.precheckAttempts > 0 {
-		d["target_precheck_http_attempts"] = strconv.Itoa(e.precheckAttempts)
+	if total := e.precheckAttempts + e.laterPrecheckAttempts; total > 0 {
+		d["target_precheck_http_attempts"] = strconv.Itoa(total)
 	}
+	delete(d, "target_dns_skipped")
 	d["target_dns_scope"] = "仅本次固定服务主机的目标解析；约束为同一被测节点代理，无系统 DNS 或直连回退"
 	d["playback_verified"] = "false"
 	d["account_verified"] = "false"
@@ -109,11 +111,9 @@ func (e *targetIPv4Evidence) attach(result *Result) {
 		d["target_address_policy"] = "one_lookup_frozen_for_this_attempt"
 		d["target_dns_cache_scope"] = "this_attempt_only"
 	}
-	e.phases.mu.Lock()
-	attempts, written := e.phases.requests, e.phases.written
-	e.phases.mu.Unlock()
-	d["target_http_attempts"] = strconv.Itoa(max(0, attempts-e.targetStartAttempts))
-	d["target_http_requests_written"] = strconv.Itoa(max(0, written-e.targetStartWritten))
+	attempts, written := e.phases.httpCounts()
+	d["target_http_attempts"] = strconv.Itoa(max(0, attempts-e.targetStartAttempts-e.laterPrecheckAttempts))
+	d["target_http_requests_written"] = strconv.Itoa(max(0, written-e.targetStartWritten-e.laterPrecheckWritten))
 	if len(e.passthrough) > 0 {
 		d["target_dns_passthrough_hosts"] = strings.Join(e.passthrough, ",")
 		d["target_dns_passthrough_note"] = "预检请求使用节点自身解析，不进入固定 IPv4 的片目证据"
@@ -158,10 +158,8 @@ func (e *targetIPv4Evidence) transport(original http.RoundTripper) (http.RoundTr
 
 func prepareTargetIPv4(ctx context.Context, client *http.Client, phases *requestPhases, host string, passthrough []string) (*http.Client, *targetIPv4Evidence, *Result) {
 	evidence := &targetIPv4Evidence{phases: phases, host: host, passthrough: passthrough}
-	phases.mu.Lock()
-	evidence.precheckAttempts = phases.requests
-	evidence.targetStartAttempts, evidence.targetStartWritten = phases.requests, phases.written
-	phases.mu.Unlock()
+	evidence.targetStartAttempts, evidence.targetStartWritten = phases.httpCounts()
+	evidence.precheckAttempts = evidence.targetStartAttempts
 	transport, ok := evidence.transport(client.Transport)
 	if !ok {
 		r := Result{Outcome: "not_executed", FailurePhase: "target_dns_setup", ErrorMessage: "当前客户端无法保持所选节点及 TLS 语义；未发起 IPv4 解析或片目请求"}
@@ -186,10 +184,8 @@ func prepareTargetIPv4(ctx context.Context, client *http.Client, phases *request
 	}
 	cancel()
 	evidence.dnsBytes = r.BytesRead
-	phases.mu.Lock()
-	evidence.targetStartAttempts, evidence.targetStartWritten = phases.requests, phases.written
-	evidence.dnsAttempts = phases.requests - evidence.precheckAttempts
-	phases.mu.Unlock()
+	evidence.targetStartAttempts, evidence.targetStartWritten = phases.httpCounts()
+	evidence.dnsAttempts = evidence.targetStartAttempts - evidence.precheckAttempts
 	if r.HTTPStatus != nil {
 		evidence.dnsStatus = *r.HTTPStatus
 	}

@@ -30,6 +30,8 @@ type netflixDNSFixture struct {
 	addresses            []string
 	dnsCalls, titleCalls int
 	fastCalls            int
+	fastStall            bool
+	fastStatuses         []int
 	dnsStatus            int
 	dnsStall             bool
 	titleStatus          int
@@ -63,8 +65,20 @@ func newNetflixDNSFixture(t *testing.T) *netflixDNSFixture {
 		f.mu.Lock()
 		if r.Host == "api.fast.com" {
 			f.fastCalls++
+			stall := f.fastStall
+			status := http.StatusServiceUnavailable
+			if f.fastCalls <= len(f.fastStatuses) {
+				status = f.fastStatuses[f.fastCalls-1]
+			}
 			f.mu.Unlock()
-			w.WriteHeader(http.StatusServiceUnavailable)
+			if stall {
+				<-r.Context().Done()
+				return
+			}
+			w.WriteHeader(status)
+			if status == http.StatusOK {
+				io.WriteString(w, `{"client":{"location":{"country":"hk"}}}`)
+			}
 			return
 		}
 		if r.Host == "cloudflare-dns.com" {
@@ -497,5 +511,51 @@ func TestTargetDNSDeadlineOrigin(t *testing.T) {
 				t.Fatalf("wrong DNS deadline or target request evidence: %+v", got)
 			}
 		})
+	}
+}
+
+func TestNetflixRepeatedFastVerdictRequiresIndependentRequests(t *testing.T) {
+	rule, _ := RuleFor("netflix_unlock")
+	calls := 0
+	checker := Checker{DriftSamples: 3, ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Host != "api.fast.com" {
+			t.Fatalf("a decisive Fast.com observation must skip title/DNS requests: %s", req.URL.Host)
+		}
+		calls++
+		if calls == 2 {
+			return fixtureResponse(req, http.StatusForbidden, "text/plain", "forbidden"), nil
+		}
+		return fixtureResponse(req, http.StatusOK, "application/json", `{"client":{"location":{"country":"hk"}}}`), nil
+	})}
+	got := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, 2*time.Second)
+	if calls != 3 || got.RequestCount != 3 || got.Outcome != "flapping" || got.Details["sample_success"] != "2" || got.Details["sample_failure"] != "1" {
+		t.Fatalf("claimed %s/%s observations using %d requests: outcome=%s", got.Details["sample_success"], got.Details["sample_total"], calls, got.Outcome)
+	}
+}
+
+func TestNetflixSlowPrecheckLeavesBudgetForPinnedTitles(t *testing.T) {
+	rule, _ := RuleFor("netflix_unlock")
+	f := newNetflixDNSFixture(t)
+	f.fastStall = true
+	f.client.Timeout = 0
+	checker := Checker{DriftSamples: 1, ClientFactory: func(monitor.MonitoredNode, time.Duration) (*http.Client, error) { return f.client, nil }}
+	got := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, 3*time.Second)
+	if got.Outcome != "unlocked" || got.Details["fast_api"] != "precheck_timed_out" ||
+		got.Details["target_dns_http_attempts"] != "1" || got.Details["target_http_attempts"] != "2" {
+		t.Fatalf("slow Fast.com prevented use of the title fallback: %+v", got)
+	}
+}
+
+func TestNetflixPinsOnceAcrossMixedFastAndTitleObservations(t *testing.T) {
+	rule, _ := RuleFor("netflix_unlock")
+	f := newNetflixDNSFixture(t)
+	f.fastStatuses = []int{http.StatusOK, http.StatusServiceUnavailable, http.StatusOK, http.StatusServiceUnavailable}
+	checker := Checker{DriftSamples: 4, ClientFactory: func(monitor.MonitoredNode, time.Duration) (*http.Client, error) { return f.client, nil }}
+	got := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, 2*time.Second)
+	if got.Outcome != "unlocked" || got.RequestCount != 9 || got.Details["sample_success"] != "4" ||
+		got.Details["target_precheck_http_attempts"] != "4" || got.Details["target_dns_http_attempts"] != "1" ||
+		got.Details["target_http_attempts"] != "4" || got.Details["target_http_requests_written"] != "4" ||
+		got.Details["target_dns_skipped"] != "" {
+		t.Fatalf("unexpected samples or phase counts: %+v", got)
 	}
 }

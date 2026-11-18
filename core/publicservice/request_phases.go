@@ -234,6 +234,12 @@ func (t phaseTransport) RoundTrip(request *http.Request) (*http.Response, error)
 	return response, err
 }
 
+func (p *requestPhases) httpCounts() (attempts, written int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.requests, p.written
+}
+
 func (p *requestPhases) attach(result *Result) {
 	if p == nil || result == nil {
 		return

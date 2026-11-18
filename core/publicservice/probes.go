@@ -575,11 +575,7 @@ func readPage(ctx context.Context, client *http.Client, target string, allowedHo
 	body, err := io.ReadAll(io.LimitReader(response.Body, int64(maximum)+1))
 	result.BytesRead = int64(min(len(body), maximum))
 	if err != nil {
-		classifyRequestError(&result, ctx, atRequestPhase(err, "response_read"))
-		if result.Outcome != "cancelled" && (status < 200 || status >= 300) {
-			result.Outcome, result.FailurePhase = "http_rejected", "http_status"
-			result.ErrorMessage = fmt.Sprintf("收到 HTTP %d，正文未读完。%s", status, result.ErrorMessage)
-		}
+		classifyPageReadError(&result, ctx, status, err)
 		return result, fetchedPage{}, false
 	}
 	truncated := len(body) > maximum
@@ -739,10 +735,25 @@ func mergeNetflixFast(result *Result, pre Result) {
 	}
 }
 
+var errNetflixFastDeadline = errors.New("Netflix precheck deadline exceeded")
+
 // checkNetflixFast follows subs-check's checkNetflixCDN: one Fast.com request
 // either yields the region, proves a 403 ban, or gives no conclusion.
 func checkNetflixFast(ctx context.Context, client *http.Client, result *Result) (region string, banned, decided bool) {
 	const target = "https://api.fast.com/netflix/speedtest/v2?https=true&token=YXNkZmFzZGxmbnNkYWZoYXNkZmhrYWxm&urlCount=1"
+	// The optional shortcut must leave time for DNS and the title fallback.
+	budget := 5 * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		budget = min(budget, time.Until(deadline)/3)
+	}
+	ctx, cancel := context.WithTimeoutCause(ctx, budget, errNetflixFastDeadline)
+	defer cancel()
+	markFailure := func(kind string) {
+		if errors.Is(context.Cause(ctx), errNetflixFastDeadline) {
+			kind = "precheck_timed_out"
+		}
+		result.Details["fast_api"] = kind
+	}
 	fast := *client
 	fast.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
@@ -757,7 +768,7 @@ func checkNetflixFast(ctx context.Context, client *http.Client, result *Result) 
 	if err != nil {
 		// Fast.com is only a shortcut; its failure must not replace the title
 		// evidence that follows.
-		result.Details["fast_api"] = "request_failed"
+		markFailure("request_failed")
 		return "", false, false
 	}
 	defer response.Body.Close()
@@ -779,7 +790,7 @@ func checkNetflixFast(ctx context.Context, client *http.Client, result *Result) 
 	body, err := io.ReadAll(io.LimitReader(response.Body, 64*1024))
 	result.BytesRead += int64(len(body))
 	if err != nil {
-		result.Details["fast_api"] = "read_failed"
+		markFailure("read_failed")
 		return "", false, false
 	}
 	var payload struct {
@@ -882,7 +893,7 @@ func netflixGET(ctx context.Context, client *http.Client, target string, result 
 	body, err := io.ReadAll(io.LimitReader(response.Body, int64(maximum)+1))
 	result.BytesRead += int64(min(len(body), maximum))
 	if err != nil {
-		classifyRequestError(result, ctx, atRequestPhase(err, "response_read"))
+		classifyPageReadError(result, ctx, response.StatusCode, err)
 		return netflixPage{}, false
 	}
 	truncated := len(body) > maximum
@@ -1158,6 +1169,14 @@ func sanitizeTransportError(err error) string {
 			s = string(runes[:120]) + "..."
 		}
 		return s
+	}
+}
+
+func classifyPageReadError(result *Result, ctx context.Context, status int, err error) {
+	classifyRequestError(result, ctx, atRequestPhase(err, "response_read"))
+	if result.Outcome != "cancelled" && (status < 200 || status >= 300) {
+		result.Outcome, result.FailurePhase = "http_rejected", "http_status"
+		result.ErrorMessage = fmt.Sprintf("收到 HTTP %d，正文未读完。%s", status, result.ErrorMessage)
 	}
 }
 

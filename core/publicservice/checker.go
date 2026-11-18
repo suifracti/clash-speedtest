@@ -564,28 +564,66 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 		defer client.CloseIdleConnections()
 	}
 	defer phases.attach(&final)
-	if host := selectedNodeIPv4Host(rule); host != "" {
-		// Fast.com needs no pinned IPv4 and can settle the region on its own, so
-		// it runs first: a node whose DoH times out must not lose the verdict.
-		skipPinning := false
+	host := selectedNodeIPv4Host(rule)
+	var pinnedClient *http.Client
+	var dnsEvidence *targetIPv4Evidence
+	var dnsFailure *Result
+	defer func() {
+		if pinnedClient != nil {
+			pinnedClient.CloseIdleConnections()
+		}
+		if dnsEvidence != nil {
+			dnsEvidence.attach(&final)
+		}
+	}()
+	checkSample := func(sampleStarted time.Time) Result {
+		sampleCtx := ctx
+		var pre *netflixFastPreflight
 		if rule.ServiceID == "netflix_unlock" && rule.RuleVersion >= 5 {
-			pre := &netflixFastPreflight{result: Result{Details: map[string]string{}}}
+			// A Fast.com verdict belongs to one observation. If it is decisive
+			// the current sample needs neither the pinned lookup nor a title.
+			beforeAttempts, beforeWritten := phases.httpCounts()
+			pre = &netflixFastPreflight{result: Result{Details: map[string]string{}}}
 			pre.region, pre.banned, pre.decided = checkNetflixFast(ctx, client, &pre.result)
-			ctx = context.WithValue(ctx, netflixFastPreflightKey{}, pre)
-			skipPinning = pre.decided
-		}
-		if !skipPinning {
-			resolved, evidence, failure := prepareTargetIPv4(ctx, client, phases, host, targetPassthroughHosts(rule))
-			defer func() { evidence.attach(&final) }()
-			if failure != nil {
-				return finish(*failure, startedAt)
+			if dnsEvidence != nil {
+				attempts, written := phases.httpCounts()
+				dnsEvidence.laterPrecheckAttempts += attempts - beforeAttempts
+				dnsEvidence.laterPrecheckWritten += written - beforeWritten
 			}
-			client = resolved
-			defer client.CloseIdleConnections()
+			sampleCtx = context.WithValue(ctx, netflixFastPreflightKey{}, pre)
+			if pre.decided {
+				return c.checkOnce(sampleCtx, client, node, rule, sampleStarted)
+			}
+			if err := ctx.Err(); err != nil {
+				classifyRequestError(&pre.result, ctx, err)
+				return finish(pre.result, sampleStarted)
+			}
 		}
+		if host == "" {
+			return c.checkOnce(sampleCtx, client, node, rule, sampleStarted)
+		}
+		if dnsEvidence == nil {
+			pinnedClient, dnsEvidence, dnsFailure = prepareTargetIPv4(ctx, client, phases, host, targetPassthroughHosts(rule))
+		}
+		if dnsFailure != nil {
+			if pre != nil {
+				if dnsFailure.Details == nil {
+					dnsFailure.Details = map[string]string{}
+				}
+				for key, value := range pre.result.Details {
+					dnsFailure.Details[key] = value
+				}
+				dnsFailure.BytesRead += pre.result.BytesRead
+			}
+			return finish(*dnsFailure, sampleStarted)
+		}
+		return c.checkOnce(sampleCtx, pinnedClient, node, rule, sampleStarted)
 	}
 
-	res1 := c.checkOnce(ctx, client, node, rule, startedAt)
+	res1 := checkSample(startedAt)
+	if dnsFailure != nil {
+		return res1
+	}
 	driftTarget := c.DriftSamples
 	if driftTarget <= 1 || rule.ServiceID == "ipok_ipv4" || rule.ServiceID == "ipok_ipv6" ||
 		res1.Outcome == "credentials_required" || res1.Outcome == "not_executed" || res1.Outcome == "cancelled" {
@@ -634,13 +672,14 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 			mode = "keepalive_requested"
 		} else {
 			mode = "close_http_idle_requested"
-			if client != nil {
-				client.CloseIdleConnections()
+			client.CloseIdleConnections()
+			if pinnedClient != nil {
+				pinnedClient.CloseIdleConnections()
 			}
 		}
 
 		probeStart := time.Now().UTC()
-		subRes := c.checkOnce(ctx, client, node, rule, probeStart)
+		subRes := checkSample(probeStart)
 		subIP, subColo := extractIPAndColo(subRes)
 		samples = append(samples, sampleEntry{
 			mode:       mode,
@@ -652,7 +691,7 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 		})
 		res1.RequestCount += subRes.RequestCount
 		res1.BytesRead += subRes.BytesRead
-		if subRes.Outcome == "cancelled" || subRes.Outcome == "not_executed" || subRes.Outcome == "credentials_required" {
+		if dnsFailure != nil || subRes.Outcome == "cancelled" || subRes.Outcome == "not_executed" || subRes.Outcome == "credentials_required" {
 			break
 		}
 	}

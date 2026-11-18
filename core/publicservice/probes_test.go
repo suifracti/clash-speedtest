@@ -83,6 +83,22 @@ func TestPageBodyFailureKeepsKnownHTTPRejection(t *testing.T) {
 	}
 }
 
+func TestNetflixTitleBodyFailureKeepsHTTPRejectionWithoutBanClaim(t *testing.T) {
+	rule, _ := RuleFor("netflix_unlock_ipv4")
+	calls := 0
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		response := fixtureResponse(req, http.StatusForbidden, "text/html", "")
+		response.Body = failedPageBody{context.DeadlineExceeded}
+		return response, nil
+	})}
+	got := checkNetflix(context.Background(), client, rule, time.Now())
+	if got.Outcome != "http_rejected" || got.FailurePhase != "http_status" || got.HTTPStatus == nil || *got.HTTPStatus != 403 ||
+		got.Details["request_failure_phase"] != "response_read" || got.Details["netflix_banned_by"] != "" || calls != 1 {
+		t.Fatalf("incomplete 403 lost rejection evidence or claimed a ban: %+v", got)
+	}
+}
+
 func TestMissingIPQualityFieldsStayUnknown(t *testing.T) {
 	for _, id := range []string{"ping0_ip_quality", "ippure_ip_quality"} {
 		rule, _ := RuleFor(id)
