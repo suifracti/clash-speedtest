@@ -22,7 +22,7 @@ import Modal from '../Modal.vue'
 import {homeModelKey,latencyVerdict,toneLabel} from './homeModel'
 import {attemptObservedAt,downloadEvidence} from '../../nodeQuality'
 import {attemptStatus} from '../../measurementRounds'
-import {downloadSpeed,downloadAverageSpeed,downloadPeakSpeed,downloadSourceName,downloadConnectionSeconds} from '../../domain'
+import {downloadReading,downloadAverageSpeed,downloadPeakSpeed,downloadSourceName,downloadConnectionSeconds} from '../../domain'
 const props=defineProps<{node:NodeOption;exitOnly?:boolean;clashUsage?:ClashUsage[];readOnly?:boolean;contextNotice?:string;autofocusTitle?:boolean}>()
 const emit=defineEmits<{(e:'select-project',id:Project|'exit'):void;(e:'refresh-clash-usage'):void;(e:'collapse'):void}>()
 const w=useWorkspace(),m=inject(homeModelKey)!
@@ -80,12 +80,19 @@ const attempts=computed(()=>[...new Map([...(m.qualityData.value[key(props.node)
 const hasExitData=computed(()=>landing.value.exitKnown||landing.value.ipKind.measured||attempts.value.some(a=>serviceIsProfile(a)&&!!a.result))
 const readError=computed(()=>m.qualityErrors.value[key(props.node)])
 const downloadRecords=computed(()=>[...new Map([...(w.downloads.value[key(props.node)]||[]),...(m.qualityData.value[key(props.node)]?.downloads||[])].map(a=>[a.attempt_id,a])).values()])
-const downloadHistoryContext=computed(()=>{const {latest,valid}=downloadEvidence(downloadRecords.value),speed=downloadSpeed(valid);return valid&&speed!==null?`${valid.attempt_id===latest?.attempt_id?'最近有效速度':'历史有效速度'} ${speed.toFixed(2)} MiB/s（${date(attemptObservedAt(valid))}）`:''})
+const downloadHistoryContext=computed(()=>{const {latest,valid}=downloadEvidence(downloadRecords.value),reading=downloadReading(valid);return valid&&reading?`${valid.attempt_id===latest?.attempt_id?'最近有效速度':'历史有效速度'} ${reading.value.toFixed(2)} MiB/s · ${reading.label}（${date(attemptObservedAt(valid))}）`:''})
 const downloadLatest=computed(()=>downloadEvidence(downloadRecords.value).latest)
-const downloadValue=computed(()=>downloadSpeed(downloadLatest.value))
+const downloadMeasurement=computed(()=>downloadReading(downloadLatest.value))
+const downloadValue=computed(()=>downloadMeasurement.value?.value??null)
 const downloadAvgValue=computed(()=>downloadAverageSpeed(downloadLatest.value))
 const downloadPeakValue=computed(()=>downloadPeakSpeed(downloadLatest.value))
 const downloadSource=computed(()=>downloadSourceName(downloadLatest.value))
+const largerDownloadCap=computed(()=>{
+ const a=downloadLatest.value
+ const maximumMiB=(a?.rule.maximum_bytes||0)/1048576
+ if(!downloadMeasurement.value||a?.result?.outcome!=='byte_limit'||!['Cloudflare','OVH'].includes(downloadSource.value))return undefined
+ return [50,100].find(size=>maximumMiB>0&&size>maximumMiB)
+})
 const downloadFailure=computed(()=>{
  const a=downloadLatest.value,r=a?.result
  if(readError.value)return '已保存记录读取失败'
@@ -99,12 +106,29 @@ const downloadFailure=computed(()=>{
 })
 const downloadTrend=computed(()=>m.rowPoints(props.node,'download').filter(p=>!p.id.startsWith('planned:')))
 const downloadSpark=computed(()=>{
- const points=downloadTrend.value,values=points.flatMap(p=>p.value===null?[]:[p.value]),max=Math.max(1,...values);let started=false
- return points.map((p,i)=>{if(p.value===null){started=false;return ''}const cmd=started?'L':'M';started=true;return `${cmd}${4+i*344/Math.max(1,points.length-1)},${30-p.value/max*26}`}).join(' ')
+ const points=downloadTrend.value,values=points.flatMap(p=>p.value===null?[]:[p.value]),max=Math.max(1,...values)
+ let condition:string|undefined
+ return points.map((p,i)=>{
+  if(p.value===null){condition=undefined;return ''}
+  const cmd=condition&&condition===p.conditionKey?'L':'M'
+  condition=p.conditionKey
+  return `${cmd}${4+i*344/Math.max(1,points.length-1)},${30-p.value/max*26}`
+ }).join(' ')
 })
-function retryDownload(){
+function retryDownload(maximumMiB?:number){
  if(props.readOnly)return
- w.openPlan([props.node]);if(w.plan.value){w.plan.value.projects=['download'];w.plan.value.includeReputation=false;w.plan.value.reputationServiceIds=[];w.plan.value.downloadSource=downloadSource.value==='OVH'?'cloudflare':'ovh'}
+ w.openPlan([props.node])
+ const plan=w.plan.value
+ if(!plan)return
+ plan.projects=['download']
+ plan.includeReputation=false
+ plan.reputationServiceIds=[]
+ if(maximumMiB){
+  plan.downloadSource=downloadSource.value==='OVH'?'ovh':'cloudflare'
+  plan.downloadMiB=maximumMiB
+  const seconds=(downloadLatest.value?.rule.maximum_duration_ns||0)/1e9
+  if([5,10,15,20,30].includes(seconds))plan.downloadSeconds=seconds
+ }else plan.downloadSource=downloadSource.value==='OVH'?'cloudflare':'ovh'
 }
 function windowText(id:string){
  if(readError.value)return '已保存记录读取失败'
@@ -175,8 +199,8 @@ function run(){if(props.readOnly)return;m.closeHover();props.exitOnly?w.openRepu
 
     <div v-if="shows('download')" class="hd-ins-block hd-download">
       <h3>下载 <button class="hd-link" @click="openHistory('download',w.displayTarget.value)">记录</button></h3>
-      <div v-if="downloadValue!==null&&!readError" class="download-success"><strong>{{downloadValue.toFixed(2)}} <small>MiB/s</small></strong></div>
-      <div v-else class="download-failure" :class="{empty:!downloadLatest}"><span>{{downloadFailure}}</span><button v-if="downloadLatest&&!readError" class="hd-btn" :disabled="readOnly||w.busy.value" @click="retryDownload">换源重测</button></div>
+      <div v-if="downloadValue!==null&&!readError" class="download-success"><strong>{{downloadValue.toFixed(2)}} <small>MiB/s</small></strong><small>{{downloadMeasurement?.label}}</small><button v-if="largerDownloadCap" class="hd-btn" :disabled="readOnly||w.busy.value" @click="retryDownload(largerDownloadCap)">同源加量重测</button></div>
+      <div v-else class="download-failure" :class="{empty:!downloadLatest}"><span>{{downloadFailure}}</span><button v-if="downloadLatest&&!readError" class="hd-btn" :disabled="readOnly||w.busy.value" @click="retryDownload()">换源重测</button></div>
       <small v-if="downloadLatest" class="hd-saved-download" :title="downloadHistoryContext">{{downloadSource}} · {{date(attemptObservedAt(downloadLatest))}}<template v-if="downloadPeakValue!==null"> · 峰值 {{downloadPeakValue.toFixed(2)}} MiB/s</template><template v-if="downloadAvgValue!==null&&downloadValue!==null&&Math.abs(downloadAvgValue-downloadValue)>=0.05"> · 全程均速 {{downloadAvgValue.toFixed(2)}} MiB/s</template><template v-if="downloadConnectionSeconds(downloadLatest)!==null"> · 连接 {{downloadConnectionSeconds(downloadLatest)?.toFixed(2)}} 秒</template></small>
       <svg v-if="downloadTrend.length>=3" class="download-spark" viewBox="0 0 352 34" role="img" aria-label="已有下载测速走势"><path :d="downloadSpark" fill="none" stroke="var(--hd-accent)" stroke-width="1.8"/><g v-for="(p,i) in downloadTrend" :key="p.id"><title>{{date(p.time)}} · {{p.value===null?'未取得速度':p.value.toFixed(2)+' MiB/s'}}</title><circle v-if="p.value!==null" :cx="4+i*344/Math.max(1,downloadTrend.length-1)" :cy="30-p.value/Math.max(1,...downloadTrend.map(p=>p.value||0))*26" r="2" fill="var(--hd-accent)"/></g></svg>
     </div>

@@ -2,6 +2,7 @@ import {expect,it} from 'vitest'
 import {ref} from 'vue'
 import {mount} from '@vue/test-utils'
 import RoundResults from '../components/RoundResults.vue'
+import MeasurementResults from '../components/MeasurementResults.vue'
 import {attemptStatus,downloadCondition} from '../measurementRounds'
 import {createPresentationCache} from '../presentation'
 import {downloadSpeed,downloadAverageSpeed,downloadPeakSpeed,key,type Attempt,type MonitorSample,type NodeOption} from '../domain'
@@ -11,6 +12,14 @@ it('labels a full bounded download as normal completion and includes partial con
  expect(attemptStatus(a,true)).toBe('完成·10 MiB')
  const short={...a,result:{...a.result!,outcome:'completed',bytes_read:25}};expect(downloadSpeed(short)).toBeNull();expect(attemptStatus(short,true)).toBe('测速源返回内容过短')
  expect(attemptStatus({...a,result:{...a.result!,outcome:'time_limit',bytes_read:5242880,duration_ns:11e9,phase_timings_ns:{response_body:10e9}}},true)).toContain('5.0 MiB / 10.00 秒')
+})
+it('labels a byte-capped one-second reading as a short average in the round details',()=>{
+ const point={id:'short-read',time:a.requested_at,value:10,tone:'good' as const,description:'',attempts:[a]}
+ const ui=mount(MeasurementResults,{props:{point,project:'download'}})
+ expect(ui.find('dt').text()).toBe('短测均速')
+ expect(ui.find('dd').text()).toBe('10.00 MiB/s')
+ expect(ui.text()).not.toContain('稳态速度')
+ ui.unmount()
 })
 it('calculates download speed using the recorded response body time',()=>{
  const measured={...a,result:{...a.result!,duration_ns:9.2e9,phase_timings_ns:{connection:5.6e9,response_body:3.6e9}}}

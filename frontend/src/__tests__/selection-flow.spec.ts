@@ -242,12 +242,12 @@ describe('shared node selection',()=>{
     const w=workspace(),at=new Date().toISOString();w.project.value='download'
     w.downloads.value[key(a)]=[{...a,attempt_id:'latest',request_id:'latest',requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://download.example'},result:{outcome:'byte_limit',bytes_read:10485760,duration_ns:1000000000,phase_timings_ns:{response_body:1000000000},finished_at:at}}]
     const wrapper=attach(HomeView,w);await flushPromises();await wrapper.get('.hd-node-open').trigger('click');await flushPromises()
-    expect(wrapper.get('.download-success').text()).toBe('10.00 MiB/s')
+    expect(wrapper.get('.download-success strong').text()).toBe('10.00 MiB/s')
     expect(wrapper.find('.download-spark').exists()).toBe(false)
     w.downloads.value[key(a)][0].result!.phase_timings_ns!.response_body=2000000000;await flushPromises()
-    expect(wrapper.get('.download-success').text()).toBe('5.00 MiB/s')
+    expect(wrapper.get('.download-success strong').text()).toBe('5.00 MiB/s')
     w.search.value='新加坡';await flushPromises()
-    expect(wrapper.get('.download-success').text()).toBe('5.00 MiB/s')
+    expect(wrapper.get('.download-success strong').text()).toBe('5.00 MiB/s')
     expect(wrapper.get('.hd-reader-notice').text()).toContain('当前筛选之外')
     await wrapper.get('.hd-node-open').trigger('click');await flushPromises()
     expect(wrapper.get('.download-failure').text()).toBe('尚无测速记录')
@@ -388,4 +388,31 @@ it('adapts the inspector to the project tab and keeps other projects as a one-li
  expect(ui.find('.hd-ins-others').exists()).toBe(false)
  expect(['.hd-latency','.hd-download','.hd-services-block'].every(s=>ui.find('.hd-inspector '+s).exists())).toBe(true)
  expect(api.startLatency).not.toHaveBeenCalled();w.dispose()
+})
+
+it('does not connect different byte caps in the inspector and prepares larger same-source retests',async()=>{
+ const records=[50,10,10].map((cap,index):Attempt=>{
+  const at=new Date(Date.now()-(3-index)*60000).toISOString()
+  return {...oldDownload,...a,attempt_id:`size-${index}`,request_id:`request-size-${index}`,requested_at:at,finished_at:at,
+   rule:{...oldDownload.rule,target_url:'https://speed.cloudflare.com/__down',maximum_bytes:cap*1048576,maximum_duration_ns:10e9},
+   result:{...oldDownload.result!,target_url:'https://speed.cloudflare.com/__down',outcome:'byte_limit',bytes_read:cap*1048576,
+    phase_timings_ns:{response_body:cap===50?4e9:1e9},finished_at:at}}
+ })
+ vi.mocked(api.attemptHistory).mockImplementation(async(kind,node)=>({attempts:kind==='download'&&node.node_key===a.node_key?records:[],has_more:false,complete:true}))
+ const w=workspace()
+ try{
+  w.nodes.value=[a];w.project.value='download'
+  const ui=attach(HomeView,w);await flushPromises();await ui.get('.hd-node-open').trigger('click');await flushPromises()
+  const inspectors=ui.get('.hd-inspector .hd-download')
+  expect(inspectors.get('.download-success').text()).toContain('短测均速')
+  const path=inspectors.get('.download-spark path').attributes('d')??''
+  expect(path.match(/M/g)).toHaveLength(2)
+  expect(path.match(/L/g)).toHaveLength(1)
+  await inspectors.get('.download-success button').trigger('click')
+  expect(w.plan.value).toMatchObject({projects:['download'],downloadSource:'cloudflare',downloadMiB:50,downloadSeconds:10})
+  expect(api.startAttempt).not.toHaveBeenCalled()
+ }finally{
+  w.dispose()
+  vi.mocked(api.attemptHistory).mockResolvedValue({attempts:[],has_more:false,complete:true})
+ }
 })

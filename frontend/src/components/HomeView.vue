@@ -13,7 +13,7 @@ import HomeWorkbench from './home/HomeWorkbench.vue'
 import {homeModelKey,weeklyHistoryKey,weeklySummary,type WeeklySummary} from './home/homeModel'
 import {useWorkspace} from '../workspace'
 import {api} from '../api'
-import {date,isReputationRule,sameHistoryRecords,downloadSpeed,downloadPeakSpeed,downloadTone,downloadOutcome,downloadConnectionSeconds,downloadSourceName,key,outcomeLabel,type NodeOption,type Project,type Attempt} from '../domain'
+import {date,isReputationRule,sameHistoryRecords,downloadReading,downloadPeakSpeed,downloadTone,downloadOutcome,downloadConnectionSeconds,downloadSourceName,key,outcomeLabel,type NodeOption,type Project,type Attempt} from '../domain'
 import {airportNodeCount as countAirportNodes} from '../airportViewing'
 import {attemptStatus,downloadNoDataReason,triggerLabel} from '../measurementRounds'
 import {latencyPointLabel,createPresentationCache,monitorHTTPServices,type TrendPoint} from '../presentation'
@@ -183,7 +183,21 @@ function airportNodeCount(id:string){return countAirportNodes(w.airports.value.f
 function serviceMetric(n:NodeOption,id:string){const a=shownService(n,id);if(!a)return '未测';if(!a.result)return attemptStatus(a);const o=a.result.outcome;if(o==='flapping')return serviceAvailability(a)===0?'检测结论不一致':'未确认';if(['matched','unlocked'].includes(o)&&!servicePassed(a))return '未确认';return outcomeLabel(o)}
 function serviceTone(n:NodeOption,id:string){const a=shownService(n,id);return a?.result?.outcome==='reachable'?'reachable':a?attemptTone(a):'empty'}
 function hoveredDownloadPoint(n:NodeOption){return hoverMode.value==='download'&&hoverNode.value&&key(hoverNode.value)===key(n)?activeRound.value:null}
-function downloadMetric(n:NodeOption){const point=hoveredDownloadPoint(n),attempt=point?.attempts?.[0],a=attempt||w.summaryDownload(n),v=point?point.value:downloadSpeed(a);if(a?.result?.error_message?.includes('备用源'))return a.result.error_message;if(a?.result?.http_status===429)return '测速源限流（429）';if(downloadNoDataReason(a))return downloadNoDataReason(a);return a?.result&&downloadTone(a)==='bad'?(a.result.outcome==='time_limit'?'时限内未读取数据':(a.result.phase||a.result.failure_phase||'').includes('handshake')?'代理握手失败':outcomeLabel(downloadOutcome(a))):v!==null?`${v<.01?'<0.01':v<1?v.toFixed(2):v.toFixed(1)} MiB/s`:a?attemptStatus(a,true):'未测'}
+function downloadMetric(n:NodeOption){
+ const point=hoveredDownloadPoint(n),a=point?.attempts?.[0]||w.summaryDownload(n)
+ const reading=downloadReading(a),value=point?point.value:reading?.value??null
+ if(a?.result?.error_message?.includes('备用源'))return a.result.error_message
+ if(a?.result?.http_status===429)return '测速源限流（429）'
+ const noData=downloadNoDataReason(a)
+ if(noData)return noData
+ if(a?.result&&downloadTone(a)==='bad'){
+  if(a.result.outcome==='time_limit')return '时限内未读取数据'
+  if((a.result.phase||a.result.failure_phase||'').includes('handshake'))return '代理握手失败'
+  return outcomeLabel(downloadOutcome(a))
+ }
+ if(value!==null)return `${value<.01?'<0.01':value.toFixed(value<1?2:1)} MiB/s${reading?.label==='短测均速'?' · 短测':''}`
+ return a?attemptStatus(a,true):'未测'
+}
 function downloadMetricTone(n:NodeOption){const point=hoveredDownloadPoint(n),a=point?.attempts?.[0]||w.summaryDownload(n);return point?point.tone:a?downloadTone(a):'empty'}
 function downloadMetricContext(n:NodeOption){const point=hoveredDownloadPoint(n),attempt=point?.attempts?.[0]||w.summaryDownload(n),peak=downloadPeakSpeed(attempt),connection=downloadConnectionSeconds(attempt),suffix=(peak!==null?` · 峰值 ${peak.toFixed(2)} MiB/s`:'')+(attempt?` · ${downloadSourceName(attempt)}`:'')+(connection===null?'':` · 连接 ${connection.toFixed(2)} 秒`);if(point)return `${date(point.time)} · ${triggerLabel(point.trigger)} · ${attempt?attemptStatus(attempt,true).replace(' · 达到时限',''):point.description}${suffix}`;return attempt?`${date(attempt.finished_at||attempt.requested_at)} · ${triggerLabel(attempt.trigger_type)} · ${attemptStatus(attempt,true).replace(' · 达到时限','')}${suffix}`:'没有下载记录'}
 function openCombinedPlan(){const nodes=[...runNodes.value];closeHover();w.project.value='combined';w.openPlan(nodes)}

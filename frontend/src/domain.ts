@@ -65,10 +65,13 @@ export function downloadPeakSpeed(a:Attempt|undefined){
   }
   return best
 }
-// 剔除前段 QUIC/TCP 慢启动爬坡后的稳态速度（尾部至少 1 秒且占总字节 ≥40% 的窗口）；无采样时退回全程均速。
-export function downloadSpeed(a:Attempt|undefined){
+// Prefer the observed tail when it improves on the body average. Keep the
+// label with the reading so a fallback average never looks like a tail sample.
+export function downloadReading(a:Attempt|undefined){
   const avg=downloadAverageSpeed(a),r=a?.result,samples=r?.samples,bodyNS=r?.phase_timings_ns?.response_body
-  if(avg===null||!r||!samples||samples.length<2||!bodyNS||bodyNS<2e9)return avg
+  if(avg===null||!r||!bodyNS)return null
+  if(bodyNS<2e9)return {value:avg,label:'短测均速'}
+  if(!samples||samples.length<2)return {value:avg,label:'全程均速'}
   // Samples only advance when bytes arrive. Use the full observed body interval
   // as the tail endpoint, including time spent stalled before a timeout.
   const last={t:Math.max(bodyNS,samples[samples.length-1].elapsed_ns),b:r.bytes_read}
@@ -77,8 +80,9 @@ export function downloadSpeed(a:Attempt|undefined){
     const dt=last.t-sample.elapsed_ns,db=last.b-sample.cumulative_bytes
     if(dt>=1e9&&db>=r.bytes_read*0.4){const v=db/1048576/(dt/1e9);if(v>best)best=v}
   }
-  return best
+  return {value:best,label:best>avg?'后段估算':'全程均速'}
 }
+export function downloadSpeed(a:Attempt|undefined){return downloadReading(a)?.value??null}
 export function downloadConnectionSeconds(a?:Attempt){const p=a?.result?.phase_timings_ns;if(!p)return null;const values=['dns','address_resolution','connection','socket_verification','proxy_connect_and_handshake','proxy_handshake','tls'].flatMap(k=>typeof p[k]==='number'?[p[k]]:[]);return values.length?values.reduce((sum,n)=>sum+n,0)/1e9:null}
 export function downloadTarget(a?:Attempt){return a?.result?.target_url||a?.rule.target_url||''}
 export function downloadSourceName(a?:Attempt){const url=downloadTarget(a);return url.includes('cachefly')?'Cachefly':url.includes('cloudflare')?'Cloudflare':url.includes('proof.ovh.net')?'OVH':url?new URL(url).hostname:'测速源未记录'}

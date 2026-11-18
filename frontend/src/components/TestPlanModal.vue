@@ -114,7 +114,7 @@ async function submit(){
           <label>每节点最多读取<UiSelect v-model.number="w.plan.value.downloadMiB"><option v-for="n in [5,10,20,50,100]" :key="n" :value="n">{{n}} MiB</option></UiSelect></label>
           <label>每节点下载时长<UiSelect v-model.number="w.plan.value.downloadSeconds"><option v-for="n in [5,10,15,20,30]" :key="n" :value="n">{{n}} 秒</option></UiSelect></label>
         </div>
-        <p class="muted small">逐个下载，避免抢占带宽。连接另计时，每节点连接与下载合计最多 {{w.plan.value.downloadSeconds*2}} 秒（含换源）。</p>
+        <p class="muted small">节点逐个测速。达到流量或时长上限即停止；正文不足 2 秒会标为短测均速。连接另计时，含换源每节点最多 {{w.plan.value.downloadSeconds*2}} 秒。</p>
       </details>
       <details v-if="w.plan.value.projects.includes('service')" class="plan-section" :open="expanded.has('service')" @toggle="toggleSection('service',$event)">
         <summary><strong>解锁检测</strong><span>{{standardServiceIds.length?`已选 ${standardServiceIds.length} 项`:'尚未选择服务'}} · 每项 {{w.plan.value.serviceSamples??4}} 次</span></summary>

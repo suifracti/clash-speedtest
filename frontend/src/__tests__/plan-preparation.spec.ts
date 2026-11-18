@@ -29,6 +29,13 @@ beforeEach(()=>{
 })
 afterEach(()=>{wrapper?.unmount();wrapper=undefined;w.dispose();document.body.innerHTML=''})
 
+it('suggests a larger byte cap for a single download and keeps the batch cap bounded',()=>{
+ w.project.value='download'
+ w.openPlan([node]);expect(w.plan.value?.downloadMiB).toBe(50)
+ w.openPlan([node,{...node,node_key:'node-b',node_identity_key:'identity-b'}])
+ expect(w.plan.value?.downloadMiB).toBe(20)
+})
+
 it('cancels preparation from the dialog without dispatching a late test or clearing earlier results',async()=>{
  const pending=deferred();vi.mocked(api.entries).mockReturnValueOnce(pending.promise)
  w.queue.value=[{id:'previous-result',node,project:'service',state:'completed'}];attach()

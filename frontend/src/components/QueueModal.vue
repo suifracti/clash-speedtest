@@ -9,7 +9,7 @@ import {latencySampleState} from '../presentation'
 import {downloadNoDataReason} from '../measurementRounds'
 import {entryCountry,mainlandNotice} from '../entryPath'
 import {useWorkspace} from '../workspace'
-import {projectNames,stateLabel,outcomeLabel,outcomeTone,downloadSpeed,downloadTone,downloadOutcome,downloadSourceName,type QueueItem} from '../domain'
+import {projectNames,stateLabel,outcomeLabel,outcomeTone,downloadReading,downloadTone,downloadOutcome,downloadSourceName,type QueueItem} from '../domain'
 import Modal from './Modal.vue'
 const w=useWorkspace(),retrying=ref(''),progressTitle=ref<HTMLElement>()
 onMounted(()=>nextTick(()=>progressTitle.value?.focus({preventScroll:true})))
@@ -74,8 +74,8 @@ function resultStatus(q:QueueItem):{label:string;tone:string;notExecuted?:boolea
   if(['not_executed','cancelled','user_cancelled','interrupted'].includes(outcome))return {label:stateLabel(outcome==='user_cancelled'?'cancelled':outcome),tone:'',notExecuted:true}
   if(downloadNoDataReason(a))return {label:downloadNoDataReason(a),tone:'warn'}
   if(downloadOutcome(a)==='response_too_short')return {label:outcomeLabel('response_too_short'),tone:'bad'}
-  const speed=downloadSpeed(a)
-  if(speed!==null)return {label:`${downloadSourceName(a)} · ${speed.toFixed(2)} MiB/s · ${(result.bytes_read/1048576).toFixed(1)} MiB`,tone:downloadTone(a,false)}
+  const reading=downloadReading(a)
+  if(reading)return {label:`${downloadSourceName(a)} · ${reading.label} ${reading.value.toFixed(2)} MiB/s · ${(result.bytes_read/1048576).toFixed(1)} MiB`,tone:downloadTone(a,false)}
   if(outcome==='source_rate_limited'||result.http_status===429)return {label:'下载源限流',tone:'warn'}
   if(result.bytes_read>0)return {label:`${(result.bytes_read/1048576).toFixed(2)} MB · 中断`,tone:'warn'}
   if(['timed_out','transport_error','connection_failed'].includes(outcome))return {label:outcomeLabel(outcome)+' · 未确认',tone:'warn'}
