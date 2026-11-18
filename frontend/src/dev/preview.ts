@@ -13,6 +13,7 @@ const signinScenario=new URL(location.href).searchParams.get('scenario')==='sign
 const accountScenario=new URL(location.href).searchParams.get('scenario')==='accounts'
 const monitorTransferScenario=new URL(location.href).searchParams.get('scenario')==='monitor-transfer'
 const storageScenario=new URL(location.href).searchParams.get('scenario')==='storage'
+const backupScenario=new URL(location.href).searchParams.get('scenario')==='backup'
 let monitorImportFailure=true
 let retentionRemaining=1200,retentionRuns=2,retentionPartial=true
 let startupReads=0,previewInitialized=!startupScenario,previewAuthenticated=!signinScenario
@@ -120,7 +121,7 @@ async function handle(url:URL,body:any,method:string):Promise<unknown>{
  if(p==='/api/auth/status'){if(startupScenario&&startupReads++===0)throw new Error('合成场景：本地服务尚未就绪');return {auth_required:signinScenario,authenticated:previewAuthenticated}}
  if(p==='/api/auth/login'&&signinScenario){if(body.password!=='preview')throw new Error('合成场景：请输入 preview');previewAuthenticated=true;return {token:'synthetic-preview-only'}}
  if(p==='/api/profile/setup/empty'&&startupScenario){previewInitialized=true;return {}}
- if(p==='/api/profile/setup')return {state:previewInitialized?'ready':'needs_choice',initialized:previewInitialized,data_root:'界面预览 · 内存数据',profile_dir:'不读取真实目录',history_dir:'不读取真实历史',settings_file:'仅当前预览',schema_version:previewInitialized?11:undefined,migration:{state:'isolated',target_history_dir:''}}
+ if(p==='/api/profile/setup')return {state:previewInitialized?'ready':'needs_choice',initialized:previewInitialized,data_root:'界面预览 · 内存数据',profile_dir:'不读取真实目录',history_dir:'不读取真实历史',settings_file:'仅当前预览',schema_version:previewInitialized?11:undefined,last_backup_at:backupScenario?'2026-11-01T00:00:00Z':undefined,last_backup_error:backupScenario?'备份已导出，但导出时间记录失败：示例目录不可写。请保留备份文件，无需再次导出。':undefined,migration:{state:'isolated',target_history_dir:''}}
  if(p==='/api/airports')return startupScenario?[]:airports
  if(p==='/api/monitor/nodes'){if(signinScenario)await new Promise(resolve=>setTimeout(resolve,6000));return startupScenario?[]:nodes}
  if(p==='/api/settings'){if(method!=='GET')Object.assign(settings,body);return settings}

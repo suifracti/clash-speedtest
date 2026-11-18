@@ -103,10 +103,20 @@ func (a *App) ExportDataBackup() (bool, error) {
 	if err != nil || path == "" {
 		return false, err
 	}
-	if err := writeExportFile(path, func(w io.Writer) error { return a.app.ExportDataBackup(a.ctx, w) }); err != nil {
-		return false, fmt.Errorf("导出备份失败: %w", err)
+	if err := a.exportDataBackupTo(path); err != nil {
+		return false, err
 	}
 	return true, nil
+}
+
+func (a *App) exportDataBackupTo(path string) error {
+	if err := writeExportFile(path, func(w io.Writer) error { return a.app.ExportDataBackup(a.ctx, w) }); err != nil {
+		return fmt.Errorf("导出备份失败: %w", err)
+	}
+	if err := a.app.RecordDataBackupExported(); err != nil {
+		return fmt.Errorf("备份文件已保存，但导出时间记录失败：%w。请保留备份文件，无需再次导出。", err)
+	}
+	return nil
 }
 
 // Build beside the destination and replace it only after all writes and close

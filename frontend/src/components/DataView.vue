@@ -24,7 +24,12 @@ async function refresh(){await perform('刷新状态',async()=>{await w.boot();i
 async function inspectPath(path:string){inspected.value=null;inspectedPath.value='';const result=await api.inspect(path);inspected.value=result;inspectedPath.value=path;feedback.value=result.available?'来源检查完成，请核对后确认导入':'来源不可用，请查看检查结果'}
 async function inspect(){const path=source.value.trim();if(!path)return;await perform('检查来源',()=>inspectPath(path))}
 async function browse(){await perform('选择来源',async()=>{const chosen=await selectProfileSourceDirectory();if(!chosen){feedback.value='已取消选择目录，当前来源保持不变';return}source.value=chosen;await inspectPath(chosen)})}
-async function exportBackup(){await perform('导出备份',async()=>{feedback.value=await backup()?'备份已导出':'已取消备份导出';if(feedback.value==='备份已导出'){w.notify(feedback.value);try{w.setup.value=await api.setup()}catch(cause){error.value=`备份已导出，但状态刷新失败：${cause instanceof Error?cause.message:String(cause)}。可刷新状态，无需再次导出。`}}})}
+async function exportBackup(){await perform('导出备份',async()=>{
+  if(!await backup()){feedback.value='已取消备份导出';return}
+  feedback.value=desktop()?'备份已导出，文件已保存':'备份已导出，下载已发起；请在浏览器下载中确认保存。'
+  w.notify(feedback.value)
+  try{w.setup.value=await api.setup()}catch(cause){error.value=`备份已导出，但状态刷新失败：${cause instanceof Error?cause.message:String(cause)}。可刷新状态，无需再次导出。`}
+})}
 async function openFolder(){await perform('打开数据目录',async()=>{await request('/api/data/open-folder','POST',undefined,'OpenDataFolder');feedback.value='已请求打开数据目录'})}
 async function refreshAfterMutation(){await w.boot();if(w.error.value)error.value=`操作已完成，但部分状态刷新失败：${w.error.value}`}
 async function initialize(){await perform('创建空白存储',async()=>{await api.initialize();feedback.value='空白存储已创建';await refreshAfterMutation()})}
@@ -44,9 +49,10 @@ async function apply(){const kind=confirmation.value;if(!kind||locked.value)retu
     </section>
     <section v-else-if="emptyStart" class="settings-section data-start-panel"><div class="section-heading"><h2>先添加一份机场订阅</h2></div><p class="section-note">存储已就绪。添加机场和订阅账户后，就可以查看线路并选择要检测的节点。</p><div class="button-group"><button class="button primary" :disabled="locked" @click="w.page.value='airports'">添加机场</button><button class="button" :disabled="locked||!!pageError" @click="vergeOpen=true">从 Clash Verge 导入／同步</button></div></section>
     <section class="settings-section data-storage-panel"><div class="section-heading"><h2>当前存储</h2><span class="badge" :class="{good:w.setup.value?.state==='ready'&&!pageError&&!w.loading.value}">{{setupLabel}}</span></div>
-      <div class="data-storage-grid"><dl class="path-list"><div><dt>数据根目录</dt><dd>{{w.setup.value?.data_root||'尚未读取'}}</dd></div><div><dt>订阅目录</dt><dd>{{w.setup.value?.profile_dir||'尚未读取'}}</dd></div><div><dt>历史目录</dt><dd>{{w.setup.value?.history_dir||'尚未读取'}}</dd></div><div><dt>设置文件</dt><dd>{{w.setup.value?.settings_file||'尚未读取'}}</dd></div><div><dt>数据库版本</dt><dd>{{w.setup.value?.schema_version??'尚未读取'}}</dd></div><div><dt>最近备份</dt><dd><time v-if="w.setup.value?.last_backup_at" :datetime="w.setup.value.last_backup_at">{{date(w.setup.value.last_backup_at)}}</time><span v-else>尚未备份</span></dd></div></dl>
+      <div class="data-storage-grid"><dl class="path-list"><div><dt>数据根目录</dt><dd>{{w.setup.value?.data_root||'尚未读取'}}</dd></div><div><dt>订阅目录</dt><dd>{{w.setup.value?.profile_dir||'尚未读取'}}</dd></div><div><dt>历史目录</dt><dd>{{w.setup.value?.history_dir||'尚未读取'}}</dd></div><div><dt>设置文件</dt><dd>{{w.setup.value?.settings_file||'尚未读取'}}</dd></div><div><dt>数据库版本</dt><dd>{{w.setup.value?.schema_version??'尚未读取'}}</dd></div><div><dt>最近导出记录</dt><dd><time v-if="w.setup.value?.last_backup_at" :datetime="w.setup.value.last_backup_at">{{date(w.setup.value.last_backup_at)}}</time><span v-else>{{!w.setup.value?'尚未读取':w.setup.value.last_backup_error?'记录不可读':'暂无时间记录'}}</span></dd></div></dl>
       <div class="data-backup-actions"><h3>保管一份完整备份</h3><div class="button-group"><button class="button" :disabled="locked||!w.setup.value?.data_root" @click="openFolder">打开数据目录</button><button class="button primary" :disabled="locked||!w.setup.value?.data_root" @click="exportBackup"><Icon name="download"/>导出备份</button></div>
-      <p class="section-note">完整备份包含订阅、历史与设置；下方订阅导入仅导入配置来源。</p></div></div>
+      <p v-if="w.setup.value?.last_backup_error" class="backup-record-status inline-error" role="status">{{w.setup.value.last_backup_error}}</p>
+      <p class="section-note">完整备份包含订阅、历史与设置；下方订阅导入仅导入配置来源。<span v-if="!desktop()">导出记录表示程序已完成输出，最终保存请查看浏览器下载。</span></p></div></div>
     </section>
     <div class="data-workflow-grid">
     <section class="settings-section data-import-panel"><div class="section-heading"><h2>导入现有订阅</h2><button v-if="w.setup.value?.state==='ready'&&!emptyStart" class="button" :disabled="locked||!!pageError" @click="vergeOpen=true">从 Clash Verge 导入／同步</button></div><p class="section-note">选择目录 → 检查来源 → 确认导入，或从本机 Clash Verge 导入／同步。仅导入订阅来源，历史与设置迁移在下方单独确认。</p>

@@ -89,6 +89,25 @@ describe('history capacity and retention',()=>{
 })
 
 describe('backup result continuity',()=>{
+  it('keeps an unread backup record unknown and exposes record failures beside the last known time',async()=>{
+    await start(DataView);workspace.setup.value=null;await flushPromises()
+    expect(document.querySelector('.path-list')?.textContent).not.toContain('尚未备份')
+    workspace.setup.value={state:'ready',initialized:true,data_root:'/synthetic/data',profile_dir:'',history_dir:'',settings_file:'',migration:{state:'ready',target_history_dir:''},last_backup_at:cutoff,last_backup_error:'备份已导出，但导出时间记录失败'} as any
+    await flushPromises()
+    expect(document.querySelector('.backup-record-status')?.textContent).toContain('导出时间记录失败')
+    expect(document.querySelector('.path-list time')?.getAttribute('datetime')).toBe(cutoff)
+    expect(backup).not.toHaveBeenCalled()
+  })
+
+  it('describes browser export as a download request and preserves a completion-record warning',async()=>{
+    await start(DataView);vi.mocked(backup).mockResolvedValueOnce(true)
+    vi.mocked(api.setup).mockResolvedValueOnce({...workspace.setup.value!,last_backup_at:cutoff,last_backup_error:'导出时间记录失败；无需再次导出'} as any)
+    await click('导出备份')
+    expect(document.querySelector('.operation-status')?.textContent).toContain('浏览器下载中确认保存')
+    expect(document.querySelector('.backup-record-status')?.textContent).toContain('无需再次导出')
+    expect(backup).toHaveBeenCalledOnce()
+  })
+
   it('shows successful export separately from metadata refresh failure and never re-exports on a read retry',async()=>{
     await start(DataView);vi.mocked(backup).mockResolvedValueOnce(true);vi.mocked(api.setup).mockRejectedValueOnce(new Error('setup offline'))
     await click('导出备份')

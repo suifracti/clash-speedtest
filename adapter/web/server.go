@@ -986,7 +986,17 @@ func (s *Server) handleExportDataRoot(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
 	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
-	_, _ = io.Copy(w, archive)
+	written, err := io.Copy(w, archive)
+	if err != nil || written != info.Size() || r.Context().Err() != nil {
+		// Headers/ZIP bytes have already been written. Do not append JSON to the
+		// archive or advance the completion record after a failed transfer.
+		return
+	}
+	if err := s.app.RecordDataBackupExported(); err != nil {
+		// The archive was sent; keep it valid. Setup exposes this record warning
+		// separately instead of reporting the whole export as failed.
+		log.Printf("backup exported but completion time was not recorded: %v", err)
+	}
 }
 
 type exportCSVReq struct {

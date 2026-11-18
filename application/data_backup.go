@@ -16,6 +16,8 @@ import (
 // ExportDataBackup is shared by Web downloads and native Save dialogs. Preserve
 // the existing archive layout and exclusions, but snapshot the live SQLite
 // database so committed WAL data is included without copying transient files.
+// This only builds the archive. Adapters record completion after their final
+// file replacement or HTTP response write, never while this temporary is built.
 func (s *AppService) ExportDataBackup(ctx context.Context, destination io.Writer) error {
 	if s == nil {
 		return fmt.Errorf("app service is not initialized")
@@ -117,7 +119,46 @@ func (s *AppService) ExportDataBackup(ctx context.Context, destination io.Writer
 	if err := archive.Close(); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(root, "last-backup-at"), []byte(time.Now().UTC().Format(time.RFC3339Nano)), 0600)
+	return nil
+}
+
+// RecordDataBackupExported records the adapter's completed export. For Web this
+// means the full response was handed to the HTTP writer, not that the browser
+// persisted a file. A record error must not discard an already exported archive.
+func (s *AppService) RecordDataBackupExported() error {
+	if s == nil || s.appPaths.DataRoot == "" {
+		return fmt.Errorf("数据根目录未配置")
+	}
+	s.backupMu.Lock()
+	defer s.backupMu.Unlock()
+	err := writeAtomicFile(filepath.Join(s.appPaths.DataRoot, "last-backup-at"), []byte(time.Now().UTC().Format(time.RFC3339Nano)), 0600)
+	s.lastBackupRecordError = ""
+	if err != nil {
+		s.lastBackupRecordError = fmt.Sprintf("备份已导出，但导出时间记录失败：%v。请保留备份文件，无需再次导出。", err)
+	}
+	return err
+}
+
+func (s *AppService) readDataBackupRecord(dto *ProfileSetupDTO) {
+	if s.appPaths.DataRoot == "" {
+		return
+	}
+	s.backupMu.Lock()
+	defer s.backupMu.Unlock()
+	data, err := os.ReadFile(filepath.Join(s.appPaths.DataRoot, "last-backup-at"))
+	if err == nil {
+		var stamp time.Time
+		stamp, err = time.Parse(time.RFC3339Nano, string(data))
+		if err == nil {
+			dto.LastBackupAt = &stamp
+		}
+	}
+	if err != nil && !os.IsNotExist(err) {
+		dto.LastBackupError = fmt.Sprintf("最近导出时间无法读取：%v", err)
+	}
+	if s.lastBackupRecordError != "" {
+		dto.LastBackupError = s.lastBackupRecordError
+	}
 }
 
 func appendBackupFile(archive *zip.Writer, name, path string, info os.FileInfo) error {

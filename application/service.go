@@ -72,6 +72,9 @@ type AppService struct {
 	noAutoCredentials   bool
 	discoverCredentials func() (string, string, error)
 
+	backupMu              sync.Mutex
+	lastBackupRecordError string
+
 	// External Controller & Decision Policy fields
 	ctrlMu         sync.RWMutex
 	controller     controller.Controller
@@ -941,11 +944,7 @@ func (s *AppService) GetProfileSetup() (*ProfileSetupDTO, error) {
 	if s.historyStore != nil && s.historyStore.DB() != nil {
 		dto.SchemaVersion = history.CurrentSchemaVersion
 	}
-	if data, err := os.ReadFile(filepath.Join(s.appPaths.DataRoot, "last-backup-at")); s.appPaths.DataRoot != "" && err == nil {
-		if stamp, err := time.Parse(time.RFC3339Nano, string(data)); err == nil {
-			dto.LastBackupAt = &stamp
-		}
-	}
+	s.readDataBackupRecord(dto)
 	if dto.DataRoot == "" && s.profilePaths.Dir != "" {
 		dto.DataRoot = filepath.Dir(s.profilePaths.Dir)
 	}

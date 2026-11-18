@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,6 +59,13 @@ func TestDataBackupRestoresCommittedHistoryAndUserFiles(t *testing.T) {
 	service := &AppService{appPaths: paths, historyStore: store}
 	var output bytes.Buffer
 	if err := service.ExportDataBackup(ctx, &output); err != nil {
+		t.Fatal(err)
+	}
+	generated, err := service.GetProfileSetup()
+	if err != nil || generated.LastBackupAt != nil {
+		t.Fatalf("temporary ZIP generation must not record a completed export: %+v, %v", generated, err)
+	}
+	if err := service.RecordDataBackupExported(); err != nil {
 		t.Fatal(err)
 	}
 	setup, err := service.GetProfileSetup()
@@ -120,6 +128,42 @@ func TestDataBackupRestoresCommittedHistoryAndUserFiles(t *testing.T) {
 	after, _ := service.GetProfileSetup()
 	if after.LastBackupAt == nil || !after.LastBackupAt.Equal(*setup.LastBackupAt) {
 		t.Fatal("failed export changed last backup timestamp")
+	}
+}
+
+func TestDataBackupRecordWarningAndRecovery(t *testing.T) {
+	paths, err := appdata.Resolve(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(paths.DataRoot, "last-backup-at")
+	if err := os.MkdirAll(marker, 0700); err != nil {
+		t.Fatal(err)
+	}
+	service := &AppService{appPaths: paths}
+	if err := service.RecordDataBackupExported(); err == nil {
+		t.Fatal("record should fail on directory")
+	}
+	setup, err := service.GetProfileSetup()
+	if err != nil || setup.LastBackupAt != nil || !strings.Contains(setup.LastBackupError, "备份已导出") {
+		t.Fatalf("record warning missing: %+v, %v", setup, err)
+	}
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RecordDataBackupExported(); err != nil {
+		t.Fatal(err)
+	}
+	setup, err = service.GetProfileSetup()
+	if err != nil || setup.LastBackupAt == nil || setup.LastBackupError != "" {
+		t.Fatalf("record recovery: %+v, %v", setup, err)
+	}
+	if err := os.WriteFile(marker, []byte("invalid time"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	setup, err = service.GetProfileSetup()
+	if err != nil || setup.LastBackupAt != nil || setup.LastBackupError == "" {
+		t.Fatalf("unreadable time must stay unknown: %+v, %v", setup, err)
 	}
 }
 
