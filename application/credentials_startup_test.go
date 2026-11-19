@@ -195,8 +195,8 @@ func TestManualCredentialReadbackUsesSameDataRoot(t *testing.T) {
 	app.Close()
 	reopened := NewAppServiceWithOptions(nil, paths, nil, Options{NoAutoCredentials: true})
 	defer reopened.Close()
-	if !reopened.GetTokenStatus().HasToken || reopened.GetAntigravityToken() != "ya29.local-mock-compatible-value" {
-		t.Fatal("saved local binding was lost on reopen")
+	if !reopened.GetTokenStatus().HasToken || reopened.GetAntigravityToken() != "ya29.local-mock-compatible-value" || reopened.GetAntigravitySource() != "manual" {
+		t.Fatalf("saved local binding or source was lost on reopen: status=%+v", reopened.GetTokenStatus())
 	}
 	if _, err := os.Stat(filepath.Join(home, ".antigravity_token")); !os.IsNotExist(err) {
 		t.Fatal("local binding wrote the daily HOME")

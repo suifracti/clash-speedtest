@@ -1733,8 +1733,16 @@ func (s *AppService) SetAntigravityToken(token, source string) error {
 // Persist before changing the live binding; a failed write must not look saved.
 func (s *AppService) saveTokenLocked(token, source string) error {
 	if s.appPaths.DataRoot != "" {
-		if err := writeAtomicFile(filepath.Join(s.appPaths.DataRoot, ".antigravity_token"), []byte(token+"\n"), 0600); err != nil {
+		tokenPath := filepath.Join(s.appPaths.DataRoot, ".antigravity_token")
+		if err := writeAtomicFile(tokenPath, []byte(token+"\n"), 0600); err != nil {
 			return fmt.Errorf("凭据未保存，原绑定保留: %w", err)
+		}
+		if source != "" {
+			if meta, err := json.Marshal(struct {
+				Source string `json:"source"`
+			}{Source: source}); err == nil {
+				_ = writeAtomicFile(tokenPath+".meta", append(meta, '\n'), 0600)
+			}
 		}
 	}
 	s.antigravityToken, s.antigravitySource = token, source
@@ -1745,7 +1753,8 @@ func (s *AppService) loadPersistedTokenLocked() bool {
 	if s.appPaths.DataRoot == "" {
 		return false
 	}
-	data, err := os.ReadFile(filepath.Join(s.appPaths.DataRoot, ".antigravity_token"))
+	tokenPath := filepath.Join(s.appPaths.DataRoot, ".antigravity_token")
+	data, err := os.ReadFile(tokenPath)
 	if err != nil {
 		return false
 	}
@@ -1753,7 +1762,16 @@ func (s *AppService) loadPersistedTokenLocked() bool {
 	if parsed == "" {
 		return false
 	}
-	s.antigravityToken, s.antigravitySource = parsed, "本数据目录凭据"
+	source := "本数据目录凭据"
+	if metaRaw, err := os.ReadFile(tokenPath + ".meta"); err == nil {
+		var meta struct {
+			Source string `json:"source"`
+		}
+		if json.Unmarshal(metaRaw, &meta) == nil && strings.TrimSpace(meta.Source) != "" {
+			source = strings.TrimSpace(meta.Source)
+		}
+	}
+	s.antigravityToken, s.antigravitySource = parsed, source
 	return true
 }
 
