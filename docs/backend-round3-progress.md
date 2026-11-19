@@ -4,6 +4,7 @@
 
 ## 当前接续（2026-11-19）
 
+- 修复 `base.css` 与 `TestPlanModal.vue` 弹窗边缘与标签容器边框缺失/内边距被覆盖的问题（改为 `.modal[open]` 固定头尾、`.modal-body` 内部滚动，并将 `.cst-plan-step details.plan-section` 作用域收窄避免影响 `.plan-tab-panel`）；按用户反馈收敛默认解锁与工作台初选列表，默认保留高区分度的 `Google Gemini`、`Google Antigravity`、`Netflix`、`TikTok` 及日本地区项目，将 `ChatGPT` / `Claude` / `Spotify` / `YouTube Premium` 收纳至“显示传统参考项 (4)”折叠开关（后台规则与历史回放完整保留）。前端 `npm test`（88 文件 / 639 项）与 `vite build` 通过。
 - 新增 `Cloudflare 人机验证检测`（`cloudflare_challenge`）并全面重构配置弹窗与分组体验：
   1. 后端 [cloudflare_challenge.go](core/publicservice/cloudflare_challenge.go) 以普通浏览器请求头依次探测 ChatGPT / Grok / Claude 三个代表性 Cloudflare 站点是否返回 `cf-mitigated: challenge`、Turnstile 或 `Just a moment`（仅观察不绕过），区分 `未触发 CF 盾`（`profiled`）、`部分弹 CF 盾`（`verification_required`）与 `易弹 CF 人机验证`（`challenge`），并统一按类别排序 `Catalog()`（`AI` → `流媒体` → `日本` → `出口地址与机房` → `IP 风险与纯净度` → `地区与人机验证`）。
   2. 前端将 `TestPlanModal.vue` 四项参数区（延迟、下载、解锁、IP信誉/纯净度）由垂直堆叠手风琴重构为横向分类标签页（`plan-tabs` + `v-show`）；`UnlockPicker.vue` 修复 `流...`/`日...` 卡片截断、增加编辑态提示条并按 `AI 服务` / `流媒体` / `日本地区` 分组展示（带每组全选/取消）；`ServicePicker.vue` 按 `出口地址与机房` / `IP 风险与纯净度` / `地区与人机验证` 分组展示；`QueueModal.vue` 与 `unlock.ts` 补齐 `cloudflare_challenge` 中文标签与逐站弹盾明细。

@@ -40,12 +40,13 @@ h2{font-size:16px;font-weight:650;letter-spacing:-.2px;color:var(--cst-text)}
 .empty-state h3{color:var(--cst-text);font-weight:650}
 .spinner{border-color:var(--cst-line-strong);border-top-color:var(--cst-accent)}
 /* 弹窗 */
-.modal{border:1px solid var(--cst-line);border-radius:var(--cst-radius-lg);background:var(--cst-panel);color:var(--cst-text);box-shadow:var(--cst-shadow-pop)}
+.modal{border:1px solid var(--cst-line-strong);border-radius:var(--cst-radius-lg);background:var(--cst-panel);color:var(--cst-text);box-shadow:var(--cst-shadow-pop);overflow:hidden}
+.modal[open]{display:flex;flex-direction:column}
 .modal::backdrop{background:var(--cst-backdrop)}
-.modal-header,.modal-footer{background:var(--cst-panel);border-color:var(--cst-line)}
+.modal-header,.modal-footer{background:var(--cst-panel);border-color:var(--cst-line);position:static;flex:none}
 .modal-header{padding:18px 22px 15px}
 .modal-header h2{font-size:16px;font-weight:650}
-.modal-body{padding:20px 22px}
+.modal-body{padding:20px 22px;flex:1 1 auto;min-height:0;overflow-y:auto}
 .modal-footer{padding:14px 22px;background:var(--cst-panel-2)}
 .toast-message{background:var(--cst-text);color:var(--cst-bg);border:0;border-radius:10px;box-shadow:var(--cst-shadow-pop);font-weight:500}
 @media(max-width:740px){.page-view{padding:16px 16px 32px}}
@@ -60,7 +61,7 @@ h2{font-size:16px;font-weight:650;letter-spacing:-.2px;color:var(--cst-text)}
 .cst-plan-step .plan-projects{margin-bottom:0}
 .cst-plan-step .plan-projects label{padding:7px 12px;border-radius:8px;border-color:var(--cst-line-strong)}
 .cst-plan-step .plan-projects label.checked{background:var(--cst-accent-soft);color:var(--cst-accent);border-color:var(--cst-accent)}
-.cst-plan-step .plan-section{padding:10px 0;border-top:0}
+.cst-plan-step details.plan-section{padding:10px 0;border-top:0}
 .cst-plan-step .plan-section h4{margin:0 0 8px;font-size:12px;font-weight:600;color:var(--cst-muted)}
 .cst-plan-step .plan-section p{margin-top:8px}
 .cst-presets{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin-bottom:10px}

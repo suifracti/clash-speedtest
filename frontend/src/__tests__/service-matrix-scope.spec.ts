@@ -73,6 +73,18 @@ it('saves and toggles custom unlock groups alongside default groups in UnlockPic
  expect(wrapper.findAll('.unlock-group-options label').some(x=>x.text().includes('流媒体'))).toBe(true)
  vi.unstubAllGlobals()
 })
+
+it('hides optional legacy reference services (ChatGPT/Claude/Spotify/YouTube) by default in full catalog until toggled',async()=>{
+ window.localStorage.clear();vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}})
+ w=createWorkspace();w.project.value='service'
+ w.catalog.value=['chatgpt_unlock','claude_unlock','gemini_unlock','antigravity','netflix_unlock','youtube_premium','spotify_unlock','tiktok_unlock'].map(id=>({service_id:id,name:id,category:'fixture',description:'',result_kind:'unlock',success_criterion:'',timeout_seconds:10}))
+ wrapper=mount(HomeView,{global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
+ await wrapper.get('.hd-services summary').trigger('click')
+ expect(wrapper.findAll('.unlock-custom .service-picker-grid strong').map(x=>x.text())).toEqual(['gemini_unlock','antigravity','netflix_unlock','tiktok_unlock'])
+ await wrapper.findAll('button').find(b=>b.text().includes('显示传统参考项 (4)'))!.trigger('click');await flushPromises()
+ expect(wrapper.findAll('.unlock-custom .service-picker-grid strong')).toHaveLength(8)
+ vi.unstubAllGlobals()
+})
 it('filters by quick region chips (including multi-select) and selects or clears matching nodes',async()=>{
  window.localStorage.clear();vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}})
  const hk:NodeOption={profile_id:'p',node_key:'n-hk',node_identity_key:'i-hk',config_revision_key:'r',profile_name:'fixture',display_name:'HK 01 优化',type:'anytls',country_code:'HK',country_flag:''}

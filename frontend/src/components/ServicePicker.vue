@@ -59,7 +59,7 @@ function clearVisible(){const ids=new Set(visible.value.map(s=>s.service_id));em
   </div>
 </template>
 <style scoped>
-.service-picker-list.is-grouped{display:flex;flex-direction:column;gap:14px;max-height:320px;overflow:auto;padding-right:2px}
+.service-picker-list.is-grouped{display:flex;flex-direction:column;gap:14px;max-height:320px;overflow:auto;padding:2px 4px}
 .service-picker-group{display:grid;gap:8px}
 .service-picker-group-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-bottom:4px;border-bottom:1px solid var(--cst-line,var(--line))}
 .service-picker-group-head h4{margin:0;font-size:12px;font-weight:700;color:var(--cst-text,var(--ink));display:inline-flex;align-items:center;gap:6px}

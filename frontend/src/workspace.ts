@@ -145,7 +145,8 @@ export function createWorkspace(){
     if(ids.length!==serviceIds.value.length||ids.some((id,i)=>id!==serviceIds.value[i])){serviceIds.value=ids;return}
     try{window.localStorage.setItem(selectedServicesKey,JSON.stringify(ids))}catch{}
   }
-  watch(catalog,()=>{if(catalog.value.length){if(catalog.value.some(s=>s.service_id==='chatgpt_unlock')&&(window.localStorage.getItem(selectedServicesKey)===null||serviceIds.value.some(id=>!catalog.value.some(s=>s.service_id===id))))serviceIds.value=catalog.value.filter(s=>s.service_id!=='antigravity'&&unlockGroup(s.service_id)!=='legacy').map(s=>s.service_id);saveServices()}},{deep:true,flush:'sync'})
+  const lowPriorityDefaultServices=new Set(['chatgpt_unlock','claude_unlock','spotify_unlock','youtube_premium'])
+  watch(catalog,()=>{if(catalog.value.length){if(catalog.value.some(s=>s.service_id==='chatgpt_unlock')&&(window.localStorage.getItem(selectedServicesKey)===null||serviceIds.value.some(id=>!catalog.value.some(s=>s.service_id===id)))){const full=catalog.value.some(s=>s.service_id==='gemini_unlock')&&catalog.value.length>=8;serviceIds.value=catalog.value.filter(s=>s.service_id!=='antigravity'&&unlockGroup(s.service_id)!=='legacy'&&(!full||!lowPriorityDefaultServices.has(s.service_id))).map(s=>s.service_id)}saveServices()}},{deep:true,flush:'sync'})
   watch(serviceIds,saveServices,{deep:true,flush:'sync'})
   watch(hours,()=>{historyVersion++;loaded.clear();historyStarted.clear();historyCursors.clear();historyWindows.clear();historyHasMore.value={};latency.value={};downloads.value={};services.value={};readErrors.value={};historyErrors.clear()})
   function mergeLatency(test:LatencyTest){

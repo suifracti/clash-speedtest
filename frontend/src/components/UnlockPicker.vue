@@ -3,13 +3,14 @@ import {computed,nextTick,ref} from 'vue'
 import {useWorkspace} from '../workspace'
 import type {ServiceRule} from '../domain'
 import {unlockGroups,unlockGroup,unlockSupported} from '../unlock'
-const props=defineProps<{modelValue:string[];catalog:ServiceRule[]}>(),emit=defineEmits<{'update:modelValue':[value:string[]]}>(),search=ref(''),customName=ref(''),customOpen=ref(false),editingGroupId=ref(''),nameInput=ref<HTMLInputElement|null>(null)
+const props=defineProps<{modelValue:string[];catalog:ServiceRule[]}>(),emit=defineEmits<{'update:modelValue':[value:string[]]}>(),search=ref(''),customName=ref(''),customOpen=ref(false),showOptional=ref(false),editingGroupId=ref(''),nameInput=ref<HTMLInputElement|null>(null)
 const w=useWorkspace()
-const customKey='cst.custom-unlock-groups',groupsKey='cst.unlock-groups.v1'
+const customKey='cst.custom-unlock-groups',groupsKey='cst.unlock-groups.v2'
+const optionalUnlockIds=new Set(['chatgpt_unlock','claude_unlock','spotify_unlock','youtube_premium'])
 interface EditableUnlockGroup{id:string;name:string;ids:string[];custom?:boolean}
 const selectable=computed(()=>props.catalog.filter(s=>!s.superseded_by&&unlockGroup(s.service_id)!=='legacy'))
 function defaultPresetGroups():EditableUnlockGroup[]{
- return unlockGroups.map(g=>({id:g.id,name:g.name,ids:g.ids.filter(id=>id!=='antigravity'&&unlockSupported(id)),custom:false}))
+ return unlockGroups.map(g=>({id:g.id,name:g.name,ids:g.ids.filter(id=>id!=='antigravity'&&!optionalUnlockIds.has(id)&&unlockSupported(id)),custom:false}))
 }
 function loadGroups():EditableUnlockGroup[]{
  try{
@@ -31,7 +32,17 @@ function persistGroups(){
  }catch{}
 }
 const categoryNames:Record<string,string>={ai:'AI 服务',streaming:'流媒体',japan:'日本地区'}
-const visible=computed(()=>selectable.value.filter(s=>!search.value||(s.name+' '+s.description+' '+(categoryNames[unlockGroup(s.service_id)]||'')).toLowerCase().includes(search.value.trim().toLowerCase())))
+const optionalCount=computed(()=>selectable.value.filter(s=>optionalUnlockIds.has(s.service_id)).length)
+const editingOptional=computed(()=>!!groups.value.find(g=>g.id===editingGroupId.value)?.ids.some(id=>optionalUnlockIds.has(id)))
+const visible=computed(()=>{
+ const q=search.value.trim().toLowerCase()
+ const hasCoreInGroup=(gid:string)=>selectable.value.some(s=>unlockGroup(s.service_id)===gid&&!optionalUnlockIds.has(s.service_id))
+ return selectable.value.filter(s=>{
+  const isOpt=optionalUnlockIds.has(s.service_id)
+  if(isOpt&&!showOptional.value&&!q&&!props.modelValue.includes(s.service_id)&&!editingOptional.value&&hasCoreInGroup(unlockGroup(s.service_id)))return false
+  return !q||(s.name+' '+s.description+' '+(categoryNames[unlockGroup(s.service_id)]||'')).toLowerCase().includes(q)
+ })
+})
 const groupedVisible=computed(()=>{
  const map=new Map<string,{id:string;name:string;items:ServiceRule[]}>()
  for(const s of visible.value){
@@ -112,6 +123,7 @@ const defaultsCustomized=computed(()=>{
     <div class="unlock-group-meta">
       <label class="unlock-region-toggle"><input v-model="w.skipByApplicableRegions.value" type="checkbox">按适用地区跳过</label>
       <div class="unlock-meta-actions">
+        <button v-if="optionalCount" type="button" class="text-button" @click="showOptional=!showOptional;if(showOptional)customOpen=true">{{showOptional?'隐藏传统参考项':`显示传统参考项 (${optionalCount})`}}</button>
         <button v-if="defaultsCustomized" type="button" class="text-button" @click="resetDefaultGroups">恢复默认分组</button>
         <button type="button" class="text-button" @click="customOpen=!customOpen">{{customOpen?'收起分类明细':'按分类自定义选择'}}</button>
       </div>
@@ -171,7 +183,7 @@ const defaultsCustomized=computed(()=>{
 .unlock-custom-bar>input{flex:1 1 170px;min-width:0}
 .unlock-custom-save{display:flex;gap:8px;align-items:center;flex:1 1 250px;min-width:0}
 .unlock-custom-save input{flex:1;min-width:0}
-.service-picker-list.is-grouped{display:flex;flex-direction:column;gap:14px;max-height:300px;overflow:auto;padding-right:2px}
+.service-picker-list.is-grouped{display:flex;flex-direction:column;gap:14px;max-height:300px;overflow:auto;padding:2px 4px}
 .service-picker-group{display:grid;gap:8px}
 .service-picker-group-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-bottom:4px;border-bottom:1px solid var(--cst-line,var(--line))}
 .service-picker-group-head h4{margin:0;font-size:12px;font-weight:700;color:var(--cst-text,var(--ink));display:inline-flex;align-items:center;gap:6px}

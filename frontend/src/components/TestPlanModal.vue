@@ -222,7 +222,7 @@ async function submit(){
 .plan-tabs button strong{font-size:12.5px;font-weight:650;white-space:nowrap}
 .plan-tabs button span{font-size:10.5px;padding:1px 6px;border-radius:999px;background:var(--cst-panel-2);color:var(--cst-muted);white-space:nowrap}
 .plan-tabs button.active span{background:var(--cst-accent-soft);color:var(--cst-accent)}
-.plan-tab-panel{padding:14px 16px;margin:0 0 10px;border:1px solid var(--cst-line-strong);border-radius:12px;background:var(--cst-panel);box-shadow:var(--cst-shadow)}
+.plan-section.plan-tab-panel{padding:16px;margin:0 0 10px;border:1px solid var(--cst-line-strong);border-radius:12px;background:var(--cst-panel);box-shadow:var(--cst-shadow)}
 .plan-repetition{border-top:1px solid var(--cst-line);display:flex;align-items:center;flex-wrap:wrap;gap:0 20px;padding-top:10px;margin-top:6px}
 .plan-repetition .inline-field{margin:8px 0}
 .plan-repetition>p{flex-basis:100%;line-height:1.6}
