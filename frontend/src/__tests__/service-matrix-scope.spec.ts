@@ -59,6 +59,18 @@ it('saves and toggles custom unlock groups alongside default groups in UnlockPic
  expect(w.serviceIds.value).toEqual(['chatgpt_unlock','abema_unlock'])
  await customLabel.get('button[aria-label="删除自定义分组 我的常测"]').trigger('click');await flushPromises()
  expect(wrapper.findAll('.unlock-group-options label').find(x=>x.text().includes('我的常测'))).toBeUndefined()
+ // Built-in groups (e.g. AI) can also be edited, deleted, and restored.
+ await wrapper.get('button[aria-label="编辑分组 AI"]').trigger('click');await flushPromises()
+ w.serviceIds.value=['chatgpt_unlock','netflix_unlock'];await flushPromises()
+ await wrapper.get('input[aria-label="自定义分组名称"]').setValue('主力常用')
+ await wrapper.findAll('button').find(b=>b.text()==='更新分组')!.trigger('click');await flushPromises()
+ const renamedLabel=wrapper.findAll('.unlock-group-options label').find(x=>x.text().includes('主力常用'))!
+ expect(renamedLabel.text()).toContain('2 项')
+ await wrapper.get('button[aria-label="删除分组 流媒体"]').trigger('click');await flushPromises()
+ expect(wrapper.findAll('.unlock-group-options label').find(x=>x.text().includes('流媒体'))).toBeUndefined()
+ await wrapper.findAll('button').find(b=>b.text()==='恢复默认分组')!.trigger('click');await flushPromises()
+ expect(wrapper.findAll('.unlock-group-options label').some(x=>x.text().includes('AI'))).toBe(true)
+ expect(wrapper.findAll('.unlock-group-options label').some(x=>x.text().includes('流媒体'))).toBe(true)
  vi.unstubAllGlobals()
 })
 it('filters by quick region chips (including multi-select) and selects or clears matching nodes',async()=>{

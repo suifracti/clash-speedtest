@@ -4,6 +4,7 @@
 
 ## 当前接续（2026-11-19）
 
+- 将 `UnlockPicker.vue` 全部解锁分组（包括默认 `AI` / `流媒体` / `日本` 与自定义分组）升级为可编辑、改名、增减项目（支持加入 `Google Antigravity`）、删除与“恢复默认分组”（持久化于 `localStorage` `cst.unlock-groups.v1`）。前端 `npm test`（88 文件 / 638 项）与 `vite build` 通过。
 - 实测修复 `gemini-3.8-flash-low` 思考 token 耗尽 `maxOutputTokens: 16` 导致 HTTP 200 空正文：`streamGenerateContent?alt=sse` 的 `generationConfig` 原固定 `maxOutputTokens: 16`，实测 `gemini-3.8-flash-low` 在思考阶段消耗 13 个 `thoughtsTokenCount` 即触发 `finishReason: MAX_TOKENS`、正式 `parts` 为空。现改为非 `-thinking` 模型使用 `maxOutputTokens: 256` 并设置 `thinkingConfig: {thinkingBudget: 0}`（实测总消耗 9 token 即直接返回 `"READY"`），`-thinking` 模型放宽至 `maxOutputTokens: 512`。Go `core/publicservice` / `application` / `adapter/web`（含 `go vet`）全部通过。
 - 对照历史 `7549994` / `219b181` 排查并修复 Antigravity 自动凭据过期与多轮体验落差：
   1. 修复 `core/auth/oauth.go` 在 `oauth_creds.json` 过期且刷新失败时仍静默返回过期 `AccessToken` 的缺陷并接入 Windows 系统代理（`oauth_proxy_windows.go`）；`application/service.go` 持久化 `.antigravity_creds.json`（含 `refresh_token`/`expiry_date`），并在 `workbench_public_service.go` 检测前及遇到 `401 auth_failed` 时 single-flight 自动刷新/重检 `~/.gemini/oauth_creds.json` 后重试一次，彻底解决旧 `DataRoot/.antigravity_token` 阴影导致实测全批报“凭据无效”的问题（同步更新 `adapter/desktop/app.go` 与 `adapter/web/server.go` 保留完整 OAuth 凭据）。
