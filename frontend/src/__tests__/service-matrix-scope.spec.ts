@@ -73,6 +73,7 @@ it('filters by quick region chips (including multi-select) and selects or clears
  expect(wrapper.get('.hd-node-region').text()).toBe('香港')
  expect(wrapper.findAll('.hd-node-part.num')[0].text()).toBe('01')
  expect(wrapper.findAll('.hd-node-part.line')[0].text()).toBe('优化')
+ expect(wrapper.get('.hd-node-meaning').text()).toContain('路由优化')
  await wrapper.findAll('.hd-region-chip').find(b=>b.text().includes('日本'))!.trigger('click');await flushPromises()
  expect(w.region.value).toBe('JP')
  expect(wrapper.findAll('.hd-node')).toHaveLength(1)

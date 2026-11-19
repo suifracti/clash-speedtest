@@ -56,6 +56,54 @@ export function nodeDisplayParts(node:Pick<NodeOption,'display_name'>&Partial<Pi
   return {region:segments[0]||'',parts:segments.slice(1).map(text=>({text,kind:classifyNodePart(text)}))}
 }
 
+export interface NodeAttrHint{term:string;short:string;detail:string}
+const attrRules:[RegExp,string,string][]=[
+  [/^高速$/,'高优先级/高带宽','机场标注的高带宽或高优先级线路（仍以实测速度为准）'],
+  [/^移动优化$/,'移动线路优化','针对中国移动网络路径做过回程或接入优化'],
+  [/^电信优化$/,'电信线路优化','针对中国电信网络路径做过回程或接入优化'],
+  [/^联通优化$/,'联通线路优化','针对中国联通网络路径做过回程或接入优化'],
+  [/^优化$/,'路由优化','针对国内访客做过接入或回程路由优化'],
+  [/^直连$/,'直连链路','未绕转多层中转的直接连接节点（实际路径以出口检测为准）'],
+  [/^专线$/,'跨境专线','专线接入链路，通常延迟更稳、高峰丢包更少'],
+  [/^iplc$/i,'IPLC 专线','国际私有租用专线，过境独立传输，延迟低且稳定'],
+  [/^iepl$/i,'IEPL 专线','国际以太网专线，高优先级跨境低延迟专线'],
+  [/^gia$/i,'CN2 GIA 优线','中国电信最高级别 CN2 双向优化路由，晚高峰表现稳'],
+  [/^cn2$/i,'电信 CN2 线路','中国电信下一代承载网优化线路'],
+  [/^bgp$/i,'多线智能路由','BGP 多线接入，可动态选择较优运营商出口'],
+  [/^cmcu$/i,'移动/联通双线','同时针对中国移动（CM）与中国联通（CU）直连/优化'],
+  [/^cmi$/i,'移动国际 CMI','中国移动国际骨干网优化路由'],
+  [/^cmcc$/i,'移动线路','中国移动接入或优化线路'],
+  [/^wap$/i,'特定蜂窝/分流入口','通常表示移动蜂窝网络适配或特定分流入口节点'],
+  [/^aws$/i,'亚马逊云机房','托管于 Amazon Web Services 云机房'],
+  [/^gcp$/i,'谷歌云机房','托管于 Google Cloud 云机房'],
+  [/^azure$/i,'微软云机房','托管于 Microsoft Azure 云机房'],
+  [/^oracle$/i,'甲骨文云机房','托管于 Oracle Cloud 云机房'],
+  [/^hy2$/i,'Hysteria2 协议','基于 QUIC 的低延迟抗丢包传输协议'],
+  [/^v6入口$|^ipv?6$/i,'IPv6 接入','使用 IPv6 入口建立连接（需本机网络支持 IPv6）'],
+  [/^家宽$|^住宅(?:ip)?$/i,'住宅/家宽 IP','接近真实宽带用户的 ISP 出口，风控更友好'],
+  [/^原生$/,'原生地区 IP','IP 注册归属与实际地区一致，适合流媒体与低风控场景'],
+  [/流媒体/,'声明解锁流媒体','机场名称标注支持流媒体解锁（以实际检测为准）'],
+  [/^(?:ai|gpt⁺?)$/i,'声明支持 AI','机场名称标注支持 AI 服务（以实际检测为准）'],
+  [/^(\d+(?:\.\d+)?)×$/,'流量计费倍率','该节点消耗流量按标注倍率扣减套餐额度'],
+]
+export function nodeAttrMeaning(part:string):NodeAttrHint|null{
+  const trimmed=part.trim()
+  if(!trimmed)return null
+  for(const [re,short,detail] of attrRules){
+    const m=trimmed.match(re)
+    if(m)return {term:trimmed,short:trimmed.endsWith('×')?`${m[1]} 倍扣流量`:short,detail:trimmed.endsWith('×')?`使用该节点会按 ${m[1]} 倍扣减套餐流量`:detail}
+  }
+  return null
+}
+export function nodeAttrHints(node:Pick<NodeOption,'display_name'>&Partial<Pick<NodeOption,'country_code'>>):NodeAttrHint[]{
+  const seen=new Set<string>(),out:NodeAttrHint[]=[]
+  for(const p of nodeDisplayParts(node).parts){
+    const h=nodeAttrMeaning(p.text)
+    if(h&&!seen.has(h.term)){seen.add(h.term);out.push(h)}
+  }
+  return out
+}
+
 // Presentation only: names used by subscriptions, identity, exports and history stay intact.
 // Unknown attributes and markers are retained; missing numbers/multipliers are never invented.
 export function nodeDisplayName(node:Pick<NodeOption,'display_name'>&Partial<Pick<NodeOption,'country_code'>>){

@@ -3,7 +3,7 @@ import {computed,inject,ref,watch} from 'vue'
 import {useWorkspace} from '../../workspace'
 import {date,key,targets,type NodeOption,type Project} from '../../domain'
 import {api,type ClashGroupOption,type ClashNodeStatus,type ClashSelectionResult,type ClashUsage} from '../../api'
-import {nodeDisplayName,nodeDisplayParts,protocolBadgeClass,regionBadgeClass} from '../../nodePresentation'
+import {nodeAttrHints,nodeAttrMeaning,nodeDisplayName,nodeDisplayParts,protocolBadgeClass,regionBadgeClass} from '../../nodePresentation'
 import {manualLatencyPoint,monitorLatencyPoints,monitorHTTPServices,type TrendPoint} from '../../presentation'
 import Icon from '../Icon.vue'
 import HealthBars from '../HealthBars.vue'
@@ -163,7 +163,7 @@ function run(){if(props.readOnly)return;m.closeHover();props.exitOnly?w.openRepu
     <header class="hd-ins-head">
       <div class="hd-ins-name" :class="regionBadgeClass(node.country_code)">
         <span class="hd-flag" :class="regionBadgeClass(node.country_code)">{{node.country_code||'—'}}</span>
-        <div><h2 :tabindex="autofocusTitle?-1:undefined" :autofocus="autofocusTitle||undefined"><span class="hd-node-region">{{nodeDisplayParts(node).region}}</span><template v-for="(part,idx) in nodeDisplayParts(node).parts" :key="idx"><span class="hd-node-sep"> · </span><span class="hd-node-part" :class="part.kind">{{part.text}}</span></template></h2><p>{{m.sourceLabel(node)}} · <b class="hd-proto-tag" :class="protocolBadgeClass(node.type)">{{node.type}}</b></p><span v-if="isClashUsing" class="hd-ins-clash-active"><i aria-hidden="true"></i>正在使用</span></div>
+        <div><h2 :tabindex="autofocusTitle?-1:undefined" :autofocus="autofocusTitle||undefined"><span class="hd-node-region">{{nodeDisplayParts(node).region}}</span><template v-for="(part,idx) in nodeDisplayParts(node).parts" :key="idx"><span class="hd-node-sep"> · </span><span class="hd-node-part" :class="part.kind" :title="nodeAttrMeaning(part.text)?.detail">{{part.text}}</span></template></h2><p>{{m.sourceLabel(node)}} · <b class="hd-proto-tag" :class="protocolBadgeClass(node.type)">{{node.type}}</b></p><div v-if="nodeAttrHints(node).length" class="hd-ins-hints"><span v-for="hint in nodeAttrHints(node)" :key="hint.term" class="hd-ins-hint" :title="hint.detail"><b>{{hint.term}}</b>{{hint.short}}</span></div><span v-if="isClashUsing" class="hd-ins-clash-active"><i aria-hidden="true"></i>正在使用</span></div>
       </div>
       <div class="hd-ins-actions">
         <label class="hd-reader-select" :title="selectionAvailable?'加入已选节点，之后可以比较或检测':'请先在当前机场范围中找到这条节点再勾选'"><input type="checkbox" aria-label="选择这个节点" :checked="w.selectedNodes.value.some(n=>key(n)===key(node)&&n.node_key===node.node_key)" :disabled="!selectionAvailable" @change="selectionAvailable&&w.toggleNode(node)">选中</label>
