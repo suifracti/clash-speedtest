@@ -71,7 +71,6 @@ type AppService struct {
 	antigravityMu       sync.RWMutex
 	noAutoCredentials   bool
 	discoverCredentials func() (string, string, error)
-	lastCredentialCheck time.Time
 
 	backupMu              sync.Mutex
 	lastBackupRecordError string
@@ -217,7 +216,6 @@ func newAppService(hStore *history.Store, appPaths appdata.AppPaths, profilePath
 	// A credential explicitly saved in this data root belongs to this instance.
 	// Only discover shared credentials when it has no local binding and discovery is enabled.
 	if !svc.loadPersistedTokenLocked() && svc.autoDiscoverCredentialsEnabled() {
-		svc.lastCredentialCheck = time.Now()
 		if token, src, err := svc.discoverCredentials(); err == nil && token != "" {
 			svc.antigravityToken, svc.antigravitySource = token, src
 		}
@@ -1808,8 +1806,6 @@ func (s *AppService) DiscoverAntigravityToken() (TokenStatusDTO, error) {
 	return s.tokenStatusLocked(), nil
 }
 
-const autoCredentialRefreshInterval = 30 * time.Minute
-
 func fillDefaultAutoDiscoverCredentials(settings *AppSettings) {
 	if settings == nil || settings.AutoDiscoverCredentials != nil {
 		return
@@ -1829,53 +1825,6 @@ func (s *AppService) autoDiscoverCredentialsEnabled() bool {
 	return true
 }
 
-func (s *AppService) hasPersistedTokenLocked() bool {
-	if s.appPaths.DataRoot == "" {
-		return false
-	}
-	data, err := os.ReadFile(filepath.Join(s.appPaths.DataRoot, ".antigravity_token"))
-	if err != nil {
-		return false
-	}
-	return auth.ParseAntigravityToken(string(data)) != ""
-}
-
-// RefreshAutoCredentialsIfDue periodically scans or refreshes shared local
-// Antigravity credentials when auto-discovery is enabled and no local override exists.
-func (s *AppService) RefreshAutoCredentialsIfDue(now time.Time) bool {
-	if s == nil || !s.autoDiscoverCredentialsEnabled() {
-		return false
-	}
-	if now.IsZero() {
-		now = time.Now()
-	}
-	s.antigravityMu.Lock()
-	if s.hasPersistedTokenLocked() || s.antigravitySource == "手动输入" || s.antigravitySource == "Google OAuth 登录" || s.antigravitySource == "本数据目录凭据" {
-		s.antigravityMu.Unlock()
-		return false
-	}
-	if !s.lastCredentialCheck.IsZero() && now.Sub(s.lastCredentialCheck) < autoCredentialRefreshInterval {
-		s.antigravityMu.Unlock()
-		return false
-	}
-	s.lastCredentialCheck = now
-	discover := s.discoverCredentials
-	if discover == nil {
-		discover = auth.TryAutoDetectAntigravityToken
-	}
-	tok, src, err := discover()
-	updated := false
-	if err == nil && tok != "" && (tok != s.antigravityToken || src != s.antigravitySource) {
-		s.antigravityToken, s.antigravitySource = tok, src
-		updated = true
-	}
-	s.antigravityMu.Unlock()
-	if updated && s.emitter != nil {
-		s.emitter.Emit(Event{Type: "antigravity_token_updated", Payload: map[string]any{"source": src}})
-	}
-	return updated
-}
-
 func (s *AppService) GetTokenStatus() TokenStatusDTO {
 	if s == nil {
 		return TokenStatusDTO{}
@@ -1883,7 +1832,6 @@ func (s *AppService) GetTokenStatus() TokenStatusDTO {
 	s.antigravityMu.Lock()
 	defer s.antigravityMu.Unlock()
 	if s.antigravityToken == "" && !s.loadPersistedTokenLocked() && s.autoDiscoverCredentialsEnabled() {
-		s.lastCredentialCheck = time.Now()
 		if tok, src, err := s.discoverCredentials(); err == nil && tok != "" {
 			s.antigravityToken, s.antigravitySource = tok, src
 		}
@@ -2084,14 +2032,12 @@ func (s *AppService) SaveSettings(settings *AppSettings) error {
 	}
 	if settings.AutoDiscoverCredentials != nil && *settings.AutoDiscoverCredentials && !s.noAutoCredentials {
 		s.antigravityMu.Lock()
-		unbound := s.antigravityToken == ""
-		if unbound {
-			s.lastCredentialCheck = time.Time{}
+		if s.antigravityToken == "" && !s.loadPersistedTokenLocked() && s.discoverCredentials != nil {
+			if tok, src, err := s.discoverCredentials(); err == nil && tok != "" {
+				s.antigravityToken, s.antigravitySource = tok, src
+			}
 		}
 		s.antigravityMu.Unlock()
-		if unbound {
-			s.RefreshAutoCredentialsIfDue(time.Now())
-		}
 	}
 	return nil
 }
