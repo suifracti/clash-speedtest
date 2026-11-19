@@ -66,6 +66,11 @@
 .hd-workbench-layout .hd-tr:not(.hd-th){font-size:13px}
 .hd-workbench-layout .hd-node strong{font-size:14px;line-height:1.5}
 .hd-workbench-layout .hd-node small{font-size:12px;line-height:1.5}
+.hd-workbench-layout .hd-round-history,.hd-workbench-layout .hd-round-review{display:flex;align-items:center;gap:5px;color:var(--hd-muted);font-size:11px;min-width:0}
+.hd-workbench-layout .hd-round-history>span:first-child,.hd-workbench-layout .hd-round-review>.hd-link{flex:none}
+.hd-workbench-layout .hd-round-history .hd-round-marks{width:auto;flex:1 1 72px;padding-inline:2px}
+.hd-workbench-layout .hd-round-review{flex-wrap:wrap;color:var(--hd-accent)}
+.hd-workbench-layout .hd-round-review>.hd-link{padding-block:3px}
 .hd-workbench-layout .hd-flag{font-size:12px}
 .hd-workbench-layout .hd-route-verdict{font-size:11px}
 .hd-workbench-layout .hd-num{font-size:13px}

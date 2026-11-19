@@ -172,7 +172,7 @@ describe('node selection through DOM controls',()=>{
     expect(cells(wrapper)).toEqual(['—','未测','未测'])
     expect(wrapper.findAll('.health-cell.has-record')).toHaveLength(0)
   })
-  it('shows only the selected station samples in sequence and opens the chosen historical round',async()=>{
+  it('replays a station or all stations from the selected historical round and returns to the latest',async()=>{
     const {w,wrapper}=attach([a],['airport-a']);w.displayTargets.value=['cloudflare','google'];await flushPromises()
     const at='2026-11-19T01:10:00Z',cloudflare='https://speed.cloudflare.com/__down?bytes=1',google='https://www.gstatic.com/generate_204'
     const latency:LatencyTest={...a,node_type:a.type,attempt_id:'saved-test',requested_at:at,finished_at:at,latency_ms:70,status:'completed',total_samples:4,success_samples:3,failure_samples:1,persistence_state:'saved',samples:[
@@ -181,7 +181,15 @@ describe('node selection through DOM controls',()=>{
       {seq:3,target:google,timestamp:at,latency_ms:100,success:true},
       {seq:4,target:google,timestamp:at,latency_ms:35,success:true},
     ]}
-    w.measurementRounds.value[key(a)]=[{round_id:'saved-round',trigger_type:'manual',state:'finished',started_at:at,items:[
+    const earlier='2026-11-19T00:50:00Z',single='2026-11-19T00:30:00Z'
+    const replayRound=(id:string,time:string,readings:[string,number][])=>{
+      const samples=readings.map(([target,latency_ms],index)=>({seq:index+1,target,latency_ms,timestamp:time,success:true}))
+      const test={...latency,attempt_id:id+'-test',requested_at:time,finished_at:time,total_samples:samples.length,success_samples:samples.length,failure_samples:0,samples}
+      return {round_id:id,trigger_type:'manual' as const,state:'finished',started_at:time,items:[
+        {...a,request_id:id,project:'latency' as const,execution_state:'completed',persistence_state:'saved',latency:test},
+      ]}
+    }
+    w.measurementRounds.value[key(a)]=[replayRound('cloudflare-only',single,[[cloudflare,19]]),replayRound('older',earlier,[[cloudflare,22],[google,32]]),{round_id:'saved-round',trigger_type:'manual',state:'finished',started_at:at,items:[
       {...a,request_id:'req',project:'latency',execution_state:'completed',persistence_state:'saved',latency},
     ]}]
     await flushPromises()
@@ -189,8 +197,25 @@ describe('node selection through DOM controls',()=>{
     expect(station).toHaveLength(2)
     expect(station[0].findAll('.response-vertical i').map(bar=>bar.attributes('title'))).toEqual(['第 1 次 · 70 ms','第 2 次 · 超时'])
     expect(station[1].findAll('.response-vertical i').map(bar=>bar.attributes('title'))).toEqual(['第 1 次 · 100 ms','第 2 次 · 35 ms'])
-    expect(station[0].findAll('.response-history button')).toHaveLength(1)
-    await station[0].get('.response-history button').trigger('click');await flushPromises()
+    expect(station[0].findAll('.response-history button')).toHaveLength(3)
+    const values=()=>wrapper.findAll('.response-stop strong').map(s=>s.text())
+    await station[0].findAll('.response-history button')[1].trigger('click');await flushPromises()
+    expect(values()).toEqual(['22 ms','35 ms'])
+    expect(station[0].get('.response-round small').text()).toBe('回看 1/1')
+    expect(station[0].findAll('.response-history button')[1].attributes('aria-pressed')).toBe('true')
+    expect(wrapper.findAll('.round-result strong').map(row=>row.text())).toEqual(['22 ms','32 ms'])
+    const whole=wrapper.findAll('.hd-round-history .response-history button')
+    expect(whole).toHaveLength(3)
+    await whole[1].trigger('click');await flushPromises()
+    expect(values()).toEqual(['22 ms','32 ms'])
+    expect(whole[1].attributes('aria-pressed')).toBe('true')
+    await whole[0].trigger('click');await flushPromises()
+    expect(values()).toEqual(['19 ms','未测'])
+    expect(wrapper.get('.response-missing').text()).toBe('该轮未测')
+    await wrapper.get('.hd-round-review button').trigger('click');await flushPromises()
+    expect(values()).toEqual(['70 ms','35 ms'])
+    expect(wrapper.find('.hd-round-review').exists()).toBe(false)
+    await station[0].findAll('.response-history button').at(-1)!.trigger('click');await flushPromises()
     expect(wrapper.find('.round-summary').text()).toContain('已读 2 个站点')
     expect(wrapper.findAll('.round-result strong').map(row=>row.text())).toEqual(['70 ms','超时','100 ms','35 ms'])
     w.project.value='combined';await flushPromises()

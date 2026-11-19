@@ -66,8 +66,8 @@ export interface HomeModel {
  sourceLabel:(n:NodeOption)=>string
  metricPoint:(n:NodeOption,target:string)=>TrendPoint|undefined
  latestLatencyRound:(n:NodeOption)=>TrendPoint|undefined
- latencyRowPoint:(n:NodeOption,target:string)=>TrendPoint|undefined
- rowVerdict:(n:NodeOption)=>Verdict
+ latencyRowPoint:(n:NodeOption,target:string,review?:TrendPoint)=>TrendPoint|undefined
+ rowVerdict:(n:NodeOption,review?:TrendPoint)=>Verdict
  siteMetric:(n:NodeOption,target:string)=>string
  siteContext:(n:NodeOption,target:string)=>string
  siteReason:(n:NodeOption,target:string)=>string

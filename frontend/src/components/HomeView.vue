@@ -264,20 +264,20 @@ function latestLatencyRound(n:NodeOption){
  const manual=newestPoint(saved,saved?.latencyTests?.some(t=>t.attempt_id===fallback?.id)?undefined:fallback)
  return manual||newestPoint(presentation.monitor(n).at(-1),sorting?monitorLatencyPoints(qualityData.value[key(n)]?.monitor||[]).at(-1):undefined)
 }
-function latencyRowPoint(n:NodeOption,target:string){
+function latencyRowPoint(n:NodeOption,target:string,review?:TrendPoint){
  const detailed=w.project.value==='latency'
- const round=detailed?latestLatencyRound(n):metricPoint(n,target),samples=latencySiteSamples(round,target)
+ const round=review??(detailed?latestLatencyRound(n):metricPoint(n,target)),samples=latencySiteSamples(round,target)
  if(!round||!samples.length)return detailed?undefined:round
  const responses=samples.filter(s=>s.value!==null).length
  const tone=samples.every(s=>s.tone==='empty')?'empty':!responses?'bad':responses<samples.length?'warn':'good'
  return {...round,samples,tone,value:detailed?latencyCellValue(round,target,true):round.value} satisfies TrendPoint
 }
-function rowVerdict(n:NodeOption){
+function rowVerdict(n:NodeOption,review?:TrendPoint){
  const sites=targets.filter(s=>w.displayTargets.value.includes(s.id))
- const array=sites.map(s=>latencyRowPoint(n,s.id))
+ const array=sites.map(s=>latencyRowPoint(n,s.id,review))
  const stable=stableLatency(sites.map((s,i)=>({id:s.id,points:array[i]?[array[i]!]:[]})))
  const weekly=weeklyStats.value[weeklyHistoryKey(n)]
- return latencyVerdict(array,stable,weekly?.allOld?null:weekly?.all.responseRate,sites.map(s=>s.name))
+ return latencyVerdict(array,stable,review||weekly?.allOld?null:weekly?.all.responseRate,sites.map(s=>s.name))
 }
 function siteMetric(n:NodeOption,target:string){const point=metricPoint(n,target);const stable=stableLatency([{id:target,points:point?[point]:[]}]);return stable===null?(point?.value!=null?'—':latencyPointLabel(point,target)):Math.round(stable)+' ms'}
 function siteContext(n:NodeOption,target:string){const p=metricPoint(n,target);const first=p?inspectorSamples(p,target)[0]?.value:null;return p?date(p.time)+(p.source==='monitor'?' · 监测':' · 手动')+(first!=null?' · 首次连接 '+Math.round(first)+' ms':''):'未测'}
