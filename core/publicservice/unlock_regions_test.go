@@ -135,3 +135,70 @@ func TestDMMGraphQLRegionCheck(t *testing.T) {
 		})
 	}
 }
+
+func TestDLsiteRegionCheck(t *testing.T) {
+	rule, ok := RuleFor("dlsite_unlock")
+	if !ok {
+		t.Fatal("missing dlsite_unlock")
+	}
+	t.Run("unlocked jp with geo header", func(t *testing.T) {
+		headCalls := 0
+		client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.Method == http.MethodHead && req.URL.String() == dlsiteGeoHeaderURL {
+				headCalls++
+				resp := fixtureResponse(req, 200, "application/json", "")
+				resp.Header.Set("X-Geo-Country-Code", "JP")
+				return resp, nil
+			}
+			if req.URL.String() != dlsiteRegionURL {
+				t.Fatalf("unexpected DLsite URL %s", req.URL)
+			}
+			return fixtureResponse(req, 200, "application/json", `{"meta":{"code":200,"errorType":"","restriction":{"hiddenByCountry":false}},"data":{"product_id":"RJ01571432"}}`), nil
+		})}
+		got := checkRegionUnlock(context.Background(), client, rule, time.Now())
+		if got.Outcome != "unlocked" || got.Details["service_region"] != "JP" || got.Details["hidden_by_country"] != "false" || headCalls != 1 {
+			t.Fatalf("got %+v, headCalls=%d", got, headCalls)
+		}
+	})
+	t.Run("hidden by country", func(t *testing.T) {
+		headCalls := 0
+		client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.Method == http.MethodHead {
+				headCalls++
+			}
+			return fixtureResponse(req, 200, "application/json", `{"meta":{"code":200,"errorType":"","restriction":{"hiddenByCountry":true}},"data":{"product_id":"RJ01571432"}}`), nil
+		})}
+		got := checkRegionUnlock(context.Background(), client, rule, time.Now())
+		if got.Outcome != "region_blocked" || got.Details["hidden_by_country"] != "true" || headCalls != 0 {
+			t.Fatalf("got %+v, headCalls=%d", got, headCalls)
+		}
+	})
+	t.Run("302 redirect keeps unknown", func(t *testing.T) {
+		client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			resp := fixtureResponse(req, http.StatusFound, "text/html", "")
+			resp.Header.Set("Location", "https://www.dlsite.com/home/")
+			return resp, nil
+		})}
+		got := checkRegionUnlock(context.Background(), client, rule, time.Now())
+		if got.Outcome != "unknown" || got.FailurePhase != "http_status" {
+			t.Fatalf("got %+v", got)
+		}
+	})
+	t.Run("missing hiddenByCountry stays unknown", func(t *testing.T) {
+		got := checkRegionUnlock(context.Background(), aiUnlockFixtureClient(200, `{"meta":{"code":200},"data":{}}`), rule, time.Now())
+		if got.Outcome != "unknown" || got.FailurePhase != "region_document" {
+			t.Fatalf("got %+v", got)
+		}
+	})
+	t.Run("cf challenge classified as challenge", func(t *testing.T) {
+		client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			resp := fixtureResponse(req, http.StatusForbidden, "text/html", "<html>Just a moment...</html>")
+			resp.Header.Set("cf-mitigated", "challenge")
+			return resp, nil
+		})}
+		got := checkRegionUnlock(context.Background(), client, rule, time.Now())
+		if got.Outcome != "challenge" {
+			t.Fatalf("got %+v", got)
+		}
+	})
+}

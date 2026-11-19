@@ -47,7 +47,7 @@ function classifyNodePart(part:string):NodeDisplayPartKind{
   if(/^\d+(?:\.\d+)?×$/i.test(part))return 'mult'
   if(/^(?:[A-Z]{1,2}\d+|\d{1,3}(?:（[²³]）)?)$/i.test(part))return 'num'
   if(/^(?:hy2|vless|vmess|anytls|trojan|tuic|ss|ssr|wg|ipv?[46]|v[46]入口)$/i.test(part))return 'proto'
-  if(/(?:^ai$|chatgpt|claude|gemini|grok|copilot|流媒体|netflix|youtube|disney|tiktok|spotify|hulu|abema|dmm|unext|google\s*play)/i.test(part))return 'media'
+  if(/(?:^ai$|chatgpt|claude|gemini|grok|copilot|流媒体|netflix|youtube|disney|tiktok|spotify|hulu|abema|dmm|unext|dlsite|google\s*play)/i.test(part))return 'media'
   if(/(?:家宽|住宅|原生|专线|优化|直连|iplc|iepl|cn2|gia|bgp|^aws$|^gcp$|azure|oracle)/i.test(part))return 'line'
   return 'attr'
 }

@@ -416,7 +416,7 @@ func Catalog() []Rule {
 		// 流媒体解锁
 		"netflix_unlock", "youtube_premium", "spotify_unlock", "tiktok_unlock",
 		// 日本地区解锁
-		"abema_unlock", "unext_unlock", "dmm_unlock", "radiko_unlock", "hulu_jp_unlock", "fod_unlock",
+		"abema_unlock", "unext_unlock", "dmm_unlock", "dlsite_unlock", "radiko_unlock", "hulu_jp_unlock", "fod_unlock",
 		// IP 信誉与纯净度：出口地址与机房 -> IP 风险与纯净度 -> 地区与人机验证
 		"cloudflare_trace", "exit_ipv4", "exit_ipv6",
 		"ippure_ip_quality", "ping0_ipv4", "ping0_ipv6",
@@ -1050,7 +1050,7 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 	switch rule.ServiceID {
 	case "chatgpt_unlock", "claude_unlock", "gemini_unlock":
 		return checkAIUnlock(ctx, client, rule, startedAt)
-	case "disney_unlock", "spotify_unlock", "tiktok_unlock", "unext_unlock", "dmm_unlock", "radiko_unlock":
+	case "disney_unlock", "spotify_unlock", "tiktok_unlock", "unext_unlock", "dmm_unlock", "dlsite_unlock", "radiko_unlock":
 		return checkRegionUnlock(ctx, client, rule, startedAt)
 	case "ipok_ipv4", "ipok_ipv6":
 		return c.checkIPOK(ctx, client, rule, startedAt)

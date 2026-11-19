@@ -228,9 +228,11 @@ function showAttrTip(e:MouseEvent|FocusEvent,part:string){
 }
 function clearAttrTip(){hoveredAttr.value=null}
 function toggleRegionChip(code:string){
- w.excludeRegion.value=false
  const next=selectedRegions.value.includes(code)?selectedRegions.value.filter(c=>c!==code):[...selectedRegions.value,code]
  w.region.value=next.length?next.join(','):'all'
+}
+function toggleExcludeMode(){
+ w.excludeRegion.value=!w.excludeRegion.value
 }
 function keyNav(e:KeyboardEvent){
  const target=e.target as HTMLElement
@@ -333,7 +335,8 @@ function keyNav(e:KeyboardEvent){
         <details v-if="!exitMode&&(w.project.value==='service'||w.project.value==='combined')" class="hd-services"><summary>选择解锁项目<small>{{m.displayServices.value.length?'已选 '+m.displayServices.value.length+' 项':'还没选'}}</small></summary><UnlockPicker v-model="w.serviceIds.value" :catalog="catalog"/></details>
         <div v-if="scopeAirportNodes.length" class="hd-region-strip" role="group" aria-label="按地区快选">
           <button type="button" class="hd-region-chip all" :aria-pressed="w.region.value==='all'&&!w.excludeRegion.value" @click="w.excludeRegion.value=false;w.region.value='all'">全部<small>{{scopeAirportNodes.length}}</small></button>
-          <button v-for="rc in regionChips" :key="rc.code" type="button" class="hd-region-chip" :class="regionBadgeClass(rc.code)" :aria-pressed="!w.excludeRegion.value&&selectedRegions.includes(rc.code)" @click="toggleRegionChip(rc.code)">{{rc.label}}<small>{{rc.count}}</small></button>
+          <button v-for="rc in regionChips" :key="rc.code" type="button" class="hd-region-chip" :class="[regionBadgeClass(rc.code),{excluded:w.excludeRegion.value&&selectedRegions.includes(rc.code)}]" :aria-pressed="selectedRegions.includes(rc.code)" @click="toggleRegionChip(rc.code)">{{w.excludeRegion.value&&selectedRegions.includes(rc.code)?`排除 ${rc.label}`:rc.label}}<small>{{rc.count}}</small></button>
+          <button type="button" class="hd-region-chip exclude-toggle" :aria-pressed="w.excludeRegion.value" title="开启后，点选的地区将被排除；也可以先选地区再点此反选排除" @click="toggleExcludeMode">排除所选</button>
           <span class="hd-quick-divider" aria-hidden="true"/>
           <button type="button" class="hd-quick-select" :disabled="!m.visibleNodes.value.length" :title="allVisibleSelected?'取消勾选当前筛选出来的节点':'一键勾选当前筛选出来的全部节点'" @click="w.toggleAll(m.visibleNodes.value)">{{allVisibleSelected?'取消全选当前':`勾选当前 ${m.visibleNodes.value.length} 个`}}</button>
           <button v-if="w.selectedNodes.value.length" type="button" class="hd-quick-select clear" @click="w.cancelSelection()">清空已选 {{w.selectedNodes.value.length}}</button>

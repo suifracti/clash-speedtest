@@ -1,5 +1,5 @@
 import {expect,it} from 'vitest'
-import {unlockGroupSummary,unlockResult,unlockServiceAllowed,unlockSupported} from '../unlock'
+import {unlockGroup,unlockGroupSummary,unlockResult,unlockServiceAllowed,unlockSupported} from '../unlock'
 import type {Attempt} from '../domain'
 const attempt=(outcome:string)=>({service_id:'chatgpt_unlock',execution_state:'completed',rule:{service_id:'chatgpt_unlock',target_url:''},result:{outcome,details:{service_region:'SG'},summary:'地区不支持'}} as unknown as Attempt)
 it('shares available counts and explicit region refusal reasons',()=>{
@@ -77,4 +77,11 @@ it('skips only excluded regions when a service uses an exclusion list',()=>{
  expect(unlockResult(cfPart)).toMatchObject({state:'verification',tone:'warn',label:'部分弹 CF 盾'})
  const cfBad={...attempt('challenge'),service_id:'cloudflare_challenge',result:{...attempt('challenge').result!,outcome:'challenge',details:{cf_challenge_detail:'ChatGPT: 弹盾(403) · Grok: 弹盾(403) · Claude: 弹盾(403)'}}} as Attempt
  expect(unlockResult(cfBad)).toMatchObject({state:'unavailable',tone:'bad',label:'易弹 CF 人机验证'})
+ expect(unlockGroup('dlsite_unlock')).toBe('japan')
+ expect(unlockServiceAllowed('dlsite_unlock','HK',true)).toBe(false)
+ expect(unlockServiceAllowed('dlsite_unlock','JP',true)).toBe(true)
+ const dlsiteOk={...attempt('unlocked'),service_id:'dlsite_unlock',result:{...attempt('unlocked').result!,outcome:'unlocked',details:{service_region:'JP',hidden_by_country:'false'}}} as Attempt
+ expect(unlockResult(dlsiteOk)).toMatchObject({state:'available',tone:'good',label:'可用 · JP'})
+ const dlsiteBlocked={...attempt('region_blocked'),service_id:'dlsite_unlock',result:{...attempt('region_blocked').result!,outcome:'region_blocked',summary:'DLsite 按当前出口地区隐藏锁区作品（RJ01571432）',details:{hidden_by_country:'true'}}} as Attempt
+ expect(unlockResult(dlsiteBlocked)).toMatchObject({state:'unavailable',tone:'warn',label:'不可用'})
 })

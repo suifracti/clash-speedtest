@@ -18,12 +18,14 @@ import (
 )
 
 const (
-	disneyDeviceURL  = "https://disney.api.edge.bamgrid.com/devices"
-	spotifyRegionURL = "https://spclient.wg.spotify.com/signup/public/v1/account"
-	tiktokRegionURL  = "https://www.tiktok.com/explore"
-	unextRegionURL   = "https://cc.unext.jp/?zxuid=1b64984ecc23&zxemp=29854391&operationName=cosmo_getPlaylistUrl&variables=%7B%22code%22%3A%22ED00440417%22%2C%22playMode%22%3A%22caption%22%2C%22bitrateLow%22%3A192%2C%22bitrateHigh%22%3Anull%2C%22validationOnly%22%3Atrue%7D&extensions=%7B%22persistedQuery%22%3A%7B%22version%22%3A1%2C%22sha256Hash%22%3A%22a2309e22a6819ff747cf9a389dd78db35fa3c386fac1d53461061ba20fa44e34%22%7D%7D"
-	dmmRegionURL     = "https://api.tv.dmm.com/graphql"
-	radikoRegionURL  = "https://radiko.jp/"
+	disneyDeviceURL    = "https://disney.api.edge.bamgrid.com/devices"
+	spotifyRegionURL   = "https://spclient.wg.spotify.com/signup/public/v1/account"
+	tiktokRegionURL    = "https://www.tiktok.com/explore"
+	unextRegionURL     = "https://cc.unext.jp/?zxuid=1b64984ecc23&zxemp=29854391&operationName=cosmo_getPlaylistUrl&variables=%7B%22code%22%3A%22ED00440417%22%2C%22playMode%22%3A%22caption%22%2C%22bitrateLow%22%3A192%2C%22bitrateHigh%22%3Anull%2C%22validationOnly%22%3Atrue%7D&extensions=%7B%22persistedQuery%22%3A%7B%22version%22%3A1%2C%22sha256Hash%22%3A%22a2309e22a6819ff747cf9a389dd78db35fa3c386fac1d53461061ba20fa44e34%22%7D%7D"
+	dmmRegionURL       = "https://api.tv.dmm.com/graphql"
+	dlsiteRegionURL    = "https://www.dlsite.com/api/product/girls/fetchProduct/RJ01571432?product_id=RJ01571432&product_type=work&locale=ja_JP"
+	dlsiteGeoHeaderURL = "https://www.dlsite.com/girls/api/=/product.json?workno=RJ01571432"
+	radikoRegionURL    = "https://radiko.jp/"
 )
 
 var (
@@ -41,6 +43,7 @@ func regionUnlockRules() []Rule {
 		regionUnlockRule("tiktok_unlock", "TikTok 地区判定", "流媒体", "全球", tiktokRegionURL, http.MethodGet, "TikTok 探索页启动数据提供 region；普通网页响应或 WAF 挑战不算解锁"),
 		regionUnlockRule("unext_unlock", "U-NEXT 日本地区判定", "日本", "日本", unextRegionURL, http.MethodGet, "U-NEXT 播放校验返回地区判定状态；validationOnly 不取播放清单"),
 		regionUnlockRule("dmm_unlock", "DMM TV 日本地区判定", "日本", "日本", dmmRegionURL, http.MethodPost, "DMM TV 客户端地区接口返回 client.isForeignAccess；false 判定日本地区可用，true 判定非日本地区"),
+		regionUnlockRule("dlsite_unlock", "DLsite", "日本", "日本", dlsiteRegionURL, http.MethodGet, "DLsite 锁区作品接口（RJ01571432）返回 meta.restriction.hiddenByCountry=false 且含作品数据才判可用；hiddenByCountry=true 判地区隐藏"),
 		regionUnlockRule("radiko_unlock", "radiko 日本地区判定", "日本", "日本", radikoRegionURL, http.MethodGet, "radiko 页面当前 areaId 为日本区域或明确显示区域限制"),
 	}
 }
@@ -51,6 +54,10 @@ func regionUnlockRule(id, name, category, region, target, method, criterion stri
 		RuleVersion: 1, Description: "使用服务自身返回的地区字段或明确地区拒绝；不验证账号、订阅或播放。",
 		TargetURL: target, Method: method, SuccessCriterion: criterion, RedirectPolicy: "probe_specific",
 		TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
+	}
+	if id == "dlsite_unlock" {
+		rule.Description = "通过 DLsite 锁区示例作品（RJ01571432）检查当前出口是否被按国家/地区隐藏；不代表全站全部作品或账号支付。"
+		rule.MaximumBodyBytes = MaximumWebDocumentBytes
 	}
 	if id == "disney_unlock" {
 		rule.RuleVersion = 4
@@ -79,6 +86,8 @@ func checkRegionUnlock(ctx context.Context, client *http.Client, rule Rule, star
 		return checkUNextRegion(ctx, client, rule, started)
 	case "dmm_unlock":
 		return checkDMMRegion(ctx, client, rule, started)
+	case "dlsite_unlock":
+		return checkDLsiteRegion(ctx, client, rule, started)
 	case "radiko_unlock":
 		return checkRadikoRegion(ctx, client, rule, started)
 	default:
@@ -343,6 +352,122 @@ func checkDMMRegion(ctx context.Context, client *http.Client, rule Rule, started
 	result.Outcome, result.Summary = "unlocked", "DMM TV 日本地区判定通过；未验证登录或播放"
 	result.Details = map[string]string{"service_region": "JP"}
 	return finish(result, started)
+}
+
+func checkDLsiteRegion(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
+	result := Result{RequestCount: 1, Details: map[string]string{"work_id": "RJ01571432"}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rule.TargetURL, nil)
+	if err != nil {
+		return finish(Result{Outcome: "transport_error", FailurePhase: "request_setup", ErrorMessage: "无法创建 DLsite 地区请求"}, started)
+	}
+	req.Header.Set("User-Agent", browserUserAgent)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept-Language", "ja-JP,ja;q=0.9,en;q=0.8")
+
+	clone := *client
+	clone.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := clone.Do(req)
+	if err != nil {
+		classifyRequestError(&result, ctx, err)
+		return finish(result, started)
+	}
+	defer resp.Body.Close()
+
+	status := resp.StatusCode
+	result.HTTPStatus = &status
+	if ray := strings.TrimSpace(resp.Header.Get("CF-Ray")); ray != "" {
+		result.Details["cf_ray"] = ray
+		if parts := strings.Split(ray, "-"); len(parts) > 1 {
+			result.Details["cf_colo"] = strings.TrimSpace(parts[1])
+		}
+	}
+	if serviceRateLimit(&result, resp, false) {
+		return finish(result, started)
+	}
+	if strings.EqualFold(strings.TrimSpace(resp.Header.Get("cf-mitigated")), "challenge") {
+		result.Outcome, result.Summary, result.ErrorMessage = "challenge", "DLsite 要求浏览器验证", "DLsite 返回 Cloudflare 验证，未确认地区解锁"
+		result.Details["challenge_evidence"] = "cf-mitigated header"
+		return finish(result, started)
+	}
+	if status >= 300 && status < 400 {
+		result.Details["redirect_to"] = serviceEvidenceURL(resp.Header.Get("Location"))
+		return regionUnknown(result, "http_status", fmt.Sprintf("DLsite 接口返回 HTTP %d 跳转，未取得地区限制结论", status), started)
+	}
+	if status == http.StatusUnavailableForLegalReasons {
+		result.Outcome, result.Summary = "region_blocked", "DLsite 返回 HTTP 451 地区法律限制"
+		result.ErrorMessage = result.Summary
+		return finish(result, started)
+	}
+
+	maximum := rule.MaximumBodyBytes
+	if maximum <= 0 {
+		maximum = MaximumWebDocumentBytes
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(maximum)+1))
+	result.BytesRead = int64(min(len(body), maximum))
+	if err != nil {
+		classifyRequestError(&result, ctx, atRequestPhase(err, "response_read"))
+		return finish(result, started)
+	}
+	if len(body) > maximum {
+		return regionUnknown(result, "response_evidence_limit", "DLsite 作品响应超过读取上限", started)
+	}
+	if classifyPageChallenge(&result, body) {
+		return finish(result, started)
+	}
+	if status < 200 || status >= 300 {
+		return finishPageResult(Result{
+			Outcome: "http_rejected", FailurePhase: "http_status", HTTPStatus: &status,
+			RequestCount: result.RequestCount, BytesRead: result.BytesRead, Details: result.Details,
+		}, fmt.Sprintf("DLsite 接口返回 HTTP %d，未取得地区结论", status), started)
+	}
+
+	var payload struct {
+		Meta *struct {
+			Code        int    `json:"code"`
+			ErrorType   string `json:"errorType"`
+			Restriction *struct {
+				HiddenByCountry *bool `json:"hiddenByCountry"`
+			} `json:"restriction"`
+		} `json:"meta"`
+		Data json.RawMessage `json:"data"`
+	}
+	if json.Unmarshal(body, &payload) != nil || payload.Meta == nil || payload.Meta.Restriction == nil || payload.Meta.Restriction.HiddenByCountry == nil {
+		return regionUnknown(result, "region_document", "DLsite 作品接口未返回 hiddenByCountry 地区判据", started)
+	}
+	if *payload.Meta.Restriction.HiddenByCountry {
+		result.Outcome = "region_blocked"
+		result.Summary = "DLsite 按当前出口地区隐藏锁区作品（RJ01571432）"
+		result.ErrorMessage = result.Summary
+		result.Details["hidden_by_country"] = "true"
+		return finish(result, started)
+	}
+	trimmedData := bytes.TrimSpace(payload.Data)
+	if payload.Meta.Code != 200 || strings.TrimSpace(payload.Meta.ErrorType) != "" || len(trimmedData) == 0 || string(trimmedData) == "null" {
+		return regionUnknown(result, "region_status", "DLsite 作品接口未返回有效作品数据", started)
+	}
+	result.Outcome = "unlocked"
+	result.Summary = "DLsite 锁区作品可访问（未按地区隐藏）"
+	result.Details["hidden_by_country"] = "false"
+	probeDLsiteGeoCountry(ctx, &clone, &result)
+	return finish(result, started)
+}
+
+func probeDLsiteGeoCountry(ctx context.Context, client *http.Client, result *Result) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, dlsiteGeoHeaderURL, nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("User-Agent", browserUserAgent)
+	result.RequestCount++
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if cc := strings.ToUpper(strings.TrimSpace(resp.Header.Get("X-Geo-Country-Code"))); validRegionCode(cc) {
+		result.Details["service_region"] = cc
+	}
 }
 
 func checkRadikoRegion(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
