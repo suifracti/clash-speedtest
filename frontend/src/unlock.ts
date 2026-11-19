@@ -25,7 +25,10 @@ export function unlockResult(a?:Attempt,serviceId?:string,ipType?:IpType){
   try{const np=details.network_path?JSON.parse(String(details.network_path)):null;if(np?.socket_bind_verified&&np?.interface)netHint=` · ${np.interface} 绕过 TUN`}catch{}
   const reply=String(details.reply_preview||'').trim()
   const modelNote=reply?`（回答“${reply}”）`:''
-  if(servicePassed(a))return {state:'available',tone:'good',label:model?`模型可用（${model}）`:'模型可用',reason:(progress||'真实模型已回答')+modelNote+googleHint+exitHint+netHint,region:googleRegion||region}
+  const ttfbHint=details.google_ttfb_ms?` · Google 响应 ${details.google_ttfb_ms}ms`:''
+  const blockedHint=details.blocked_ips?` · 受阻出口 ${details.blocked_ips}`:''
+  if(servicePassed(a))return {state:'available',tone:'good',label:model?`模型可用（${model}）`:'模型可用',reason:(progress||'真实模型已回答')+modelNote+ttfbHint+googleHint+exitHint+netHint,region:googleRegion||region}
+  if(o==='flapping')return {state:'unavailable',tone:'warn',label:'偶发送中 / 漂移',reason:`${details.sample_success||0}/${details.sample_total||0} 次通过${blockedHint}${ttfbHint}${googleHint}${exitHint}${netHint}`,region:googleRegion||region}
   if(o==='region_blocked')return {state:'unavailable',tone:'warn',label:googleRegion==='CN'?'出口送中（CN）':'地区不支持',reason:(r.error_message||'Google 返回当前地区不支持')+googleHint+exitHint+netHint,region:googleRegion||region}
   if(o==='service_rejected')return {state:'unavailable',tone:'warn',label:'策略拦截',reason:(r.error_message||'模型请求被服务策略拦截')+googleHint+exitHint+netHint,region:googleRegion||region}
   const agLabels:Record<string,string>={credentials_required:'需要凭据',auth_failed:'凭据失效',setup_required:'账号待开通',permission_denied:'权限不足',rate_limited:'额度受限'}

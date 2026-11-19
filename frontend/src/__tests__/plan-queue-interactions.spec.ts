@@ -9,7 +9,7 @@ import {key,type Attempt,type LatencyBatch,type NodeOption,type LatencyTest} fro
 vi.hoisted(()=>{Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:()=>null,setItem:()=>{}}})})
 vi.mock('../api',async importOriginal=>{
   const actual=await importOriginal<typeof import('../api')>()
-  return {...actual,api:{...actual.api,airports:vi.fn(),nodes:vi.fn(),startLatency:vi.fn(),startAttempt:vi.fn(),attemptAction:vi.fn(),createRound:vi.fn(),finishRound:vi.fn(),measurementRounds:vi.fn(),attemptHistory:vi.fn()}}
+  return {...actual,api:{...actual.api,airports:vi.fn(),nodes:vi.fn(),startLatency:vi.fn(),startAttempt:vi.fn(),attemptAction:vi.fn(),createRound:vi.fn(),finishRound:vi.fn(),measurementRounds:vi.fn(),attemptHistory:vi.fn(),discoverToken:vi.fn()}}
 })
 const node:NodeOption={profile_id:'sub-a',node_key:'node-a',node_identity_key:'identity-a',config_revision_key:'revision-a',profile_name:'Airport A',display_name:'Node A',type:'ss',country_code:'SG',country_flag:''}
 const airport={id:'airport-a',name:'Airport A',node_count:1,has_cache:true,url_display:'',subscriptions:[{id:'sub-a',airport_id:'airport-a',name:'Default',url_display:'',url_configured:true,node_count:1,has_cache:true}]}
@@ -24,11 +24,16 @@ beforeEach(()=>{
 })
 afterEach(()=>{wrapper?.unmount();wrapper=undefined;w.dispose();document.body.innerHTML=''})
 
-it('warns about large Antigravity batches without blocking them',async()=>{
+it('warns about large Antigravity batches without blocking them and lets users refresh credentials inline',async()=>{
  const list=Array.from({length:4},(_,i)=>({...node,node_key:`node-${i}`,node_identity_key:`identity-${i}`}))
+ vi.mocked(api.discoverToken).mockResolvedValue({has_token:true,source:'oauth_creds (已自动刷新)',preview:'ya29...live'})
  w.nodes.value=list;w.project.value='service';w.openPlan(list);w.plan.value!.serviceIds=['antigravity'];attach(TestPlanModal)
  expect(document.body.textContent).toContain('从 4 个节点的 IP 发起请求，有风控风险')
  expect(button('开始检测').disabled).toBe(false)
+ button('检测 / 刷新凭据').click();await flushPromises()
+ expect(api.discoverToken).toHaveBeenCalledTimes(1)
+ expect(w.token.value?.source).toBe('oauth_creds (已自动刷新)')
+ expect(document.body.textContent).toContain('已绑定本地凭据（oauth_creds (已自动刷新)）')
 })
 
 it('keeps the configuration dialog open when a node changed after selecting the test scope',async()=>{
@@ -107,6 +112,24 @@ it('separates Antigravity processing from model confirmation and labels shared t
  expect(allRows[0].find('details').text()).toContain('候选 Flash 模型：gemini-3.8-flash-low, gemini-2.5-flash')
  expect(allRows[0].find('details').text()).toContain('账号返回全部模型：claude-opus-5.5, gemini-2.5-flash, gemini-3.8-flash-low, gemini-4-hydrogen, gemini-4-neon')
  expect(JSON.stringify(attempts)).toBe(before);expect(api.startAttempt).not.toHaveBeenCalled()
+})
+
+it('shows Antigravity flapping exit IPs, Google TTFB and inline credential refresh when auth_failed occurs',async()=>{
+ const authFailed:Attempt={...node,attempt_id:'ag-auth',request_id:'ag-req-auth',service_id:'antigravity',requested_at:'2026-11-19T09:00:00Z',execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://fixture.invalid/antigravity'},result:{outcome:'auth_failed',bytes_read:0,finished_at:'2026-11-19T09:00:01Z',failure_phase:'loadCodeAssist',http_status:401,error_message:'Google 凭据无效或已过期，请在设置中重新绑定',details:{antigravity_progress:'尚未确认账号项目'}}}
+ const flapping:Attempt={...node,attempt_id:'ag-flap',request_id:'ag-req-flap',service_id:'antigravity',requested_at:'2026-11-19T09:00:00Z',execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://fixture.invalid/antigravity'},result:{outcome:'flapping',bytes_read:0,finished_at:'2026-11-19T09:00:05Z',failure_phase:'drift_validation',details:{antigravity_progress:'真实模型已回答',checked_model:'gemini-3.8-flash-low',reply_preview:'READY',sample_planned:'4',sample_total:'4',sample_success:'3',sample_failure:'1',blocked_ips:'198.51.100.2',blocked_regions:'CN',google_ttfb_ms:'420',google_min_ttfb_ms:'380',google_max_ttfb_ms:'490',google_region:'JP'}}}
+ w.queue.value=[
+  {id:authFailed.attempt_id,node,project:'service',serviceId:'antigravity',state:'completed',attempt:authFailed},
+  {id:flapping.attempt_id,node,project:'service',serviceId:'antigravity',state:'completed',attempt:flapping},
+ ]
+ vi.mocked(api.discoverToken).mockResolvedValue({has_token:true,source:'oauth_creds (已自动刷新)',preview:'ya29...ok'})
+ attach(QueueModal)
+ expect(document.querySelector('.antigravity-summary')?.textContent).toBe('Antigravity：已处理 2/2 · 确认模型可用 0 · 偶发送中/漂移 1 · 地区拒绝 0 · 未确认 1')
+ expect(document.body.textContent).toContain('Google 响应 420ms')
+ expect(document.body.textContent).toContain('受阻出口 198.51.100.2')
+ expect(document.body.textContent).toContain('偶发送中 / 漂移')
+ button('重新检测 / 刷新本地凭据').click();await flushPromises()
+ expect(api.discoverToken).toHaveBeenCalledTimes(1)
+ expect(document.body.textContent).toContain('已刷新并绑定（oauth_creds (已自动刷新)）')
 })
 
 function downloadPlan(){const nodes=[node,{...node,node_key:'node-b',node_identity_key:'identity-b',display_name:'Node B'},{...node,node_key:'node-c',node_identity_key:'identity-c',display_name:'Node C'}];w.nodes.value=nodes;w.project.value='download';w.openPlan(nodes);return nodes}

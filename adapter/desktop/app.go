@@ -458,7 +458,7 @@ func (a *App) StartOAuthLogin() error {
 		return errAppNotInitialized
 	}
 	go func() {
-		token, err := auth.StartOAuthBrowserFlow(os.Stdout)
+		creds, err := auth.StartOAuthBrowserFlowCreds(os.Stdout)
 		if err != nil {
 			if a != nil && a.emitter != nil {
 				a.emitter.Emit(application.Event{
@@ -471,7 +471,7 @@ func (a *App) StartOAuthLogin() error {
 			return
 		}
 		if a != nil && a.app != nil {
-			if err := a.app.SetAntigravityToken(token, "Google OAuth 登录"); err != nil && a.emitter != nil {
+			if err := a.app.SetAntigravityOAuthCreds(creds, "Google OAuth 登录"); err != nil && a.emitter != nil {
 				a.emitter.Emit(application.Event{Type: "antigravity_login_failed", Payload: map[string]any{"error": err.Error()}})
 			}
 		}

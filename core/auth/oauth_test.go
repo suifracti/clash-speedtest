@@ -312,3 +312,50 @@ func TestSaveTokenFileEmpty(t *testing.T) {
 		t.Error("expected error for whitespace token, got nil")
 	}
 }
+
+func TestTryAutoDetectAntigravityCredsRefreshesExpiredAndNeverReturnsStale(t *testing.T) {
+	dir := t.TempDir()
+	credsPath := filepath.Join(dir, "oauth_creds.json")
+	staleCreds := `{"access_token":"ya29.stale-expired","refresh_token":"rt-valid","expiry_date":1}`
+	if err := os.WriteFile(credsPath, []byte(staleCreds), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	origPaths := candidateTokenPathsFunc
+	origTokenURL := googleTokenURL
+	t.Cleanup(func() {
+		candidateTokenPathsFunc = origPaths
+		googleTokenURL = origTokenURL
+	})
+	candidateTokenPathsFunc = func() []string { return []string{credsPath} }
+
+	t.Run("refresh succeeds", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"ya29.fresh-token","expires_in":3600,"token_type":"Bearer"}`))
+		}))
+		defer srv.Close()
+		googleTokenURL = srv.URL
+
+		creds, src, err := TryAutoDetectAntigravityCreds()
+		if err != nil || creds == nil || creds.AccessToken != "ya29.fresh-token" || creds.RefreshToken != "rt-valid" || !strings.Contains(src, "已自动刷新") {
+			t.Fatalf("expected refreshed token, got creds=%+v src=%q err=%v", creds, src, err)
+		}
+	})
+
+	t.Run("refresh failure does not leak stale expired access token", func(t *testing.T) {
+		if err := os.WriteFile(credsPath, []byte(staleCreds), 0600); err != nil {
+			t.Fatal(err)
+		}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "invalid_grant", http.StatusBadRequest)
+		}))
+		defer srv.Close()
+		googleTokenURL = srv.URL
+
+		tok, _, err := TryAutoDetectAntigravityToken()
+		if err == nil || tok != "" {
+			t.Fatalf("must not return expired token on refresh failure, got tok=%q err=%v", tok, err)
+		}
+	})
+}

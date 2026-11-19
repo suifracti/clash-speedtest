@@ -31,7 +31,7 @@ func serviceSocketBudget(rule Rule, observations int) int {
 	case "claude_unlock", "gemini_unlock":
 		perSample = 5
 	case "antigravity":
-		perSample = 4 // existing account/catalog/model requests plus independent trace
+		perSample = 5 // loadCodeAssist/fetchAvailableModels/fetchUserInfo/streamGenerateContent + independent trace
 	case "ipok_ipv4", "ipok_ipv6":
 		samples, perSample = 1, 2 // one exit observation and at most one budgeted lookup
 	default:

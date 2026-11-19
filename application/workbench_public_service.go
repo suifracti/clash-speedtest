@@ -311,7 +311,7 @@ func (s *AppService) executeWorkbenchPublicServiceTest(ctx context.Context, runt
 		checker.ReputationStore = s.historyStore.DB()
 	}
 	if runtime.rule.ServiceID == "antigravity" {
-		checker.AntigravityToken = s.GetAntigravityToken()
+		checker.AntigravityToken = s.resolveLiveAntigravityToken()
 	}
 	if runtime.driftSamples > 0 {
 		checker.DriftSamples = runtime.driftSamples
@@ -319,6 +319,12 @@ func (s *AppService) executeWorkbenchPublicServiceTest(ctx context.Context, runt
 	finishActivity := s.probeActivity.begin("service")
 	defer finishActivity()
 	result := checker.Check(ctx, runtime.node, runtime.rule, runtime.timeout)
+	if runtime.rule.ServiceID == "antigravity" && result.Outcome == "auth_failed" && ctx.Err() == nil {
+		if refreshedToken, ok := s.recoverExpiredAntigravityToken(checker.AntigravityToken); ok && refreshedToken != "" && refreshedToken != checker.AntigravityToken {
+			checker.AntigravityToken = refreshedToken
+			result = checker.Check(ctx, runtime.node, runtime.rule, runtime.timeout)
+		}
+	}
 	peers := finishActivity()
 	finishNetwork()
 	if result.Details == nil {

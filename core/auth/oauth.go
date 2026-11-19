@@ -28,6 +28,8 @@ const (
 	GoogleScopes = "https://www.googleapis.com/auth/userinfo.email openid https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.profile"
 )
 
+var googleTokenURL = GoogleTokenURL
+
 // getAntigravityOAuthClientID returns the Google OAuth client ID, configurable via ANTIGRAVITY_CLIENT_ID.
 func getAntigravityOAuthClientID() string {
 	if env := os.Getenv("ANTIGRAVITY_CLIENT_ID"); env != "" {
@@ -76,13 +78,13 @@ func RefreshAntigravityToken(refreshToken string) (*OAuthCreds, error) {
 		"grant_type":    {"refresh_token"},
 	}
 
-	req, err := http.NewRequest(http.MethodPost, GoogleTokenURL, strings.NewReader(vals.Encode()))
+	req, err := http.NewRequest(http.MethodPost, googleTokenURL, strings.NewReader(vals.Encode()))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := newOAuthHTTPClient()
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("token refresh network error: %w", err)
@@ -127,13 +129,13 @@ func ExchangeAuthCode(code, redirectURI string) (*OAuthCreds, error) {
 		"redirect_uri":  {redirectURI},
 	}
 
-	req, err := http.NewRequest(http.MethodPost, GoogleTokenURL, strings.NewReader(vals.Encode()))
+	req, err := http.NewRequest(http.MethodPost, googleTokenURL, strings.NewReader(vals.Encode()))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := newOAuthHTTPClient()
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("exchange code network error: %w", err)
@@ -205,41 +207,62 @@ func CandidateTokenPaths() []string {
 
 var candidateTokenPathsFunc = CandidateTokenPaths
 
-// TryAutoDetectAntigravityToken attempts to discover and, if needed, refresh
-// existing Antigravity credentials on the local machine.
-func TryAutoDetectAntigravityToken() (token string, source string, err error) {
+// TryAutoDetectAntigravityCreds attempts to discover and, if needed, refresh
+// existing Antigravity OAuth credentials on the local machine.
+// An expired OAuth credential is never returned if refreshing it fails.
+func TryAutoDetectAntigravityCreds() (*OAuthCreds, string, error) {
+	var lastErr error
 	for _, path := range candidateTokenPathsFunc() {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}
 
-		// Try parsing as JSON OAuthCreds first
+		// Try parsing as JSON OAuthCreds first.
 		var creds OAuthCreds
-		if jsonErr := json.Unmarshal(data, &creds); jsonErr == nil && creds.AccessToken != "" {
-			if creds.IsExpired() && creds.RefreshToken != "" {
-				refreshed, refreshErr := RefreshAntigravityToken(creds.RefreshToken)
-				if refreshErr == nil && refreshed.AccessToken != "" {
-					_ = saveOAuthCredsFile(path, refreshed)
-					if home, hErr := os.UserHomeDir(); hErr == nil && home != "" {
-						_ = saveTokenFile(filepath.Join(home, ".antigravity_token"), refreshed.AccessToken)
+		if jsonErr := json.Unmarshal(data, &creds); jsonErr == nil && (creds.AccessToken != "" || creds.RefreshToken != "") {
+			if creds.IsExpired() {
+				if creds.RefreshToken != "" {
+					refreshed, refreshErr := RefreshAntigravityToken(creds.RefreshToken)
+					if refreshErr == nil && refreshed != nil && refreshed.AccessToken != "" {
+						_ = saveOAuthCredsFile(path, refreshed)
+						if home, hErr := os.UserHomeDir(); hErr == nil && home != "" {
+							_ = saveTokenFile(filepath.Join(home, ".antigravity_token"), refreshed.AccessToken)
+						}
+						return refreshed, path + " (已自动刷新)", nil
 					}
-					return refreshed.AccessToken, path + " (已自动刷新)", nil
+					if refreshErr != nil {
+						lastErr = refreshErr
+					}
 				}
+				// Never silently hand out an expired token; keep scanning candidates.
+				continue
 			}
-			return creds.AccessToken, path, nil
+			return &creds, path, nil
 		}
 
-		// Otherwise try parsing as a plain token or 'Authorization: Bearer' file
+		// Otherwise try parsing as a plain token or 'Authorization: Bearer' file.
 		if parsed := ParseAntigravityToken(string(data)); parsed != "" {
-			// Skip mock or dummy tokens from tests
 			if strings.Contains(parsed, "mock") || strings.Contains(parsed, "test-") {
 				continue
 			}
-			return parsed, path, nil
+			return &OAuthCreds{AccessToken: parsed}, path, nil
 		}
 	}
-	return "", "", fmt.Errorf("no credentials found in candidate paths")
+	if lastErr != nil {
+		return nil, "", lastErr
+	}
+	return nil, "", fmt.Errorf("no credentials found in candidate paths")
+}
+
+// TryAutoDetectAntigravityToken attempts to discover and, if needed, refresh
+// existing Antigravity credentials on the local machine.
+func TryAutoDetectAntigravityToken() (token string, source string, err error) {
+	creds, source, err := TryAutoDetectAntigravityCreds()
+	if err != nil || creds == nil {
+		return "", "", err
+	}
+	return creds.AccessToken, source, nil
 }
 
 func saveOAuthCredsFile(path string, creds *OAuthCreds) error {
@@ -279,9 +302,19 @@ func OpenBrowser(targetURL string) error {
 // StartOAuthBrowserFlow spins up a temporary loopback HTTP server and opens
 // the system browser to complete Google OAuth consent.
 func StartOAuthBrowserFlow(out io.Writer) (string, error) {
+	creds, err := StartOAuthBrowserFlowCreds(out)
+	if err != nil || creds == nil {
+		return "", err
+	}
+	return creds.AccessToken, nil
+}
+
+// StartOAuthBrowserFlowCreds runs the browser OAuth flow and returns the full
+// credential set including refresh token and expiry metadata.
+func StartOAuthBrowserFlowCreds(out io.Writer) (*OAuthCreds, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return "", fmt.Errorf("listen on loopback: %w", err)
+		return nil, fmt.Errorf("listen on loopback: %w", err)
 	}
 	defer listener.Close()
 
@@ -362,11 +395,11 @@ func StartOAuthBrowserFlow(out io.Writer) (string, error) {
 	select {
 	case res := <-ch:
 		if res.err != nil {
-			return "", res.err
+			return nil, res.err
 		}
 		creds, err := ExchangeAuthCode(res.code, redirectURI)
 		if err != nil {
-			return "", fmt.Errorf("交换 Token 失败: %w", err)
+			return nil, fmt.Errorf("交换 Token 失败: %w", err)
 		}
 		_ = saveTokenFile(".antigravity_token", creds.AccessToken)
 		if home, err := os.UserHomeDir(); err == nil {
@@ -375,10 +408,10 @@ func StartOAuthBrowserFlow(out io.Writer) (string, error) {
 			_ = saveOAuthCredsFile(filepath.Join(geminiDir, "oauth_creds.json"), creds)
 		}
 		fmt.Fprintln(out, "✅ 授权成功！Token 已缓存至 .antigravity_token")
-		return creds.AccessToken, nil
+		return creds, nil
 
 	case <-time.After(3 * time.Minute):
-		return "", fmt.Errorf("等待浏览器授权超时（3 分钟）")
+		return nil, fmt.Errorf("等待浏览器授权超时（3 分钟）")
 	}
 }
 

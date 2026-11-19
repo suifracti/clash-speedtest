@@ -9,9 +9,32 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
+
+type antigravitySessionKey struct{}
+
+type antigravitySessionCache struct {
+	mu      sync.Mutex
+	project string
+	models  []string
+	allIDs  []string
+}
+
+func antigravityLatencyGrade(ms int64) string {
+	switch {
+	case ms < 500:
+		return "fast"
+	case ms <= 1200:
+		return "medium"
+	case ms <= 2500:
+		return "slow"
+	default:
+		return "laggy"
+	}
+}
 
 const antigravityBase = "https://daily-cloudcode-pa.googleapis.com/v1internal:"
 
@@ -121,10 +144,16 @@ func checkAntigravity(ctx context.Context, client *http.Client, token string, st
 		req.Header.Set("Accept", "application/json, text/event-stream")
 		req.Header.Set("User-Agent", "antigravity/2.14.0")
 		r.RequestCount++
+		reqStart := time.Now()
 		resp, err := client.Do(req)
 		if err != nil {
 			antigravityReadError(&r, ctx, err)
 			return nil, false
+		}
+		if step == "streamGenerateContent?alt=sse" {
+			ttfbMs := max(int64(1), time.Since(reqStart).Milliseconds())
+			r.Details["google_ttfb_ms"] = strconv.FormatInt(ttfbMs, 10)
+			r.Details["latency_grade"] = antigravityLatencyGrade(ttfbMs)
 		}
 		defer resp.Body.Close()
 		status := resp.StatusCode
@@ -179,48 +208,65 @@ func checkAntigravity(ctx context.Context, client *http.Client, token string, st
 		return nil, false
 	}
 
-	// No fabricated project ID or model name: both must be returned by the service.
-	body, ok := call("loadCodeAssist", map[string]any{"metadata": map[string]string{"ideType": "ANTIGRAVITY"}})
-	if !ok {
-		return finish(r, started)
+	var (
+		project string
+		models  []string
+		allIDs  []string
+	)
+	if cache, _ := ctx.Value(antigravitySessionKey{}).(*antigravitySessionCache); cache != nil {
+		cache.mu.Lock()
+		project, models, allIDs = cache.project, cache.models, cache.allIDs
+		cache.mu.Unlock()
 	}
-	var config struct {
-		Project json.RawMessage `json:"cloudaicompanionProject"`
-	}
-	if json.Unmarshal(body, &config) != nil {
-		return end("unknown", "loadCodeAssist", "账号配置响应无法识别")
-	}
-	var project string
-	if json.Unmarshal(config.Project, &project) != nil {
-		var object struct {
-			ID string `json:"id"`
-		}
-		_ = json.Unmarshal(config.Project, &object)
-		project = object.ID
-	}
-	if strings.TrimSpace(project) == "" {
-		return end("setup_required", "loadCodeAssist", "账号尚未返回可用项目，请先在 Antigravity 完成登录与开通")
-	}
-	r.Details["antigravity_progress"] = "账号项目已返回，尚未确认可用模型"
 
-	body, ok = call("fetchAvailableModels", map[string]string{"project": project})
-	if !ok {
-		return finish(r, started)
-	}
-	var listing struct {
-		Models map[string]json.RawMessage `json:"models"`
-	}
-	if json.Unmarshal(body, &listing) != nil || len(listing.Models) == 0 {
-		return end("unknown", "fetchAvailableModels", "未获取到可识别的模型列表，不能确认可用性")
-	}
-	models, allIDs := selectAntigravityFlashModels(listing.Models)
-	if len(models) == 0 {
-		return end("setup_required", "fetchAvailableModels", "账号未提供轻量 Gemini Flash 模型，本次不改用高成本模型")
+	if project == "" || len(models) == 0 {
+		// No fabricated project ID or model name: both must be returned by the service.
+		body, ok := call("loadCodeAssist", map[string]any{"metadata": map[string]string{"ideType": "ANTIGRAVITY"}})
+		if !ok {
+			return finish(r, started)
+		}
+		var config struct {
+			Project json.RawMessage `json:"cloudaicompanionProject"`
+		}
+		if json.Unmarshal(body, &config) != nil {
+			return end("unknown", "loadCodeAssist", "账号配置响应无法识别")
+		}
+		if json.Unmarshal(config.Project, &project) != nil {
+			var object struct {
+				ID string `json:"id"`
+			}
+			_ = json.Unmarshal(config.Project, &object)
+			project = object.ID
+		}
+		if strings.TrimSpace(project) == "" {
+			return end("setup_required", "loadCodeAssist", "账号尚未返回可用项目，请先在 Antigravity 完成登录与开通")
+		}
+		r.Details["antigravity_progress"] = "账号项目已返回，尚未确认可用模型"
+
+		body, ok = call("fetchAvailableModels", map[string]string{"project": project})
+		if !ok {
+			return finish(r, started)
+		}
+		var listing struct {
+			Models map[string]json.RawMessage `json:"models"`
+		}
+		if json.Unmarshal(body, &listing) != nil || len(listing.Models) == 0 {
+			return end("unknown", "fetchAvailableModels", "未获取到可识别的模型列表，不能确认可用性")
+		}
+		models, allIDs = selectAntigravityFlashModels(listing.Models)
+		if len(models) == 0 {
+			return end("setup_required", "fetchAvailableModels", "账号未提供轻量 Gemini Flash 模型，本次不改用高成本模型")
+		}
+		if cache, _ := ctx.Value(antigravitySessionKey{}).(*antigravitySessionCache); cache != nil {
+			cache.mu.Lock()
+			cache.project, cache.models, cache.allIDs = project, models, allIDs
+			cache.mu.Unlock()
+		}
 	}
 	r.Model = models[0]
 	r.Details["checked_model"] = r.Model
 	r.Details["models_listed"] = strconv.Itoa(len(models))
-	r.Details["all_models_count"] = strconv.Itoa(len(listing.Models))
+	r.Details["all_models_count"] = strconv.Itoa(max(len(allIDs), len(models)))
 	r.Details["available_flash_models"] = truncatePreview(strings.Join(models, ", "), 300)
 	r.Details["all_model_ids"] = truncatePreview(strings.Join(allIDs, ", "), 500)
 	r.Details["antigravity_progress"] = "轻量模型已列出，尚未核查地区与生成"
@@ -249,7 +295,7 @@ func checkAntigravity(ctx context.Context, client *http.Client, token string, st
 	}
 	r.Details["antigravity_progress"] = "轻量模型已列出，尚未收到真实回答"
 
-	body, ok = call("streamGenerateContent?alt=sse", map[string]any{
+	body, ok := call("streamGenerateContent?alt=sse", map[string]any{
 		"project": project, "model": r.Model,
 		"request": map[string]any{
 			"contents":         []any{map[string]any{"role": "user", "parts": []any{map[string]string{"text": "Reply with only the word READY."}}}},

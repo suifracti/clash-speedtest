@@ -66,11 +66,15 @@ type AppService struct {
 	status              TestStatus
 	currentRunID        string
 	stoppedByUser       atomic.Bool
-	antigravityToken    string
-	antigravitySource   string
-	antigravityMu       sync.RWMutex
-	noAutoCredentials   bool
-	discoverCredentials func() (string, string, error)
+	antigravityToken     string
+	antigravitySource    string
+	antigravityCreds     *auth.OAuthCreds
+	antigravityMu        sync.RWMutex
+	antigravityRefreshMu sync.Mutex
+	noAutoCredentials    bool
+	discoverCredentials  func() (string, string, error)
+	discoverCreds        func() (*auth.OAuthCreds, string, error)
+	refreshOAuthToken    func(string) (*auth.OAuthCreds, error)
 
 	backupMu              sync.Mutex
 	lastBackupRecordError string
@@ -158,12 +162,24 @@ func newAppService(hStore *history.Store, appPaths appdata.AppPaths, profilePath
 		emitter = NewMemoryEventEmitter()
 	}
 	discover := options.CredentialDiscovery
-	if discover == nil {
+	var discoverCreds func() (*auth.OAuthCreds, string, error)
+	if discover != nil {
+		discoverCreds = func() (*auth.OAuthCreds, string, error) {
+			tok, src, err := discover()
+			if err != nil || tok == "" {
+				return nil, src, err
+			}
+			return &auth.OAuthCreds{AccessToken: tok}, src, nil
+		}
+	} else {
 		discover = auth.TryAutoDetectAntigravityToken
+		discoverCreds = auth.TryAutoDetectAntigravityCreds
 	}
 	svc := &AppService{
 		noAutoCredentials:   options.NoAutoCredentials,
 		discoverCredentials: discover,
+		discoverCreds:       discoverCreds,
+		refreshOAuthToken:   auth.RefreshAntigravityToken,
 		historyStore:        hStore,
 		profilePaths:        profilePaths,
 		appPaths:            appPaths,
@@ -214,10 +230,13 @@ func newAppService(hStore *history.Store, appPaths appdata.AppPaths, profilePath
 	}
 
 	// A credential explicitly saved in this data root belongs to this instance.
-	// Only discover shared credentials when it has no local binding and discovery is enabled.
-	if !svc.loadPersistedTokenLocked() && svc.autoDiscoverCredentialsEnabled() {
-		if token, src, err := svc.discoverCredentials(); err == nil && token != "" {
-			svc.antigravityToken, svc.antigravitySource = token, src
+	// Refresh it if it has an expired OAuth grant; otherwise only discover shared
+	// credentials when unbound and startup discovery is enabled.
+	if svc.loadPersistedTokenLocked() {
+		svc.refreshExpiredPersistedCredsLocked()
+	} else if svc.autoDiscoverCredentialsEnabled() {
+		if creds, src, err := svc.discoverCreds(); err == nil && creds != nil && creds.AccessToken != "" {
+			svc.antigravityToken, svc.antigravitySource, svc.antigravityCreds = creds.AccessToken, src, cloneOAuthCreds(creds)
 		}
 	}
 
@@ -1730,12 +1749,71 @@ func (s *AppService) SetAntigravityToken(token, source string) error {
 	return nil
 }
 
+// SetAntigravityOAuthCreds persists full OAuth credentials (including refresh
+// token and expiry) alongside the compatibility token file.
+func (s *AppService) SetAntigravityOAuthCreds(creds *auth.OAuthCreds, source string) error {
+	if s == nil {
+		return fmt.Errorf("app service is not initialized")
+	}
+	if creds == nil || strings.TrimSpace(creds.AccessToken) == "" {
+		return fmt.Errorf("oauth credentials are empty")
+	}
+	s.antigravityMu.Lock()
+	err := s.saveCredsLocked(creds, source)
+	s.antigravityMu.Unlock()
+	if err != nil {
+		return err
+	}
+	if s.emitter != nil {
+		s.emitter.Emit(Event{Type: "antigravity_token_updated", Payload: map[string]any{"source": source}})
+	}
+	return nil
+}
+
+func cloneOAuthCreds(creds *auth.OAuthCreds) *auth.OAuthCreds {
+	if creds == nil {
+		return nil
+	}
+	cp := *creds
+	return &cp
+}
+
 // Persist before changing the live binding; a failed write must not look saved.
 func (s *AppService) saveTokenLocked(token, source string) error {
 	if s.appPaths.DataRoot != "" {
 		tokenPath := filepath.Join(s.appPaths.DataRoot, ".antigravity_token")
 		if err := writeAtomicFile(tokenPath, []byte(token+"\n"), 0600); err != nil {
 			return fmt.Errorf("凭据未保存，原绑定保留: %w", err)
+		}
+		_ = os.Remove(filepath.Join(s.appPaths.DataRoot, ".antigravity_creds.json"))
+		if source != "" {
+			if meta, err := json.Marshal(struct {
+				Source string `json:"source"`
+			}{Source: source}); err == nil {
+				_ = writeAtomicFile(tokenPath+".meta", append(meta, '\n'), 0600)
+			}
+		}
+	}
+	s.antigravityToken, s.antigravitySource, s.antigravityCreds = token, source, nil
+	return nil
+}
+
+func (s *AppService) saveCredsLocked(creds *auth.OAuthCreds, source string) error {
+	if creds == nil || strings.TrimSpace(creds.AccessToken) == "" {
+		return fmt.Errorf("oauth credentials are empty")
+	}
+	if creds.RefreshToken == "" && creds.ExpiryDate == 0 {
+		return s.saveTokenLocked(creds.AccessToken, source)
+	}
+	if s.appPaths.DataRoot != "" {
+		tokenPath := filepath.Join(s.appPaths.DataRoot, ".antigravity_token")
+		if err := writeAtomicFile(tokenPath, []byte(creds.AccessToken+"\n"), 0600); err != nil {
+			return fmt.Errorf("凭据未保存，原绑定保留: %w", err)
+		}
+		if credsRaw, err := json.MarshalIndent(creds, "", "  "); err == nil {
+			if err := writeAtomicFile(filepath.Join(s.appPaths.DataRoot, ".antigravity_creds.json"), append(credsRaw, '\n'), 0600); err != nil {
+				return fmt.Errorf("凭据未保存，原绑定保留: %w", err)
+			}
 		}
 		if source != "" {
 			if meta, err := json.Marshal(struct {
@@ -1745,7 +1823,7 @@ func (s *AppService) saveTokenLocked(token, source string) error {
 			}
 		}
 	}
-	s.antigravityToken, s.antigravitySource = token, source
+	s.antigravityToken, s.antigravitySource, s.antigravityCreds = creds.AccessToken, source, cloneOAuthCreds(creds)
 	return nil
 }
 
@@ -1754,14 +1832,6 @@ func (s *AppService) loadPersistedTokenLocked() bool {
 		return false
 	}
 	tokenPath := filepath.Join(s.appPaths.DataRoot, ".antigravity_token")
-	data, err := os.ReadFile(tokenPath)
-	if err != nil {
-		return false
-	}
-	parsed := auth.ParseAntigravityToken(string(data))
-	if parsed == "" {
-		return false
-	}
 	source := "本数据目录凭据"
 	if metaRaw, err := os.ReadFile(tokenPath + ".meta"); err == nil {
 		var meta struct {
@@ -1771,8 +1841,45 @@ func (s *AppService) loadPersistedTokenLocked() bool {
 			source = strings.TrimSpace(meta.Source)
 		}
 	}
-	s.antigravityToken, s.antigravitySource = parsed, source
+	if credsRaw, err := os.ReadFile(filepath.Join(s.appPaths.DataRoot, ".antigravity_creds.json")); err == nil {
+		var creds auth.OAuthCreds
+		if json.Unmarshal(credsRaw, &creds) == nil && (creds.AccessToken != "" || creds.RefreshToken != "") {
+			s.antigravityCreds = &creds
+			s.antigravityToken, s.antigravitySource = creds.AccessToken, source
+			return true
+		}
+	}
+	data, err := os.ReadFile(tokenPath)
+	if err != nil {
+		return false
+	}
+	parsed := auth.ParseAntigravityToken(string(data))
+	if parsed == "" {
+		return false
+	}
+	s.antigravityToken, s.antigravitySource, s.antigravityCreds = parsed, source, nil
 	return true
+}
+
+func (s *AppService) refreshExpiredPersistedCredsLocked() {
+	if s.noAutoCredentials || s.antigravityCreds == nil || !s.antigravityCreds.IsExpired() {
+		return
+	}
+	if s.antigravityCreds.RefreshToken != "" && s.refreshOAuthToken != nil {
+		if refreshed, err := s.refreshOAuthToken(s.antigravityCreds.RefreshToken); err == nil && refreshed != nil && refreshed.AccessToken != "" {
+			src := s.antigravitySource
+			if !strings.Contains(src, "已自动刷新") {
+				src += " (已自动刷新)"
+			}
+			_ = s.saveCredsLocked(refreshed, src)
+			return
+		}
+	}
+	if s.autoDiscoverCredentialsEnabled() && s.antigravitySource != "手动输入" && s.discoverCreds != nil {
+		if creds, src, err := s.discoverCreds(); err == nil && creds != nil && creds.AccessToken != "" {
+			_ = s.saveCredsLocked(creds, src)
+		}
+	}
 }
 
 func (s *AppService) tokenStatusLocked() TokenStatusDTO {
@@ -1797,31 +1904,41 @@ func (s *AppService) DiscoverAntigravityToken() (TokenStatusDTO, error) {
 	if s == nil {
 		return TokenStatusDTO{}, fmt.Errorf("app service is not initialized")
 	}
+	s.antigravityRefreshMu.Lock()
+	defer s.antigravityRefreshMu.Unlock()
 	s.antigravityMu.Lock()
-	defer s.antigravityMu.Unlock()
 	// This operation is an explicit user request: allow finding a refreshed
 	// credential even when a previous local binding already exists.
 	if s.antigravityToken == "" {
 		s.loadPersistedTokenLocked()
 	}
-	discover := s.discoverCredentials
-	if discover == nil {
-		discover = auth.TryAutoDetectAntigravityToken
+	discoverCreds := s.discoverCreds
+	if discoverCreds == nil {
+		discoverCreds = auth.TryAutoDetectAntigravityCreds
 	}
-	tok, src, err := discover()
-	if err != nil || tok == "" {
+	s.antigravityMu.Unlock()
+
+	creds, src, err := discoverCreds()
+	if err != nil || creds == nil || creds.AccessToken == "" {
 		if err == nil {
 			err = fmt.Errorf("未在已知路径检测到 Antigravity 凭据")
 		}
-		return s.tokenStatusLocked(), fmt.Errorf("检测本地凭据失败: %w", err)
+		s.antigravityMu.RLock()
+		status := s.tokenStatusLocked()
+		s.antigravityMu.RUnlock()
+		return status, fmt.Errorf("检测本地凭据失败: %w", err)
 	}
-	if err := s.saveTokenLocked(tok, src); err != nil {
-		return s.tokenStatusLocked(), err
+	s.antigravityMu.Lock()
+	saveErr := s.saveCredsLocked(creds, src)
+	status := s.tokenStatusLocked()
+	s.antigravityMu.Unlock()
+	if saveErr != nil {
+		return status, saveErr
 	}
 	if s.emitter != nil {
 		s.emitter.Emit(Event{Type: "antigravity_token_updated", Payload: map[string]any{"source": src}})
 	}
-	return s.tokenStatusLocked(), nil
+	return status, nil
 }
 
 func fillDefaultAutoDiscoverCredentials(settings *AppSettings) {
@@ -1850,11 +1967,85 @@ func (s *AppService) GetTokenStatus() TokenStatusDTO {
 	s.antigravityMu.Lock()
 	defer s.antigravityMu.Unlock()
 	if s.antigravityToken == "" && !s.loadPersistedTokenLocked() && s.autoDiscoverCredentialsEnabled() {
-		if tok, src, err := s.discoverCredentials(); err == nil && tok != "" {
-			s.antigravityToken, s.antigravitySource = tok, src
+		if creds, src, err := s.discoverCreds(); err == nil && creds != nil && creds.AccessToken != "" {
+			s.antigravityToken, s.antigravitySource, s.antigravityCreds = creds.AccessToken, src, cloneOAuthCreds(creds)
 		}
+	} else {
+		s.refreshExpiredPersistedCredsLocked()
 	}
 	return s.tokenStatusLocked()
+}
+
+// resolveLiveAntigravityToken returns an active token, proactively refreshing an
+// expired OAuth grant before starting a probe.
+func (s *AppService) resolveLiveAntigravityToken() string {
+	if s == nil {
+		return ""
+	}
+	s.antigravityMu.RLock()
+	tok, creds := s.antigravityToken, cloneOAuthCreds(s.antigravityCreds)
+	s.antigravityMu.RUnlock()
+	if tok != "" && (creds == nil || !creds.IsExpired()) {
+		return tok
+	}
+	refreshed, ok := s.recoverExpiredAntigravityToken("")
+	if ok && refreshed != "" {
+		return refreshed
+	}
+	return s.GetAntigravityToken()
+}
+
+// recoverExpiredAntigravityToken performs a single-flight refresh or local
+// credential re-discovery when Google rejects an expired token.
+func (s *AppService) recoverExpiredAntigravityToken(failedToken string) (string, bool) {
+	if s == nil || s.noAutoCredentials {
+		return "", false
+	}
+	s.antigravityRefreshMu.Lock()
+	defer s.antigravityRefreshMu.Unlock()
+
+	s.antigravityMu.RLock()
+	curTok, curSrc, curCreds := s.antigravityToken, s.antigravitySource, cloneOAuthCreds(s.antigravityCreds)
+	s.antigravityMu.RUnlock()
+
+	if failedToken != "" && curTok != "" && curTok != failedToken && (curCreds == nil || !curCreds.IsExpired()) {
+		return curTok, true
+	}
+	if curSrc == "手动输入" {
+		return "", false
+	}
+	if curCreds != nil && curCreds.RefreshToken != "" && s.refreshOAuthToken != nil {
+		if refreshed, err := s.refreshOAuthToken(curCreds.RefreshToken); err == nil && refreshed != nil && refreshed.AccessToken != "" && refreshed.AccessToken != failedToken {
+			src := curSrc
+			if !strings.Contains(src, "已自动刷新") {
+				src += " (已自动刷新)"
+			}
+			s.antigravityMu.Lock()
+			_ = s.saveCredsLocked(refreshed, src)
+			s.antigravityMu.Unlock()
+			if s.emitter != nil {
+				s.emitter.Emit(Event{Type: "antigravity_token_updated", Payload: map[string]any{"source": src}})
+			}
+			return refreshed.AccessToken, true
+		}
+	}
+	if !s.autoDiscoverCredentialsEnabled() || s.discoverCreds == nil {
+		return "", false
+	}
+	creds, src, err := s.discoverCreds()
+	if err != nil || creds == nil || creds.AccessToken == "" || creds.AccessToken == failedToken {
+		return "", false
+	}
+	s.antigravityMu.Lock()
+	saveErr := s.saveCredsLocked(creds, src)
+	s.antigravityMu.Unlock()
+	if saveErr != nil {
+		return "", false
+	}
+	if s.emitter != nil {
+		s.emitter.Emit(Event{Type: "antigravity_token_updated", Payload: map[string]any{"source": src}})
+	}
+	return creds.AccessToken, true
 }
 
 // Config Export operations
@@ -2050,10 +2241,12 @@ func (s *AppService) SaveSettings(settings *AppSettings) error {
 	}
 	if settings.AutoDiscoverCredentials != nil && *settings.AutoDiscoverCredentials && !s.noAutoCredentials {
 		s.antigravityMu.Lock()
-		if s.antigravityToken == "" && !s.loadPersistedTokenLocked() && s.discoverCredentials != nil {
-			if tok, src, err := s.discoverCredentials(); err == nil && tok != "" {
-				s.antigravityToken, s.antigravitySource = tok, src
+		if s.antigravityToken == "" && !s.loadPersistedTokenLocked() && s.discoverCreds != nil {
+			if creds, src, err := s.discoverCreds(); err == nil && creds != nil && creds.AccessToken != "" {
+				s.antigravityToken, s.antigravitySource, s.antigravityCreds = creds.AccessToken, src, cloneOAuthCreds(creds)
 			}
+		} else {
+			s.refreshExpiredPersistedCredsLocked()
 		}
 		s.antigravityMu.Unlock()
 	}

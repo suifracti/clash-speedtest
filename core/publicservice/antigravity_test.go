@@ -199,6 +199,50 @@ func TestAntigravityPrefersNewestIDEFlashOverLegacy25(t *testing.T) {
 	})
 }
 
+func TestAntigravityMultiSampleReusesAccountDiscoveryAndTracksBlockedIPs(t *testing.T) {
+	rule, _ := RuleFor("antigravity")
+	var loadCalls, modelCalls, geoCalls, streamCalls atomic.Int32
+	checker := Checker{DriftSamples: 4, AntigravityToken: "test-secret", ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Host == "www.cloudflare.com" {
+			// Alternate exit IP: round 1 & 3 JP, round 2 CN, round 4 JP
+			n := geoCalls.Load()
+			if n == 2 {
+				return fixtureResponse(req, 200, "text/plain", "ip=198.51.100.2\nloc=CN\ncolo=SZX\n"), nil
+			}
+			return fixtureResponse(req, 200, "text/plain", "ip=203.0.113.8\nloc=JP\ncolo=NRT\n"), nil
+		}
+		switch req.URL.Path {
+		case "/v1internal:loadCodeAssist":
+			loadCalls.Add(1)
+			return fixtureResponse(req, 200, "application/json", `{"cloudaicompanionProject":"actual-project"}`), nil
+		case "/v1internal:fetchAvailableModels":
+			modelCalls.Add(1)
+			return fixtureResponse(req, 200, "application/json", `{"models":{"gemini-3.8-flash-low":{}}}`), nil
+		case "/v1internal:fetchUserInfo":
+			n := geoCalls.Add(1)
+			if n == 2 {
+				return fixtureResponse(req, 200, "application/json", `{"regionCode":"CN"}`), nil
+			}
+			return fixtureResponse(req, 200, "application/json", `{"regionCode":"JP"}`), nil
+		case "/v1internal:streamGenerateContent":
+			streamCalls.Add(1)
+			return fixtureResponse(req, 200, "text/event-stream", "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"READY\"}]}}]}}\n\n"), nil
+		default:
+			return fixtureResponse(req, 404, "text/plain", "not found"), nil
+		}
+	})}
+	result := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, 10*time.Second)
+	if result.Outcome != "flapping" || result.Details["sample_success"] != "3" || result.Details["sample_failure"] != "1" {
+		t.Fatalf("expected flapping 3/4, got %+v", result)
+	}
+	if loadCalls.Load() != 1 || modelCalls.Load() != 1 || geoCalls.Load() != 4 || streamCalls.Load() != 3 {
+		t.Fatalf("unexpected call counts: load=%d model=%d geo=%d stream=%d", loadCalls.Load(), modelCalls.Load(), geoCalls.Load(), streamCalls.Load())
+	}
+	if result.Details["blocked_ips"] != "198.51.100.2" || result.Details["blocked_regions"] != "CN" || result.Details["google_ttfb_ms"] == "" {
+		t.Fatalf("missing blocked IP / TTFB details: %+v", result.Details)
+	}
+}
+
 func TestAntigravityCancellationStopsBeforeNextRequest(t *testing.T) {
 	rule, _ := RuleFor("antigravity")
 	ctx, cancel := context.WithCancel(context.Background())

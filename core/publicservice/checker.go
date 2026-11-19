@@ -11,6 +11,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -582,8 +583,15 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 			dnsEvidence.attach(&final)
 		}
 	}()
+	var agSession *antigravitySessionCache
+	if rule.ServiceID == "antigravity" {
+		agSession = &antigravitySessionCache{}
+	}
 	checkSample := func(sampleStarted time.Time) Result {
 		sampleCtx := ctx
+		if agSession != nil {
+			sampleCtx = context.WithValue(sampleCtx, antigravitySessionKey{}, agSession)
+		}
 		var pre *netflixFastPreflight
 		if rule.ServiceID == "netflix_unlock" && rule.RuleVersion >= 5 {
 			// A Fast.com verdict belongs to one observation. If it is decisive
@@ -841,6 +849,13 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 		details["observed_colos"] = strings.Join(observedColos, ", ")
 	}
 	details["observed_outcomes"] = strings.Join(observedOutcomes, ", ")
+	if rule.ServiceID == "antigravity" {
+		agResults := make([]Result, len(samples))
+		for i, sample := range samples {
+			agResults[i] = sample.res
+		}
+		attachAntigravityMultiSampleEvidence(agResults, details)
+	}
 
 	counts := fmt.Sprintf("%d通过 / %d判据未通过 / %d未确认 / %d取消 / %d未执行 / %d未启动", successSamples, failureSamples, unknownSamples, cancelledSamples, notExecutedSamples, unstartedSamples)
 	switch {
@@ -885,6 +900,62 @@ func (c Checker) Check(ctx context.Context, node monitor.MonitoredNode, rule Rul
 	res1 = finish(res1, startedAt)
 	final = res1
 	return final
+}
+
+func attachAntigravityMultiSampleEvidence(samples []Result, details map[string]string) {
+	if len(samples) == 0 || details == nil {
+		return
+	}
+	var blockedIPs, blockedRegions []string
+	seenBlockedIP := map[string]bool{}
+	seenBlockedRegion := map[string]bool{}
+	var sumTTFB, minTTFB, maxTTFB int64
+	ttfbCount := 0
+
+	for _, r := range samples {
+		ip := strings.TrimSpace(r.Details["ip"])
+		region := strings.TrimSpace(r.Details["google_region"])
+		if r.Outcome == "region_blocked" || region == "CN" || region == "HK" || region == "MO" {
+			if ip != "" && !seenBlockedIP[ip] {
+				seenBlockedIP[ip] = true
+				blockedIPs = append(blockedIPs, ip)
+			}
+			if region != "" && !seenBlockedRegion[region] {
+				seenBlockedRegion[region] = true
+				blockedRegions = append(blockedRegions, region)
+			}
+		}
+		if rawTTFB := strings.TrimSpace(r.Details["google_ttfb_ms"]); rawTTFB != "" {
+			if ttfb, err := strconv.ParseInt(rawTTFB, 10, 64); err == nil && ttfb > 0 {
+				sumTTFB += ttfb
+				if ttfbCount == 0 || ttfb < minTTFB {
+					minTTFB = ttfb
+				}
+				if ttfb > maxTTFB {
+					maxTTFB = ttfb
+				}
+				ttfbCount++
+			}
+		}
+		for _, k := range []string{"reply_preview", "checked_model", "available_flash_models", "all_model_ids"} {
+			if details[k] == "" && r.Details[k] != "" {
+				details[k] = r.Details[k]
+			}
+		}
+	}
+	if len(blockedIPs) > 0 {
+		details["blocked_ips"] = strings.Join(blockedIPs, ", ")
+	}
+	if len(blockedRegions) > 0 {
+		details["blocked_regions"] = strings.Join(blockedRegions, ", ")
+	}
+	if ttfbCount > 0 {
+		avg := sumTTFB / int64(ttfbCount)
+		details["google_ttfb_ms"] = strconv.FormatInt(avg, 10)
+		details["google_min_ttfb_ms"] = strconv.FormatInt(minTTFB, 10)
+		details["google_max_ttfb_ms"] = strconv.FormatInt(maxTTFB, 10)
+		details["latency_grade"] = antigravityLatencyGrade(avg)
+	}
 }
 
 // An explicitly selected single observation keeps its original outcome/phase;

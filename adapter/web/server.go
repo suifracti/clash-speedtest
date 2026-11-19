@@ -922,7 +922,7 @@ func (s *Server) handleAntigravityLogin(w http.ResponseWriter, r *http.Request) 
 	}
 	go func() {
 		defer s.oauthRunning.Store(false)
-		token, err := auth.StartOAuthBrowserFlow(os.Stdout)
+		creds, err := auth.StartOAuthBrowserFlowCreds(os.Stdout)
 		if err != nil {
 			log.Printf("OAuth login failed: %s", err)
 			s.emitter.Emit(application.Event{
@@ -933,7 +933,7 @@ func (s *Server) handleAntigravityLogin(w http.ResponseWriter, r *http.Request) 
 			})
 			return
 		}
-		if err := s.app.SetAntigravityToken(token, "Google OAuth 登录"); err != nil {
+		if err := s.app.SetAntigravityOAuthCreds(creds, "Google OAuth 登录"); err != nil {
 			s.emitter.Emit(application.Event{Type: "antigravity_login_failed", Payload: map[string]any{"error": err.Error()}})
 		}
 	}()

@@ -265,3 +265,33 @@ func TestAutoDiscoverCredentialsSettingControlsStartupAndStatus(t *testing.T) {
 		t.Fatalf("re-enabling auto-discover did not check once: calls=%d tok=%s", calls2, app2.GetAntigravityToken())
 	}
 }
+
+func TestStalePersistedTokenRecoversOnAuthFailureViaSingleFlightDiscovery(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	paths, _ := appdata.Resolve(t.TempDir())
+	if err := os.WriteFile(filepath.Join(paths.DataRoot, ".antigravity_token"), []byte("ya29.stale-cached\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	app := NewAppServiceWithOptions(nil, paths, nil, Options{CredentialDiscovery: func() (string, string, error) {
+		calls++
+		return "ya29.fresh-recovered", "local oauth_creds (已自动刷新)", nil
+	}})
+	defer app.Close()
+
+	// Startup keeps existing local token contract without eager discovery.
+	if calls != 0 || app.GetAntigravityToken() != "ya29.stale-cached" {
+		t.Fatalf("unexpected startup discovery: calls=%d tok=%s", calls, app.GetAntigravityToken())
+	}
+
+	// Runtime 401 recovery re-discovers cleanly once and persists updated token.
+	tok, ok := app.recoverExpiredAntigravityToken("ya29.stale-cached")
+	if !ok || tok != "ya29.fresh-recovered" || calls != 1 || app.GetAntigravityToken() != "ya29.fresh-recovered" {
+		t.Fatalf("expected 401 recovery to update token, got ok=%v tok=%q calls=%d", ok, tok, calls)
+	}
+	// A sibling goroutine seeing the already-replaced failedToken gets the new token without re-calling discovery.
+	tok2, ok2 := app.recoverExpiredAntigravityToken("ya29.stale-cached")
+	if !ok2 || tok2 != "ya29.fresh-recovered" || calls != 1 {
+		t.Fatalf("expected single-flight reuse, got ok=%v tok=%q calls=%d", ok2, tok2, calls)
+	}
+}

@@ -11,7 +11,7 @@ import {entryCountry,mainlandNotice} from '../entryPath'
 import {useWorkspace} from '../workspace'
 import {projectNames,stateLabel,outcomeLabel,outcomeTone,downloadReading,downloadTone,downloadOutcome,downloadSourceName,type QueueItem} from '../domain'
 import Modal from './Modal.vue'
-const w=useWorkspace(),retrying=ref(''),progressTitle=ref<HTMLElement>()
+const w=useWorkspace(),retrying=ref(''),refreshingToken=ref(false),tokenNotice=ref(''),progressTitle=ref<HTMLElement>()
 onMounted(()=>nextTick(()=>progressTitle.value?.focus({preventScroll:true})))
 const report=computed(()=>w.reportSelection.value),previous=ref<LatencyBatch[]>([])
 const airportNames=computed(()=>Object.fromEntries(w.nodes.value.map(n=>[n.profile_id,w.nodeAirportName(n)])))
@@ -55,11 +55,26 @@ const downloadTransfer=computed(()=>{
 })
 const isAntigravity=(q:QueueItem)=>q.project==='service'&&(q.serviceId||q.attempt?.service_id)==='antigravity'
 const modelConfirmed=(q:QueueItem)=>q.attempt?.result?.outcome==='matched'&&q.attempt.result.details?.antigravity_progress==='真实模型已回答'
+const antigravityAuthFailed=computed(()=>w.queue.value.some(q=>isAntigravity(q)&&['auth_failed','credentials_required'].includes(q.attempt?.result?.outcome||'')))
+async function discoverLocalToken(){
+ if(refreshingToken.value)return
+ refreshingToken.value=true;tokenNotice.value=''
+ try{
+  const status=await api.discoverToken()
+  w.token.value=status
+  tokenNotice.value=status.has_token?`已刷新并绑定（${status.source||'本地检测'}），可重新发起检测`:'未检测到可用凭据，请在设置中添加'
+ }catch(e){
+  tokenNotice.value=e instanceof Error?e.message:String(e)
+ }finally{
+  refreshingToken.value=false
+ }
+}
 const antigravitySummary=computed(()=>{
  const rows=w.queue.value.filter(isAntigravity);if(!rows.length)return ''
  const processed=rows.filter(q=>['completed','failed','not_executed','cancelled','interrupted'].includes(q.state))
  const confirmed=processed.filter(modelConfirmed).length,refused=processed.filter(q=>q.attempt?.result?.outcome==='region_blocked').length
- return `Antigravity：已处理 ${processed.length}/${rows.length} · 确认模型可用 ${confirmed} · 地区拒绝 ${refused} · 未确认 ${processed.length-confirmed-refused}`
+ const flapping=processed.filter(q=>q.attempt?.result?.outcome==='flapping').length
+ return `Antigravity：已处理 ${processed.length}/${rows.length} · 确认模型可用 ${confirmed}${flapping?` · 偶发送中/漂移 ${flapping}`:''} · 地区拒绝 ${refused} · 未确认 ${processed.length-confirmed-refused-flapping}`
 })
 function resultStatus(q:QueueItem):{label:string;tone:string;notExecuted?:boolean}|null{
  if(q.project==='service'&&['completed','failed'].includes(q.state)){
@@ -67,6 +82,7 @@ function resultStatus(q:QueueItem):{label:string;tone:string;notExecuted?:boolea
   if(!result)return {label:'已结束 · 无结果',tone:''}
   const outcome=result.outcome
   if(isAntigravity(q)&&outcome==='matched')return {label:modelConfirmed(q)?'确认模型可用':'未确认模型可用',tone:modelConfirmed(q)?'good':'warn'}
+  if(isAntigravity(q)&&outcome==='flapping')return {label:'偶发送中 / 漂移',tone:'warn'}
   if(isAntigravity(q)&&outcome==='region_blocked')return {label:'地区拒绝',tone:'warn'}
   if(['not_executed','cancelled','user_cancelled','interrupted'].includes(outcome))return {label:stateLabel(outcome==='user_cancelled'?'cancelled':outcome),tone:'',notExecuted:true}
   if(['timed_out','transport_error','rate_limited'].includes(outcome))return {label:outcomeLabel(outcome)+' · 未确认',tone:'warn'}
@@ -120,9 +136,10 @@ function antigravityEvidenceLine(q:QueueItem){
  const d=r.details||{},parts:string[]=[]
  if(d.checked_model)parts.push(`模型 ${d.checked_model}${d.models_listed?`（可选 ${d.models_listed}/${d.all_models_count||d.models_listed}）`:''}`)
  if(d.reply_preview)parts.push(`实测回答“${d.reply_preview}”`)
+ if(d.google_ttfb_ms)parts.push(`Google 响应 ${d.google_ttfb_ms}ms`)
  if(d.google_region)parts.push(`Google 判定 ${d.google_region}`)
  if(d.country_code)parts.push(`CF 观察 ${d.country_code}${d.cloudflare_colo?` (${d.cloudflare_colo})`:''}${d.ip?` ${d.ip}`:''}`)
- if(Number(d.sample_planned)>1)parts.push(`抽样 ${d.sample_success||0}/${d.sample_total||d.sample_planned}${d.ip_drift_detected==='true'?' · 存在出口漂移':''}`)
+ if(Number(d.sample_planned)>1)parts.push(`抽样 ${d.sample_success||0}/${d.sample_total||d.sample_planned}${d.blocked_ips?` · 受阻出口 ${d.blocked_ips}`:d.ip_drift_detected==='true'?' · 存在出口漂移':''}`)
  let path:{interface?:string;socket_bind_verified?:boolean}={};try{path=JSON.parse(String(d.network_path||'{}'))}catch{}
  if(path.socket_bind_verified&&path.interface)parts.push(`${path.interface} 绕过 TUN`)
  return parts.join(' · ')
@@ -132,7 +149,8 @@ function antigravityDetails(q:QueueItem){
  const d=r.details||{},steps:Record<string,string>={loadCodeAssist:'账号项目查询',fetchAvailableModels:'模型目录查询','streamGenerateContent?alt=sse':'模型生成',model_response:'模型回答确认',fetchUserInfo:'Google 地区识别',drift_validation:'多轮出口漂移'}
  const phases:Record<string,string>={proxy_connect:'节点代理建连',tls_handshake:'目标 TLS 握手',request_write:'请求写出',response_headers:'等待响应头',response_read:'读取响应体'}
  let path:{address_family?:string;interface?:string}={};try{path=JSON.parse(String(d.network_path||'{}'))}catch{}
- return [`${d.antigravity_progress||'模型进度未记录'}${d.checked_model?` · 模型：${d.checked_model}`:''}`,...(d.reply_preview?[`模型实测回答：“${d.reply_preview}”`]:[]),...(d.models_listed?[`可选轻量模型：${d.models_listed} / 总模型 ${d.all_models_count||d.models_listed}`]:[]),...(d.available_flash_models?[`候选 Flash 模型：${d.available_flash_models}`]:[]),...(d.all_model_ids?[`账号返回全部模型：${d.all_model_ids}`]:[]),`Google 内部地区判定：${d.google_region||'未返回'}`,`账号／模型阶段：${steps[r.failure_phase||'']||r.failure_phase||'已结束'}`,`HTTP 状态：${r.http_status??'未收到'}`,`请求失败阶段：${phases[String(d.request_failure_phase)]||d.request_failure_phase||'未记录'}`,`超时来源：${d.timeout_origin==='checker_deadline'?'检查总时限':d.timeout_origin==='transport'?'传输超时':'未记录'}`,`HTTP 请求写出累计：${d.http_requests_written??'未记录'}（含出口观察）`,`地址族：${path.address_family||'未记录'} · 网卡：${path.interface||'未记录'}`,`Cloudflare 独立出口观察：${d.country_code?`${d.country_code}${d.cloudflare_colo?` (${d.cloudflare_colo})`:''}${d.ip?` · ${d.ip}`:''}（不代表 Google 出口）`:d.exit_observation_state||'未记录'}`]
+ const latencyRange=d.google_min_ttfb_ms&&d.google_max_ttfb_ms?`（区间 ${d.google_min_ttfb_ms}–${d.google_max_ttfb_ms} ms）`:''
+ return [`${d.antigravity_progress||'模型进度未记录'}${d.checked_model?` · 模型：${d.checked_model}`:''}`,...(d.reply_preview?[`模型实测回答：“${d.reply_preview}”`]:[]),...(d.google_ttfb_ms?[`Google API 响应：${d.google_ttfb_ms} ms${latencyRange}`]:[]),...(d.blocked_ips?[`受阻出口 IP：${d.blocked_ips}${d.blocked_regions?`（${d.blocked_regions}）`:''}`]:[]),...(d.models_listed?[`可选轻量模型：${d.models_listed} / 总模型 ${d.all_models_count||d.models_listed}`]:[]),...(d.available_flash_models?[`候选 Flash 模型：${d.available_flash_models}`]:[]),...(d.all_model_ids?[`账号返回全部模型：${d.all_model_ids}`]:[]),`Google 内部地区判定：${d.google_region||'未返回'}`,`账号／模型阶段：${steps[r.failure_phase||'']||r.failure_phase||'已结束'}`,`HTTP 状态：${r.http_status??'未收到'}`,`请求失败阶段：${phases[String(d.request_failure_phase)]||d.request_failure_phase||'未记录'}`,`超时来源：${d.timeout_origin==='checker_deadline'?'检查总时限':d.timeout_origin==='transport'?'传输超时':'未记录'}`,`HTTP 请求写出累计：${d.http_requests_written??'未记录'}（含出口观察）`,`地址族：${path.address_family||'未记录'} · 网卡：${path.interface||'未记录'}`,`Cloudflare 独立出口观察：${d.country_code?`${d.country_code}${d.cloudflare_colo?` (${d.cloudflare_colo})`:''}${d.ip?` · ${d.ip}`:''}（不代表 Google 出口）`:d.exit_observation_state||'未记录'}`]
 }
 // 执行与保存是两个独立属性：先看有没有跑完，再看结果有没有落库。
 function latencyItem(q:QueueItem){return q.project==='latency'?batchItems.value.get(q.itemId||''):undefined}
@@ -212,6 +230,7 @@ async function retry(q:QueueItem){retrying.value=q.id;try{if(q.batchId&&q.itemId
   <template v-else>
     <p class="queue-counts" role="status">已处理 {{w.done.value}} / {{w.queue.value.length}} · 已成功 {{succeeded}} · 排队 {{counts.queued}} · 执行 {{counts.running}} · 未运行/取消 {{counts.notRun}} · 启动未知 {{counts.unknown}} · 保存中 {{counts.saving}} · 保存失败 {{counts.saveFailed}}</p>
     <p v-if="antigravitySummary" class="queue-counts antigravity-summary" role="status">{{antigravitySummary}}</p>
+    <p v-if="antigravityAuthFailed" class="queue-counts antigravity-token-bar"><button class="button ghost small" :disabled="refreshingToken" @click="discoverLocalToken">{{refreshingToken?'正在刷新凭据…':'重新检测 / 刷新本地凭据'}}</button><span v-if="tokenNotice" class="small muted">{{tokenNotice}}</span></p>
     <div v-if="!w.queue.value.length&&w.activeBatch.value" class="muted">恢复的后台批次包含 {{w.activeBatch.value.item_count}} 个节点；结果可在检测历史查看。</div>
     <div v-if="w.queue.value.length" class="queue-list-tools"><div class="queue-views" role="group" aria-label="检测项目范围"><button :aria-pressed="queueView==='focus'" @click="queueView='focus'">进行中与需留意 <span>{{attentionQueue.length}}</span></button><button :aria-pressed="queueView==='all'" @click="queueView='all'">全部项目 <span>{{w.queue.value.length}}</span></button></div><small>检测结果与保存状态分别列出</small></div>
     <div v-if="visibleQueue.length" class="cst-queue-cols" aria-hidden="true"><span>节点与项目</span><span>执行</span><span>检测结果</span><span>保存</span></div>

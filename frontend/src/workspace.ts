@@ -364,7 +364,7 @@ export function createWorkspace(){
           if(cancelRequested.value||!alive(version))return
           starting.push(q);q.state='running'
           const downloadBudget=frozen.downloadMode==='adaptive'?{mode:'adaptive'}:{maximum_bytes:frozen.downloadMiB*1048576}
-          const body={...scope(q.node),request_id:q.id,...(p==='download'?{...downloadBudget,timeout_seconds:frozen.downloadSeconds,...(frozen.downloadSource?{source_id:frozen.downloadSource}:{})}:{service_id:q.serviceId,timeout_seconds:15,drift_samples:frozen.serviceSamples??4})}
+          const body={...scope(q.node),request_id:q.id,...(p==='download'?{...downloadBudget,timeout_seconds:frozen.downloadSeconds,...(frozen.downloadSource?{source_id:frozen.downloadSource}:{})}:{service_id:q.serviceId,timeout_seconds:(frozen.serviceSamples??4)>=4?30:15,drift_samples:frozen.serviceSamples??4})}
           pendingStart.value={kind:p,requestId:q.id,node:q.node,body,serviceId:q.serviceId};remember(pendingStart.value)
           try{const a=await api.startAttempt(p,body);if(!alive(version))return;q.attempt=a;starting=starting.filter(item=>item!==q);await pollAttempt(p,q.node,a)}catch(e){if(!alive(version))return;if(!startRejected(e))throw e;q.state='not_executed';q.error=e instanceof Error?e.message:String(e);if(pendingStart.value?.requestId===q.id)pendingStart.value=null;forget(q.id);starting=starting.filter(item=>item!==q)}
         }
