@@ -27,6 +27,33 @@ func checkAntigravityObserved(ctx context.Context, client *http.Client, token st
 		observed <- checkCloudflareTrace(exitCtx, &traceClient, Rule{TargetURL: "https://www.cloudflare.com/cdn-cgi/trace", MaximumBodyBytes: 8192}, started)
 	}()
 	r := checkAntigravity(ctx, client, token, started)
+	if ctx.Err() == nil && (r.Outcome == "matched" || r.Outcome == "region_blocked" || r.Outcome == "permission_denied" || r.Outcome == "unknown" || r.Outcome == "service_rejected") {
+		if r.Details == nil {
+			r.Details = map[string]string{}
+		}
+		googleRegion, geoBlocked, geoReqs, geoBytes, geoErr := fetchAntigravityGoogleRegion(ctx, client, token)
+		r.RequestCount += geoReqs
+		r.BytesRead += geoBytes
+		if googleRegion != "" {
+			r.Details["google_region"] = googleRegion
+			r.Details["service_region"] = googleRegion
+		}
+		if geoBlocked {
+			r.Outcome = "region_blocked"
+			r.FailurePhase = "fetchUserInfo"
+			r.Details["antigravity_progress"] = "Google 内部地区判定受限"
+			switch {
+			case googleRegion == "CN":
+				r.ErrorMessage = "Google 内部地区判定为 CN（送中），限制使用（不以生成接口 200 误判可用）"
+			case googleRegion != "":
+				r.ErrorMessage = "Google 内部地区判定为 " + googleRegion + "，限制使用（不以生成接口 200 误判可用）"
+			case geoErr != "":
+				r.ErrorMessage = geoErr
+			default:
+				r.ErrorMessage = "Google 内部地区判定当前出口不支持"
+			}
+		}
+	}
 	exit := <-observed
 	if r.Details == nil {
 		r.Details = map[string]string{}
@@ -45,6 +72,53 @@ func checkAntigravityObserved(ctx context.Context, client *http.Client, token st
 		r.Summary, r.ErrorMessage = r.ErrorMessage, ""
 	}
 	return r
+}
+
+func fetchAntigravityGoogleRegion(ctx context.Context, client *http.Client, token string) (regionCode string, blocked bool, reqCount int, bytesRead int64, errMsg string) {
+	if client == nil || strings.TrimSpace(token) == "" {
+		return "", false, 0, 0, ""
+	}
+	geoCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(geoCtx, http.MethodPost, antigravityBase+"fetchUserInfo", bytes.NewBufferString("{}"))
+	if err != nil {
+		return "", false, 0, 0, ""
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "antigravity/2.14.0")
+	reqCount = 1
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", false, reqCount, 0, ""
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8192))
+	bytesRead = int64(len(body))
+	if err != nil && len(body) == 0 {
+		return "", false, reqCount, bytesRead, ""
+	}
+	lower := strings.ToLower(string(body))
+	if resp.StatusCode >= 400 && (strings.Contains(lower, "user location is not supported") || strings.Contains(lower, "location is not supported for the api")) {
+		return "", true, reqCount, bytesRead, "Google 内部地区接口拒绝当前出口"
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", false, reqCount, bytesRead, ""
+	}
+	var info struct {
+		RegionCode string `json:"regionCode"`
+	}
+	if json.Unmarshal(body, &info) == nil {
+		code := strings.ToUpper(strings.TrimSpace(info.RegionCode))
+		if len(code) == 2 {
+			regionCode = code
+			if code == "CN" || code == "HK" || code == "MO" {
+				return regionCode, true, reqCount, bytesRead, ""
+			}
+		}
+	}
+	return regionCode, false, reqCount, bytesRead, ""
 }
 
 // checkAntigravity uses the existing internal service route, not a public API
@@ -184,14 +258,17 @@ func checkAntigravity(ctx context.Context, client *http.Client, token string, st
 	body, ok = call("streamGenerateContent?alt=sse", map[string]any{
 		"project": project, "model": r.Model,
 		"request": map[string]any{
-			"contents":         []any{map[string]any{"role": "user", "parts": []any{map[string]string{"text": "Reply OK."}}}},
+			"contents":         []any{map[string]any{"role": "user", "parts": []any{map[string]string{"text": "Reply with only the word READY."}}}},
 			"generationConfig": map[string]any{"maxOutputTokens": 16},
 		},
 	})
 	if !ok {
 		return finish(r, started)
 	}
-	replyText := antigravityExtractText(body)
+	replyText, refusalOutcome, refusalMsg := antigravityInspectModelResponse(body)
+	if refusalOutcome != "" {
+		return end(refusalOutcome, "model_response", refusalMsg)
+	}
 	if replyText == "" {
 		return end("unknown", "model_response", "收到了响应，但没有可确认的模型输出；不标记可用")
 	}
@@ -209,7 +286,8 @@ func antigravityReadError(r *Result, ctx context.Context, err error) {
 }
 
 func antigravityHasContent(body []byte) bool {
-	return antigravityExtractText(body) != ""
+	reply, outcome, _ := antigravityInspectModelResponse(body)
+	return outcome == "" && reply != ""
 }
 
 func truncatePreview(s string, maxRunes int) string {
@@ -227,28 +305,77 @@ func truncatePreview(s string, maxRunes int) string {
 	return string(out) + "…"
 }
 
+func antigravityBodyRegionRefusal(text string) bool {
+	lower := strings.ToLower(text)
+	for _, phrase := range []string{
+		"user location is not supported",
+		"location is not supported for the api",
+		"not available in your country",
+		"not available in your region",
+		"not supported in your region",
+		"country is not supported",
+		"unsupported region",
+	} {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
 func antigravityExtractText(body []byte) string {
+	reply, outcome, _ := antigravityInspectModelResponse(body)
+	if outcome != "" {
+		return ""
+	}
+	return reply
+}
+
+func antigravityInspectModelResponse(body []byte) (reply string, refusalOutcome string, refusalMsg string) {
 	type candidate struct {
-		Content struct {
+		FinishReason string `json:"finishReason"`
+		Content      struct {
 			Parts []struct {
 				Text    string `json:"text"`
 				Thought bool   `json:"thought"`
 			} `json:"parts"`
 		} `json:"content"`
 	}
+	type feedback struct {
+		BlockReason string `json:"blockReason"`
+	}
 	type response struct {
-		Candidates []candidate     `json:"candidates"`
-		Error      json.RawMessage `json:"error"`
+		Candidates     []candidate     `json:"candidates"`
+		PromptFeedback *feedback       `json:"promptFeedback"`
+		Error          json.RawMessage `json:"error"`
+	}
+	blockMarker := ""
+	inspectBlock := func(fb *feedback, cands []candidate) {
+		if fb != nil && strings.TrimSpace(fb.BlockReason) != "" && blockMarker == "" {
+			blockMarker = strings.TrimSpace(fb.BlockReason)
+		}
+		for _, c := range cands {
+			reason := strings.ToUpper(strings.TrimSpace(c.FinishReason))
+			switch reason {
+			case "SAFETY", "RECITATION", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII":
+				if blockMarker == "" {
+					blockMarker = reason
+				}
+			}
+		}
 	}
 	extract := func(data []byte) (string, bool) {
 		var item struct {
-			Response   response        `json:"response"`
-			Candidates []candidate     `json:"candidates"`
-			Error      json.RawMessage `json:"error"`
+			Response       response        `json:"response"`
+			Candidates     []candidate     `json:"candidates"`
+			PromptFeedback *feedback       `json:"promptFeedback"`
+			Error          json.RawMessage `json:"error"`
 		}
 		if json.Unmarshal(data, &item) != nil || len(item.Error) > 0 || len(item.Response.Error) > 0 {
 			return "", false
 		}
+		inspectBlock(item.PromptFeedback, item.Candidates)
+		inspectBlock(item.Response.PromptFeedback, item.Response.Candidates)
 		var sb strings.Builder
 		for _, c := range append(item.Response.Candidates, item.Candidates...) {
 			for _, p := range c.Content.Parts {
@@ -260,8 +387,11 @@ func antigravityExtractText(body []byte) string {
 		text := strings.TrimSpace(sb.String())
 		return text, text != ""
 	}
+	if antigravityBodyRegionRefusal(string(body)) {
+		return "", "region_blocked", "模型接口正文返回当前地区不支持"
+	}
 	if text, ok := extract(body); ok {
-		return text
+		return text, "", ""
 	}
 	var sseText strings.Builder
 	for _, line := range strings.Split(string(body), "\n") {
@@ -273,16 +403,23 @@ func antigravityExtractText(body []byte) string {
 			}
 			var item map[string]json.RawMessage
 			if json.Unmarshal(data, &item) != nil || item["error"] != nil {
-				return ""
+				return "", "", ""
 			}
 			var nested response
 			if json.Unmarshal(item["response"], &nested) == nil && len(nested.Error) > 0 {
-				return ""
+				return "", "", ""
 			}
 			if part, ok := extract(data); ok {
 				sseText.WriteString(part)
 			}
 		}
 	}
-	return strings.TrimSpace(sseText.String())
+	final := strings.TrimSpace(sseText.String())
+	if final != "" && antigravityBodyRegionRefusal(final) {
+		return "", "region_blocked", "模型回复正文提示当前地区不支持"
+	}
+	if final == "" && blockMarker != "" {
+		return "", "service_rejected", "模型请求被服务策略拦截（" + blockMarker + "）"
+	}
+	return final, "", ""
 }

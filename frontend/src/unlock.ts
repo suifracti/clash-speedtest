@@ -17,15 +17,19 @@ export function unlockResult(a?:Attempt,serviceId?:string,ipType?:IpType){
  if(id==='antigravity'){
   const model=String(details.checked_model||'').replace(/^models\//,'')
   const progress=String(details.antigravity_progress||'')
-  const exitHint=region?` · CF 观察 ${region}（不代表 Google）`:''
+  const googleRegion=String(details.google_region||'').toUpperCase()
+  const cfRegion=String(details.country_code||'').toUpperCase()
+  const googleHint=googleRegion?` · Google 判定 ${googleRegion}`:''
+  const exitHint=cfRegion?` · CF 观察 ${cfRegion}（不代表 Google）`:''
   let netHint=''
   try{const np=details.network_path?JSON.parse(String(details.network_path)):null;if(np?.socket_bind_verified&&np?.interface)netHint=` · ${np.interface} 绕过 TUN`}catch{}
   const reply=String(details.reply_preview||'').trim()
   const modelNote=reply?`（回答“${reply}”）`:''
-  if(servicePassed(a))return {state:'available',tone:'good',label:model?`模型可用（${model}）`:'模型可用',reason:(progress||'真实模型已回答')+modelNote+exitHint+netHint,region}
-  if(o==='region_blocked')return {state:'unavailable',tone:'warn',label:'地区不支持',reason:(r.error_message||'Google 返回当前地区不支持')+exitHint+netHint,region}
+  if(servicePassed(a))return {state:'available',tone:'good',label:model?`模型可用（${model}）`:'模型可用',reason:(progress||'真实模型已回答')+modelNote+googleHint+exitHint+netHint,region:googleRegion||region}
+  if(o==='region_blocked')return {state:'unavailable',tone:'warn',label:googleRegion==='CN'?'出口送中（CN）':'地区不支持',reason:(r.error_message||'Google 返回当前地区不支持')+googleHint+exitHint+netHint,region:googleRegion||region}
+  if(o==='service_rejected')return {state:'unavailable',tone:'warn',label:'策略拦截',reason:(r.error_message||'模型请求被服务策略拦截')+googleHint+exitHint+netHint,region:googleRegion||region}
   const agLabels:Record<string,string>={credentials_required:'需要凭据',auth_failed:'凭据失效',setup_required:'账号待开通',permission_denied:'权限不足',rate_limited:'额度受限'}
-  if(o&&agLabels[o])return {state:'unknown',tone:'warn',label:agLabels[o],reason:r.error_message||agLabels[o],region}
+  if(o&&agLabels[o])return {state:'unknown',tone:'warn',label:agLabels[o],reason:r.error_message||agLabels[o],region:googleRegion||region}
  }
  const google=['gemini_unlock','youtube_premium','google_region'].includes(a?.service_id||a?.rule.service_id||'')
  if(o==='verification_required'||(google&&/https:\/\/(?:[^/]+\.)?google\.com\/(?:sorry|recaptcha)/i.test(String(details.final_url||''))))return {state:'verification',tone:'warn',label:'需人机验证',reason:'Google 对该 IP 要求验证，实际使用时也会遇到'+(id==='gemini_unlock'?datacenterHint(ipType):''),region}

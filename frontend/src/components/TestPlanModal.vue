@@ -130,7 +130,7 @@ async function submit(){
       <details v-if="w.plan.value.projects.includes('service')" class="plan-section" :open="expanded.has('service')" @toggle="toggleSection('service',$event)">
         <summary><strong>解锁检测</strong><span>{{standardServiceIds.length?`已选 ${standardServiceIds.length} 项`:'尚未选择服务'}} · 每项 {{w.plan.value.serviceSamples??4}} 次</span></summary>
         <UnlockPicker v-model="standardServiceIds" :catalog="standardCatalog"/>
-        <p v-if="standardServiceIds.includes('antigravity')" class="inline-warning">Antigravity 会用已绑定账号发起真实模型请求，可能消耗额度。</p>
+        <p v-if="standardServiceIds.includes('antigravity')" class="inline-warning">Antigravity 会用已绑定账号核查 Google 内部地区（fetchUserInfo）并发起真实模型生成请求（可能消耗少量额度）；如需排查多出口负载均衡偶发送中，可将下方「每服务采样次数」设为 4 次或 8 次。</p>
         <p class="muted small">连接复用按实际观测记录。关闭 HTTP 空闲连接不等于节点重连，也不能保证出口稳定。</p>
       </details>
       <details v-if="w.plan.value.includeReputation" class="plan-section reputation-section" :open="expanded.has('reputation')" @toggle="toggleSection('reputation',$event)">
@@ -139,7 +139,7 @@ async function submit(){
         <p class="muted small">IPPure 包含 IPv4 风险、Cloudflare 请求环境系数和 ASN 人机流量比。IPPure 本身不提供 IPv6 风险分；各项结果独立保存。</p>
       </details>
       <div class="plan-repetition">
-        <label v-if="w.plan.value.projects.includes('service')||w.plan.value.includeReputation" class="inline-field">每服务采样次数<UiSelect v-model.number="w.plan.value.serviceSamples"><option v-for="n in [1,2,4]" :key="n" :value="n">{{n}} 次</option></UiSelect></label>
+        <label v-if="w.plan.value.projects.includes('service')||w.plan.value.includeReputation" class="inline-field">每服务采样次数<UiSelect v-model.number="w.plan.value.serviceSamples"><option v-for="n in [1,2,4,8]" :key="n" :value="n">{{n}} 次</option></UiSelect></label>
         <label class="inline-field">重复检测<UiSelect v-model.number="w.plan.value.repeats"><option v-for="n in [1,2,3,5]" :key="n" :value="n">{{n}} 轮</option></UiSelect></label>
         <p v-if="w.plan.value.projects.includes('service')||w.plan.value.includeReputation" class="muted small">服务与 IP 检测使用同一采样次数；每项共用 15 秒总时限，未完成会保留已取得的样本。</p>
       </div>

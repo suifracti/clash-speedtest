@@ -86,7 +86,7 @@ it('shows exact service outcomes instead of green task completion and keeps old 
 })
 
 it('separates Antigravity processing from model confirmation and labels shared timing as cumulative',async()=>{
- const attempts=['matched','region_blocked','transport_error','timed_out','matched'].map((outcome,i)=>({...node,attempt_id:`ag-${i}`,request_id:`ag-request-${i}`,service_id:'antigravity',requested_at:'2026-10-27T15:53:00Z',execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://fixture.invalid/antigravity'},result:{outcome,bytes_read:0,finished_at:'2026-10-27T15:54:00Z',failure_phase:outcome==='region_blocked'?'streamGenerateContent?alt=sse':'loadCodeAssist',http_status:outcome==='region_blocked'?400:undefined,details:{antigravity_progress:i===0?'真实模型已回答':'尚未确认账号项目',...(i===0?{checked_model:'gemini-2.5-flash',models_listed:'2',all_models_count:'5',reply_preview:'OK.',cloudflare_colo:'NRT',ip:'203.0.113.8',network_path:JSON.stringify({interface:'WLAN',socket_bind_verified:true,address_family:'ipv4'})}:{}),http_requests_written:'1',proxy_connect_ms:'10004.4',proxy_connect_attempts:'2',proxy_connect_pending:'0',exit_observation:'独立 Cloudflare 请求；不代表 Google 实际看到的出口',country_code:'JP'}}} as Attempt))
+ const attempts=['matched','region_blocked','transport_error','timed_out','matched'].map((outcome,i)=>({...node,attempt_id:`ag-${i}`,request_id:`ag-request-${i}`,service_id:'antigravity',requested_at:'2026-10-27T15:53:00Z',execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://fixture.invalid/antigravity'},result:{outcome,bytes_read:0,finished_at:'2026-10-27T15:54:00Z',failure_phase:outcome==='region_blocked'?'streamGenerateContent?alt=sse':'loadCodeAssist',http_status:outcome==='region_blocked'?400:undefined,details:{antigravity_progress:i===0?'真实模型已回答':'尚未确认账号项目',...(i===0?{checked_model:'gemini-2.5-flash',models_listed:'2',all_models_count:'5',reply_preview:'READY',google_region:'JP',cloudflare_colo:'NRT',ip:'203.0.113.8',network_path:JSON.stringify({interface:'WLAN',socket_bind_verified:true,address_family:'ipv4'})}:{}),http_requests_written:'1',proxy_connect_ms:'10004.4',proxy_connect_attempts:'2',proxy_connect_pending:'0',exit_observation:'独立 Cloudflare 请求；不代表 Google 实际看到的出口',country_code:'JP'}}} as Attempt))
  const before=JSON.stringify(attempts)
  w.queue.value=attempts.map(a=>({id:a.attempt_id,node,project:'service',serviceId:'antigravity',state:'completed',attempt:a}));attach(QueueModal)
  expect(document.querySelector('.antigravity-summary')?.textContent).toBe('Antigravity：已处理 5/5 · 确认模型可用 1 · 地区拒绝 1 · 未确认 3')
@@ -100,8 +100,9 @@ it('separates Antigravity processing from model confirmation and labels shared t
  expect(rows[1].find('details').text()).toContain('Cloudflare 独立出口观察：JP（不代表 Google 出口）')
  button('全部项目').click();await flushPromises()
  const allRows=Array.from(document.querySelectorAll('.queue-row')).map(el=>new DOMWrapper(el))
- expect(allRows[0].text()).toContain('模型 gemini-2.5-flash（可选 2/5） · 实测回答“OK.” · CF 观察 JP (NRT) 203.0.113.8 · WLAN 绕过 TUN')
- expect(allRows[0].find('details').text()).toContain('模型实测回答：“OK.”')
+ expect(allRows[0].text()).toContain('模型 gemini-2.5-flash（可选 2/5） · 实测回答“READY” · Google 判定 JP · CF 观察 JP (NRT) 203.0.113.8 · WLAN 绕过 TUN')
+ expect(allRows[0].find('details').text()).toContain('模型实测回答：“READY”')
+ expect(allRows[0].find('details').text()).toContain('Google 内部地区判定：JP')
  expect(allRows[0].find('details').text()).toContain('可选轻量模型：2 / 总模型 5')
  expect(JSON.stringify(attempts)).toBe(before);expect(api.startAttempt).not.toHaveBeenCalled()
 })

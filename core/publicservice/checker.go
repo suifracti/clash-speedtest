@@ -88,10 +88,10 @@ var catalog = []Rule{
 		Accept: "application/vnd.github+json", APIVersionHeader: "2026-03-10",
 	},
 	{
-		ServiceID: "antigravity", Name: "Google Antigravity 可用性", RuleVersion: 5,
-		Category: "AI 服务", Region: "全球", ResultKind: "account_availability", Description: "Google Antigravity (反重力) AI 辅助模型可用性探测。使用已绑定 Google 凭据发起极短模型请求，区分账号、地区与网络故障。",
+		ServiceID: "antigravity", Name: "Google Antigravity 可用性", RuleVersion: 6,
+		Category: "AI 服务", Region: "全球", ResultKind: "account_availability", Description: "Google Antigravity (反重力) AI 辅助模型可用性探测。同时核查 Google 内部地区判定与真实模型输出，区分账号、地区、策略拒绝与网络故障。",
 		TargetURL: antigravityBase + "streamGenerateContent?alt=sse", Method: http.MethodPost,
-		SuccessCriterion: "使用已绑定 Google 凭据，经所选节点查询项目和模型并发起短请求；仅实际模型输出判定可用。最多 3 个模型相关请求，另有 1 次不带凭据的 Cloudflare 出口观察；共享总超时，可能消耗少量账号额度。出口观察不代表 Google 实际看到的 IP",
+		SuccessCriterion: "使用已绑定 Google 凭据，经所选节点查询账号项目、模型目录与 Google 内部地区判定（fetchUserInfo），并发起真实模型生成请求；仅无地区/策略拒绝且取得真实模型输出时判定可用。另有 1 次不带凭据的 Cloudflare 出口观察；多轮采样可排查负载均衡漂移",
 		RedirectPolicy:   "do_not_follow", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
 	},
 	{

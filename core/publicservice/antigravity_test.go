@@ -18,14 +18,16 @@ func TestAntigravityAvailabilityRequiresModelContent(t *testing.T) {
 		status        int
 		body, outcome string
 	}{
-		{"content", 200, `data: {"response":{"candidates":[{"content":{"parts":[{"text":"OK"}]}}]}}` + "\n\n", "matched"},
+		{"content", 200, `data: {"response":{"candidates":[{"content":{"parts":[{"text":"READY"}]}}]}}` + "\n\n", "matched"},
 		{"empty200", 200, `{}`, "unknown"},
 		{"thoughtOnly", 200, `{"candidates":[{"content":{"parts":[{"text":"thinking","thought":true}]}}]}`, "unknown"},
+		{"bodyRefusal200", 200, `data: {"response":{"candidates":[{"content":{"parts":[{"text":"This feature is not available in your region."}]}}]}}` + "\n\n", "region_blocked"},
+		{"safetyBlock200", 200, `{"promptFeedback":{"blockReason":"SAFETY"}}`, "service_rejected"},
 		{"forbidden", 403, `{"error":{"status":"PERMISSION_DENIED"}}`, "permission_denied"},
 		{"quota", 429, `{"error":{"status":"RESOURCE_EXHAUSTED"}}`, "rate_limited"},
 		{"region", 400, `{"error":{"message":"User location is not supported"}}`, "region_blocked"},
 		{"badModel", 400, `{"error":{"status":"INVALID_ARGUMENT"}}`, "unknown"},
-		{"lateStreamError", 200, "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"OK\"}]}}]}\n\ndata: {\"error\":{\"status\":\"INTERNAL\"}}\n", "unknown"},
+		{"lateStreamError", 200, "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"READY\"}]}}]}\n\ndata: {\"error\":{\"status\":\"INTERNAL\"}}\n", "unknown"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
@@ -36,10 +38,13 @@ func TestAntigravityAvailabilityRequiresModelContent(t *testing.T) {
 					}
 					return fixtureResponse(req, 200, "text/plain", "ip=203.0.113.8\nloc=JP\ncolo=NRT\n"), nil
 				}
-				calls++
 				if req.Header.Get("Authorization") != "Bearer test-secret" || req.Method != http.MethodPost || req.URL.Host != "daily-cloudcode-pa.googleapis.com" {
 					t.Error("credential or isolated request contract mismatch")
 				}
+				if req.URL.Path == "/v1internal:fetchUserInfo" {
+					return fixtureResponse(req, 200, "application/json", `{"regionCode":"JP"}`), nil
+				}
+				calls++
 				switch calls {
 				case 1:
 					if req.URL.Path != "/v1internal:loadCodeAssist" {
@@ -50,24 +55,31 @@ func TestAntigravityAvailabilityRequiresModelContent(t *testing.T) {
 					return fixtureResponse(req, 200, "application/json", `{"models":{"gemini-fixture-flash":{}}}`), nil
 				default:
 					b, _ := io.ReadAll(req.Body)
-					if !strings.Contains(string(b), "actual-project") || !strings.Contains(string(b), "gemini-fixture-flash") || req.URL.Path != "/v1internal:streamGenerateContent" {
+					if !strings.Contains(string(b), "actual-project") || !strings.Contains(string(b), "gemini-fixture-flash") || !strings.Contains(string(b), "READY") || req.URL.Path != "/v1internal:streamGenerateContent" {
 						t.Error("model probe did not use discovered configuration")
 					}
 					return fixtureResponse(req, tc.status, "text/event-stream", tc.body), nil
 				}
 			})}
 			result := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
-			if result.Outcome != tc.outcome || calls != 3 || result.RequestCount != 4 || result.Model != "gemini-fixture-flash" || result.Details["ip"] != "203.0.113.8" {
+			wantRequests := 5
+			if tc.outcome == "rate_limited" {
+				wantRequests = 4
+			}
+			if result.Outcome != tc.outcome || calls != 3 || result.RequestCount != wantRequests || result.Model != "gemini-fixture-flash" || result.Details["ip"] != "203.0.113.8" {
 				t.Fatalf("got %+v calls %d", result, calls)
 			}
 			progress := "轻量模型已列出，尚未收到真实回答"
 			wantReply := ""
 			if tc.outcome == "matched" {
 				progress = "真实模型已回答"
-				wantReply = "OK"
+				wantReply = "READY"
 			}
 			if result.Details["antigravity_progress"] != progress || result.Details["checked_model"] != "gemini-fixture-flash" || result.Details["models_listed"] != "1" || result.Details["all_models_count"] != "1" || result.Details["reply_preview"] != wantReply {
 				t.Fatalf("model evidence is ambiguous: %+v", result.Details)
+			}
+			if tc.outcome != "rate_limited" && result.Details["google_region"] != "JP" {
+				t.Fatalf("expected google_region JP, got: %+v", result.Details)
 			}
 			if strings.Contains(result.ErrorMessage, "test-secret") {
 				t.Fatal("credential leaked")
@@ -96,17 +108,53 @@ func TestAntigravityAcceptsCompleteModelCatalogLargerThanGenericProbeLimit(t *te
 			return fixtureResponse(req, 200, "text/plain", "ip=203.0.113.8\nloc=JP\ncolo=NRT\n"), nil
 		}
 		switch req.URL.Path {
+		case "/v1internal:fetchUserInfo":
+			return fixtureResponse(req, 200, "application/json", `{"regionCode":"JP"}`), nil
 		case "/v1internal:loadCodeAssist":
 			return fixtureResponse(req, 200, "application/json", `{"cloudaicompanionProject":"actual-project"}`), nil
 		case "/v1internal:fetchAvailableModels":
 			return fixtureResponse(req, 200, "application/json", modelCatalog), nil
 		default:
-			return fixtureResponse(req, 200, "text/event-stream", "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"OK\"}]}}]}}\n\n"), nil
+			return fixtureResponse(req, 200, "text/event-stream", "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"READY\"}]}}]}}\n\n"), nil
 		}
 	})}
 	result := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
 	if result.Outcome != "matched" || result.Model != "gemini-fixture-flash" {
 		t.Fatalf("large but complete model catalog must be usable: %+v", result)
+	}
+}
+
+func TestAntigravityGoogleRegionGeofenceOverridesModel200(t *testing.T) {
+	rule, _ := RuleFor("antigravity")
+	for _, tc := range []struct {
+		code string
+		want string
+	}{
+		{"CN", "CN（送中）"},
+		{"HK", "判定为 HK"},
+		{"MO", "判定为 MO"},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			checker := Checker{AntigravityToken: "test-secret", ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+				if req.URL.Host == "www.cloudflare.com" {
+					return fixtureResponse(req, 200, "text/plain", "ip=203.0.113.8\nloc=JP\ncolo=NRT\n"), nil
+				}
+				switch req.URL.Path {
+				case "/v1internal:fetchUserInfo":
+					return fixtureResponse(req, 200, "application/json", `{"regionCode":"`+tc.code+`"}`), nil
+				case "/v1internal:loadCodeAssist":
+					return fixtureResponse(req, 200, "application/json", `{"cloudaicompanionProject":"actual-project"}`), nil
+				case "/v1internal:fetchAvailableModels":
+					return fixtureResponse(req, 200, "application/json", `{"models":{"gemini-fixture-flash":{}}}`), nil
+				default:
+					return fixtureResponse(req, 200, "text/event-stream", "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"READY\"}]}}]}}\n\n"), nil
+				}
+			})}
+			result := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
+			if result.Outcome != "region_blocked" || result.FailurePhase != "fetchUserInfo" || result.Details["google_region"] != tc.code || !strings.Contains(result.ErrorMessage, tc.want) {
+				t.Fatalf("geofence %s did not override model 200: %+v", tc.code, result)
+			}
+		})
 	}
 }
 
