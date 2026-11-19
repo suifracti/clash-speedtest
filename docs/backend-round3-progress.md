@@ -4,6 +4,7 @@
 
 ## 当前接续（2026-11-19）
 
+- 实测修复 `gemini-3.8-flash-low` 思考 token 耗尽 `maxOutputTokens: 16` 导致 HTTP 200 空正文：`streamGenerateContent?alt=sse` 的 `generationConfig` 原固定 `maxOutputTokens: 16`，实测 `gemini-3.8-flash-low` 在思考阶段消耗 13 个 `thoughtsTokenCount` 即触发 `finishReason: MAX_TOKENS`、正式 `parts` 为空。现改为非 `-thinking` 模型使用 `maxOutputTokens: 256` 并设置 `thinkingConfig: {thinkingBudget: 0}`（实测总消耗 9 token 即直接返回 `"READY"`），`-thinking` 模型放宽至 `maxOutputTokens: 512`。Go `core/publicservice` / `application` / `adapter/web`（含 `go vet`）全部通过。
 - 对照历史 `7549994` / `219b181` 排查并修复 Antigravity 自动凭据过期与多轮体验落差：
   1. 修复 `core/auth/oauth.go` 在 `oauth_creds.json` 过期且刷新失败时仍静默返回过期 `AccessToken` 的缺陷并接入 Windows 系统代理（`oauth_proxy_windows.go`）；`application/service.go` 持久化 `.antigravity_creds.json`（含 `refresh_token`/`expiry_date`），并在 `workbench_public_service.go` 检测前及遇到 `401 auth_failed` 时 single-flight 自动刷新/重检 `~/.gemini/oauth_creds.json` 后重试一次，彻底解决旧 `DataRoot/.antigravity_token` 阴影导致实测全批报“凭据无效”的问题（同步更新 `adapter/desktop/app.go` 与 `adapter/web/server.go` 保留完整 OAuth 凭据）。
   2. 补齐 `7549994` 风格多轮能力：多次采样共享首轮 `loadCodeAssist`/`fetchAvailableModels`（后续轮次仅跑 `fetchUserInfo` + `streamGenerateContent?alt=sse` + CF trace），调整 `probe_budget.go` 为 5 socket/样本与 `4/8` 次采样 30 秒预算；记录并展示 `google_ttfb_ms`、`latency_grade` 与 `blocked_ips` 偶发送中出口列表；在 `TestPlanModal.vue` 与 `QueueModal.vue` 增加行内一键“检测 / 刷新凭据”及 `unlock.ts` 偶发送中状态映射。

@@ -56,6 +56,16 @@ func TestAntigravityAvailabilityRequiresModelContent(t *testing.T) {
 					return fixtureResponse(req, 200, "application/json", `{"models":{"gemini-fixture-flash":{}}}`), nil
 				default:
 					b, _ := io.ReadAll(req.Body)
+					var payload struct {
+						Request struct {
+							GenerationConfig struct {
+								MaxOutputTokens int `json:"maxOutputTokens"`
+							} `json:"generationConfig"`
+						} `json:"request"`
+					}
+					if err := json.Unmarshal(b, &payload); err != nil || payload.Request.GenerationConfig.MaxOutputTokens < 128 {
+						t.Errorf("generationConfig maxOutputTokens too small for thinking models: %s", string(b))
+					}
 					if !strings.Contains(string(b), "actual-project") || !strings.Contains(string(b), "gemini-fixture-flash") || !strings.Contains(string(b), "READY") || req.URL.Path != "/v1internal:streamGenerateContent" {
 						t.Error("model probe did not use discovered configuration")
 					}

@@ -295,11 +295,16 @@ func checkAntigravity(ctx context.Context, client *http.Client, token string, st
 	}
 	r.Details["antigravity_progress"] = "轻量模型已列出，尚未收到真实回答"
 
+	genCfg := map[string]any{"maxOutputTokens": 512}
+	if !strings.Contains(r.Model, "thinking") {
+		genCfg["maxOutputTokens"] = 256
+		genCfg["thinkingConfig"] = map[string]any{"thinkingBudget": 0}
+	}
 	body, ok := call("streamGenerateContent?alt=sse", map[string]any{
 		"project": project, "model": r.Model,
 		"request": map[string]any{
 			"contents":         []any{map[string]any{"role": "user", "parts": []any{map[string]string{"text": "Reply with only the word READY."}}}},
-			"generationConfig": map[string]any{"maxOutputTokens": 16},
+			"generationConfig": genCfg,
 		},
 	})
 	if !ok {
