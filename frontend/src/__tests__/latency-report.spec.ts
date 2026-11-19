@@ -51,4 +51,28 @@ describe('latency run report',()=>{
   expect(latencyVerdict(activeLatencyTargets.map(t=>manualLatencyPoint(node.result!,t.id))).label).toBe('部分站点不通（Google）')
  })
 
+ it('organizes overview vs paginated searchable details and keeps node name separate from airport',async()=>{
+  const rows=[
+   ...Array.from({length:17},(_,i)=>({...item(`jp-${i}`,250+i,true),profile_id:'a'})),
+   {...item('us-bad',0,false),profile_id:'a'}
+  ]
+  const wrapper=mount(LatencyReport,{props:{batch:batch(rows),airportNames:{a:'良心云'}}})
+  expect(wrapper.findAll('.report-tab')).toHaveLength(2)
+  expect(wrapper.get('.report-tab[aria-selected="true"]').text()).toContain('结果概览')
+  const unstableOrBadBtn=wrapper.findAll('.latency-report-count').find(b=>b.text().includes('无响应'))!
+  await unstableOrBadBtn.trigger('click')
+  expect(wrapper.get('.report-tab[aria-selected="true"]').text()).toContain('逐个明细')
+  expect(wrapper.findAll('.latency-report-table-wrap tbody tr')).toHaveLength(1)
+  expect(wrapper.get('.latency-report-table-wrap tbody tr td:first-child button').text()).toBe('美国 · bad')
+  expect(wrapper.get('.latency-report-table-wrap tbody tr td:first-child button').text()).not.toContain('良心云')
+  await wrapper.findAll('.report-filter-chip').find(b=>b.text().includes('全部'))!.trigger('click')
+  expect(wrapper.findAll('.latency-report-table-wrap tbody tr')).toHaveLength(15)
+  expect(wrapper.get('.report-pagination').text()).toContain('第 1 / 2 页')
+  await wrapper.findAll('.report-pagination button').find(b=>b.text()==='下一页')!.trigger('click')
+  expect(wrapper.findAll('.latency-report-table-wrap tbody tr')).toHaveLength(3)
+  await wrapper.get('.report-detail-search input').setValue('us-bad')
+  expect(wrapper.findAll('.latency-report-table-wrap tbody tr')).toHaveLength(1)
+  wrapper.unmount()
+ })
+
 })

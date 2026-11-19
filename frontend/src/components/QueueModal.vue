@@ -242,7 +242,7 @@ async function retry(q:QueueItem){retrying.value=q.id;try{if(q.batchId&&q.itemId
     <p class="queue-note">检测中显示整批进度，结束后提供逐节点报告。关闭此窗口不影响检测。</p>
   </template>
   <template v-else>
-    <p class="queue-counts" role="status">已处理 {{w.done.value}} / {{w.queue.value.length}} · 已成功 {{succeeded}} · 排队 {{counts.queued}} · 执行 {{counts.running}} · 未运行/取消 {{counts.notRun}} · 启动未知 {{counts.unknown}} · 保存中 {{counts.saving}} · 保存失败 {{counts.saveFailed}}</p>
+    <p class="queue-counts" role="status"><span>已处理 {{w.done.value}} / {{w.queue.value.length}}</span><span class="good">已成功 {{succeeded}}</span><span v-if="counts.queued">排队 {{counts.queued}}</span><span v-if="counts.running">执行 {{counts.running}}</span><span v-if="counts.notRun" class="warn">未运行/取消 {{counts.notRun}}</span><span v-if="counts.unknown" class="warn">启动未知 {{counts.unknown}}</span><span v-if="counts.saving">保存中 {{counts.saving}}</span><span v-if="counts.saveFailed" class="bad">保存失败 {{counts.saveFailed}}</span></p>
     <p v-if="antigravitySummary" class="queue-counts antigravity-summary" role="status">{{antigravitySummary}}</p>
     <p v-if="antigravityAuthFailed" class="queue-counts antigravity-token-bar"><button class="button ghost small" :disabled="refreshingToken" @click="discoverLocalToken">{{refreshingToken?'正在刷新凭据…':'重新检测 / 刷新本地凭据'}}</button><span v-if="tokenNotice" class="small muted">{{tokenNotice}}</span></p>
     <div v-if="!w.queue.value.length&&w.activeBatch.value" class="muted">恢复的后台批次包含 {{w.activeBatch.value.item_count}} 个节点；结果可在检测历史查看。</div>
@@ -272,22 +272,28 @@ async function retry(q:QueueItem){retrying.value=q.id;try{if(q.batchId&&q.itemId
 .queue-download-transfer dt,.queue-download-transfer small{font-size:12px;color:var(--cst-muted)}
 .queue-download-transfer dd{margin:0;font-size:13px;font-weight:600;color:var(--cst-text);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 .queue-transfer-node small{margin-inline-start:8px;font-weight:400}
-.progress-track{height:4px;border-radius:0;margin:8px 0 16px;background:var(--cst-line)}
-.progress-track i{background:var(--cst-accent);border-radius:0}
-.compact-progress-counts{display:flex;flex-wrap:wrap;gap:22px 36px;padding:16px 0 24px;border-bottom:1px solid var(--cst-line)}
-.compact-progress-counts span{color:var(--cst-muted);font-size:12px;display:flex;align-items:baseline;gap:10px}
-.compact-progress-counts strong{color:var(--cst-text);font-size:24px;font-variant-numeric:tabular-nums}
-.queue-list-tools{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:20px 0 8px}
+.progress-track{height:6px;border-radius:999px;margin:8px 0 14px;background:var(--cst-line);overflow:hidden}
+.progress-track i{background:var(--cst-accent);border-radius:999px}
+.queue-counts{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.queue-counts>span{display:inline-flex;align-items:center;padding:3px 9px;border:1px solid var(--cst-line);border-radius:999px;background:var(--cst-panel-2);font-size:12px;color:var(--cst-muted);font-variant-numeric:tabular-nums}
+.queue-counts>span.good{color:var(--cst-good);border-color:color-mix(in srgb,var(--cst-good) 28%,var(--cst-line))}
+.queue-counts>span.warn{color:var(--cst-warn);border-color:var(--cst-warn-line);background:var(--cst-warn-bg)}
+.queue-counts>span.bad{color:var(--cst-bad);border-color:color-mix(in srgb,var(--cst-bad) 28%,var(--cst-line))}
+.queue-counts.antigravity-summary{display:block;padding:8px 12px;border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel-2);font-size:12px}
+.compact-progress-counts{display:flex;flex-wrap:wrap;gap:12px;padding:12px 0 18px;border-bottom:1px solid var(--cst-line)}
+.compact-progress-counts span{color:var(--cst-muted);font-size:12px;display:flex;align-items:baseline;gap:8px;padding:8px 12px;border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel-2)}
+.compact-progress-counts strong{color:var(--cst-text);font-size:20px;font-variant-numeric:tabular-nums}
+.queue-list-tools{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:16px 0 10px}
 .queue-list-tools>small,.queue-note,.queue-empty{font-size:12px;color:var(--cst-muted);line-height:1.7}
-.queue-note{margin:20px 0 0}.queue-empty{padding:26px 0;border-top:1px solid var(--cst-line)}
+.queue-note{margin:16px 0 0}.queue-empty{padding:22px 16px;border:1px dashed var(--cst-line);border-radius:10px;background:var(--cst-panel-2);text-align:center}
 .queue-notice{font-size:13px;line-height:1.7;margin:14px 0}
 .queue-views{display:flex;gap:18px;flex-wrap:wrap}
 .queue-views button{border:0;background:none;border-bottom:2px solid transparent;padding:8px 0;font-size:12px;color:var(--cst-muted);cursor:pointer}
 .queue-views button[aria-pressed=true]{border-color:var(--cst-accent);color:var(--cst-text);font-weight:600}
 .queue-views span{margin-left:6px;font-variant-numeric:tabular-nums;color:var(--cst-muted)}
-.cst-queue-cols,.cst-queue-row{display:grid;grid-template-columns:minmax(0,1.5fr) 84px minmax(110px,1fr) minmax(90px,.8fr);gap:16px;align-items:start}
-.cst-queue-cols{padding:10px 0;border-bottom:1px solid var(--cst-line);font-size:11px;color:var(--cst-muted)}
-.cst-queue-row{padding:15px 0;border-bottom:1px solid var(--cst-line);margin:0;background:none;border-radius:0}
+.cst-queue-cols,.cst-queue-row{display:grid;grid-template-columns:minmax(0,1.5fr) 84px minmax(110px,1fr) minmax(90px,.8fr);gap:14px;align-items:start}
+.cst-queue-cols{padding:6px 14px 8px;font-size:11px;color:var(--cst-muted)}
+.cst-queue-row{padding:12px 14px;border:1px solid var(--cst-line);margin:0 0 8px;background:var(--cst-panel);border-radius:10px}
 .cst-queue-node{min-width:0}.cst-queue-node strong{display:block;font-size:13px;overflow-wrap:anywhere}
 .cst-queue-node small{color:var(--cst-muted)}.cst-queue-node p{margin:4px 0 0}
 .cst-queue-exec{display:flex;align-items:center;gap:6px;font-size:12px}
