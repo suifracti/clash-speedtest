@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	workbenchLatencyBatchConcurrency = 16
+	workbenchLatencyBatchConcurrency = 8
 	workbenchLatencyBatchMaxItems    = 10000
 	workbenchLatencySourceBatch      = "workbench_batch_latency"
 	workbenchLatencyMethod           = "http_get_via_proxy_first_byte"

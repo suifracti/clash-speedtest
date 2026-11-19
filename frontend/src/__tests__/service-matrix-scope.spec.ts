@@ -92,6 +92,7 @@ it('filters by quick region chips (including multi-select) and selects or clears
  const us:NodeOption={profile_id:'p',node_key:'n-us',node_identity_key:'i-us',config_revision_key:'r',profile_name:'fixture',display_name:'US 03 AI',type:'vless',country_code:'US',country_flag:''}
  w=createWorkspace();w.project.value='latency';w.nodes.value=[hk,jp,us];w.airports.value=[{id:'a',name:'fixture',has_cache:true,url_display:'',node_count:3,subscriptions:[{id:'p',airport_id:'a',name:'fixture',url_display:'',url_configured:false,node_count:3,has_cache:true}]}];w.setAirports(['a'])
  wrapper=mount(HomeView,{global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
+ expect(wrapper.find('select[aria-label="地区"]').exists()).toBe(false)
  expect(wrapper.get('.hd-region-strip').text()).toContain('全部3')
  expect(wrapper.get('.hd-source-label').text()).toBe('fixture')
  expect(wrapper.get('.hd-node-region').text()).toBe('香港')

@@ -297,9 +297,10 @@ func TestWorkbenchLatencyBatchCancellationAbortsCurrentMeasurementAndPreservesEv
 }
 
 func TestWorkbenchLatencyBatchCancellationBoundsConcurrencyAndDeduplicatesRequest(t *testing.T) {
+	const wantConcurrency = 8
 	service, store, _, options := newWorkbenchBatchFixture(t, 18)
 	release := make(chan struct{})
-	started := make(chan struct{}, 8)
+	started := make(chan struct{}, len(options))
 	var active, maximum, measured atomic.Int32
 	service.latencyMeasureHook = func(context.Context, monitor.MonitoredNode, time.Duration) (*speedtester.Result, string, error) {
 		count := active.Add(1)
@@ -324,7 +325,7 @@ func TestWorkbenchLatencyBatchCancellationBoundsConcurrencyAndDeduplicatesReques
 	if err != nil {
 		t.Fatalf("start batch: %v", err)
 	}
-	for i := 0; i < workbenchLatencyBatchConcurrency; i++ {
+	for i := 0; i < wantConcurrency; i++ {
 		select {
 		case <-started:
 		case <-time.After(5 * time.Second):
@@ -347,8 +348,8 @@ func TestWorkbenchLatencyBatchCancellationBoundsConcurrencyAndDeduplicatesReques
 	if _, err := service.TestSingle(SingleTestRequest{Config: TestConfig{Metrics: []string{"download"}}}, ""); err == nil || strings.Contains(err.Error(), "Workbench") {
 		t.Fatalf("non-latency single metric was unexpectedly blocked by the batch: %v", err)
 	}
-	if maximum.Load() != workbenchLatencyBatchConcurrency {
-		t.Fatalf("observed concurrency %d, want exactly %d", maximum.Load(), workbenchLatencyBatchConcurrency)
+	if maximum.Load() != wantConcurrency {
+		t.Fatalf("observed concurrency %d, want exactly %d", maximum.Load(), wantConcurrency)
 	}
 	if _, err := service.CancelWorkbenchLatencyBatch(created.BatchID); err != nil {
 		t.Fatalf("cancel batch: %v", err)
@@ -359,7 +360,7 @@ func TestWorkbenchLatencyBatchCancellationBoundsConcurrencyAndDeduplicatesReques
 	if err != nil {
 		t.Fatalf("get batch: %v", err)
 	}
-	if measured.Load() != workbenchLatencyBatchConcurrency || batch.State != "cancelled" {
+	if measured.Load() != wantConcurrency || batch.State != "cancelled" {
 		t.Fatalf("cancel must stop pending dispatch: measured=%d state=%s", measured.Load(), batch.State)
 	}
 	measuredCancelled, pendingCancelled := 0, 0
@@ -371,7 +372,7 @@ func TestWorkbenchLatencyBatchCancellationBoundsConcurrencyAndDeduplicatesReques
 			pendingCancelled++
 		}
 	}
-	if measuredCancelled != 16 || pendingCancelled != 2 {
+	if measuredCancelled != wantConcurrency || pendingCancelled != len(options)-wantConcurrency {
 		t.Fatalf("measured evidence or pending cancellation were lost: measuredCancelled=%d pendingCancelled=%d items=%+v", measuredCancelled, pendingCancelled, batch.Items)
 	}
 }

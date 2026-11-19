@@ -308,7 +308,7 @@ it('offers one Netflix choice and retains the temporary alias for history only',
 })
 
 it('does not pre-select IP reputation when the catalog offers no reputation items',()=>{
-  w.catalog.value=[];w.project.value='latency';w.openPlan([node]);expect(w.plan.value?.concurrency).toBe(16)
+  w.catalog.value=[];w.project.value='latency';w.openPlan([node]);expect(w.plan.value?.concurrency).toBe(8)
   expect(w.plan.value).toMatchObject({includeReputation:false,reputationServiceIds:[]})
 })
 
@@ -329,6 +329,7 @@ it('sends more than 200 nodes in one latency batch',async()=>{
  vi.mocked(api.startLatency).mockImplementation(async(body:any)=>({batch_id:'one-batch',request_id:body.request_id,state:'completed',items:body.selections.map((n:any,i:number)=>({...n,item_id:`item-${i}`,execution_state:'completed',persistence_state:'saved'}))}) as any)
  await w.runPlan()
  expect(api.startLatency).toHaveBeenCalledTimes(1)
+ expect(vi.mocked(api.startLatency).mock.calls[0][0]).toMatchObject({concurrency:8})
  expect((vi.mocked(api.startLatency).mock.calls[0][0] as any).selections).toHaveLength(208)
  expect(w.latestReportBatch.value?.items).toHaveLength(208)
  expect(w.reportSelection.value?.batch.batch_id).toBe('one-batch')
