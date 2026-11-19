@@ -20,7 +20,9 @@ export function unlockResult(a?:Attempt,serviceId?:string,ipType?:IpType){
   const exitHint=region?` · CF 观察 ${region}（不代表 Google）`:''
   let netHint=''
   try{const np=details.network_path?JSON.parse(String(details.network_path)):null;if(np?.socket_bind_verified&&np?.interface)netHint=` · ${np.interface} 绕过 TUN`}catch{}
-  if(servicePassed(a))return {state:'available',tone:'good',label:model?`模型可用（${model}）`:'模型可用',reason:(progress||'真实模型已回答')+exitHint+netHint,region}
+  const reply=String(details.reply_preview||'').trim()
+  const modelNote=reply?`（回答“${reply}”）`:''
+  if(servicePassed(a))return {state:'available',tone:'good',label:model?`模型可用（${model}）`:'模型可用',reason:(progress||'真实模型已回答')+modelNote+exitHint+netHint,region}
   if(o==='region_blocked')return {state:'unavailable',tone:'warn',label:'地区不支持',reason:(r.error_message||'Google 返回当前地区不支持')+exitHint+netHint,region}
   const agLabels:Record<string,string>={credentials_required:'需要凭据',auth_failed:'凭据失效',setup_required:'账号待开通',permission_denied:'权限不足',rate_limited:'额度受限'}
   if(o&&agLabels[o])return {state:'unknown',tone:'warn',label:agLabels[o],reason:r.error_message||agLabels[o],region}

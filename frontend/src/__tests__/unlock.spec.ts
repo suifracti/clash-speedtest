@@ -62,9 +62,10 @@ it('skips only excluded regions when a service uses an exclusion list',()=>{
  expect(unlockServiceAllowed('antigravity','HK',true,rules)).toBe(false)
  expect(unlockServiceAllowed('antigravity','US',true,rules)).toBe(true)
  expect(unlockServiceAllowed('antigravity','HK',false,rules)).toBe(true)
- const agOk={...attempt('matched'),service_id:'antigravity',result:{...attempt('matched').result!,outcome:'matched',details:{antigravity_progress:'真实模型已回答',checked_model:'gemini-2.5-flash',country_code:'JP',network_path:JSON.stringify({interface:'WLAN',socket_bind_verified:true})}}} as Attempt
+ const agOk={...attempt('matched'),service_id:'antigravity',result:{...attempt('matched').result!,outcome:'matched',details:{antigravity_progress:'真实模型已回答',checked_model:'gemini-2.5-flash',reply_preview:'OK',country_code:'JP',network_path:JSON.stringify({interface:'WLAN',socket_bind_verified:true})}}} as Attempt
  expect(unlockResult(agOk)).toMatchObject({state:'available',tone:'good',label:'模型可用（gemini-2.5-flash）'})
  expect(unlockResult(agOk).reason).toContain('WLAN 绕过 TUN')
+ expect(unlockResult(agOk).reason).toContain('回答“OK”')
  const agBlocked={...attempt('region_blocked'),service_id:'antigravity'} as Attempt
  expect(unlockResult(agBlocked)).toMatchObject({state:'unavailable',tone:'warn',label:'地区不支持'})
 })

@@ -7,8 +7,10 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const antigravityBase = "https://daily-cloudcode-pa.googleapis.com/v1internal:"
@@ -176,6 +178,8 @@ func checkAntigravity(ctx context.Context, client *http.Client, token string, st
 	}
 	r.Model = models[0]
 	r.Details["checked_model"] = r.Model
+	r.Details["models_listed"] = strconv.Itoa(len(models))
+	r.Details["all_models_count"] = strconv.Itoa(len(listing.Models))
 	r.Details["antigravity_progress"] = "轻量模型已列出，尚未收到真实回答"
 	body, ok = call("streamGenerateContent?alt=sse", map[string]any{
 		"project": project, "model": r.Model,
@@ -187,9 +191,11 @@ func checkAntigravity(ctx context.Context, client *http.Client, token string, st
 	if !ok {
 		return finish(r, started)
 	}
-	if !antigravityHasContent(body) {
+	replyText := antigravityExtractText(body)
+	if replyText == "" {
 		return end("unknown", "model_response", "收到了响应，但没有可确认的模型输出；不标记可用")
 	}
+	r.Details["reply_preview"] = truncatePreview(replyText, 48)
 	r.Details["antigravity_progress"] = "真实模型已回答"
 	return end("matched", "", "本次通过所选节点收到模型输出；仅代表当前账号、模型与测试时刻可用")
 }
@@ -203,6 +209,25 @@ func antigravityReadError(r *Result, ctx context.Context, err error) {
 }
 
 func antigravityHasContent(body []byte) bool {
+	return antigravityExtractText(body) != ""
+}
+
+func truncatePreview(s string, maxRunes int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if maxRunes <= 0 || utf8.RuneCountInString(s) <= maxRunes {
+		return s
+	}
+	out := make([]rune, 0, maxRunes+1)
+	for _, r := range s {
+		if len(out) >= maxRunes {
+			break
+		}
+		out = append(out, r)
+	}
+	return string(out) + "…"
+}
+
+func antigravityExtractText(body []byte) string {
 	type candidate struct {
 		Content struct {
 			Parts []struct {
@@ -215,28 +240,30 @@ func antigravityHasContent(body []byte) bool {
 		Candidates []candidate     `json:"candidates"`
 		Error      json.RawMessage `json:"error"`
 	}
-	inspect := func(data []byte) bool {
+	extract := func(data []byte) (string, bool) {
 		var item struct {
 			Response   response        `json:"response"`
 			Candidates []candidate     `json:"candidates"`
 			Error      json.RawMessage `json:"error"`
 		}
 		if json.Unmarshal(data, &item) != nil || len(item.Error) > 0 || len(item.Response.Error) > 0 {
-			return false
+			return "", false
 		}
+		var sb strings.Builder
 		for _, c := range append(item.Response.Candidates, item.Candidates...) {
 			for _, p := range c.Content.Parts {
 				if !p.Thought && strings.TrimSpace(p.Text) != "" {
-					return true
+					sb.WriteString(p.Text)
 				}
 			}
 		}
-		return false
+		text := strings.TrimSpace(sb.String())
+		return text, text != ""
 	}
-	if inspect(body) {
-		return true
+	if text, ok := extract(body); ok {
+		return text
 	}
-	found := false
+	var sseText strings.Builder
 	for _, line := range strings.Split(string(body), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "data:") {
@@ -246,14 +273,16 @@ func antigravityHasContent(body []byte) bool {
 			}
 			var item map[string]json.RawMessage
 			if json.Unmarshal(data, &item) != nil || item["error"] != nil {
-				return false
+				return ""
 			}
 			var nested response
 			if json.Unmarshal(item["response"], &nested) == nil && len(nested.Error) > 0 {
-				return false
+				return ""
 			}
-			found = inspect(data) || found
+			if part, ok := extract(data); ok {
+				sseText.WriteString(part)
+			}
 		}
 	}
-	return found
+	return strings.TrimSpace(sseText.String())
 }

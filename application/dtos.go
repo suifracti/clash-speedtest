@@ -366,6 +366,7 @@ type AppSettings struct {
 	LocalNotifications             *LocalNotificationSettings `json:"local_notifications,omitempty"`
 	AirportMonthlyPrices           map[string]float64         `json:"airport_monthly_prices,omitempty"`
 	SubscriptionDailyUpdateEnabled *bool                      `json:"subscription_daily_update_enabled,omitempty"`
+	AutoDiscoverCredentials        *bool                      `json:"auto_discover_credentials,omitempty"`
 	PreferredBrowser               string                     `json:"preferred_browser"` // "auto", "chrome", "edge", "default", or custom path
 	MonitorRetentionPolicy         monitor.RetentionPolicy    `json:"monitor_retention_policy"`
 	MonitorRetentionCustomDays     int                        `json:"monitor_retention_custom_days"`

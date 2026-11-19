@@ -61,10 +61,12 @@ func TestAntigravityAvailabilityRequiresModelContent(t *testing.T) {
 				t.Fatalf("got %+v calls %d", result, calls)
 			}
 			progress := "轻量模型已列出，尚未收到真实回答"
+			wantReply := ""
 			if tc.outcome == "matched" {
 				progress = "真实模型已回答"
+				wantReply = "OK"
 			}
-			if result.Details["antigravity_progress"] != progress || result.Details["checked_model"] != "gemini-fixture-flash" {
+			if result.Details["antigravity_progress"] != progress || result.Details["checked_model"] != "gemini-fixture-flash" || result.Details["models_listed"] != "1" || result.Details["all_models_count"] != "1" || result.Details["reply_preview"] != wantReply {
 				t.Fatalf("model evidence is ambiguous: %+v", result.Details)
 			}
 			if strings.Contains(result.ErrorMessage, "test-secret") {

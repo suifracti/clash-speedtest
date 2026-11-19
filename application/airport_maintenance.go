@@ -102,6 +102,7 @@ func (s *AppService) StartSubscriptionRefresh(userAgent string) {
 					if err := s.refreshDueAirport(ctx, now, userAgent); err != nil {
 						log.Print("订阅定时刷新无法执行或保存，请检查机场存储")
 					}
+					s.RefreshAutoCredentialsIfDue(now)
 				}
 			}
 		}()

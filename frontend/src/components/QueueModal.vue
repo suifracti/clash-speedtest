@@ -115,12 +115,22 @@ function servicePhaseNote(q:QueueItem){
  }
  return `代理建连累计约 ${(duration/1000).toFixed(2)} 秒 · 未记录完整 HTTP 请求写出，服务结论未确认`
 }
+function antigravityEvidenceLine(q:QueueItem){
+ const r=q.attempt?.result;if(!isAntigravity(q)||!r)return ''
+ const d=r.details||{},parts:string[]=[]
+ if(d.checked_model)parts.push(`模型 ${d.checked_model}${d.models_listed?`（可选 ${d.models_listed}/${d.all_models_count||d.models_listed}）`:''}`)
+ if(d.reply_preview)parts.push(`实测回答“${d.reply_preview}”`)
+ if(d.country_code)parts.push(`CF 观察 ${d.country_code}${d.cloudflare_colo?` (${d.cloudflare_colo})`:''}${d.ip?` ${d.ip}`:''}`)
+ let path:{interface?:string;socket_bind_verified?:boolean}={};try{path=JSON.parse(String(d.network_path||'{}'))}catch{}
+ if(path.socket_bind_verified&&path.interface)parts.push(`${path.interface} 绕过 TUN`)
+ return parts.join(' · ')
+}
 function antigravityDetails(q:QueueItem){
  const r=q.attempt?.result;if(!isAntigravity(q)||!r)return []
  const d=r.details||{},steps:Record<string,string>={loadCodeAssist:'账号项目查询',fetchAvailableModels:'模型目录查询','streamGenerateContent?alt=sse':'模型生成',model_response:'模型回答确认'}
  const phases:Record<string,string>={proxy_connect:'节点代理建连',tls_handshake:'目标 TLS 握手',request_write:'请求写出',response_headers:'等待响应头',response_read:'读取响应体'}
  let path:{address_family?:string;interface?:string}={};try{path=JSON.parse(String(d.network_path||'{}'))}catch{}
- return [`${d.antigravity_progress||'模型进度未记录'}`,`账号／模型阶段：${steps[r.failure_phase||'']||r.failure_phase||'已结束'}`,`HTTP 状态：${r.http_status??'未收到'}`,`请求失败阶段：${phases[String(d.request_failure_phase)]||d.request_failure_phase||'未记录'}`,`超时来源：${d.timeout_origin==='checker_deadline'?'检查总时限':d.timeout_origin==='transport'?'传输超时':'未记录'}`,`HTTP 请求写出累计：${d.http_requests_written??'未记录'}（含出口观察）`,`地址族：${path.address_family||'未记录'} · 网卡：${path.interface||'未记录'}`,`Cloudflare 独立出口观察：${d.country_code?`${d.country_code}（不代表 Google 出口）`:d.exit_observation_state||'未记录'}`]
+ return [`${d.antigravity_progress||'模型进度未记录'}${d.checked_model?` · 模型：${d.checked_model}`:''}`,...(d.reply_preview?[`模型实测回答：“${d.reply_preview}”`]:[]),...(d.models_listed?[`可选轻量模型：${d.models_listed} / 总模型 ${d.all_models_count||d.models_listed}`]:[]),`账号／模型阶段：${steps[r.failure_phase||'']||r.failure_phase||'已结束'}`,`HTTP 状态：${r.http_status??'未收到'}`,`请求失败阶段：${phases[String(d.request_failure_phase)]||d.request_failure_phase||'未记录'}`,`超时来源：${d.timeout_origin==='checker_deadline'?'检查总时限':d.timeout_origin==='transport'?'传输超时':'未记录'}`,`HTTP 请求写出累计：${d.http_requests_written??'未记录'}（含出口观察）`,`地址族：${path.address_family||'未记录'} · 网卡：${path.interface||'未记录'}`,`Cloudflare 独立出口观察：${d.country_code?`${d.country_code}${d.cloudflare_colo?` (${d.cloudflare_colo})`:''}${d.ip?` · ${d.ip}`:''}（不代表 Google 出口）`:d.exit_observation_state||'未记录'}`]
 }
 // 执行与保存是两个独立属性：先看有没有跑完，再看结果有没有落库。
 function latencyItem(q:QueueItem){return q.project==='latency'?batchItems.value.get(q.itemId||''):undefined}
@@ -204,7 +214,7 @@ async function retry(q:QueueItem){retrying.value=q.id;try{if(q.batchId&&q.itemId
     <div v-if="w.queue.value.length" class="queue-list-tools"><div class="queue-views" role="group" aria-label="检测项目范围"><button :aria-pressed="queueView==='focus'" @click="queueView='focus'">进行中与需留意 <span>{{attentionQueue.length}}</span></button><button :aria-pressed="queueView==='all'" @click="queueView='all'">全部项目 <span>{{w.queue.value.length}}</span></button></div><small>检测结果与保存状态分别列出</small></div>
     <div v-if="visibleQueue.length" class="cst-queue-cols" aria-hidden="true"><span>节点与项目</span><span>执行</span><span>检测结果</span><span>保存</span></div>
     <div v-for="q in visibleQueue" :key="q.id" class="queue-row cst-queue-row">
-      <div class="cst-queue-node"><strong>{{nodeDisplayName(q.node)}}</strong><small>{{q.node.profile_name}} · {{projectNames[q.project]}}<template v-if="q.serviceId"> · {{w.catalog.value.find(s=>s.service_id===q.serviceId)?.name||q.serviceId}}</template></small><p v-if="errorText(q)" class="bad small" :title="errorText(q)">{{queueErrorLabel(q)}}</p><p v-if="servicePhaseNote(q)" class="muted small">{{servicePhaseNote(q)}}</p><details v-if="antigravityDetails(q).length" class="small muted"><summary>执行详情</summary><p v-for="detail in antigravityDetails(q)" :key="detail">{{detail}}</p></details></div>
+      <div class="cst-queue-node"><strong>{{nodeDisplayName(q.node)}}</strong><small>{{q.node.profile_name}} · {{projectNames[q.project]}}<template v-if="q.serviceId"> · {{w.catalog.value.find(s=>s.service_id===q.serviceId)?.name||q.serviceId}}</template></small><p v-if="errorText(q)" class="bad small" :title="errorText(q)">{{queueErrorLabel(q)}}</p><p v-if="antigravityEvidenceLine(q)" class="muted small">{{antigravityEvidenceLine(q)}}</p><p v-if="servicePhaseNote(q)" class="muted small">{{servicePhaseNote(q)}}</p><details v-if="antigravityDetails(q).length" class="small muted"><summary>执行详情</summary><p v-for="detail in antigravityDetails(q)" :key="detail">{{detail}}</p></details></div>
       <span class="cst-queue-exec" :class="{warn:unknownStart(q)}"><i class="cst-queue-dot" :class="unknownStart(q)?'warn':['queued'].includes(q.state)?'empty':['running','cancelling'].includes(q.state)?'running':'done'"/>{{unknownStart(q)?'启动未知':stateLabel(q.state)}}</span>
       <div class="queue-state"><span v-if="resultStatus(q)&&!unknownStart(q)" class="badge" :class="resultStatus(q)!.tone">{{resultStatus(q)!.label}}</span><span v-else-if="!unknownStart(q)&&!['queued','running','cancelling'].includes(q.state)" class="badge" :class="q.state==='completed'?'good':q.state==='failed'?'bad':''">{{stateLabel(q.state)}}</span><span v-else class="cst-queue-pending">{{unknownStart(q)?'待确认':'等待结果'}}</span></div>
       <div class="cst-queue-save" :class="saveState(q).tone"><span>{{saveState(q).label}}</span><small v-if="saveFailed(q)&&persistenceError(q)" class="queue-save-error">{{persistenceError(q)}}</small><button v-if="saveFailed(q)&&retryable(q)" class="text-button" :disabled="retrying===q.id" @click="retry(q)">重试保存</button><small v-else-if="saveFailed(q)&&!retryable(q)" class="muted">原结果无法恢复</small></div>

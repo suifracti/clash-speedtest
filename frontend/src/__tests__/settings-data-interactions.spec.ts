@@ -96,3 +96,11 @@ it('requests notification authorization when enabled, then saves without request
 it('keeps notifications off and offers system settings when authorization fails',async()=>{
  vi.mocked(request).mockRejectedValueOnce(new Error('UNErrorDomain error 1'));const view=attach(SettingsView);await flushPromises();await view.get('.settings-section .notification-toggle input[type=checkbox]').setValue(true);await flushPromises();expect((view.get('.settings-section .notification-toggle input[type=checkbox]').element as HTMLInputElement).checked).toBe(false);expect(view.text()).toContain('系统未允许 CST 发送通知');expect(view.text()).not.toContain('UNErrorDomain');expect(api.saveSettings).not.toHaveBeenCalled();await click('打开系统通知设置');expect(request).toHaveBeenLastCalledWith('','POST',undefined,'OpenSystemNotificationSettings')
 })
+it('persists the local credential auto-discovery switch in settings',async()=>{
+ const view=attach(SettingsView);await flushPromises()
+ const toggle=view.get('.credential-toggle input[type=checkbox]')
+ expect((toggle.element as HTMLInputElement).checked).toBe(true)
+ await toggle.setValue(false)
+ await click('保存设置')
+ expect(api.saveSettings).toHaveBeenLastCalledWith(expect.objectContaining({auto_discover_credentials:false}))
+})

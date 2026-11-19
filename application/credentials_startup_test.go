@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 type noAutoRoundTripper func(*http.Request) (*http.Response, error)
@@ -218,5 +219,52 @@ func TestExplicitDiscoveryCanReplaceAnExistingLocalBinding(t *testing.T) {
 	status, err := app.DiscoverAntigravityToken()
 	if err != nil || calls != 1 || !status.HasToken || app.GetAntigravityToken() != "ya29.refreshed-local-value" {
 		t.Fatalf("explicit refresh did not run: calls=%d source=%s err=%v", calls, status.Source, err)
+	}
+}
+
+func TestAutoDiscoverCredentialsSettingControlsStartupStatusAndPeriodic(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	paths, _ := appdata.Resolve(t.TempDir())
+	if err := os.WriteFile(paths.SettingsFile, []byte(`{"preferred_browser":"default","monitor_retention_policy":"keep_all","auto_discover_credentials":false}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	tokenValue := "ya29.auto-1"
+	app := NewAppServiceWithOptions(nil, paths, nil, Options{CredentialDiscovery: func() (string, string, error) {
+		calls++
+		return tokenValue, "auto source", nil
+	}})
+	defer app.Close()
+
+	if status := app.GetTokenStatus(); status.HasToken || calls != 0 {
+		t.Fatalf("disabled auto-discover unexpectedly ran: calls=%d status=%+v", calls, status)
+	}
+	if app.RefreshAutoCredentialsIfDue(time.Now().Add(time.Hour)) || calls != 0 {
+		t.Fatalf("disabled auto-discover periodic check ran: calls=%d", calls)
+	}
+	// Explicit manual discover still works when auto-discovery is disabled.
+	discovered, err := app.DiscoverAntigravityToken()
+	if err != nil || !discovered.HasToken || calls != 1 {
+		t.Fatalf("explicit discover failed: calls=%d status=%+v err=%v", calls, discovered, err)
+	}
+
+	// Re-enabling periodic auto-discovery updates non-overridden shared credentials once interval elapses.
+	paths2, _ := appdata.Resolve(t.TempDir())
+	calls2 := 0
+	currentTok := "ya29.periodic-1"
+	app2 := NewAppServiceWithOptions(nil, paths2, nil, Options{CredentialDiscovery: func() (string, string, error) {
+		calls2++
+		return currentTok, "auto source", nil
+	}})
+	defer app2.Close()
+	if calls2 != 1 || app2.GetAntigravityToken() != "ya29.periodic-1" {
+		t.Fatalf("initial auto-discover mismatch: calls=%d tok=%s", calls2, app2.GetAntigravityToken())
+	}
+	currentTok = "ya29.periodic-2"
+	if app2.RefreshAutoCredentialsIfDue(time.Now().Add(5 * time.Minute)) {
+		t.Fatal("periodic auto-discover ran before interval elapsed")
+	}
+	if !app2.RefreshAutoCredentialsIfDue(time.Now().Add(31 * time.Minute)) || app2.GetAntigravityToken() != "ya29.periodic-2" {
+		t.Fatalf("periodic auto-discover did not refresh after interval: tok=%s calls=%d", app2.GetAntigravityToken(), calls2)
 	}
 }
