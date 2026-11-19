@@ -2,6 +2,7 @@ package publicservice
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/faceair/clash-speedtest/core/monitor"
 	"io"
 	"net/http"
@@ -63,9 +64,6 @@ func TestAntigravityAvailabilityRequiresModelContent(t *testing.T) {
 			})}
 			result := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
 			wantRequests := 5
-			if tc.outcome == "rate_limited" {
-				wantRequests = 4
-			}
 			if result.Outcome != tc.outcome || calls != 3 || result.RequestCount != wantRequests || result.Model != "gemini-fixture-flash" || result.Details["ip"] != "203.0.113.8" {
 				t.Fatalf("got %+v calls %d", result, calls)
 			}
@@ -78,7 +76,7 @@ func TestAntigravityAvailabilityRequiresModelContent(t *testing.T) {
 			if result.Details["antigravity_progress"] != progress || result.Details["checked_model"] != "gemini-fixture-flash" || result.Details["models_listed"] != "1" || result.Details["all_models_count"] != "1" || result.Details["reply_preview"] != wantReply {
 				t.Fatalf("model evidence is ambiguous: %+v", result.Details)
 			}
-			if tc.outcome != "rate_limited" && result.Details["google_region"] != "JP" {
+			if result.Details["google_region"] != "JP" {
 				t.Fatalf("expected google_region JP, got: %+v", result.Details)
 			}
 			if strings.Contains(result.ErrorMessage, "test-secret") {
@@ -135,6 +133,7 @@ func TestAntigravityGoogleRegionGeofenceOverridesModel200(t *testing.T) {
 		{"MO", "判定为 MO"},
 	} {
 		t.Run(tc.code, func(t *testing.T) {
+			streamCalled := 0
 			checker := Checker{AntigravityToken: "test-secret", ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
 				if req.URL.Host == "www.cloudflare.com" {
 					return fixtureResponse(req, 200, "text/plain", "ip=203.0.113.8\nloc=JP\ncolo=NRT\n"), nil
@@ -147,15 +146,57 @@ func TestAntigravityGoogleRegionGeofenceOverridesModel200(t *testing.T) {
 				case "/v1internal:fetchAvailableModels":
 					return fixtureResponse(req, 200, "application/json", `{"models":{"gemini-fixture-flash":{}}}`), nil
 				default:
+					streamCalled++
 					return fixtureResponse(req, 200, "text/event-stream", "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"READY\"}]}}]}}\n\n"), nil
 				}
 			})}
 			result := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
-			if result.Outcome != "region_blocked" || result.FailurePhase != "fetchUserInfo" || result.Details["google_region"] != tc.code || !strings.Contains(result.ErrorMessage, tc.want) {
-				t.Fatalf("geofence %s did not override model 200: %+v", tc.code, result)
+			if result.Outcome != "region_blocked" || result.FailurePhase != "fetchUserInfo" || result.Details["google_region"] != tc.code || !strings.Contains(result.ErrorMessage, tc.want) || streamCalled != 0 || result.Details["reply_preview"] != "" {
+				t.Fatalf("geofence %s did not stop before model generation: streamCalled=%d %+v", tc.code, streamCalled, result)
 			}
 		})
 	}
+}
+
+func TestAntigravityPrefersNewestIDEFlashOverLegacy25(t *testing.T) {
+	rule, _ := RuleFor("antigravity")
+	t.Run("prefers gemini-3.8-flash-low and records full catalog", func(t *testing.T) {
+		checker := Checker{AntigravityToken: "test-secret", ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Host == "www.cloudflare.com" {
+				return fixtureResponse(req, 200, "text/plain", "ip=203.0.113.8\nloc=JP\ncolo=NRT\n"), nil
+			}
+			switch req.URL.Path {
+			case "/v1internal:fetchUserInfo":
+				return fixtureResponse(req, 200, "application/json", `{"regionCode":"JP"}`), nil
+			case "/v1internal:loadCodeAssist":
+				return fixtureResponse(req, 200, "application/json", `{"cloudaicompanionProject":"actual-project"}`), nil
+			case "/v1internal:fetchAvailableModels":
+				return fixtureResponse(req, 200, "application/json", `{"models":{"gemini-2.5-flash":{},"gemini-3.8-flash-low":{},"gemini-4-neon":{}}}`), nil
+			default:
+				return fixtureResponse(req, 200, "text/event-stream", "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"READY\"}]}}]}}\n\n"), nil
+			}
+		})}
+		result := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
+		if result.Outcome != "matched" || result.Model != "gemini-3.8-flash-low" ||
+			result.Details["available_flash_models"] != "gemini-3.8-flash-low, gemini-2.5-flash" ||
+			result.Details["all_model_ids"] != "gemini-2.5-flash, gemini-3.8-flash-low, gemini-4-neon" {
+			t.Fatalf("expected gemini-3.8-flash-low and sorted catalogs, got %+v", result)
+		}
+	})
+	t.Run("prefers newer major.minor flash descending", func(t *testing.T) {
+		models, allIDs := selectAntigravityFlashModels(map[string]json.RawMessage{
+			"gemini-2.5-flash":      {},
+			"gemini-2.0-flash-lite": {},
+			"gemini-3.9-flash":      {},
+			"claude-opus-5.5":       {},
+		})
+		if len(models) != 3 || models[0] != "gemini-3.9-flash" || models[1] != "gemini-2.5-flash" || models[2] != "gemini-2.0-flash-lite" {
+			t.Fatalf("unexpected flash ordering: %v", models)
+		}
+		if len(allIDs) != 4 {
+			t.Fatalf("unexpected allIDs: %v", allIDs)
+		}
+	})
 }
 
 func TestAntigravityCancellationStopsBeforeNextRequest(t *testing.T) {

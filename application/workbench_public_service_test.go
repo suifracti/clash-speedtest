@@ -76,7 +76,7 @@ func TestWorkbenchAntigravityRequestAndSavedEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reached.Load() || saved.PersistenceState != "saved" || saved.ServiceID != "antigravity" || saved.Rule.RuleVersion != 6 || saved.Result == nil || saved.Result.Outcome != "auth_failed" || saved.Result.HTTPStatus == nil || *saved.Result.HTTPStatus != 401 {
+	if !reached.Load() || saved.PersistenceState != "saved" || saved.ServiceID != "antigravity" || saved.Rule.RuleVersion != 7 || saved.Result == nil || saved.Result.Outcome != "auth_failed" || saved.Result.HTTPStatus == nil || *saved.Result.HTTPStatus != 401 {
 		t.Fatalf("request and stored evidence mismatch: %+v", saved)
 	}
 }

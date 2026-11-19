@@ -27,33 +27,6 @@ func checkAntigravityObserved(ctx context.Context, client *http.Client, token st
 		observed <- checkCloudflareTrace(exitCtx, &traceClient, Rule{TargetURL: "https://www.cloudflare.com/cdn-cgi/trace", MaximumBodyBytes: 8192}, started)
 	}()
 	r := checkAntigravity(ctx, client, token, started)
-	if ctx.Err() == nil && (r.Outcome == "matched" || r.Outcome == "region_blocked" || r.Outcome == "permission_denied" || r.Outcome == "unknown" || r.Outcome == "service_rejected") {
-		if r.Details == nil {
-			r.Details = map[string]string{}
-		}
-		googleRegion, geoBlocked, geoReqs, geoBytes, geoErr := fetchAntigravityGoogleRegion(ctx, client, token)
-		r.RequestCount += geoReqs
-		r.BytesRead += geoBytes
-		if googleRegion != "" {
-			r.Details["google_region"] = googleRegion
-			r.Details["service_region"] = googleRegion
-		}
-		if geoBlocked {
-			r.Outcome = "region_blocked"
-			r.FailurePhase = "fetchUserInfo"
-			r.Details["antigravity_progress"] = "Google 内部地区判定受限"
-			switch {
-			case googleRegion == "CN":
-				r.ErrorMessage = "Google 内部地区判定为 CN（送中），限制使用（不以生成接口 200 误判可用）"
-			case googleRegion != "":
-				r.ErrorMessage = "Google 内部地区判定为 " + googleRegion + "，限制使用（不以生成接口 200 误判可用）"
-			case geoErr != "":
-				r.ErrorMessage = geoErr
-			default:
-				r.ErrorMessage = "Google 内部地区判定当前出口不支持"
-			}
-		}
-	}
 	exit := <-observed
 	if r.Details == nil {
 		r.Details = map[string]string{}
@@ -240,13 +213,7 @@ func checkAntigravity(ctx context.Context, client *http.Client, token string, st
 	if json.Unmarshal(body, &listing) != nil || len(listing.Models) == 0 {
 		return end("unknown", "fetchAvailableModels", "未获取到可识别的模型列表，不能确认可用性")
 	}
-	models := make([]string, 0)
-	for id := range listing.Models {
-		if strings.HasPrefix(id, "gemini-") && strings.Contains(id, "flash") && len(id) <= 128 {
-			models = append(models, id)
-		}
-	}
-	sort.Strings(models)
+	models, allIDs := selectAntigravityFlashModels(listing.Models)
 	if len(models) == 0 {
 		return end("setup_required", "fetchAvailableModels", "账号未提供轻量 Gemini Flash 模型，本次不改用高成本模型")
 	}
@@ -254,7 +221,34 @@ func checkAntigravity(ctx context.Context, client *http.Client, token string, st
 	r.Details["checked_model"] = r.Model
 	r.Details["models_listed"] = strconv.Itoa(len(models))
 	r.Details["all_models_count"] = strconv.Itoa(len(listing.Models))
+	r.Details["available_flash_models"] = truncatePreview(strings.Join(models, ", "), 300)
+	r.Details["all_model_ids"] = truncatePreview(strings.Join(allIDs, ", "), 500)
+	r.Details["antigravity_progress"] = "轻量模型已列出，尚未核查地区与生成"
+
+	// Check Google's internal geofence BEFORE model generation so blocked regions
+	// (e.g. CN/HK/MO) stop cleanly without burning model generation tokens.
+	googleRegion, geoBlocked, geoReqs, geoBytes, geoErr := fetchAntigravityGoogleRegion(ctx, client, token)
+	r.RequestCount += geoReqs
+	r.BytesRead += geoBytes
+	if googleRegion != "" {
+		r.Details["google_region"] = googleRegion
+		r.Details["service_region"] = googleRegion
+	}
+	if geoBlocked {
+		r.Details["antigravity_progress"] = "Google 内部地区判定受限（未发起模型生成）"
+		switch {
+		case googleRegion == "CN":
+			return end("region_blocked", "fetchUserInfo", "Google 内部地区判定为 CN（送中），限制使用（未发起模型生成）")
+		case googleRegion != "":
+			return end("region_blocked", "fetchUserInfo", "Google 内部地区判定为 "+googleRegion+"，限制使用（未发起模型生成）")
+		case geoErr != "":
+			return end("region_blocked", "fetchUserInfo", geoErr)
+		default:
+			return end("region_blocked", "fetchUserInfo", "Google 内部地区判定当前出口不支持")
+		}
+	}
 	r.Details["antigravity_progress"] = "轻量模型已列出，尚未收到真实回答"
+
 	body, ok = call("streamGenerateContent?alt=sse", map[string]any{
 		"project": project, "model": r.Model,
 		"request": map[string]any{
@@ -423,3 +417,89 @@ func antigravityInspectModelResponse(body []byte) (reply string, refusalOutcome 
 	}
 	return final, "", ""
 }
+
+// selectAntigravityFlashModels sorts candidate Flash models to prefer the IDE
+// default low-cost model (gemini-3.8-flash-low / gemini-3.8-flash*) and newer
+// Gemini major.minor versions ahead of legacy gemini-2.5-flash.
+func selectAntigravityFlashModels(listing map[string]json.RawMessage) (models []string, allIDs []string) {
+	allIDs = make([]string, 0, len(listing))
+	for raw := range listing {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		allIDs = append(allIDs, id)
+		if strings.HasPrefix(id, "gemini-") && strings.Contains(id, "flash") && len(id) <= 128 {
+			models = append(models, id)
+		}
+	}
+	sort.Strings(allIDs)
+	sort.Slice(models, func(i, j int) bool {
+		return antigravityFlashLess(models[i], models[j])
+	})
+	return models, allIDs
+}
+
+func antigravityFlashLess(a, b string) bool {
+	if tierA, tierB := antigravityFlashTier(a), antigravityFlashTier(b); tierA != tierB {
+		return tierA < tierB
+	}
+	majA, minA := geminiModelVersion(a)
+	majB, minB := geminiModelVersion(b)
+	if majA != majB {
+		return majA > majB
+	}
+	if minA != minB {
+		return minA > minB
+	}
+	liteA, liteB := strings.Contains(a, "lite"), strings.Contains(b, "lite")
+	if liteA != liteB {
+		return !liteA
+	}
+	return a < b
+}
+
+func antigravityFlashTier(id string) int {
+	switch {
+	case id == "gemini-3.8-flash-low":
+		return 0
+	case strings.HasPrefix(id, "gemini-3.8-flash"):
+		return 1
+	default:
+		return 2
+	}
+}
+
+func geminiModelVersion(id string) (major int, minor int) {
+	rest := strings.TrimPrefix(id, "gemini-")
+	var nums []string
+	var cur strings.Builder
+	for i := 0; i < len(rest); i++ {
+		c := rest[i]
+		if c >= '0' && c <= '9' {
+			cur.WriteByte(c)
+			continue
+		}
+		if cur.Len() > 0 {
+			nums = append(nums, cur.String())
+			cur.Reset()
+		}
+		if c == '.' && len(nums) == 1 {
+			continue
+		}
+		if len(nums) > 0 {
+			break
+		}
+	}
+	if cur.Len() > 0 {
+		nums = append(nums, cur.String())
+	}
+	if len(nums) >= 1 {
+		major, _ = strconv.Atoi(nums[0])
+	}
+	if len(nums) >= 2 {
+		minor, _ = strconv.Atoi(nums[1])
+	}
+	return major, minor
+}
+

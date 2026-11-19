@@ -2,6 +2,10 @@
 
 执行方式与范围以 [roadmap-round3.md](roadmap-round3.md) 顶部两节为准；前后端由 GPT 实施，原分工中 Claude 负责方案与把关；2026-11-18 用户明确授权当前代理自行决定本轮全 UI 重构。测试使用本地服务和临时数据，不代表真实节点检测。
 
+## 当前接续（2026-11-19）
+
+- 修复 `core/publicservice/antigravity.go`（RuleVersion 7）两项实测退化：其一将 Google 内部地区识别 `v1internal:fetchUserInfo` 移至 `streamGenerateContent?alt=sse` 之前，`CN`/`HK`/`MO` 在模型生成前即终止并标记 `region_blocked`（0 次模型生成请求、不产生误导性的 `实测回答“READY”`）；其二以 `selectAntigravityFlashModels` 优先选择 `gemini-3.8-flash-low` / `gemini-3.8-flash*` 及更高版本 Flash（降序）替代原字典序 `sort.Strings[0]` 误选中后端保留的遗留 `gemini-2.5-flash`，并记录 `available_flash_models` 与 `all_model_ids` 到 `QueueModal.vue` 执行详情。Go `core/publicservice` / `application` / `adapter/web`（含 `go vet`）与前端 88 文件 / 637 项测试及生产构建通过。
+
 ## 当前接续（2026-11-18）
 
 - 「为你选线」改为每个节点地区按用途选首选和次选。次选优先沿用首选条件并排除同一线路的账户别名。日常依响应率、中位延迟和波动，下载优先稳定速度，AI 和流媒体按所选服务的最近通过记录。旧配置和不完整下载数据保持可查并标记待复测。Clash 配置组导出本用途符合推荐条件的两档线路。Windows 隔离生产界面从同一份历史读取 6 个地区，日常和下载分别显示 6 首选、5 次选，默认 AI 5 首选、4 次选，默认流媒体 6 首选、4 次选。核对服务切换、具体历史记录入口和 640px 排版，发起检测请求为 0。88 个前端文件的 633 项测试与生产构建通过。

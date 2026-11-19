@@ -20,13 +20,17 @@ func TestAntigravityQuotaDoesNotBecomeBodyConnectionFailure(t *testing.T) {
 					response.Body = body
 					return response, nil
 				}
-				if calls == 1 {
+				switch req.URL.Path {
+				case "/v1internal:loadCodeAssist":
 					return fixtureResponse(req, 200, "application/json", `{"cloudaicompanionProject":"fixture-project"}`), nil
+				case "/v1internal:fetchUserInfo":
+					return fixtureResponse(req, 200, "application/json", `{"regionCode":"JP"}`), nil
+				default:
+					return fixtureResponse(req, 200, "application/json", `{"models":{"gemini-fixture-flash":{}}}`), nil
 				}
-				return fixtureResponse(req, 200, "application/json", `{"models":{"gemini-fixture-flash":{}}}`), nil
 			})}
 			got := checkAntigravity(context.Background(), client, "fixture-token", time.Now())
-			wantCalls := map[string]int{"loadCodeAssist": 1, "fetchAvailableModels": 2, "streamGenerateContent?alt=sse": 3}[step]
+			wantCalls := map[string]int{"loadCodeAssist": 1, "fetchAvailableModels": 2, "streamGenerateContent?alt=sse": 4}[step]
 			if got.Outcome != "rate_limited" || got.FailurePhase != step || got.HTTPStatus == nil || *got.HTTPStatus != 429 || got.Details["retry_after_seconds"] != "60" || calls != wantCalls || got.RequestCount != wantCalls || body.reads != 0 || !body.closed {
 				t.Fatalf("quota evidence replaced or more requests made: calls=%d reads=%d closed=%v result=%+v", calls, body.reads, body.closed, got)
 			}
