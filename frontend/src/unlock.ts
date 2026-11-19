@@ -14,6 +14,17 @@ export function unlockResult(a?:Attempt,serviceId?:string,ipType?:IpType){
  const r=a?.result,details=r?.details||{},region=String(details.service_region||details.country_code||details.region||'').toUpperCase(),o=r?.outcome
  if(id==='disney_unlock'&&!servicePassed(a))return {state:'unknown',tone:'empty',label:'暂不支持',reason:r?'当前自动检测暂不可用，旧记录保留':'',region}
  if(!r)return {state:'unknown',tone:'empty',label:a?.started_at?'无法判断':'未测',reason:a?.started_at?'检测未完成':'',region}
+ if(id==='antigravity'){
+  const model=String(details.checked_model||'').replace(/^models\//,'')
+  const progress=String(details.antigravity_progress||'')
+  const exitHint=region?` · CF 观察 ${region}（不代表 Google）`:''
+  let netHint=''
+  try{const np=details.network_path?JSON.parse(String(details.network_path)):null;if(np?.socket_bind_verified&&np?.interface)netHint=` · ${np.interface} 绕过 TUN`}catch{}
+  if(servicePassed(a))return {state:'available',tone:'good',label:model?`模型可用（${model}）`:'模型可用',reason:(progress||'真实模型已回答')+exitHint+netHint,region}
+  if(o==='region_blocked')return {state:'unavailable',tone:'warn',label:'地区不支持',reason:(r.error_message||'Google 返回当前地区不支持')+exitHint+netHint,region}
+  const agLabels:Record<string,string>={credentials_required:'需要凭据',auth_failed:'凭据失效',setup_required:'账号待开通',permission_denied:'权限不足',rate_limited:'额度受限'}
+  if(o&&agLabels[o])return {state:'unknown',tone:'warn',label:agLabels[o],reason:r.error_message||agLabels[o],region}
+ }
  const google=['gemini_unlock','youtube_premium','google_region'].includes(a?.service_id||a?.rule.service_id||'')
  if(o==='verification_required'||(google&&/https:\/\/(?:[^/]+\.)?google\.com\/(?:sorry|recaptcha)/i.test(String(details.final_url||''))))return {state:'verification',tone:'warn',label:'需人机验证',reason:'Google 对该 IP 要求验证，实际使用时也会遇到'+(id==='gemini_unlock'?datacenterHint(ipType):''),region}
  if(google&&region==='CN'&&o==='region_blocked')return {state:'unavailable',tone:'bad',label:'Google 判定为中国大陆',reason:r.summary||'Google 判定为中国大陆',region}
