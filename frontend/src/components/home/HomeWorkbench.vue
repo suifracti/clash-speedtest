@@ -5,7 +5,7 @@ import './workbench-layout.css'
 import {useWorkspace} from '../../workspace'
 import {date,isReputationRule,key,projectNames,targets,type NodeOption,type Project} from '../../domain'
 import {api,type ClashUsage} from '../../api'
-import {nodeDisplayName,nodeRegion,nodeRegionLabel,protocolBadgeClass,regionBadgeClass} from '../../nodePresentation'
+import {nodeDisplayName,nodeDisplayParts,nodeRegion,nodeRegionLabel,protocolBadgeClass,regionBadgeClass} from '../../nodePresentation'
 import {airportNodeCount} from '../../airportViewing'
 import Icon from '../Icon.vue'
 import UiSelect from '../UiSelect.vue'
@@ -115,7 +115,7 @@ const scopeLabel=computed(()=>w.selectedNodes.value.length?`已选 ${w.selectedN
 const filterSummary=computed(()=>[
  w.airportFilter.value==='all'?'':chosen.value.find(a=>a.id===w.airportFilter.value)?.name,
  w.subscription.value==='all'?'':m.filterProfiles.value.find(([id])=>id===w.subscription.value)?.[1],
- w.region.value!=='all'&&w.excludeRegion.value?'排除 '+nodeRegionLabel(w.region.value):'',
+ w.region.value!=='all'&&w.excludeRegion.value?'排除 '+selectedRegions.value.map(nodeRegionLabel).join(' / '):'',
  m.protocolFilter.value==='all'?'':m.protocolFilter.value,
  m.qualityGate.value==='all'?'':gates.find(g=>g.id===m.qualityGate.value)?.label,
  m.qualitySort.value==='existing'?'':qualitySorts.find(q=>q.id===m.qualitySort.value)?.label,
@@ -215,9 +215,14 @@ const regionChips=computed(()=>{
  return m.filterRegions.value.map(code=>({code,label:nodeRegionLabel(code),count:counts.get(code)||0}))
 })
 const allVisibleSelected=computed(()=>m.visibleNodes.value.length>0&&m.visibleNodes.value.every(selected))
+const selectedRegions=computed(()=>{
+ const raw=w.region.value.startsWith('exclude:')?w.region.value.slice(8):w.region.value
+ return raw==='all'?[]:raw.split(',').map(s=>s.trim()).filter(Boolean)
+})
 function toggleRegionChip(code:string){
  w.excludeRegion.value=false
- w.region.value=w.region.value===code?'all':code
+ const next=selectedRegions.value.includes(code)?selectedRegions.value.filter(c=>c!==code):[...selectedRegions.value,code]
+ w.region.value=next.length?next.join(','):'all'
 }
 function keyNav(e:KeyboardEvent){
  const target=e.target as HTMLElement
@@ -278,7 +283,7 @@ function keyNav(e:KeyboardEvent){
       </div>
       <div class="hd-toolbar-filters">
         <label class="hd-search"><Icon name="search"/><input v-model="w.search.value" type="search" placeholder="搜节点、机场、地区" aria-label="搜索节点、机场或地区" title="可搜索节点名、机场名或地区"></label>
-        <UiSelect v-model="w.region.value" aria-label="地区"><option value="all">全部地区</option><option v-for="r in m.filterRegions.value" :key="r" :value="r">{{nodeRegionLabel(r)}}</option></UiSelect>
+        <UiSelect v-model="w.region.value" aria-label="地区"><option value="all">全部地区</option><option v-if="selectedRegions.length>1" :value="w.region.value">已选 {{selectedRegions.length}} 个地区</option><option v-for="r in m.filterRegions.value" :key="r" :value="r">{{nodeRegionLabel(r)}}</option></UiSelect>
         <UiSelect v-model="w.sort.value" aria-label="排序"><option v-for="s in sorts" :key="s.id" :value="s.id">排序：{{s.label}}</option></UiSelect>
         <UiSelect v-model.number="w.hours.value" aria-label="时间范围"><option :value="6">最近 6 小时</option><option :value="24">最近 24 小时</option><option :value="168">最近 7 天</option><option :value="720">最近 30 天</option></UiSelect>
         <details ref="more" class="hd-more" :class="{'has-active':moreActive>0}" @keydown.esc="closeMore"><summary ref="moreSummary">更多筛选<small>{{filterSummary?filterSummary+' · ':''}}{{m.qualityFiltersPending.value?'范围确认中':'符合 '+m.visibleNodes.value.length+' 个'}}</small></summary>
@@ -290,7 +295,7 @@ function keyNav(e:KeyboardEvent){
               <label v-if="m.filterProfiles.value.length>1">订阅<UiSelect v-model="w.subscription.value" aria-label="订阅筛选"><option value="all">全部订阅</option><option v-for="[id,name] in m.filterProfiles.value" :key="id" :value="id">{{name}}</option></UiSelect></label>
               <label>协议<UiSelect v-model="m.protocolFilter.value" aria-label="协议筛选"><option value="all">全部协议</option><option v-for="p in m.protocolChoices.value" :key="p" :value="p">{{p}}</option></UiSelect></label>
               <label v-if="w.sort.value==='airport'&&chosen.length>1&&w.airportFilter.value==='all'">优先机场<UiSelect v-model="w.priorityAirportId.value" aria-label="优先机场"><option value="all">机场自然顺序</option><option v-for="a in chosen" :key="a.id" :value="a.id">{{a.name}}优先</option></UiSelect></label>
-              <label v-if="w.region.value!=='all'" class="hd-check"><input v-model="w.excludeRegion.value" type="checkbox">反过来：排除「{{nodeRegionLabel(w.region.value)}}」</label>
+              <label v-if="w.region.value!=='all'" class="hd-check"><input v-model="w.excludeRegion.value" type="checkbox">反过来：排除「{{selectedRegions.map(nodeRegionLabel).join(' / ')}}」</label>
             </div>
           </section>
           <section class="hd-more-group" aria-labelledby="more-result">
@@ -320,7 +325,7 @@ function keyNav(e:KeyboardEvent){
         <details v-if="!exitMode&&(w.project.value==='service'||w.project.value==='combined')" class="hd-services"><summary>选择解锁项目<small>{{m.displayServices.value.length?'已选 '+m.displayServices.value.length+' 项':'还没选'}}</small></summary><UnlockPicker v-model="w.serviceIds.value" :catalog="catalog"/></details>
         <div v-if="scopeAirportNodes.length" class="hd-region-strip" role="group" aria-label="按地区快选">
           <button type="button" class="hd-region-chip all" :aria-pressed="w.region.value==='all'&&!w.excludeRegion.value" @click="w.excludeRegion.value=false;w.region.value='all'">全部<small>{{scopeAirportNodes.length}}</small></button>
-          <button v-for="rc in regionChips" :key="rc.code" type="button" class="hd-region-chip" :class="regionBadgeClass(rc.code)" :aria-pressed="!w.excludeRegion.value&&w.region.value===rc.code" @click="toggleRegionChip(rc.code)">{{rc.label}}<small>{{rc.count}}</small></button>
+          <button v-for="rc in regionChips" :key="rc.code" type="button" class="hd-region-chip" :class="regionBadgeClass(rc.code)" :aria-pressed="!w.excludeRegion.value&&selectedRegions.includes(rc.code)" @click="toggleRegionChip(rc.code)">{{rc.label}}<small>{{rc.count}}</small></button>
           <span class="hd-quick-divider" aria-hidden="true"/>
           <button type="button" class="hd-quick-select" :disabled="!m.visibleNodes.value.length" :title="allVisibleSelected?'取消勾选当前筛选出来的节点':'一键勾选当前筛选出来的全部节点'" @click="w.toggleAll(m.visibleNodes.value)">{{allVisibleSelected?'取消全选当前':`勾选当前 ${m.visibleNodes.value.length} 个`}}</button>
           <button v-if="w.selectedNodes.value.length" type="button" class="hd-quick-select clear" @click="w.cancelSelection()">清空已选 {{w.selectedNodes.value.length}}</button>
@@ -365,7 +370,7 @@ function keyNav(e:KeyboardEvent){
         <div ref="rowScroller" class="hd-row-scroll" role="rowgroup" @scroll="syncTableHeading">
         <div v-for="n in m.pageNodes.value" :key="key(n)" :data-node-key="key(n)" class="hd-tr" role="row" :class="{focus:isFocus(n)&&(inspectorOpen||!!focusKey),selected:selected(n),'clash-using':isClashUsing(n)}" :aria-selected="selected(n)" @click="focus(n)">
           <span role="cell" @click.stop><input type="checkbox" :checked="selected(n)" :aria-label="'选择 '+nodeDisplayName(n)" @change="w.toggleNode(n)"></span>
-          <span role="cell" class="hd-node" :class="regionBadgeClass(n.country_code)" :title="n.display_name+' · '+m.sourceLabel(n)+' · '+n.type"><span><div class="hd-node-title"><span class="hd-flag" :class="regionBadgeClass(n.country_code)">{{n.country_code||'—'}}</span><span v-if="isClashUsing(n)" class="hd-clash-active-badge" aria-label="Clash 正在使用" title="Clash 正在使用"><i class="hd-clash-node-dot" aria-hidden="true"/>在用</span><button class="hd-node-open" :tabindex="isFocus(n)?0:-1" :aria-label="'查看 '+nodeDisplayName(n)+' · '+m.sourceLabel(n)" @focus="focusKey=key(n)" @click.stop="focus(n)"><strong>{{nodeDisplayName(n)}}</strong></button></div><small><span class="hd-source-label">{{exitMode?w.nodeAirportName(n):m.sourceLabel(n)}}</span> · <b class="hd-proto-tag" :class="protocolBadgeClass(n.type)">{{n.type}}</b></small><span v-if="overviewMode" class="hd-route-verdict" :class="verdicts[key(n)].tone">{{verdicts[key(n)].label}}</span></span></span>
+          <span role="cell" class="hd-node" :class="regionBadgeClass(n.country_code)" :title="n.display_name+' · '+m.sourceLabel(n)+' · '+n.type"><span><div class="hd-node-title"><span class="hd-flag" :class="regionBadgeClass(n.country_code)">{{n.country_code||'—'}}</span><span v-if="isClashUsing(n)" class="hd-clash-active-badge" aria-label="Clash 正在使用" title="Clash 正在使用"><i class="hd-clash-node-dot" aria-hidden="true"/>在用</span><button class="hd-node-open" :tabindex="isFocus(n)?0:-1" :aria-label="'查看 '+nodeDisplayName(n)+' · '+m.sourceLabel(n)" @focus="focusKey=key(n)" @click.stop="focus(n)"><strong><span class="hd-node-region">{{nodeDisplayParts(n).region}}</span><template v-for="(part,idx) in nodeDisplayParts(n).parts" :key="idx"><span class="hd-node-sep"> · </span><span class="hd-node-part" :class="part.kind">{{part.text}}</span></template></strong></button></div><small><span class="hd-source-label">{{exitMode?w.nodeAirportName(n):m.sourceLabel(n)}}</span> · <b class="hd-proto-tag" :class="protocolBadgeClass(n.type)">{{n.type}}</b></small><span v-if="overviewMode" class="hd-route-verdict" :class="verdicts[key(n)].tone">{{verdicts[key(n)].label}}</span></span></span>
           <NodeResponseStrip v-if="overviewMode" :node="n"/>
           <template v-if="exitMode"><template v-for="field in exitFields" :key="field"><span v-if="field==='line'" role="cell" class="hd-exit-cell hd-line-cell"><span class="hd-line-text" :title="exitRows[key(n)].line">{{exitRows[key(n)].line}}</span><span v-if="exitRows[key(n)].route" class="hd-route-tag" :class="exitRows[key(n)].routeTone" :title="exitRows[key(n)].routeTitle">{{exitRows[key(n)].route}}</span></span><span v-else-if="field==='ipTag'" role="cell" class="hd-exit-cell hd-ip-cell"><span class="hd-ip-tag" :class="exitRows[key(n)].ipKind.tone" :title="'IP 类型：'+exitRows[key(n)].ipKind.detail">{{exitRows[key(n)].ipTag}}</span></span><span v-else role="cell" class="hd-num hd-exit-cell" :class="field==='label'?exitRows[key(n)].tone:field==='riskLabel'?exitRows[key(n)].riskTone:''" :title="field==='label'?exitRows[key(n)].detail:field==='riskLabel'?'IPPure 与机器流量占比取较高值':''">{{exitRows[key(n)][field]}}</span></template></template>
           <span v-if="showVerdict&&!overviewMode" role="cell"><b class="hd-pill" :class="[verdicts[key(n)].tone,{'partial-sites':verdicts[key(n)].label.startsWith('部分站点不通')}]">{{verdicts[key(n)].label}}</b></span>
@@ -420,7 +425,7 @@ function keyNav(e:KeyboardEvent){
 .hd-pill.partial-sites{max-width:100%;white-space:normal;line-height:1.4;border-radius:8px;box-sizing:border-box}
 .history-sort{font-size:11px;white-space:nowrap;text-align:left}
 .old-tag{margin-left:2px;padding:0 2px;border-radius:2px;background:var(--hd-soft);color:var(--hd-muted);font-size:9px;font-weight:600}
-.hd-clash-usage{display:inline-flex;align-items:center;gap:5px;margin-top:5px;padding:3px 7px;border:1px solid var(--hd-line);border-radius:999px;background:var(--hd-panel);font-size:11px;line-height:1.4;color:var(--hd-muted)}.hd-clash-usage{cursor:pointer}.hd-clash-usage:hover{border-color:var(--hd-accent)}.hd-clash-usage strong{color:var(--hd-text)}.hd-clash-usage-dot,.hd-clash-node-dot{display:inline-block;flex:none;width:7px;height:7px;border-radius:50%;background:var(--hd-good)}.hd-clash-node-dot{width:6px;height:6px;margin:0}.hd-clash-active-badge{display:inline-flex;align-items:center;gap:4px;flex:none;padding:1px 6px;border-radius:999px;font-size:10px;font-weight:700;color:var(--hd-good);background:var(--hd-good-bg);border:1px solid color-mix(in srgb,var(--hd-good) 32%,transparent);line-height:1.45}
+.hd-clash-usage{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border:1px solid color-mix(in srgb,var(--hd-good) 32%,var(--hd-line));border-radius:999px;background:color-mix(in srgb,var(--hd-good) 9%,var(--hd-panel));font-size:11.5px;font-weight:550;line-height:1.4;color:color-mix(in srgb,var(--hd-good) 85%,var(--hd-text));transition:border-color .14s,background .14s}.hd-clash-usage{cursor:pointer}.hd-clash-usage:hover{border-color:var(--hd-good);background:color-mix(in srgb,var(--hd-good) 14%,var(--hd-panel))}.hd-clash-usage strong{color:var(--hd-text)}.hd-clash-usage-dot,.hd-clash-node-dot{display:inline-block;flex:none;width:6px;height:6px;border-radius:50%;background:var(--hd-good)}.hd-clash-active-badge{display:inline-flex;align-items:center;gap:4px;flex:none;padding:1px 7px;border-radius:999px;font-size:10px;font-weight:700;color:var(--hd-good);background:var(--hd-good-bg);border:1px solid color-mix(in srgb,var(--hd-good) 32%,transparent);line-height:1.45}
 .hd-body.exit-mode .hd-tr{padding-top:9px;padding-bottom:9px}.hd-body.exit-mode .hd-exit-cell.good{color:var(--hd-good)}.hd-exit-cell{font-size:11px;white-space:normal;line-height:1.4}.hd-exit-cell.bad{color:var(--hd-bad);font-weight:600}.hd-exit-cell.warn{color:var(--hd-warn)}
 .hd .hd-svc-cell.empty{color:var(--hd-empty);font-weight:400}.hd .hd-svc-cell.warn{color:var(--hd-warn)}
 </style>
@@ -429,11 +434,11 @@ function keyNav(e:KeyboardEvent){
 .history-sort{font-size:11px;white-space:nowrap;text-align:left}.matrix-switch{display:inline-flex;margin:0 0 12px}
 .hd-line-cell{display:flex;align-items:flex-start;gap:6px;font-size:11px;line-height:1.45;white-space:normal}
 .hd-line-text{min-width:0;color:var(--hd-text,inherit)}
-.hd-route-tag{flex:none;margin-top:1px;padding:0 5px;border-radius:4px;border:1px solid var(--hd-line);color:var(--hd-muted);background:var(--hd-panel);font-size:10px;line-height:1.5;white-space:nowrap}
-.hd-route-tag.good{color:var(--hd-good);border-color:color-mix(in srgb,var(--hd-good) 35%,var(--hd-line))}
+.hd-route-tag{flex:none;margin-top:1px;padding:1px 7px;border-radius:999px;border:1px solid var(--hd-line);color:var(--hd-muted);background:var(--hd-panel-2);font-size:10px;font-weight:600;line-height:1.45;white-space:nowrap}
+.hd-route-tag.good{color:var(--hd-good);background:var(--hd-good-bg);border-color:color-mix(in srgb,var(--hd-good) 35%,var(--hd-line))}
 .hd-route-tag.warn{color:var(--hd-warn);border-color:color-mix(in srgb,var(--hd-warn) 35%,var(--hd-line));background:var(--hd-warn-bg)}
 .hd-ip-cell{display:flex;align-items:center}
-.hd-ip-tag{display:inline-block;padding:0 5px;border-radius:4px;border:1px solid var(--hd-line);background:var(--hd-panel-2);color:var(--hd-muted);font-size:10px;line-height:1.6;white-space:nowrap}
+.hd-ip-tag{display:inline-block;padding:1px 7px;border-radius:999px;border:1px solid var(--hd-line);background:var(--hd-panel-2);color:var(--hd-muted);font-size:10px;font-weight:600;line-height:1.5;white-space:nowrap}
 .hd-ip-tag.good{color:var(--hd-good);background:var(--hd-good-bg);border-color:color-mix(in srgb,var(--hd-good) 30%,var(--hd-line))}
 .hd-ip-tag.warn{color:var(--hd-warn);background:var(--hd-warn-bg);border-color:color-mix(in srgb,var(--hd-warn) 30%,var(--hd-line))}
 .hd-ip-tag.empty{background:transparent;border-style:dashed}

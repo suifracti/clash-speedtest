@@ -41,6 +41,21 @@ export function protocolBadgeClass(type?:string){return protocolClasses[(type||'
 const regionClasses:Record<string,string>={HK:'region-hk',TW:'region-tw',JP:'region-jp',SG:'region-sg',KR:'region-kr',US:'region-us',UK:'region-uk',GB:'region-uk',DE:'region-eu',FR:'region-eu',NL:'region-eu',CH:'region-eu',SE:'region-eu',IT:'region-eu',ES:'region-eu',PL:'region-eu',CA:'region-ca',AU:'region-ca',RU:'region-eu'}
 export function regionBadgeClass(code?:string){const c=(code||'').trim().toUpperCase();if(!c||c==='UNKNOWN'||c==='XX'||c==='ZZ'||c==='—')return 'region-unknown';return regionClasses[c]||'region-other'}
 
+export type NodeDisplayPartKind='num'|'line'|'media'|'proto'|'mult'|'attr'
+export interface NodeDisplayParts{region:string;parts:{text:string;kind:NodeDisplayPartKind}[]}
+function classifyNodePart(part:string):NodeDisplayPartKind{
+  if(/^\d+(?:\.\d+)?×$/i.test(part))return 'mult'
+  if(/^(?:[A-Z]{1,2}\d+|\d{1,3}(?:（[²³]）)?)$/i.test(part))return 'num'
+  if(/^(?:hy2|vless|vmess|anytls|trojan|tuic|ss|ssr|wg|ipv?[46]|v[46]入口)$/i.test(part))return 'proto'
+  if(/(?:^ai$|chatgpt|claude|gemini|grok|copilot|流媒体|netflix|youtube|disney|tiktok|spotify|hulu|abema|dmm|unext|google\s*play)/i.test(part))return 'media'
+  if(/(?:家宽|住宅|原生|专线|优化|直连|iplc|iepl|cn2|gia|bgp|^aws$|^gcp$|azure|oracle)/i.test(part))return 'line'
+  return 'attr'
+}
+export function nodeDisplayParts(node:Pick<NodeOption,'display_name'>&Partial<Pick<NodeOption,'country_code'>>):NodeDisplayParts{
+  const segments=nodeDisplayName(node).split(' · ')
+  return {region:segments[0]||'',parts:segments.slice(1).map(text=>({text,kind:classifyNodePart(text)}))}
+}
+
 // Presentation only: names used by subscriptions, identity, exports and history stay intact.
 // Unknown attributes and markers are retained; missing numbers/multipliers are never invented.
 export function nodeDisplayName(node:Pick<NodeOption,'display_name'>&Partial<Pick<NodeOption,'country_code'>>){

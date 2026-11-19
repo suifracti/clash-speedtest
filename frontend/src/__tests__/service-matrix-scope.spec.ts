@@ -61,16 +61,26 @@ it('saves and toggles custom unlock groups alongside default groups in UnlockPic
  expect(wrapper.findAll('.unlock-group-options label').find(x=>x.text().includes('我的常测'))).toBeUndefined()
  vi.unstubAllGlobals()
 })
-it('filters by quick region chips and selects or clears matching nodes',async()=>{
+it('filters by quick region chips (including multi-select) and selects or clears matching nodes',async()=>{
  window.localStorage.clear();vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}})
- const hk:NodeOption={profile_id:'p',node_key:'n-hk',node_identity_key:'i-hk',config_revision_key:'r',profile_name:'fixture',display_name:'HK 01',type:'anytls',country_code:'HK',country_flag:''}
- const jp:NodeOption={profile_id:'p',node_key:'n-jp',node_identity_key:'i-jp',config_revision_key:'r',profile_name:'fixture',display_name:'JP 01',type:'vless',country_code:'JP',country_flag:''}
- w=createWorkspace();w.project.value='latency';w.nodes.value=[hk,jp];w.airports.value=[{id:'a',name:'fixture',has_cache:true,url_display:'',node_count:2,subscriptions:[{id:'p',airport_id:'a',name:'fixture',url_display:'',url_configured:false,node_count:2,has_cache:true}]}];w.setAirports(['a'])
+ const hk:NodeOption={profile_id:'p',node_key:'n-hk',node_identity_key:'i-hk',config_revision_key:'r',profile_name:'fixture',display_name:'HK 01 优化',type:'anytls',country_code:'HK',country_flag:''}
+ const jp:NodeOption={profile_id:'p',node_key:'n-jp',node_identity_key:'i-jp',config_revision_key:'r',profile_name:'fixture',display_name:'JP 02 HY2',type:'vless',country_code:'JP',country_flag:''}
+ const us:NodeOption={profile_id:'p',node_key:'n-us',node_identity_key:'i-us',config_revision_key:'r',profile_name:'fixture',display_name:'US 03 AI',type:'vless',country_code:'US',country_flag:''}
+ w=createWorkspace();w.project.value='latency';w.nodes.value=[hk,jp,us];w.airports.value=[{id:'a',name:'fixture',has_cache:true,url_display:'',node_count:3,subscriptions:[{id:'p',airport_id:'a',name:'fixture',url_display:'',url_configured:false,node_count:3,has_cache:true}]}];w.setAirports(['a'])
  wrapper=mount(HomeView,{global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
- expect(wrapper.get('.hd-region-strip').text()).toContain('全部2')
+ expect(wrapper.get('.hd-region-strip').text()).toContain('全部3')
  expect(wrapper.get('.hd-source-label').text()).toBe('fixture')
+ expect(wrapper.get('.hd-node-region').text()).toBe('香港')
+ expect(wrapper.findAll('.hd-node-part.num')[0].text()).toBe('01')
+ expect(wrapper.findAll('.hd-node-part.line')[0].text()).toBe('优化')
  await wrapper.findAll('.hd-region-chip').find(b=>b.text().includes('日本'))!.trigger('click');await flushPromises()
  expect(w.region.value).toBe('JP')
+ expect(wrapper.findAll('.hd-node')).toHaveLength(1)
+ await wrapper.findAll('.hd-region-chip').find(b=>b.text().includes('香港'))!.trigger('click');await flushPromises()
+ expect(w.region.value).toBe('JP,HK')
+ expect(wrapper.findAll('.hd-node')).toHaveLength(2)
+ await wrapper.findAll('.hd-region-chip').find(b=>b.text().includes('日本'))!.trigger('click');await flushPromises()
+ expect(w.region.value).toBe('HK')
  expect(wrapper.findAll('.hd-node')).toHaveLength(1)
  await wrapper.get('.hd-quick-select').trigger('click');await flushPromises()
  expect(w.selectedKeys.value).toHaveLength(1)

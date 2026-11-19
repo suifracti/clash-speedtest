@@ -74,12 +74,14 @@ export function createWorkspace(){
     const q=search.value.trim().toLowerCase();
     const isExcluded=excludeRegion.value||region.value.startsWith('exclude:');
     const targetRegion=region.value.startsWith('exclude:')?region.value.slice(8):region.value;
+    const targetRegions=targetRegion==='all'?[]:targetRegion.split(',').map(s=>s.trim()).filter(Boolean);
     let visible=proxyNodes.value.filter(n=>{
       if(downloadFullOnly.value&&project.value==='download'&&downloadGroup(summaryDownload(n)).kind!=='full')return false;
       if(airportFilter.value!=='all'&&nodeAirportId(n)!==airportFilter.value)return false;
       if(subscription.value!=='all'&&n.profile_id!==subscription.value)return false;
-      if(targetRegion!=='all'){
-        const matches=nodeRegion(n)===targetRegion||(n.country_code||'unknown')===targetRegion;
+      if(targetRegions.length){
+        const r=nodeRegion(n),raw=n.country_code||'unknown';
+        const matches=targetRegions.includes(r)||targetRegions.includes(raw);
         if(isExcluded?matches:!matches)return false;
       }
       return !q||(n.display_name+' '+nodeDisplayName(n)+' '+n.profile_name+' '+nodeAirportName(n)+' '+nodeSubscriptionName(n)+' '+n.country_code).toLowerCase().includes(q);
@@ -131,7 +133,7 @@ export function createWorkspace(){
   function setAirports(ids:string[]){selectedAirportIds.value=ids;resetUnavailableAirports(ids);subscription.value='all';region.value='all';inspectNode.value=null;plan.value=null}
   watch([sourceNodes,nodes],()=>{const available=new Set(proxyNodes.value.map(key));selectedKeys.value=selectedKeys.value.filter(k=>available.has(k));if(inspectNode.value&&!available.has(key(inspectNode.value)))inspectNode.value=null})
   watch(selectedAirportIds,ids=>{resetUnavailableAirports(ids||[]);window.localStorage.setItem('speedtest.circle-airports',JSON.stringify(ids))},{deep:true})
-  watch(airportFilter,()=>{subscription.value='all';if(region.value!=='all'&&!proxyNodes.value.some(n=>(airportFilter.value==='all'||nodeAirportId(n)===airportFilter.value)&&(nodeRegion(n)===region.value||(n.country_code||'unknown')===region.value)))region.value='all'},{flush:'sync'})
+  watch(airportFilter,()=>{subscription.value='all';if(region.value!=='all'){const isEx=region.value.startsWith('exclude:');const raw=isEx?region.value.slice(8):region.value;const parts=raw.split(',').map(s=>s.trim()).filter(Boolean);const scopeNodes=proxyNodes.value.filter(n=>airportFilter.value==='all'||nodeAirportId(n)===airportFilter.value);const kept=parts.filter(code=>scopeNodes.some(n=>nodeRegion(n)===code||(n.country_code||'unknown')===code));region.value=kept.length?(isEx?`exclude:${kept.join(',')}`:kept.join(',')):'all'}},{flush:'sync'})
   watch(project,value=>{if(value!=='combined'&&['latency','download','service'].includes(sort.value))sort.value=value},{flush:'sync'})
   const targetIds=new Set(targets.map(t=>t.id))
   watch(displayTargets,ids=>{const valid=[...new Set(ids.filter(id=>targetIds.has(id)))];if(!valid.length)valid.push('cloudflare');if(valid.length!==ids.length||valid.some((id,i)=>id!==ids[i]))displayTargets.value=valid;try{window.localStorage.setItem('speedtest.display-sites',JSON.stringify(valid))}catch{};},{deep:true,flush:'sync'})
