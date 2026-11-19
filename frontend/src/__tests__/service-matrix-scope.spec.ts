@@ -4,6 +4,7 @@ import HomeView from '../components/HomeView.vue'
 import {createWorkspace,workspaceKey} from '../workspace'
 import {api} from '../api'
 import type {Attempt,NodeOption} from '../domain'
+import {regionBadgeClass} from '../nodePresentation'
 vi.mock('../api',async original=>{const actual=await original<typeof import('../api')>();return {...actual,api:{...actual.api,refreshJobs:vi.fn(async()=>[]),measurementRounds:vi.fn(async()=>[]),latencyHistory:vi.fn(async()=>({tests:[],complete:true,has_more:false})),latencySummaries:vi.fn(async()=>[]),monitorSamples:vi.fn(async()=>({items:[],has_more:false})),attemptHistory:vi.fn(async()=>({attempts:[],complete:true,has_more:false})),startAttempt:vi.fn(),startLatency:vi.fn()}}})
 let wrapper:ReturnType<typeof mount>|undefined,w:ReturnType<typeof createWorkspace>|undefined
 afterEach(()=>{wrapper?.unmount();w?.dispose();window.localStorage.clear()})
@@ -35,4 +36,45 @@ it('does not preserve an automatic three-service recommendation as a user choice
 it('does not promote old display-only choices into detection defaults',()=>{
  window.localStorage.clear();window.localStorage.setItem('speedtest.display-services',JSON.stringify(['cloudflare_204','grok_web']))
  w=createWorkspace();expect(w.serviceIds.value).toEqual([])
+})
+it('saves and toggles custom unlock groups alongside default groups in UnlockPicker',async()=>{
+ window.localStorage.clear();vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}})
+ const node:NodeOption={profile_id:'p',node_key:'n',node_identity_key:'i',config_revision_key:'r',profile_name:'fixture',display_name:'fixture',type:'anytls',country_code:'TW',country_flag:''}
+ w=createWorkspace();w.project.value='service';w.nodes.value=[node];w.airports.value=[{id:'a',name:'fixture',has_cache:true,url_display:'',node_count:1,subscriptions:[{id:'p',airport_id:'a',name:'account',url_display:'',url_configured:false,node_count:1,has_cache:true}]}];w.setAirports(['a']);w.catalog.value=['chatgpt_unlock','netflix_unlock','abema_unlock'].map((id,i)=>({service_id:id,name:['ChatGPT','Netflix','ABEMA'][i],category:'fixture',description:'',result_kind:'unlock',success_criterion:'fixture',timeout_seconds:10}));
+ wrapper=mount(HomeView,{global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
+ expect(wrapper.get('.hd-proto-tag').classes()).toContain('proto-anytls')
+ expect(wrapper.get('.hd-flag').classes()).toContain('region-tw')
+ expect(wrapper.get('.hd-node').classes()).toContain('region-tw')
+ expect(new Set(['HK','TW','JP','SG','KR','US','UK'].map(c=>regionBadgeClass(c))).size).toBe(7)
+ await wrapper.get('.hd-services summary').trigger('click')
+ w.serviceIds.value=['chatgpt_unlock','abema_unlock'];await flushPromises()
+ await wrapper.get('input[aria-label="自定义分组名称"]').setValue('我的常测')
+ await wrapper.findAll('button').find(b=>b.text()==='保存分组')!.trigger('click');await flushPromises()
+ const customLabel=wrapper.findAll('.unlock-group-options label').find(x=>x.text().includes('我的常测'))!
+ expect(customLabel).toBeDefined()
+ expect(customLabel.text()).toContain('2 项')
+ await customLabel.get('input').setValue(false);await flushPromises()
+ expect(w.serviceIds.value).toEqual([])
+ await customLabel.get('input').setValue(true);await flushPromises()
+ expect(w.serviceIds.value).toEqual(['chatgpt_unlock','abema_unlock'])
+ await customLabel.get('button[aria-label="删除自定义分组 我的常测"]').trigger('click');await flushPromises()
+ expect(wrapper.findAll('.unlock-group-options label').find(x=>x.text().includes('我的常测'))).toBeUndefined()
+ vi.unstubAllGlobals()
+})
+it('filters by quick region chips and selects or clears matching nodes',async()=>{
+ window.localStorage.clear();vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}})
+ const hk:NodeOption={profile_id:'p',node_key:'n-hk',node_identity_key:'i-hk',config_revision_key:'r',profile_name:'fixture',display_name:'HK 01',type:'anytls',country_code:'HK',country_flag:''}
+ const jp:NodeOption={profile_id:'p',node_key:'n-jp',node_identity_key:'i-jp',config_revision_key:'r',profile_name:'fixture',display_name:'JP 01',type:'vless',country_code:'JP',country_flag:''}
+ w=createWorkspace();w.project.value='latency';w.nodes.value=[hk,jp];w.airports.value=[{id:'a',name:'fixture',has_cache:true,url_display:'',node_count:2,subscriptions:[{id:'p',airport_id:'a',name:'fixture',url_display:'',url_configured:false,node_count:2,has_cache:true}]}];w.setAirports(['a'])
+ wrapper=mount(HomeView,{global:{provide:{[workspaceKey as symbol]:w}}});await flushPromises()
+ expect(wrapper.get('.hd-region-strip').text()).toContain('全部2')
+ expect(wrapper.get('.hd-source-label').text()).toBe('fixture')
+ await wrapper.findAll('.hd-region-chip').find(b=>b.text().includes('日本'))!.trigger('click');await flushPromises()
+ expect(w.region.value).toBe('JP')
+ expect(wrapper.findAll('.hd-node')).toHaveLength(1)
+ await wrapper.get('.hd-quick-select').trigger('click');await flushPromises()
+ expect(w.selectedKeys.value).toHaveLength(1)
+ await wrapper.get('.hd-quick-select.clear').trigger('click');await flushPromises()
+ expect(w.selectedKeys.value).toHaveLength(0)
+ vi.unstubAllGlobals()
 })

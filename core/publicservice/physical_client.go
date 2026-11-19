@@ -14,7 +14,7 @@ func defaultClientFactory(ctx context.Context, node monitor.MonitoredNode, timeo
 	var snapshot func() speedtester.DownloadNetworkPath
 	var cleanup func()
 	var err error
-	if runtime.GOOS != "darwin" {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
 		client, err = monitor.NewDefaultNodeDialer().CreateClient(node, timeout)
 		cleanup = func() {
 			if client != nil {

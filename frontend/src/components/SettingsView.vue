@@ -10,7 +10,7 @@ import {checkedRetentionPreview,retentionCount,retentionFailure,retentionSummary
 import Modal from './Modal.vue'
 import Icon from './Icon.vue'
 import {applyTheme,savedThemePreference,type ThemePreference} from '../theme'
-const w=useWorkspace(),settings=ref<Settings|null>(null),busy=ref(false),loading=ref(true),error=ref(''),feedback=ref(''),operation=ref(''),tokenInput=ref(''),tokenForm=ref(false),theme=ref(savedThemePreference()),warningGiB=ref<number|null>(null),hardGiB=ref<number|null>(null),responseKiB=ref<number|null>(null),preview=ref<RetentionPreview|null>(null)
+const w=useWorkspace(),settings=ref<Settings|null>(null),busy=ref(false),loading=ref(true),error=ref(''),feedback=ref(''),operation=ref(''),theme=ref(savedThemePreference()),warningGiB=ref<number|null>(null),hardGiB=ref<number|null>(null),responseKiB=ref<number|null>(null),preview=ref<RetentionPreview|null>(null)
 const settingSection=w.settingsSection
 const storage=ref<MonitorStorageUsage|null>(null),storageLoading=ref(false),storageError=ref(''),storageReadAt=ref('')
 const previewRequest=ref<RetentionRequest|null>(null),previewNeedsRefresh=ref(false),previewAttempted=ref(false)
@@ -21,7 +21,7 @@ function acceptStorage(value:MonitorStorageUsage|null){storage.value=value;stora
 async function refreshStorage(){const generation=++storageGeneration;storageLoading.value=true;try{const value=await api.storage();if(alive&&generation===storageGeneration)acceptStorage(value||null)}catch(cause){if(alive&&generation===storageGeneration)storageError.value=cause instanceof Error?cause.message:String(cause)}finally{if(alive&&generation===storageGeneration)storageLoading.value=false}}
 watch(settingSection,value=>{if(value==='storage')void refreshStorage()},{immediate:true})
 onBeforeUnmount(()=>{alive=false;storageGeneration++})
-const settingSections=[['appearance','外观与链接'],['connection','Clash 连接'],['services','解锁地区规则'],['monitor','监测请求预算'],['storage','历史容量与保留'],['notifications','本机通知'],['credentials','账号凭据']]
+const settingSections=[['appearance','外观与链接'],['connection','Clash 连接'],['services','解锁地区规则'],['monitor','监测请求预算'],['storage','历史容量与保留'],['notifications','本机通知']]
 const savedSettings=ref('')
 const settingsStamp=()=>JSON.stringify([settings.value,warningGiB.value,hardGiB.value,responseKiB.value])
 const settingsDirty=computed(()=>!!savedSettings.value&&savedSettings.value!==settingsStamp())
@@ -35,7 +35,6 @@ async function openNotificationSettings(){await perform('打开系统通知设�
 let dialogTrigger:HTMLElement|null=null
 function rememberFocus(){dialogTrigger=document.activeElement instanceof HTMLElement?document.activeElement:null}
 function restoreFocus(){void nextTick(()=>dialogTrigger?.isConnected&&dialogTrigger.focus())}
-function openToken(){if(busy.value)return;rememberFocus();error.value='';feedback.value='';tokenForm.value=true}
 async function perform(label:string,fn:()=>Promise<void>){if(busy.value)return;busy.value=true;error.value='';feedback.value='';operation.value=label;try{await fn()}catch(e){error.value=e instanceof Error?e.message:String(e)}finally{busy.value=false;operation.value=''}}
 async function load(){loading.value=true;await perform('加载设置',async()=>{settings.value=await api.settings();settings.value.unlock_service_regions=Object.fromEntries(unlockGroups.flatMap(g=>g.ids.map(id=>[id,applicableRegions(id,settings.value?.unlock_service_regions)])));settings.value.skip_by_applicable_regions??=true;settings.value.local_notifications??={enabled:false,failure_percent:50,remaining_percent:10,expiry_days:7};settings.value.clash_connection??={mode:'auto',endpoint:'',secret:''};warningGiB.value=settings.value.monitor_storage_warning_bytes==null?null:settings.value.monitor_storage_warning_bytes/1073741824;hardGiB.value=settings.value.monitor_storage_hard_bytes==null?null:settings.value.monitor_storage_hard_bytes/1073741824;responseKiB.value=settings.value.monitor_budget_response_bytes==null?null:settings.value.monitor_budget_response_bytes/1024;savedSettings.value=settingsStamp()});loading.value=false}
 async function setTheme(value:ThemePreference){await perform('切换外观',async()=>{try{await applyTheme(value);feedback.value='外观已更新，无需另行保存'}finally{theme.value=savedThemePreference()}})}
@@ -49,11 +48,6 @@ function validSettings(){
 }
 function validRetention(){const days=settings.value?.monitor_retention_custom_days;if(settings.value?.monitor_retention_policy==='custom'&&(!Number.isInteger(days)||days!<1||days!>36500)){settingSection.value='storage';error.value='自定义保存天数须为 1–36500 的整数';return false}return true}
 async function save(){if(busy.value||!settings.value)return;error.value='';feedback.value='';if(!validSettings())return;const s={...settings.value!,monitor_storage_warning_bytes:Math.round(warningGiB.value!*1073741824),monitor_storage_hard_bytes:Math.round(hardGiB.value!*1073741824),monitor_budget_response_bytes:Math.round(responseKiB.value!*1024)};await perform('保存设置',async()=>{await api.saveSettings(s);w.settings.value=s;savedSettings.value=settingsStamp();feedback.value='设置已保存';w.notify(feedback.value);if(settingSection.value==='storage')await refreshStorage()})}
-async function setToken(){if(!tokenInput.value.trim())return;await perform('保存凭据',async()=>{await api.setToken(tokenInput.value);tokenInput.value='';tokenForm.value=false;feedback.value='凭据已保存';w.notify(feedback.value);w.token.value=await api.token()});if(!tokenForm.value)restoreFocus()}
-async function discoverToken(){await perform('检测本地凭据',async()=>{const res=await api.discoverToken();w.token.value=res;if(res.has_token){feedback.value=`已检测并绑定本地凭据（来自 ${res.source||'本地发现'}）`;w.notify(feedback.value)}else{feedback.value='未在已知路径检测到可用凭据'}})}
-async function refreshToken(){await perform('刷新凭据状态',async()=>{w.token.value=await api.token();feedback.value=w.token.value?.has_token?`凭据状态已刷新（已绑定 · ${w.token.value.source}）`:'凭据状态已刷新（尚未绑定）'})}
-async function login(){await perform('打开账号登录',async()=>{await api.oauth();feedback.value='已打开账号登录，完成后请刷新状态';w.notify(feedback.value)})}
-function closeToken(){if(busy.value)return;tokenForm.value=false;tokenInput.value='';error.value='';feedback.value='已取消凭据输入';restoreFocus()}
 function closePreview(){if(busy.value)return;preview.value=null;error.value='';feedback.value=previewAttempted.value?'已关闭清理窗口；已有处理结果不会撤销。':'已取消清理，监测记录保持不变';restoreFocus()}
 async function readRetentionPreview(body:RetentionRequest){
   await perform('预览旧采样清理',async()=>{
@@ -90,7 +84,7 @@ onMounted(load)
 <template>
   <section class="page-view settings-view preferences-view" :aria-busy="busy">
     <div class="page-header"><div><h1>偏好设置</h1><p>外观、监测请求与保存策略。</p></div><button class="button primary" :disabled="busy||!settings" @click="save">保存设置</button></div>
-    <p v-if="error&&!tokenForm&&!preview" class="inline-error" role="alert">{{error}}</p>
+    <p v-if="error&&!preview" class="inline-error" role="alert">{{error}}</p>
     <p class="operation-status" role="status" aria-live="polite">{{operation?`正在${operation}…`:feedback||'监测与保存策略修改后，请点击保存设置。'}}</p>
     <div v-if="!settings&&!loading" class="load-retry"><button class="button" :disabled="busy" @click="load">重试加载</button></div>
     <div class="preferences-layout">
@@ -134,11 +128,9 @@ onMounted(load)
       </template>
       <div class="preference-grid">
       <section v-if="settings?.local_notifications" v-show="settingSection==='notifications'" class="settings-section"><div class="section-heading"><h2>本机通知<span class="cst-effect">保存后生效 · 默认关闭</span></h2><label class="notification-toggle"><input v-model="settings.local_notifications.enabled" type="checkbox" :disabled="!desktop()" @change="changeNotifications">启用桌面通知</label></div><div v-if="notificationDenied" class="notification-denied" role="alert"><span>系统未允许 CST 发送通知</span><button class="button" @click="openNotificationSettings">打开系统通知设置</button></div><div class="form-grid"><label>无响应节点达到 · %<input v-model.number="settings.local_notifications.failure_percent" type="number" min="1" max="100"></label><label>套餐剩余低于 · %<input v-model.number="settings.local_notifications.remaining_percent" type="number" min="1" max="100"></label><label>到期提前 · 天<input v-model.number="settings.local_notifications.expiry_days" type="number" min="0"></label></div><p class="section-note">应用运行时检查已保存检测与套餐信息；相同告警只通知一次，恢复后可再次提醒。{{desktop()?'启用时由系统询问通知权限。':'请在桌面 App 中启用。'}}</p></section>
-      <section v-show="settingSection==='credentials'" class="settings-section"><div class="section-heading"><h2>账号凭据</h2><span class="badge" :class="w.token.value?.has_token?'good':''">{{!w.token.value?'状态尚未读取':w.token.value.has_token?`已绑定 · ${w.token.value.source||'来源未确认'}`:'尚未绑定 Antigravity 凭据'}}</span></div><p class="section-note">用于 Antigravity 真实模型可用性探测。探测前可先绑定或从本机环境自动发现凭据。</p><div class="button-group"><button class="button" @click="login"><Icon name="key"/>浏览器登录</button><button class="button" @click="discoverToken"><Icon name="search"/>检测查找凭据</button><button class="button ghost" @click="openToken">手动输入 Token</button><button class="button ghost" @click="refreshToken">刷新状态</button></div></section>
       </div>
     </fieldset>
     </div>
-    <Modal v-if="tokenForm" title="手动绑定凭据" :closable="!busy" @close="closeToken"><fieldset class="dialog-fields" :disabled="busy"><label class="form-stack">Token<textarea v-model="tokenInput" rows="4" autocomplete="off" spellcheck="false" placeholder="输入 Token 或 Authorization: Bearer …"/></label></fieldset><p v-if="error" class="inline-error" role="alert">{{error}}</p><p v-if="busy" role="status">正在{{operation}}…</p><template #footer><button class="button" :disabled="busy" @click="closeToken">取消</button><button class="button primary" :disabled="busy||!tokenInput.trim()" @click="setToken">保存凭据</button></template></Modal>
     <Modal v-if="preview" title="清理预览" :closable="!busy" @close="closePreview">
       <div class="retention-preview">
         <p v-if="previewNeedsRefresh" class="inline-warning">以下是执行前的预览，须重新核对剩余数量后再确认。</p>

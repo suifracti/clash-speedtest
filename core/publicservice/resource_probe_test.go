@@ -52,18 +52,20 @@ func TestUnlockCatalogReplacesReachabilityButKeepsLegacyRules(t *testing.T) {
 	for _, r := range Catalog() {
 		seen[r.ServiceID] = true
 	}
-	for _, id := range []string{"chatgpt_unlock", "claude_unlock", "gemini_unlock", "antigravity", "netflix_unlock", "youtube_premium", "disney_unlock", "prime_video", "spotify_unlock", "tiktok_unlock", "abema_unlock", "unext_unlock", "dmm_unlock", "radiko_unlock", "hulu_jp_unlock", "fod_unlock"} {
+	for _, id := range []string{"chatgpt_unlock", "claude_unlock", "gemini_unlock", "netflix_unlock", "youtube_premium", "spotify_unlock", "tiktok_unlock", "abema_unlock", "unext_unlock", "dmm_unlock", "radiko_unlock", "hulu_jp_unlock", "fod_unlock"} {
 		if !seen[id] {
 			t.Errorf("missing %s", id)
 		}
 	}
-	for _, id := range []string{"resource_chatgpt", "resource_grok", "chatgpt_web", "grok_web", "google_connect", "cloudflare_doh"} {
+	for _, id := range []string{"antigravity", "disney_unlock", "prime_video", "resource_chatgpt", "resource_grok", "chatgpt_web", "grok_web", "google_connect", "cloudflare_doh"} {
 		if seen[id] {
 			t.Errorf("retired target %s in picker", id)
 		}
 	}
-	if _, ok := RuleFor("chatgpt_web"); !ok {
-		t.Fatal("legacy rule is no longer readable")
+	for _, id := range []string{"chatgpt_web", "antigravity", "disney_unlock", "prime_video"} {
+		if _, ok := RuleFor(id); !ok {
+			t.Fatalf("legacy rule %s is no longer readable", id)
+		}
 	}
 }
 

@@ -58,8 +58,7 @@ export const groupServices:Record<'ai'|'streaming',{id:string;label:string}[]>={
   ],
   streaming:[
     {id:'netflix_unlock',label:'Netflix 完整片库'},
-    {id:'youtube_premium',label:'YouTube Premium'},
-    {id:'disney_unlock',label:'Disney+'}
+    {id:'youtube_premium',label:'YouTube Premium'}
   ]
 }
 export const defaultRequiredServices:{ai:string[];streaming:string[]}={ai:['chatgpt_unlock','claude_unlock'],streaming:['netflix_unlock']}

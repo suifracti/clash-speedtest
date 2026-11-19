@@ -1,13 +1,35 @@
 <script setup lang="ts">
-import {onMounted,ref} from 'vue'
+import {computed,onMounted,ref} from 'vue'
 import {api,type ClashVergeSubscription} from '../api'
-import {date} from '../domain'
+import {bytes,date,subscriptionUsed,type Subscription} from '../domain'
 import {useWorkspace} from '../workspace'
 import Modal from './Modal.vue'
 import UiSelect from './UiSelect.vue'
 
 const emit=defineEmits<{close:[]}>()
 const w=useWorkspace(),sources=ref<ClashVergeSubscription[]>([]),targets=ref<Record<string,string>>({}),names=ref<Record<string,string>>({}),syncNames=ref<Record<string,boolean>>({}),results=ref<Record<string,string>>({}),loading=ref(false),syncing=ref(''),error=ref(''),refreshFailed=ref(false)
+const duplicateNames=computed(()=>{const counts=new Map<string,number>();for(const source of sources.value){const key=(source.name||'').trim();if(key)counts.set(key,(counts.get(key)||0)+1)}return new Set(Array.from(counts.entries()).filter(([,count])=>count>1).map(([name])=>name))})
+function usageSummary(usage?:Subscription['usage']){
+ if(!usage)return ''
+ const used=subscriptionUsed(usage)
+ const head=used!==null?(usage.total?`${bytes(used)} / ${bytes(usage.total)}`:`已用 ${bytes(used)}`):(usage.total?`总量 ${bytes(usage.total)}`:'')
+ const tail:string[]=[]
+ if(usage.total&&used!==null)tail.push(`剩余 ${bytes(Math.max(0,usage.total-used))}`)
+ if(usage.expire)tail.push(`到期 ${new Date(usage.expire*1000).toLocaleDateString('zh-CN')}`)
+ return [head,...tail].filter(Boolean).join(' · ')
+}
+function usageRatio(usage?:Subscription['usage']){
+ const used=subscriptionUsed(usage)
+ if(used===null||!usage?.total)return null
+ return Math.min(100,used/usage.total*100)
+}
+function accountOptionLabel(airportName:string,account:Subscription){
+ const hints:string[]=[]
+ if(account.node_count)hints.push(`${account.node_count} 节点`)
+ const quota=usageSummary(account.usage)
+ if(quota)hints.push(quota)
+ return hints.length?`${airportName} · ${account.name}（${hints.join(' · ')}）`:`${airportName} · ${account.name}`
+}
 function syncNameFor(source:ClashVergeSubscription){return (names.value[source.uid]??source.name??'').trim()||(source.name||'').trim()||'Clash Verge 订阅'}
 function targetAvailable(source:ClashVergeSubscription){return w.airports.value.some(a=>a.id===source.airport_id&&a.subscriptions?.some(s=>s.id===source.subscription_id))}
 async function refreshAccounts(){
@@ -58,8 +80,13 @@ onMounted(()=>void load())
    <div v-for="source in sources" :key="source.uid" class="verge-source" :class="{linked:source.linked}">
     <div class="verge-name">
      <span class="verge-field-label">Clash Verge 来源</span>
-     <strong>{{source.name||'Clash Verge 订阅'}}</strong>
-     <small>来源更新 {{date(source.updated_at)}}</small>
+     <strong>{{source.name||'Clash Verge 订阅'}}<span v-if="duplicateNames.has((source.name||'').trim())" class="verge-dup-tag">同名订阅</span></strong>
+     <small>来源更新 {{date(source.updated_at)}}<template v-if="source.node_count"> · {{source.node_count}} 个节点</template></small>
+     <div v-if="usageSummary(source.usage)" class="verge-usage">
+      <small class="verge-usage-text">{{usageSummary(source.usage)}}</small>
+      <div v-if="usageRatio(source.usage)!==null" class="cst-meter verge-usage-meter" role="meter" aria-label="来源订阅已用比例" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Math.round(usageRatio(source.usage)!)"><i :class="{warn:usageRatio(source.usage)!>85}" :style="{width:`${usageRatio(source.usage)}%`}"/></div>
+     </div>
+     <small v-else-if="duplicateNames.has((source.name||'').trim())" class="muted">未返回用量头 · 标识 {{source.uid.slice(0,8)}}</small>
      <small :class="source.url_changed||source.name_changed?'warn':'muted'">{{source.linked?(source.url_changed&&source.name_changed?'链接与名称已变化，将同步原账户':source.url_changed?'链接已变化，将更新原账户':source.name_changed?'名称已变化，可勾选同步名称':'已关联原账户'):source.subscription_id?'找到相同链接，可关联原账户':'请选择已有账户或新建机场'}}</small>
     </div>
     <div class="verge-destination">
@@ -67,7 +94,7 @@ onMounted(()=>void load())
     <UiSelect v-model="targets[source.uid]" :disabled="!!syncing||source.linked" :aria-label="source.name+' 导入位置'">
      <option value="">选择导入位置</option>
      <option value="new">新建机场（{{syncNameFor(source)}}）</option>
-     <template v-for="airport in w.airports.value" :key="airport.id"><option v-for="account in airport.subscriptions||[]" :key="account.id" :value="airport.id+':'+account.id">{{airport.name}} · {{account.name}}</option></template>
+     <template v-for="airport in w.airports.value" :key="airport.id"><option v-for="account in airport.subscriptions||[]" :key="account.id" :value="airport.id+':'+account.id">{{accountOptionLabel(airport.name,account)}}</option></template>
      <option v-if="source.linked&&!targetAvailable(source)" :value="source.airport_id+':'+source.subscription_id">已关联账户 · {{names[source.uid]}}</option>
     </UiSelect>
     </label>
@@ -93,6 +120,10 @@ onMounted(()=>void load())
 .verge-field-label{display:block;font-size:12px;font-weight:500;color:var(--cst-muted);margin-bottom:7px}
 .verge-name{display:flex;flex-direction:column;gap:5px;min-width:0;overflow-wrap:anywhere}
 .verge-name strong{font-size:17px;font-weight:650;color:var(--cst-text);line-height:1.6}
+.verge-dup-tag{display:inline-block;margin-left:8px;padding:1px 6px;font-size:11px;font-weight:500;color:var(--cst-warn);background:var(--cst-panel-2);border:1px solid var(--cst-line);border-radius:4px;vertical-align:middle}
+.verge-usage{display:grid;gap:5px;margin:2px 0}
+.verge-usage-text{font-variant-numeric:tabular-nums;color:var(--cst-text)!important}
+.verge-usage-meter{max-width:220px}
 .verge-name small{font-size:11.5px;color:var(--cst-muted)}
 .verge-name small.warn{color:var(--cst-warn);font-weight:500}
 .verge-destination{border-left:2px solid var(--cst-line);padding-left:24px;display:grid;gap:14px;min-width:0}

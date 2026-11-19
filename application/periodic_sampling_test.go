@@ -87,8 +87,13 @@ func TestPeriodicCoversEveryServiceAndRetainsFailures(t *testing.T) {
 	if c.Total != 2*len(periodicServices(p.cfg)) || c.Processed != c.Total || c.Saved != c.Total || c.Outcomes["auth_failed"] != c.Total {
 		t.Fatalf("coverage: %+v", c)
 	}
-	if _, ok := seen.Load("0antigravity"); !ok {
-		t.Fatal("Antigravity omitted")
+	if _, ok := seen.Load("0chatgpt_unlock"); !ok {
+		t.Fatal("active catalog service omitted")
+	}
+	for _, retired := range []string{"0antigravity", "0disney_unlock", "0prime_video"} {
+		if _, ok := seen.Load(retired); ok {
+			t.Fatalf("retired service %s should not be in periodic catalog", retired)
+		}
 	}
 }
 func TestPeriodicDownloadCannotOverlapService(t *testing.T) {

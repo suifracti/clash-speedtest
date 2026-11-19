@@ -62,9 +62,6 @@ it('provides the next subscription step after creating an empty store',async()=>
   await click('创建空白存储');expect(document.querySelector('.data-start-panel')?.textContent).toContain('先添加一份机场订阅');expect(document.querySelector('.data-view [role=status]')?.textContent).toContain('空白存储已创建')
   await click('添加机场');expect(w.page.value).toBe('airports');expect(api.initialize).toHaveBeenCalledTimes(1)
 })
-it('retains login, token refresh and manual token save with busy/error/cancel feedback',async()=>{
-  attach(SettingsView);await flushPromises();await click('浏览器登录');expect(api.oauth).toHaveBeenCalledOnce();expect(document.querySelector('.preferences-view [role=status]')?.textContent).toContain('登录');vi.mocked(api.token).mockResolvedValue({has_token:false,source:'none',preview:''});await click('刷新状态');expect(document.body.textContent).toContain('尚未绑定');await click('手动输入 Token');const input=document.querySelector('textarea')!;input.value='synthetic-test-token';input.dispatchEvent(new Event('input',{bubbles:true}));await flushPromises();vi.mocked(api.setToken).mockRejectedValueOnce(new Error('token denied'));await click('保存凭据');expect(document.querySelector('dialog [role=alert]')?.textContent).toContain('token denied');await click('取消');expect(document.querySelector('dialog')).toBeNull();await click('手动输入 Token');expect(document.querySelector('textarea')?.value).toBe('');input.value='';await click('取消');await click('手动输入 Token');const next=document.querySelector('textarea')!;next.value='synthetic-test-token';next.dispatchEvent(new Event('input',{bubbles:true}));await flushPromises();vi.mocked(api.token).mockResolvedValue({has_token:true,source:'manual',preview:'***'});await click('保存凭据');expect(api.setToken).toHaveBeenLastCalledWith('synthetic-test-token');expect(document.querySelector('dialog')).toBeNull();expect(document.body.textContent).toContain('已绑定')
-})
 it('preserves retention custom-day and keep-all dependent controls',async()=>{
   const view=attach(SettingsView);await flushPromises();const select=view.get('.settings-control-grid select'),controls=()=>view.findAll('.settings-control-grid input');await select.setValue('custom');expect(controls()).toHaveLength(5);await controls()[4].setValue(0);await click('预览旧采样清理');expect(request).not.toHaveBeenCalled();await select.setValue('keep_all');expect(controls()).toHaveLength(4);expect(document.body.textContent).not.toContain('预览旧采样清理')
 })
@@ -81,14 +78,6 @@ it.each(['import','migration'])('restores focus to a stable control when %s remo
   const opener=kind==='import'?'导入这个来源':'迁移旧版历史与设置';button(opener).focus();await click(opener)
   vi.mocked(w.boot).mockImplementationOnce(async()=>{w.setup.value!.migration.state='ready'})
   await click(kind==='import'?'确认导入':'确认迁移');expect(button('刷新状态')).toBe(document.activeElement)
-})
-
-it('opening settings and refreshing status do not silently discover external credentials',async()=>{
- vi.mocked(api.token).mockResolvedValue({has_token:false,source:'none',preview:''})
- vi.mocked(api.discoverToken).mockResolvedValue({has_token:true,source:'external fixture',preview:'***'})
- attach(SettingsView);await flushPromises();expect(api.discoverToken).not.toHaveBeenCalled()
- await click('刷新状态');expect(api.discoverToken).not.toHaveBeenCalled();expect(api.token).toHaveBeenCalled()
- await click('检测查找凭据');expect(api.discoverToken).toHaveBeenCalledOnce();expect(document.body.textContent).toContain('已绑定')
 })
 it('requests notification authorization when enabled, then saves without requesting twice',async()=>{
  const view=attach(SettingsView);await flushPromises();const toggle=view.get('.settings-section .notification-toggle input[type=checkbox]');await toggle.setValue(true);await flushPromises();expect(request).toHaveBeenCalledWith('','POST',undefined,'EnableLocalNotifications');await click('保存设置');expect(request).toHaveBeenCalledTimes(1);expect(api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({local_notifications:expect.objectContaining({enabled:true})}))

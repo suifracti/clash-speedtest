@@ -1026,3 +1026,9 @@ Go speedtester、publicservice、application、history 全包回归与 vet 通�
 `7dc34ec` 分开显示短测均速、全程均速和后段估算，单条计划默认 50 MiB，批量默认 20 MiB，用户可调整。到上限后可准备同源加量复测，检查器趋势按测速条件分段。 `322d8f8` 保存换源前 HTTP 状态与实际来源证据。历史采用既有 SQLite 结果 JSON，无迁移。
 
 前端 88 文件/626 项通过，换源变更后相关 54 项、vue-tsc 与生产前端构建通过。Go application、history、speedtester、Web、桌面相关包回归与 vet 通过。单一 Windows 隔离产物 `322d8f8` 验证嵌入前端、同轮全部报告页和三档定点复测。备用源读满时，会一起读回首选源的拒绝或限流码，以及实际源返回的 206。隔离环境退出后只读校验 SQLite。
+
+### 2026-11-19 Windows TUN 物理出口绑定、服务目录精简与工作台体验改进
+
+- **Windows 物理出口套接字绑定与非 Fake-IP DNS 解析**：`core/speedtester/download_egress_windows.go` 实现 Winsock2 `IP_UNICAST_IF`（按网络字节序写入、按主机字节序回读确认）与 `IPV6_UNICAST_IF`，支持 TCP/UDP 绑定到自动探测到的物理网卡并过滤链路本地及 Clash Verge TUN Fake-IP DNS 地址；与 `download_egress_shared.go`、`download_dns_shared.go`（保留 `download_dns_darwin.go` 能力锚点）、`physical_family_shared.go`、`physical_entry_shared.go` 共享物理路径与双栈回退逻辑，并解除 `core/publicservice/physical_client.go`、`core/speedtester/physical_probe.go`、`application/monitor_physical.go` 与延迟测试的平台硬限制。本机 Windows 宿主真实网卡/DNS 单测通过。
+- **下线不可用/停用解锁项与自定义预设分组**：从 `core/publicservice.Catalog()`、`core/autopick.GroupServices`、`frontend/src/unlock-config.json`、`autoPick.ts`、`PeriodicSamplingPanel.vue`、`TestPlanModal.vue` 及 `SettingsView.vue` 移除 `disney_unlock`、`prime_video`、`antigravity`（`RuleFor` 与历史队列/报告只读兼容性保留）；`UnlockPicker.vue` 增加本地持久化的自定义服务分组增删切换。
+- **Clash Verge 导入辨识与工作台视觉/交互重整**：`core/profiles/verge.go` 与 `application/verge_subscriptions.go` 输出非敏感 `node_count` 与 `usage` 摘要助于区分同机场不同订阅；合并简化左侧机场筛选与测速范围交互，`SubscriptionOverview.vue` 为“机场 / 当前订阅”加角色标签与公告提示胶囊、`HomeWorkbench` 标明“经策略组：...”、去掉同名重复副标题；重整顶部导航胶囊样式与状态条、工具栏彩色地区快选与一键全选/清空、表头紧凑吸顶、内联地区色标与节点名着色、分协议色标及 Clash 在用绿条提示；Cross-platform Go vet（Windows/Darwin/Linux）、全部 16 个 Go 包 `-count=1`、前端 88 文件 633 项 Vitest 与 `vite build` 全部通过。

@@ -366,14 +366,18 @@ func ping0FamilyRule(family string) Rule {
 // The current selector contains unlock checks and the independent exit tools only.
 // RuleFor retains legacy IDs so existing snapshots and history remain readable.
 func Catalog() []Rule {
-	result := append(append([]Rule{}, aiUnlockRules()...), regionUnlockRules()...)
-	keep := map[string]string{"antigravity": "Google Antigravity", "netflix_unlock": "Netflix", "youtube_premium": "YouTube Premium", "prime_video": "Prime Video", "abema_unlock": "ABEMA", "hulu_jp_unlock": "Hulu Japan", "fod_unlock": "FOD"}
+	result := append([]Rule{}, aiUnlockRules()...)
+	for _, rule := range regionUnlockRules() {
+		if rule.ServiceID == "disney_unlock" {
+			continue
+		}
+		result = append(result, rule)
+	}
+	keep := map[string]string{"netflix_unlock": "Netflix", "youtube_premium": "YouTube Premium", "abema_unlock": "ABEMA", "hulu_jp_unlock": "Hulu Japan", "fod_unlock": "FOD"}
 	for _, rule := range catalog {
 		if name, ok := keep[rule.ServiceID]; ok {
 			rule.Name = name
-			if rule.ServiceID == "antigravity" {
-				rule.Category = "AI"
-			} else if rule.ServiceID == "abema_unlock" || rule.ServiceID == "hulu_jp_unlock" || rule.ServiceID == "fod_unlock" {
+			if rule.ServiceID == "abema_unlock" || rule.ServiceID == "hulu_jp_unlock" || rule.ServiceID == "fod_unlock" {
 				rule.Category = "日本"
 			} else {
 				rule.Category = "流媒体"

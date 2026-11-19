@@ -1,4 +1,4 @@
-//go:build darwin
+//go:build darwin || windows
 
 package speedtester
 
@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -34,7 +33,11 @@ func ResolvePhysicalHost(ctx context.Context, host string, timeout time.Duration
 		return PhysicalHostResolve{}, fmt.Errorf("节点没有 server 地址")
 	}
 	if ip, err := netip.ParseAddr(host); err == nil {
-		return PhysicalHostResolve{Host: host, Source: "literal", Addresses: []string{ip.Unmap().String()}}, nil
+		unmapped := ip.Unmap()
+		if !usablePhysicalAddress(unmapped) {
+			return PhysicalHostResolve{}, fmt.Errorf("节点地址不可用或为 Fake-IP，未取得真实入口地址")
+		}
+		return PhysicalHostResolve{Host: host, Source: "literal", Addresses: []string{unmapped.String()}}, nil
 	}
 	if timeout <= 0 {
 		timeout = 5 * time.Second
@@ -49,8 +52,8 @@ func ResolvePhysicalHost(ctx context.Context, host string, timeout time.Duration
 	if err != nil {
 		return PhysicalHostResolve{}, fmt.Errorf("读取物理网卡 %s 失败: %w", ifaceName, err)
 	}
-	dnsServer := physicalInterfaceDNS(ctx, ifaceName, iface.Index)
-	if dnsServer == "" {
+	dnsServer, _, dnsErr := detectPhysicalInterfaceDNS(ctx, ifaceName, iface.Index)
+	if dnsErr != nil || dnsServer == "" {
 		return PhysicalHostResolve{}, fmt.Errorf("物理网卡 %s 没有可用的 DNS", ifaceName)
 	}
 	resolve := PhysicalHostResolve{Host: host, Source: "dns", Interface: ifaceName, DNS: dnsServer}
@@ -77,22 +80,6 @@ func ResolvePhysicalHost(ctx context.Context, host string, timeout time.Duration
 		return PhysicalHostResolve{}, lastErr
 	}
 	return resolve, nil
-}
-
-func physicalInterfaceDNS(ctx context.Context, name string, index int) string {
-	if output, err := exec.CommandContext(ctx, "/usr/sbin/scutil", "--dns").Output(); err == nil {
-		if dns := physicalScopedDNS(string(output), name, index); dns != "" {
-			return dns
-		}
-	}
-	if output, err := exec.CommandContext(ctx, "/usr/sbin/ipconfig", "getoption", name, "domain_name_server").Output(); err == nil {
-		for _, field := range strings.Fields(string(output)) {
-			if ip, parseErr := netip.ParseAddr(field); parseErr == nil && ip.Is4() && usablePhysicalAddress(ip) {
-				return ip.String()
-			}
-		}
-	}
-	return ""
 }
 
 func exchangePhysicalDNS(ctx context.Context, iface, server, host string, qtype uint16, timeout time.Duration) ([]string, error) {

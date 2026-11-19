@@ -5,7 +5,7 @@ import './workbench-layout.css'
 import {useWorkspace} from '../../workspace'
 import {date,isReputationRule,key,projectNames,targets,type NodeOption,type Project} from '../../domain'
 import {api,type ClashUsage} from '../../api'
-import {nodeDisplayName,nodeRegionLabel} from '../../nodePresentation'
+import {nodeDisplayName,nodeRegion,nodeRegionLabel,protocolBadgeClass,regionBadgeClass} from '../../nodePresentation'
 import {airportNodeCount} from '../../airportViewing'
 import Icon from '../Icon.vue'
 import UiSelect from '../UiSelect.vue'
@@ -139,7 +139,7 @@ function updateDetailViewport(){detailViewportNarrow.value=detailViewport?.match
 onMounted(()=>detailViewport?.addEventListener('change',updateDetailViewport))
 onBeforeUnmount(()=>detailViewport?.removeEventListener('change',updateDetailViewport))
 function closeDetails(){if(m.compareOpen.value)m.closeComparison();else{inspectorOpen.value=false;void nextTick(focusReadingRow)}}
-const sourcesOpen=ref(false),ledgerExpanded=ref(false)
+const ledgerExpanded=ref(false)
 const focusKey=ref<string|null>(null)
 const focusNode=computed(()=>m.pageNodes.value.find(n=>key(n)===focusKey.value)||m.pageNodes.value[0])
 const readingNode=ref<NodeOption|null>(null),readingNodes=ref<NodeOption[]>([]),readerBody=ref<HTMLElement>()
@@ -208,6 +208,17 @@ const columns=computed(()=>overviewMode.value?['28px','minmax(190px,1.5fr)',...s
 const overviewMinWidth=computed(()=>28+190+sites.value.length*70+90+115+60+(sites.value.length+4)*10+28)
 watch(columns,()=>{void nextTick(syncTableHeading)})
 const allOnPage=computed(()=>m.pageNodes.value.length>0&&m.pageNodes.value.every(selected))
+const scopeAirportNodes=computed(()=>w.proxyNodes.value.filter(n=>w.airportFilter.value==='all'||w.nodeAirportId(n)===w.airportFilter.value))
+const regionChips=computed(()=>{
+ const counts=new Map<string,number>()
+ for(const n of scopeAirportNodes.value){const r=nodeRegion(n);counts.set(r,(counts.get(r)||0)+1)}
+ return m.filterRegions.value.map(code=>({code,label:nodeRegionLabel(code),count:counts.get(code)||0}))
+})
+const allVisibleSelected=computed(()=>m.visibleNodes.value.length>0&&m.visibleNodes.value.every(selected))
+function toggleRegionChip(code:string){
+ w.excludeRegion.value=false
+ w.region.value=w.region.value===code?'all':code
+}
 function keyNav(e:KeyboardEvent){
  const target=e.target as HTMLElement
  if(e.altKey||e.ctrlKey||e.metaKey||target!==table.value&&!target.closest('.hd-node-open'))return
@@ -230,7 +241,7 @@ function keyNav(e:KeyboardEvent){
         <h1>线路工作台</h1>
         <p v-if="filteredAirport"><strong class="hd-head-airport">{{filteredAirport.name}}</strong> · {{filteredAirportNodes}} 个节点 · <button class="hd-link" @click="w.airportFilter.value='all'">看全部 {{chosen.length}} 个机场</button></p>
         <p v-else><button class="hd-link" @click="m.picker.value=true">{{chosen.length?chosen.length+' 个机场':'选择机场'}}</button> · {{chosenNodeCount}} 个节点</p>
-        <button v-if="dominantClashUsage" class="hd-clash-usage" :disabled="!dominantClashNode" title="查看正在用的节点；按当前连接累计流量排序，每 30 秒更新" @click="inspectClashUsage"><span class="hd-clash-usage-dot" aria-hidden="true"></span>Clash 正在用：<strong>{{dominantClashName}}</strong><template v-if="dominantClashChains">（经 {{dominantClashChains}}）</template></button>
+        <button v-if="dominantClashUsage" class="hd-clash-usage" :disabled="!dominantClashNode" title="查看正在用的节点；按当前连接累计流量排序，每 30 秒更新" @click="inspectClashUsage"><span class="hd-clash-usage-dot" aria-hidden="true"></span>Clash 正在用：<strong>{{dominantClashName}}</strong><template v-if="dominantClashChains">（经策略组：{{dominantClashChains}}）</template></button>
       </div>
       <div class="hd-head-actions">
         <button class="hd-btn ghost hd-nav-shortcut" @click="w.page.value='recommend'">帮我选一条<Icon name="arrowRight"/></button>
@@ -242,24 +253,16 @@ function keyNav(e:KeyboardEvent){
     <section class="hd-source" :class="{'ledger-expanded':ledgerExpanded}" aria-label="机场选择">
       <header class="hd-source-heading">
         <h2>来源与套餐</h2>
-        <button class="hd-link" @click="m.picker.value=true">管理范围</button>
+        <span v-if="w.airports.value.length" class="hd-muted small">已纳 {{chosen.length}}/{{w.airports.value.length}}</span>
       </header>
-      <label class="hd-source-scope">
-        <span>查看机场</span>
-        <UiSelect v-model="w.airportFilter.value" aria-label="查看机场">
-          <option value="all">{{chosen.length===w.airports.value.length?'全部机场':'范围内全部机场'}} · {{chosenNodeCount}} 个节点</option>
-          <option v-for="a in chosen" :key="a.id" :value="a.id">{{a.name}} · {{airportNodeCount(a,w.nodes.value)}} 个节点</option>
-        </UiSelect>
-      </label>
+      <div class="hd-source-details"><AirportSidebar @select="id=>w.viewAirport(id)"/></div>
       <SubscriptionOverview :airports="chosen" :notices="w.notices.value" :airport-id="w.airportFilter.value" @viewed="id=>{w.airportFilter.value=id}">
         <template #additional-actions>
           <div class="hd-source-tools">
             <button class="hd-ledger-toggle hd-link" :aria-expanded="ledgerExpanded" @click="ledgerExpanded=!ledgerExpanded">{{ledgerExpanded?'收起用量明细':'展开用量明细'}}</button>
-            <button class="hd-source-toggle" :aria-expanded="sourcesOpen" @click="sourcesOpen=!sourcesOpen">机场检测状态 <span aria-hidden="true">{{sourcesOpen?'−':'+'}}</span></button>
           </div>
         </template>
       </SubscriptionOverview>
-      <div v-if="sourcesOpen" class="hd-source-details"><AirportSidebar @select="id=>w.viewAirport(id)"/></div>
     </section>
 
     <div ref="workArea" class="hd-results" aria-label="线路对照区">
@@ -313,9 +316,19 @@ function keyNav(e:KeyboardEvent){
         </div>
         </details>
       </div>
-      <div v-if="!exitMode" class="hd-view-options">
-        <details v-if="w.project.value==='service'||w.project.value==='combined'" class="hd-services"><summary>选择解锁项目<small>{{m.displayServices.value.length?'已选 '+m.displayServices.value.length+' 项':'还没选'}}</small></summary><UnlockPicker v-model="w.serviceIds.value" :catalog="catalog"/></details>
-        <p v-if="latencyTab" :id="readingHintId" class="hd-reading-hint">已保存的 HTTP 延迟<template v-if="overviewMode"> · 短线为本轮实际采样</template></p><SiteDisplayPicker v-if="latencyTab" v-model="w.displayTargets.value"/>
+      <div class="hd-view-options">
+        <details v-if="!exitMode&&(w.project.value==='service'||w.project.value==='combined')" class="hd-services"><summary>选择解锁项目<small>{{m.displayServices.value.length?'已选 '+m.displayServices.value.length+' 项':'还没选'}}</small></summary><UnlockPicker v-model="w.serviceIds.value" :catalog="catalog"/></details>
+        <div v-if="scopeAirportNodes.length" class="hd-region-strip" role="group" aria-label="按地区快选">
+          <button type="button" class="hd-region-chip all" :aria-pressed="w.region.value==='all'&&!w.excludeRegion.value" @click="w.excludeRegion.value=false;w.region.value='all'">全部<small>{{scopeAirportNodes.length}}</small></button>
+          <button v-for="rc in regionChips" :key="rc.code" type="button" class="hd-region-chip" :class="regionBadgeClass(rc.code)" :aria-pressed="!w.excludeRegion.value&&w.region.value===rc.code" @click="toggleRegionChip(rc.code)">{{rc.label}}<small>{{rc.count}}</small></button>
+          <span class="hd-quick-divider" aria-hidden="true"/>
+          <button type="button" class="hd-quick-select" :disabled="!m.visibleNodes.value.length" :title="allVisibleSelected?'取消勾选当前筛选出来的节点':'一键勾选当前筛选出来的全部节点'" @click="w.toggleAll(m.visibleNodes.value)">{{allVisibleSelected?'取消全选当前':`勾选当前 ${m.visibleNodes.value.length} 个`}}</button>
+          <button v-if="w.selectedNodes.value.length" type="button" class="hd-quick-select clear" @click="w.cancelSelection()">清空已选 {{w.selectedNodes.value.length}}</button>
+        </div>
+        <div v-if="latencyTab" class="hd-view-tail">
+          <p :id="readingHintId" class="hd-reading-hint">已保存延迟<template v-if="overviewMode"> · 短线为本轮实测</template></p>
+          <SiteDisplayPicker v-model="w.displayTargets.value"/>
+        </div>
       </div>
     </div>
     <p v-if="['latency','download','service'].includes(w.sort.value)" class="hd-muted hd-sort-status" role="status">{{w.sortLoading.value?`读取全部节点 ${w.sortReadCount.value}/${w.proxyNodes.value.length}…`:w.sortError.value||(w.sortAt.value?'排序截止 '+date(w.sortAt.value)+' · 翻页不改变排名':'尚未读取全部节点，仅按已读记录排序')}}<button class="hd-link" :disabled="w.sortLoading.value" @click="w.refreshSort()">更新排序</button></p>
@@ -350,9 +363,9 @@ function keyNav(e:KeyboardEvent){
         </div>
         </div>
         <div ref="rowScroller" class="hd-row-scroll" role="rowgroup" @scroll="syncTableHeading">
-        <div v-for="n in m.pageNodes.value" :key="key(n)" :data-node-key="key(n)" class="hd-tr" role="row" :class="{focus:isFocus(n)&&(inspectorOpen||!!focusKey),selected:selected(n)}" :aria-selected="selected(n)" @click="focus(n)">
+        <div v-for="n in m.pageNodes.value" :key="key(n)" :data-node-key="key(n)" class="hd-tr" role="row" :class="{focus:isFocus(n)&&(inspectorOpen||!!focusKey),selected:selected(n),'clash-using':isClashUsing(n)}" :aria-selected="selected(n)" @click="focus(n)">
           <span role="cell" @click.stop><input type="checkbox" :checked="selected(n)" :aria-label="'选择 '+nodeDisplayName(n)" @change="w.toggleNode(n)"></span>
-          <span role="cell" class="hd-node" :title="n.display_name+' · '+m.sourceLabel(n)+' · '+n.type"><span class="hd-flag">{{n.country_code||'—'}}</span><span><button class="hd-node-open" :tabindex="isFocus(n)?0:-1" :aria-label="'查看 '+nodeDisplayName(n)+' · '+m.sourceLabel(n)" @focus="focusKey=key(n)" @click.stop="focus(n)"><strong><i v-if="isClashUsing(n)" class="hd-clash-node-dot" aria-label="Clash 正在使用" title="Clash 正在使用"></i>{{nodeDisplayName(n)}}</strong></button><small>{{exitMode?w.nodeAirportName(n):m.sourceLabel(n)}} · <b class="hd-proto-tag">{{n.type}}</b></small><span v-if="overviewMode" class="hd-route-verdict" :class="verdicts[key(n)].tone">{{verdicts[key(n)].label}}</span></span></span>
+          <span role="cell" class="hd-node" :class="regionBadgeClass(n.country_code)" :title="n.display_name+' · '+m.sourceLabel(n)+' · '+n.type"><span><div class="hd-node-title"><span class="hd-flag" :class="regionBadgeClass(n.country_code)">{{n.country_code||'—'}}</span><span v-if="isClashUsing(n)" class="hd-clash-active-badge" aria-label="Clash 正在使用" title="Clash 正在使用"><i class="hd-clash-node-dot" aria-hidden="true"/>在用</span><button class="hd-node-open" :tabindex="isFocus(n)?0:-1" :aria-label="'查看 '+nodeDisplayName(n)+' · '+m.sourceLabel(n)" @focus="focusKey=key(n)" @click.stop="focus(n)"><strong>{{nodeDisplayName(n)}}</strong></button></div><small><span class="hd-source-label">{{exitMode?w.nodeAirportName(n):m.sourceLabel(n)}}</span> · <b class="hd-proto-tag" :class="protocolBadgeClass(n.type)">{{n.type}}</b></small><span v-if="overviewMode" class="hd-route-verdict" :class="verdicts[key(n)].tone">{{verdicts[key(n)].label}}</span></span></span>
           <NodeResponseStrip v-if="overviewMode" :node="n"/>
           <template v-if="exitMode"><template v-for="field in exitFields" :key="field"><span v-if="field==='line'" role="cell" class="hd-exit-cell hd-line-cell"><span class="hd-line-text" :title="exitRows[key(n)].line">{{exitRows[key(n)].line}}</span><span v-if="exitRows[key(n)].route" class="hd-route-tag" :class="exitRows[key(n)].routeTone" :title="exitRows[key(n)].routeTitle">{{exitRows[key(n)].route}}</span></span><span v-else-if="field==='ipTag'" role="cell" class="hd-exit-cell hd-ip-cell"><span class="hd-ip-tag" :class="exitRows[key(n)].ipKind.tone" :title="'IP 类型：'+exitRows[key(n)].ipKind.detail">{{exitRows[key(n)].ipTag}}</span></span><span v-else role="cell" class="hd-num hd-exit-cell" :class="field==='label'?exitRows[key(n)].tone:field==='riskLabel'?exitRows[key(n)].riskTone:''" :title="field==='label'?exitRows[key(n)].detail:field==='riskLabel'?'IPPure 与机器流量占比取较高值':''">{{exitRows[key(n)][field]}}</span></template></template>
           <span v-if="showVerdict&&!overviewMode" role="cell"><b class="hd-pill" :class="[verdicts[key(n)].tone,{'partial-sites':verdicts[key(n)].label.startsWith('部分站点不通')}]">{{verdicts[key(n)].label}}</b></span>
@@ -407,7 +420,7 @@ function keyNav(e:KeyboardEvent){
 .hd-pill.partial-sites{max-width:100%;white-space:normal;line-height:1.4;border-radius:8px;box-sizing:border-box}
 .history-sort{font-size:11px;white-space:nowrap;text-align:left}
 .old-tag{margin-left:2px;padding:0 2px;border-radius:2px;background:var(--hd-soft);color:var(--hd-muted);font-size:9px;font-weight:600}
-.hd-clash-usage{display:inline-flex;align-items:center;gap:5px;margin-top:5px;padding:3px 7px;border:1px solid var(--hd-line);border-radius:999px;background:var(--hd-panel);font-size:11px;line-height:1.4;color:var(--hd-muted)}.hd-clash-usage{cursor:pointer}.hd-clash-usage:hover{border-color:var(--hd-accent)}.hd-clash-usage strong{color:var(--hd-text)}.hd-clash-usage-dot,.hd-clash-node-dot{display:inline-block;flex:none;width:7px;height:7px;border-radius:50%;background:var(--hd-good)}.hd-clash-node-dot{width:6px;height:6px;margin-right:5px;vertical-align:middle}
+.hd-clash-usage{display:inline-flex;align-items:center;gap:5px;margin-top:5px;padding:3px 7px;border:1px solid var(--hd-line);border-radius:999px;background:var(--hd-panel);font-size:11px;line-height:1.4;color:var(--hd-muted)}.hd-clash-usage{cursor:pointer}.hd-clash-usage:hover{border-color:var(--hd-accent)}.hd-clash-usage strong{color:var(--hd-text)}.hd-clash-usage-dot,.hd-clash-node-dot{display:inline-block;flex:none;width:7px;height:7px;border-radius:50%;background:var(--hd-good)}.hd-clash-node-dot{width:6px;height:6px;margin:0}.hd-clash-active-badge{display:inline-flex;align-items:center;gap:4px;flex:none;padding:1px 6px;border-radius:999px;font-size:10px;font-weight:700;color:var(--hd-good);background:var(--hd-good-bg);border:1px solid color-mix(in srgb,var(--hd-good) 32%,transparent);line-height:1.45}
 .hd-body.exit-mode .hd-tr{padding-top:9px;padding-bottom:9px}.hd-body.exit-mode .hd-exit-cell.good{color:var(--hd-good)}.hd-exit-cell{font-size:11px;white-space:normal;line-height:1.4}.hd-exit-cell.bad{color:var(--hd-bad);font-weight:600}.hd-exit-cell.warn{color:var(--hd-warn)}
 .hd .hd-svc-cell.empty{color:var(--hd-empty);font-weight:400}.hd .hd-svc-cell.warn{color:var(--hd-warn)}
 </style>

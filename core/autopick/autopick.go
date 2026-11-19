@@ -43,7 +43,7 @@ const (
 // the required subset per group; the rest are never probed.
 var GroupServices = map[string][]string{
 	PurposeAI:        {"chatgpt_unlock", "claude_unlock", "gemini_unlock"},
-	PurposeStreaming: {"netflix_unlock", "youtube_premium", "disney_unlock"},
+	PurposeStreaming: {"netflix_unlock", "youtube_premium"},
 }
 
 // DefaultRequiredServices is the required subset used until the user edits it.

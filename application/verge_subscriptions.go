@@ -20,14 +20,16 @@ type ClashVergeImportRequest struct {
 }
 
 type ClashVergeSubscriptionDTO struct {
-	UID            string    `json:"uid"`
-	Name           string    `json:"name"`
-	UpdatedAt      time.Time `json:"updated_at"`
-	AirportID      string    `json:"airport_id,omitempty"`
-	SubscriptionID string    `json:"subscription_id,omitempty"`
-	Linked         bool      `json:"linked"`
-	URLChanged     bool      `json:"url_changed"`
-	NameChanged    bool      `json:"name_changed"`
+	UID            string                      `json:"uid"`
+	Name           string                      `json:"name"`
+	UpdatedAt      time.Time                   `json:"updated_at"`
+	NodeCount      int                         `json:"node_count,omitempty"`
+	Usage          *profiles.SubscriptionUsage `json:"usage,omitempty"`
+	AirportID      string                      `json:"airport_id,omitempty"`
+	SubscriptionID string                      `json:"subscription_id,omitempty"`
+	Linked         bool                        `json:"linked"`
+	URLChanged     bool                        `json:"url_changed"`
+	NameChanged    bool                        `json:"name_changed"`
 }
 
 func (s *AppService) ListClashVergeSubscriptions() ([]ClashVergeSubscriptionDTO, error) {
@@ -48,7 +50,8 @@ func (s *AppService) ListClashVergeSubscriptions() ([]ClashVergeSubscriptionDTO,
 	}
 	result := make([]ClashVergeSubscriptionDTO, 0, len(sources))
 	for _, source := range sources {
-		dto := ClashVergeSubscriptionDTO{UID: source.UID, Name: source.Name, UpdatedAt: source.UpdatedAt}
+		nodeCount, _ := profiles.CountVergeProfileNodes(file, source)
+		dto := ClashVergeSubscriptionDTO{UID: source.UID, Name: source.Name, UpdatedAt: source.UpdatedAt, NodeCount: nodeCount, Usage: source.Usage}
 		matches := 0
 		for _, airport := range store.Airports {
 			if airport == nil {

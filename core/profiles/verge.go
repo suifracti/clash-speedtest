@@ -113,8 +113,7 @@ func LoadVergeProfiles(indexPath string) ([]VergeProfile, error) {
 	return profiles, nil
 }
 
-// ReadVergeProfileCache imports node definitions, not Verge's root settings.
-func ReadVergeProfileCache(indexPath string, profile VergeProfile) ([]byte, error) {
+func parseVergeProfileProxies(indexPath string, profile VergeProfile) (*yaml.Node, error) {
 	if profile.File == "" || profile.File == "." || profile.File == ".." || strings.ContainsAny(profile.File, `/\`) {
 		return nil, errors.New("Clash Verge 订阅缓存文件名无效")
 	}
@@ -128,9 +127,27 @@ func ReadVergeProfileCache(indexPath string, profile VergeProfile) ([]byte, erro
 	if err = yaml.Unmarshal(body, &document); err != nil || document.Proxies.Kind != yaml.SequenceNode || len(document.Proxies.Content) == 0 {
 		return nil, errors.New("Clash Verge 订阅缓存没有有效节点")
 	}
+	return &document.Proxies, nil
+}
+
+// CountVergeProfileNodes returns how many proxy entries exist in the cached YAML.
+func CountVergeProfileNodes(indexPath string, profile VergeProfile) (int, error) {
+	proxies, err := parseVergeProfileProxies(indexPath, profile)
+	if err != nil {
+		return 0, err
+	}
+	return len(proxies.Content), nil
+}
+
+// ReadVergeProfileCache imports node definitions, not Verge's root settings.
+func ReadVergeProfileCache(indexPath string, profile VergeProfile) ([]byte, error) {
+	proxies, err := parseVergeProfileProxies(indexPath, profile)
+	if err != nil {
+		return nil, err
+	}
 	filtered := struct {
 		Proxies *yaml.Node `yaml:"proxies"`
-	}{Proxies: &document.Proxies}
+	}{Proxies: proxies}
 	result, err := yaml.Marshal(filtered)
 	if err != nil {
 		return nil, errors.New("无法读取 Clash Verge 节点配置")

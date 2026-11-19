@@ -95,7 +95,7 @@ func TestWebWorkbenchLatencyContractAndReopen(t *testing.T) {
 	if result.PersistenceState != "saving" {
 		t.Fatalf("unexpected Web result: %+v", result)
 	}
-	if runtime.GOOS == "darwin" {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
 		// The physical path must reject a loopback fixture before any
 		// target request, while the adapter still persists the attempt.
 		if result.Status != "not_executed" || len(result.Samples) != 0 || result.MethodVersion != 2 || len(result.NetworkPath) == 0 || proxyRequests.Load() != 0 {

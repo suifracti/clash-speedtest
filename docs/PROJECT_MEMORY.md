@@ -122,6 +122,8 @@
 
 2026-11-18 导入界面接续：按“Clash Verge 来源 → CST 目标账户”分别显示来源名、更新时间、目标位置和账户名称。自定义账户名不能反写到来源名，否则用户会误以为本机 Verge 文件也已改名。UID/准确 URL 关联规则不变；已绑定目标锁定，无匹配时不按名称猜账户。导入接口成功就记录绑定与成功结果；后续列表读取失败单独说明，提供只重新加载账户的入口，不要求重提导入。初始化导入在 boot 前通知成功，避免页面切换吞掉结果。合成场景验证了原账户同步、新建机场及窄窗口，不代表真实 Verge 绑定验证。
 
+2026-11-19 同机场多订阅辨识：`core/profiles/verge.go` 的 `CountVergeProfileNodes` 与 `application/verge_subscriptions.go` 扩展 `ClashVergeSubscriptionDTO`，在不泄露来源链接或账户 token 的前提下直接附带本地缓存 `node_count` 与 `usage`（`SubscriptionUsage` 已用/总量/剩余与到期时间），`ClashVergeImport.vue` 在同机场存在多个重名或同类订阅时显示同源重名提示、已保存用量摘要与进度条，并在目标下拉中同时显示对应账户节点数与剩余流量。
+
 ## L-006 解锁地区正反向规则与 Antigravity 批量风险及耗时归因
 
 适用：配置某项解锁只测指定地区或排除指定地区；开启/批量勾选 Antigravity；解释 Antigravity 队列里的模型可用与代理建连耗时。
@@ -129,6 +131,8 @@
 `4bb77e7`、`0c344f0`、`de31a46` 在现有 `unlock_service_regions` 字段上支持每服务独立地区规则：默认无前缀列表为“只测所选”，`!地区码`（`excludedRegion`）为“排除所选”，空列表为不限地区（后端无需新增字段）。`unlockServiceSkipReason` 遇到只测列表跳过未选地区（“不在该项设定的检测地区内”），遇到排除列表只跳过所选地区（“已排除此地区，不检测”），入口与节点名均无法识别地区时仍继续检测。空列表无法保存 `!` 前缀，`UnlockRegionEditor.vue` 用 `pendingExclude` 暂存模式并在只测/排除切换时保留已勾地区。
 
 `b690d3d` 将 Antigravity 从自动精选（`core/autopick/autopick.go` 的 `defaultCatalog`）与工作台分组/全选默认目录（`defaultSelectableServices`）排除，只允许显式手动勾选。`7cb86bb` 取消此前每次最多 3 个节点的硬拦截，超过 3 个节点时由 `antigravityBatchRisk` 在计划弹窗与工作台显示多 IP 风控与额度消耗提醒，不再禁用开始按钮或在 `runPlan` 拒绝提交。`8b794ea` 在 `QueueModal.vue` 中把“已处理”与“确认模型可用（仅 `matched` 且真实模型回答）/地区拒绝（`streamGenerateContent` HTTP 400）/未确认”分开，并标明 `details.proxy_connect_ms` 是已结束调用（含同时发起的无凭据 Cloudflare trace 与 Google 请求）的代理建连累计耗时，不能归因给单次请求。上述逻辑由前端与 Go 离线单测覆盖，未发起真实付费模型调用。
+
+2026-11-19 停用三项与自定义解锁分组：按既定边界从在用目录（`core/publicservice.Catalog()`、`core/autopick.GroupServices`、`frontend/src/unlock-config.json`、`frontend/src/autoPick.ts`、`PeriodicSamplingPanel.vue`、`TestPlanModal.vue` 及 `SettingsView.vue` 的 AI 凭据页）全面下线 `disney_unlock`、`prime_video` 与 `antigravity`，不再出现在新计划/监测/自动精选选择中，同时保留 `RuleFor(...)` 与历史队列/详情只读展示。`UnlockPicker.vue` 在“AI / 流媒体 / 日本”默认预设旁新增本地持久化的自定义分组（`localStorage` `cst.custom-unlock-groups`），支持保存当前已选服务为自定义分组、一键切换勾选与删除。
 
 ## L-007 订阅抓取路径、手动冷却豁免与换链接用量连续性
 
@@ -168,7 +172,7 @@
 
 Windows 下编译或运行 Wails 桌面端需显式传入 `-tags production`（`.github/workflows/ci.yml` 与 `run.ps1` 已默认带上；构建前需有 `frontend/dist` 与 legacy embed 资产），否则落入 Wails 默认的 `app_default_windows.go` 弹出 build tags 提示框；在无交互或沙箱隔离桌面（如 `WinSta0\exebox-*`）中，`WebView2` 的 `CreateCoreWebView2Controller` 会因窗口句柄跨桌面报 `80070578: Invalid window handle`，此时可用 `--web --port 8999 --listen 127.0.0.1 --browser none --data-dir <dir>` 启动本地 Web 服务调试，真实桌面双击 `build/bin/clash-speedtest.exe` 独立验收。`frontend/vite.config.ts` 已自动为未带 `--localstorage-file` 的 Node `v25/v26` 进程注入按进程隔离的临时文件路径（`cst-vitest-localstorage-${process.pid}.json`），并在 Windows 下设置 `fileParallelism: false` 避免多 worker 并发争用同一 SQLite localStorage 文件报 `disk I/O error`，直接运行 `npm test` 即可通过。
 
-Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 模式且默认 `/var/run/clash-verge-service/users/<uid>/verge-mihomo.sock` 不存在时，通过 `core/profiles/verge.go` 的 `LoadVergeControllerConfig` 自动读取本机 Clash Verge `clash-verge.yaml` 与 `config.yaml` 中的 `external-controller-pipe` / `external-controller-unix` / `external-controller` 与 `secret`（Windows 下优先连接 Named Pipe `\\.\pipe\verge-mihomo-...`，并由 `adapter/controller/mihomo/dial_windows.go` 在 Service Mode 下自动从 `-sidecar-release-` / `-sidecar-` 回退到 `-production-` 管道）；`core/profiles/fetch_network_windows.go` 从注册表 `Internet Settings` 读取 `ProxyEnable` 与 `ProxyServer`（支持统一 `host:port` 与分协议 `http=...;https=...`）接入订阅抓取的 `system_proxy` 策略；`core/speedtester/physical_entry_other.go` 将非 Darwin 平台的 `ResolvePhysicalHost` 与 `NewPhysicalHTTPClient` 绑定到 `AutoDetectPhysicalInterface()` 检出的物理网卡（非回环地址使用 `mihomo/component/dialer` 绑定接口，显式置 `Proxy: nil`），并过滤 `198.18.0.0/15` 与 `fdfe:dcba:9876::/64` Fake-IP；`adapter/desktop/notifications.go` 在 Windows 下使用 `ms-settings:notifications` 打开系统通知设置。
+Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 模式且默认 `/var/run/clash-verge-service/users/<uid>/verge-mihomo.sock` 不存在时，通过 `core/profiles/verge.go` 的 `LoadVergeControllerConfig` 自动读取本机 Clash Verge `clash-verge.yaml` 与 `config.yaml` 中的 `external-controller-pipe` / `external-controller-unix` / `external-controller` 与 `secret`（Windows 下优先连接 Named Pipe `\\.\pipe\verge-mihomo-...`，并由 `adapter/controller/mihomo/dial_windows.go` 在 Service Mode 下自动从 `-sidecar-release-` / `-sidecar-` 回退到 `-production-` 管道）；`core/profiles/fetch_network_windows.go` 从注册表 `Internet Settings` 读取 `ProxyEnable` 与 `ProxyServer`（支持统一 `host:port` 与分协议 `http=...;https=...`）接入订阅抓取的 `system_proxy` 策略；2026-11-19 起，`core/speedtester/download_egress_shared.go` 与 `download_egress_windows.go`、`download_dns_shared.go` 将物理出口套接字绑定与活跃网卡非 Fake-IP DNS 探测完整接入 Windows（使用 Winsock2 `IP_UNICAST_IF` 大端序设置并按主机字节序回读校验，以及 `IPV6_UNICAST_IF`），重构 `physical_family_shared.go` / `physical_entry_shared.go` 与 `core/publicservice/physical_client.go` 并解除工作台/监测层对非 `darwin` 平台的硬屏蔽；`adapter/desktop/notifications.go` 在 Windows 下使用 `ms-settings:notifications` 打开系统通知设置。
 
 `frontend/src/workspace.ts` 的 `boot()` 此前在 `setup.state !== 'ready'` 时提前返回而未调用 `events(...)`，导致新数据目录停留在“数据与备份”初始化页时侧栏一直显示“本地服务未连接”。现已抽出 `subscribeEvents()` 在 `api.setup()` 成功后立即建立事件连接（非 `ready` 状态下忽略业务事件刷新，初始化成功后直接复用同一连接），并在 `dispose()` 中重置 `unsubscribe` 与 `connected`。
 
@@ -337,3 +341,9 @@ Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 
 - **全功能 UI 重构与 14 项能力保留**：纳入 `L-017`、`bf9af5c`..`7325a67` 与 `74e5442`..`fb0ed04`（含地区首选/次选推荐 `fdd4743`、任务队列实时下载已读字节与轮次正文累计 `ea6aa13`、按订阅与时间窗直查跨配置延迟历史 `b1d2c58`、七天历史按需读取 `7325a67` 及备份/容量两阶段与监测导入导出恢复）。
 - **四类检测根因核查、误判修复与自适应下载**：纳入 `16160f4`..`6814f97`（`cfe04fc` 阶段保留、`39b4783` Netflix 逐次独立、`60aa631` 轮次错误归位、`7dc34ec`/`322d8f8` 短测口径与换源首态保留）以及 `adfcdf3`/`54032dc`（自适应速度稳定结束 v5，`download_stability.go`）。
 - **覆盖边界**：本轮（2026-11-19）仅核对 `AGENTS.md`（2026-11-18 版）、仓库 Git 历史与已存档文档证据并同步索引与 Vault 总览/会话卷，未改业务代码、未重编二进制、未启动或重跑实网检测。
+
+## 2026-11-19 Windows TUN 物理出口绑定、服务目录精简与工作台体验改进
+
+- **Windows 物理网卡绑定与直连 DNS 绕过 TUN**：新增 `core/speedtester/download_egress_windows.go`（`IP_UNICAST_IF` / `IPV6_UNICAST_IF` 绑定并适配 Winsock2 设置网络字节序、读取主机字节序行为，UDP 通配双栈回退）与物理网卡真实 DNS 选择；共享逻辑抽离至 `download_egress_shared.go`、`download_dns_shared.go`（保留 `download_dns_darwin.go` 能力锚点）、`physical_family_shared.go` 与 `physical_entry_shared.go`，同步解除 `core/publicservice/physical_client.go`、`core/speedtester/physical_probe.go`、`application/monitor_physical.go` 与工作台延迟双栈限制，本机 Windows 宿主真机物理网卡绑定/DNS 单测、全 16 个 Go 包 `-count=1` 与 Windows/Darwin/Linux 交叉 `go vet` 均通过。
+- **服务目录与 Verge 导入清晰化**：从默认/计划/自动精选/监测目录及 AI 凭据设置移除停用的 `disney_unlock`、`prime_video`、`antigravity`（保留历史回放解析）；Clash Verge 导入补充本地缓存节点数与已用/总量/剩余额度对比提示，区分同机场多份订阅。
+- **工作台侧栏与顶部、工具栏、表格视觉优化**：取消顶部冗余状态下拉/折叠/管理入口，改用 `AirportSidebar`“左击查看 + 右侧复选框纳入范围”；`SubscriptionOverview` 明确“机场 / 当前订阅”角色标签与更醒目的公告胶囊，单订阅机场不再重复机场·订阅副标题；顶部导航切换为与卡片体系一致的胶囊分段式布局与精简状态条；工具栏空白处加入彩色地区快选胶囊与一键“勾选当前 / 清空已选”，`UnlockPicker` 支持自定义分组；表头吸顶紧贴导航栏消除穿透露字，协议标签（按协议分色）、地区色块+节点名内联着色、Clash 在用绿条与“在用”徽标（含“经策略组：...”）一并到位；完整前端 88 文件 / 633 项 Vitest 与生产构建通过。

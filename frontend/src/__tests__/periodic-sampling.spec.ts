@@ -3,7 +3,7 @@ import {flushPromises,mount,type VueWrapper} from '@vue/test-utils'
 import PeriodicSamplingPanel from '../components/PeriodicSamplingPanel.vue'
 import {api} from '../api'
 vi.mock('../api',()=>({api:{periodicSampling:vi.fn(),configurePeriodicSampling:vi.fn(),periodicChecks:vi.fn()}}))
-const config={enabled:false,latency_interval_seconds:120,service_interval_seconds:300,download_interval_seconds:3600,download_mib:10,service_concurrency:16,include_antigravity:true}
+const config={enabled:false,latency_interval_seconds:120,service_interval_seconds:300,download_interval_seconds:3600,download_mib:10,service_concurrency:16,include_antigravity:false}
 const status={config,running:false,node_count:258,service_count:82,monitor_job_ids:[],cycles:{}}
 let wrapper:VueWrapper|undefined
 afterEach(()=>{wrapper?.unmount();vi.clearAllMocks();vi.useRealTimers()})

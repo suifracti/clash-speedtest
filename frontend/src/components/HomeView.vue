@@ -178,7 +178,7 @@ const displayServices=computed(()=>w.serviceIds.value.map(id=>w.catalog.value.fi
 const servicePages=computed(()=>Math.max(1,Math.ceil(displayServices.value.length/servicesPerPage.value)))
 const visibleServices=computed(()=>displayServices.value.slice((servicePage.value-1)*servicesPerPage.value,servicePage.value*servicesPerPage.value))
 const visibleServiceIds=computed(()=>visibleServices.value.map(s=>s.service_id))
-function sourceLabel(n:NodeOption){return w.nodeAirportName(n)+' · '+w.nodeSubscriptionName(n)}
+function sourceLabel(n:NodeOption){const airport=w.nodeAirportName(n),sub=w.nodeSubscriptionName(n);return sub&&sub!==airport?`${airport} · ${sub}`:airport}
 function airportNodeCount(id:string){return countAirportNodes(w.airports.value.find(a=>a.id===id),w.nodes.value)}
 function serviceMetric(n:NodeOption,id:string){const a=shownService(n,id);if(!a)return '未测';if(!a.result)return attemptStatus(a);const o=a.result.outcome;if(o==='flapping')return serviceAvailability(a)===0?'检测结论不一致':'未确认';if(['matched','unlocked'].includes(o)&&!servicePassed(a))return '未确认';return outcomeLabel(o)}
 function serviceTone(n:NodeOption,id:string){const a=shownService(n,id);return a?.result?.outcome==='reachable'?'reachable':a?attemptTone(a):'empty'}

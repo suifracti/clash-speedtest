@@ -77,7 +77,7 @@ func TestDesktopWorkbenchLatencyContractAndReopen(t *testing.T) {
 	if result.PersistenceState != "saving" {
 		t.Fatalf("unexpected Wails result: %+v", result)
 	}
-	if runtime.GOOS == "darwin" {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
 		// A loopback fixture is not a physical node. Persist the local
 		// constraint without fabricating a latency sample or sending HTTP.
 		if result.Status != "not_executed" || len(result.Samples) != 0 || result.MethodVersion != 2 || len(result.NetworkPath) == 0 || proxyRequests.Load() != 0 {

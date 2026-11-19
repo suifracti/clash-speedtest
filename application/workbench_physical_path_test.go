@@ -103,8 +103,8 @@ func TestWorkbenchPhysicalLatencyPathAndPreparationFailureSaveAndReopen(t *testi
 }
 
 func TestWorkbenchDefaultMacServiceLocalPreflightSavesZeroRequestsAndReopens(t *testing.T) {
-	if runtime.GOOS != "darwin" {
-		t.Skip("Mac physical path only")
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+		t.Skip("physical path enabled on darwin and windows only")
 	}
 	// Empty config is rejected before interface discovery/DNS/HTTP. No real peer.
 	node := monitor.MonitoredNode{NodeKey: "node-same", NodeIdentityKey: "i", ConfigRevisionKey: "r", DisplayName: "fixture"}

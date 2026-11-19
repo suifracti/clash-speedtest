@@ -114,7 +114,7 @@ describe('SubscriptionOverview status strip',()=>{
     const buttons=wrapper.findAll('.subscription-actions .button')
     expect(wrapper.findAll('.subscription-airport-row')).toHaveLength(2)
     expect(wrapper.find('select[aria-label="首页用量订阅"]').exists()).toBe(false)
-    expect(buttons.slice(0,2).map(b=>b.text())).toEqual(['刷新此机场','选择范围'])
+    expect(buttons.slice(0,2).map(b=>b.text())).toEqual(['刷新此机场'])
     await buttons[0]!.trigger('click');await flushPromises()
     expect(refreshMocks.startRefresh).toHaveBeenLastCalledWith(expect.objectContaining({selections:[
       {airport_id:'airport-a',subscription_id:'account-a1'},
@@ -144,33 +144,34 @@ describe('SubscriptionOverview status strip',()=>{
     expect(wrapper!.text()).not.toContain('30 分钟内已刷新')
   })
 
-  it('sends selected and full workspace refresh scopes without changing measurement scope',async()=>{
+  it('refreshes chosen workspace airports or full workspace without altering measurement scope',async()=>{
+    const singleSubAirport:Airport={id:'airport-s',name:'Single Sub Airport',url_display:'https://single.example.invalid',node_count:1,has_cache:true,subscriptions:[{id:'account-s1',airport_id:'airport-s',name:'Account S1',url_display:'https://single.example.invalid',url_configured:true,node_count:1,has_cache:true}]}
     const workspace=createWorkspace()
-    workspace.airports.value=[airportA,airportB]
+    workspace.airports.value=[airportA,singleSubAirport]
     workspace.selectedAirportIds.value=['airport-a']
     workspace.subscription.value='all'
-    wrapper=mount(SubscriptionOverview,{props:{airports:[airportA],notices:[]},global:{provide:{[workspaceKey as symbol]:workspace}}})
+    wrapper=mount(SubscriptionOverview,{props:{airports:[singleSubAirport],notices:[],airportId:'airport-s'},global:{provide:{[workspaceKey as symbol]:workspace}}})
     await flushPromises()
 
-    expect(refreshMocks.startRefresh).not.toHaveBeenCalled()
-    expect(workspace.selectedAirportIds.value).toEqual(['airport-a'])
-    expect(workspace.subscription.value).toBe('all')
+    expect(wrapper.find('button[aria-label="选择刷新范围"]').exists()).toBe(false)
+    expect(wrapper.findAll('.subscription-actions .button').map(b=>b.text())).toEqual(['刷新此机场'])
+    await wrapper.get('.subscription-actions .button').trigger('click')
+    await flushPromises()
+    expect(refreshMocks.startRefresh).toHaveBeenLastCalledWith(expect.objectContaining({selections:[{airport_id:'airport-s',subscription_id:'account-s1'}]}))
 
-    await wrapper!.get('button[aria-label="选择刷新范围"]').trigger('click')
-    await wrapper!.get('input[aria-label="Airport A · Account A2"]').setValue(false)
-    await wrapper!.get('input[aria-label="Airport B · Account B1"]').setValue(true)
-    const chooseRefresh=wrapper!.findAll('button').find(button=>button.text().includes('刷新所选'))
-    expect(chooseRefresh).toBeTruthy()
-    await chooseRefresh!.trigger('click')
+    await wrapper!.setProps({airports:[airportA],airportId:'all'})
+    const refreshChosen=wrapper!.findAll('button').find(button=>button.text().includes('刷新所选机场'))
+    expect(refreshChosen).toBeTruthy()
+    await refreshChosen!.trigger('click')
     await flushPromises()
     expect(refreshMocks.startRefresh).toHaveBeenLastCalledWith(expect.objectContaining({selections:[
       {airport_id:'airport-a',subscription_id:'account-a1'},
-      {airport_id:'airport-b',subscription_id:'account-b1'},
+      {airport_id:'airport-a',subscription_id:'account-a2'},
     ]}))
     expect(workspace.selectedAirportIds.value).toEqual(['airport-a'])
     expect(workspace.subscription.value).toBe('all')
 
-    await wrapper!.setProps({airportId:'all'})
+    await wrapper!.setProps({airports:[airportA,singleSubAirport],airportId:'all'})
     const refreshAll=wrapper!.findAll('button').find(button=>button.text().includes('全部刷新'))
     expect(refreshAll).toBeTruthy()
     await refreshAll!.trigger('click')
@@ -178,7 +179,7 @@ describe('SubscriptionOverview status strip',()=>{
     expect(refreshMocks.startRefresh).toHaveBeenLastCalledWith(expect.objectContaining({selections:[
       {airport_id:'airport-a',subscription_id:'account-a1'},
       {airport_id:'airport-a',subscription_id:'account-a2'},
-      {airport_id:'airport-b',subscription_id:'account-b1'},
+      {airport_id:'airport-s',subscription_id:'account-s1'},
     ]}))
     expect(workspace.selectedAirportIds.value).toEqual(['airport-a'])
     expect(workspace.subscription.value).toBe('all')

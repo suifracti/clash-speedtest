@@ -35,6 +35,12 @@ const regionLabels:Record<string,string>={HK:'香港',MO:'澳门',TW:'台湾',JP
 const nameRegions=Object.entries(regionLabels).filter(([code])=>code!=='GB').sort((a,b)=>b[1].length-a[1].length)
 export function nodeRegionLabel(code:string){return regionLabels[code]||(['OTHER','unknown','XX','ZZ'].includes(code)?'未识别地区':code)}
 
+const protocolClasses:Record<string,string>={vmess:'proto-vmess',vless:'proto-vless',trojan:'proto-trojan',anytls:'proto-anytls',ss:'proto-ss',shadowsocks:'proto-ss',ssr:'proto-ssr',shadowsocksr:'proto-ssr',hysteria2:'proto-hy2',hysteria:'proto-hy2',hy2:'proto-hy2',tuic:'proto-tuic',wireguard:'proto-wg',wg:'proto-wg'}
+export function protocolBadgeClass(type?:string){return protocolClasses[(type||'').trim().toLowerCase()]||'proto-other'}
+
+const regionClasses:Record<string,string>={HK:'region-hk',TW:'region-tw',JP:'region-jp',SG:'region-sg',KR:'region-kr',US:'region-us',UK:'region-uk',GB:'region-uk',DE:'region-eu',FR:'region-eu',NL:'region-eu',CH:'region-eu',SE:'region-eu',IT:'region-eu',ES:'region-eu',PL:'region-eu',CA:'region-ca',AU:'region-ca',RU:'region-eu'}
+export function regionBadgeClass(code?:string){const c=(code||'').trim().toUpperCase();if(!c||c==='UNKNOWN'||c==='XX'||c==='ZZ'||c==='—')return 'region-unknown';return regionClasses[c]||'region-other'}
+
 // Presentation only: names used by subscriptions, identity, exports and history stay intact.
 // Unknown attributes and markers are retained; missing numbers/multipliers are never invented.
 export function nodeDisplayName(node:Pick<NodeOption,'display_name'>&Partial<Pick<NodeOption,'country_code'>>){

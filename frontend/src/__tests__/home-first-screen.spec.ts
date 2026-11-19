@@ -246,25 +246,26 @@ describe('synthetic 256-node home first screen',()=>{
 })
 
 describe('airport filter keeps the header and source strip on that airport (synthetic data)',()=>{
-  it('changes the viewed airport through the source selector without widening the chosen scope',async()=>{
+  it('changes the viewed airport directly from the sidebar without widening the chosen scope',async()=>{
     const {workspace,wrapper}=attachHome()
     const selectedAirports=['airport-1','airport-3']
     workspace.setAirports(selectedAirports)
     await flushPromises()
     const selectedNode=workspace.filteredNodes.value[0]!
     workspace.toggleNode(selectedNode)
-    const selector=wrapper.get<HTMLSelectElement>('select[aria-label="查看机场"]')
-    expect([...selector.element.options].map(option=>option.value)).toEqual(['all',...selectedAirports])
-    await selector.setValue('airport-3')
+    expect(wrapper.find('select[aria-label="查看机场"]').exists()).toBe(false)
+    const pickButton=(label:string)=>wrapper.findAll('.sidebar-airport-pick').find(b=>b.text().includes(label))!
+    expect((wrapper.get('input[aria-label="纳入范围 合成机场 1"]').element as HTMLInputElement).checked).toBe(true)
+    expect((wrapper.get('input[aria-label="纳入范围 合成机场 2"]').element as HTMLInputElement).checked).toBe(false)
+    await pickButton('合成机场 3').trigger('click')
     expect(workspace.filteredNodes.value).toHaveLength(64)
-    await selector.setValue('all')
     expect(workspace.selectedAirportIds.value).toEqual(selectedAirports)
-    expect(workspace.filteredNodes.value).toHaveLength(128)
-    expect(workspace.selectedNodes.value).toEqual([selectedNode])
-    await selector.setValue('airport-3')
     await wrapper.findAll('.hd-title button').find(button=>button.text()==='看全部 2 个机场')!.trigger('click')
     expect(workspace.selectedAirportIds.value).toEqual(selectedAirports)
     expect(workspace.filteredNodes.value).toHaveLength(128)
+    expect(workspace.selectedNodes.value).toEqual([selectedNode])
+    await wrapper.get('input[aria-label="纳入范围 合成机场 2"]').setValue(true)
+    expect(workspace.selectedAirportIds.value).toEqual(['airport-1','airport-3','airport-2'])
     expect(api.startLatency).not.toHaveBeenCalled()
     expect(api.startRefresh).not.toHaveBeenCalled()
   })

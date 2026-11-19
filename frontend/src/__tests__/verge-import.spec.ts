@@ -76,3 +76,25 @@ it('imports a Verge subscription directly from initial setup in DataView and boo
   expect(document.body.textContent).toContain('已同步 5 个节点')
  }finally{wrapper.unmount();w.dispose();list.mockRestore();sync.mockRestore();boot.mockRestore()}
 })
+
+it('shows quota usage, node count, and duplicate tag to distinguish same-name Verge subscriptions',async()=>{
+ HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','')}
+ HTMLDialogElement.prototype.close=function(){this.removeAttribute('open')}
+ const list=vi.spyOn(api,'vergeSubscriptions').mockResolvedValue([
+  {uid:'dup-1',name:'同名机场',updated_at:'2026-10-23T12:31:00Z',node_count:42,usage:{upload:0,download:589*1073741824,total:600*1073741824},linked:false,url_changed:false},
+  {uid:'dup-2',name:'同名机场',updated_at:'2026-11-19T04:40:00Z',node_count:68,usage:{upload:0,download:162*1073741824,total:600*1073741824},linked:false,url_changed:false}
+ ])
+ const w=createWorkspace();w.airports.value=[{id:'a1',name:'同名机场',node_count:42,has_cache:true,url_display:'',subscriptions:[{id:'s1',airport_id:'a1',name:'同名机场',node_count:42,has_cache:true,url_display:'',url_configured:true,usage:{upload:0,download:589*1073741824,total:600*1073741824}}]}] as never
+ const wrapper=mount(AirportsView,{attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w},stubs:{UsageDays:true,SubscriptionChanges:true}}})
+ try{
+  await wrapper.findAll('button').find(b=>b.text()==='从 Clash Verge 导入／同步')!.trigger('click')
+  await flushPromises()
+  const text=document.body.textContent||''
+  expect(text).toContain('同名订阅')
+  expect(text).toContain('42 个节点')
+  expect(text).toContain('68 个节点')
+  expect(text).toContain('589.00 GiB / 600.00 GiB')
+  expect(text).toContain('162.00 GiB / 600.00 GiB')
+  expect(document.querySelectorAll('.verge-usage-meter')).toHaveLength(2)
+ }finally{wrapper.unmount();w.dispose();list.mockRestore()}
+})

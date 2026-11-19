@@ -7,7 +7,7 @@ import UiSelect from './UiSelect.vue'
 import Modal from './Modal.vue'
 import ServicePicker from './ServicePicker.vue'
 import UnlockPicker from './UnlockPicker.vue'
-import {antigravityBatchRisk,unlockServiceSkipReason} from '../unlock'
+import {unlockServiceSkipReason} from '../unlock'
 
 const w=useWorkspace(),validation=ref('')
 const isReputationId=(id:string)=>isReputationRule(w.catalog.value.find(rule=>rule.service_id===id)||{service_id:id})
@@ -63,9 +63,6 @@ const presets:Preset[]=[
 const activePreset=computed(()=>{const p=w.plan.value;if(!p||!p.projects.includes('latency'))return undefined;return presets.find(x=>x.target===p.target&&x.samples===p.samples&&x.timeout===p.timeout&&x.repeats===p.repeats)})
 function applyPreset(x:Preset){const p=w.plan.value;if(!p)return;if(!p.projects.includes('latency'))p.projects=['latency',...p.projects];p.target=x.target;p.samples=x.samples;p.timeout=x.timeout;p.repeats=x.repeats}
 const extras=computed(()=>{const p=w.plan.value;if(!p)return [];return [...p.projects.filter(x=>x!=='latency').map(x=>projectNames[x]),...(p.includeReputation?['IP信誉/纯净度']:[])]})
-// 只有 Antigravity 会用已绑定账号发真实模型请求；其余 AI 项是网页/资源可达性检查。
-const modelServices=computed(()=>selectedServiceIds.value.filter(id=>id==='antigravity'))
-const modelRisk=computed(()=>antigravityBatchRisk(w.plan.value?.nodes.length||0,selectedServiceIds.value))
 const latencySamples=computed(()=>{const p=w.plan.value;return p&&p.projects.includes('latency')?p.nodes.length*p.repeats*(p.target==='all'?targets.length:1)*p.samples:0})
 const serviceObservations=computed(()=>{const p=w.plan.value;return p?p.nodes.reduce((sum,n)=>sum+w.allowedUnlockServices(n,selectedServiceIds.value).length,0)*p.repeats*(p.serviceSamples??4):0})
 async function submit(){
@@ -89,7 +86,7 @@ async function submit(){
       <h3 id="plan-project-title">检测项目</h3>
       <div class="cst-presets" role="group" aria-label="检测预设">
         <button v-for="x in presets" :key="x.id" type="button" class="cst-preset" :aria-pressed="activePreset?.id===x.id" @click="applyPreset(x)"><strong>{{x.label}}</strong><small>{{x.hint}}</small></button>
-        <p class="cst-preset-state" role="status">当前：<strong>{{activePreset?.label||'自定义'}}</strong><template v-if="extras.length"> · 另含 {{extras.join('、')}}</template><template v-if="modelServices.length"> · <span class="warn">含模型类服务</span></template></p>
+        <p class="cst-preset-state" role="status">当前：<strong>{{activePreset?.label||'自定义'}}</strong><template v-if="extras.length"> · 另含 {{extras.join('、')}}</template></p>
       </div>
       <div class="plan-projects">
         <label v-for="p in (['latency','download','service'] as Exclude<Project,'combined'>[])" :key="p" :class="{checked:w.plan.value.projects.includes(p)}"><input v-model="w.plan.value.projects" type="checkbox" :value="p">{{projectNames[p]}}</label>
@@ -123,7 +120,6 @@ async function submit(){
       <details v-if="w.plan.value.projects.includes('service')" class="plan-section" :open="expanded.has('service')" @toggle="toggleSection('service',$event)">
         <summary><strong>解锁检测</strong><span>{{standardServiceIds.length?`已选 ${standardServiceIds.length} 项`:'尚未选择服务'}} · 每项 {{w.plan.value.serviceSamples??4}} 次</span></summary>
         <UnlockPicker v-model="standardServiceIds" :catalog="standardCatalog"/>
-        <p v-if="standardServiceIds.includes('antigravity')" class="inline-warning">Antigravity 会用已绑定账号发起真实模型请求，可能消耗额度。</p>
         <p class="muted small">连接复用按实际观测记录。关闭 HTTP 空闲连接不等于节点重连，也不能保证出口稳定。</p>
       </details>
       <details v-if="w.plan.value.includeReputation" class="plan-section reputation-section" :open="expanded.has('reputation')" @toggle="toggleSection('reputation',$event)">
@@ -152,14 +148,13 @@ async function submit(){
         <div v-if="w.plan.value.projects.includes('latency')"><dt>延迟</dt><dd><strong>{{latencySamples}}</strong> 次计划采样<small>{{w.plan.value.nodes.length}} 节点 × {{w.plan.value.target==='all'?targets.length+' 站':'1 站'}} × {{w.plan.value.samples}} 次 × {{w.plan.value.repeats}} 轮</small></dd></div>
         <div v-if="selectedServiceIds.length"><dt>服务与 IP</dt><dd><strong>{{serviceObservations}}</strong> 次计划观察<small>{{selectedServiceIds.length}} 项 · 服务采样 {{w.plan.value.serviceSamples??4}} 次/项；服务内部步骤、跳转和协议开销另计<template v-if="w.plan.value.projects.includes('service')&&standardServiceIds.includes('netflix_unlock')">（Netflix 一次观察约 5 个请求）</template></small></dd></div>
         <div v-if="w.plan.value.projects.includes('download')"><dt>下载</dt><dd v-if="adaptiveDownload">流量随实测速度与下载时长变化<small>实际扣费还受机场倍率和协议开销影响</small></dd><dd v-else>最多读取正文 <strong>{{bytes(downloadVolume)}}</strong><small>实际扣费还受机场倍率和协议开销影响</small></dd></div>
-        <div v-if="modelServices.length" class="warn"><dt>模型类</dt><dd>会用已绑定账号发起真实请求<small>可能消耗账号额度，单独计算</small></dd></div>
       </dl>
       <details v-if="skippedCount" class="plan-skipped"><summary>地区规则跳过 {{skippedCount}} 个节点/服务组合</summary><p v-for="item in skippedServices" :key="item.id"><strong>{{item.name}} · 跳过 {{item.count}} 个节点</strong><small>{{item.reason}}</small><small v-for="[id,account] in item.accounts" :key="id">{{account.name}} · {{account.count}}</small></p></details>
       <p class="muted small">合计 {{plannedRequests}} 次计划采样<template v-if="plannedKinds">（{{plannedKinds}}）</template>；这是计划次数，不是实际请求总数。</p>
     </section>
       </aside>
     </div>
-    <template #footer><div v-if="validation||modelRisk" class="plan-feedback"><p v-if="validation" class="inline-error" role="alert">{{validation}}</p><p v-if="modelRisk" class="inline-warning">{{modelRisk}}</p></div><button class="button" @click="w.plan.value=null">{{w.preparingPlan.value?'取消准备':'返回调整'}}</button><button class="button primary" :disabled="w.busy.value||w.preparingPlan.value" @click="submit">{{w.preparingPlan.value?'正在准备…':`开始检测 ${w.plan.value.nodes.length} 个节点`}}</button></template>
+    <template #footer><div v-if="validation" class="plan-feedback"><p class="inline-error" role="alert">{{validation}}</p></div><button class="button" @click="w.plan.value=null">{{w.preparingPlan.value?'取消准备':'返回调整'}}</button><button class="button primary" :disabled="w.busy.value||w.preparingPlan.value" @click="submit">{{w.preparingPlan.value?'正在准备…':`开始检测 ${w.plan.value.nodes.length} 个节点`}}</button></template>
   </Modal>
 </template>
 

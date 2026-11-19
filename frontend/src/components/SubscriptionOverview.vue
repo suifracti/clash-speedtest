@@ -23,9 +23,6 @@ const activeJob=ref<SubscriptionRefreshJob|null>(null)
 const loading=ref(false)
 const jobsReadState=ref<'loading'|'ready'|'error'>('loading')
 const noticeOpen=ref(false)
-const scopeOpen=ref(false)
-const scopeTouched=ref(false)
-const selectedScopeKeys=ref<string[]>([])
 const error=ref('')
 
 const selected=computed(()=>accounts.value[0])
@@ -85,7 +82,7 @@ const extraLinks=computed(()=>{
   return values.map(link=>({...link,url:safeAirportLink(link.url)})).filter((link,index,all)=>!!link.label&&!!link.url&&link.url!==officialLink.value&&all.findIndex(other=>safeAirportLink(other.url)===link.url)===index)
 })
 const workspaceAccounts=computed(()=>airportAccounts(workspace.airports.value))
-const selectedScopeAccounts=computed(()=>workspaceAccounts.value.filter(account=>selectedScopeKeys.value.includes(account.key)))
+const selectedAirportsAccounts=computed(()=>props.airports.length?airportAccounts(props.airports):workspaceAccounts.value)
 // Manual job history and persisted automatic attempts share one latest state per subscription.
 const latestRefreshByAccount=computed(()=>workspaceAccounts.value.map(account=>{
   let latest:{job:SubscriptionRefreshJob;item:SubscriptionRefreshJob['items'][number];at:string}|undefined
@@ -189,15 +186,6 @@ const statusTone=computed(()=>jobRunning(activeJob.value)?'warn':['failed','inte
 const refreshDisabled=computed(()=>loading.value||jobRunning(activeJob.value))
 const cancelJob=computed(()=>jobRunning(activeJob.value)?activeJob.value:jobRunning(visibleJob.value)?visibleJob.value:null)
 
-function defaultScopeKeys(){
-  const propAirportIds=new Set(props.airports.map(airport=>airport.id))
-  return workspaceAccounts.value.filter(account=>propAirportIds.has(account.airport.id)).map(account=>account.key)
-}
-function syncDefaultScope(){if(!scopeTouched.value)selectedScopeKeys.value=defaultScopeKeys()}
-function setScopeSelected(key:string,checked:boolean){
-  scopeTouched.value=true
-  selectedScopeKeys.value=checked?[...new Set([...selectedScopeKeys.value,key])]:selectedScopeKeys.value.filter(value=>value!==key)
-}
 function mergeJob(job:SubscriptionRefreshJob){
   jobs.value=[job,...jobs.value.filter(existing=>existing.id!==job.id)]
   if(activeJob.value?.id===job.id||job.state==='running')activeJob.value=job
@@ -239,9 +227,8 @@ async function startSelections(accountsToRefresh:AirportAccount[]){
   }catch(e){error.value=e instanceof Error?e.message:String(e)}finally{loading.value=false}
 }
 async function startCurrent(){if(selected.value)await startSelections([selected.value])}
-async function startChosenScope(){await startSelections(selectedScopeAccounts.value);scopeOpen.value=false}
 async function startAirport(){await startSelections(accounts.value)}
-async function startAll(){await startSelections(workspaceAccounts.value)}
+async function startAll(){await startSelections(selectedAirportsAccounts.value)}
 async function cancelCurrent(){
   const job=cancelJob.value
   if(!job)return
@@ -261,8 +248,6 @@ async function retryJob(job:SubscriptionRefreshJob){
     if(jobRunning(next))schedulePoll(next.id)
   }catch(e){error.value=e instanceof Error?e.message:String(e)}finally{loading.value=false}
 }
-watch(()=>props.airports,syncDefaultScope,{immediate:true,deep:true})
-watch(()=>workspace.airports.value,syncDefaultScope,{deep:true})
 watch(disclosureSummary,value=>emit('summary',value),{immediate:true})
 onMounted(()=>void loadJobs())
 onBeforeUnmount(()=>{disposed=true;clearTimeout(pollTimer)})
@@ -271,7 +256,7 @@ defineExpose({usageRatio})
 
 <template>
   <section class="subscription-overview" :class="{'all-airports':allAirports}" aria-label="首页订阅账户状态">
-    <header v-if="!allAirports&&viewedAirport" class="subscription-airport-heading"><strong>{{viewedAirport.name}}</strong><small>{{accounts.length}} 个订阅</small></header>
+    <header v-if="!allAirports&&viewedAirport" class="subscription-airport-heading"><span class="subscription-role-tag airport">机场</span><strong>{{viewedAirport.name}}</strong><small>{{accounts.length}} 个订阅</small></header>
     <template v-if="rowMode">
       <div class="subscription-all-main">
         <div class="subscription-airport-list" :aria-label="allAirports?'全部机场用量汇总':'机场订阅用量'">
@@ -299,16 +284,7 @@ defineExpose({usageRatio})
           </div>
         </div>
       </div>
-      <div class="subscription-actions"><button class="button primary" :disabled="refreshDisabled||!workspaceAccounts.length" @click="allAirports?startAll():startAirport()">{{loading?'提交中…':allAirports?'全部刷新':'刷新此机场'}}</button><template v-if="!allAirports"><div class="refresh-scope">
-          <button class="button ghost" type="button" aria-label="选择刷新范围" :aria-expanded="scopeOpen" @click="scopeOpen=!scopeOpen">选择范围</button>
-          <div v-if="scopeOpen" class="refresh-scope-panel" role="group" aria-label="刷新订阅范围">
-            <label v-for="entry in workspaceAccounts" :key="entry.key">
-              <input type="checkbox" :aria-label="`${entry.airport.name} · ${entry.subscription.name}`" :checked="selectedScopeKeys.includes(entry.key)" @change="setScopeSelected(entry.key,($event.target as HTMLInputElement).checked)">
-              <span>{{entry.airport.name}} · {{entry.subscription.name}}</span>
-            </label>
-            <button class="button primary" :disabled="refreshDisabled||!selectedScopeAccounts.length" @click="startChosenScope">刷新所选 {{selectedScopeAccounts.length}}</button>
-          </div>
-        </div></template><button v-if="cancelJob" class="text-button danger" @click="cancelCurrent">取消刷新</button></div>
+      <div class="subscription-actions"><button class="button primary" :disabled="refreshDisabled||!(allAirports?selectedAirportsAccounts.length:accounts.length)" @click="allAirports?startAll():startAirport()">{{loading?'提交中…':allAirports?(props.airports.length&&props.airports.length<workspace.airports.value.length?'刷新所选机场':'全部刷新'):'刷新此机场'}}</button><button v-if="cancelJob" class="text-button danger" @click="cancelCurrent">取消刷新</button></div>
     </template>
     <template v-else-if="selected">
       <div class="subscription-main">
@@ -317,7 +293,7 @@ defineExpose({usageRatio})
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 4.5-9 4.5-9-4.5L12 3Z"/><path d="m3 12 9 4.5 9-4.5"/><path d="m3 16.5 9 4.5 9-4.5"/></svg>
           </div>
           <div class="subscription-account">
-            <strong>{{selected.subscription.name}}</strong>
+            <strong class="subscription-sub-name"><span class="subscription-role-tag sub">当前订阅</span><span>{{selected.subscription.name}}</span></strong>
             <small>{{sourceLabel}} · {{updatedAtLabel}}</small>
             <div class="subscription-facts">
               <span class="subscription-expiry">{{expireLabel}}</span>
@@ -326,7 +302,7 @@ defineExpose({usageRatio})
                 <summary>更多入口 {{extraLinks.length}}</summary>
                 <div><a v-for="link in extraLinks" :key="link.label+link.url" :href="link.url" target="_blank" rel="noopener noreferrer">{{link.label}} ↗</a></div>
               </details>
-              <SubscriptionChanges :airport-id="selected.airport.id" :subscription="selected.subscription"/><button v-if="accountNotices.length" class="text-button" @click="noticeOpen=true">公告 {{accountNotices.length}} ›</button>
+              <SubscriptionChanges :airport-id="selected.airport.id" :subscription="selected.subscription"/><button v-if="accountNotices.length" type="button" class="subscription-notice-pill" @click="noticeOpen=true"><span class="notice-dot" aria-hidden="true"/>公告 {{accountNotices.length}} ›</button>
             </div>
           </div>
         </div>
@@ -353,18 +329,8 @@ defineExpose({usageRatio})
       </div>
 
       <div class="subscription-actions">
-        <button class="button primary" :disabled="refreshDisabled" @click="startCurrent">{{loading?'提交中…':'刷新当前订阅'}}</button>
-        <button class="button ghost" :disabled="refreshDisabled" @click="startAirport">刷新此机场</button>
-        <div class="refresh-scope">
-          <button class="button ghost" type="button" aria-label="选择刷新范围" :aria-expanded="scopeOpen" @click="scopeOpen=!scopeOpen">选择范围</button>
-          <div v-if="scopeOpen" class="refresh-scope-panel" role="group" aria-label="刷新订阅范围">
-            <label v-for="entry in workspaceAccounts" :key="entry.key">
-              <input type="checkbox" :aria-label="`${entry.airport.name} · ${entry.subscription.name}`" :checked="selectedScopeKeys.includes(entry.key)" @change="setScopeSelected(entry.key,($event.target as HTMLInputElement).checked)">
-              <span>{{entry.airport.name}} · {{entry.subscription.name}}</span>
-            </label>
-            <button class="button primary" :disabled="refreshDisabled||!selectedScopeAccounts.length" @click="startChosenScope">刷新所选 {{selectedScopeAccounts.length}}</button>
-          </div>
-        </div>
+        <button class="button primary" :disabled="refreshDisabled" @click="startAirport">{{loading?'提交中…':'刷新此机场'}}</button>
+        <button v-if="accounts.length>1" class="button ghost" :disabled="refreshDisabled" @click="startCurrent">仅刷当前订阅</button>
         <span v-if="statusLabel" class="badge" :class="statusTone">{{statusLabel}}</span>
         <button v-if="visibleItem?.state==='failed'" class="text-button" :disabled="loading" @click="retryFailed">重试失败项</button>
         <button v-if="cancelJob" class="text-button danger" @click="cancelCurrent">取消刷新</button>
@@ -408,7 +374,15 @@ defineExpose({usageRatio})
 .subscription-airport-heading,.subscription-issues,.status-read{grid-column:1/-1}
 .subscription-main{display:grid;grid-template-columns:minmax(140px,.85fr) minmax(220px,1.65fr) 156px;align-items:center;gap:14px;min-width:0}
 .subscription-identity{display:flex;align-items:center;gap:10px;min-width:0}.subscription-icon{display:grid;place-items:center;flex:none;width:34px;height:34px;border-radius:10px;background:var(--blue-soft);color:var(--blue)}.subscription-icon svg{width:20px;height:20px}
-.subscription-account{display:grid;gap:1px;min-width:0}.subscription-account>strong,.subscription-account>small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.subscription-account>strong{font-size:14px;font-weight:700}.subscription-account>small{font-size:10.5px;line-height:1.25;color:var(--muted)}.subscription-account .ui-select{max-width:100%}.subscription-account .ui-select-trigger{min-height:26px;padding:2px 6px;font-size:14px;font-weight:650}
+.subscription-account{display:grid;gap:3px;min-width:0}.subscription-account>strong,.subscription-account>small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.subscription-account>strong{font-size:14px;font-weight:700}.subscription-account>small{font-size:10.5px;line-height:1.25;color:var(--muted)}.subscription-account .ui-select{max-width:100%}.subscription-account .ui-select-trigger{min-height:26px;padding:2px 6px;font-size:14px;font-weight:650}
+.subscription-role-tag{display:inline-flex;align-items:center;flex:none;padding:1px 6px;border-radius:5px;font-size:10px;font-weight:700;line-height:1.4;letter-spacing:.02em}
+.subscription-role-tag.airport{background:var(--cst-panel-2);border:1px solid var(--cst-line-strong);color:var(--muted)}
+.subscription-role-tag.sub{background:var(--blue-soft);color:var(--blue)}
+.subscription-sub-name{display:flex;align-items:center;gap:6px;min-width:0}.subscription-sub-name>span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.subscription-notice-pill{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border:1px solid color-mix(in srgb,#d97706 38%,var(--line));border-radius:999px;background:color-mix(in srgb,#d97706 10%,var(--surface));color:#b45309;font-size:10.5px;font-weight:700;line-height:1.35;cursor:pointer;transition:background .12s,border-color .12s}
+:global([data-theme="dark"]) .subscription-notice-pill{color:#fbbf24;background:color-mix(in srgb,#f59e0b 14%,var(--surface));border-color:color-mix(in srgb,#f59e0b 40%,var(--line))}
+.subscription-notice-pill:hover{background:color-mix(in srgb,#d97706 18%,var(--surface));border-color:#d97706}
+.subscription-notice-pill .notice-dot{width:5px;height:5px;border-radius:50%;background:currentColor;flex:none}
 .subscription-facts{display:flex;align-items:center;flex-wrap:wrap;gap:1px 7px;color:var(--muted);font-size:10px;line-height:1.2}.subscription-facts a,.subscription-facts button{white-space:nowrap}.subscription-expiry{white-space:nowrap}.subscription-extra-links{position:relative}.subscription-extra-links summary{cursor:pointer;white-space:nowrap}.subscription-extra-links>div{position:absolute;top:calc(100% + 4px);left:0;z-index:10;display:grid;gap:7px;min-width:130px;padding:9px;border:1px solid var(--line);border-radius:8px;background:var(--surface);box-shadow:var(--shadow)}.subscription-facts .text-button{font-size:10px}
 .subscription-remaining{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 7px;min-width:0;white-space:nowrap}.subscription-remaining-label{color:var(--muted);font-size:10px}.subscription-remaining-value{color:var(--blue);font-size:17px;font-weight:700;line-height:1.2;letter-spacing:-.02em;white-space:nowrap}.subscription-remaining-percent{display:inline-flex;align-items:center;flex:none;padding:2px 6px;border-radius:999px;background:var(--blue-soft);color:var(--blue);font-size:10px;font-weight:700;white-space:nowrap}
 .subscription-quota{display:grid;gap:5px;min-width:0}.subscription-quota-legend{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}.subscription-quota-used,.subscription-quota-total{display:grid;gap:2px;min-width:0;padding-left:12px;position:relative;color:var(--muted);font-size:10px;line-height:1.2}.subscription-quota-used::before,.subscription-quota-total::before{content:'';position:absolute;left:0;top:3px;width:6px;height:6px;border-radius:50%;background:var(--blue-soft)}.subscription-quota-total::before{background:var(--blue)}.subscription-quota-used>strong,.subscription-quota-total>strong{color:var(--ink);font-size:11px;font-weight:600;line-height:1.2;white-space:nowrap}.usage-track{height:8px;margin:0;overflow:hidden;border-radius:999px;background:var(--blue-soft);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--blue) 7%,transparent)}.usage-track i{display:block;height:100%;border-radius:inherit;background:var(--blue);transition:width .35s ease}

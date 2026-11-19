@@ -14,7 +14,7 @@ import (
 type physicalMonitorDialer struct{}
 
 func (physicalMonitorDialer) CreateClient(node monitor.MonitoredNode, timeout time.Duration) (*http.Client, error) {
-	if runtime.GOOS != "darwin" || monitor.HasSourceTLSConstraints(node.RawConfig) {
+	if (runtime.GOOS != "darwin" && runtime.GOOS != "windows") || monitor.HasSourceTLSConstraints(node.RawConfig) {
 		return monitor.NewDefaultNodeDialer().CreateClient(node, timeout)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)

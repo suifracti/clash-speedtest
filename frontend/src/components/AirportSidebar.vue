@@ -9,6 +9,10 @@ const counts=computed(()=>airportNodeCounts(w.airports.value,w.nodes.value)),tot
 const visible=computed(()=>w.airports.value.filter(a=>a.name.toLowerCase().includes(search.value.trim().toLowerCase())))
 const inScope=computed(()=>new Set(w.selectedAirportIds.value||[]))
 const excluded=computed(()=>w.airports.value.some(a=>!inScope.value.has(a.id)))
+const allChecked=computed(()=>w.airports.value.length>0&&w.airports.value.every(a=>inScope.value.has(a.id)))
+const someChecked=computed(()=>w.airports.value.some(a=>inScope.value.has(a.id))&&!allChecked.value)
+function toggleAirportScope(id:string){const cur=w.selectedAirportIds.value||[];w.setAirports(cur.includes(id)?cur.filter(x=>x!==id):[...cur,id])}
+function toggleAllScope(checked:boolean){w.setAirports(checked?w.airports.value.map(a=>a.id):[])}
 const cache=new Map<string,LatencyBatch>()
 watch(()=>w.batches.value,async(rows,_,onCleanup)=>{
  let cancelled=false;onCleanup(()=>cancelled=true)
@@ -34,8 +38,14 @@ const health=computed(()=>Object.fromEntries(w.airports.value.map(a=>{
 <template><section v-if="w.airports.value.length" class="cst-side-airports" aria-label="机场快捷切换">
  <button class="airport-heading" :aria-expanded="!collapsed" @click="collapsed=!collapsed"><span>机场</span><small>{{collapsed?'展开':'收起'}}</small></button>
  <template v-if="!collapsed"><input v-model="search" class="airport-search" placeholder="搜索机场" aria-label="搜索侧栏机场">
- <button type="button" :aria-pressed="!excluded&&w.airportFilter.value==='all'" @click="emit('select','all')"><span>{{excluded?'纳入全部机场':'全部机场'}}</span><small>{{total}}</small></button>
- <button v-for="a in visible" :key="a.id" type="button" :title="`${a.name} · ${health[a.id].label}`" :aria-pressed="w.airportFilter.value===a.id" @click="emit('select',a.id)"><i class="airport-health" :class="health[a.id].tone" :aria-label="health[a.id].label"/><span>{{a.name}}</span><small v-if="!inScope.has(a.id)">纳入范围</small><small v-else>{{counts[a.id]||0}}</small></button>
+ <div class="sidebar-airport-row">
+  <button type="button" class="sidebar-airport-pick" :aria-pressed="!excluded&&w.airportFilter.value==='all'" @click="emit('select','all')"><span>全部机场</span><small>{{total}}</small></button>
+  <input type="checkbox" class="sidebar-scope-check" aria-label="纳入全部机场" title="纳入或取消全部机场" :checked="allChecked" :indeterminate="someChecked" @change="toggleAllScope(($event.target as HTMLInputElement).checked)">
+ </div>
+ <div v-for="a in visible" :key="a.id" class="sidebar-airport-row" :class="{excluded:!inScope.has(a.id)}">
+  <button type="button" class="sidebar-airport-pick" :title="`${a.name} · ${health[a.id].label}`" :aria-pressed="w.airportFilter.value===a.id" @click="emit('select',a.id)"><i class="airport-health" :class="health[a.id].tone" :aria-label="health[a.id].label"/><span>{{a.name}}</span><small>{{counts[a.id]||0}}</small></button>
+  <input type="checkbox" class="sidebar-scope-check" :aria-label="`纳入范围 ${a.name}`" :title="`勾选将 ${a.name} 纳入全部机场范围`" :checked="inScope.has(a.id)" @change="toggleAirportScope(a.id)">
+ </div>
  <p v-if="!visible.length" class="muted small">没有匹配机场</p></template>
 </section></template>
 <style scoped>

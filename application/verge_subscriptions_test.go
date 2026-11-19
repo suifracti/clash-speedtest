@@ -59,6 +59,9 @@ func TestVergeSyncKeepsAccountWhenSourceURLChanges(t *testing.T) {
 	if err != nil || len(preview) != 1 || preview[0].SubscriptionID != "" {
 		t.Fatalf("unrelated URLs must require an explicit account choice: %+v %v", preview, err)
 	}
+	if preview[0].NodeCount != 1 || preview[0].Usage == nil || preview[0].Usage.Total == nil || *preview[0].Usage.Total != 100 {
+		t.Fatalf("preview must expose node_count and usage to distinguish subscriptions: %+v", preview[0])
+	}
 	if _, err = s.ImportClashVergeSubscription(context.Background(), ClashVergeImportRequest{UID: "remote-fixture", AirportID: "airport-a", SubscriptionID: "sub-a"}); err != nil {
 		t.Fatal(err)
 	}

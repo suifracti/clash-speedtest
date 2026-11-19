@@ -7,8 +7,7 @@
       "ids": [
         "chatgpt_unlock",
         "claude_unlock",
-        "gemini_unlock",
-        "antigravity"
+        "gemini_unlock"
       ]
     },
     {
@@ -18,8 +17,6 @@
       "ids": [
         "netflix_unlock",
         "youtube_premium",
-        "disney_unlock",
-        "prime_video",
         "spotify_unlock",
         "tiktok_unlock"
       ]

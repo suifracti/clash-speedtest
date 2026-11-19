@@ -92,7 +92,7 @@ func (st *SpeedTester) TestSinglePhysicalContext(ctx context.Context, name strin
 	if st == nil || proxy == nil {
 		return nil
 	}
-	if runtime.GOOS != "darwin" {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
 		return st.TestSingleContext(ctx, name, proxy, emit)
 	}
 	var configTimeout time.Duration
