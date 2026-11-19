@@ -5,7 +5,7 @@ import './workbench-layout.css'
 import {useWorkspace} from '../../workspace'
 import {date,isReputationRule,key,projectNames,targets,type NodeOption,type Project} from '../../domain'
 import {api,type ClashUsage} from '../../api'
-import {nodeAttrHints,nodeAttrMeaning,nodeDisplayName,nodeDisplayParts,nodeRegion,nodeRegionLabel,protocolBadgeClass,regionBadgeClass} from '../../nodePresentation'
+import {nodeAttrMeaning,nodeDisplayName,nodeDisplayParts,nodeRegion,nodeRegionLabel,protocolBadgeClass,regionBadgeClass} from '../../nodePresentation'
 import {airportNodeCount} from '../../airportViewing'
 import Icon from '../Icon.vue'
 import UiSelect from '../UiSelect.vue'
@@ -219,8 +219,14 @@ const selectedRegions=computed(()=>{
  const raw=w.region.value.startsWith('exclude:')?w.region.value.slice(8):w.region.value
  return raw==='all'?[]:raw.split(',').map(s=>s.trim()).filter(Boolean)
 })
-function nodeAttrSummary(n:NodeOption){return nodeAttrHints(n).map(h=>h.short).join(' · ')}
-function nodeAttrTooltip(n:NodeOption){return nodeAttrHints(n).map(h=>`${h.term}：${h.detail}`).join('\n')}
+const hoveredAttr=ref<{term:string;short:string;detail:string;x:number;y:number}|null>(null)
+function showAttrTip(e:MouseEvent|FocusEvent,part:string){
+ const info=nodeAttrMeaning(part)
+ if(!info){hoveredAttr.value=null;return}
+ const rect=(e.currentTarget as HTMLElement).getBoundingClientRect()
+ hoveredAttr.value={...info,x:rect.left+rect.width/2,y:Math.max(12,rect.top-6)}
+}
+function clearAttrTip(){hoveredAttr.value=null}
 function toggleRegionChip(code:string){
  w.excludeRegion.value=false
  const next=selectedRegions.value.includes(code)?selectedRegions.value.filter(c=>c!==code):[...selectedRegions.value,code]
@@ -270,7 +276,7 @@ function keyNav(e:KeyboardEvent){
           </div>
         </template>
       </SubscriptionOverview>
-    </section>
+  </section>
 
     <div ref="workArea" class="hd-results" aria-label="线路对照区">
     <div ref="toolbar" class="hd-toolbar">
@@ -299,7 +305,7 @@ function keyNav(e:KeyboardEvent){
               <label v-if="w.sort.value==='airport'&&chosen.length>1&&w.airportFilter.value==='all'">优先机场<UiSelect v-model="w.priorityAirportId.value" aria-label="优先机场"><option value="all">机场自然顺序</option><option v-for="a in chosen" :key="a.id" :value="a.id">{{a.name}}优先</option></UiSelect></label>
               <label v-if="w.region.value!=='all'" class="hd-check"><input v-model="w.excludeRegion.value" type="checkbox">反过来：排除「{{selectedRegions.map(nodeRegionLabel).join(' / ')}}」</label>
             </div>
-          </section>
+  </section>
           <section class="hd-more-group" aria-labelledby="more-result">
             <h4 id="more-result">按{{w.project.value==='combined'?'检测':projectNames[w.project.value]}}结果<small>{{resultHint}}</small></h4>
             <div class="hd-more-grid">
@@ -313,13 +319,13 @@ function keyNav(e:KeyboardEvent){
             </div>
             <p class="hd-muted hd-more-note">数据截止 {{date(m.qualityGate.value==='response'?weeklyProgress.until:m.qualityCutoff.value)}} · 各项分别测量，不作综合打分<button class="hd-link" :disabled="m.qualityGate.value==='response'?weeklyProgress.processed<weeklyProgress.total:m.qualityLoading.value" @click="m.qualityGate.value==='response'?m.refreshWeekly():m.readQualityNodes(qualityFiltering?w.proxyNodes.value:m.pageNodes.value,true)">{{m.qualityLoading.value?'读取中…':'更新质量记录'}}</button></p>
             <p v-if="qualityFiltering" class="hd-muted" role="status">{{m.qualityGate.value==='response'?(m.qualityFiltersPending.value?'正在读取近 7 天延迟历史…':`按近 7 天采样响应率 ≥90% 筛选 · 当前符合 ${m.visibleNodes.value.length} 个`):m.allQualityReady.value?`已读固定范围 ${w.proxyNodes.value.length} 个节点 · 当前符合 ${m.visibleNodes.value.length} 个 · 读取失败 ${Object.keys(m.qualityErrors.value).length} 个 · 存在缺页/读取错误 ${Object.values(m.qualityData.value).filter(e=>!e.complete).length} 个（只限制对应类型的证据）`:`正在读取全部 ${w.proxyNodes.value.length} 个节点的历史记录（已读 ${Object.keys(m.qualityData.value).length}）；读取完成后应用条件筛选与排序`}}</p>
-          </section>
+  </section>
           <section class="hd-more-group" aria-labelledby="more-view">
             <h4 id="more-view">怎么显示</h4>
             <div class="hd-more-grid">
               <label>每页<UiSelect :model-value="m.pageSize.value" aria-label="每页显示节点数" @update:model-value="m.setPageSize(Number($event))"><option :value="10">10 个节点</option><option :value="20">20 个节点</option><option :value="50">50 个节点</option><option :value="100">100 个节点</option><option :value="0">全部</option></UiSelect></label>
             </div>
-          </section>
+  </section>
         </div>
         </details>
       </div>
@@ -372,7 +378,7 @@ function keyNav(e:KeyboardEvent){
         <div ref="rowScroller" class="hd-row-scroll" role="rowgroup" @scroll="syncTableHeading">
         <div v-for="n in m.pageNodes.value" :key="key(n)" :data-node-key="key(n)" class="hd-tr" role="row" :class="{focus:isFocus(n)&&(inspectorOpen||!!focusKey),selected:selected(n),'clash-using':isClashUsing(n)}" :aria-selected="selected(n)" @click="focus(n)">
           <span role="cell" @click.stop><input type="checkbox" :checked="selected(n)" :aria-label="'选择 '+nodeDisplayName(n)" @change="w.toggleNode(n)"></span>
-          <span role="cell" class="hd-node" :class="regionBadgeClass(n.country_code)" :title="n.display_name+' · '+m.sourceLabel(n)+' · '+n.type"><span><div class="hd-node-title"><span class="hd-flag" :class="regionBadgeClass(n.country_code)">{{n.country_code||'—'}}</span><span v-if="isClashUsing(n)" class="hd-clash-active-badge" aria-label="Clash 正在使用" title="Clash 正在使用"><i class="hd-clash-node-dot" aria-hidden="true"/>在用</span><button class="hd-node-open" :tabindex="isFocus(n)?0:-1" :aria-label="'查看 '+nodeDisplayName(n)+' · '+m.sourceLabel(n)" @focus="focusKey=key(n)" @click.stop="focus(n)"><strong><span class="hd-node-region">{{nodeDisplayParts(n).region}}</span><template v-for="(part,idx) in nodeDisplayParts(n).parts" :key="idx"><span class="hd-node-sep"> · </span><span class="hd-node-part" :class="part.kind" :title="nodeAttrMeaning(part.text)?.detail">{{part.text}}</span></template></strong></button></div><small><span class="hd-source-label">{{exitMode?w.nodeAirportName(n):m.sourceLabel(n)}}</span> · <b class="hd-proto-tag" :class="protocolBadgeClass(n.type)">{{n.type}}</b><span v-if="nodeAttrSummary(n)" class="hd-node-meaning" :title="nodeAttrTooltip(n)"> · {{nodeAttrSummary(n)}}</span></small><span v-if="overviewMode" class="hd-route-verdict" :class="verdicts[key(n)].tone">{{verdicts[key(n)].label}}</span></span></span>
+          <span role="cell" class="hd-node" :class="regionBadgeClass(n.country_code)" :title="n.display_name+' · '+m.sourceLabel(n)+' · '+n.type"><span><div class="hd-node-title"><span class="hd-flag" :class="regionBadgeClass(n.country_code)">{{n.country_code||'—'}}</span><span v-if="isClashUsing(n)" class="hd-clash-active-badge" aria-label="Clash 正在使用" title="Clash 正在使用"><i class="hd-clash-node-dot" aria-hidden="true"/>在用</span><button class="hd-node-open" :tabindex="isFocus(n)?0:-1" :aria-label="'查看 '+nodeDisplayName(n)+' · '+m.sourceLabel(n)" @focus="focusKey=key(n)" @click.stop="focus(n)"><strong><span class="hd-node-region">{{nodeDisplayParts(n).region}}</span><template v-for="(part,idx) in nodeDisplayParts(n).parts" :key="idx"><span class="hd-node-sep"> · </span><span class="hd-node-part" :class="part.kind" :title="nodeAttrMeaning(part.text)?.detail" @mouseenter="showAttrTip($event,part.text)" @mouseleave="clearAttrTip">{{part.text}}</span></template></strong></button></div><small><span class="hd-source-label">{{exitMode?w.nodeAirportName(n):m.sourceLabel(n)}}</span> · <b class="hd-proto-tag" :class="protocolBadgeClass(n.type)">{{n.type}}</b></small><span v-if="overviewMode" class="hd-route-verdict" :class="verdicts[key(n)].tone">{{verdicts[key(n)].label}}</span></span></span>
           <NodeResponseStrip v-if="overviewMode" :node="n"/>
           <template v-if="exitMode"><template v-for="field in exitFields" :key="field"><span v-if="field==='line'" role="cell" class="hd-exit-cell hd-line-cell"><span class="hd-line-text" :title="exitRows[key(n)].line">{{exitRows[key(n)].line}}</span><span v-if="exitRows[key(n)].route" class="hd-route-tag" :class="exitRows[key(n)].routeTone" :title="exitRows[key(n)].routeTitle">{{exitRows[key(n)].route}}</span></span><span v-else-if="field==='ipTag'" role="cell" class="hd-exit-cell hd-ip-cell"><span class="hd-ip-tag" :class="exitRows[key(n)].ipKind.tone" :title="'IP 类型：'+exitRows[key(n)].ipKind.detail">{{exitRows[key(n)].ipTag}}</span></span><span v-else role="cell" class="hd-num hd-exit-cell" :class="field==='label'?exitRows[key(n)].tone:field==='riskLabel'?exitRows[key(n)].riskTone:''" :title="field==='label'?exitRows[key(n)].detail:field==='riskLabel'?'IPPure 与机器流量占比取较高值':''">{{exitRows[key(n)][field]}}</span></template></template>
           <span v-if="showVerdict&&!overviewMode" role="cell"><b class="hd-pill" :class="[verdicts[key(n)].tone,{'partial-sites':verdicts[key(n)].label.startsWith('部分站点不通')}]">{{verdicts[key(n)].label}}</b></span>
@@ -420,6 +426,7 @@ function keyNav(e:KeyboardEvent){
     </footer>
     </div>
     </div>
+    <div v-if="hoveredAttr" class="hd-attr-popover" role="tooltip" :style="{left:hoveredAttr.x+'px',top:hoveredAttr.y+'px'}"><strong>{{hoveredAttr.term}} · {{hoveredAttr.short}}</strong><small>{{hoveredAttr.detail}}</small></div>
   </section>
 </template>
 

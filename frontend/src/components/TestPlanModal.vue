@@ -31,7 +31,17 @@ const selectedServiceIds=computed(()=>{
 })
 const plannedRequests=computed(()=>{const p=w.plan.value;if(!p)return 0;return p.nodes.length*p.repeats*((p.projects.includes('latency')?(p.target==='all'?targets.length:1)*p.samples:0)+(p.projects.includes('download')?1:0))+p.nodes.reduce((sum,n)=>sum+w.allowedUnlockServices(n,selectedServiceIds.value).length,0)*p.repeats*(p.serviceSamples??4)})
 const plannedKinds=computed(()=>{const p=w.plan.value;return [...(p?.projects.includes('latency')?['延迟采样']:[]),...(selectedServiceIds.value.length?['服务观察']:[]),...(p?.projects.includes('download')?['每节点 1 次下载']:[])].join(' + ')})
-const groups=computed(()=>[...new Map(w.plan.value?.nodes.map(n=>[n.profile_id,{id:n.profile_id,name:n.profile_name,count:w.plan.value!.nodes.filter(x=>x.profile_id===n.profile_id).length}])||[]).values()])
+function sourceGroupName(n:typeof w.plan.value extends infer P?P extends {nodes:(infer N)[]}?N:never:never){
+  const airport=w.nodeAirportName(n),sub=w.nodeSubscriptionName(n)
+  return sub&&sub!==airport?`${airport} · ${sub}`:airport
+}
+const groups=computed(()=>[...new Map(w.plan.value?.nodes.map(n=>[n.profile_id,{id:n.profile_id,name:sourceGroupName(n),count:w.plan.value!.nodes.filter(x=>x.profile_id===n.profile_id).length}])||[]).values()])
+const modelServices=computed(()=>selectedServiceIds.value.filter(id=>id==='antigravity'))
+const modelRisk=computed(()=>{
+  const p=w.plan.value
+  if(!p||!modelServices.value.length||p.nodes.length<=3)return ''
+  return `所选解锁包含 Antigravity，将从 ${p.nodes.length} 个节点的 IP 发起请求，有风控风险；每次都会使用已绑定账号真实模型额度。`
+})
 const selectedSections=computed(()=>[...(w.plan.value?.projects||[]),...(w.plan.value?.includeReputation?['reputation']:[])])
 const expanded=ref(new Set(selectedSections.value.slice(0,1)))
 watch(selectedSections,(current,previous)=>{for(const id of current)if(!previous.includes(id))expanded.value.add(id)})
@@ -86,7 +96,7 @@ async function submit(){
       <h3 id="plan-project-title">检测项目</h3>
       <div class="cst-presets" role="group" aria-label="检测预设">
         <button v-for="x in presets" :key="x.id" type="button" class="cst-preset" :aria-pressed="activePreset?.id===x.id" @click="applyPreset(x)"><strong>{{x.label}}</strong><small>{{x.hint}}</small></button>
-        <p class="cst-preset-state" role="status">当前：<strong>{{activePreset?.label||'自定义'}}</strong><template v-if="extras.length"> · 另含 {{extras.join('、')}}</template></p>
+        <p class="cst-preset-state" role="status">当前：<strong>{{activePreset?.label||'自定义'}}</strong><template v-if="extras.length"> · 另含 {{extras.join('、')}}</template><template v-if="modelServices.length"> · <span class="warn">含模型类服务</span></template></p>
       </div>
       <div class="plan-projects">
         <label v-for="p in (['latency','download','service'] as Exclude<Project,'combined'>[])" :key="p" :class="{checked:w.plan.value.projects.includes(p)}"><input v-model="w.plan.value.projects" type="checkbox" :value="p">{{projectNames[p]}}</label>
@@ -120,6 +130,7 @@ async function submit(){
       <details v-if="w.plan.value.projects.includes('service')" class="plan-section" :open="expanded.has('service')" @toggle="toggleSection('service',$event)">
         <summary><strong>解锁检测</strong><span>{{standardServiceIds.length?`已选 ${standardServiceIds.length} 项`:'尚未选择服务'}} · 每项 {{w.plan.value.serviceSamples??4}} 次</span></summary>
         <UnlockPicker v-model="standardServiceIds" :catalog="standardCatalog"/>
+        <p v-if="standardServiceIds.includes('antigravity')" class="inline-warning">Antigravity 会用已绑定账号发起真实模型请求，可能消耗额度。</p>
         <p class="muted small">连接复用按实际观测记录。关闭 HTTP 空闲连接不等于节点重连，也不能保证出口稳定。</p>
       </details>
       <details v-if="w.plan.value.includeReputation" class="plan-section reputation-section" :open="expanded.has('reputation')" @toggle="toggleSection('reputation',$event)">
@@ -148,58 +159,70 @@ async function submit(){
         <div v-if="w.plan.value.projects.includes('latency')"><dt>延迟</dt><dd><strong>{{latencySamples}}</strong> 次计划采样<small>{{w.plan.value.nodes.length}} 节点 × {{w.plan.value.target==='all'?targets.length+' 站':'1 站'}} × {{w.plan.value.samples}} 次 × {{w.plan.value.repeats}} 轮</small></dd></div>
         <div v-if="selectedServiceIds.length"><dt>服务与 IP</dt><dd><strong>{{serviceObservations}}</strong> 次计划观察<small>{{selectedServiceIds.length}} 项 · 服务采样 {{w.plan.value.serviceSamples??4}} 次/项；服务内部步骤、跳转和协议开销另计<template v-if="w.plan.value.projects.includes('service')&&standardServiceIds.includes('netflix_unlock')">（Netflix 一次观察约 5 个请求）</template></small></dd></div>
         <div v-if="w.plan.value.projects.includes('download')"><dt>下载</dt><dd v-if="adaptiveDownload">流量随实测速度与下载时长变化<small>实际扣费还受机场倍率和协议开销影响</small></dd><dd v-else>最多读取正文 <strong>{{bytes(downloadVolume)}}</strong><small>实际扣费还受机场倍率和协议开销影响</small></dd></div>
+        <div v-if="modelServices.length" class="warn"><dt>模型类</dt><dd>会用已绑定账号发起真实请求<small>可能消耗账号额度，单独计算</small></dd></div>
       </dl>
       <details v-if="skippedCount" class="plan-skipped"><summary>地区规则跳过 {{skippedCount}} 个节点/服务组合</summary><p v-for="item in skippedServices" :key="item.id"><strong>{{item.name}} · 跳过 {{item.count}} 个节点</strong><small>{{item.reason}}</small><small v-for="[id,account] in item.accounts" :key="id">{{account.name}} · {{account.count}}</small></p></details>
       <p class="muted small">合计 {{plannedRequests}} 次计划采样<template v-if="plannedKinds">（{{plannedKinds}}）</template>；这是计划次数，不是实际请求总数。</p>
     </section>
       </aside>
     </div>
-    <template #footer><div v-if="validation" class="plan-feedback"><p class="inline-error" role="alert">{{validation}}</p></div><button class="button" @click="w.plan.value=null">{{w.preparingPlan.value?'取消准备':'返回调整'}}</button><button class="button primary" :disabled="w.busy.value||w.preparingPlan.value" @click="submit">{{w.preparingPlan.value?'正在准备…':`开始检测 ${w.plan.value.nodes.length} 个节点`}}</button></template>
+    <template #footer><div v-if="validation||modelRisk" class="plan-feedback"><p v-if="validation" class="inline-error" role="alert">{{validation}}</p><p v-if="modelRisk" class="inline-warning">{{modelRisk}}</p></div><button class="button" @click="w.plan.value=null">{{w.preparingPlan.value?'取消准备':'返回调整'}}</button><button class="button primary" :disabled="w.busy.value||w.preparingPlan.value" @click="submit">{{w.preparingPlan.value?'正在准备…':`开始检测 ${w.plan.value.nodes.length} 个节点`}}</button></template>
   </Modal>
 </template>
 
 <style scoped>
-.plan-layout{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:28px;align-items:start}
+.plan-layout{display:grid;grid-template-columns:minmax(0,1fr) 268px;gap:22px;align-items:start}
 .plan-editor{min-width:0;margin:0;padding:0;border:0}
 .plan-editor[disabled]{opacity:.7}
-.plan-preparing{display:flex;align-items:center;gap:9px;margin:0 0 16px;padding:10px 0;color:var(--cst-accent);font-size:12px}
-.plan-section>summary{display:flex;align-items:baseline;justify-content:space-between;gap:12px;list-style:none;padding:12px 0;color:var(--cst-text)}
+.plan-preparing{display:flex;align-items:center;gap:9px;margin:0 0 14px;padding:10px 12px;border-radius:10px;background:var(--cst-accent-soft);color:var(--cst-accent);font-size:12px}
+.plan-editor .cst-plan-step>h3{margin:0 0 10px;font-size:13px;font-weight:700;color:var(--cst-text)}
+.plan-section>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;list-style:none;padding:12px 0;color:var(--cst-text);cursor:pointer}
 .plan-section>summary::-webkit-details-marker{display:none}
-.plan-section>summary:before{content:'›';font-size:18px;color:var(--cst-muted)}
+.plan-section>summary:before{content:'›';font-size:16px;color:var(--cst-muted);transition:transform .15s}
 .plan-section[open]>summary:before{transform:rotate(90deg)}
-.plan-section>summary strong{font-size:13px;margin-right:auto;white-space:nowrap}
-.plan-section>summary span{font-size:11px;color:var(--cst-muted);text-align:right}
-.plan-section[open]>summary{padding-bottom:18px}
-.plan-editor details.plan-section{padding:0;margin:0;border-top:1px solid var(--cst-line)}
-.plan-editor details.plan-section[open]{padding-bottom:18px}
-.plan-repetition{border-top:1px solid var(--cst-line);display:flex;align-items:center;flex-wrap:wrap;gap:0 24px;padding-top:4px}
-.plan-repetition .inline-field{margin:12px 0}
-.plan-repetition>p{flex-basis:100%;line-height:1.7}
-.plan-skipped{margin:12px 0;font-size:11px}
-.plan-skipped>summary{line-height:1.6}
-.plan-skipped p{padding:8px 0;border-bottom:1px solid var(--cst-line);line-height:1.6}
+.plan-section>summary strong{font-size:13px;font-weight:650;margin-right:auto;white-space:nowrap}
+.plan-section>summary span{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;background:var(--cst-panel);border:1px solid var(--cst-line);font-size:11px;color:var(--cst-muted);text-align:right}
+.plan-section[open]>summary{padding-bottom:14px;border-bottom:1px solid var(--cst-line);margin-bottom:14px}
+.plan-editor details.plan-section{padding:0 14px;margin:0 0 10px;border:1px solid var(--cst-line);border-radius:12px;background:var(--cst-panel-2)}
+.plan-editor details.plan-section[open]{padding-bottom:16px;background:var(--cst-panel);border-color:var(--cst-line-strong);box-shadow:var(--cst-shadow)}
+.plan-repetition{border-top:1px solid var(--cst-line);display:flex;align-items:center;flex-wrap:wrap;gap:0 20px;padding-top:10px;margin-top:6px}
+.plan-repetition .inline-field{margin:8px 0}
+.plan-repetition>p{flex-basis:100%;line-height:1.6}
+.plan-skipped{margin:10px 0;padding:8px 10px;border-radius:10px;background:var(--cst-panel);border:1px solid var(--cst-line);font-size:11px}
+.plan-skipped>summary{line-height:1.5}
+.plan-skipped p{padding:7px 0;border-bottom:1px solid var(--cst-line);line-height:1.55}
+.plan-skipped p:last-child{border-bottom:0;padding-bottom:0}
 .plan-skipped small{display:block;color:var(--cst-muted)}
 .plan-feedback{flex-basis:100%}
 .plan-feedback p{margin:0}
 .plan-feedback p+p{margin-top:8px}
-.plan-receipt{position:sticky;top:0;min-width:0;border-left:1px solid var(--cst-line);padding-left:22px}
-.plan-receipt .plan-scope{display:flex;flex-direction:column;align-items:flex-start;gap:5px}
-.plan-receipt .plan-scope strong{font-size:24px;line-height:1.3;margin-bottom:4px}
-.plan-receipt .selection-details{margin:12px 0 0}
-.plan-receipt .selection-details[open]{max-height:240px;overflow:auto}
-.plan-receipt .compact-row{display:flex;flex-direction:column;align-items:flex-start;gap:2px;overflow-wrap:anywhere;padding:7px 0}
-.plan-receipt .cst-budget{display:block}
-.plan-receipt .cst-budget>div{border:0;border-radius:0;border-bottom:1px solid var(--cst-line);background:none;padding:10px 0}
-.plan-receipt .cst-budget>div:first-child{padding-top:0}
-.plan-receipt .cst-budget>div.warn{border-left:2px solid var(--cst-warn);padding-left:10px;margin-top:10px}
-.plan-receipt .cst-budget dd strong{font-size:21px;font-weight:650}
-.plan-editor .cst-presets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;border-bottom:1px solid var(--cst-line);padding-bottom:12px;margin-bottom:14px}
-.plan-editor .cst-preset{min-width:0;border:0;border-radius:0;box-shadow:none;background:none;padding:8px;gap:4px;border-bottom:2px solid transparent}
-.plan-editor .cst-preset[aria-pressed=true]{border-bottom-color:var(--cst-accent);background:var(--cst-accent-soft)}
-.plan-editor .cst-preset small{font-size:10px}
-.plan-editor .cst-preset-state{grid-column:1/-1;padding-top:8px}
-.plan-editor .plan-projects{gap:12px 18px}
-.plan-editor .plan-projects label{border:0;border-radius:0;background:none;color:var(--cst-text);padding:0;min-height:30px}
-@media(max-width:850px){.plan-layout{grid-template-columns:minmax(0,1fr)}.plan-receipt{position:static;border-left:0;border-top:1px solid var(--cst-line);padding:18px 0 0;display:grid;grid-template-columns:1fr 1fr;gap:20px}.plan-receipt .plan-budget{border:0;padding:0}.plan-receipt .plan-scope strong{font-size:20px}}
-@media(max-width:560px){.plan-receipt{grid-template-columns:1fr}.plan-editor .cst-presets{grid-template-columns:1fr}.plan-editor .cst-preset{flex-direction:row;align-items:center;justify-content:space-between;padding:10px 6px}.plan-editor .cst-preset small{font-size:11px}}
+.plan-receipt{position:sticky;top:0;min-width:0;display:grid;gap:12px}
+.plan-receipt .cst-plan-step{padding:14px;border:1px solid var(--cst-line-strong);border-radius:12px;background:var(--cst-panel-2)}
+.plan-receipt .cst-plan-step h3{margin:0 0 8px;font-size:12px;font-weight:700;color:var(--cst-muted)}
+.plan-receipt .plan-scope{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+.plan-receipt .plan-scope strong{font-size:22px;font-weight:750;line-height:1.25;margin-bottom:2px;color:var(--cst-text)}
+.plan-receipt .plan-scope>span{display:inline-flex;align-items:center;padding:2px 9px;border-radius:999px;background:var(--cst-panel);border:1px solid var(--cst-line);font-size:11px;font-weight:600;color:var(--cst-text)}
+.plan-receipt .selection-details{margin:10px 0 0;padding-top:10px;border-top:1px solid var(--cst-line)}
+.plan-receipt .selection-details[open]{max-height:220px;overflow:auto}
+.plan-receipt .compact-row{display:flex;flex-direction:column;align-items:flex-start;gap:2px;overflow-wrap:anywhere;padding:6px 0}
+.plan-receipt .cst-budget{display:grid;gap:8px;margin:0}
+.plan-receipt .cst-budget>div{border:1px solid var(--cst-line);border-radius:9px;background:var(--cst-panel);padding:9px 11px}
+.plan-receipt .cst-budget>div.warn{border-color:color-mix(in srgb,var(--cst-warn) 45%,var(--cst-line));background:color-mix(in srgb,var(--cst-warn) 7%,var(--cst-panel))}
+.plan-receipt .cst-budget dt{font-size:11px;font-weight:600;color:var(--cst-muted)}
+.plan-receipt .cst-budget dd{margin:3px 0 0;font-size:12px}
+.plan-receipt .cst-budget dd strong{font-size:19px;font-weight:750}
+.plan-receipt .cst-budget dd small{display:block;margin-top:3px;color:var(--cst-muted);font-size:10.5px;line-height:1.45}
+.plan-editor .cst-presets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:14px}
+.plan-editor .cst-preset{display:flex;flex-direction:column;align-items:flex-start;min-width:0;border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel-2);padding:9px 11px;gap:3px;text-align:left;transition:border-color .14s,background .14s,box-shadow .14s}
+.plan-editor .cst-preset:hover{border-color:var(--cst-accent);background:var(--cst-panel)}
+.plan-editor .cst-preset[aria-pressed=true]{border-color:var(--cst-accent);background:var(--cst-panel);box-shadow:var(--cst-shadow);color:var(--cst-accent)}
+.plan-editor .cst-preset strong{font-size:12.5px;font-weight:650}
+.plan-editor .cst-preset small{font-size:10.5px;color:var(--cst-muted)}
+.plan-editor .cst-preset-state{grid-column:1/-1;margin:2px 0 0;font-size:11.5px;color:var(--cst-muted)}
+.plan-editor .plan-projects{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px}
+.plan-editor .plan-projects label{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:4px 12px;border:1px solid var(--cst-line);border-radius:999px;background:var(--cst-panel-2);color:var(--cst-muted);font-size:12px;font-weight:550;cursor:pointer;transition:border-color .14s,background .14s,color .14s}
+.plan-editor .plan-projects label:hover{border-color:var(--cst-accent);color:var(--cst-text)}
+.plan-editor .plan-projects label.checked{background:var(--cst-accent-soft);border-color:color-mix(in srgb,var(--cst-accent) 35%,var(--cst-line));color:var(--cst-accent);font-weight:650}
+@media(max-width:850px){.plan-layout{grid-template-columns:minmax(0,1fr)}.plan-receipt{position:static;grid-template-columns:1fr 1fr}.plan-receipt .plan-scope strong{font-size:19px}}
+@media(max-width:560px){.plan-receipt{grid-template-columns:1fr}.plan-editor .cst-presets{grid-template-columns:1fr}.plan-editor .cst-preset{flex-direction:row;align-items:center;justify-content:space-between;padding:10px 12px}.plan-editor .cst-preset small{font-size:11px}}
 </style>

@@ -102,10 +102,12 @@
 
 .history-view .history-sample-outcome {
   justify-self: end;
-  padding: 4px 8px;
-  border-radius: 5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
   background: var(--surface-soft);
   font-size: 11px;
+  font-weight: 600;
 }
 
 .history-view .history-sample-outcome.good {
@@ -399,8 +401,8 @@
 }
 
 /* Data custody keeps live locations, backup, and import steps easy to scan. */
-.data-view .settings-section{border:0;border-radius:0;box-shadow:none;padding:24px}
-.data-view .data-storage-panel{border-top:2px solid var(--cst-text)}
+.data-view .settings-section{border:1px solid var(--cst-line-strong);border-radius:14px;background:var(--cst-panel);box-shadow:var(--cst-shadow-card);padding:22px;margin-bottom:16px}
+.data-view .data-storage-panel{border:1px solid var(--cst-line-strong)}
 .data-storage-grid{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(230px,1fr);gap:32px;align-items:start}
 .data-view .data-storage-panel .path-list{grid-template-columns:minmax(0,1fr);gap:0;margin:10px 0 0}
 .data-view .data-storage-panel .path-list>div{display:grid;grid-template-columns:90px minmax(0,1fr);align-items:baseline;gap:12px;min-width:0;padding:12px 0;border:0;border-bottom:1px solid var(--cst-line);border-radius:0;background:transparent}
@@ -428,17 +430,16 @@
 }
 
 .data-view .data-import-panel {
-  border-color: var(--cst-line);
+  border-color: var(--cst-line-strong);
 }
 
 .data-view .data-migration-panel {
-  border-color: color-mix(in srgb, var(--amber) 38%, var(--cst-line));
+  border-color: color-mix(in srgb, var(--amber) 45%, var(--cst-line));
   background: var(--surface);
-  border-top: 2px solid var(--cst-warn);
 }
 
 .data-view .data-start-panel {
-  border-color: var(--cst-line);
+  border-color: var(--cst-line-strong);
 }
 
 @media (max-width: 800px) {

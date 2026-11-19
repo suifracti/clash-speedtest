@@ -373,11 +373,13 @@ func Catalog() []Rule {
 		}
 		result = append(result, rule)
 	}
-	keep := map[string]string{"netflix_unlock": "Netflix", "youtube_premium": "YouTube Premium", "abema_unlock": "ABEMA", "hulu_jp_unlock": "Hulu Japan", "fod_unlock": "FOD"}
+	keep := map[string]string{"antigravity": "Google Antigravity", "netflix_unlock": "Netflix", "youtube_premium": "YouTube Premium", "abema_unlock": "ABEMA", "hulu_jp_unlock": "Hulu Japan", "fod_unlock": "FOD"}
 	for _, rule := range catalog {
 		if name, ok := keep[rule.ServiceID]; ok {
 			rule.Name = name
-			if rule.ServiceID == "abema_unlock" || rule.ServiceID == "hulu_jp_unlock" || rule.ServiceID == "fod_unlock" {
+			if rule.ServiceID == "antigravity" {
+				rule.Category = "AI"
+			} else if rule.ServiceID == "abema_unlock" || rule.ServiceID == "hulu_jp_unlock" || rule.ServiceID == "fod_unlock" {
 				rule.Category = "日本"
 			} else {
 				rule.Category = "流媒体"

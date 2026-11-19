@@ -6,7 +6,7 @@ import type {PeriodicSamplingConfig,PeriodicSamplingStatus,PeriodicChecks} from 
 const status=ref<PeriodicSamplingStatus|null>(null),error=ref(''),readError=ref(''),busy=ref(false)
 const emit=defineEmits<{state:[value:{status:PeriodicSamplingStatus|null;error:string}]}>()
 watch([status,error,readError],()=>emit('state',{status:status.value,error:readError.value||error.value}),{immediate:true})
-const form=reactive({latency:2,service:5,download:60,mib:10,concurrency:16})
+const form=reactive({latency:2,service:5,download:60,mib:10,concurrency:16,antigravity:true})
 const checks=ref<PeriodicChecks|null>(null),checkNodes=ref<PeriodicChecks['nodes']>([]),checksError=ref(''),checksOpen=ref(false),checkNode=ref(''),checksLoading=ref(false),reading=ref(false)
 const stateLabel=computed(()=>readError.value?(status.value?'状态需确认':'状态未知'):!status.value?'读取中…':status.value.pause_reason?'容量保护暂停':status.value.running?'巡检已启动':status.value.config.enabled?'计划已启用 · 当前未运行':'未启动')
 let ticks=0,readGeneration=0,checksGeneration=0,mounted=true
@@ -23,7 +23,7 @@ async function loadChecks(){
  finally{if(mounted&&token===checksGeneration)checksLoading.value=false}
 }
 function checkToggle(event:Event){checksOpen.value=(event.target as HTMLDetailsElement).open;if(checksOpen.value)void loadChecks()}
-function syncForm(cfg:PeriodicSamplingConfig){form.latency=cfg.latency_interval_seconds/60;form.service=cfg.service_interval_seconds/60;form.download=cfg.download_interval_seconds/60;form.mib=cfg.download_mib;form.concurrency=cfg.service_concurrency||16}
+function syncForm(cfg:PeriodicSamplingConfig){form.latency=cfg.latency_interval_seconds/60;form.service=cfg.service_interval_seconds/60;form.download=cfg.download_interval_seconds/60;form.mib=cfg.download_mib;form.concurrency=cfg.service_concurrency||16;form.antigravity=cfg.include_antigravity}
 async function load(){
  if(reading.value||busy.value)return
  const token=++readGeneration;reading.value=true
@@ -37,7 +37,7 @@ async function load(){
 }
 async function save(enabled:boolean){
  if(!status.value||busy.value)return
- const cfg:PeriodicSamplingConfig=enabled?{enabled:true,latency_interval_seconds:Math.round(form.latency*60),service_interval_seconds:Math.round(form.service*60),download_interval_seconds:Math.round(form.download*60),download_mib:form.mib,include_antigravity:false,service_concurrency:form.concurrency}:{...status.value.config,enabled:false}
+ const cfg:PeriodicSamplingConfig=enabled?{enabled:true,latency_interval_seconds:Math.round(form.latency*60),service_interval_seconds:Math.round(form.service*60),download_interval_seconds:Math.round(form.download*60),download_mib:form.mib,include_antigravity:form.antigravity,service_concurrency:form.concurrency}:{...status.value.config,enabled:false}
  ++readGeneration;reading.value=false;busy.value=true;error.value=''
  try{
   const result=await api.configurePeriodicSampling(cfg)
@@ -75,6 +75,7 @@ function duration(seconds:number|null|undefined){if(seconds===undefined||seconds
   <div class="patrol-lane">
    <div class="patrol-purpose"><h3>服务可用性</h3><p>按节点和服务轮转检测</p><small>共 {{status?.service_count??'未知'}} 项规则，实际覆盖见本轮进度</small></div>
    <div class="patrol-inputs"><label>巡检计划间隔（分钟）<input type="number" min="0.167" max="1440" step="1" v-model.number="form.service"></label><label>服务并发上限（1–64）<input data-test="service-concurrency" type="number" min="1" max="64" step="1" v-model.number="form.concurrency"></label></div>
+   <label class="check-field patrol-model"><input type="checkbox" v-model="form.antigravity">包含 Antigravity 真实模型请求（会消耗模型额度）</label>
   </div>
   <div class="patrol-lane">
    <div class="patrol-purpose"><h3>下载测速</h3><p>单路采样，避开服务请求</p><small>每批最多 4 个节点，完成后交让巡检</small></div>
