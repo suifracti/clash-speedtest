@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {exitLanding} from '../exitLanding'
-import {inspectorSamples,stableLatency} from '../inspectorLatency'
+import {inspectorSamples,latencySiteSamples,latencyCellValue,stableLatency} from '../inspectorLatency'
 import {readLatencyHistoryWithConfig,latencyHistorySplit} from '../latencyHistory'
 import {sortSiteRows} from '../siteQualityView'
 import {latestServices,readQuality,multiSiteQuality,qualityGroups,downloadEvidence,latencyReadComplete,qualityMatchesGate,type QualityEvidence,type SiteQualityMetric} from '../nodeQuality'
@@ -10,13 +10,14 @@ import {serviceAvailability,downloadGroup,servicePassed} from '../sharedResults'
 import {attemptTone} from '../measurementRounds'
 import {computed,nextTick,onBeforeUnmount,onMounted,provide,ref,watch} from 'vue'
 import HomeWorkbench from './home/HomeWorkbench.vue'
-import {homeModelKey,weeklyHistoryKey,weeklySummary,type WeeklySummary} from './home/homeModel'
+import {homeModelKey,latencyVerdict,weeklyHistoryKey,weeklySummary,type WeeklySummary} from './home/homeModel'
 import {useWorkspace} from '../workspace'
 import {api} from '../api'
-import {date,isReputationRule,sameHistoryRecords,downloadReading,downloadPeakSpeed,downloadTone,downloadOutcome,downloadConnectionSeconds,downloadSourceName,key,outcomeLabel,type NodeOption,type Project,type Attempt} from '../domain'
+import {date,isReputationRule,sameHistoryRecords,downloadReading,downloadPeakSpeed,downloadTone,downloadOutcome,downloadConnectionSeconds,downloadSourceName,key,outcomeLabel,sampleFor,targets,type NodeOption,type Project,type Attempt} from '../domain'
 import {airportNodeCount as countAirportNodes} from '../airportViewing'
 import {attemptStatus,downloadNoDataReason,triggerLabel} from '../measurementRounds'
-import {latencyPointLabel,createPresentationCache,monitorHTTPServices,type TrendPoint} from '../presentation'
+import {latencyPointLabel,createPresentationCache,manualLatencyPoint,monitorLatencyPoints,monitorHTTPServices,type TrendPoint} from '../presentation'
+import {unlockGroups,unlockGroupSummary} from '../unlock'
 import Modal from './Modal.vue'
 import MeasurementResults from './MeasurementResults.vue'
 import {nodeDisplayName,nodeRegion} from '../nodePresentation'
@@ -53,7 +54,7 @@ watch([savedQualityVersion,()=>w.busy.value],([version,busy])=>{
  appliedQualityVersion=version
  qualityGeneration++;qualityData.value={};qualityErrors.value={};qualityLoading.value=false;qualityCutoff.value=new Date().toISOString()
  if(w.page.value!=='home')return
- const quick=qualityView.value,full=quick?(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing'):(siteSort.value!=='existing'||siteGate.value!=='all')
+ const quick=qualityView.value,full=metricHeader.value||(quick?(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing'):(siteSort.value!=='existing'||siteGate.value!=='all'))
  if(quick||full||compareOpen.value)void readQualityNodes(full?w.proxyNodes.value:[...new Map([...pageNodes.value,...(compareOpen.value?qualityCompareNodes.value:[])].map(n=>[key(n),n])).values()])
 })
 const compareCompatible=computed(()=>{const g=qualityCompareNodes.value.map(n=>{const e=qualityData.value[key(n)];const g=e?qualityGroups(e.tests,e.monitor,compareTarget.value)[0]:undefined;return e&&latencyReadComplete(e,g)?g:undefined});return g.length>1&&g.every(v=>v?.comparable&&!v.insufficient&&v.key===g[0]?.key)})
@@ -87,29 +88,60 @@ const siteRows=computed(()=>{
 })
 const siteSortResult=computed(()=>sortSiteRows(siteRows.value,siteSort.value==='existing'?'p50':siteSort.value))
 const weeklyStats=ref<Record<string,WeeklySummary>>({}),weeklyErrors=ref<Record<string,string>>({})
-const weeklySort=ref(''),weeklyDescending=ref(true),weeklyUntil=ref(new Date().toISOString())
+const headerSort=ref(''),weeklyUntil=ref(new Date().toISOString())
+const weeklyColumn=computed(()=>['responseRate','volatility'].includes(headerSort.value))
+const metricHeader=computed(()=>!!headerSort.value&&headerSort.value!=='name'&&!weeklyColumn.value)
 const usesWeeklyHistory=computed(()=>['latency','combined'].includes(w.project.value)||qualityGate.value==='response')
-const weeklyFullScope=computed(()=>qualityGate.value==='response'||['responseRate','volatility'].includes(weeklySort.value))
+const weeklyFullScope=computed(()=>qualityGate.value==='response'||weeklyColumn.value)
 function weeklyRead(id:string){return !!(weeklyStats.value[id]||weeklyErrors.value[id])}
 const weeklyReady=computed(()=>w.proxyNodes.value.every(n=>weeklyRead(weeklyHistoryKey(n))))
-function sortWeekly(metric:string){weeklyDescending.value=weeklySort.value===metric?!weeklyDescending.value:['responseRate','purity'].includes(metric);weeklySort.value=metric;currentPage.value=1;if(metric==='purity')void readQualityNodes(w.proxyNodes.value)}
-watch(()=>w.sort.value,()=>weeklySort.value='')
-const visibleNodes=computed(()=>{let list=w.filteredNodes.value;if(!qualityView.value)return (siteSort.value!=='existing'&&allQualityReady.value?siteSortResult.value.rows:siteRows.value).map(r=>r.node);list=list.filter(n=>protocolFilter.value==='all'||n.type===protocolFilter.value)
+const headerSortReady=computed(()=>headerSort.value==='name'||(weeklyColumn.value?weeklyReady.value:allQualityReady.value))
+function sortHeader(column:string){
+ headerSort.value=headerSort.value===column?'':column
+ currentPage.value=1;closeHover()
+ if(headerSort.value&&headerSort.value!=='name'&&!weeklyColumn.value)void readQualityNodes(w.proxyNodes.value)
+}
+watch([()=>w.sort.value,()=>w.project.value],()=>headerSort.value='')
+watch(()=>w.displayTargets.value,ids=>{if(headerSort.value.startsWith('site:')&&!ids.includes(headerSort.value.slice(5)))headerSort.value=''})
+const baseVisibleNodes=computed(()=>{let list=w.filteredNodes.value;if(!qualityView.value)return (siteSort.value!=='existing'&&allQualityReady.value?siteSortResult.value.rows:siteRows.value).map(r=>r.node);list=list.filter(n=>protocolFilter.value==='all'||n.type===protocolFilter.value)
  if(qualityGate.value==='response'&&weeklyReady.value)list=list.filter(n=>(weeklyStats.value[weeklyHistoryKey(n)]?.all.responseRate??-1)>=90)
  else if(qualityGate.value!=='all'&&qualityGate.value!=='response'&&allQualityReady.value)list=list.filter(n=>qualityMatchesGate(qualityData.value[key(n)],qualitySummaries.value[key(n)],qualityGate.value,qualityCutoff.value))
  if(qualitySort.value!=='existing'&&allQualityReady.value)list=[...list].sort((a,b)=>{const ga=qualitySummaries.value[key(a)],gb=qualitySummaries.value[key(b)],ea=qualityData.value[key(a)],eb=qualityData.value[key(b)];const valid=(g:typeof ga,e:QualityEvidence|undefined)=>!!g&&!!e&&latencyReadComplete(e,g)&&g.comparable&&(qualitySort.value==='observed'?g.success>=1:!g.insufficient)&&(qualitySort.value!=='p95'||g.success>=20);const av=valid(ga,ea),bv=valid(gb,eb);if(av!==bv)return av?-1:1;if(!av)return 0;const group=ga.key.localeCompare(gb.key);if(group)return group;return qualitySort.value==='rate'?(gb.successRate||0)-(ga.successRate||0):(qualitySort.value==='p95'?ga.p95! -gb.p95!:ga.p50! -gb.p50!)})
- if(['latency','combined'].includes(w.project.value)&&weeklySort.value&&(weeklySort.value==='purity'||weeklyReady.value)){
-  const metric=weeklySort.value as 'responseRate'|'volatility'|'purity'
-  function value(n:NodeOption){
-   if(metric==='purity')return exitLanding(n,[...(qualityData.value[key(n)]?.services||[]),...(w.services.value[key(n)]||[])]).purity.score
-   return weeklyStats.value[weeklyHistoryKey(n)]?.all[metric]??null
-  }
-  list=[...list].sort((a,b)=>{
-   const av=value(a),bv=value(b)
-   return av==null?(bv==null?0:1):bv==null?-1:(av-bv)*(weeklyDescending.value?-1:1)
-  })
- }
  return list})
+const names=new Intl.Collator('zh-CN',{numeric:true,sensitivity:'base'})
+const visibleNodes=computed(()=>{
+ const list=baseVisibleNodes.value,field=headerSort.value
+ if(!field||!headerSortReady.value)return list
+ if(field==='name')return [...list].sort((a,b)=>names.compare(nodeDisplayName(a),nodeDisplayName(b)))
+ const values=new Map(list.map(node=>[key(node),headerValue(node,field)]))
+ return [...list].sort((a,b)=>{
+  const first=values.get(key(a)),second=values.get(key(b))
+  return first==null?(second==null?0:1):second==null?-1:first-second
+ })
+})
+function headerValue(node:NodeOption,field:string):number|null{
+ const evidence=qualityData.value[key(node)]
+ if(field==='responseRate'||field==='volatility')return weeklyStats.value[weeklyHistoryKey(node)]?.all[field]??null
+ if(field.startsWith('site:')||field==='verdict'){
+  if(evidence&&(!evidence.reads.latency.complete||!evidence.reads.monitor.complete))return null
+  if(field==='verdict')return ({bad:0,warn:1,good:2,empty:null} as const)[rowVerdict(node).tone]??null
+  const target=field.slice(5),detailed=w.project.value==='latency'
+  return latencyCellValue(detailed?latestLatencyRound(node):metricPoint(node,target),target,detailed)
+ }
+ if(field==='download'||field==='downloadTime'){
+  if(evidence&&!evidence.reads.download.complete)return null
+  const attempt=tableDownload(node)
+  return field==='download'?downloadReading(attempt)?.value??null:Date.parse(attempt?.finished_at||attempt?.result?.finished_at||'')||null
+ }
+ if(evidence&&!evidence.reads.service.complete)return null
+ const landing=exitLanding(node,[...(evidence?.services||[]),...(w.services.value[key(node)]||[])])
+ if(field==='purity')return landing.purity.score
+ const groups=field==='service'?unlockGroups:unlockGroups.filter(g=>g.id===field.slice(7))
+ const catalog=w.catalog.value.filter(rule=>!isReputationRule(rule))
+ const results=groups.map(g=>unlockGroupSummary(g.id,catalog,id=>shownService(node,id),w.nodeUnlockRegion(node),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions,landing.ipKind.type))
+ const total=results.reduce((sum,r)=>sum+r.total,0)
+ return total?results.reduce((sum,r)=>sum+r.available,0)/total:null
+}
 watch([qualityGate,qualitySort],()=>{currentPage.value=1;if(qualityGate.value==='download'&&w.project.value!=='combined')w.project.value='download';else if(qualityGate.value==='service'&&w.project.value!=='combined')w.project.value='service';if(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing')void readQualityNodes(w.proxyNodes.value)})
 watch(protocolFilter,()=>currentPage.value=1)
 watch([siteTarget,siteSort,siteGate],()=>{currentPage.value=1;closeHover();if(siteSort.value!=='existing'||siteGate.value!=='all')void readQualityNodes(w.proxyNodes.value)})
@@ -183,8 +215,13 @@ function airportNodeCount(id:string){return countAirportNodes(w.airports.value.f
 function serviceMetric(n:NodeOption,id:string){const a=shownService(n,id);if(!a)return '未测';if(!a.result)return attemptStatus(a);const o=a.result.outcome;if(o==='flapping')return serviceAvailability(a)===0?'检测结论不一致':'未确认';if(['matched','unlocked'].includes(o)&&!servicePassed(a))return '未确认';return outcomeLabel(o)}
 function serviceTone(n:NodeOption,id:string){const a=shownService(n,id);return a?.result?.outcome==='reachable'?'reachable':a?attemptTone(a):'empty'}
 function hoveredDownloadPoint(n:NodeOption){return hoverMode.value==='download'&&hoverNode.value&&key(hoverNode.value)===key(n)?activeRound.value:null}
+function tableDownload(n:NodeOption){
+ const displayed=w.summaryDownload(n)
+ if(!['download','downloadTime'].includes(headerSort.value))return displayed
+ return downloadEvidence([...(qualityData.value[key(n)]?.downloads||[]),...(displayed?[displayed]:[])]).latest
+}
 function downloadMetric(n:NodeOption){
- const point=hoveredDownloadPoint(n),a=point?.attempts?.[0]||w.summaryDownload(n)
+ const point=hoveredDownloadPoint(n),a=point?.attempts?.[0]||tableDownload(n)
  const reading=downloadReading(a),value=point?point.value:reading?.value??null
  if(a?.result?.error_message?.includes('备用源'))return a.result.error_message
  if(a?.result?.http_status===429)return '测速源限流（429）'
@@ -198,12 +235,50 @@ function downloadMetric(n:NodeOption){
  if(value!==null)return `${value<.01?'<0.01':value.toFixed(value<1?2:1)} MiB/s${reading?.label==='短测均速'?' · 短测':reading?.label==='未稳定均速'?' · 未稳定':''}`
  return a?attemptStatus(a,true):'未测'
 }
-function downloadMetricTone(n:NodeOption){const point=hoveredDownloadPoint(n),a=point?.attempts?.[0]||w.summaryDownload(n);return point?point.tone:a?downloadTone(a):'empty'}
-function downloadMetricContext(n:NodeOption){const point=hoveredDownloadPoint(n),attempt=point?.attempts?.[0]||w.summaryDownload(n),peak=downloadPeakSpeed(attempt),connection=downloadConnectionSeconds(attempt),suffix=(peak!==null?` · 峰值 ${peak.toFixed(2)} MiB/s`:'')+(attempt?` · ${downloadSourceName(attempt)}`:'')+(connection===null?'':` · 连接 ${connection.toFixed(2)} 秒`);if(point)return `${date(point.time)} · ${triggerLabel(point.trigger)} · ${attempt?attemptStatus(attempt,true).replace(' · 达到时限',''):point.description}${suffix}`;return attempt?`${date(attempt.finished_at||attempt.requested_at)} · ${triggerLabel(attempt.trigger_type)} · ${attemptStatus(attempt,true).replace(' · 达到时限','')}${suffix}`:'没有下载记录'}
+function downloadMetricTone(n:NodeOption){const point=hoveredDownloadPoint(n),a=point?.attempts?.[0]||tableDownload(n);return point?point.tone:a?downloadTone(a):'empty'}
+function downloadMetricContext(n:NodeOption){const point=hoveredDownloadPoint(n),attempt=point?.attempts?.[0]||tableDownload(n),peak=downloadPeakSpeed(attempt),connection=downloadConnectionSeconds(attempt),suffix=(peak!==null?` · 峰值 ${peak.toFixed(2)} MiB/s`:'')+(attempt?` · ${downloadSourceName(attempt)}`:'')+(connection===null?'':` · 连接 ${connection.toFixed(2)} 秒`);if(point)return `${date(point.time)} · ${triggerLabel(point.trigger)} · ${attempt?attemptStatus(attempt,true).replace(' · 达到时限',''):point.description}${suffix}`;return attempt?`${date(attempt.finished_at||attempt.requested_at)} · ${triggerLabel(attempt.trigger_type)} · ${attemptStatus(attempt,true).replace(' · 达到时限','')}${suffix}`:'没有下载记录'}
 function openCombinedPlan(){const nodes=[...runNodes.value];closeHover();w.project.value='combined';w.openPlan(nodes)}
 function runLabel(p:Project){return p==='latency'?'测延迟':p==='download'?'测速':p==='service'?'解锁检测':'组合检测'}
 function toggleAirport(id:string){const selected=w.selectedAirportIds.value||[];w.setAirports(selected.includes(id)?selected.filter(s=>s!==id):[...selected,id])}
-function metricPoint(n:NodeOption,target:string){if(w.sort.value==='latency'&&target===w.displayTarget.value&&w.sortSnapshots.value[key(n)])return w.sortSnapshots.value[key(n)].latency;return sitePoints(n,target).at(-1)}
+function qualityLatencyPoint(n:NodeOption,target:string){
+ const evidence=qualityData.value[key(n)]
+ const test=evidence?.tests.filter(t=>sampleFor(t,target).length).reduce<import('../domain').LatencyTest|undefined>((recent,t)=>!recent||Date.parse(t.finished_at)>Date.parse(recent.finished_at)?t:recent,undefined)
+ return test?manualLatencyPoint(test,target):undefined
+}
+function newestPoint(first?:TrendPoint,second?:TrendPoint){return !first||second&&Date.parse(second.time)>Date.parse(first.time)?second:first}
+function metricPoint(n:NodeOption,target:string){
+ const sorting=headerSort.value==='verdict'||headerSort.value==='site:'+target
+ if(!sorting&&w.sort.value==='latency'&&target===w.displayTarget.value&&w.sortSnapshots.value[key(n)])return w.sortSnapshots.value[key(n)].latency
+ const displayed=sitePoints(n,target).filter(p=>latencySiteSamples(p,target).length).at(-1)
+ if(!sorting)return displayed
+ const evidence=qualityData.value[key(n)]
+ const manual=qualityLatencyPoint(n,target)
+ const monitored=monitorLatencyPoints(evidence?.monitor||[],target).at(-1)
+ // Keep the durable round reference when the same saved attempt is already loaded.
+ return newestPoint(newestPoint(displayed,displayed?.latencyTests?.some(t=>t.attempt_id===manual?.id)?undefined:manual),monitored)
+}
+function latestLatencyRound(n:NodeOption){
+ const saved=presentation.points(n,'latency','all').filter(p=>p.sampleGroups?.some(group=>group.samples.length)).at(-1)
+ const sorting=headerSort.value==='verdict'||headerSort.value.startsWith('site:')
+ const fallback=sorting?qualityLatencyPoint(n,'all'):undefined
+ const manual=newestPoint(saved,saved?.latencyTests?.some(t=>t.attempt_id===fallback?.id)?undefined:fallback)
+ return manual||newestPoint(presentation.monitor(n).at(-1),sorting?monitorLatencyPoints(qualityData.value[key(n)]?.monitor||[]).at(-1):undefined)
+}
+function latencyRowPoint(n:NodeOption,target:string){
+ const detailed=w.project.value==='latency'
+ const round=detailed?latestLatencyRound(n):metricPoint(n,target),samples=latencySiteSamples(round,target)
+ if(!round||!samples.length)return detailed?undefined:round
+ const responses=samples.filter(s=>s.value!==null).length
+ const tone=samples.every(s=>s.tone==='empty')?'empty':!responses?'bad':responses<samples.length?'warn':'good'
+ return {...round,samples,tone,value:detailed?latencyCellValue(round,target,true):round.value} satisfies TrendPoint
+}
+function rowVerdict(n:NodeOption){
+ const sites=targets.filter(s=>w.displayTargets.value.includes(s.id))
+ const array=sites.map(s=>latencyRowPoint(n,s.id))
+ const stable=stableLatency(sites.map((s,i)=>({id:s.id,points:array[i]?[array[i]!]:[]})))
+ const weekly=weeklyStats.value[weeklyHistoryKey(n)]
+ return latencyVerdict(array,stable,weekly?.allOld?null:weekly?.all.responseRate,sites.map(s=>s.name))
+}
 function siteMetric(n:NodeOption,target:string){const point=metricPoint(n,target);const stable=stableLatency([{id:target,points:point?[point]:[]}]);return stable===null?(point?.value!=null?'—':latencyPointLabel(point,target)):Math.round(stable)+' ms'}
 function siteContext(n:NodeOption,target:string){const p=metricPoint(n,target);const first=p?inspectorSamples(p,target)[0]?.value:null;return p?date(p.time)+(p.source==='monitor'?' · 监测':' · 手动')+(first!=null?' · 首次连接 '+Math.round(first)+' ms':''):'未测'}
 function siteReason(n:NodeOption,target:string){return [...new Set(metricPoint(n,target)?.sampleGroups?.find(g=>latencyTargetId(g.target)===target)?.samples.map(s=>s.note||s.error).filter(Boolean)||[])].join('；')}
@@ -213,7 +288,7 @@ function monitorPoints(n:NodeOption){return presentation.monitor(n)}
 function rowPoints(n:NodeOption,p:Project){return p==='latency'?sitePoints(n,w.displayTarget.value):p==='service'?presentation.services(n):presentation.points(n,p,w.displayTarget.value)}
 function sitePoints(n:NodeOption,target:string){return presentation.site(n,target)}
 watch([pageNodes,hoverNode],([nodes,hover])=>presentation.retain(hover?[...nodes,hover]:nodes),{immediate:true,flush:'sync'})
-watch(hoverPoints,list=>{const old=activeRound.value;if(!old||inlineTab.value!=='round')return;const updated=list.find(p=>p.id===old.id&&p.source===old.source);if(updated)activeRound.value=updated;else closeHover()},{flush:'post'})
+watch(hoverPoints,list=>{const old=activeRound.value;if(!old||inlineTab.value!=='round')return;const updated=list.find(p=>p.id===old.id&&p.source===old.source);if(updated)activeRound.value=updated;else if(!keepOpen.value)closeHover()},{flush:'post'})
 async function readMonitor(){
   void w.loadMeasurementRounds(pageNodes.value)
   const generation=++monitorGeneration,list=pageNodes.value,project=w.project.value,until=new Date().toISOString(),since=new Date(Date.now()-w.hours.value*3600000).toISOString()
@@ -236,21 +311,21 @@ watch([()=>w.search.value,()=>w.region.value,()=>w.subscription.value,()=>w.airp
 watch(()=>w.hours.value,()=>{presentation.clear();monitorGeneration++;monitorData.value={};monitorErrors.value={};monitorHTTPData.value={};monitorHTTPErrors.value={}});watch(totalPages,count=>currentPage.value=Math.min(currentPage.value,count))
 watch([pageNodes,qualityView,qualityScopeKey],([nodes,quick,scope],[,,previousScope])=>{
  if(previousScope!==undefined&&scope!==previousScope){qualityGeneration++;qualityData.value={};qualityErrors.value={};qualityLoading.value=false
-  if((quick||siteSort.value!=='existing'||siteGate.value!=='all')&&w.page.value==='home')void readQualityNodes((quick?(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing'):(siteSort.value!=='existing'||siteGate.value!=='all'))?w.proxyNodes.value:nodes)
+  if((quick||siteSort.value!=='existing'||siteGate.value!=='all'||metricHeader.value)&&w.page.value==='home')void readQualityNodes(metricHeader.value||(quick?(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing'):(siteSort.value!=='existing'||siteGate.value!=='all'))?w.proxyNodes.value:nodes)
   return
  }
  if((quick||siteSort.value!=='existing'||siteGate.value!=='all')&&w.page.value==='home')void readQualityNodes(nodes)
 },{immediate:true})
-watch(()=>w.hours.value,()=>{if(qualityView.value||siteSort.value!=='existing'||siteGate.value!=='all')void readQualityNodes((qualityView.value?(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing'):(siteSort.value!=='existing'||siteGate.value!=='all'))?w.proxyNodes.value:pageNodes.value,true);else{qualityGeneration++;qualityData.value={};qualityErrors.value={};qualityCutoff.value=new Date().toISOString()}})
+watch(()=>w.hours.value,()=>{if(qualityView.value||siteSort.value!=='existing'||siteGate.value!=='all')void readQualityNodes(metricHeader.value||(qualityView.value?(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing'):(siteSort.value!=='existing'||siteGate.value!=='all'))?w.proxyNodes.value:pageNodes.value,true);else{qualityGeneration++;qualityData.value={};qualityErrors.value={};qualityCutoff.value=new Date().toISOString()}})
 watch([pageNodes,()=>w.project.value,()=>w.hours.value],()=>{if(w.page.value==='home'){void w.ensureHistory(pageNodes.value);void readMonitor()}},{immediate:true})
-watch(()=>w.page.value,p=>{if(p==='home'){void w.ensureHistory(pageNodes.value);void readMonitor();if(qualityView.value||siteSort.value!=='existing'||siteGate.value!=='all')void readQualityNodes((qualityView.value?(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing'):(siteSort.value!=='existing'||siteGate.value!=='all'))?w.proxyNodes.value:pageNodes.value)}else{closeHover();presentation.clear()}})
+watch(()=>w.page.value,p=>{if(p==='home'){void w.ensureHistory(pageNodes.value);void readMonitor();if(qualityView.value||siteSort.value!=='existing'||siteGate.value!=='all')void readQualityNodes(metricHeader.value||(qualityView.value?(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing'):(siteSort.value!=='existing'||siteGate.value!=='all'))?w.proxyNodes.value:pageNodes.value)}else{closeHover();presentation.clear()}})
 watch(()=>w.serviceIds.value,closeHover,{deep:true})
 watch(()=>w.displayServiceIds.value,()=>{servicePage.value=1;closeHover()},{deep:true})
 watch(servicePage,closeHover)
 watch(servicePages,count=>servicePage.value=Math.min(servicePage.value,count))
 watch([()=>w.project.value,()=>w.hours.value,currentPage],closeHover)
 watch(()=>w.displayTarget.value,()=>{if(keepOpen.value&&hoverNode.value){activeRound.value=null;inlineTab.value='history'}else closeHover()})
-provide(homeModelKey,{refreshWeekly,weeklyStats,weeklyErrors,weeklyProgress,weeklyReady,weeklySort,weeklyDescending,sortWeekly,compareOpen,compareTarget,compareNodes:qualityCompareNodes,compareCompatible,comparisonDownloadStatus,closeComparison,servicePoints:(n:NodeOption,id:string)=>presentation.points(n,'service',w.displayTarget.value,id),hiddenSelectedCount,qualityFiltersPending,monitorData,monitorErrors,monitorHTTPErrors,httpPoints,visibleServices,servicePage,servicePages,servicesPerPage,chosen,filterProfiles,protocolChoices,protocolFilter,qualityGate,qualitySort,qualityLoading,qualityErrors,qualityCutoff,allQualityReady,readQualityNodes,siteSummaries,pageSize,setPageSize,pageNodes,visibleNodes,runNodes,currentPage,totalPages,picker,filterRegions,qualityData,nodeActivities,displayServices,sourceLabel,metricPoint,siteMetric,siteContext,siteReason,sitePoints,rowPoints,downloadMetric,downloadMetricTone,downloadMetricContext,serviceMetric,serviceTone,shownService,showService,showServiceEvidence,hoverNode,hoverMode,hoverTarget,hoverService,hoverPoints,activeRound,inlineTab,inlineHistorySource,keepOpen,inspectRound,openRound,leaveRound,keepRound,closeHover,expandHistory,openComparison,openCombinedPlan,runLabel})
+provide(homeModelKey,{refreshWeekly,weeklyStats,weeklyErrors,weeklyProgress,weeklyReady,headerSort,headerSortReady,sortHeader,compareOpen,compareTarget,compareNodes:qualityCompareNodes,compareCompatible,comparisonDownloadStatus,closeComparison,servicePoints:(n:NodeOption,id:string)=>presentation.points(n,'service',w.displayTarget.value,id),hiddenSelectedCount,qualityFiltersPending,monitorData,monitorErrors,monitorHTTPErrors,httpPoints,visibleServices,servicePage,servicePages,servicesPerPage,chosen,filterProfiles,protocolChoices,protocolFilter,qualityGate,qualitySort,qualityLoading,qualityErrors,qualityCutoff,allQualityReady,readQualityNodes,siteSummaries,pageSize,setPageSize,pageNodes,visibleNodes,runNodes,currentPage,totalPages,picker,filterRegions,qualityData,nodeActivities,displayServices,sourceLabel,metricPoint,latestLatencyRound,latencyRowPoint,rowVerdict,siteMetric,siteContext,siteReason,sitePoints,rowPoints,downloadMetric,downloadMetricTone,downloadMetricContext,serviceMetric,serviceTone,shownService,showService,showServiceEvidence,hoverNode,hoverMode,hoverTarget,hoverService,hoverPoints,activeRound,inlineTab,inlineHistorySource,keepOpen,inspectRound,openRound,leaveRound,keepRound,closeHover,expandHistory,openComparison,openCombinedPlan,runLabel})
 onMounted(()=>monitorTimer=setInterval(()=>{if(w.page.value==='home'&&document.visibilityState==='visible')void readMonitor()},30000));onBeforeUnmount(()=>{weeklyGeneration++;weeklyWaiting.clear();qualityGeneration++;presentation.clear();monitorGeneration++;clearTimeout(hoverTimer);clearInterval(monitorTimer)})
 </script>
 <template>

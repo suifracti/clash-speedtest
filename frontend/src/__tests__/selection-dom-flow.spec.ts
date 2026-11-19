@@ -3,7 +3,7 @@ import {DOMWrapper,flushPromises,mount,type VueWrapper} from '@vue/test-utils'
 import HomeView from '../components/HomeView.vue'
 import {createWorkspace,workspaceKey} from '../workspace'
 import {api} from '../api'
-import {key,type MonitorSample,type NodeOption,type Plan} from '../domain'
+import {key,type LatencyTest,type MonitorSample,type NodeOption,type Plan} from '../domain'
 import {nodeDisplayName} from '../nodePresentation'
 
 vi.hoisted(()=>{const items=new Map<string,string>();Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:(k:string)=>items.get(k)||null,setItem:(k:string,v:string)=>items.set(k,v),clear:()=>items.clear()}})})
@@ -25,7 +25,7 @@ function dialog(){return new DOMWrapper(document.querySelector('dialog')!)}
 function airportInput(name:string){const label=Array.from(document.querySelectorAll('.airport-pick-list label')).find(e=>e.querySelector('strong')?.textContent===name)!;return new DOMWrapper(label.querySelector('input')!)}
 function nodeInput(view:VueWrapper,name:string){return view.get(`.hd-tr input[aria-label="选择 ${name}"]`)}
 const rows='.hd-tr:not(.hd-th)'
-function cells(view:VueWrapper){return view.findAll(`${rows} .hd-num:not(.hd-history-cell)`).map(m=>m.text())}
+function cells(view:VueWrapper){return view.findAll(`${rows} .hd-num:not(.hd-history-cell), ${rows} .response-stop strong`).map(m=>m.text())}
 
 beforeEach(()=>{window.localStorage.clear();window.sessionStorage.clear();vi.clearAllMocks();HTMLDialogElement.prototype.showModal=vi.fn();HTMLDialogElement.prototype.close=vi.fn();vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}});vi.stubGlobal('fetch',vi.fn().mockRejectedValue(new Error('Unexpected network request in isolated DOM selection test')))})
 afterEach(()=>{expect(vi.mocked(fetch).mock.calls.filter(([url,options])=>!((String(url)==='/api/clash/node-status'&&options?.method==='POST')||(String(url)==='/api/clash/usage'&&options?.method==='GET')))).toEqual([]);wrapper?.unmount();w?.dispose();wrapper=undefined;w=undefined;document.body.innerHTML='';vi.unstubAllGlobals()})
@@ -166,11 +166,35 @@ describe('node selection through DOM controls',()=>{
     expect(wrapper.get('.latency-combined').attributes('aria-label')).toContain('本轮实际采样')
     expect(wrapper.findAll('.latency-combined .failed')).toHaveLength(1)
     w.latency.value={[key(a)]:[{...a,attempt_id:'new-manual',node_type:'trojan',requested_at:'2026-10-03T07:00:00Z',finished_at:'2026-10-03T07:00:01Z',status:'completed',latency_ms:55,total_samples:1,success_samples:1,failure_samples:0,persistence_state:'saved',samples:[{seq:1,target:'https://speed.cloudflare.com/__down?bytes=1',timestamp:'2026-10-03T07:00:01Z',latency_ms:55,success:true}]}]}
-    await flushPromises();expect(cells(wrapper)).toEqual(['—','—','未测'])
+    await flushPromises();expect(cells(wrapper)).toEqual(['—','55 ms','未测'])
     w.nodes.value=[{...a,config_revision_key:'revision-new'}];await flushPromises()
     expect(api.monitorSamples).toHaveBeenLastCalledWith(expect.objectContaining({config_revision_key:'revision-new'}))
     expect(cells(wrapper)).toEqual(['—','未测','未测'])
     expect(wrapper.findAll('.health-cell.has-record')).toHaveLength(0)
+  })
+  it('shows only the selected station samples in sequence and opens the chosen historical round',async()=>{
+    const {w,wrapper}=attach([a],['airport-a']);w.displayTargets.value=['cloudflare','google'];await flushPromises()
+    const at='2026-11-19T01:10:00Z',cloudflare='https://speed.cloudflare.com/__down?bytes=1',google='https://www.gstatic.com/generate_204'
+    const latency:LatencyTest={...a,node_type:a.type,attempt_id:'saved-test',requested_at:at,finished_at:at,latency_ms:70,status:'completed',total_samples:4,success_samples:3,failure_samples:1,persistence_state:'saved',samples:[
+      {seq:2,target:cloudflare,timestamp:at,latency_ms:0,success:false,error:'timeout'},
+      {seq:1,target:cloudflare,timestamp:at,latency_ms:70,success:true},
+      {seq:3,target:google,timestamp:at,latency_ms:100,success:true},
+      {seq:4,target:google,timestamp:at,latency_ms:35,success:true},
+    ]}
+    w.measurementRounds.value[key(a)]=[{round_id:'saved-round',trigger_type:'manual',state:'finished',started_at:at,items:[
+      {...a,request_id:'req',project:'latency',execution_state:'completed',persistence_state:'saved',latency},
+    ]}]
+    await flushPromises()
+    const station=wrapper.findAll('.response-stop')
+    expect(station).toHaveLength(2)
+    expect(station[0].findAll('.response-vertical i').map(bar=>bar.attributes('title'))).toEqual(['第 1 次 · 70 ms','第 2 次 · 超时'])
+    expect(station[1].findAll('.response-vertical i').map(bar=>bar.attributes('title'))).toEqual(['第 1 次 · 100 ms','第 2 次 · 35 ms'])
+    expect(station[0].findAll('.response-history button')).toHaveLength(1)
+    await station[0].get('.response-history button').trigger('click');await flushPromises()
+    expect(wrapper.find('.round-summary').text()).toContain('已读 2 个站点')
+    expect(wrapper.findAll('.round-result strong').map(row=>row.text())).toEqual(['70 ms','超时','100 ms','35 ms'])
+    w.project.value='combined';await flushPromises()
+    expect(wrapper.findAll('.response-stop').map(cell=>cell.findAll('.response-samples i').length)).toEqual([2,2])
   })
   it('shows stopped HTTP monitoring in service and combined views without claiming catalog checks passed',async()=>{
     const google:MonitorSample={...a,sample_id:'http-google-1',run_id:'http-run-1',display_name_snapshot:a.display_name,timestamp:'2026-10-03T06:30:00Z',probe_type:'service_google',target:'https://www.google.com/generate_204',success:true,latency:80000000,ttfb:0,sampling_tier:'regular'}

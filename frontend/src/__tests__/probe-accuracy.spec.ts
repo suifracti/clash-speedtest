@@ -82,7 +82,7 @@ it('keeps planned but unexecuted six-site targets out of failure and successful 
  const w={displayTarget:ref('cloudflare'),serviceIds:ref([] as string[]),latency:ref({}),downloads:ref({}),services:ref({})};const cache=createPresentationCache(w,ref({[key(n)]:[s]}),ref({}))
  expect(cache.site(n,'google')[0].tone).toBe('empty')
  expect(cache.site(n,'google')[0].sampleGroups![0].samples[0].tone).toBe('empty')
- const ui=mount(RoundResults,{props:{point:cache.site(n,'google')[0]}});expect(ui.find('.round-summary').text()).toContain('实际执行 0 / 6 站点');ui.unmount()
+ const ui=mount(RoundResults,{props:{point:cache.site(n,'google')[0]}});expect(ui.find('.round-summary').text()).toContain('实际执行 0 个站点');ui.unmount()
 })
 it('keeps all target children available from a scheduled site cell while its value stays site-specific',()=>{
  const base:MonitorSample={...n,sample_id:'cf',run_id:'run-six',display_name_snapshot:'n',timestamp:'2026-10-07T00:00:00Z',target:'https://speed.cloudflare.com/__down?bytes=1',probe_type:'rtt',success:true,latency:100e6,ttfb:100e6,sampling_tier:'regular'}

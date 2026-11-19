@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {computed} from 'vue'
-import {partialLatencyFailures} from '../inspectorLatency'
+import {latencyFailureReason,partialLatencyFailures} from '../inspectorLatency'
 import {triggerLabel} from '../measurementRounds'
 import {date} from '../domain'
 import type {SampleGroup,TrendPoint} from '../presentation'
@@ -21,7 +21,7 @@ function notes(group:SampleGroup){
 <template>
   <section class="round-results" aria-label="本轮测试数据">
     <header><strong>{{point.source==='monitor'?'本轮已读采样':'本轮全部测试'}}</strong><time :datetime="point.time" :title="point.time">{{date(point.time)}} · {{triggerLabel(point.trigger)}}</time></header>
-    <p class="round-summary">本节点本轮已读 {{groups.length}} / 6 个默认站点记录 · 实际执行 {{executedSites}} / 6 站点 · {{samples.length}} 次采样 · {{success}}/{{samples.length}} 成功<span v-if="cancelled"> · 取消 {{cancelled}}</span></p>
+    <p class="round-summary">本节点本轮已读 {{groups.length}} 个站点 · 实际执行 {{executedSites}} 个站点 · {{samples.length}} 次采样 · {{success}}/{{samples.length}} 成功<span v-if="cancelled"> · 取消 {{cancelled}}</span></p>
     <p class="small muted">这是本节点的已读覆盖，不代表全局覆盖；旧单站记录保持原范围。响应时延或 HTTP 成功不证明业务／地区解锁。</p>
     <p v-for="iface in physicalInterfaces" :key="iface" class="small muted">已绕开本机 TUN（{{iface}}）</p>
     <template v-for="test in point.latencyTests||[]" :key="test.attempt_id"><p v-if="test.network_path?.socket_bind_verified&&(test.network_path.dns_bind_verified||test.network_path.dns_mode==='node_literal_no_dns')" class="small muted">已绕开本机 TUN（{{test.network_path.interface}}）</p></template>
@@ -30,7 +30,7 @@ function notes(group:SampleGroup){
     <div class="round-target-list">
       <article v-for="group in groups" :key="group.id" class="round-target">
         <header><strong :title="group.target">{{group.name}}</strong><span>中位数 <b>{{group.value===null?'—':group.value.toFixed(0)+' ms'}}</b></span><small>{{group.samples.filter(s=>s.value!==null).length}}/{{group.samples.length}} 成功</small></header>
-        <div class="round-result-grid"><div v-for="sample in group.samples" :key="sample.id" class="round-result" :class="sample.tone" :title="sample.description"><span>{{sample.label}}</span><strong>{{sample.value===null?(sample.executionState==='cancelled'?'已取消':sample.tone==='empty'?'未执行':'未确认'):sample.value.toFixed(0)+' ms'}}</strong></div></div>
+        <div class="round-result-grid"><div v-for="sample in group.samples" :key="sample.id" class="round-result" :class="sample.tone" :title="sample.description"><span>{{sample.label}}</span><strong>{{sample.value===null?(sample.executionState==='cancelled'?'已取消':sample.tone==='empty'?'未执行':latencyFailureReason(sample.error||'')):sample.value.toFixed(0)+' ms'}}</strong></div></div>
         <p v-for="note in notes(group)" :key="note" class="small muted round-note">{{note}}</p>
         <p v-for="failure in failures(group)" :key="failure.error" class="round-failure" :class="group.samples.every(s=>s.executionState==='cancelled')?'muted':'bad'">{{failure.labels}}：{{failure.error}}</p>
       </article>

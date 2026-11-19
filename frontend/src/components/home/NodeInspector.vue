@@ -16,6 +16,7 @@ import {entryCountry,mainlandNotice,pathSteps} from '../../entryPath'
 import {stableLatency,inspectorMedian} from '../../inspectorLatency'
 import NodeExitSummary from '../NodeExitSummary.vue'
 import MeasurementResults from '../MeasurementResults.vue'
+import RoundResults from '../RoundResults.vue'
 import InlineHistory from '../InlineHistory.vue'
 import TrendChart from '../TrendChart.vue'
 import Modal from '../Modal.vue'
@@ -196,7 +197,7 @@ function run(){if(props.readOnly)return;m.closeHover();props.exitOnly?w.openRepu
       </template>
     </div>
 
-    <div v-if="shows('latency')" class="hd-ins-block hd-latency">
+    <div v-if="shows('latency')&&!(m.hoverMode.value==='latency'&&(showRound||showHistory))" class="hd-ins-block hd-latency">
       <InspectorLatency :series="latencySeries" :node="node" :focus="reportFocus" :read-only="readOnly" @round-change="latencyFocus=$event" @return-latest="w.latencyReportFocus.value=null"/>
       <small v-if="m.monitorErrors.value[key(node)]" class="bad">监测记录读取失败</small>
     </div>
@@ -223,7 +224,7 @@ function run(){if(props.readOnly)return;m.closeHover();props.exitOnly?w.openRepu
       <h3>解锁检测</h3><UnlockInspector :node="node" :ip-type="landing.ipKind.type"/>
     </div>
 
-    <div v-if="!exitOnly&&(showRound||showHistory)&&m.hoverMode.value!=='latency'" class="hd-ins-detail" @mouseenter="m.keepRound" @mouseleave="m.leaveRound" @keydown.esc.stop="m.closeHover">
+    <div v-if="!exitOnly&&(showRound||showHistory)" class="hd-ins-detail" @mouseenter="m.keepRound" @mouseleave="m.leaveRound" @keydown.esc.stop="m.closeHover">
       <header><strong>{{showRound?'这一轮的数据':detailTitle}}</strong>
         <span>
           <button v-if="showRound" class="hd-link" @click="m.expandHistory">看完整走势</button>
@@ -233,7 +234,8 @@ function run(){if(props.readOnly)return;m.closeHover();props.exitOnly?w.openRepu
         </span>
       </header>
       <template v-if="showRound&&m.activeRound.value">
-        <MeasurementResults :point="m.activeRound.value" :project="m.hoverMode.value"/>
+        <RoundResults v-if="m.hoverMode.value==='latency'" :point="m.activeRound.value"/>
+        <MeasurementResults v-else :point="m.activeRound.value" :project="m.hoverMode.value"/>
         <TrendChart :points="m.hoverPoints.value" :unit="m.hoverMode.value==='download'?'MiB/s':m.hoverMode.value==='service'?'通过':'ms'" label="节点近期走势"/>
       </template>
       <InlineHistory v-else :node="node" :nodes="m.visibleNodes.value" :project="m.hoverMode.value" :source="m.inlineHistorySource.value" :monitor-service-id="m.hoverService.value" :anchor-points="m.hoverPoints.value" :target-ids="w.displayTargets.value" :service-ids="m.displayServices.value.map(s=>s.service_id)"/>

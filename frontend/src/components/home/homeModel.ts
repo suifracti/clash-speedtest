@@ -25,9 +25,9 @@ export interface HomeModel {
  weeklyErrors:Ref<Record<string,string>>
  weeklyProgress:ComputedRef<{full:boolean;total:number;processed:number;failed:number;until:string}>
  weeklyReady:ComputedRef<boolean>
- weeklySort:Ref<string>
- weeklyDescending:Ref<boolean>
- sortWeekly:(metric:string)=>void
+ headerSort:Ref<string>
+ headerSortReady:ComputedRef<boolean>
+ sortHeader:(column:string)=>void
  hiddenSelectedCount:ComputedRef<number>
  qualityFiltersPending:ComputedRef<boolean>
  monitorData:Ref<Record<string,MonitorSample[]>>
@@ -65,6 +65,9 @@ export interface HomeModel {
  displayServices:ComputedRef<{service_id:string;name:string}[]>
  sourceLabel:(n:NodeOption)=>string
  metricPoint:(n:NodeOption,target:string)=>TrendPoint|undefined
+ latestLatencyRound:(n:NodeOption)=>TrendPoint|undefined
+ latencyRowPoint:(n:NodeOption,target:string)=>TrendPoint|undefined
+ rowVerdict:(n:NodeOption)=>Verdict
  siteMetric:(n:NodeOption,target:string)=>string
  siteContext:(n:NodeOption,target:string)=>string
  siteReason:(n:NodeOption,target:string)=>string

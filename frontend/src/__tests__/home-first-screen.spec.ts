@@ -137,10 +137,34 @@ it('waits for the full seven-day sort and filter range before applying the known
   workspace.cancelSelection();await flushPromises()
   release();await flushPromises()
   expect(vi.mocked(api.latencyHistoryScopes)).toHaveBeenCalledTimes(25)
-  expect(sort.element.parentElement?.getAttribute('aria-sort')).toBe('descending')
+  expect(sort.element.parentElement?.getAttribute('aria-sort')).toBe('ascending')
   expect(wrapper.findAll('.hd-row-scroll [data-node-key]').map(row=>row.attributes('data-node-key'))).toEqual([key(best)])
   expect(wrapper.text()).toContain('1 个节点读取失败')
   expect(wrapper.get('.hd-run').attributes('disabled')).toBeUndefined()
+})
+
+it('sorts a station across pages, restores the previous order, and exposes page size above the list',async()=>{
+  const fixture=nodes().filter(n=>n.profile_id===profileIds[0]).slice(0,25)
+  const first=fixture[0]!,last=fixture.at(-1)!,at=new Date(Date.now()-60_000).toISOString(),target='https://speed.cloudflare.com/__down?bytes=1'
+  const test=(node:NodeOption,value:number):LatencyTest=>({...node,node_type:node.type,attempt_id:'site-'+node.node_key,requested_at:at,finished_at:at,status:'completed',latency_ms:value,total_samples:2,success_samples:2,failure_samples:0,persistence_state:'saved',samples:[1,2].map(seq=>({seq,target,timestamp:at,latency_ms:value,success:true}))})
+  vi.mocked(api.latencyHistory).mockImplementation(async n=>({tests:n.node_key===last.node_key?[test(last,22)]:n.node_key===first.node_key?[test(first,95)]:[],has_more:false,complete:true}))
+  const {workspace,wrapper}=attachHome({nodes:fixture});workspace.project.value='latency';await flushPromises()
+  const rows=()=>wrapper.findAll('.hd-row-scroll [data-node-key]').map(r=>r.attributes('data-node-key'))
+  const original=rows(),button=wrapper.findAll('.hd-column-sort').find(b=>b.text()==='Cloudflare')!
+  expect(original).not.toContain(key(last))
+  await button.trigger('click');await flushPromises()
+  expect(rows().slice(0,2)).toEqual([key(last),key(first)])
+  expect(button.element.parentElement?.getAttribute('aria-sort')).toBe('ascending')
+  await button.trigger('click');await flushPromises()
+  expect(rows()).toEqual(original)
+  expect(button.element.parentElement?.getAttribute('aria-sort')).toBe('none')
+  const top=wrapper.get('nav[aria-label="节点列表分页"]')
+  await top.get('select[aria-label="每页显示节点数"]').setValue('10');await flushPromises()
+  expect(rows()).toHaveLength(10)
+  expect(top.text()).toContain('第 1–10 条，共 25 条')
+  expect(window.localStorage.getItem('speedtest-page-size')).toBe('10')
+  await top.get('[aria-label="下一页"]').trigger('click');await flushPromises()
+  expect(top.text()).toContain('第 11–20 条，共 25 条')
 })
 
 describe('synthetic 256-node home first screen',()=>{
