@@ -84,6 +84,11 @@ function resultStatus(q:QueueItem):{label:string;tone:string;notExecuted?:boolea
   if(isAntigravity(q)&&outcome==='matched')return {label:modelConfirmed(q)?'确认模型可用':'未确认模型可用',tone:modelConfirmed(q)?'good':'warn'}
   if(isAntigravity(q)&&outcome==='flapping')return {label:'偶发送中 / 漂移',tone:'warn'}
   if(isAntigravity(q)&&outcome==='region_blocked')return {label:'地区拒绝',tone:'warn'}
+  if((q.serviceId||q.attempt?.service_id)==='cloudflare_challenge'){
+   if(outcome==='profiled')return {label:'未触发 CF 盾',tone:'good'}
+   if(outcome==='verification_required')return {label:'部分弹 CF 盾',tone:'warn'}
+   if(outcome==='challenge')return {label:'易弹 CF 验证',tone:'bad'}
+  }
   if(['not_executed','cancelled','user_cancelled','interrupted'].includes(outcome))return {label:stateLabel(outcome==='user_cancelled'?'cancelled':outcome),tone:'',notExecuted:true}
   if(['timed_out','transport_error','rate_limited'].includes(outcome))return {label:outcomeLabel(outcome)+' · 未确认',tone:'warn'}
   return {label:outcomeLabel(outcome),tone:outcomeTone(outcome)}
@@ -132,7 +137,16 @@ function servicePhaseNote(q:QueueItem){
  return `代理建连累计约 ${(duration/1000).toFixed(2)} 秒 · 未记录完整 HTTP 请求写出，服务结论未确认`
 }
 function antigravityEvidenceLine(q:QueueItem){
- const r=q.attempt?.result;if(!isAntigravity(q)||!r)return ''
+ const r=q.attempt?.result;if(!r)return ''
+ if((q.serviceId||q.attempt?.service_id)==='cloudflare_challenge'){
+  const d=r.details||{},parts:string[]=[]
+  if(d.cf_challenge_detail)parts.push(String(d.cf_challenge_detail))
+  if(d.cf_colo)parts.push(`CF 机房 ${d.cf_colo}`)
+  let path:{interface?:string;socket_bind_verified?:boolean}={};try{path=JSON.parse(String(d.network_path||'{}'))}catch{}
+  if(path.socket_bind_verified&&path.interface)parts.push(`${path.interface} 绕过 TUN`)
+  return parts.join(' · ')
+ }
+ if(!isAntigravity(q))return ''
  const d=r.details||{},parts:string[]=[]
  if(d.checked_model)parts.push(`模型 ${d.checked_model}${d.models_listed?`（可选 ${d.models_listed}/${d.all_models_count||d.models_listed}）`:''}`)
  if(d.reply_preview)parts.push(`实测回答“${d.reply_preview}”`)

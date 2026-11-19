@@ -361,45 +361,90 @@ func ping0FamilyRule(family string) Rule {
 	if family == "IPv6" {
 		id, host = "ping0_ipv6", "ipv6.ping0.cc"
 	}
-	return Rule{ServiceID: id, Name: "Ping0 " + family + " 风险画像", RuleVersion: 1, Category: "出口与 IP", Region: "全球", ResultKind: "ip_quality", Description: "独立查询所选节点的 " + family + " 出口与 Ping0 风险分，不借用另一地址族的结果。", TargetURL: "https://" + host + "/geo/json", Method: http.MethodGet, SuccessCriterion: "HTTP 200，JSON出口必须属于指定地址族；风险分按源站原值展示，缺失不记0", RedirectPolicy: "do_not_follow", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: 8 * 1024, Accept: "application/json"}
+	return Rule{ServiceID: id, Name: "Ping0 " + family + " 风险画像", RuleVersion: 1, Category: "IP 风险与纯净度", Region: "全球", ResultKind: "ip_quality", Description: "独立查询所选节点的 " + family + " 出口与 Ping0 风险分，不借用另一地址族的结果。", TargetURL: "https://" + host + "/geo/json", Method: http.MethodGet, SuccessCriterion: "HTTP 200，JSON出口必须属于指定地址族；风险分按源站原值展示，缺失不记0", RedirectPolicy: "do_not_follow", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: 8 * 1024, Accept: "application/json"}
 }
 
 // The current selector contains unlock checks and the independent exit tools only.
 // RuleFor retains legacy IDs so existing snapshots and history remain readable.
 func Catalog() []Rule {
-	result := append([]Rule{}, aiUnlockRules()...)
+	byID := map[string]Rule{}
+	for _, rule := range aiUnlockRules() {
+		byID[rule.ServiceID] = rule
+	}
 	for _, rule := range regionUnlockRules() {
 		if rule.ServiceID == "disney_unlock" {
 			continue
 		}
-		result = append(result, rule)
+		byID[rule.ServiceID] = rule
 	}
-	keep := map[string]string{"antigravity": "Google Antigravity", "netflix_unlock": "Netflix", "youtube_premium": "YouTube Premium", "abema_unlock": "ABEMA", "hulu_jp_unlock": "Hulu Japan", "fod_unlock": "FOD"}
+	keep := map[string]struct {
+		name     string
+		category string
+	}{
+		"antigravity":     {"Google Antigravity", "AI"},
+		"netflix_unlock":  {"Netflix", "流媒体"},
+		"youtube_premium": {"YouTube Premium", "流媒体"},
+		"abema_unlock":    {"ABEMA", "日本"},
+		"hulu_jp_unlock":  {"Hulu Japan", "日本"},
+		"fod_unlock":      {"FOD", "日本"},
+	}
 	for _, rule := range catalog {
-		if name, ok := keep[rule.ServiceID]; ok {
-			rule.Name = name
-			if rule.ServiceID == "antigravity" {
-				rule.Category = "AI"
-			} else if rule.ServiceID == "abema_unlock" || rule.ServiceID == "hulu_jp_unlock" || rule.ServiceID == "fod_unlock" {
-				rule.Category = "日本"
-			} else {
-				rule.Category = "流媒体"
-			}
-			result = append(result, rule)
+		if meta, ok := keep[rule.ServiceID]; ok {
+			rule.Name = meta.name
+			rule.Category = meta.category
+			byID[rule.ServiceID] = rule
 		}
 		if rule.ResultKind == "exit_profile" || rule.ResultKind == "ip_quality" {
 			if !strings.HasPrefix(rule.ServiceID, "ipok_") && rule.ServiceID != "ping0_ip_quality" {
-				result = append(result, rule)
+				if rule.ResultKind == "exit_profile" {
+					rule.Category = "出口地址与机房"
+				} else {
+					rule.Category = "IP 风险与纯净度"
+				}
+				byID[rule.ServiceID] = rule
 			}
 		}
 	}
-	return append(result, ping0FamilyRule("IPv4"), ping0FamilyRule("IPv6"), googleRegionRule())
+	byID["ping0_ipv4"] = ping0FamilyRule("IPv4")
+	byID["ping0_ipv6"] = ping0FamilyRule("IPv6")
+	byID["google_region"] = googleRegionRule()
+	byID["cloudflare_challenge"] = cloudflareChallengeRule()
+
+	orderedIDs := []string{
+		// AI 解锁
+		"chatgpt_unlock", "claude_unlock", "gemini_unlock", "antigravity",
+		// 流媒体解锁
+		"netflix_unlock", "youtube_premium", "spotify_unlock", "tiktok_unlock",
+		// 日本地区解锁
+		"abema_unlock", "unext_unlock", "dmm_unlock", "radiko_unlock", "hulu_jp_unlock", "fod_unlock",
+		// IP 信誉与纯净度：出口地址与机房 -> IP 风险与纯净度 -> 地区与人机验证
+		"cloudflare_trace", "exit_ipv4", "exit_ipv6",
+		"ippure_ip_quality", "ping0_ipv4", "ping0_ipv6",
+		"google_region", "cloudflare_challenge",
+	}
+	result := make([]Rule, 0, len(byID))
+	added := map[string]bool{}
+	for _, id := range orderedIDs {
+		if r, ok := byID[id]; ok {
+			result = append(result, r)
+			added[id] = true
+		}
+	}
+	for _, r := range byID {
+		if !added[r.ServiceID] {
+			result = append(result, r)
+		}
+	}
+	return result
 }
 
 func RuleFor(serviceID string) (Rule, bool) {
 	serviceID = strings.TrimSpace(serviceID)
 	if serviceID == "google_region" {
 		return googleRegionRule(), true
+	}
+	if serviceID == "cloudflare_challenge" {
+		return cloudflareChallengeRule(), true
 	}
 	for _, rule := range append(aiUnlockRules(), regionUnlockRules()...) {
 		if rule.ServiceID == serviceID {
@@ -1025,6 +1070,8 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 		return checkFOD(ctx, client, rule, startedAt)
 	case "google_region":
 		return checkGoogleRegion(ctx, client, rule, startedAt)
+	case "cloudflare_challenge":
+		return checkCloudflareChallenge(ctx, client, rule, startedAt)
 	case "youtube_premium":
 		return checkYouTubePremium(ctx, client, rule, startedAt)
 	case "prime_video":

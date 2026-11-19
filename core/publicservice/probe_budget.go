@@ -32,6 +32,8 @@ func serviceSocketBudget(rule Rule, observations int) int {
 		perSample = 5
 	case "antigravity":
 		perSample = 5 // loadCodeAssist/fetchAvailableModels/fetchUserInfo/streamGenerateContent + independent trace
+	case "cloudflare_challenge":
+		perSample = 3 // three representative Cloudflare-protected sites
 	case "ipok_ipv4", "ipok_ipv6":
 		samples, perSample = 1, 2 // one exit observation and at most one budgeted lookup
 	default:

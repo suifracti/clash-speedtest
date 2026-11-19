@@ -4,6 +4,10 @@
 
 ## 当前接续（2026-11-19）
 
+- 新增 `Cloudflare 人机验证检测`（`cloudflare_challenge`）并全面重构配置弹窗与分组体验：
+  1. 后端 [cloudflare_challenge.go](core/publicservice/cloudflare_challenge.go) 以普通浏览器请求头依次探测 ChatGPT / Grok / Claude 三个代表性 Cloudflare 站点是否返回 `cf-mitigated: challenge`、Turnstile 或 `Just a moment`（仅观察不绕过），区分 `未触发 CF 盾`（`profiled`）、`部分弹 CF 盾`（`verification_required`）与 `易弹 CF 人机验证`（`challenge`），并统一按类别排序 `Catalog()`（`AI` → `流媒体` → `日本` → `出口地址与机房` → `IP 风险与纯净度` → `地区与人机验证`）。
+  2. 前端将 `TestPlanModal.vue` 四项参数区（延迟、下载、解锁、IP信誉/纯净度）由垂直堆叠手风琴重构为横向分类标签页（`plan-tabs` + `v-show`）；`UnlockPicker.vue` 修复 `流...`/`日...` 卡片截断、增加编辑态提示条并按 `AI 服务` / `流媒体` / `日本地区` 分组展示（带每组全选/取消）；`ServicePicker.vue` 按 `出口地址与机房` / `IP 风险与纯净度` / `地区与人机验证` 分组展示；`QueueModal.vue` 与 `unlock.ts` 补齐 `cloudflare_challenge` 中文标签与逐站弹盾明细。
+  3. 校验：`go vet` 与 `go test ./core/publicservice ./application ./adapter/web ./adapter/desktop -count=1` 全部通过；前端 `npm test`（88 文件 / 638 项）与 `vite build` 通过。
 - 将 `UnlockPicker.vue` 全部解锁分组（包括默认 `AI` / `流媒体` / `日本` 与自定义分组）升级为可编辑、改名、增减项目（支持加入 `Google Antigravity`）、删除与“恢复默认分组”（持久化于 `localStorage` `cst.unlock-groups.v1`）。前端 `npm test`（88 文件 / 638 项）与 `vite build` 通过。
 - 实测修复 `gemini-3.8-flash-low` 思考 token 耗尽 `maxOutputTokens: 16` 导致 HTTP 200 空正文：`streamGenerateContent?alt=sse` 的 `generationConfig` 原固定 `maxOutputTokens: 16`，实测 `gemini-3.8-flash-low` 在思考阶段消耗 13 个 `thoughtsTokenCount` 即触发 `finishReason: MAX_TOKENS`、正式 `parts` 为空。现改为非 `-thinking` 模型使用 `maxOutputTokens: 256` 并设置 `thinkingConfig: {thinkingBudget: 0}`（实测总消耗 9 token 即直接返回 `"READY"`），`-thinking` 模型放宽至 `maxOutputTokens: 512`。Go `core/publicservice` / `application` / `adapter/web`（含 `go vet`）全部通过。
 - 对照历史 `7549994` / `219b181` 排查并修复 Antigravity 自动凭据过期与多轮体验落差：

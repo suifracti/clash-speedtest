@@ -34,6 +34,12 @@ export function unlockResult(a?:Attempt,serviceId?:string,ipType?:IpType){
   const agLabels:Record<string,string>={credentials_required:'需要凭据',auth_failed:'凭据失效',setup_required:'账号待开通',permission_denied:'权限不足',rate_limited:'额度受限'}
   if(o&&agLabels[o])return {state:'unknown',tone:'warn',label:agLabels[o],reason:r.error_message||agLabels[o],region:googleRegion||region}
  }
+ if(id==='cloudflare_challenge'){
+  const detail=String(details.cf_challenge_detail||'').trim()
+  if(o==='profiled')return {state:'available',tone:'good',label:'未触发 CF 盾',reason:detail||r.summary||'代表性 Cloudflare 站点均直通',region}
+  if(o==='verification_required')return {state:'verification',tone:'warn',label:'部分弹 CF 盾',reason:detail||r.summary||'部分严格站点触发 Cloudflare 人机验证',region}
+  if(o==='challenge')return {state:'unavailable',tone:'bad',label:'易弹 CF 人机验证',reason:detail||r.summary||'多数或全部站点返回 Cloudflare 挑战',region}
+ }
  const google=['gemini_unlock','youtube_premium','google_region'].includes(a?.service_id||a?.rule.service_id||'')
  if(o==='verification_required'||(google&&/https:\/\/(?:[^/]+\.)?google\.com\/(?:sorry|recaptcha)/i.test(String(details.final_url||''))))return {state:'verification',tone:'warn',label:'需人机验证',reason:'Google 对该 IP 要求验证，实际使用时也会遇到'+(id==='gemini_unlock'?datacenterHint(ipType):''),region}
  if(google&&region==='CN'&&o==='region_blocked')return {state:'unavailable',tone:'bad',label:'Google 判定为中国大陆',reason:r.summary||'Google 判定为中国大陆',region}

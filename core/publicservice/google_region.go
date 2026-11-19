@@ -8,7 +8,7 @@ import (
 
 func googleRegionRule() Rule {
 	r, _ := RuleFor("youtube_premium")
-	r.ServiceID, r.Name, r.Category, r.ResultKind = "google_region", "Google 判定地区", "出口与 IP", "exit_profile"
+	r.ServiceID, r.Name, r.Category, r.ResultKind = "google_region", "Google 判定地区", "地区与人机验证", "exit_profile"
 	r.RuleVersion = 3
 	r.SuccessCriterion = "读取 YouTube 返回的 Google 地区字段；不判断 Premium 或账号可用性"
 	return r

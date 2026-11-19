@@ -57,9 +57,21 @@ const modelRisk=computed(()=>{
   return `所选解锁包含 Antigravity，将从 ${p.nodes.length} 个节点的 IP 发起请求，有风控风险；每次都会使用已绑定账号真实模型额度。`
 })
 const selectedSections=computed(()=>[...(w.plan.value?.projects||[]),...(w.plan.value?.includeReputation?['reputation']:[])])
-const expanded=ref(new Set(selectedSections.value.slice(0,1)))
-watch(selectedSections,(current,previous)=>{for(const id of current)if(!previous.includes(id))expanded.value.add(id)})
-function toggleSection(id:string,event:Event){if((event.target as HTMLDetailsElement).open)expanded.value.add(id);else expanded.value.delete(id)}
+const activeSection=ref<string>(selectedSections.value[0]||'service')
+watch(selectedSections,(current,previous)=>{
+ const added=current.find(id=>!previous.includes(id))
+ if(added)activeSection.value=added
+ else if(!current.includes(activeSection.value))activeSection.value=current[0]||''
+})
+const sectionTabs=computed(()=>{
+ const p=w.plan.value;if(!p)return []
+ const tabs:{id:string;label:string;meta:string}[]=[]
+ if(p.projects.includes('latency'))tabs.push({id:'latency',label:'延迟检测',meta:`${p.target==='all'?'四站':targets.find(t=>t.id===p.target)?.name||p.target} · ${p.samples}次`})
+ if(p.projects.includes('download'))tabs.push({id:'download',label:'下载测速',meta:`${preferredDownloadSource.value==='ovh'?'OVH':'CF'} · ${adaptiveDownload.value?'稳定停':p.downloadMiB+' MiB'}`})
+ if(p.projects.includes('service'))tabs.push({id:'service',label:'解锁检测',meta:standardServiceIds.value.length?`已选 ${standardServiceIds.value.length} 项`:'未选'})
+ if(p.includeReputation)tabs.push({id:'reputation',label:'IP信誉/纯净度',meta:`已选 ${reputationServiceIds.value.length} 项`})
+ return tabs
+})
 const skippedServices=computed(()=>{
   const names=new Map(w.catalog.value.map(s=>[s.service_id,s.name])),groups=new Map<string,{id:string;name:string;reason:string;count:number;accounts:Map<string,{name:string;count:number}>}>()
   for(const node of w.plan.value?.nodes||[]){
@@ -119,18 +131,25 @@ async function submit(){
     </section>
 
     <section class="cst-plan-step" aria-labelledby="plan-param-title">
-      <h3 id="plan-param-title">检测参数</h3>
-      <details v-if="w.plan.value.projects.includes('latency')" class="plan-section" :open="expanded.has('latency')" @toggle="toggleSection('latency',$event)">
-        <summary><strong>延迟检测</strong><span>{{w.plan.value.target==='all'?'四站':targets.find(t=>t.id===w.plan.value!.target)?.name||w.plan.value.target}} · 每站 {{w.plan.value.samples}} 次 · {{w.plan.value.timeout}} 秒超时</span></summary>
+      <div class="plan-param-head">
+        <h3 id="plan-param-title">检测参数</h3>
+        <div v-if="sectionTabs.length" class="plan-tabs" role="tablist" aria-label="检测参数分类">
+          <button v-for="tab in sectionTabs" :key="tab.id" type="button" role="tab" :aria-selected="activeSection===tab.id" :class="{active:activeSection===tab.id}" @click="activeSection=tab.id">
+            <strong>{{tab.label}}</strong>
+            <span>{{tab.meta}}</span>
+          </button>
+        </div>
+      </div>
+      <p v-if="!sectionTabs.length" class="muted small">请先在上方勾选至少一个检测项目。</p>
+      <div v-if="w.plan.value.projects.includes('latency')" v-show="activeSection==='latency'" class="plan-section plan-tab-panel" role="tabpanel">
         <div class="form-grid">
           <label>检测站点<UiSelect v-model="w.plan.value.target"><option value="all">四站综合检测</option><option v-for="target in targets" :key="target.id" :value="target.id">{{target.name}}</option></UiSelect></label>
           <label>每站采样次数<UiSelect v-model.number="w.plan.value.samples"><option v-for="n in [1,3,6,10,20]" :key="n" :value="n">{{n}} 次</option></UiSelect></label>
           <label>请求超时<UiSelect v-model.number="w.plan.value.timeout"><option v-for="n in [3,5,10,20,30]" :key="n" :value="n">{{n}} 秒</option></UiSelect></label>
           <label>节点并发<UiSelect v-model.number="w.plan.value.concurrency"><option v-for="n in [1,4,8,16]" :key="n" :value="n">{{n}} 个节点</option></UiSelect></label>
         </div>
-      </details>
-      <details v-if="w.plan.value.projects.includes('download')" class="plan-section" :open="expanded.has('download')" @toggle="toggleSection('download',$event)">
-        <summary><strong>下载测速</strong><span>{{preferredDownloadSource==='ovh'?'OVH':'Cloudflare'}} · {{adaptiveDownload?'速度稳定后结束':w.plan.value.downloadMiB+' MiB / 节点'}} · {{w.plan.value.downloadSeconds}} 秒正文上限</span></summary>
+      </div>
+      <div v-if="w.plan.value.projects.includes('download')" v-show="activeSection==='download'" class="plan-section plan-tab-panel" role="tabpanel">
         <div class="form-grid">
           <label>结束条件<UiSelect :model-value="w.plan.value.downloadMode||'fixed'" @update:model-value="w.plan.value.downloadMode=$event==='adaptive'?'adaptive':'fixed'"><option value="adaptive">速度稳定后结束</option><option value="fixed">达到指定流量</option></UiSelect></label>
           <label>首选测速源<UiSelect :model-value="preferredDownloadSource" @update:model-value="w.plan.value.downloadSource=String($event)"><option value="cloudflare">Cloudflare</option><option value="ovh">OVH</option></UiSelect></label>
@@ -140,9 +159,8 @@ async function submit(){
         <p v-if="adaptiveDownload" class="muted small">节点逐个测速。启动后连续三个约 1 秒的读数相差不超过中间值的 10% 就结束。连续 5 秒无数据会停止。{{preferredDownloadSource==='cloudflare'?'Cloudflare 的文件可能先传完。':''}}</p>
         <p v-else class="muted small">节点逐个测速。达到流量或时长上限即停止，正文不足 2 秒会标为短测均速。</p>
         <p class="muted small">遇到 403／429 自动换源一次。连接另计时，含换源每节点最多 {{w.plan.value.downloadSeconds*2}} 秒。</p>
-      </details>
-      <details v-if="w.plan.value.projects.includes('service')" class="plan-section" :open="expanded.has('service')" @toggle="toggleSection('service',$event)">
-        <summary><strong>解锁检测</strong><span>{{standardServiceIds.length?`已选 ${standardServiceIds.length} 项`:'尚未选择服务'}} · 每项 {{w.plan.value.serviceSamples??4}} 次</span></summary>
+      </div>
+      <div v-if="w.plan.value.projects.includes('service')" v-show="activeSection==='service'" class="plan-section plan-tab-panel" role="tabpanel">
         <UnlockPicker v-model="standardServiceIds" :catalog="standardCatalog"/>
         <div v-if="standardServiceIds.includes('antigravity')" class="inline-warning">
           <p>Antigravity 会用已绑定账号核查 Google 内部地区（fetchUserInfo）并发起真实模型生成请求（可能消耗少量额度）；如需排查多出口负载均衡偶发送中，可将下方「每服务采样次数」设为 4 次或 8 次。</p>
@@ -152,12 +170,11 @@ async function submit(){
           </p>
         </div>
         <p class="muted small">连接复用按实际观测记录。关闭 HTTP 空闲连接不等于节点重连，也不能保证出口稳定。</p>
-      </details>
-      <details v-if="w.plan.value.includeReputation" class="plan-section reputation-section" :open="expanded.has('reputation')" @toggle="toggleSection('reputation',$event)">
-        <summary><strong>IP信誉/纯净度</strong><span>已选 {{reputationServiceIds.length}} 项 · 每项 {{w.plan.value.serviceSamples??4}} 次</span></summary>
+      </div>
+      <div v-if="w.plan.value.includeReputation" v-show="activeSection==='reputation'" class="plan-section plan-tab-panel reputation-section" role="tabpanel">
         <ServicePicker v-model="reputationServiceIds" :catalog="reputationCatalog"/>
-        <p class="muted small">IPPure 包含 IPv4 风险、Cloudflare 请求环境系数和 ASN 人机流量比。IPPure 本身不提供 IPv6 风险分；各项结果独立保存。</p>
-      </details>
+        <p class="muted small">IPPure 包含 IPv4 风险、Cloudflare 请求环境系数和 ASN 人机流量比；Cloudflare 人机验证检测探测代表性站点是否弹盾（仅观察不绕过）；各项结果独立保存。</p>
+      </div>
       <div class="plan-repetition">
         <label v-if="w.plan.value.projects.includes('service')||w.plan.value.includeReputation" class="inline-field">每服务采样次数<UiSelect v-model.number="w.plan.value.serviceSamples"><option v-for="n in [1,2,4,8]" :key="n" :value="n">{{n===4?'4 次（推荐排查漂移）':n===8?'8 次（深度稳定性）':`${n} 次`}}</option></UiSelect></label>
         <label class="inline-field">重复检测<UiSelect v-model.number="w.plan.value.repeats"><option v-for="n in [1,2,3,5]" :key="n" :value="n">{{n}} 轮</option></UiSelect></label>
@@ -195,16 +212,17 @@ async function submit(){
 .plan-editor{min-width:0;margin:0;padding:0;border:0}
 .plan-editor[disabled]{opacity:.7}
 .plan-preparing{display:flex;align-items:center;gap:9px;margin:0 0 14px;padding:10px 12px;border-radius:10px;background:var(--cst-accent-soft);color:var(--cst-accent);font-size:12px}
-.plan-editor .cst-plan-step>h3{margin:0 0 10px;font-size:13px;font-weight:700;color:var(--cst-text)}
-.plan-section>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;list-style:none;padding:12px 0;color:var(--cst-text);cursor:pointer}
-.plan-section>summary::-webkit-details-marker{display:none}
-.plan-section>summary:before{content:'›';font-size:16px;color:var(--cst-muted);transition:transform .15s}
-.plan-section[open]>summary:before{transform:rotate(90deg)}
-.plan-section>summary strong{font-size:13px;font-weight:650;margin-right:auto;white-space:nowrap}
-.plan-section>summary span{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;background:var(--cst-panel);border:1px solid var(--cst-line);font-size:11px;color:var(--cst-muted);text-align:right}
-.plan-section[open]>summary{padding-bottom:14px;border-bottom:1px solid var(--cst-line);margin-bottom:14px}
-.plan-editor details.plan-section{padding:0 14px;margin:0 0 10px;border:1px solid var(--cst-line);border-radius:12px;background:var(--cst-panel-2)}
-.plan-editor details.plan-section[open]{padding-bottom:16px;background:var(--cst-panel);border-color:var(--cst-line-strong);box-shadow:var(--cst-shadow)}
+.plan-editor .cst-plan-step>h3,.plan-param-head h3{margin:0 0 10px;font-size:13px;font-weight:700;color:var(--cst-text)}
+.plan-param-head{display:grid;gap:8px;margin-bottom:10px}
+.plan-param-head h3{margin:0}
+.plan-tabs{display:flex;flex-wrap:wrap;gap:6px;padding:4px;border:1px solid var(--cst-line);border-radius:11px;background:var(--cst-panel-2)}
+.plan-tabs button{display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--cst-muted);font-size:12px;cursor:pointer;transition:background .14s,border-color .14s,color .14s}
+.plan-tabs button:hover{color:var(--cst-text);background:var(--cst-hover)}
+.plan-tabs button.active{background:var(--cst-panel);border-color:var(--cst-line-strong);color:var(--cst-accent);box-shadow:var(--cst-shadow)}
+.plan-tabs button strong{font-size:12.5px;font-weight:650;white-space:nowrap}
+.plan-tabs button span{font-size:10.5px;padding:1px 6px;border-radius:999px;background:var(--cst-panel-2);color:var(--cst-muted);white-space:nowrap}
+.plan-tabs button.active span{background:var(--cst-accent-soft);color:var(--cst-accent)}
+.plan-tab-panel{padding:14px 16px;margin:0 0 10px;border:1px solid var(--cst-line-strong);border-radius:12px;background:var(--cst-panel);box-shadow:var(--cst-shadow)}
 .plan-repetition{border-top:1px solid var(--cst-line);display:flex;align-items:center;flex-wrap:wrap;gap:0 20px;padding-top:10px;margin-top:6px}
 .plan-repetition .inline-field{margin:8px 0}
 .plan-repetition>p{flex-basis:100%;line-height:1.6}

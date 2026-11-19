@@ -1016,6 +1016,9 @@ func pageHasExplicitChallenge(body []byte) bool {
 	text := strings.ToLower(string(body))
 	return strings.Contains(text, "/cdn-cgi/challenge-platform/") ||
 		strings.Contains(text, "cf-chl-") ||
+		strings.Contains(text, "_cf_chl_opt") ||
+		strings.Contains(text, "cf-turnstile") ||
+		strings.Contains(text, "challenges.cloudflare.com/turnstile") ||
 		strings.Contains(text, "slardarwaf") ||
 		strings.Contains(text, "_wafchallengeid")
 }

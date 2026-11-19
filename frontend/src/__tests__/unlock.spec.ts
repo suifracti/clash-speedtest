@@ -71,4 +71,10 @@ it('skips only excluded regions when a service uses an exclusion list',()=>{
  expect(unlockResult(agCn)).toMatchObject({state:'unavailable',tone:'warn',label:'出口送中（CN）'})
  const agBlocked={...attempt('region_blocked'),service_id:'antigravity'} as Attempt
  expect(unlockResult(agBlocked)).toMatchObject({state:'unavailable',tone:'warn',label:'地区不支持'})
+ const cfClean={...attempt('profiled'),service_id:'cloudflare_challenge',result:{...attempt('profiled').result!,outcome:'profiled',details:{cf_challenge_detail:'ChatGPT: 直通(200) · Grok: 直通(200) · Claude: 直通(200)'}}} as Attempt
+ expect(unlockResult(cfClean)).toMatchObject({state:'available',tone:'good',label:'未触发 CF 盾'})
+ const cfPart={...attempt('verification_required'),service_id:'cloudflare_challenge',result:{...attempt('verification_required').result!,outcome:'verification_required',details:{cf_challenge_detail:'ChatGPT: 直通(200) · Grok: 直通(200) · Claude: 弹盾(403 cf-mitigated)'}}} as Attempt
+ expect(unlockResult(cfPart)).toMatchObject({state:'verification',tone:'warn',label:'部分弹 CF 盾'})
+ const cfBad={...attempt('challenge'),service_id:'cloudflare_challenge',result:{...attempt('challenge').result!,outcome:'challenge',details:{cf_challenge_detail:'ChatGPT: 弹盾(403) · Grok: 弹盾(403) · Claude: 弹盾(403)'}}} as Attempt
+ expect(unlockResult(cfBad)).toMatchObject({state:'unavailable',tone:'bad',label:'易弹 CF 人机验证'})
 })
