@@ -12,7 +12,7 @@
 | 迁移/合并后功能丢了、换工作树或执行者 | L-002；docs/version-consistency.md |
 | 用量不完整、检测失败、取消/保存、历史身份 | L-003；docs/backend-round3-progress.md |
 | 切换机场后体检变空或显示上个机场的数据 | L-003；frontend/src/components/AirportReport.vue |
-| 下载只有短文本、速度口径/稳态均值/峰值、超时、备用源限流与旧测速结果 | L-004；core/speedtester/download_stream.go；application/workbench_download.go；frontend/src/domain.ts |
+| 下载只有短文本、速度口径/稳态均值/峰值/自适应稳速 v5/队列实时字节、超时、备用源限流与旧测速结果 | L-004；core/speedtester/download_stream.go；core/speedtester/download_stability.go；application/workbench_download.go；frontend/src/domain.ts；frontend/src/components/QueueModal.vue |
 | Clash Verge 更新订阅后不想重填链接；关联已有账户 | L-005；application/verge_subscriptions.go |
 | 某解锁服务只想测指定地区或排除指定地区；Antigravity 批量风险与连接耗时 | L-006；frontend/src/unlock.ts；core/autopick/autopick.go；frontend/src/components/QueueModal.vue |
 | 手动刷新被 30 分钟冷却拦住；订阅代理/直连/物理重试原因、换链接后今日与 14 天用量断掉 | L-007；application/subscription_refresh.go；application/subscription_usage.go；core/subscriptionusage/continuity.go |
@@ -23,7 +23,7 @@
 | 持续监测抢占预算、暂停时无法手动触发、Mac 监测未绕开 TUN；本机通知重复告警或授权失败 | L-012；core/monitor/；core/speedtester/；application/local_notifications.go |
 | Netflix DoH 超时吞掉结论、YouTube 误判送中（pagead）、Gemini/Spotify 机房限制、Disney+ 握手 EOF、Gemini/TikTok/U-NEXT/DMM/Prime Video/ABEMA DoH 修复；出口 IP 类型 | L-013；core/publicservice/probes.go；core/publicservice/unlock_ai.go；core/publicservice/unlock_regions.go；core/publicservice/target_ipv4.go；core/publicservice/checker.go；frontend/src/ipKind.ts |
 | 自动精选端口被占后 Verge 订阅失效、运行期改设置被覆盖或报告丢用途；入口超 100 地址丢国家；Clash/Verge 本机对照与报告导图 | L-014；application/auto_pick.go；application/auto_pick_subscription.go；core/entry/lookup.go；application/clash_comparison.go；frontend/src/components/LatencyReportImage.vue |
-| Windows Clash Verge 命名管道、同名节点换端口变更抵消与非 Darwin 场景推荐 | L-015；adapter/controller/mihomo/dial_windows.go；core/profiles/node_changes.go；frontend/src/recommendations.ts |
+| Windows Clash Verge 命名管道、同名节点换端口变更抵消、地区首选次选与非 Darwin 场景推荐 | L-015；adapter/controller/mihomo/dial_windows.go；core/profiles/node_changes.go；frontend/src/recommendations.ts；frontend/src/components/RecommendationView.vue |
 | 延迟 Keep-Alive 复用失效、Windows TUN Fake-IP DNS 拖慢物理出口、测量轮次并发锁竞争 | L-016；core/speedtester/speedtester.go；core/speedtester/physical_entry_other.go；core/history/measurement_round.go |
 | UI 像 AI 通用模板、只换皮、重构漏功能；每个功能块开工前要读记忆 | L-017；docs/ui-rebuild-20261118.md；Obsidian 项目 UI 研究与 Decisions |
 
@@ -330,3 +330,10 @@ Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 
 ## 2026-11-15 晚间增量覆盖（延迟/下载复核与解锁探针六项修复）
 
 在 `http://127.0.0.1:8999` 本地调试实例上复核延迟与 20 MiB / 15s 下载测速确认稳定后，完成 `L-013` 解锁探测六项修复（`gemini_unlock` v5、`tiktok_unlock` v3 与 `SlardarWAF` 挑战识别、`unext_unlock` v2、`dmm_unlock` v2、`prime_video` v3 及 `target_ipv4.go` 动态 DoH 预算）；同步通过 `go vet ./...`、`core/publicservice` + `application` Go 单测、前端 73 文件 451 项 Vitest、`npm run build` 及双节点受控实网复验（未执行 Antigravity 或全机场批量测速，未重编 `.exe`）。
+
+## 2026-11-18～2026-11-19 增量覆盖（全 UI 重构、四类检测复测与自适应/选线对齐）
+
+对照仓库提交 `e459b12..fdd4743cbb9fcfdc20d45d12d2323b2760b60e15`（共 41 条提交）与 `docs/backend-round3-progress.md`、`docs/ui-rebuild-20261118.md` 完成进度及记忆索引对齐：
+- **全功能 UI 重构与 14 项能力保留**：纳入 `L-017`、`bf9af5c`..`7325a67` 与 `74e5442`..`fb0ed04`（含地区首选/次选推荐 `fdd4743`、任务队列实时下载已读字节与轮次正文累计 `ea6aa13`、按订阅与时间窗直查跨配置延迟历史 `b1d2c58`、七天历史按需读取 `7325a67` 及备份/容量两阶段与监测导入导出恢复）。
+- **四类检测根因核查、误判修复与自适应下载**：纳入 `16160f4`..`6814f97`（`cfe04fc` 阶段保留、`39b4783` Netflix 逐次独立、`60aa631` 轮次错误归位、`7dc34ec`/`322d8f8` 短测口径与换源首态保留）以及 `adfcdf3`/`54032dc`（自适应速度稳定结束 v5，`download_stability.go`）。
+- **覆盖边界**：本轮（2026-11-19）仅核对 `AGENTS.md`（2026-11-18 版）、仓库 Git 历史与已存档文档证据并同步索引与 Vault 总览/会话卷，未改业务代码、未重编二进制、未启动或重跑实网检测。
