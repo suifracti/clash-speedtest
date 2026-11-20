@@ -2,7 +2,7 @@
 import {computed} from 'vue'
 import {date,type NodeOption} from '../../domain'
 import {latencyPointLabel,type TrendPoint} from '../../presentation'
-import {computeTipAnchor,hideChartTip,showChartTip} from '../../chartTip'
+import {hideChartTip} from '../../chartTip'
 
 const props=defineProps<{points:TrendPoint[];label:string;target:string;selected?:TrendPoint;node?:NodeOption}>()
 const emit=defineEmits<{select:[point:TrendPoint,target:string,node?:NodeOption]}>()
@@ -16,26 +16,13 @@ function move(event:KeyboardEvent,previous:boolean){
  const sibling=(previous?button.previousElementSibling:button.nextElementSibling) as HTMLButtonElement|null
  sibling?.focus()
 }
-function showTip(e:MouseEvent|FocusEvent,point:TrendPoint){
- const anchor=computeTipAnchor(e.currentTarget as HTMLElement|null,115,90)
- if(!anchor)return
- showChartTip({
-  kind:'latency-history',
-  time:date(point.time),
-  source:point.source==='monitor'?'持续监测':'手动检测',
-  reading:props.target==='all'?'整轮历史（点击回看）':latencyPointLabel(point,props.target),
-  unknown:point.tone==='empty',
-  ...anchor,
- })
-}
 </script>
 
 <template>
- <span v-if="points.length" class="response-history" role="group" :aria-label="label" @mouseleave="hideChartTip">
+ <span v-if="points.length" class="response-history" role="group" :aria-label="label">
   <button v-for="(point,index) in points" :key="point.source+':'+point.id" type="button"
    :aria-pressed="index===selectedIndex" :tabindex="index===(selectedIndex<0?points.length-1:selectedIndex)?0:-1"
-   :class="[point.tone,{monitor:point.source==='monitor'}]" :title="labelFor(point)" :aria-label="label+' · '+labelFor(point)"
-   @mouseenter="showTip($event,point)" @focus="showTip($event,point)" @blur="hideChartTip"
+   :class="[point.tone,{monitor:point.source==='monitor'}]" :aria-label="label+' · '+labelFor(point)"
    @keydown.left.stop.prevent="move($event,true)" @keydown.right.stop.prevent="move($event,false)" @click.stop="hideChartTip();emit('select',point,target,node)"/>
  </span>
 </template>

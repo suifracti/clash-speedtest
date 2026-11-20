@@ -16,10 +16,6 @@ import {activeChartTip} from '../chartTip'
           </li>
         </ol>
       </template>
-      <template v-else-if="activeChartTip.kind==='latency-history'">
-        <div class="cst-chart-tip-head"><span>{{activeChartTip.time}}</span><span>{{activeChartTip.source}}</span></div>
-        <strong class="cst-chart-tip-val" :class="{unknown:activeChartTip.unknown}">{{activeChartTip.reading}}</strong>
-      </template>
       <template v-else-if="activeChartTip.kind==='overview-latency'">
         <div class="cst-chart-tip-head"><span>{{activeChartTip.title}}</span><span v-if="activeChartTip.sub">{{activeChartTip.sub}}</span></div>
         <ul class="ov-tip-list">

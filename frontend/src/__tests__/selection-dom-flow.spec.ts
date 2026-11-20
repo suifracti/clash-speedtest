@@ -5,6 +5,7 @@ import {createWorkspace,workspaceKey} from '../workspace'
 import {api} from '../api'
 import {key,type LatencyTest,type MonitorSample,type NodeOption,type Plan} from '../domain'
 import {nodeDisplayName} from '../nodePresentation'
+import {activeChartTip} from '../chartTip'
 
 vi.hoisted(()=>{const items=new Map<string,string>();Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:(k:string)=>items.get(k)||null,setItem:(k:string,v:string)=>items.set(k,v),clear:()=>items.clear()}})})
 vi.mock('../api',async importOriginal=>{const actual=await importOriginal<typeof import('../api')>();return {...actual,api:{...actual.api,latencyHistoryScopes:vi.fn(async()=>[]),batches:vi.fn(async()=>[]),revisions:vi.fn(async()=>[]),refreshJobs:vi.fn(async()=>[]),latencyHistory:vi.fn(async()=>({tests:[],has_more:false,complete:true})),measurementRounds:vi.fn(async()=>[]),createRound:vi.fn(async()=>undefined),finishRound:vi.fn(async()=>undefined),latencySummaries:vi.fn(async(nodes:NodeOption[])=>nodes.map(()=>({tests:[],complete:true,has_more:false}))),attemptHistory:vi.fn(async()=>({attempts:[],complete:true,has_more:false})),monitorSamples:vi.fn(async()=>({items:[],has_more:false,next_cursor:''})),startLatency:vi.fn(),startAttempt:vi.fn(),createJob:vi.fn()}}})
@@ -199,6 +200,9 @@ describe('node selection through DOM controls',()=>{
     expect(station[1].findAll('.response-vertical i').map(bar=>bar.attributes('title'))).toEqual(['第 1 次 · 100 ms','第 2 次 · 35 ms'])
     expect(station[0].findAll('.response-history button')).toHaveLength(3)
     const values=()=>wrapper.findAll('.response-stop strong').map(s=>s.text())
+    await station[0].findAll('.response-history button')[1].trigger('mouseenter')
+    await station[0].findAll('.response-history button')[1].trigger('focus')
+    expect(activeChartTip.value).toBeNull()
     await station[0].findAll('.response-history button')[1].trigger('click');await flushPromises()
     expect(values()).toEqual(['22 ms','35 ms'])
     expect(station[0].get('.response-round small').text()).toBe('回看 1/1')

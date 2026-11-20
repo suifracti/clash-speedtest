@@ -62,9 +62,9 @@ function showTip(e:MouseEvent|FocusEvent,site:SiteInfo){
 function onHistorySelect(point:TrendPoint,target:string){emit('history',props.node,point,target)}
 </script>
 <template>
-    <span v-for="s in sites" :key="s.id" role="cell" class="response-stop" :class="[s.point?.tone||'empty',{'response-detailed':detailed,'response-reviewing':s.review,'has-http-note':!!s.httpCode}]" :title="s.name+' · '+s.context">
+    <span v-for="s in sites" :key="s.id" role="cell" class="response-stop" :class="[s.point?.tone||'empty',{'response-detailed':detailed,'response-reviewing':s.review,'has-http-note':!!s.httpCode}]">
       <span class="response-site">{{s.name}}</span>
-      <span class="response-head-line"><strong>{{s.text}}</strong><b v-if="s.httpCode" class="response-http-tag" :title="`${s.name} ${s.httpCount}/${s.samples.length} 次返回 HTTP ${s.httpCode}（已连通，可能限流/风控）`">{{s.httpCode}}</b></span>
+      <span class="response-head-line" :title="s.name+' · '+s.context"><strong>{{s.text}}</strong><b v-if="s.httpCode" class="response-http-tag" :title="`${s.name} ${s.httpCount}/${s.samples.length} 次返回 HTTP ${s.httpCode}（已连通，可能限流/风控）`">{{s.httpCode}}</b></span>
       <template v-if="detailed">
         <button v-if="s.point&&s.samples.length" class="response-round" type="button" :aria-label="s.name+' '+s.roundLabel+'顺序 · '+s.samples.map(sampleLabel).join('；')" @mouseenter="showTip($event,s)" @mouseleave="hideChartTip" @focus="showTip($event,s)" @blur="hideChartTip" @click.stop="hideChartTip();emit('round',node,s.point,s.id)">
           <span class="response-vertical" aria-hidden="true"><i v-for="(sample,index) in s.samples" :key="sample.id" :class="[sample.tone,{'http-note':!!sample.note}]" :style="{height:sampleHeight(sample)+'px'}" :title="sampleLabel(sample,index)"/></span>
