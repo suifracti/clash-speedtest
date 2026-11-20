@@ -6,6 +6,7 @@ import {activeLatencyTargets,latencyTargets,latencyTargetId} from '../../latency
 import {downloadEvidence,latestServices,qualityGroups} from '../../nodeQuality'
 import {nodeDisplayName} from '../../nodePresentation'
 import {exitLanding} from '../../exitLanding'
+import {latencySiteSamples,stableLatency} from '../../inspectorLatency'
 import {unlockResult} from '../../unlock'
 import QualityMetrics from '../QualityMetrics.vue'
 import UiSelect from '../UiSelect.vue'
@@ -85,9 +86,36 @@ function buildNodeRounds(tests:LatencyTest[]):RoundSnapshot[]{
   return {atMs:b.atMs,time:b.time,med,success,total,tone}
  })
 }
+function buildSitePointRounds(n:NodeOption):RoundSnapshot[]{
+ const pts=m.sitePoints(n,'all').filter(p=>activeLatencyTargets.some(t=>latencySiteSamples(p,t.id).length))
+ return pts.map(p=>{
+  const siteMeds:number[]=[]
+  let success=0,total=0
+  for(const t of activeLatencyTargets){
+   const samples=latencySiteSamples(p,t.id)
+   if(!samples.length)continue
+   total+=samples.length
+   success+=samples.filter(s=>s.value!==null).length
+   const ms=stableLatency([{id:t.id,points:[{...p,samples}]}])
+   if(ms!==null&&Number.isFinite(ms))siteMeds.push(ms)
+  }
+  const med=median(siteMeds)
+  const atMs=Date.parse(p.time)
+  const tone:RoundSnapshot['tone']=success===0?'bad':success<total||(med!==null&&med>=1200)?'warn':'good'
+  return {atMs:Number.isFinite(atMs)?atMs:0,time:p.time,med,success,total,tone}
+ }).filter(r=>r.total>0).sort((a,b)=>a.atMs-b.atMs)
+}
 const trendMap=computed<Record<string,TrendDigest>>(()=>Object.fromEntries(m.compareNodes.value.map(n=>{
  const ev=m.qualityData.value[key(n)]
- const rounds=ev?buildNodeRounds(ev.tests).slice(-6):[]
+ const evRounds=ev?buildNodeRounds(ev.tests):[]
+ const merged=[...evRounds]
+ if(merged.length<2){
+  for(const ptRound of buildSitePointRounds(n)){
+   if(!merged.some(r=>Math.abs(r.atMs-ptRound.atMs)<=60_000))merged.push(ptRound)
+  }
+  merged.sort((a,b)=>a.atMs-b.atMs)
+ }
+ const rounds=merged.slice(-6)
  const weekly=m.weeklyStats.value[weeklyHistoryKey(n)]
  const weeklyRate=weekly&&!weekly.allOld&&weekly.all.responseRate!=null?Math.round(weekly.all.responseRate):null
  if(!rounds.length)return [key(n),{rounds,badge:'',tone:'muted' as const,detail:'未测',weeklyRate}]
@@ -318,8 +346,9 @@ onMounted(()=>root.value?.querySelector<HTMLElement>('.hd-compare-head button')?
 .compare-winner-pill{display:inline-flex;align-items:center;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:700;line-height:1.4;white-space:nowrap;border:1px solid transparent}
 .compare-winner-pill.good{color:var(--hd-good);background:var(--hd-good-bg);border-color:color-mix(in srgb,var(--hd-good) 30%,transparent)}
 .compare-winner-pill.warn{color:var(--hd-warn);background:var(--hd-warn-bg);border-color:color-mix(in srgb,var(--hd-warn) 34%,transparent)}
-.compare-diff-ms{font-size:11px;font-weight:600;color:var(--hd-muted);font-variant-numeric:tabular-nums}
-.compare-bar{flex:1 1 80px;height:5px;border-radius:999px;background:var(--cst-aurora-track,var(--hd-line));overflow:hidden;min-width:64px}
+.compare-diff-ms{display:inline-flex;align-items:center;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:650;line-height:1.4;color:var(--hd-text);background:var(--hd-panel-2);border:1px solid var(--hd-line);white-space:nowrap;font-variant-numeric:tabular-nums}
+.compare-bar{flex:none;width:100%;height:6px;border-radius:999px;background:var(--cst-aurora-track,var(--hd-line));overflow:hidden}
+.compare-dl-bar-row .compare-bar{flex:1 1 80px;width:auto;min-width:64px}
 .compare-bar>i{display:block;height:100%;border-radius:inherit}
 .compare-bar>i.good{background:var(--cst-aurora-good,var(--hd-good))}
 .compare-bar>i.accent{background:var(--cst-aurora-bar,var(--hd-accent))}
