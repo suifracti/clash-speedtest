@@ -1,5 +1,5 @@
 import {expect,it} from 'vitest'
-import {candidateDiff,isRecommendation,recommend,recommendationService,recommendationServices} from '../recommendations'
+import {candidateDiff,countRiskExcluded,isRecommendation,recommend,recommendationService,recommendationServices} from '../recommendations'
 import {key,type Attempt,type LatencyTest,type NodeOption,type ServiceRule} from '../domain'
 import type {QualityEvidence} from '../nodeQuality'
 it('ranks continuous download ahead of an initial burst followed by a timeout stall',()=>{
@@ -204,4 +204,31 @@ it('attaches multi-source reputation consensus, divergence and single-source fal
  expect(picks.find(p=>p.region==='SG')?.purity).toMatchObject({divergent:true,tone:'warn',badgeLabel:'2站分歧 · 均80',sourceCount:2})
  expect(picks.find(p=>p.region==='JP')?.purity).toMatchObject({singleFallback:true,tone:'warn',badgeLabel:'单源参考 · 纯净 85',sourceCount:1})
  expect(picks.find(p=>p.region==='GB')?.purity).toMatchObject({divergent:false,singleFallback:false,tone:'good',badgeLabel:'2站共识 · 纯净 85',sourceCount:2})
+})
+
+it('filters risky/divergent/CF-blocked lines and enforces verified-clean policy honestly without branding untested nodes risky',()=>{
+ const at='2026-11-21T02:00:00Z'
+ const mkNode=(id:string):NodeOption=>({profile_id:'p',node_key:id,node_identity_key:id,config_revision_key:'r1',display_name:id,profile_name:'P',type:'hysteria2',country_code:'JP',country_flag:''})
+ const catalog=[{service_id:'gemini_unlock',name:'Google Gemini',category:'AI',result_kind:'unlock'}] as ServiceRule[]
+ const mkAttempt=(n:NodeOption,serviceId:string,outcome:string,details:Record<string,string>={}):Attempt=>({
+  ...n,attempt_id:`att-${n.node_key}-${serviceId}`,request_id:`req-${n.node_key}-${serviceId}`,requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',service_id:serviceId,
+  rule:{service_id:serviceId,name:serviceId,target_url:'https://example.invalid'},
+  result:{outcome,bytes_read:0,finished_at:at,details},
+ })
+ const badCf=mkNode('jp-bad-cf'),untestedRep=mkNode('jp-untested'),clean=mkNode('jp-clean')
+ const reads={latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}}
+ const data:Record<string,QualityEvidence>={
+  [key(badCf)]:{tests:[],monitor:[],downloads:[],services:[mkAttempt(badCf,'gemini_unlock','unlocked'),mkAttempt(badCf,'cloudflare_challenge','challenge')],reads,complete:true,since:at,until:at},
+  [key(untestedRep)]:{tests:[],monitor:[],downloads:[],services:[mkAttempt(untestedRep,'gemini_unlock','unlocked')],reads,complete:true,since:at,until:at},
+  [key(clean)]:{tests:[],monitor:[],downloads:[],services:[mkAttempt(clean,'gemini_unlock','unlocked'),mkAttempt(clean,'ippure_ip_quality','profiled',{risk_score:'10',risk_scale_max:'100',risk_direction:'lower_is_better'}),mkAttempt(clean,'ping0_ipv4','profiled',{risk_score:'15'}),mkAttempt(clean,'cloudflare_challenge','profiled')],reads,complete:true,since:at,until:at},
+ }
+ const list=[badCf,untestedRep,clean]
+ // avoid_risky removes badCf but keeps clean & untestedRep (tie-broken alphabetically by node key)
+ const safe=recommend(list,data,catalog,{ai:'gemini_unlock'},{riskPolicy:'avoid_risky'}).ai
+ expect(safe.map(c=>c.node.node_key)).toEqual(['jp-clean','jp-untested'])
+ expect(countRiskExcluded(list,data,'avoid_risky')).toBe(1)
+ // verified_clean keeps only multi-source consensus clean node
+ const strict=recommend(list,data,catalog,{ai:'gemini_unlock'},{riskPolicy:'verified_clean'}).ai
+ expect(strict.map(c=>c.node.node_key)).toEqual(['jp-clean'])
+ expect(countRiskExcluded(list,data,'verified_clean')).toBe(2)
 })

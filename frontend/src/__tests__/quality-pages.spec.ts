@@ -108,3 +108,33 @@ it('opens a preconfigured region plan from RecommendationView without starting a
  expect(plan.value.includeReputation).toBe(false)
  wrapper.unmount()
 })
+
+it('filters recommendations by airport and risk policy and updates export group name',async()=>{
+ const at='2026-11-21T02:00:00Z'
+ const target='https://speed.cloudflare.com/__down?bytes=1'
+ const makeLatency=(n:NodeOption,ms:number)=>({...n,attempt_id:'lat-'+n.node_key,display_name:n.display_name,node_type:'ss',source:'workbench',method:'http_get_via_proxy_first_byte',method_version:1,target,requested_at:at,finished_at:at,status:'completed',latency_ms:ms,total_samples:6,success_samples:6,failure_samples:0,persistence_state:'saved',samples:Array.from({length:6},(_,seq)=>({seq:seq+1,target,timestamp:at,latency_ms:ms,success:true}))})
+ const data:Record<string,QualityEvidence>={
+  [key(nodes[0])]:{tests:[makeLatency(nodes[0],120) as any],monitor:[],downloads:[],services:[],reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true,since:at,until:at},
+  [key(nodes[1])]:{tests:[makeLatency(nodes[1],90) as any],monitor:[],downloads:[],services:[],reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true,since:at,until:at},
+ }
+ vi.mocked(readQualityBatch).mockResolvedValueOnce(data)
+ const wrapper=mount(RecommendationView,{global});await flushPromises()
+ expect(wrapper.findAll('.region-card')).toHaveLength(2)
+
+ // Filter to airport A only
+ const airportBtn=wrapper.findAll('.rec-filter-pill').find(b=>b.text().includes('A'))!
+ await airportBtn.trigger('click');await flushPromises()
+ expect(wrapper.findAll('.region-card')).toHaveLength(1)
+ expect(wrapper.find('.region-card h3').text()).toBe('日本')
+
+ // Export Clash uses airport-scoped group name
+ await wrapper.get('.recommendation-export button').trigger('click');await flushPromises()
+ expect(api.exportClash).toHaveBeenLastCalledWith([scope(nodes[0])],'A · 日常地区推荐')
+
+ // Switching to verified_clean excludes untested node honestly
+ const strictBtn=wrapper.findAll('.rec-filter-pill').find(b=>b.text()==='仅选已证纯净')!
+ await strictBtn.trigger('click');await flushPromises()
+ expect(wrapper.findAll('.region-card')).toHaveLength(0)
+ expect(wrapper.text()).toContain('已过滤 1 条')
+ wrapper.unmount()
+})

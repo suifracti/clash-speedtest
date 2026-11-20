@@ -8,6 +8,8 @@ import {exitLanding,type ReputationSourceItem} from './exitLanding'
 export const purposes=[{id:'streaming',name:'流媒体与解锁'},{id:'ai',name:'AI'},{id:'download',name:'下载'},{id:'daily',name:'日常'}] as const
 export type Purpose=typeof purposes[number]['id']
 export type ServicePurpose=Extract<Purpose,'ai'|'streaming'>
+export type RecommendationRiskPolicy='all'|'avoid_risky'|'verified_clean'
+export interface RecommendOptions {riskPolicy?:RecommendationRiskPolicy}
 export interface CfChallengeHint {
  tone:'good'|'warn'|'bad';label:string;detail:string
 }
@@ -226,14 +228,38 @@ function regionalPicks(list:Candidate[],compare=bySpeed){
  })
 }
 
-export function recommend(nodes:NodeOption[],data:Record<string,QualityEvidence>,catalog:ServiceRule[],selected:Partial<Record<ServicePurpose,string>>={}):Record<Purpose,Candidate[]>{
- const lists:Record<Purpose,Candidate[]>={streaming:[],ai:[],download:[],daily:[]}
- const servicePurposes=['ai','streaming'] as const
- const wanted=servicePurposes.map(purpose=>({purpose,rule:recommendationService(recommendationServices(catalog,purpose),purpose,selected[purpose])}))
+export function matchesRiskPolicy(policy:RecommendationRiskPolicy,purity?:PurityHint,cfChallenge?:CfChallengeHint):boolean{
+ if(policy==='all')return true
+ if(policy==='avoid_risky'){
+  if(purity&&(purity.tone==='bad'||purity.divergent))return false
+  if(cfChallenge&&cfChallenge.tone==='bad')return false
+  return true
+ }
+ return Boolean(purity&&purity.tone==='good'&&!purity.singleFallback&&!purity.divergent&&cfChallenge?.tone!=='bad')
+}
+
+export function countRiskExcluded(nodes:NodeOption[],data:Record<string,QualityEvidence>,policy:RecommendationRiskPolicy):number{
+ if(policy==='all')return 0
+ let excluded=0
  for(const node of nodes){
   const e=data[key(node)],region=recommendationRegion(node)
   if(!e||region==='unknown')continue
   const cfChallenge=cfChallengeHint(node,e),purity=purityHint(node,e)
+  if(!matchesRiskPolicy(policy,purity,cfChallenge))excluded++
+ }
+ return excluded
+}
+
+export function recommend(nodes:NodeOption[],data:Record<string,QualityEvidence>,catalog:ServiceRule[],selected:Partial<Record<ServicePurpose,string>>={},options:RecommendOptions={}):Record<Purpose,Candidate[]>{
+ const lists:Record<Purpose,Candidate[]>={streaming:[],ai:[],download:[],daily:[]}
+ const servicePurposes=['ai','streaming'] as const
+ const wanted=servicePurposes.map(purpose=>({purpose,rule:recommendationService(recommendationServices(catalog,purpose),purpose,selected[purpose])}))
+ const policy=options.riskPolicy||'all'
+ for(const node of nodes){
+  const e=data[key(node)],region=recommendationRegion(node)
+  if(!e||region==='unknown')continue
+  const cfChallenge=cfChallengeHint(node,e),purity=purityHint(node,e)
+  if(!matchesRiskPolicy(policy,purity,cfChallenge))continue
 
   const daily=dailyCandidate(node,e,region,cfChallenge,purity)
   if(daily)lists.daily.push(daily)

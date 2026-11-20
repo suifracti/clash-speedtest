@@ -1,23 +1,36 @@
 <script setup lang="ts">
-import {computed,onMounted,ref} from 'vue'
+import {computed,onMounted,ref,watch} from 'vue'
 import {useWorkspace} from '../workspace'
 import {api,saveFile} from '../api'
 import {date,isNotice,key,scope,type NodeOption} from '../domain'
 import {type QualityEvidence} from '../nodeQuality'
 import {readQualityBatch} from '../qualityBatch'
-import {candidateDiff,isRecommendation,purposes,recommend,recommendationRegion,recommendationRegions,recommendationService,recommendationServices,type Purpose,type ServicePurpose,type Candidate} from '../recommendations'
+import {candidateDiff,countRiskExcluded,isRecommendation,purposes,recommend,recommendationRegion,recommendationRegions,recommendationService,recommendationServices,type Purpose,type RecommendationRiskPolicy,type ServicePurpose,type Candidate} from '../recommendations'
 import {nodeDisplayName,nodeRegionLabel,regionBadgeClass} from '../nodePresentation'
 import UiSelect from './UiSelect.vue'
 
 const w=useWorkspace(),loading=ref(false),error=ref(''),data=ref<Record<string,QualityEvidence>>({}),readAt=ref('')
 const nodes=computed(()=>w.nodes.value.filter(n=>!isNotice(n)))
+const selectedAirportId=ref('all')
+const riskPolicy=ref<RecommendationRiskPolicy>('all')
+const airportOptions=computed(()=>{
+ const counts=new Map<string,number>()
+ for(const n of nodes.value){const id=w.nodeAirportId(n);counts.set(id,(counts.get(id)||0)+1)}
+ return w.airports.value.map(a=>({id:a.id,name:a.name,count:counts.get(a.id)||0})).filter(a=>a.count>0)
+})
+watch(airportOptions,opts=>{
+ if(selectedAirportId.value!=='all'&&!opts.some(a=>a.id===selectedAirportId.value))selectedAirportId.value='all'
+})
+const scopedNodes=computed(()=>selectedAirportId.value==='all'?nodes.value:nodes.value.filter(n=>w.nodeAirportId(n)===selectedAirportId.value))
+const selectedAirportName=computed(()=>selectedAirportId.value==='all'?'':(airportOptions.value.find(a=>a.id===selectedAirportId.value)?.name||''))
 const activePurpose=ref<Purpose>('daily'),selectedServices=ref<Partial<Record<ServicePurpose,string>>>({})
 const isServicePurpose=(purpose:Purpose):purpose is ServicePurpose=>purpose==='ai'||purpose==='streaming'
 const serviceOptions=computed(()=>isServicePurpose(activePurpose.value)?recommendationServices(w.catalog.value,activePurpose.value):[])
 const activeService=computed(()=>isServicePurpose(activePurpose.value)?recommendationService(serviceOptions.value,activePurpose.value,selectedServices.value[activePurpose.value]):undefined)
-const results=computed(()=>recommend(nodes.value,data.value,w.catalog.value,selectedServices.value))
-const regions=computed(()=>recommendationRegions(nodes.value).map(code=>{
- const regionNodes=nodes.value.filter(n=>recommendationRegion(n)===code)
+const results=computed(()=>recommend(scopedNodes.value,data.value,w.catalog.value,selectedServices.value,{riskPolicy:riskPolicy.value}))
+const riskExcludedCount=computed(()=>countRiskExcluded(scopedNodes.value,data.value,riskPolicy.value))
+const regions=computed(()=>recommendationRegions(scopedNodes.value).map(code=>{
+ const regionNodes=scopedNodes.value.filter(n=>recommendationRegion(n)===code)
  return {
   code,label:nodeRegionLabel(code),nodes:regionNodes,picks:results.value[activePurpose.value].filter(candidate=>candidate.region===code),
  }
@@ -67,11 +80,22 @@ async function refresh(){
 }
 async function exportCandidates(){
  const purpose=activePurpose.value,candidates=recommended.value,name=activeService.value?.name||purposeName.value
+ const groupName=selectedAirportName.value?`${selectedAirportName.value} · ${name}地区推荐`:`${name}地区推荐`
+ const fileName=selectedAirportId.value==='all'?`speedtest-${purpose}.yaml`:`speedtest-${purpose}-${selectedAirportId.value}.yaml`
  try{
-  const result=await api.exportClash(candidates.map(c=>scope(c.node)),name+'地区推荐')
-  if(await saveFile(result.yaml_content,'speedtest-'+purpose+'.yaml','application/x-yaml'))w.notify(`已导出 ${result.node_count} 条地区推荐`)
+  const result=await api.exportClash(candidates.map(c=>scope(c.node)),groupName)
+  if(await saveFile(result.yaml_content,fileName,'application/x-yaml'))w.notify(`已导出 ${result.node_count} 条地区推荐`)
  }catch(e){w.fail(e)}
 }
+function openRegionReputationPlan(region:{nodes:NodeOption[]}){
+ if(typeof w.openReputationPlan==='function'){w.openReputationPlan(region.nodes);return}
+ w.page.value='home'
+}
+const riskPolicies:{id:RecommendationRiskPolicy;label:string;tip:string}[]=[
+ {id:'all',label:'全部线路',tip:'不按出口信誉或 CF 盾过滤，所有已测线路均参与评选'},
+ {id:'avoid_risky',label:'避开高风险与弹盾',tip:'排除已证高风险、多源强分歧或易弹 CF 盾线路；未测出口信誉的线路仍诚实保留'},
+ {id:'verified_clean',label:'仅选已证纯净',tip:'只从多源共识纯净且未触发易弹 CF 盾的线路中评选'},
+]
 function selectService(value:string|number){
  const purpose=activePurpose.value
  if(isServicePurpose(purpose))selectedServices.value[purpose]=String(value)
@@ -141,6 +165,19 @@ onMounted(()=>void refresh())
       </div>
       <button v-if="recommended.length" class="button primary" @click="exportCandidates">导出 Clash 配置组</button>
       <button v-else class="button" @click="w.page.value='home'">去工作台检测</button>
+     </div>
+    </div>
+
+    <div class="recommendation-filters">
+     <div v-if="airportOptions.length>1" class="rec-filter-group" role="group" aria-label="按机场筛选推荐范围">
+      <span class="rec-filter-label">机场范围</span>
+      <button type="button" class="rec-filter-pill" :aria-pressed="selectedAirportId==='all'" @click="selectedAirportId='all'">全部机场 <b>{{nodes.length}}</b></button>
+      <button v-for="a in airportOptions" :key="a.id" type="button" class="rec-filter-pill" :aria-pressed="selectedAirportId===a.id" @click="selectedAirportId=a.id">{{a.name}} <b>{{a.count}}</b></button>
+     </div>
+     <div class="rec-filter-group" role="group" aria-label="出口纯净与风控过滤">
+      <span class="rec-filter-label">风控约束</span>
+      <button v-for="p in riskPolicies" :key="p.id" type="button" class="rec-filter-pill" :aria-pressed="riskPolicy===p.id" :title="p.tip" @click="riskPolicy=p.id">{{p.label}}</button>
+      <span v-if="riskPolicy!=='all'" class="rec-excluded-note">{{riskExcludedCount?`已过滤 ${riskExcludedCount} 条`:'当前范围无被过滤线路'}}</span>
      </div>
     </div>
 
@@ -221,9 +258,12 @@ onMounted(()=>void refresh())
          <h3>{{region.label}}</h3>
          <span class="region-count-pill">{{region.nodes.length}}</span>
         </div>
-        <button v-if="canPlanRegion(region)" class="region-plan-btn" @click="openRegionPlan(region)">补测本区（{{region.nodes.length}}）</button>
+        <div class="region-empty-actions">
+         <button v-if="riskPolicy==='verified_clean'&&region.code!=='unknown'&&region.nodes.length" type="button" class="region-plan-btn ghost-plan" @click="openRegionReputationPlan(region)">补测出口信誉</button>
+         <button v-if="canPlanRegion(region)" class="region-plan-btn" @click="openRegionPlan(region)">补测本区（{{region.nodes.length}}）</button>
+        </div>
        </div>
-       <p class="region-note">{{region.code==='unknown'?'地区待确认，可在线路工作台查看':isServicePurpose(activePurpose)&&!activeService?'暂无可选服务':missing[activePurpose]}}</p>
+       <p class="region-note">{{region.code==='unknown'?'地区待确认，可在线路工作台查看':isServicePurpose(activePurpose)&&!activeService?'暂无可选服务':riskPolicy==='verified_clean'?'当前风控约束下无已证多源纯净线路，可切换风控约束或先补测出口信誉':missing[activePurpose]}}</p>
       </section>
      </div>
     </div>
@@ -248,6 +288,17 @@ onMounted(()=>void refresh())
 .coverage-track{height:6px;border-radius:999px;background:var(--cst-aurora-track);overflow:hidden}
 .coverage-track>i{display:block;height:100%;border-radius:999px;background:var(--cst-aurora-bar);box-shadow:var(--cst-aurora-glow);transition:width .4s cubic-bezier(.22,1,.36,1)}
 .recommendation-criteria{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;padding-top:12px;border-top:1px solid var(--cst-line)}
+.recommendation-filters{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px 16px;padding-top:10px;border-top:1px solid var(--cst-line)}
+.rec-filter-group{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+.rec-filter-label{font-size:11.5px;font-weight:650;color:var(--cst-muted);margin-right:2px}
+.rec-filter-pill{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:999px;border:1px solid var(--cst-line);background:var(--cst-panel-2);color:var(--cst-muted);font-size:12px;font-weight:550;cursor:pointer;transition:all .14s}
+.rec-filter-pill b{font-weight:700;font-variant-numeric:tabular-nums;opacity:.85}
+.rec-filter-pill:hover{color:var(--cst-text);border-color:color-mix(in srgb,var(--cst-accent) 32%,var(--cst-line))}
+.rec-filter-pill[aria-pressed=true]{color:var(--cst-accent);background:color-mix(in srgb,var(--cst-accent) 10%,var(--cst-panel));border-color:color-mix(in srgb,var(--cst-accent) 42%,var(--cst-line));font-weight:650}
+.rec-excluded-note{font-size:11.5px;color:var(--cst-warn,#b45309);padding:2px 8px;border-radius:999px;background:var(--cst-warn-bg);border:1px solid color-mix(in srgb,var(--cst-warn,#b45309) 25%,transparent);font-weight:600}
+.region-empty-actions{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}
+.region-plan-btn.ghost-plan{background:var(--cst-panel-2);color:var(--cst-text);border-color:var(--cst-line-strong)}
+.region-plan-btn.ghost-plan:hover{background:color-mix(in srgb,var(--cst-accent) 12%,var(--cst-panel));color:var(--cst-accent);border-color:var(--cst-accent)}
 .criteria-main{display:grid;gap:8px;flex:1;min-width:240px}
 .recommendation-criteria p,.recommendation-method{font-size:12.5px;line-height:1.6;color:var(--cst-muted);margin:0}
 .recommendation-method{max-width:56ch}
