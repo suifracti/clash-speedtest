@@ -164,11 +164,12 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px 20px;
-  margin-bottom: 22px;
-  padding: 13px 16px;
-  border: 1px solid var(--line);
-  border-radius: 0;
-  background: transparent;
+  margin-bottom: 18px;
+  padding: 14px 18px;
+  border: 1px solid var(--cst-line-strong);
+  border-radius: 14px;
+  background: var(--cst-panel);
+  box-shadow: var(--cst-shadow);
 }
 
 .monitor-view .monitor-resource-values {
@@ -219,23 +220,28 @@
 }
 
 .monitor-view .monitor-card:not(.periodic-panel) {
-  border: 0;
-  border-left: 3px solid var(--cst-line-strong);
-  border-radius: 0;
-  box-shadow: none;
-  padding: 22px 24px;
+  border: 1px solid var(--cst-line-strong);
+  border-left: 3.5px solid var(--cst-accent);
+  border-radius: 15px;
+  background: var(--cst-panel);
+  box-shadow: var(--cst-shadow);
+  padding: 20px 22px;
 }
 
 .monitor-view .monitor-spec span {
-  padding: 0 12px 0 0;
-  border-right: 1px solid var(--line);
+  padding: 3px 10px;
+  border: 1px solid var(--cst-line);
+  border-radius: 999px;
+  background: var(--cst-panel-2);
   font-size: 12px;
+  font-weight: 550;
 }
 
 .monitor-view .monitor-nodes {
-  padding: 8px 10px;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
+  padding: 9px 12px;
+  border: 1px solid var(--cst-line);
+  border-radius: 10px;
+  background: var(--cst-panel-2);
 }
 
 .monitor-view .monitor-nodes > summary {

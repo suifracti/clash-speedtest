@@ -214,8 +214,21 @@ onBeforeUnmount(()=>{disposed=true;editGeneration++;removeGeneration++;clearTime
 <AirportReport v-else-if="section==='report'" :initial-airport-id="focusedAirport?.id" @airport-change="viewingAirport=$event;search=''"/>
 <template v-else>
 <div v-if="w.airports.value.length" class="account-register-summary" aria-label="账户台账概览">
-  <span :class="{warn:expiringSoonCount}">{{expiringSoonCount?`${expiringSoonCount} 个账户已过期或将在 7 天内到期`:'已知到期日中，没有近期到期账户'}}</span>
-  <span>{{knownQuotaStats.count}} 个账户有剩余量记录 <strong>{{knownQuotaStats.sum!==null?bytes(knownQuotaStats.sum):'未知'}}</strong><small> 各账户独立使用</small></span>
+  <div class="summary-stat-card">
+    <small>接入来源规模</small>
+    <strong>{{w.airports.value.length}} 个机场 · {{totalAccounts}} 个账户</strong>
+    <span>共缓存 {{totalNodes}} 条可用节点配置</span>
+  </div>
+  <div class="summary-stat-card accent">
+    <small>有效套餐剩余总额</small>
+    <strong>{{knownQuotaStats.sum!==null?bytes(knownQuotaStats.sum):'未知'}}</strong>
+    <span>{{knownQuotaStats.count}} 个账户已返回流量余量 · 各账户独立使用</span>
+  </div>
+  <div class="summary-stat-card" :class="{warn:expiringSoonCount>0}">
+    <small>续费与到期状态</small>
+    <strong>{{expiringSoonCount?`${expiringSoonCount} 个近期到期`:'全部正常'}}</strong>
+    <span>{{expiringSoonCount?`${expiringSoonCount} 个账户已过期或将在 7 天内到期`:'已知到期日中，没有近期到期账户'}}</span>
+  </div>
 </div>
 <div class="account-register">
 <aside class="account-register-index" aria-label="机场索引">
@@ -331,46 +344,55 @@ onBeforeUnmount(()=>{disposed=true;editGeneration++;removeGeneration++;clearTime
 .airports-top-bar p{font-size:12px}
 .airports-header-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-left:auto}
 .airports-top-bar .subscription-view-tabs{margin-bottom:0}
-.account-register-summary{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 0;border-top:1px solid var(--cst-line);color:var(--cst-muted);font-size:12px}
+.account-register-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:18px;padding:0;border:0}
+.summary-stat-card{display:flex;flex-direction:column;gap:4px;padding:15px 18px;border:1px solid var(--cst-line-strong);border-radius:14px;background:var(--cst-panel);box-shadow:var(--cst-shadow)}
+.summary-stat-card small{font-size:11.5px;font-weight:600;color:var(--cst-muted)}
+.summary-stat-card strong{font-size:20px;font-weight:750;color:var(--cst-text);font-variant-numeric:tabular-nums;letter-spacing:-.02em;margin:0}
+.summary-stat-card span{font-size:11.5px;color:var(--cst-muted)}
+.summary-stat-card.accent{background:linear-gradient(145deg,color-mix(in srgb,var(--cst-accent) 7%,var(--cst-panel)),var(--cst-panel));border-color:color-mix(in srgb,var(--cst-accent) 28%,var(--cst-line))}
+.summary-stat-card.accent strong{color:var(--cst-accent)}
+.summary-stat-card.warn{background:var(--cst-warn-bg);border-color:color-mix(in srgb,var(--cst-warn) 35%,var(--cst-line))}
+.summary-stat-card.warn strong{color:var(--cst-warn)}
 .account-register-summary strong{color:var(--cst-text);font-weight:600;margin-left:8px}
 .account-register-summary small{font-size:11px}
-.account-register{display:grid;grid-template-columns:210px minmax(0,1fr);gap:28px;align-items:start;margin-top:12px}
-.account-register-index{position:sticky;top:calc(var(--cst-nav-height,58px) + 20px);min-width:0}
+.account-register{display:grid;grid-template-columns:240px minmax(0,1fr);gap:20px;align-items:start;margin-top:4px}
+.account-register-index{position:sticky;top:calc(var(--cst-nav-height,58px) + 20px);min-width:0;padding:14px;border:1px solid var(--cst-line-strong);border-radius:15px;background:var(--cst-panel);box-shadow:var(--cst-shadow)}
 .account-register-index .page-toolbar{display:grid;gap:12px;margin:0 0 16px;padding:0}
 .account-register-index .search-field{width:100%;min-width:0;box-sizing:border-box}
 .account-register-index nav{display:grid;gap:4px}
-.account-register-index nav>button{display:flex;align-items:center;gap:10px;width:100%;padding:12px 10px;border:0;border-left:3px solid transparent;background:transparent;text-align:left;border-radius:0;color:var(--cst-muted)}
-.account-register-index nav>button[aria-pressed=true]{border-left-color:var(--cst-accent);background:var(--cst-panel);color:var(--cst-text)}
+.account-register-index nav>button{display:flex;align-items:center;gap:10px;width:100%;padding:10px 12px;border:1px solid transparent;background:transparent;text-align:left;border-radius:11px;color:var(--cst-muted);transition:all .14s}
+.account-register-index nav>button[aria-pressed=true]{border-color:color-mix(in srgb,var(--cst-accent) 32%,var(--cst-line));background:color-mix(in srgb,var(--cst-accent) 8%,var(--cst-panel-2));color:var(--cst-text);box-shadow:var(--cst-shadow)}
 .account-register-index nav>button:hover{background:var(--cst-panel)}
-.account-index-initial{display:grid;place-items:center;width:28px;height:28px;background:var(--cst-panel-2);font-size:12px;flex:none}
+.account-index-initial{display:grid;place-items:center;width:30px;height:30px;border-radius:9px;background:color-mix(in srgb,var(--cst-accent) 12%,var(--cst-panel-2));color:var(--cst-accent);font-size:13px;font-weight:700;flex:none}
 .account-register-index nav strong{display:block;font-size:13px;font-weight:600;overflow-wrap:anywhere}
 .account-register-index nav small{display:block;font-size:11px;color:var(--cst-muted);margin-top:4px}
 .account-register-index nav .icon{margin-left:auto;width:12px;flex:none}
 .cst-ledger{min-width:0}
-.cst-ledger-airport{padding:0;border:0;border-radius:0;background:var(--cst-panel);box-shadow:none;overflow:visible}
-.cst-ledger-airport-head{display:flex;align-items:center;gap:14px;padding:22px 24px;border-bottom:2px solid var(--cst-text);flex-wrap:wrap;background:var(--cst-panel)}
-.cst-ledger-logo{width:42px;height:42px;display:grid;place-items:center;border:1px solid var(--cst-line-strong);color:var(--cst-text);font-size:20px;flex:none}
+.cst-ledger-airport{padding:0;border:1px solid var(--cst-line-strong);border-radius:16px;background:var(--cst-panel);box-shadow:var(--cst-shadow);overflow:hidden}
+.cst-ledger-airport-head{display:flex;align-items:center;gap:14px;padding:20px 24px;border-bottom:1px solid var(--cst-line);flex-wrap:wrap;background:linear-gradient(180deg,color-mix(in srgb,var(--cst-panel-2) 70%,var(--cst-panel)),var(--cst-panel))}
+.cst-ledger-logo{width:44px;height:44px;display:grid;place-items:center;border-radius:12px;background:linear-gradient(135deg,color-mix(in srgb,var(--cst-accent) 16%,var(--cst-panel)),color-mix(in srgb,var(--cst-accent) 6%,var(--cst-panel-2)));border:1px solid color-mix(in srgb,var(--cst-accent) 26%,var(--cst-line));color:var(--cst-accent);font-size:19px;font-weight:750;flex:none}
 .cst-ledger-title{flex:1;min-width:200px;display:grid;gap:6px}
 .cst-ledger-title h2{margin:0;font-size:22px;font-weight:600;letter-spacing:-.02em}
 .cst-ledger-title small{color:var(--cst-muted);font-size:12px;line-height:1.8}
 .cst-ledger-airport-head>.button-group{margin-left:auto;flex-wrap:wrap}
 .cst-ledger-airport .airport-note{margin:0;padding:12px 24px;color:var(--cst-muted);font-size:12px;border-bottom:1px solid var(--cst-line)}
 .cst-ledger-cols{display:none}
-.cst-ledger-row{display:grid;grid-template-columns:minmax(150px,1fr) minmax(100px,.7fr) minmax(210px,1.4fr);gap:24px 20px;align-items:start;padding:24px;border-bottom:1px solid var(--cst-line)}
+.cst-ledger-row{display:grid;grid-template-columns:minmax(160px,1fr) minmax(110px,.7fr) minmax(210px,1.35fr);gap:16px 20px;align-items:start;margin:14px 18px;padding:18px 20px;border:1px solid var(--cst-line);border-radius:13px;background:var(--cst-panel-2)}
 .cst-ledger-account{grid-column:1/-1;display:grid;gap:5px;min-width:0}
 .cst-ledger-account strong{font-size:16px;font-weight:600;color:var(--cst-text)}
 .cst-ledger-account small{color:var(--cst-muted);font-size:12px}
-.cst-ledger-account code{font:11px/1.5 var(--cst-mono);color:var(--cst-muted);max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:none;border:0;padding:0}
+.cst-ledger-account code{font:11px/1.5 var(--cst-mono);color:var(--cst-muted);max-width:fit-content;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:var(--cst-panel);border:1px solid var(--cst-line);border-radius:6px;padding:2px 8px}
 .cst-ledger-quota,.cst-ledger-expire{display:flex;flex-direction:column;gap:8px;font-variant-numeric:tabular-nums;min-width:0}
 .cst-ledger-quota strong,.cst-ledger-expire strong{font-size:15px;font-weight:600;color:var(--cst-text)}
 .cst-ledger-quota small,.cst-ledger-expire small{color:var(--cst-muted);font-size:12px}
 .cst-ledger-expire strong.warn{color:var(--cst-warn)}.cst-ledger-expire strong.bad{color:var(--cst-bad)}
 .account-field-label{margin-bottom:2px}
-.cst-meter{height:4px;background:var(--cst-line);overflow:hidden;margin:4px 0}
-.cst-meter i{display:block;height:100%;background:var(--cst-accent)}.cst-meter i.warn{background:var(--cst-warn)}
+.cst-meter{height:7px;border-radius:999px;background:var(--cst-line);overflow:hidden;margin:3px 0}
+.cst-meter i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--cst-accent),#38bdf8)}.cst-meter i.warn{background:var(--cst-warn)}
+
 .cst-ledger-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;grid-column:1/-1;padding-top:2px}
 .cst-ledger-foot{padding:16px 24px}
 @media(min-width:1450px){.cst-ledger-row{grid-template-columns:minmax(230px,1.1fr) minmax(150px,.8fr) minmax(110px,.65fr) minmax(240px,1.4fr)}.cst-ledger-account{grid-column:auto}.cst-ledger-actions{justify-content:flex-end}}
-@media(max-width:1100px){.account-register{grid-template-columns:180px minmax(0,1fr);gap:20px}.cst-ledger-row{grid-template-columns:1fr 1fr}.cst-ledger-row>:deep(.cst-usage-days){grid-column:1/-1}.cst-ledger-row>.cst-usage-days{grid-column:1/-1}}
+@media(max-width:1100px){.account-register-summary{grid-template-columns:minmax(0,1fr)}.account-register{grid-template-columns:200px minmax(0,1fr);gap:16px}.cst-ledger-row{grid-template-columns:1fr 1fr}.cst-ledger-row>:deep(.cst-usage-days){grid-column:1/-1}.cst-ledger-row>.cst-usage-days{grid-column:1/-1}}
 @media(max-width:760px){.account-register{grid-template-columns:minmax(0,1fr);gap:16px}.account-register-index{position:static}.account-register-index nav{display:flex;overflow:auto;gap:8px}.account-register-index nav>button{min-width:180px}.account-register-index .page-toolbar{grid-template-columns:minmax(0,1fr) auto;align-items:center}.cst-ledger-airport-head,.cst-ledger-row{padding:18px}.airports-header-right{margin-left:0}.cst-ledger-account code{white-space:normal;overflow-wrap:anywhere}}
 </style>

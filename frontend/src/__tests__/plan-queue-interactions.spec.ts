@@ -411,3 +411,28 @@ it('does not show a progress bar before latency admission is confirmed and separ
  expect(Array.from(document.querySelectorAll('dialog button')).some(b=>b.textContent?.includes('取消检测'))).toBe(false)
  expect(document.querySelector('.progress-track')).not.toBeNull()
 })
+
+it('filters queue items when clicking status count pills and labels reputation probes as 出口与信誉',async()=>{
+ const dupNode={...node,profile_name:'Airport A · Airport A'}
+ const okAttempt:Attempt={...dupNode,attempt_id:'ok-1',request_id:'ok-1',service_id:'cloudflare_trace',requested_at:'2026-11-20T08:00:00Z',execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://fixture.invalid/ip'},result:{outcome:'profiled',bytes_read:0,http_status:200,finished_at:'2026-11-20T08:00:01Z'}}
+ const timeoutAttempt:Attempt={...dupNode,attempt_id:'warn-1',request_id:'warn-1',service_id:'antigravity',requested_at:'2026-11-20T08:00:00Z',execution_state:'completed',persistence_state:'saved',rule:{target_url:'https://fixture.invalid/ag'},result:{outcome:'timed_out',bytes_read:0,finished_at:'2026-11-20T08:00:05Z',error_message:'请求超过设定超时'}}
+ w.catalog.value=[{service_id:'cloudflare_trace',name:'出口 IP 与 Cloudflare 机房',result_kind:'exit_profile',enabled_by_default:true} as any,{service_id:'antigravity',name:'Google Antigravity',result_kind:'unlock',enabled_by_default:false} as any]
+ w.queue.value=[
+  {id:'ok-1',node:dupNode,project:'service',serviceId:'cloudflare_trace',state:'completed',attempt:okAttempt},
+  {id:'warn-1',node:dupNode,project:'service',serviceId:'antigravity',state:'completed',attempt:timeoutAttempt},
+  {id:'wait-1',node:{...dupNode,display_name:'Node Queued'},project:'service',serviceId:'antigravity',state:'queued'}
+ ]
+ attach(QueueModal)
+ expect(document.querySelectorAll('.queue-row')).toHaveLength(1)
+ expect(document.querySelector('.queue-row')?.textContent).toContain('Airport A · 解锁检测 · Google Antigravity')
+ expect(document.querySelector('.queue-row')?.textContent).not.toContain('Airport A · Airport A')
+ button('已成功 1').click();await flushPromises()
+ expect(document.querySelectorAll('.queue-row')).toHaveLength(1)
+ expect(document.querySelector('.queue-row')?.textContent).toContain('Airport A · 出口与信誉 · 出口 IP 与 Cloudflare 机房')
+ button('排队 1').click();await flushPromises()
+ expect(document.querySelectorAll('.queue-row')).toHaveLength(1)
+ expect(document.querySelector('.queue-row')?.textContent).toContain('Node Queued')
+ button('已处理 2 / 3').click();await flushPromises()
+ expect(document.querySelectorAll('.queue-row')).toHaveLength(3)
+ expect(api.startAttempt).not.toHaveBeenCalled()
+})

@@ -25,7 +25,7 @@ beforeEach(()=>{
  vi.mocked(api.startAttempt).mockImplementation(async(_kind,body:any)=>({...node,...body,attempt_id:body.request_id,requested_at:'2026-11-18T00:00:00Z',execution_state:'completed',persistence_state:'saved',rule:{service_id:body.service_id},result:{outcome:'profiled',bytes_read:0,finished_at:'2026-11-18T00:00:01Z'}}))
  w=createWorkspace();w.airports.value=[{id:'airport-a',name:'Airport A',node_count:1,has_cache:true,url_display:'',subscriptions:[{id:'account-a',airport_id:'airport-a',name:'Account A',node_count:1,has_cache:true,url_display:'',url_configured:true}]}];w.nodes.value=[{...node}];w.setAirports(['airport-a'])
  w.catalog.value=[{service_id:'exit_ipv4',name:'IPv4 出口',category:'出口',result_kind:'exit_profile',description:'',success_criterion:'',timeout_seconds:15}]
- w.project.value='latency';w.openPlan([node])
+ w.project.value='latency';w.openPlan([node]);w.plan.value!.includeReputation=true
 })
 afterEach(()=>{wrapper?.unmount();wrapper=undefined;w.dispose();document.body.innerHTML=''})
 
@@ -85,7 +85,7 @@ it('rechecks configuration after preparation and leaves the plan available for c
 
 it('ignores the earlier preparation when a new plan is opened and started',async()=>{
  const first=deferred(),second=deferred();vi.mocked(api.entries).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
- const oldRun=w.runPlan();w.openPlan([node]);w.plan.value!.samples=10;const next=w.plan.value,newRun=w.runPlan()
+ const oldRun=w.runPlan();w.openPlan([node]);w.plan.value!.includeReputation=true;w.plan.value!.samples=10;const next=w.plan.value,newRun=w.runPlan()
  first.resolve({nodes:[]});await oldRun
  expect(w.plan.value).toBe(next);expect(w.preparingPlan.value).toBe(true);expect(api.createRound).not.toHaveBeenCalled()
  second.resolve({nodes:[]});await newRun

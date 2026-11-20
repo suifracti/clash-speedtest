@@ -367,3 +367,8 @@ Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 
   - 「解锁按服务矩阵」（`UnlockServiceMatrix.vue`）默认优先选中 `gemini_unlock`（按显示服务兜底），右侧节点卡增加 CF 盾小标签以及“查看详情 / 单节点重测”快捷入口（不自动启动）。
   - 「机场体检」（`AirportReport.vue`、`airportReport.ts`）统一为圆角卡片风格，新增已保存出口纯净度均分与 CF 盾概况卡，排行表新增关键词搜索与“仅看有问题”筛选。
   - `App.vue` 将 6 个非首屏次级页面与 6 个弹窗改为 `defineAsyncComponent` 按需懒加载，首屏 JS 由 `939.36 kB` 降至 `431.58 kB`（CSS 由 `363.75 kB` 降至 `201.88 kB`），消除 500 kB 打包告警；88 文件 / 649 项 Vitest 与生产构建全过。
+- **同日再续：专项检测不再暗绑 IP 信誉、队列计数胶囊直点筛选、综合四维等宽与全界面去毛胚卡片化**：
+  - **专项计划默认解绑 IP 信誉（修复 `12 → 108` 膨胀，`frontend/src/workspace.ts`）**：`openPlan()` 原无条件默认 `includeReputation: true`，导致在「延迟/下载/解锁」单项目标签下选 12 节点测 1 个服务时自动拼入 8 项 IP 信誉探针膨胀为 `12 × (1 + 8) = 108` 项。现仅「综合」（`combined`）与「出口与信誉」（`openReputationPlan`）默认开启 `includeReputation: true`，单专项默认 `false`（仍预填 `reputationServiceIds` 供用户在配置弹窗手动勾选）。
+  - **检测进度（`QueueModal.vue`）胶囊直点筛选与归类修正**：顶部状态计数胶囊（`已处理` / `已成功` / `需留意·异常` / `执行` / `排队` / `未运行·取消`）改为可直接点击过滤队列列表的交互按钮；IP 信誉与出口规则在队列中归类显示为 `出口与信誉`（不再混标为 `解锁检测`），并自动去重 `机场A · 机场A` 同名来源标签。
+  - **工作台「综合」四维等宽总览与三专项重做（`HomeWorkbench.vue`、`home-design.css`）**：「综合」不再铺开四站独立宽列挤压其余维度，改为 `节点 | 延迟总览 | 下载速度 | 服务解锁 | 出口画像` 四维 `1fr` 均衡总览卡格（细粒度多站竖条、按服务解锁矩阵、出口七列均留归对应专项标签）；升级「下载测速」（速度比例条 + 有效速度/峰值全程/测速源与行内快测按钮）、「解锁检测」（合并视图切换与服务选择副栏 + 状态胶囊）及「出口与信誉」（线路属性胶囊、等宽 IP 芯片、状态色标）。
+  - **次级页面全面脱离 HTML 控制台毛胚感（`RecommendationView.vue`、`AirportsView.vue`、`SubscriptionUsageView.vue`、`MonitorView.vue`、`HistoryView.vue`、`LatencyReports.vue`、`secondary-observatory.css`）**：「为你选线」升级为顶部用途英雄卡（分段胶囊 + 地区覆盖进度条）+ 双列已命中地区首选/次选圆角卡 + 底部紧凑待补测网格；「订阅」顶部新增三张 KPI 汇总卡、渐变流量进度条与独立订阅内卡；「监测」与「记录」全面去除 `2px solid` 粗黑线与裸 `<hr>` 列表，统一为分段胶囊切换、模式选择卡、时间轴圆角行卡与详情面板。88 文件 / 650 项 Vitest 与生产构建通过。

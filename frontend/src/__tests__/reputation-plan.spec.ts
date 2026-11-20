@@ -44,13 +44,15 @@ beforeEach(()=>{
 })
 afterEach(()=>{wrapper?.unmount();wrapper=undefined;w.dispose();document.body.innerHTML=''})
 
-it('defaults to every available IP reputation rule without changing normal service selection',()=>{
+it('keeps single-purpose plans unbundled while prefilling IP reputation rules for combined and exit plans',()=>{
  w.project.value='service';w.catalog.value=rules.filter(item=>item.service_id!=='exit_ipv6');w.serviceIds.value=['cloudflare_204','exit_ipv4','ippure_ip_quality']
  w.openPlan([node])
  expect(w.plan.value?.projects).toEqual(['service'])
  expect(w.plan.value?.serviceIds).toEqual(['cloudflare_204'])
- expect(w.plan.value?.includeReputation).toBe(true)
+ expect(w.plan.value?.includeReputation).toBe(false)
  expect(w.plan.value?.reputationServiceIds).toEqual(['exit_ipv4','ping0_ipv4','ping0_ipv6','ippure_ip_quality','quality_optional'])
+ w.project.value='combined';w.openPlan([node])
+ expect(w.plan.value?.includeReputation).toBe(true)
  w.openReputationPlan([node])
  expect(w.plan.value?.projects).toEqual([])
  expect(w.plan.value?.includeReputation).toBe(true)
@@ -60,7 +62,7 @@ it('defaults to every available IP reputation rule without changing normal servi
 })
 
 it('keeps the IP reputation checkbox and its filtered picker independent from normal services',async()=>{
- w.project.value='service';w.openPlan([node])
+ w.project.value='combined';w.openPlan([node]);w.plan.value!.projects=['service']
  wrapper=mount(TestPlanModal,{global:{provide:{[workspaceKey as symbol]:w},stubs:{Modal:modalStub}}})
  const reputationToggle=wrapper.findAll('.plan-projects label').find(label=>label.text().includes('IP信誉/纯净度'))
  expect(reputationToggle).toBeDefined()

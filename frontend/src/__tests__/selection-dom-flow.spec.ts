@@ -148,7 +148,7 @@ describe('node selection through DOM controls',()=>{
     expect(wrapper.find('.exit-ipkind').exists()).toBe(false);expect(wrapper.find('.landing-sources').exists()).toBe(false)
     w.services.value[key(b)]=[{...b,attempt_id:'purity',service_id:'ippure_ip_quality',persistence_state:'saved',execution_state:'completed',rule:{service_id:'ippure_ip_quality'},result:{outcome:'profiled',finished_at:'2026-10-24T10:00:00Z',details:{risk_score:'18',risk_scale_max:'100',risk_direction:'lower_is_better',ip_type:'机房 IDC',origin_type:'原生 IP',country_code:'SG'}}} as never]
     await flushPromises();expect(wrapper.get('.exit-purity').text()).toContain('纯净度 82 · 机房 IP · 原生 SG')
-    await wrapper.findAll('[role="columnheader"] button').find(button=>button.text().startsWith('纯净度'))!.trigger('click');await flushPromises()
+    await wrapper.findAll('[role="columnheader"] button').find(button=>button.text().startsWith('出口画像'))!.trigger('click');await flushPromises()
     expect(wrapper.findAll('.hd-tr:not(.hd-th) .hd-node')[0]!.text()).toContain(b.display_name)
     expect(api.startLatency).not.toHaveBeenCalled();expect(api.startAttempt).not.toHaveBeenCalled();usage.mockRestore()
   })
@@ -219,7 +219,8 @@ describe('node selection through DOM controls',()=>{
     expect(wrapper.find('.round-summary').text()).toContain('已读 2 个站点')
     expect(wrapper.findAll('.round-result strong').map(row=>row.text())).toEqual(['70 ms','超时','100 ms','35 ms'])
     w.project.value='combined';await flushPromises()
-    expect(wrapper.findAll('.response-stop').map(cell=>cell.findAll('.response-samples i').length)).toEqual([2,2])
+    expect(wrapper.findAll('.hd-ov-cell')).toHaveLength(4)
+    expect(wrapper.get('.hd-ov-cell').text()).toContain('2/2 站响应')
   })
   it('shows stopped HTTP monitoring in service and combined views without claiming catalog checks passed',async()=>{
     const google:MonitorSample={...a,sample_id:'http-google-1',run_id:'http-run-1',display_name_snapshot:a.display_name,timestamp:'2026-10-03T06:30:00Z',probe_type:'service_google',target:'https://www.google.com/generate_204',success:true,latency:80000000,ttfb:0,sampling_tier:'regular'}
