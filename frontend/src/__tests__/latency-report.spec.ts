@@ -139,4 +139,40 @@ describe('latency run report',()=>{
   wrapper.unmount()
  })
 
+ it('shows left-column site & region overviews and concrete per-row specifics in problem groups',async()=>{
+  const mkPartial=(name:string,ms:number)=>{
+   const row=item(name,ms,true)
+   row.result!.samples=[
+    ...Array.from({length:6},(_,i)=>({seq:i+1,target:'https://speed.cloudflare.com/__down?bytes=1',timestamp:'2026-10-20T12:00:00Z',latency_ms:ms,success:true})),
+    ...Array.from({length:6},(_,i)=>({seq:i+7,target:'https://www.gstatic.com/generate_204',timestamp:'2026-10-20T12:00:01Z',latency_ms:0,success:false,error:'context deadline exceeded'})),
+   ]
+   row.result!.total_samples=12;row.result!.success_samples=6;row.result!.failure_samples=6;row.result!.status='partial_failed'
+   return row
+  }
+  const b=batch([
+   {...item('新加坡 01',140,true),profile_id:'a'},
+   {...mkPartial('美国 01',250),profile_id:'a'},
+   {...mkPartial('美国 02',310),profile_id:'a'},
+  ])
+  const wrapper=mount(LatencyReport,{props:{batch:b,airportNames:{a:'机场A'}}})
+  // Left column site & region summaries render
+  expect(wrapper.find('.report-site-overview').text()).toContain('Google')
+  expect(wrapper.find('.report-site-overview').text()).toContain('2 不通')
+  expect(wrapper.find('.report-region-list').text()).toContain('新加坡')
+  expect(wrapper.find('.report-region-list').text()).toContain('美国')
+  // Right column problem rows always show concrete per-row response ratio & site/latency details
+  const groupItems=wrapper.findAll('.latency-report-group li')
+  expect(groupItems).toHaveLength(2)
+  expect(groupItems[0]!.text()).toContain('6/12')
+  expect(groupItems[0]!.text()).toContain('Google 0/6')
+  expect(groupItems[0]!.text()).toContain('250ms')
+  expect(groupItems[1]!.text()).toContain('310ms')
+  // Clicking a region row drills directly into details filtered by that region
+  const usRegionBtn=wrapper.findAll('.report-region-row').find(btn=>btn.text().includes('美国'))!
+  await usRegionBtn.trigger('click')
+  expect(wrapper.get('.report-tab[aria-selected="true"]').text()).toContain('逐个明细')
+  expect(wrapper.findAll('.latency-report-details .latency-report-table-wrap tbody tr')).toHaveLength(2)
+  wrapper.unmount()
+ })
+
 })

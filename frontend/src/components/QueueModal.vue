@@ -584,8 +584,8 @@ button.queue-pill:hover{border-color:var(--cst-accent);color:var(--cst-text);bac
 .compact-running-chip .spinner{width:10px;height:10px;flex:none}
 .compact-running-chip>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
 .compact-running-chip small{font-size:10.5px;color:var(--cst-muted);flex:none}
-.compact-recent-list{display:grid;gap:6px;max-height:270px;overflow:auto;padding-right:2px}
-.compact-recent-card{border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel-2);overflow:hidden;transition:border-color .14s,background .14s}
+.compact-recent-list{display:flex;flex-direction:column;gap:6px;max-height:280px;overflow-y:auto;padding-right:4px}
+.compact-recent-card{flex:0 0 auto;border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel-2);overflow:hidden;transition:border-color .14s,background .14s}
 .compact-recent-card:hover,.compact-recent-card.expanded{border-color:color-mix(in srgb,var(--cst-accent) 36%,var(--cst-line));background:var(--cst-panel)}
 .compact-recent-row{width:100%;border:0;background:transparent;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 11px;text-align:left;cursor:pointer;color:inherit}
 .compact-recent-node{min-width:0;display:grid;gap:2px}

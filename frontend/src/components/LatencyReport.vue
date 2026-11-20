@@ -255,6 +255,90 @@ function rowFailSummary(row:LatencyReportRow){
  if(parts.length)return parts.join(' · ')
  return partialLatencyError(row.item.result)||row.suspectedReasons.join('；')||row.skipReason||''
 }
+const siteSummary=computed(()=>{
+ const map=new Map<string,{id:string;name:string;shortName:string;tested:number;okNodes:number;blockedNodes:number;lossNodes:number;medians:number[];issueKeys:string[];failReasons:Map<string,number>}>()
+ for(const row of report.value.rows){
+  if(row.status==='skipped')continue
+  for(const s of row.sites){
+   if(!s.attemptedSamples)continue
+   let entry=map.get(s.id)
+   if(!entry){
+    entry={id:s.id,name:s.name,shortName:shortSiteName(s.name),tested:0,okNodes:0,blockedNodes:0,lossNodes:0,medians:[],issueKeys:[],failReasons:new Map()}
+    map.set(s.id,entry)
+   }
+   entry.tested++
+   if(s.responseSamples===0){
+    entry.blockedNodes++
+    entry.issueKeys.push(row.key)
+   }else{
+    entry.okNodes++
+    if(s.stableMs!==null)entry.medians.push(s.stableMs)
+    if(s.failCount>0){entry.lossNodes++;entry.issueKeys.push(row.key)}
+   }
+   for(const r of s.failReasons)entry.failReasons.set(r,(entry.failReasons.get(r)||0)+1)
+  }
+ }
+ return [...map.values()].map(entry=>{
+  const sorted=entry.medians.slice().sort((a,b)=>a-b)
+  const mid=sorted.length?sorted[Math.floor(sorted.length/2)]!:null
+  const topReason=[...entry.failReasons.entries()].sort((a,b)=>b[1]-a[1])[0]?.[0]||''
+  const rate=entry.tested?Math.round(entry.okNodes/entry.tested*100):0
+  const tone=entry.blockedNodes>0?(entry.okNodes===0?'bad':'warn'):entry.lossNodes>0?'warn':'good'
+  return {...entry,medianMs:mid,topReason,rate,tone}
+ })
+})
+const regionSummary=computed(()=>{
+ const map=new Map<string,{region:string;total:number;usable:number;issues:number;fastestMs:number|null}>()
+ for(const row of report.value.rows){
+  const region=rowRegion(row)
+  let entry=map.get(region)
+  if(!entry){entry={region,total:0,usable:0,issues:0,fastestMs:null};map.set(region,entry)}
+  entry.total++
+  if(row.status==='usable')entry.usable++
+  else if(row.status!=='skipped')entry.issues++
+  if(row.status==='usable'&&row.stableMs!==null&&(entry.fastestMs===null||row.stableMs<entry.fastestMs))entry.fastestMs=row.stableMs
+ }
+ return [...map.values()]
+  .sort((a,b)=>b.usable-a.usable||b.total-a.total||a.region.localeCompare(b.region,'zh-CN'))
+  .map(entry=>({...entry,rate:entry.total?Math.round(entry.usable/entry.total*100):0,tone:entry.usable===0?'bad':entry.issues>0?'warn':'good'}))
+})
+function openRegionDetails(region:string){
+ detailSubset.value=null
+ detailStatus.value='all'
+ detailRegion.value=region
+ detailProtocol.value='all'
+ detailSearch.value=''
+ detailPage.value=1
+ reportView.value='details'
+}
+function problemRowEvidence(group:LatencyReportGroup,row:LatencyReportRow):{ratio:string;ratioTone:'bad'|'warn'|'';chip:string;detail:string}{
+ const ratio=row.attemptedSamples?`${row.responseSamples}/${row.attemptedSamples}`:''
+ if(group.kind==='skipped')return {ratio:'',ratioTone:'',chip:'',detail:issueDetail(group,row)||'未执行'}
+ if(group.kind==='slow'){
+  const slowest=row.sites.filter(s=>s.stableMs!==null).sort((a,b)=>(b.stableMs||0)-(a.stableMs||0))[0]
+  const chip=slowest&&slowest.stableMs!==null?`最慢 ${shortSiteName(slowest.name)} ${Math.round(slowest.stableMs)}ms`:''
+  return {ratio:'',ratioTone:'',chip,detail:issueDetail(group,row)}
+ }
+ if(group.kind==='partial'){
+  const dead=row.sites.filter(s=>s.attemptedSamples>0&&s.responseSamples===0)
+  const deadText=dead.map(s=>`${shortSiteName(s.name)} 0/${s.attemptedSamples}${s.failReasons[0]?`(${s.failReasons[0]})`:''}`).join(' · ')
+  const aliveMs=row.stableMs!==null?`余站 ${Math.round(row.stableMs)}ms`:''
+  return {ratio,ratioTone:'warn',chip:[deadText,aliveMs].filter(Boolean).join(' · ')||issueDetail(group,row),detail:''}
+ }
+ if(group.kind==='no-response'){
+  const reasons=[...new Set(row.sites.flatMap(s=>s.failReasons).filter(Boolean))]
+  const testedCount=row.sites.filter(s=>s.attemptedSamples>0).length
+  const chip=reasons.length===1&&testedCount>1?`${testedCount} 站均${reasons[0]}`:reasons.slice(0,2).join(' / ')||partialLatencyError(row.item.result)||''
+  return {ratio:ratio||'0/0',ratioTone:'bad',chip,detail:''}
+ }
+ if(group.kind==='unstable'){
+  const flaky=row.sites.filter(s=>s.failCount>0).map(s=>`${shortSiteName(s.name)} ${s.responseSamples}/${s.attemptedSamples}${s.failReasons[0]?`(${s.failReasons[0]})`:''}`)
+  const ms=row.stableMs!==null?`中位 ${Math.round(row.stableMs)}ms`:''
+  return {ratio,ratioTone:'warn',chip:[flaky.slice(0,2).join(' · '),ms].filter(Boolean).join(' · ')||issueDetail(group,row),detail:''}
+ }
+ const raw=issueDetail(group,row)
+ return {ratio,ratioTone:row.responseSamples===0?'bad':'warn',chip:'',detail:!sharedIssueDetail(group)&&raw!==group.reason?raw:''}
+}
 function inspectedPeakMs(row:LatencyReportRow){
  return Math.max(1,...row.sites.flatMap(s=>s.samples.map(sp=>sp.latencyMs??0)))
 }
@@ -438,18 +522,63 @@ function inspectedAlerts(row:LatencyReportRow){
   </section>
 
   <div class="latency-report-columns">
-   <section class="latency-report-panel">
-    <header><div><h3>最快 5 个</h3><small>按已测站点稳定中位排序 · 点行查本轮逐次采样</small></div></header>
-    <ol v-if="report.fastest5.length" class="latency-report-fastest">
-     <li v-for="(row,index) in report.fastest5" :key="row.key" class="report-clickable-item" @click="openNodeDetail(row,report.fastest5)">
-      <span class="latency-report-rank" :class="index===0?'top1':index<3?'top3':''">{{index+1}}</span>
-      <div class="latency-report-node"><button type="button" class="text-button" @click.stop="openNodeDetail(row,report.fastest5)">{{nodeDisplayName(row.item)}}</button><small>{{row.airportName}}<template v-if="row.nodeType!=='未知协议'"> · {{row.nodeType}}</template></small></div>
-      <strong class="report-fast-ms"><ReportMs :value="row.stableMs"/></strong>
-      <span class="report-row-arrow" aria-hidden="true">›</span>
-     </li>
-    </ol>
-    <p v-else class="latency-report-empty">没有可计算的稳定延迟结果，需有首次之后的响应采样。</p>
-   </section>
+   <div class="latency-report-left-col">
+    <section class="latency-report-panel">
+     <header><div><h3>最快 5 个</h3><small>按已测站点稳定中位排序 · 点行查本轮逐次采样</small></div></header>
+     <ol v-if="report.fastest5.length" class="latency-report-fastest">
+      <li v-for="(row,index) in report.fastest5" :key="row.key" class="report-clickable-item" @click="openNodeDetail(row,report.fastest5)">
+       <span class="latency-report-rank" :class="index===0?'top1':index<3?'top3':''">{{index+1}}</span>
+       <div class="latency-report-node"><button type="button" class="text-button" @click.stop="openNodeDetail(row,report.fastest5)">{{nodeDisplayName(row.item)}}</button><small>{{row.airportName}}<template v-if="row.nodeType!=='未知协议'"> · {{row.nodeType}}</template></small></div>
+       <strong class="report-fast-ms"><ReportMs :value="row.stableMs"/></strong>
+       <span class="report-row-arrow" aria-hidden="true">›</span>
+      </li>
+     </ol>
+     <p v-else class="latency-report-empty">没有可计算的稳定延迟结果，需有首次之后的响应采样。</p>
+    </section>
+
+    <section v-if="siteSummary.length" class="latency-report-panel">
+     <header><div><h3>各站响应概况</h3><small>一眼看清是否某单站普遍不通或偏慢</small></div></header>
+     <div class="report-site-overview">
+      <button
+       v-for="site in siteSummary"
+       :key="site.id"
+       type="button"
+       class="report-site-stat"
+       :class="[site.tone,{clickable:site.issueKeys.length>0}]"
+       :disabled="!site.issueKeys.length"
+       :title="site.issueKeys.length?`查看 ${site.name} 存在异常的 ${site.issueKeys.length} 个节点`:`${site.name} 全部节点均响应`"
+       @click="site.issueKeys.length&&openSubset(`${site.name} 异常`,site.issueKeys)"
+      >
+       <div class="report-site-stat-top">
+        <strong>{{site.name}}</strong>
+        <span class="report-site-stat-ms">{{formatMs(site.medianMs)}}</span>
+       </div>
+       <div class="report-mini-track"><i :class="site.tone" :style="{width:site.rate+'%'}"/></div>
+       <div class="report-site-stat-foot">
+        <span>{{site.okNodes}} / {{site.tested}} 节点响应</span>
+        <b v-if="site.blockedNodes" class="bad">{{site.blockedNodes}} 不通<template v-if="site.topReason">·{{site.topReason}}</template></b>
+        <b v-else-if="site.lossNodes" class="warn">{{site.lossNodes}} 丢包</b>
+        <b v-else class="good">全通</b>
+       </div>
+      </button>
+     </div>
+    </section>
+
+    <section v-if="regionSummary.length>1" class="latency-report-panel">
+     <header><div><h3>分地区概况</h3><small>点击任意地区直达明细筛选</small></div></header>
+     <ul class="report-region-list">
+      <li v-for="reg in regionSummary" :key="reg.region">
+       <button type="button" class="report-region-row" @click="openRegionDetails(reg.region)">
+        <span class="report-region-name">{{reg.region}}</span>
+        <span class="report-mini-track region-track"><i :class="reg.tone" :style="{width:reg.rate+'%'}"/></span>
+        <span class="report-region-count" :class="reg.tone"><b>{{reg.usable}}</b>/{{reg.total}} 能用</span>
+        <span class="report-region-fast">{{reg.fastestMs!==null?`最快 ${Math.round(reg.fastestMs)}ms`:'无可用'}}</span>
+        <span class="report-row-arrow" aria-hidden="true">›</span>
+       </button>
+      </li>
+     </ul>
+    </section>
+   </div>
 
    <section class="latency-report-panel latency-report-problems">
     <header><div><h3>问题按原因</h3><small>点标题筛选整组，点节点看本轮逐次报错详情</small></div></header>
@@ -467,7 +596,12 @@ function inspectedAlerts(row:LatencyReportRow){
       <ul>
        <li v-for="row in expandedGroups.has(index)||group.rows.length<=8?group.rows:group.rows.slice(0,6)" :key="row.key" class="report-clickable-item" @click="openNodeDetail(row,group.rows)">
         <span class="report-group-node"><button type="button" class="text-button" @click.stop="openNodeDetail(row,group.rows)">{{nodeDisplayName(row.item)}}</button><span v-if="row.airportName" class="report-airport">{{row.airportName}}</span></span>
-        <span class="report-group-tail"><small v-if="group.kind==='slow'||!sharedIssueDetail(group)&&issueDetail(group,row)!==group.reason">{{issueDetail(group,row)}}</small><span class="report-row-arrow" aria-hidden="true">›</span></span>
+        <span class="report-group-tail">
+         <span v-if="problemRowEvidence(group,row).ratio" class="report-group-ratio" :class="problemRowEvidence(group,row).ratioTone">{{problemRowEvidence(group,row).ratio}}</span>
+         <span v-if="problemRowEvidence(group,row).chip" class="report-group-specific" :title="problemRowEvidence(group,row).chip">{{problemRowEvidence(group,row).chip}}</span>
+         <small v-if="problemRowEvidence(group,row).detail">{{problemRowEvidence(group,row).detail}}</small>
+         <span class="report-row-arrow" aria-hidden="true">›</span>
+        </span>
        </li>
       </ul>
       <button v-if="group.rows.length>8" type="button" class="text-button report-expand-btn" @click="toggleGroup(index)">{{expandedGroups.has(index)?'收起':'再看 '+(group.rows.length-6)+' 个'}}</button>
@@ -681,7 +815,31 @@ function inspectedAlerts(row:LatencyReportRow){
 .latency-report-http:hover{border-color:var(--cst-warn);filter:brightness(.98);transform:translateY(-1px)}
 .report-http-action{flex:none;font-weight:700;white-space:nowrap;padding:2px 9px;border-radius:999px;background:color-mix(in srgb,var(--cst-warn) 14%,var(--cst-panel-solid))}
 
-.latency-report-columns{display:grid;grid-template-columns:minmax(240px,.88fr) minmax(0,1.12fr);gap:14px;align-items:start}
+.latency-report-columns{display:grid;grid-template-columns:minmax(260px,.92fr) minmax(0,1.08fr);gap:14px;align-items:start}
+.latency-report-left-col{display:flex;flex-direction:column;gap:14px;min-width:0}
+.report-site-overview{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px}
+.report-site-stat{display:flex;flex-direction:column;gap:6px;padding:9px 10px;border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel-2);text-align:left;color:var(--cst-text);cursor:default;transition:border-color .14s,background .14s}
+.report-site-stat.clickable{cursor:pointer}
+.report-site-stat.clickable:hover{border-color:var(--cst-accent);background:color-mix(in srgb,var(--cst-accent) 5%,var(--cst-panel-solid))}
+.report-site-stat-top{display:flex;align-items:baseline;justify-content:space-between;gap:6px}
+.report-site-stat-top strong{font-size:12.5px;font-weight:700}
+.report-site-stat-ms{font-size:11.5px;font-weight:650;color:var(--cst-muted);font-variant-numeric:tabular-nums}
+.report-mini-track{height:5px;border-radius:999px;background:var(--cst-aurora-track,var(--cst-line));overflow:hidden}
+.report-mini-track i{display:block;height:100%;border-radius:999px;background:var(--cst-good)}
+.report-mini-track i.warn{background:var(--cst-warn)}
+.report-mini-track i.bad{background:var(--cst-bad)}
+.report-site-stat-foot{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:10.5px;color:var(--cst-muted);font-variant-numeric:tabular-nums}
+.report-site-stat-foot b{font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:56%}
+.report-site-stat-foot b.good{color:var(--cst-good)}.report-site-stat-foot b.warn{color:var(--cst-warn)}.report-site-stat-foot b.bad{color:var(--cst-bad)}
+.report-region-list{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:5px}
+.report-region-row{width:100%;display:grid;grid-template-columns:56px minmax(48px,1fr) auto auto auto;align-items:center;gap:8px;padding:7px 9px;border:1px solid transparent;border-radius:9px;background:var(--cst-panel-2);color:var(--cst-text);font-size:12px;cursor:pointer;text-align:left;transition:border-color .14s,background .14s}
+.report-region-row:hover{border-color:color-mix(in srgb,var(--cst-accent) 34%,var(--cst-line));background:color-mix(in srgb,var(--cst-accent) 5%,var(--cst-panel-solid))}
+.report-region-name{font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.region-track{height:6px}
+.report-region-count{font-size:11.5px;color:var(--cst-muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.report-region-count b{color:var(--cst-text);font-weight:700}
+.report-region-count.good b{color:var(--cst-good)}.report-region-count.warn b{color:var(--cst-warn)}.report-region-count.bad b{color:var(--cst-bad)}
+.report-region-fast{font-size:11px;color:var(--cst-muted);font-variant-numeric:tabular-nums;white-space:nowrap}
 .latency-report-panel{min-width:0;border:1px solid var(--cst-line);border-radius:14px;background:var(--cst-panel);padding:14px 16px;box-shadow:var(--cst-shadow-xs)}
 .latency-report-panel>header,.latency-report-group>header{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .latency-report-panel h3{font-size:14px;font-weight:700;margin:0 0 2px}
@@ -715,8 +873,12 @@ function inspectedAlerts(row:LatencyReportRow){
 .latency-report-group ul{display:flex;flex-direction:column;gap:4px;list-style:none;padding:0;margin:8px 0 0}
 .latency-report-group li{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0;padding:6px 8px;border:1px solid transparent;border-radius:8px;background:var(--cst-panel-solid);cursor:pointer;transition:border-color .14s,background .14s}
 .latency-report-group li:hover{border-color:color-mix(in srgb,var(--cst-accent) 34%,var(--cst-line));background:color-mix(in srgb,var(--cst-accent) 5%,var(--cst-panel-solid))}
-.report-group-node{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
-.report-group-tail{display:inline-flex;align-items:center;gap:6px;flex:none}
+.report-group-node{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0;flex:1}
+.report-group-tail{display:inline-flex;align-items:center;gap:6px;flex:none;max-width:56%;justify-content:flex-end}
+.report-group-ratio{display:inline-flex;align-items:center;padding:1px 6px;border-radius:999px;font-size:10.5px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;border:1px solid var(--cst-line);background:var(--cst-panel-2);color:var(--cst-muted)}
+.report-group-ratio.warn{color:var(--cst-warn);background:var(--cst-warn-bg);border-color:color-mix(in srgb,var(--cst-warn) 30%,transparent)}
+.report-group-ratio.bad{color:var(--cst-bad);background:var(--cst-bad-bg);border-color:color-mix(in srgb,var(--cst-bad) 28%,transparent)}
+.report-group-specific{min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--cst-muted);font-size:11px;text-align:right;white-space:nowrap}
 .latency-report-group li small{min-width:0;color:var(--cst-muted);font-size:11px;text-align:right;white-space:nowrap}
 .latency-report-group.suspected{border-color:color-mix(in srgb,var(--cst-accent) 35%,var(--cst-line))}
 .latency-report-group.skipped{background:color-mix(in srgb,var(--cst-panel) 85%,var(--cst-hover))}
