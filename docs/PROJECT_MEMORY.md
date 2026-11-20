@@ -361,3 +361,9 @@ Windows 与跨平台运行边界：`application/clash_comparison.go` 在 `auto` 
 - **「为你选线」升级（`frontend/src/recommendations.ts`、`RecommendationView.vue`）**：日常推荐由仅读 Cloudflare 扩展为同条件四站综合（Cloudflare / Google / GitHub / Apple）并兼容单站历史，存在单站全不通的线路标为 `部分站点不通` 且不入首选/次选与 Clash 导出；AI 默认优先 `gemini_unlock`，“流媒体与解锁”支持选 `dlsite_unlock` 等日本服务；附带当前配置已保存的 `cloudflare_challenge` 人机验证徽标、首选/次选差异说明与“补测本区”预配置检测草稿按钮（仅开窗不自动开测）。
 - **审计门禁同步与自动精选对齐（`docs/candidate-capabilities.json`、`core/autopick/autopick.go`、`frontend/src/autoPick.ts`）**：`six_site_quality` 对 `NodeResponseStrip.vue` 的锚点由旧 `metricPoint` 同步为重构后的 `latencyRowPoint`（保留全部 14 项能力条目）；自动精选 AI 默认必需服务改为 `gemini_unlock`（兼容既有 `chatgpt_unlock`/`claude_unlock` 保存配置，不含 `antigravity`），流媒体组新增 `tiktok_unlock` 与 `dlsite_unlock` 可选并补齐报告文案映射。
 - **验证**：`scripts/tests` 29 项全过、`go vet` 与 5 个受影响 Go 包 `-count=1` 全过、前端 `vue-tsc -b && vite build` 与 88 文件 / 646 项 Vitest 全过；未触碰桌面端 `.exe` 构建或实网测速。
+- **同日续做：综合/专项视觉区隔、出口表与检查器 CF 盾闭环、解锁矩阵/机场体检升级与前端拆包**：
+  - 工作台项目切换器（`HomeWorkbench.vue`、`home-design.css`）将「综合」独立为左侧带图标的实心渐变总览胶囊并配竖向分隔线与顶部主色高亮表框，右侧四个专项视图（延迟/下载/解锁/出口与信誉）采用沉稳卡片+底条及对应模式色标，切换总览与专项一眼可分。
+  - 「出口与信誉」表（`exitLanding.ts`、`HomeWorkbench.vue`、`HomeView.vue`）新增可排序的 **CF 盾** 列（`直通`/`部分弹盾`/`易弹盾`/`未测`），综合页纯净度列同步附着已测 CF 盾小徽标；右侧检查器（`NodeExitSummary.vue`、`exitSummaryPresentation.ts`）补齐 `Cloudflare 人机验证` 紧凑专卡与来源详情中的三站明细。
+  - 「解锁按服务矩阵」（`UnlockServiceMatrix.vue`）默认优先选中 `gemini_unlock`（按显示服务兜底），右侧节点卡增加 CF 盾小标签以及“查看详情 / 单节点重测”快捷入口（不自动启动）。
+  - 「机场体检」（`AirportReport.vue`、`airportReport.ts`）统一为圆角卡片风格，新增已保存出口纯净度均分与 CF 盾概况卡，排行表新增关键词搜索与“仅看有问题”筛选。
+  - `App.vue` 将 6 个非首屏次级页面与 6 个弹窗改为 `defineAsyncComponent` 按需懒加载，首屏 JS 由 `939.36 kB` 降至 `431.58 kB`（CSS 由 `363.75 kB` 降至 `201.88 kB`），消除 500 kB 打包告警；88 文件 / 649 项 Vitest 与生产构建全过。

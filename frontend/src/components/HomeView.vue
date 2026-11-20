@@ -136,6 +136,7 @@ function headerValue(node:NodeOption,field:string):number|null{
  if(evidence&&!evidence.reads.service.complete)return null
  const landing=exitLanding(node,[...(evidence?.services||[]),...(w.services.value[key(node)]||[])])
  if(field==='purity')return landing.purity.score
+ if(field==='cfChallenge')return landing.cfChallenge.rank
  const groups=field==='service'?unlockGroups:unlockGroups.filter(g=>g.id===field.slice(7))
  const catalog=w.catalog.value.filter(rule=>!isReputationRule(rule))
  const results=groups.map(g=>unlockGroupSummary(g.id,catalog,id=>shownService(node,id),w.nodeUnlockRegion(node),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions,landing.ipKind.type))

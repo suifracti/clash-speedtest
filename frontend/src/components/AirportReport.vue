@@ -7,7 +7,7 @@ import {nodeDisplayName,nodeRegionLabel} from '../nodePresentation'
 import {airportBeats,airportFaults,beatTone,type AirportBeat} from '../airportPulse'
 import type {QualityEvidence} from '../nodeQuality'
 import {readQualityBatch} from '../qualityBatch'
-import {airportReport,airportNodeStats,filterAirportNodes} from '../airportReport'
+import {airportReport,airportNodeStats,airportExitSummary,filterAirportNodes} from '../airportReport'
 import {readUsage,shanghaiDay,shiftDay,type UsageReport} from '../usageDaily'
 import {hideHoverTip,showHoverTip} from '../hoverTip'
 import TrendChart from './TrendChart.vue'
@@ -21,15 +21,25 @@ const filtered=computed(()=>region.value!=='all'||line.value!=='all'||protocol.v
 const regions=computed(()=>[...new Set(airportNodes.value.map(n=>n.country_code).filter(Boolean))].sort())
 const protocols=computed(()=>[...new Set(airportNodes.value.map(n=>n.type))].sort())
 const report=computed(()=>airportReport(nodes.value,data.value))
+const exitSummary=computed(()=>airportExitSummary(nodes.value,data.value))
+const rankSearch=ref(''),onlyProblems=ref(false)
 type RankField='responseRate'|'median'|'volatility'|'lastFailure'
 const rankField=ref<RankField>('responseRate'),rankDescending=ref(true)
 const rankColumns:{id:RankField;label:string}[]=[{id:'responseRate',label:'响应率'},{id:'median',label:'稳定延迟中位数'},{id:'volatility',label:'波动（P90−P10）'},{id:'lastFailure',label:'最近一次失败'}]
 function sortRank(field:RankField){if(rankField.value===field)rankDescending.value=!rankDescending.value;else{rankField.value=field;rankDescending.value=field==='responseRate'||field==='lastFailure'}}
-const ranks=computed(()=>nodes.value.map(node=>({node,...airportNodeStats(data.value[key(node)])})).sort((a,b)=>{
- const value=(r:typeof a)=>rankField.value==='lastFailure'?(r.lastFailure?Date.parse(r.lastFailure.time):null):r[rankField.value]
- const compare=(av:number|null,bv:number|null,descending:boolean)=>av===null?(bv===null?0:1):bv===null?-1:(av-bv)*(descending?-1:1)
- return Number(a.total<3)-Number(b.total<3)||compare(value(a),value(b),rankDescending.value)||(rankField.value==='responseRate'?compare(a.median,b.median,false):0)
-}))
+const ranks=computed(()=>{
+ const query=rankSearch.value.trim().toLowerCase()
+ return nodes.value.map(node=>({node,...airportNodeStats(data.value[key(node)])})).filter(row=>{
+  if(onlyProblems.value&&!((row.responseRate!==null&&row.responseRate<90)||!!row.lastFailure))return false
+  if(!query)return true
+  const hay=[nodeDisplayName(row.node),row.node.display_name,w.nodeSubscriptionName(row.node),row.node.country_code,nodeRegionLabel(row.node.country_code)].join(' ').toLowerCase()
+  return hay.includes(query)
+ }).sort((a,b)=>{
+  const value=(r:typeof a)=>rankField.value==='lastFailure'?(r.lastFailure?Date.parse(r.lastFailure.time):null):r[rankField.value]
+  const compare=(av:number|null,bv:number|null,descending:boolean)=>av===null?(bv===null?0:1):bv===null?-1:(av-bv)*(descending?-1:1)
+  return Number(a.total<3)-Number(b.total<3)||compare(value(a),value(b),rankDescending.value)||(rankField.value==='responseRate'?compare(a.median,b.median,false):0)
+ })
+})
 async function inspectNode(node:typeof nodes.value[number]){w.page.value='home';await nextTick();w.viewRequest.value=node}
 const ms=(value:number|null)=>value===null?'—':Math.round(value)+' ms'
 const responseTone=(value:number|null)=>value===null?'':value<80?'bad':value<=95?'warn':'good'
@@ -92,6 +102,7 @@ onMounted(()=>void refresh())
     <div><small>响应率</small><strong>{{report.rate===null?'—':report.rate.toFixed(0)+'%'}} <small>（{{report.responses}}/{{report.samples}} 次）</small></strong><small>{{report.total}} 轮中 {{report.failedRounds}} 轮有失败</small></div>
     <div v-if="!filtered"><small>近 30 日已观测用量</small><strong>{{traffic===null?'未知':bytes(traffic)}}</strong><small>缺失时段未补零</small></div>
     <div v-if="!filtered"><small>每 GB 成本估算</small><strong>{{cost===null?'—':'¥'+cost.toFixed(2)}}</strong><small>月费 ÷ 已观测 GB，记录不足时会偏高</small><div class="report-price"><label>月费（元）<input v-model.number="price" type="number" min="0" step="0.01" aria-label="机场月费"></label><button class="button" :disabled="!airport||savingPrice" @click="savePrice">{{savingPrice?'保存中…':'保存月费'}}</button></div></div>
+    <div v-if="exitSummary.purityCount||exitSummary.cfCount"><small>出口纯净度与 CF 盾（已保存）</small><strong v-if="exitSummary.purityAvg!==null">均分 {{exitSummary.purityAvg}}<small>（{{exitSummary.purityClean}} 干净 / {{exitSummary.purityCount}} 已测）</small></strong><strong v-else>CF {{exitSummary.cfGood}}/{{exitSummary.cfCount}} 直通</strong><small v-if="exitSummary.cfCount">CF 盾：{{exitSummary.cfGood}} 直通 · {{exitSummary.cfWarn}} 部分 · {{exitSummary.cfBad}} 易弹</small><small v-else>尚未保存 Cloudflare 人机验证记录</small></div>
    </aside>
    <div class="health-observations">
    <h3>平均响应延迟走势</h3><p class="muted small">按天汇总有响应样本，站点和检测条件可能不同。</p><TrendChart :points="report.trend" unit="ms" label="近30日平均响应延迟"/>
@@ -110,7 +121,13 @@ onMounted(()=>void refresh())
    </div>
   </template>
   <section v-if="!busy" class="report-rank">
-   <h3>节点排行</h3>
+   <div class="rank-head">
+    <h3>节点排行</h3>
+    <div class="rank-controls">
+     <input v-model="rankSearch" type="search" class="rank-search" placeholder="筛选节点名、地区或订阅" aria-label="筛选排行节点">
+     <button type="button" class="rank-filter-pill" :aria-pressed="onlyProblems" @click="onlyProblems=!onlyProblems">仅看有问题</button>
+    </div>
+   </div>
    <div class="rank-table-wrap"><table><thead><tr><th>节点</th><th v-for="col in rankColumns.slice(0,1)" :key="col.id" :aria-sort="rankField===col.id?(rankDescending?'descending':'ascending'):'none'"><button class="text-button" @click="sortRank(col.id)">{{col.label}}{{rankField===col.id?(rankDescending?' ↓':' ↑'):''}}</button></th><th>轮数</th><th v-for="col in rankColumns.slice(1)" :key="col.id" :aria-sort="rankField===col.id?(rankDescending?'descending':'ascending'):'none'"><button class="text-button" @click="sortRank(col.id)">{{col.label}}{{rankField===col.id?(rankDescending?' ↓':' ↑'):''}}</button></th></tr></thead>
     <tbody><tr v-for="row in ranks" :key="key(row.node)"><td><button class="text-button rank-node" @click="inspectNode(row.node)">{{nodeDisplayName(row.node)}}</button><small v-if="w.nodeSubscriptionName(row.node)" class="rank-account">{{w.nodeSubscriptionName(row.node)}}</small></td><td :class="responseTone(row.responseRate)" :title="`${row.responses}/${row.samples} 次响应`">{{row.responseRate===null?'—':row.responseRate.toFixed(0)+'%'}}<small v-if="row.total<3" class="rank-low">轮数少</small></td><td>{{row.total}}</td><td>{{ms(row.median)}}</td><td title="慢的时候比快的时候多多少（P90−P10）；至少5轮有稳定延迟后显示">{{ms(row.volatility)}}</td><td :title="row.lastFailure?.detail">{{row.lastFailure?date(row.lastFailure.time):'—'}}</td></tr></tbody>
    </table></div>
@@ -122,17 +139,17 @@ onMounted(()=>void refresh())
 .rank-low{margin-left:6px;color:var(--cst-muted);font-size:11px;font-weight:500;padding:1px 5px;border-radius:4px;background:var(--cst-panel-2)}
 .report-filters{display:flex;align-items:end;gap:12px;flex-wrap:wrap;margin:14px 0;padding:12px 14px;background:var(--cst-panel-2);border:1px solid var(--cst-line);border-radius:var(--cst-radius-sm)}.report-filters label{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:550;color:var(--cst-muted)}.report-filters .small{margin-bottom:8px;margin-left:auto;font-weight:550}.report-rank{margin-top:22px;padding-top:18px;border-top:1px solid var(--cst-line)}.rank-table-wrap{overflow:auto;border:1px solid var(--cst-line);border-radius:var(--cst-radius-sm);background:var(--cst-panel);margin-top:10px}.report-rank table{width:100%;border-collapse:collapse;font-size:12.5px}.report-rank th,.report-rank td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--cst-line)}.report-rank th{white-space:nowrap;background:var(--cst-panel-2);font-weight:650;color:var(--cst-muted)}.report-rank tbody tr:hover{background:color-mix(in srgb,var(--cst-panel-2) 65%,var(--cst-panel))}.report-rank td:not(:first-child){white-space:nowrap;font-variant-numeric:tabular-nums}.rank-node{white-space:normal;text-align:left;font-weight:600}
 .report-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:16px 0}.report-metrics>div{display:flex;flex-direction:column;gap:6px;padding:14px 16px;background:var(--cst-panel-2);border:1px solid var(--cst-line);border-radius:var(--cst-radius-sm)}.report-metrics strong{font-size:22px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}.report-metrics strong small{font-size:12px;font-weight:450;color:var(--cst-muted)}.report-metrics small{color:var(--cst-muted);font-size:11.5px}.report-price{display:flex;align-items:end;gap:8px;margin-top:8px;padding-top:8px;border-top:1px dashed var(--cst-line)}.report-price label{font-size:12px;color:var(--cst-muted)}.report-price input{width:100px;display:block;margin-top:4px;min-height:32px;padding:4px 8px;border:1px solid var(--cst-line-strong);border-radius:7px;background:var(--cst-panel);color:var(--cst-text)}.report-empty{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:16px 0;padding:18px;border:1px dashed var(--cst-line-strong);border-radius:var(--cst-radius-sm);background:var(--cst-panel-2)}.airport-beats{display:flex;gap:3px;height:22px;margin:10px 0 8px;padding:3px;border-radius:7px;background:var(--cst-panel-2);border:1px solid var(--cst-line)}.beat-legend{margin:0 0 14px;font-size:11px;line-height:1.5;color:var(--cst-muted)}.beat-cell{flex:1 1 0;min-width:3px;padding:0;border:0;border-radius:3px;background:var(--cst-empty-bg);cursor:pointer;transition:transform .12s}.beat-cell:hover{transform:scaleY(1.12)}.beat-cell.good{background:var(--cst-good)}.beat-cell.warn{background:var(--cst-warn)}.beat-cell.bad{background:var(--cst-bad)}.beat-cell.selected{outline:2px solid var(--cst-accent);outline-offset:2px}.beat-detail{margin:0 0 14px;padding:8px 12px;border-radius:7px;background:var(--cst-accent-soft);color:var(--cst-accent);font-size:12px;font-weight:550;line-height:1.5}.fault-list{display:flex;flex-direction:column;margin:8px 0 16px;border:1px solid var(--cst-line);border-radius:var(--cst-radius-sm);overflow:hidden}.fault-row{display:grid;grid-template-columns:88px 164px 70px minmax(0,1fr);gap:10px;align-items:center;padding:9px 12px;border-top:1px solid var(--cst-line);font-size:12px;background:var(--cst-panel)}.fault-row:first-child{border-top:0}.fault-kind{display:inline-block;padding:2px 7px;border-radius:5px;font-size:11px;font-weight:600;text-align:center;white-space:nowrap}.fault-kind.round{background:var(--cst-bad-bg);color:var(--cst-bad)}.fault-kind.node{background:var(--cst-warn-bg);color:var(--cst-warn)}.fault-time{color:var(--cst-muted);white-space:nowrap;font-variant-numeric:tabular-nums}.fault-row strong{font-weight:650;font-variant-numeric:tabular-nums}.fault-row small{color:var(--cst-muted);line-height:1.5}@media(max-width:800px){.report-metrics{grid-template-columns:1fr}.fault-row{grid-template-columns:76px minmax(0,1fr) 56px}.fault-row small{grid-column:1/-1}}
-.airport-health.settings-section{padding:22px 0;border:0;border-radius:0;box-shadow:none;background:none}
+.airport-health.settings-section{padding:20px 22px;border:1px solid var(--cst-line);border-radius:14px;background:var(--cst-panel);box-shadow:var(--cst-shadow)}
 .airport-health>.section-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}.airport-health>.section-heading h2{font-size:20px}.airport-health>.section-heading p{margin:6px 0 0}
-.airport-health .report-filters{background:none;border:0;border-bottom:1px solid var(--cst-line);border-radius:0;padding:12px 0 18px;margin:10px 0 24px}
-.health-analysis{display:grid;grid-template-columns:230px minmax(0,1fr);gap:32px;align-items:start}
-.health-analysis .report-metrics{display:block;margin:0;border-right:1px solid var(--cst-line);padding-right:24px;position:sticky;top:calc(var(--cst-nav-height,58px) + 20px)}
-.health-analysis .report-metrics>div{padding:18px 0;border:0;border-bottom:1px solid var(--cst-line);border-radius:0;background:none;gap:8px}
-.health-analysis .report-metrics>div:first-child{padding-top:0}.health-analysis .report-metrics strong{font-size:27px;font-weight:600}
-.health-analysis .report-metrics strong small{display:block;margin-top:6px}.health-analysis .report-price{flex-wrap:wrap;gap:8px;border:0;padding-top:4px}
-.health-observations{min-width:0}.health-observations h3{margin:22px 0 7px;font-size:14px}.health-observations h3:first-child{margin-top:0}.health-observations p{line-height:1.7}
-.health-observations .airport-beats{padding:0;border:0;border-radius:0;background:none;height:28px}.health-observations .beat-cell{max-width:36px;border-radius:2px}
-.airport-health .report-rank{margin-top:28px;padding-top:22px}.airport-health .rank-table-wrap{border-radius:0;border-left:0;border-right:0}.rank-account{display:block;font-size:11px;color:var(--cst-muted);margin-top:5px}.airport-health .rank-node{justify-content:flex-start}
-@media(max-width:1000px){.health-analysis{grid-template-columns:minmax(0,1fr);gap:24px}.health-analysis .report-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;position:static;border:0;padding:0}.health-analysis .report-metrics>div{padding-top:0}.health-analysis .report-metrics strong{font-size:23px}}
-@media(max-width:680px){.health-analysis .report-metrics{grid-template-columns:minmax(0,1fr)}.health-analysis .report-metrics>div{padding:12px 0}.health-analysis .report-price{flex-wrap:nowrap}}
+.airport-health .report-filters{background:var(--cst-panel-2);border:1px solid var(--cst-line);border-radius:12px;padding:12px 14px;margin:14px 0 20px}
+.health-analysis{display:grid;grid-template-columns:256px minmax(0,1fr);gap:22px;align-items:start}
+.health-analysis .report-metrics{display:flex;flex-direction:column;gap:12px;margin:0;border-right:0;padding-right:0;position:sticky;top:calc(var(--cst-nav-height,58px) + 20px)}
+.health-analysis .report-metrics>div{padding:14px 16px;border:1px solid var(--cst-line);border-radius:12px;background:var(--cst-panel-2);gap:6px}
+.health-analysis .report-metrics strong{font-size:24px;font-weight:650}
+.health-analysis .report-metrics strong small{display:block;margin-top:4px}.health-analysis .report-price{flex-wrap:wrap;gap:8px;border-top:1px dashed var(--cst-line);padding-top:8px}
+.health-observations{min-width:0;padding:16px 18px;border:1px solid var(--cst-line);border-radius:12px;background:var(--cst-panel-2)}.health-observations h3{margin:20px 0 7px;font-size:14px}.health-observations h3:first-child{margin-top:0}.health-observations p{line-height:1.7}
+.health-observations .airport-beats{padding:4px;border:1px solid var(--cst-line);border-radius:8px;background:var(--cst-panel);height:28px}.health-observations .beat-cell{max-width:36px;border-radius:3px}
+.airport-health .report-rank{margin-top:24px;padding-top:18px}.rank-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.rank-head h3{margin:0}.rank-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.rank-search{min-width:190px;min-height:32px;padding:4px 10px;border:1px solid var(--cst-line-strong);border-radius:9px;background:var(--cst-panel-2);color:var(--cst-text);font-size:12.5px}.rank-filter-pill{min-height:32px;padding:0 12px;border:1px solid var(--cst-line-strong);border-radius:999px;background:var(--cst-panel-2);color:var(--cst-muted);font-size:12px;font-weight:600;cursor:pointer}.rank-filter-pill[aria-pressed=true]{background:color-mix(in srgb,var(--cst-warn,#b45309) 12%,var(--cst-panel));border-color:color-mix(in srgb,var(--cst-warn,#b45309) 45%,transparent);color:var(--cst-warn,#b45309)}.airport-health .rank-table-wrap{border-radius:12px}.rank-account{display:block;font-size:11px;color:var(--cst-muted);margin-top:5px}.airport-health .rank-node{justify-content:flex-start}
+@media(max-width:1000px){.health-analysis{grid-template-columns:minmax(0,1fr);gap:18px}.health-analysis .report-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;position:static}.health-analysis .report-metrics strong{font-size:22px}}
+@media(max-width:680px){.health-analysis .report-metrics{grid-template-columns:minmax(0,1fr)}.health-analysis .report-price{flex-wrap:nowrap}}
 </style>

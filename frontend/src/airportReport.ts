@@ -4,6 +4,7 @@ import {shanghaiDay} from './usageDaily'
 import {activeLatencyTargets} from './latencyTargets'
 import {manualLatencyPoint,monitorLatencyPoints} from './presentation'
 import {latencyHistoryStats} from './latencyHistory'
+import {exitLanding} from './exitLanding'
 export function airportReport(nodes:NodeOption[],data:Record<string,QualityEvidence>){
  const rounds=new Map<string,{responses:number;samples:number}>(),failures=new Map<string,number>(),days=new Map<string,number[]>(),seen=new Set<string>()
  let incomplete=false
@@ -32,4 +33,28 @@ export function airportNodeStats(evidence?:QualityEvidence){
  const stableRounds=stats.rounds.flatMap(round=>round.stable===null?[]:[round.stable]).sort((a,b)=>a-b)
  const percentile=(p:number)=>{const x=(stableRounds.length-1)*p,i=Math.floor(x);return stableRounds[i]+(stableRounds[Math.ceil(x)]-stableRounds[i])*(x-i)}
  return {...stats,volatility:stableRounds.length>=5?percentile(.9)-percentile(.1):null}
+}
+
+export function airportExitSummary(nodes:NodeOption[],data:Record<string,QualityEvidence>){
+ let puritySum=0,purityCount=0,purityClean=0,purityRisky=0,cfCount=0,cfGood=0,cfWarn=0,cfBad=0
+ for(const node of nodes){
+  const e=data[key(node)]
+  if(!e?.services?.length)continue
+  const landing=exitLanding(node,e.services)
+  if(landing.purity.score!==null){
+   purityCount++;puritySum+=landing.purity.score
+   if(landing.purity.score>=80)purityClean++
+   else if(landing.purity.score<50)purityRisky++
+  }
+  if(landing.cfChallenge.tone!=='empty'){
+   cfCount++
+   if(landing.cfChallenge.tone==='good')cfGood++
+   else if(landing.cfChallenge.tone==='warn')cfWarn++
+   else cfBad++
+  }
+ }
+ return {
+  purityCount,purityAvg:purityCount?Math.round(puritySum/purityCount):null,purityClean,purityRisky,
+  cfCount,cfGood,cfWarn,cfBad,
+ }
 }

@@ -7,7 +7,7 @@ import {createWorkspace,workspaceKey} from '../workspace'
 import {readQualityBatch} from '../qualityBatch'
 vi.mock('../qualityBatch',()=>({readQualityBatch:vi.fn()}))
 vi.mock('../usageDaily',async original=>({...await original<typeof import('../usageDaily')>(),readUsage:vi.fn(async()=>({accounts:[],intervals:[]}))}))
-import {airportReport} from '../airportReport'
+import {airportExitSummary,airportReport} from '../airportReport'
 import {key,type NodeOption} from '../domain'
 import type {QualityEvidence} from '../nodeQuality'
 it('summarizes observed node rounds and leaves missing history unknown',()=>{
@@ -85,4 +85,43 @@ it('saves the airport and price chosen before a delayed settings read even after
   expect(save).toHaveBeenCalledWith(expect.objectContaining({airport_monthly_prices:{a:35,b:20}}))
   expect((wrapper.get('[aria-label="机场月费"]').element as HTMLInputElement).value).toBe('20')
  }finally{wrapper.unmount();w.dispose();settings.mockRestore();save.mockRestore()}
+})
+
+it('summarizes saved exit purity/CF challenge stats and filters rank table by search and problems',async()=>{
+ const make=(id:string,name:string)=>({profile_id:'p',node_key:id,node_identity_key:id,config_revision_key:'r',display_name:name,country_code:'JP',type:'ss'} as NodeOption)
+ const okNode=make('ok','日本01'),badNode=make('bad','日本02'),at='2026-11-20T08:00:00Z'
+ const history:Record<string,QualityEvidence>={
+  [key(okNode)]:{
+   tests:[{...okNode,attempt_id:'t-ok',requested_at:at,total_samples:3,success_samples:3,samples:[1,2,3].map(seq=>({seq,target:'https://speed.cloudflare.com/__down?bytes=1',timestamp:at,success:true,latency_ms:120}))}],
+   monitor:[],downloads:[],
+   services:[
+    {...okNode,attempt_id:'s-pure',service_id:'ippure_ip_quality',execution_state:'completed',persistence_state:'saved',rule:{service_id:'ippure_ip_quality'},result:{outcome:'profiled',finished_at:at,details:{risk_score:'12',risk_scale_max:'100',risk_direction:'lower_is_better'}}},
+    {...okNode,attempt_id:'s-cf',service_id:'cloudflare_challenge',execution_state:'completed',persistence_state:'saved',rule:{service_id:'cloudflare_challenge'},result:{outcome:'profiled',finished_at:at,details:{cf_challenge_detail:'ChatGPT: 直通(200)'}}},
+   ],
+   reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true,since:at,until:at,
+  } as unknown as QualityEvidence,
+  [key(badNode)]:{
+   tests:[{...badNode,attempt_id:'t-bad',requested_at:at,total_samples:3,success_samples:1,samples:[1,2,3].map(seq=>({seq,target:'https://speed.cloudflare.com/__down?bytes=1',timestamp:at,success:seq===1,latency_ms:seq===1?150:0,error:seq===1?'':'timeout'}))}],
+   monitor:[],downloads:[],
+   services:[
+    {...badNode,attempt_id:'s-cf2',service_id:'cloudflare_challenge',execution_state:'completed',persistence_state:'saved',rule:{service_id:'cloudflare_challenge'},result:{outcome:'challenge',finished_at:at,details:{cf_challenge_detail:'ChatGPT: 弹盾(403)'}}},
+   ],
+   reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true,since:at,until:at,
+  } as unknown as QualityEvidence,
+ }
+ expect(airportExitSummary([okNode,badNode],history)).toMatchObject({purityCount:1,purityAvg:88,purityClean:1,cfCount:2,cfGood:1,cfBad:1})
+ vi.mocked(readQualityBatch).mockReset().mockResolvedValue(history)
+ const settings=vi.spyOn(api,'settings').mockResolvedValue({} as never)
+ const w=createWorkspace();w.airports.value=[{id:'a',name:'机场A',subscriptions:[{id:'p',airport_id:'a'}]}] as never;w.nodes.value=[okNode,badNode]
+ const wrapper=mount(AirportReport,{global:{provide:{[workspaceKey as symbol]:w},stubs:{TrendChart:true}}})
+ try{
+  await flushPromises()
+  expect(wrapper.get('.report-metrics').text()).toContain('均分 88')
+  expect(wrapper.get('.report-metrics').text()).toContain('CF 盾：1 直通 · 0 部分 · 1 易弹')
+  await wrapper.get('.rank-filter-pill').trigger('click')
+  expect(wrapper.findAll('.rank-node').map(r=>r.text())).toEqual(['日本 · 02'])
+  await wrapper.get('.rank-filter-pill').trigger('click')
+  await wrapper.get('.rank-search').setValue('01')
+  expect(wrapper.findAll('.rank-node').map(r=>r.text())).toEqual(['日本 · 01'])
+ }finally{wrapper.unmount();w.dispose();settings.mockRestore()}
 })

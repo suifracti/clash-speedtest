@@ -1,10 +1,11 @@
 import type {Attempt} from './domain'
+import {unlockResult} from './unlock'
 
 // Presentation only. These functions consume saved results; they never query an IP.
 export type ExitRecord={attempt:Attempt;serviceId:string;family:string;provider:string;ip:string;region:string;ipType:string;asn:string;organization:string;risk:string;tier:string;confirmed:boolean;exitSource:boolean;reputationSource:boolean;observedAt:string;status:string}
 export type ExitAddress={family:string;record?:ExitRecord;region:string;ipType:string;status:string}
 export type ReputationRow={serviceId:string;provider:string;record?:ExitRecord;status:string}
-const providerNames:Record<string,string>={cloudflare_trace:'Cloudflare',exit_ipv4:'出口查询',exit_ipv6:'出口查询',ping0_ip_quality:'Ping0',ping0_ipv4:'Ping0',ping0_ipv6:'Ping0',ippure_ip_quality:'IPPure',ipok_ipv4:'IPOK',ipok_ipv6:'IPOK'}
+const providerNames:Record<string,string>={cloudflare_trace:'Cloudflare',cloudflare_challenge:'Cloudflare 人机验证',google_region:'Google 地区',exit_ipv4:'出口查询',exit_ipv6:'出口查询',ping0_ip_quality:'Ping0',ping0_ipv4:'Ping0',ping0_ipv6:'Ping0',ippure_ip_quality:'IPPure',ipok_ipv4:'IPOK',ipok_ipv6:'IPOK'}
 export function exitField(a:Attempt,...keys:string[]):string {
  for(const key of keys){const value=a.result?.details?.[key];if(typeof value==='string'&&value.trim())return value.trim();if(typeof value==='number'&&Number.isFinite(value))return String(value)}
  return ''
@@ -52,6 +53,11 @@ export function toExitRecord(a:Attempt,observedAt:string):ExitRecord {
  if(!ipType&&residential!==undefined)ipType=residential?'住宅':'非住宅'
  if(!ipType&&idc!==undefined)ipType=idc?'机房 IDC':'非 IDC（不等于家宽）'
  const risk=exitField(a,'risk_score','fraud_score').replace(/^(未提供|未知|null|undefined)$/i,'')
+ if(id==='cloudflare_challenge'){
+  const res=unlockResult(a,'cloudflare_challenge')
+  const cfConfirmed=res.tone==='good'||res.tone==='warn'||res.tone==='bad'
+  return {attempt:a,serviceId:id,family:'HTTP',provider:providerNames[id],ip,region:res.region,ipType:'',asn:'',organization:'',risk:'',tier:'',confirmed:cfConfirmed&&res.tone==='good',exitSource:false,reputationSource:false,observedAt,status:cfConfirmed?res.label:failureStatus(a)}
+ }
  return {attempt:a,serviceId:id,family:exitFamily(a,id,ip),provider:providerNames[id]||exitField(a,'provider')||id,ip,region:exitField(a,'country_code','country','location','city'),ipType,asn:exitField(a,'asn'),organization:exitField(a,'organization','org','isp'),risk,tier:exitField(a,'risk_tier','risk_level','tier'),confirmed,exitSource,reputationSource,observedAt,status:confirmed?(reputationSource?(risk?'已取得风险结果':'未返回风险分'):'已取得地址'):failureStatus(a)}
 }
 export function completeExitFamilies(records:ExitRecord[]):ExitRecord[] {
@@ -91,6 +97,7 @@ export function detailFields(r:ExitRecord,historical=false){
   {label:'IP',value:r.ip},{label:'地区',value:r.region},{label:'ASN',value:r.asn},{label:'运营商',value:r.organization},{label:'类型',value:r.ipType},{label:'风险',value:r.confirmed?formattedRisk(r):''},{label:'风险等级',value:r.confirmed?r.tier:''},
   {label:'Cloudflare风险系数',value:exitField(r.attempt,'cf_risk_score')},{label:'Cloudflare状态',value:exitField(r.attempt,'cf_status')},{label:'Cloudflare地址族',value:exitField(r.attempt,'cf_ip_family')},{label:'Cloudflare观察范围',value:exitField(r.attempt,'cf_scope')},{label:'Cloudflare查询时间',value:exitField(r.attempt,'cf_query_at')},
   {label:'ASN人机流量比',value:exitField(r.attempt,'asn_human_percent')&&exitField(r.attempt,'asn_bot_percent')?`人类 ${exitField(r.attempt,'asn_human_percent')}% · 机器 ${exitField(r.attempt,'asn_bot_percent')}%`:''},{label:'统计ASN',value:exitField(r.attempt,'asn_traffic_asn')},{label:'流量比状态',value:exitField(r.attempt,'asn_traffic_status')},{label:'流量比范围',value:exitField(r.attempt,'asn_traffic_scope')},{label:'流量比查询时间',value:exitField(r.attempt,'asn_traffic_query_at')},
+  {label:'CF 盾站点明细',value:exitField(r.attempt,'cf_challenge_detail')},
   {label:'状态',value:historical?'历史有效画像，不代表当前':r.status},{label:'观测时间',value:r.observedAt},{label:'查询时间',value:queryAt},{label:'出口观察时间',value:exitField(r.attempt,'exit_observed_at')||queryAt},{label:'数据新鲜度',value:exitField(r.attempt,'data_freshness')},{label:'出口范围',value:exitField(r.attempt,'exit_scope')},{label:'缓存',value:cache==='hit'?'复用本地结果缓存':cache?`缓存状态：${cache}`:''}
  ].filter(row=>!!row.value)
 }

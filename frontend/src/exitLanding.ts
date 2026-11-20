@@ -3,6 +3,7 @@ import {attemptObservedAt,latestServices} from './nodeQuality'
 import {exitField,riskScore,toExitRecord} from './exitSummaryPresentation'
 import {ipKindFromLatest} from './ipKind'
 import {nodeRegionLabel} from './nodePresentation'
+import {unlockResult} from './unlock'
 const codes='CN HK MO TW JP SG US KR GB DE FR NL AU CA RU TH MY VN PH ID IN TR AE AR BR IT ES SE CH PL ZA KH EG NG PK'.split(' ')
 const english=new Intl.DisplayNames(['en'],{type:'region'})
 function country(value:string){const v=value.trim().toUpperCase();if(['XX','ZZ'].includes(v))return '';if(/香港|HONG\s*KONG/i.test(value))return 'HK';if(/澳门|MACAU|MACAO/i.test(value))return 'MO';if(/台湾|TAIWAN/i.test(value))return 'TW';if(/^[A-Z]{2}$/.test(v))return v==='UK'?'GB':v;return codes.find(c=>[nodeRegionLabel(c),english.of(c)].some(name=>name?.toUpperCase()===v))||(/中国大陆|中国|MAINLAND CHINA/i.test(value)?'CN':'')}
@@ -32,5 +33,16 @@ export function exitLanding(node:Pick<NodeOption,'country_code'>,attempts:Attemp
  const originText=ipKind.origin==='native'?`原生 ${library[0]||consensusRegion||'地区未知'}`:ipKind.origin==='broadcast'?'广播 IP':'原生未知'
  const purityDate=purityAt?new Date(purityAt).toLocaleDateString('en-US',{month:'2-digit',day:'2-digit'}):''
  const purity={score:purityScore,label:purityScore===null?'—':`${purityScore} · ${ipKind.typeLabel}`,tone:purityScore===null?'empty':purityScore>=80?'good':purityScore>=50?'warn':'bad',title:reputation?`由 ${reputation.provider} 风险分 ${riskScore(reputation)} 换算 · 越高越干净 · ${purityAt}`:'没有可换算的风险分',summary:`纯净度 ${purityScore??'—'} · ${typeText} · ${originText}`+(purityDate?` · ${purityDate} 查询`:'')}
- return {purity,consensusRegion,googleNote,region:mainland?.region||google||cfRegion||library[0]||expected,org:ipRecord?exitField(ipRecord,'organization','org','isp'):'',exitKnown:!!library.length||!!cfRegion||!!google,riskLabel:risk?risk.label+' '+Math.round(riskValue!)+(risk.label==='机器'?'%':''):'未测',riskTone:riskValue===undefined?'empty':riskValue>=70?'bad':riskValue>=30?'warn':'good',ip:maskedIP(ipRecord?exitField(ipRecord,'ip'):''),country:library.join(' / ')||'—',label,tone:mainland?'bad':mismatch?'warn':count===3&&expected?'good':'empty',tags,detail:tags.join(' · '),pure:field(pure,'risk_score','fraud_score'),ping:[field(ping,'risk_score'),field(find('ping0_ipv6'),'risk_score')].join(' / '),cf:field(pure,'cf_risk_score'),traffic:valid(pure)&&exitField(pure!,'asn_human_percent')&&exitField(pure!,'asn_bot_percent')?`${exitField(pure!,'asn_human_percent')}% / ${exitField(pure!,'asn_bot_percent')}%`:'—',ipKind}
+ const cfChallengeAttempt=find('cloudflare_challenge')
+ const cfChallengeRes=cfChallengeAttempt?unlockResult(cfChallengeAttempt,'cloudflare_challenge'):undefined
+ const cfChallenge=cfChallengeRes&&(cfChallengeRes.tone==='good'||cfChallengeRes.tone==='warn'||cfChallengeRes.tone==='bad')
+  ?{
+   shortLabel:cfChallengeRes.tone==='good'?'直通':cfChallengeRes.tone==='warn'?'部分弹盾':'易弹盾',
+   label:cfChallengeRes.label,
+   tone:cfChallengeRes.tone as 'good'|'warn'|'bad',
+   detail:cfChallengeRes.reason,
+   rank:cfChallengeRes.tone==='good'?0:cfChallengeRes.tone==='warn'?1:2,
+  }
+  :{shortLabel:'未测',label:'未测',tone:'empty' as const,detail:'尚未进行 Cloudflare 人机验证检测',rank:null as number|null}
+ return {purity,cfChallenge,consensusRegion,googleNote,region:mainland?.region||google||cfRegion||library[0]||expected,org:ipRecord?exitField(ipRecord,'organization','org','isp'):'',exitKnown:!!library.length||!!cfRegion||!!google,riskLabel:risk?risk.label+' '+Math.round(riskValue!)+(risk.label==='机器'?'%':''):'未测',riskTone:riskValue===undefined?'empty':riskValue>=70?'bad':riskValue>=30?'warn':'good',ip:maskedIP(ipRecord?exitField(ipRecord,'ip'):''),country:library.join(' / ')||'—',label,tone:mainland?'bad':mismatch?'warn':count===3&&expected?'good':'empty',tags,detail:tags.join(' · '),pure:field(pure,'risk_score','fraud_score'),ping:[field(ping,'risk_score'),field(find('ping0_ipv6'),'risk_score')].join(' / '),cf:field(pure,'cf_risk_score'),traffic:valid(pure)&&exitField(pure!,'asn_human_percent')&&exitField(pure!,'asn_bot_percent')?`${exitField(pure!,'asn_human_percent')}% / ${exitField(pure!,'asn_bot_percent')}%`:'—',ipKind}
 }

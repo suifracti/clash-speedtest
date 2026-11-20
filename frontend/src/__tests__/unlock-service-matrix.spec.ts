@@ -35,3 +35,12 @@ it('reports a failed export without claiming success',async()=>{
  await view.findAll('button').find(b=>b.text()==='导出可用节点')!.trigger('click');await flushPromises()
  expect(w.error.value).toBe('导出失败');expect(saveFile).not.toHaveBeenCalled()
 })
+it('opens single-node detail or retest plan from matrix cards',async()=>{
+ await flushPromises()
+ await view.get('button[aria-label="ChatGPT · 新加坡 · 1/2"]').trigger('click')
+ await view.findAll('.matrix-node-ops button').find(b=>b.text()==='查看详情')!.trigger('click')
+ expect(w.viewRequest.value?.node_key).toBe('0')
+ expect(view.emitted('inspect')?.[0]?.[0]).toMatchObject({node_key:'0'})
+ await view.findAll('.matrix-node-ops button').find(b=>b.text()==='重测')!.trigger('click')
+ expect(w.plan.value).toMatchObject({nodes:[nodes[0]],projects:['service'],serviceIds:['chatgpt_unlock'],includeReputation:false,reputationServiceIds:[]})
+})

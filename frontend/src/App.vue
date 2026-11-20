@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {computed,nextTick,onMounted,onBeforeUnmount,provide,ref,watch} from 'vue'
+import {computed,defineAsyncComponent,nextTick,onMounted,onBeforeUnmount,provide,ref,watch} from 'vue'
 import {useLocalNotifications} from './localNotifications'
 import {api} from './api'
 import {createWorkspace,terminal,workspaceKey} from './workspace'
@@ -7,20 +7,20 @@ import type {Page} from './domain'
 import Icon from './components/Icon.vue'
 import Modal from './components/Modal.vue'
 import HomeView from './components/HomeView.vue'
-import RecommendationView from './components/RecommendationView.vue'
-import AirportsView from './components/AirportsView.vue'
-import MonitorView from './components/MonitorView.vue'
-import HistoryView from './components/HistoryView.vue'
-import SettingsView from './components/SettingsView.vue'
-import DataView from './components/DataView.vue'
-import TestPlanModal from './components/TestPlanModal.vue'
-import MonitorCreateModal from './components/MonitorCreateModal.vue'
-import NodeDetailModal from './components/NodeDetailModal.vue'
 import {latencyReportText} from './latencyReport'
-import QueueModal from './components/QueueModal.vue'
-import AutoPickReportModal from './components/AutoPickReportModal.vue'
-import CommandPalette from './components/CommandPalette.vue'
 import HoverTip from './components/HoverTip.vue'
+const RecommendationView=defineAsyncComponent(()=>import('./components/RecommendationView.vue'))
+const AirportsView=defineAsyncComponent(()=>import('./components/AirportsView.vue'))
+const MonitorView=defineAsyncComponent(()=>import('./components/MonitorView.vue'))
+const HistoryView=defineAsyncComponent(()=>import('./components/HistoryView.vue'))
+const SettingsView=defineAsyncComponent(()=>import('./components/SettingsView.vue'))
+const DataView=defineAsyncComponent(()=>import('./components/DataView.vue'))
+const TestPlanModal=defineAsyncComponent(()=>import('./components/TestPlanModal.vue'))
+const MonitorCreateModal=defineAsyncComponent(()=>import('./components/MonitorCreateModal.vue'))
+const NodeDetailModal=defineAsyncComponent(()=>import('./components/NodeDetailModal.vue'))
+const QueueModal=defineAsyncComponent(()=>import('./components/QueueModal.vue'))
+const AutoPickReportModal=defineAsyncComponent(()=>import('./components/AutoPickReportModal.vue'))
+const CommandPalette=defineAsyncComponent(()=>import('./components/CommandPalette.vue'))
 import {date,projectNames} from './domain'
 import {applyTheme,savedThemePreference,type ThemePreference} from './theme'
 const w=createWorkspace();provide(workspaceKey,w);useLocalNotifications(w)
