@@ -27,7 +27,8 @@
 .hd-workbench-layout .hd-source .airport-summary-today{grid-column:1/-1;grid-row:3;font-size:11.5px}
 .hd-workbench-layout .hd-source .airport-summary-time{grid-column:1;grid-row:4;white-space:normal;font-size:10.5px}
 .hd-workbench-layout .hd-source .subscription-airport-row>span:last-of-type{grid-column:2;grid-row:4;justify-self:end;font-size:10.5px;font-weight:600}
-.hd-workbench-layout .hd-source .usage-track{height:6px;margin-top:6px}
+.hd-workbench-layout .hd-source .usage-track{height:7px;margin-top:6px;background:var(--cst-aurora-track);box-shadow:none}
+.hd-workbench-layout .hd-source .usage-track i{background:var(--cst-aurora-bar);box-shadow:var(--cst-aurora-glow);transition:width .4s cubic-bezier(.22,1,.36,1)}
 .hd-workbench-layout .hd-source .all-daily{display:block;border:0;padding:0;min-width:0}
 .hd-workbench-layout .hd-source .all-daily h3,.hd-workbench-layout .hd-source .subscription-daily h3{font-size:12px;margin:0 0 10px;font-weight:500;color:var(--hd-muted)}
 .hd-workbench-layout .hd-source .all-daily-chart{width:100%;max-width:none;gap:20px;margin:0}

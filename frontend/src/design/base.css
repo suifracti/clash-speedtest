@@ -134,5 +134,5 @@ h2{font-size:16px;font-weight:650;letter-spacing:-.2px;color:var(--cst-text)}
 .cst-cycle-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .cst-cycle-head strong{font-size:13.5px;font-weight:650}
 .cst-cycle-stats{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:12px;color:var(--cst-muted);font-variant-numeric:tabular-nums}
-.cst-cycle-bar{height:5px;border-radius:999px;background:var(--cst-line);overflow:hidden}
-.cst-cycle-bar i{display:block;height:100%;background:var(--cst-accent);transition:width .25s ease}
+.cst-cycle-bar{height:6px;border-radius:999px;background:var(--cst-aurora-track);overflow:hidden}
+.cst-cycle-bar i{display:block;height:100%;border-radius:999px;background:var(--cst-aurora-bar);box-shadow:var(--cst-aurora-glow);transition:width .35s ease}

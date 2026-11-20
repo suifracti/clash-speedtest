@@ -228,7 +228,7 @@ onMounted(()=>void refresh())
 <style scoped>
 .recommendation-page .page-header p{font-size:13px}
 .recommendation-empty{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
-.recommendation-hero-card{padding:18px 20px;border:1px solid var(--cst-line-strong);border-radius:16px;background:var(--cst-panel);box-shadow:var(--cst-shadow);margin-bottom:20px;display:grid;gap:14px}
+.recommendation-hero-card{padding:18px 20px;border:1px solid var(--cst-line);border-radius:var(--cst-radius);background:var(--cst-panel);box-shadow:var(--cst-shadow-xs);margin-bottom:20px;display:grid;gap:14px}
 .recommendation-hero-top{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
 .recommendation-tabs{display:inline-flex;gap:4px;flex-wrap:wrap;padding:4px;border-radius:11px;background:var(--cst-panel-2);border:1px solid var(--cst-line)}
 .recommendation-tabs button{padding:7px 16px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--cst-muted);cursor:pointer;font-size:13.5px;font-weight:550;transition:all .14s}
@@ -238,8 +238,8 @@ onMounted(()=>void refresh())
 .coverage-meter{display:flex;flex-direction:column;gap:4px;min-width:140px}
 .coverage-meter span{font-size:12px;color:var(--cst-muted)}
 .coverage-meter strong{color:var(--cst-text);font-weight:700;font-variant-numeric:tabular-nums}
-.coverage-track{height:5px;border-radius:999px;background:var(--cst-line);overflow:hidden}
-.coverage-track>i{display:block;height:100%;border-radius:999px;background:var(--cst-accent)}
+.coverage-track{height:6px;border-radius:999px;background:var(--cst-aurora-track);overflow:hidden}
+.coverage-track>i{display:block;height:100%;border-radius:999px;background:var(--cst-aurora-bar);box-shadow:var(--cst-aurora-glow);transition:width .4s cubic-bezier(.22,1,.36,1)}
 .recommendation-criteria{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;padding-top:12px;border-top:1px solid var(--cst-line)}
 .criteria-main{display:grid;gap:8px;flex:1;min-width:240px}
 .recommendation-criteria p,.recommendation-method{font-size:12.5px;line-height:1.6;color:var(--cst-muted);margin:0}
@@ -249,7 +249,7 @@ onMounted(()=>void refresh())
 .recommendation-service{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;font-weight:600;color:var(--cst-text)}
 .recommendation-service .ui-select{min-width:220px;max-width:min(100%,340px)}
 .region-cards-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
-.region-card{display:flex;flex-direction:column;gap:12px;padding:18px 20px;border:1px solid var(--cst-line-strong);border-radius:15px;background:var(--cst-panel);box-shadow:var(--cst-shadow)}
+.region-card{display:flex;flex-direction:column;gap:12px;padding:18px 20px;border:1px solid var(--cst-line);border-radius:var(--cst-radius);background:var(--cst-panel);box-shadow:var(--cst-shadow-xs)}
 .region-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
 .region-title-wrap{display:inline-flex;align-items:center;gap:8px;min-width:0}
 .region-flag{display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:20px;padding:0 6px;border-radius:6px;font-size:11px;font-weight:750;background:color-mix(in srgb,var(--region,var(--cst-accent)) 14%,var(--cst-panel-2));color:var(--region,var(--cst-accent));border:1px solid color-mix(in srgb,var(--region,var(--cst-accent)) 28%,transparent)}

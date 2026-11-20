@@ -40,8 +40,8 @@ kbd{font:10px var(--cst-font);padding:1.5px 5px;border:1px solid var(--cst-line-
 .cst-task-attention{color:var(--cst-warn);font-weight:600}
 .cst-task-cancel{height:30px;padding:0 10px;border:1px solid color-mix(in srgb,var(--cst-bad) 26%,transparent);border-radius:9px;background:var(--cst-bad-bg);color:var(--cst-bad);font-size:12px;font-weight:600;white-space:nowrap}
 .cst-task-cancel:hover{background:var(--cst-bad);color:#fff}
-.cst-task-bar{width:64px;height:4px;border-radius:999px;overflow:hidden;background:var(--cst-line-strong)}
-.cst-task-bar i{display:block;height:100%;background:var(--cst-accent)}
+.cst-task-bar{width:64px;height:5px;border-radius:999px;overflow:hidden;background:var(--cst-aurora-track)}
+.cst-task-bar i{display:block;height:100%;border-radius:999px;background:var(--cst-aurora-bar);box-shadow:var(--cst-aurora-glow)}
 .cst-recent-report{white-space:nowrap}.cst-recent-report small{font-size:11px}
 .cst-recent-report.with-task{border-left:1px solid var(--cst-line)}
 @media(min-width:1240px){

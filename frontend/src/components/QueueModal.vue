@@ -314,8 +314,8 @@ async function retry(q:QueueItem){retrying.value=q.id;try{if(q.batchId&&q.itemId
 .queue-download-transfer dt,.queue-download-transfer small{font-size:12px;color:var(--cst-muted)}
 .queue-download-transfer dd{margin:0;font-size:13px;font-weight:600;color:var(--cst-text);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 .queue-transfer-node small{margin-inline-start:8px;font-weight:400}
-.progress-track{height:6px;border-radius:999px;margin:8px 0 14px;background:var(--cst-line);overflow:hidden}
-.progress-track i{background:var(--cst-accent);border-radius:999px}
+.progress-track{height:7px;border-radius:999px;margin:8px 0 14px;background:var(--cst-aurora-track);overflow:hidden}
+.progress-track i{background:var(--cst-aurora-bar);box-shadow:var(--cst-aurora-glow);border-radius:999px;transition:width .35s cubic-bezier(.22,1,.36,1)}
 .queue-counts{display:flex;flex-wrap:wrap;gap:7px;margin:8px 0}
 .queue-counts>.queue-pill{display:inline-flex;align-items:center;padding:5px 12px;border:1px solid var(--cst-line-strong);border-radius:999px;background:var(--cst-panel-2);font-size:12px;font-weight:550;color:var(--cst-muted);font-variant-numeric:tabular-nums;transition:all .14s ease}
 button.queue-pill{cursor:pointer}
