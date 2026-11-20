@@ -1,20 +1,52 @@
 <script setup lang="ts">
 import {computed,onBeforeUnmount,onMounted,ref,shallowRef,watch} from 'vue'
 import {api,type SubscriptionRefreshJob,type SubscriptionRefreshRequest} from '../api'
-import {bytes,date,subscriptionUsed,type Airport,type NodeOption} from '../domain'
-import {airportAccounts,noticesForAccount,safeAirportLink,parseNoticeUsage,type AirportAccount} from '../airportViewing'
+import {bytes,date,subscriptionUsed,type Airport,type LatencyBatch,type NodeOption} from '../domain'
+import {airportAccounts,airportNodeCounts,noticesForAccount,safeAirportLink,parseNoticeUsage,type AirportAccount} from '../airportViewing'
 import {useWorkspace} from '../workspace'
 import {accountDailyUsage,usageRefreshError,shanghaiDay,shiftDay,type DayUsage,type UsageSnapshot} from '../usageDaily'
 import SubscriptionChanges from './SubscriptionChanges.vue'
 import Modal from './Modal.vue'
 import UsageDays from './UsageDays.vue'
 
-const props=defineProps<{airports:Airport[];notices:NodeOption[];airportId?:string}>()
+const props=defineProps<{airports:Airport[];notices:NodeOption[];airportId?:string;unified?:boolean;searchQuery?:string}>()
 type SubscriptionDisclosureSummary={refreshState:'loading'|'ready'|'error';noticeCount:number;expiredAccountCount:number;unknownExpiryAccountCount:number;failedItemCount:number;interruptedItemCount:number;runningItemCount:number;latestRefreshIssueAccount?:string;latestRefreshIssueState?:'failed'|'interrupted'}
 const emit=defineEmits<{summary:[value:SubscriptionDisclosureSummary];viewed:[airportId:string]}>()
 const workspace=useWorkspace()
 const allAirports=computed(()=>props.airportId==='all')
-const viewedAirport=computed(()=>props.airports.find(airport=>airport.id===props.airportId)||props.airports[0])
+const viewedAirport=computed(()=>workspace.airports.value.find(airport=>airport.id===props.airportId)||props.airports.find(airport=>airport.id===props.airportId)||props.airports[0])
+const airportCounts=computed(()=>airportNodeCounts(workspace.airports.value,workspace.nodes.value))
+const totalAirportNodes=computed(()=>Object.values(airportCounts.value).reduce((a,b)=>a+b,0))
+const inScope=computed(()=>new Set(workspace.selectedAirportIds.value||[]))
+const hasExcluded=computed(()=>workspace.airports.value.some(a=>!inScope.value.has(a.id)))
+const allAirportsChecked=computed(()=>workspace.airports.value.length>0&&workspace.airports.value.every(a=>inScope.value.has(a.id)))
+const someAirportsChecked=computed(()=>workspace.airports.value.some(a=>inScope.value.has(a.id))&&!allAirportsChecked.value)
+function toggleAirportScope(id:string){const cur=workspace.selectedAirportIds.value||[];workspace.setAirports(cur.includes(id)?cur.filter(x=>x!==id):[...cur,id])}
+function toggleAllAirportScope(checked:boolean){workspace.setAirports(checked?workspace.airports.value.map(a=>a.id):[])}
+const unifiedAirports=computed(()=>{const q=(props.searchQuery||'').trim().toLowerCase();return workspace.airports.value.filter(a=>!q||a.name.toLowerCase().includes(q))})
+const healthBatches=ref<LatencyBatch[]>([])
+const healthBatchCache=new Map<string,LatencyBatch>()
+watch(()=>[props.unified,workspace.batches.value] as const,async([enabled,rows],_,onCleanup)=>{
+  if(!enabled)return
+  let cancelled=false;onCleanup(()=>cancelled=true)
+  try{
+    const read:LatencyBatch[]=[],covered=new Set<string>()
+    for(const row of rows||[]){
+      if(!row.state.startsWith('completed'))continue
+      const batch=row.items?row:healthBatchCache.get(row.batch_id)||await api.batch(row.batch_id)
+      if(cancelled)return
+      healthBatchCache.set(batch.batch_id,batch);read.push(batch)
+      for(const a of workspace.airports.value)if(batch.items?.some(i=>(a.subscriptions?.map(s=>s.id)||[a.id]).includes(i.profile_id)))covered.add(a.id)
+      if(covered.size===workspace.airports.value.length)break
+    }
+    healthBatches.value=read
+  }catch{if(!cancelled)healthBatches.value=[]}
+},{immediate:true})
+const airportHealth=computed(()=>Object.fromEntries(workspace.airports.value.map(a=>{
+  const profiles=a.subscriptions?.map(s=>s.id)||[a.id],batch=healthBatches.value.find(b=>b.items?.some(i=>profiles.includes(i.profile_id)))
+  const items=batch?.items?.filter(i=>profiles.includes(i.profile_id)&&i.result&&i.result.total_samples>0)||[],failed=items.filter(i=>i.result!.success_samples===0).length
+  return [a.id,{tone:!items.length?'empty':failed/items.length>=.5?'bad':failed?'warn':'good',label:!items.length?'暂无延迟批次结果':`最近延迟批次 ${date(batch!.requested_at)}：${failed}/${items.length} 个已检测节点无响应`}]
+})))
 const accounts=computed(()=>viewedAirport.value?airportAccounts([viewedAirport.value]):[])
 const rowMode=computed(()=>allAirports.value||accounts.value.length>1)
 const displayedAccounts=computed(()=>allAirports.value?airportAccounts(props.airports):accounts.value)
@@ -100,8 +132,9 @@ const workspaceRefreshIssues=computed(()=>latestRefreshByAccount.value.filter(en
 // 全部机场只汇总现有账户数据，不改变订阅或检测范围。
 const dailyByAccount=ref<Record<string,DayUsage[]>>({})
 const snapshotsByAccount=ref<Record<string,UsageSnapshot|undefined>>({})
-watch(()=>[rowMode.value,displayedAccounts.value.map(a=>a.key).join('|'),workspaceRefreshIssues.value.map(i=>i.account.key).join('|'),workspace.usageRefreshVersion.value],async()=>{
-  const accountsToRead=[...new Map([...(rowMode.value?displayedAccounts.value:[]),...workspaceRefreshIssues.value.map(i=>i.account)].map(account=>[account.key,account])).values()]
+watch(()=>[rowMode.value,props.unified,allAirports.value,displayedAccounts.value.map(a=>a.key).join('|'),workspaceAccounts.value.map(a=>a.key).join('|'),workspaceRefreshIssues.value.map(i=>i.account.key).join('|'),workspace.usageRefreshVersion.value],async()=>{
+  const baseAccounts=props.unified&&allAirports.value?workspaceAccounts.value:displayedAccounts.value
+  const accountsToRead=[...new Map([...(rowMode.value?baseAccounts:[]),...workspaceRefreshIssues.value.map(i=>i.account)].map(account=>[account.key,account])).values()]
   const entries=await Promise.all(accountsToRead.map(async account=>{
     const result=await accountDailyUsage(account.airport.id,account.subscription.id,3).catch(()=>undefined)
     return [account.key,result] as const
@@ -151,7 +184,7 @@ function accountRow(airport:Airport,list:AirportAccount[]){
   const pathHint=list.map(account=>{const snapshot=snapshotsByAccount.value[account.key];return snapshot?.fetch_path?`${account.subscription.name}：${pathLabels[snapshot.fetch_path]||snapshot.fetch_path} · ${snapshot.status==='refresh_failed'?'刷新失败':'刷新成功'}`:''}).filter(Boolean).join('；')
   return {pathHint,airport,remaining,ratio,today:sumDay(list,0),updated,issues,lastFailedAt:failedAt.length?Math.max(...failedAt):0,accounts:list}
 }
-const overviewRows=computed(()=>allAirports.value?props.airports.map(airport=>({...accountRow(airport,airportAccounts([airport])),id:airport.id,name:airport.name})):accounts.value.map(account=>({...accountRow(account.airport,[account]),id:account.key,name:account.subscription.name})))
+const overviewRows=computed(()=>allAirports.value?(props.unified?unifiedAirports.value:props.airports).map(airport=>({...accountRow(airport,airportAccounts([airport])),id:airport.id,name:airport.name})):accounts.value.map(account=>({...accountRow(account.airport,[account]),id:account.key,name:account.subscription.name})))
 const workspaceRefreshIssueJobs=computed(()=>[...new Map(workspaceRefreshIssues.value.flatMap(issue=>issue.job?[[issue.job.id,issue.job] as const]:[])).values()])
 const disclosureSummary=computed<SubscriptionDisclosureSummary>(()=>{
   const expiry=airportAccounts(props.airports).map(account=>account.subscription.usage?.expire).filter((value):value is number=>typeof value==='number'&&Number.isFinite(value)&&value>0)
@@ -266,23 +299,63 @@ defineExpose({usageRatio})
 </script>
 
 <template>
-  <section class="subscription-overview" :class="{'all-airports':allAirports}" aria-label="首页订阅账户状态">
+  <section class="subscription-overview" :class="{'all-airports':allAirports,'is-unified':props.unified}" aria-label="首页订阅账户状态">
+    <div v-if="props.unified&&workspace.airports.value.length" class="unified-top-bar">
+      <div class="sidebar-airport-row unified-all-row">
+        <button type="button" class="sidebar-airport-pick unified-all-pick" :aria-pressed="!hasExcluded&&allAirports" @click="emit('viewed','all')"><span>全部机场</span><small>{{totalAirportNodes}}</small></button>
+        <input type="checkbox" class="sidebar-scope-check" aria-label="纳入全部机场" title="纳入或取消全部机场" :checked="allAirportsChecked" :indeterminate="someAirportsChecked" @change="toggleAllAirportScope(($event.target as HTMLInputElement).checked)">
+      </div>
+      <div v-if="!allAirports" class="unified-mini-switcher" aria-label="机场快捷切换">
+        <div v-for="a in unifiedAirports" :key="a.id" class="sidebar-airport-row" :class="{excluded:!inScope.has(a.id)}">
+          <button type="button" class="sidebar-airport-pick" :title="`${a.name} · ${airportHealth[a.id]?.label||''}`" :aria-pressed="props.airportId===a.id" @click="emit('viewed',a.id)"><i class="airport-health" :class="airportHealth[a.id]?.tone||'empty'"/><span>{{a.name}}</span><small>{{airportCounts[a.id]||0}}</small></button>
+          <input type="checkbox" class="sidebar-scope-check" :aria-label="`纳入范围 ${a.name}`" :title="`勾选将 ${a.name} 纳入全部机场范围`" :checked="inScope.has(a.id)" @change="toggleAirportScope(a.id)">
+        </div>
+        <p v-if="!unifiedAirports.length" class="muted small">没有匹配机场</p>
+      </div>
+    </div>
     <header v-if="!allAirports&&viewedAirport" class="subscription-airport-heading"><span class="subscription-role-tag airport">机场</span><strong>{{viewedAirport.name}}</strong><small>{{accounts.length}} 个订阅</small></header>
     <template v-if="rowMode">
       <div class="subscription-all-main">
         <div class="subscription-airport-list" :aria-label="allAirports?'全部机场用量汇总':'机场订阅用量'">
-          <div v-for="row in overviewRows" :key="row.id" class="subscription-airport-row" :title="row.pathHint">
-            <strong class="airport-summary-name">{{row.name}}<small v-if="allAirports&&row.accounts.length>1">{{row.accounts.length}} 个订阅</small></strong>
-            <div class="airport-summary-quota">
-              <span>剩余 <b>{{row.remaining===null?'未知':bytes(row.remaining)}}</b> <small v-if="row.ratio!==null">{{(row.ratio*100).toFixed(2)}}% 可用</small></span>
-              <div v-if="row.ratio!==null" class="usage-track"><i :style="{width:`${row.ratio*100}%`}"/></div>
+          <template v-if="props.unified&&allAirports">
+            <div v-for="row in overviewRows" :key="row.id" class="subscription-airport-row unified-airport-card" :class="{excluded:!inScope.has(row.airport.id)}" :title="row.pathHint" @click="emit('viewed',row.airport.id)">
+              <div class="unified-card-head">
+                <button type="button" class="sidebar-airport-pick unified-card-pick" :title="`${row.name} · ${airportHealth[row.airport.id]?.label||''}`" :aria-pressed="props.airportId===row.airport.id" @click.stop="emit('viewed',row.airport.id)">
+                  <i class="airport-health" :class="airportHealth[row.airport.id]?.tone||'empty'"/>
+                  <strong class="airport-summary-name">{{row.name}}<small v-if="row.accounts.length>1">{{row.accounts.length}} 个订阅</small></strong>
+                  <small class="unified-node-count">{{airportCounts[row.airport.id]||0}}</small>
+                </button>
+                <input type="checkbox" class="sidebar-scope-check" :aria-label="`纳入范围 ${row.name}`" :title="`勾选将 ${row.name} 纳入全部机场范围`" :checked="inScope.has(row.airport.id)" @click.stop @change="toggleAirportScope(row.airport.id)">
+              </div>
+              <div class="airport-summary-quota">
+                <span>剩余 <b>{{row.remaining===null?'未知':bytes(row.remaining)}}</b> <small v-if="row.ratio!==null">{{(row.ratio*100).toFixed(1)}}%</small></span>
+                <div v-if="row.ratio!==null" class="usage-track"><i :style="{width:`${row.ratio*100}%`}"/></div>
+              </div>
+              <div class="unified-card-meta">
+                <span class="airport-summary-today">今日 {{dayText(row.today)}}</span>
+                <span class="unified-card-status">
+                  <time class="airport-summary-time" :class="{'airport-refresh-note':row.lastFailedAt}">{{row.lastFailedAt?`上次刷新 ${hm(row.lastFailedAt)}`:row.updated?hm(row.updated)||date(row.updated):'未刷新'}}</time>
+                  <span v-if="row.lastFailedAt" class="airport-refresh-note" title="本次刷新失败，仍使用上一次快照">缓存</span>
+                  <span v-else :class="{'airport-refresh-failed':row.issues.length}" :title="row.issues.map(issue=>issue.message||'刷新中断').join('；')">{{row.issues.length?'异常':'正常'}}</span>
+                </span>
+              </div>
             </div>
-            <span class="airport-summary-today">今日 {{dayText(row.today)}}</span>
-            <time class="airport-summary-time" :class="{'airport-refresh-note':row.lastFailedAt}">{{row.lastFailedAt?`上次刷新 ${hm(row.lastFailedAt)}`:row.updated?date(row.updated):'未刷新'}}</time>
-            <span v-if="row.lastFailedAt" class="airport-refresh-note" title="本次刷新失败，仍使用上一次快照">缓存</span>
-            <span v-else :class="{'airport-refresh-failed':row.issues.length}" :title="row.issues.map(issue=>issue.message||'刷新中断').join('；')">{{row.issues.length?'刷新失败':'正常'}}</span>
-            <button v-if="allAirports" class="text-button" @click="emit('viewed',row.airport.id)">只看</button><button v-else class="text-button" :disabled="refreshDisabled" @click="startSelections(row.accounts)">刷新</button>
-          </div>
+            <p v-if="!overviewRows.length&&props.searchQuery?.trim()" class="muted small">没有匹配机场</p>
+          </template>
+          <template v-else>
+            <div v-for="row in overviewRows" :key="row.id" class="subscription-airport-row" :title="row.pathHint">
+              <strong class="airport-summary-name">{{row.name}}<small v-if="allAirports&&row.accounts.length>1">{{row.accounts.length}} 个订阅</small></strong>
+              <div class="airport-summary-quota">
+                <span>剩余 <b>{{row.remaining===null?'未知':bytes(row.remaining)}}</b> <small v-if="row.ratio!==null">{{(row.ratio*100).toFixed(2)}}% 可用</small></span>
+                <div v-if="row.ratio!==null" class="usage-track"><i :style="{width:`${row.ratio*100}%`}"/></div>
+              </div>
+              <span class="airport-summary-today">今日 {{dayText(row.today)}}</span>
+              <time class="airport-summary-time" :class="{'airport-refresh-note':row.lastFailedAt}">{{row.lastFailedAt?`上次刷新 ${hm(row.lastFailedAt)}`:row.updated?date(row.updated):'未刷新'}}</time>
+              <span v-if="row.lastFailedAt" class="airport-refresh-note" title="本次刷新失败，仍使用上一次快照">缓存</span>
+              <span v-else :class="{'airport-refresh-failed':row.issues.length}" :title="row.issues.map(issue=>issue.message||'刷新中断').join('；')">{{row.issues.length?'刷新失败':'正常'}}</span>
+              <button v-if="allAirports" class="text-button" @click="emit('viewed',row.airport.id)">只看</button><button v-else class="text-button" :disabled="refreshDisabled" @click="startSelections(row.accounts)">刷新</button>
+            </div>
+          </template>
         </div>
         <div class="subscription-daily all-daily">
           <h3>近 3 日用量 · 合计</h3>

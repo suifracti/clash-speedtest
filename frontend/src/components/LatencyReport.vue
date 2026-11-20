@@ -7,7 +7,7 @@ import {nodeDisplayName} from '../nodePresentation'
 import {stateLabel,type BatchItem,type LatencyBatch} from '../domain'
 import {partialLatencyError} from '../inspectorLatency'
 import {partialLatencyLabel} from '../latencyTargets'
-import {buildLatencyReport,compareLatencyReports,latencyAirportSummary,latencyHttpNotices,latencySlowThresholdNote,type LatencyReportGroup,type LatencyReportRow,type LatencyReportStatus} from '../latencyReport'
+import {buildLatencyReport,compareLatencyReports,latencyAirportSummary,latencyHttpNoticeDetails,latencySlowThresholdNote,type LatencyReportGroup,type LatencyReportRow,type LatencyReportStatus} from '../latencyReport'
 
 const props=withDefaults(defineProps<{
  batch:LatencyBatch
@@ -36,17 +36,38 @@ const reportTitle=ref<HTMLElement>()
 onMounted(()=>nextTick(()=>reportTitle.value?.focus({preventScroll:true})))
 const reportView=ref<'overview'|'details'>('overview')
 const detailStatus=ref<'all'|LatencyReportStatus>('all')
+const detailSubset=ref<{label:string;keys:Set<string>}|null>(null)
 const detailSearch=ref('')
 const detailPage=ref(1)
 const detailPageSize=15
 const expandedGroups=ref(new Set<number>())
 function toggleGroup(index:number){const next=new Set(expandedGroups.value);next.has(index)?next.delete(index):next.add(index);expandedGroups.value=next}
-function openDetails(status:'all'|LatencyReportStatus='all'){detailStatus.value=status;detailPage.value=1;reportView.value='details'}
-watch(()=>props.batch.batch_id,()=>{reportView.value='overview';detailStatus.value='all';detailSearch.value='';detailPage.value=1})
-watch([detailStatus,detailSearch],()=>{detailPage.value=1})
+function openDetails(status:'all'|LatencyReportStatus='all'){detailSubset.value=null;detailStatus.value=status;detailPage.value=1;reportView.value='details'}
+function openSubset(label:string,keys:string[]){
+ if(!keys.length)return
+ detailStatus.value='all'
+ detailSearch.value=''
+ detailSubset.value={label,keys:new Set(keys)}
+ detailPage.value=1
+ reportView.value='details'
+}
+function openAirportDetails(airport:string){
+ const keys=report.value.rows.filter(r=>r.airportName===airport).map(r=>r.key)
+ openSubset(`机场 · ${airport}`,keys)
+}
+function openSuspectedDetails(){
+ const keys=report.value.rows.filter(r=>r.suspected).map(r=>r.key)
+ openSubset('疑似检测问题',keys)
+}
+function clearDetailFilters(){detailStatus.value='all';detailSubset.value=null;detailSearch.value=''}
+watch(()=>props.batch.batch_id,()=>{reportView.value='overview';clearDetailFilters();detailPage.value=1})
+watch([detailStatus,detailSearch,detailSubset],()=>{detailPage.value=1})
 const airportSummary=computed(()=>latencyAirportSummary(report.value))
-const httpNotices=computed(()=>latencyHttpNotices(report.value))
+const httpNoticeItems=computed(()=>latencyHttpNoticeDetails(report.value))
 const comparison=computed(()=>compareLatencyReports(props.batch,report.value,props.previous))
+const usablePercent=computed(()=>report.value.counts.total?Math.round(report.value.counts.usable/report.value.counts.total*1000)/10:0)
+const usableTone=computed(()=>!report.value.counts.total?'empty':usablePercent.value>=80?'good':usablePercent.value>=50?'warn':'bad')
+const stateTone=computed(()=>props.batch.state==='completed'?'good':props.batch.state.includes('fail')||props.batch.state.includes('issue')?'warn':'empty')
 const issueItems=computed(()=>{
  const unique=new Map<string,BatchItem>()
  for(const issue of report.value.issues)unique.set(issue.row.key,issue.item)
@@ -73,7 +94,7 @@ const countCards=computed<{key:LatencyReportStatus;label:string;value:number;ton
  {key:'partial',label:'部分站点不通',value:report.value.counts.partial,tone:'warn'}
 ])
 
-const resultSegments=computed(()=>[...countCards.value,{key:'skipped',label:'未执行',value:report.value.counts.skipped,tone:'empty'}].filter(c=>c.value>0))
+const resultSegments=computed(()=>[...countCards.value,{key:'skipped' as LatencyReportStatus,label:'未执行',value:report.value.counts.skipped,tone:'empty'}].filter(c=>c.value>0))
 
 function formatTime(value?:string){
  if(!value)return '时间未知'
@@ -89,7 +110,7 @@ function formatDuration(value:number|null){
 function formatMs(value:number|null|undefined){return value===null||value===undefined||!Number.isFinite(value)?'—':`${Math.round(value)} ms`}
 function formatSignedMs(value:number){const rounded=Math.round(value);return `${rounded>0?'+':''}${rounded} ms`}
 function statusLabel(row:LatencyReportRow){
- return row.status==='partial'?partialLatencyLabel(row.partialSites):({usable:'能用',slow:'偏慢',unstable:'不稳定',partial:'部分站点不通', 'no-response':'无响应',skipped:'未执行'} as const)[row.status]
+ return row.status==='partial'?partialLatencyLabel(row.partialSites):({usable:'能用',slow:'偏慢',unstable:'不稳定',partial:'部分站点不通','no-response':'无响应',skipped:'未执行'} as const)[row.status]
 }
 function issueDetail(group:LatencyReportGroup,row:LatencyReportRow){
  return group.issues.find(issue=>issue.row.key===row.key)?.detail||row.skipReason||row.suspectedReasons.join('；')
@@ -112,6 +133,7 @@ const detailFilters=computed(()=>[
 const filteredRows=computed(()=>{
  const q=detailSearch.value.trim().toLowerCase()
  return report.value.rows.filter(row=>{
+  if(detailSubset.value&&!detailSubset.value.keys.has(row.key))return false
   if(detailStatus.value!=='all'&&row.status!==detailStatus.value)return false
   if(!q)return true
   return (nodeDisplayName(row.item)+' '+row.airportName+' '+row.nodeType+' '+statusLabel(row)).toLowerCase().includes(q)
@@ -126,66 +148,108 @@ function shortSiteName(name:string){return name==='Cloudflare'?'CF':name}
 <template>
  <section class="latency-report" aria-label="延迟检测报告">
   <header class="latency-report-head">
-   <div>
-    <p class="latency-report-kicker">{{props.monitor?'持续监测':'本轮检测'}}</p>
-    <h2 ref="reportTitle" tabindex="-1" autofocus>{{props.monitor?'持续监测报告':'延迟检测报告'}}</h2>
+   <div class="latency-report-head-main">
+    <div class="latency-report-title-row">
+     <h2 ref="reportTitle" tabindex="-1" autofocus>{{props.monitor?'持续监测概览':'本轮检测概览'}}</h2>
+     <span class="latency-report-state" :class="stateTone"><i aria-hidden="true"/>{{stateLabel(props.batch.state)}}</span>
+    </div>
     <p class="latency-report-meta">{{summaryLine}}</p>
    </div>
-   <span class="latency-report-state">{{stateLabel(props.batch.state)}}</span>
+   <nav class="report-tabs" role="tablist" aria-label="延迟报告视图">
+    <button type="button" class="report-tab" role="tab" :aria-selected="reportView==='overview'" @click="reportView='overview'">结果概览</button>
+    <button type="button" class="report-tab" role="tab" :aria-selected="reportView==='details'" @click="reportView='details'">逐个明细 <small>{{report.rows.length}}</small></button>
+   </nav>
   </header>
-
-  <nav class="report-tabs" role="tablist" aria-label="延迟报告视图">
-   <button type="button" class="report-tab" role="tab" :aria-selected="reportView==='overview'" @click="reportView='overview'">结果概览</button>
-   <button type="button" class="report-tab" role="tab" :aria-selected="reportView==='details'" @click="reportView='details'">逐个明细 <small>{{report.rows.length}}</small></button>
-  </nav>
 
   <div v-show="reportView==='overview'" class="report-pane">
   <section class="latency-report-overview" aria-label="本轮结果分布">
-   <div class="latency-report-verdict"><span>能用的节点</span><strong>{{report.counts.usable}}<small> / {{report.counts.total}}</small></strong><p>未执行与疑似检测问题单独说明</p></div>
+   <button type="button" class="latency-report-verdict" :disabled="!report.counts.usable" :title="report.counts.usable?`查看能用的 ${report.counts.usable} 个节点`:undefined" @click="report.counts.usable&&openDetails('usable')">
+    <span class="verdict-label">能用的节点 <b v-if="report.counts.total" class="verdict-pct" :class="usableTone">{{usablePercent}}%</b></span>
+    <strong>{{report.counts.usable}}<small> / {{report.counts.total}}</small></strong>
+    <p>点击下方任意分类或柱段可直达明细</p>
+   </button>
    <div class="latency-report-distribution">
-    <div v-if="report.counts.total" class="latency-report-distribution-bar" role="img" :aria-label="resultSegments.map(c=>c.label+' '+c.value+' 个').join('，')"><span v-for="segment in resultSegments" :key="segment.key" :class="segment.tone" :style="{width:segment.value/report.counts.total*100+'%'}" :title="segment.label+' '+segment.value+' 个'"/></div>
+    <div v-if="report.counts.total" class="latency-report-distribution-bar" role="img" :aria-label="resultSegments.map(c=>c.label+' '+c.value+' 个').join('，')">
+     <button v-for="segment in resultSegments" :key="segment.key" type="button" class="report-bar-seg" :class="segment.tone" :style="{width:segment.value/report.counts.total*100+'%'}" :title="`查看 ${segment.label}（${segment.value} 个）`" @click="openDetails(segment.key)"/>
+    </div>
     <div class="latency-report-counts" aria-label="检测结果计数">
-     <button v-for="card in countCards" :key="card.key" type="button" class="latency-report-count" :class="[card.tone,{clickable:card.value>0}]" :disabled="card.value===0" :title="card.value>0?`查看 ${card.label} 的 ${card.value} 个节点`:undefined" @click="openDetails(card.key)"><small>{{card.label}}</small><strong>{{card.value}}</strong></button>
+     <button v-for="card in countCards" :key="card.key" type="button" class="latency-report-count" :class="[card.tone,{clickable:card.value>0}]" :disabled="card.value===0" :title="card.value>0?`查看 ${card.label} 的 ${card.value} 个节点`:undefined" @click="openDetails(card.key)"><i aria-hidden="true"/><small>{{card.label}}</small><strong>{{card.value}}</strong></button>
     </div>
    </div>
   </section>
-  <p v-if="report.counts.suspected" class="latency-report-note">疑似检测问题 {{report.counts.suspected}} 项（与上方分类重叠）</p>
-  <p v-if="report.counts.skipped" class="latency-report-note">
-   未执行 {{report.counts.skipped}} 项（不计入无响应）
-  </p>
 
-  <p class="latency-report-compare">{{comparisonLine}}</p>
-  <p v-for="notice in httpNotices" :key="notice" class="latency-report-http">{{notice}}</p>
+  <div v-if="report.counts.suspected||report.counts.skipped" class="latency-report-notes">
+   <button v-if="report.counts.suspected" type="button" class="latency-report-note clickable" @click="openSuspectedDetails">疑似检测问题 {{report.counts.suspected}} 项（与上方分类重叠）<span>查看 ›</span></button>
+   <button v-if="report.counts.skipped" type="button" class="latency-report-note clickable" @click="openDetails('skipped')">未执行 {{report.counts.skipped}} 项（不计入无响应）<span>查看 ›</span></button>
+  </div>
 
-  <section v-if="airportSummary.length>1" class="airport-summary"><h3>按机场汇总</h3><div class="airport-summary-scroll"><table><thead><tr><th>机场</th><th>节点数</th><th>能用</th><th>能用率</th><th>偏慢/不稳定</th><th>部分不通</th><th>无响应</th></tr></thead><tbody><tr v-for="a in airportSummary" :key="a.airport"><td>{{a.airport}}</td><td>{{a.total}}</td><td>{{a.usable}}</td><td>{{a.total?Math.round(a.usable/a.total*100):0}}%</td><td>{{a.slow}}</td><td>{{a.partial}}</td><td :class="{bad:a.noResponse>0}">{{a.noResponse}}</td></tr></tbody></table></div></section>
+  <div class="latency-report-compare">
+   <template v-if="comparison.reason"><span>{{comparisonLine}}</span></template>
+   <template v-else>
+    <span>和上次同条件（{{comparison.comparableNodes}} 个可比节点）比：</span>
+    <button v-if="comparison.newlyFailed>0" type="button" class="report-inline-chip bad" @click="openSubset('较上次新增失败',comparison.newlyFailedKeys||[])">新增失败 {{comparison.newlyFailed}} ›</button>
+    <span v-else class="report-inline-muted">新增失败 0</span>
+    <span class="report-dot">·</span>
+    <button v-if="comparison.recovered>0" type="button" class="report-inline-chip good" @click="openSubset('较上次已恢复',comparison.recoveredKeys||[])">恢复 {{comparison.recovered}} ›</button>
+    <span v-else class="report-inline-muted">恢复 0</span>
+    <span class="report-dot">·</span>
+    <span>{{comparison.stableMedianDeltaMs===null?'稳定中位差暂无数据':`稳定中位差 ${formatSignedMs(comparison.stableMedianDeltaMs)}`}}</span>
+   </template>
+  </div>
+
+  <button v-for="notice in httpNoticeItems" :key="notice.text" type="button" class="latency-report-http" @click="openSubset(notice.label,notice.nodeKeys)">
+   <span>{{notice.text}}</span>
+   <span class="report-http-action">查看这 {{notice.nodeKeys.length}} 个节点 ›</span>
+  </button>
+
+  <section v-if="airportSummary.length>1" class="airport-summary">
+   <header><h3>按机场汇总</h3><small>点击任意机场查看该机场明细</small></header>
+   <div class="airport-summary-scroll">
+    <table>
+     <thead><tr><th>机场</th><th>节点数</th><th>能用</th><th>能用率</th><th>偏慢/不稳定</th><th>部分不通</th><th>无响应</th></tr></thead>
+     <tbody>
+      <tr v-for="a in airportSummary" :key="a.airport" class="clickable-row" @click="openAirportDetails(a.airport)">
+       <td><strong>{{a.airport}}</strong></td><td>{{a.total}}</td><td class="good">{{a.usable}}</td><td>{{a.total?Math.round(a.usable/a.total*100):0}}%</td><td>{{a.slow}}</td><td>{{a.partial}}</td><td :class="{bad:a.noResponse>0}">{{a.noResponse}}</td>
+      </tr>
+     </tbody>
+    </table>
+   </div>
+  </section>
+
   <div class="latency-report-columns">
    <section class="latency-report-panel">
-    <header><div><h3>最快 5 个</h3><small>按已测站点的稳定中位值排序</small></div></header>
+    <header><div><h3>最快 5 个</h3><small>按已测站点稳定中位排序 · 点击整行查详情</small></div></header>
     <ol v-if="report.fastest5.length" class="latency-report-fastest">
-     <li v-for="(row,index) in report.fastest5" :key="row.key">
-      <span class="latency-report-rank">{{index+1}}</span>
-      <div class="latency-report-node"><button class="text-button" @click="emit('inspect',row.item)">{{nodeDisplayName(row.item)}}</button><small>{{row.airportName}}<template v-if="row.nodeType!=='未知协议'"> · {{row.nodeType}}</template></small></div>
-      <strong><ReportMs :value="row.stableMs"/></strong>
+     <li v-for="(row,index) in report.fastest5" :key="row.key" class="report-clickable-item" @click="emit('inspect',row.item)">
+      <span class="latency-report-rank" :class="index===0?'top1':index<3?'top3':''">{{index+1}}</span>
+      <div class="latency-report-node"><button type="button" class="text-button" @click.stop="emit('inspect',row.item)">{{nodeDisplayName(row.item)}}</button><small>{{row.airportName}}<template v-if="row.nodeType!=='未知协议'"> · {{row.nodeType}}</template></small></div>
+      <strong class="report-fast-ms"><ReportMs :value="row.stableMs"/></strong>
+      <span class="report-row-arrow" aria-hidden="true">›</span>
      </li>
     </ol>
     <p v-else class="latency-report-empty">没有可计算的稳定延迟结果，需有首次之后的响应采样。</p>
    </section>
 
    <section class="latency-report-panel latency-report-problems">
-    <header><div><h3>问题按原因</h3><small>节点可打开明细，问题可直接重测</small></div></header>
+    <header><div><h3>问题按原因</h3><small>点标题筛选整组，点任意节点查看详情</small></div></header>
     <div v-if="report.groups.length" class="latency-report-groups">
      <article v-for="(group,index) in report.groups" :key="group.kind+'-'+group.reason+'-'+index" class="latency-report-group" :class="group.kind">
       <header>
-       <div><h4>{{group.reason}} <span>· {{group.rows.length}} 个</span></h4><small v-if="sharedIssueDetail(group)&&sharedIssueDetail(group)!==group.reason">{{sharedIssueDetail(group)}}</small><small v-if="group.kind==='skipped'">未执行项目单列，不计为无响应</small></div>
-       <button v-if="group.rows.length&&group.kind!=='skipped'" class="button ghost latency-report-retry" @click="emit('retry',uniqueItems(group.rows))">重测</button>
+       <div class="report-group-title">
+        <h4><button type="button" class="report-group-drill" :title="`在明细中查看这 ${group.rows.length} 个节点`" @click="openSubset(group.reason,group.rows.map(r=>r.key))">{{group.reason}} <span>· {{group.rows.length}} 个 ›</span></button></h4>
+        <small v-if="sharedIssueDetail(group)&&sharedIssueDetail(group)!==group.reason">{{sharedIssueDetail(group)}}</small>
+        <small v-if="group.kind==='skipped'">未执行项目单列，不计为无响应</small>
+       </div>
+       <button v-if="group.rows.length&&group.kind!=='skipped'" type="button" class="button latency-report-retry" @click="emit('retry',uniqueItems(group.rows))">重测</button>
       </header>
       <p v-if="group.kind==='slow'&&props.entryNotice" class="latency-report-group-note">{{props.entryNotice}}</p>
       <ul>
-       <li v-for="row in expandedGroups.has(index)||group.rows.length<=8?group.rows:group.rows.slice(0,6)" :key="row.key">
-        <span class="report-group-node"><button class="text-button" @click="emit('inspect',row.item)">{{nodeDisplayName(row.item)}}</button><span v-if="row.airportName" class="report-airport">{{row.airportName}}</span></span>
-        <small v-if="group.kind==='slow'||!sharedIssueDetail(group)&&issueDetail(group,row)!==group.reason">{{issueDetail(group,row)}}</small>
+       <li v-for="row in expandedGroups.has(index)||group.rows.length<=8?group.rows:group.rows.slice(0,6)" :key="row.key" class="report-clickable-item" @click="emit('inspect',row.item)">
+        <span class="report-group-node"><button type="button" class="text-button" @click.stop="emit('inspect',row.item)">{{nodeDisplayName(row.item)}}</button><span v-if="row.airportName" class="report-airport">{{row.airportName}}</span></span>
+        <span class="report-group-tail"><small v-if="group.kind==='slow'||!sharedIssueDetail(group)&&issueDetail(group,row)!==group.reason">{{issueDetail(group,row)}}</small><span class="report-row-arrow" aria-hidden="true">›</span></span>
        </li>
-      </ul><button v-if="group.rows.length>8" class="text-button" @click="toggleGroup(index)">{{expandedGroups.has(index)?'收起':'再看 '+(group.rows.length-6)+' 个'}}</button>
+      </ul>
+      <button v-if="group.rows.length>8" type="button" class="text-button report-expand-btn" @click="toggleGroup(index)">{{expandedGroups.has(index)?'收起':'再看 '+(group.rows.length-6)+' 个'}}</button>
      </article>
     </div>
     <p v-else class="latency-report-empty">本轮没有需要处理的问题。</p>
@@ -196,23 +260,24 @@ function shortSiteName(name:string){return name==='Cloudflare'?'CF':name}
   <div v-show="reportView==='details'" class="report-pane latency-report-details">
    <div class="report-detail-toolbar">
     <div class="report-detail-filters" role="group" aria-label="按结果筛选">
-     <button v-for="f in detailFilters" :key="f.key" type="button" class="report-filter-chip" :aria-pressed="detailStatus===f.key" @click="detailStatus=f.key">{{f.label}}<small>{{f.value}}</small></button>
+     <button v-for="f in detailFilters" :key="f.key" type="button" class="report-filter-chip" :aria-pressed="!detailSubset&&detailStatus===f.key" @click="detailSubset=null;detailStatus=f.key">{{f.label}}<small>{{f.value}}</small></button>
+     <button v-if="detailSubset" type="button" class="report-subset-pill" @click="detailSubset=null">范围：{{detailSubset.label}}（{{detailSubset.keys.size}}）<span>×</span></button>
     </div>
     <div class="report-detail-search">
      <input v-model="detailSearch" type="search" placeholder="搜节点、机场、协议" aria-label="筛选节点明细">
-     <button v-if="detailStatus!=='all'||detailSearch" type="button" class="button ghost small" @click="detailStatus='all';detailSearch=''">重置</button>
+     <button v-if="detailStatus!=='all'||detailSearch||detailSubset" type="button" class="button ghost small" @click="clearDetailFilters">重置</button>
     </div>
    </div>
    <div class="latency-report-table-wrap">
     <table>
      <thead><tr><th>节点</th><th>结果</th><th class="number">首次中位</th><th class="number">稳定中位</th><th>各站稳定延迟</th><th>说明</th></tr></thead>
      <tbody>
-      <tr v-for="row in pagedRows" :key="row.key">
-       <td><button class="text-button" @click="emit('inspect',row.item)">{{nodeDisplayName(row.item)}}</button><small>{{row.airportName}}<template v-if="row.nodeType!=='未知协议'"> · {{row.nodeType}}</template></small></td>
+      <tr v-for="row in pagedRows" :key="row.key" class="clickable-row" @click="emit('inspect',row.item)">
+       <td><button type="button" class="text-button" @click.stop="emit('inspect',row.item)">{{nodeDisplayName(row.item)}}</button><small>{{row.airportName}}<template v-if="row.nodeType!=='未知协议'"> · {{row.nodeType}}</template></small></td>
        <td><span class="latency-report-status" :class="row.status">{{statusLabel(row)}}</span><small v-if="row.suspected" class="latency-report-suspected">疑似检测问题</small></td>
        <td class="number"><ReportMs :value="row.firstMedianMs"/></td><td class="number"><ReportMs :value="row.stableMs"/></td>
        <td><div class="report-sites-grid"><span v-for="site in row.sites" :key="site.id" class="report-site-chip" :class="{bad:site.stableMs===null,slow:site.stableMs!==null&&site.stableMs>1500}" :title="`${site.name}: ${formatMs(site.stableMs)}`"><small>{{shortSiteName(site.name)}}</small><b>{{formatMs(site.stableMs)}}</b></span></div></td>
-       <td><small>{{partialLatencyError(row.item.result)||row.suspectedReasons.join('；')||row.skipReason||'—'}}</small></td>
+       <td><div class="report-detail-note-cell"><small>{{partialLatencyError(row.item.result)||row.suspectedReasons.join('；')||row.skipReason||'—'}}</small><span class="report-row-arrow" aria-hidden="true">›</span></div></td>
       </tr>
       <tr v-if="!pagedRows.length"><td colspan="6" class="report-table-empty">没有符合当前筛选条件的节点</td></tr>
      </tbody>
@@ -238,84 +303,184 @@ function shortSiteName(name:string){return name==='Cloudflare'?'CF':name}
 <style scoped>
 .report-image-stage{position:fixed;left:-12000px;top:0;width:1000px;pointer-events:none}
 .latency-report{display:flex;flex-direction:column;gap:14px;color:var(--cst-text)}
-.latency-report-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
-.latency-report-kicker{color:var(--cst-muted);font-size:11px;line-height:1.3;margin:0}
-.latency-report-head h2{margin:3px 0 4px;font-size:19px}
+.latency-report-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.latency-report-head-main{display:flex;flex-direction:column;gap:4px;min-width:0}
+.latency-report-title-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.latency-report-head h2{margin:0;font-size:15.5px;font-weight:750;letter-spacing:-.015em;color:var(--cst-text)}
+.latency-report-head h2:focus{outline:none}
 .latency-report-meta{color:var(--cst-muted);font-size:12px;line-height:1.45;margin:0}
-.latency-report-state{flex:none;border:1px solid var(--cst-line-strong);border-radius:999px;padding:4px 10px;background:var(--cst-panel-2);color:var(--cst-muted);font-size:11px}
-.report-tabs{display:flex;gap:6px;flex-wrap:wrap;padding-bottom:2px;border-bottom:1px solid var(--cst-line)}
-.report-tab{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;margin-bottom:-1px;border:1px solid transparent;border-bottom:2px solid transparent;border-radius:9px 9px 0 0;background:transparent;color:var(--cst-muted);font-size:13px;font-weight:550;cursor:pointer}
-.report-tab small{padding:1px 6px;border-radius:999px;background:var(--cst-panel-2);color:var(--cst-muted);font-size:11px;font-variant-numeric:tabular-nums}
+.latency-report-state{display:inline-flex;align-items:center;gap:6px;flex:none;border:1px solid var(--cst-line-strong);border-radius:999px;padding:2.5px 10px;background:var(--cst-panel-2);color:var(--cst-muted);font-size:11px;font-weight:650}
+.latency-report-state i{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
+.latency-report-state.good{color:var(--cst-good);background:var(--cst-good-bg);border-color:color-mix(in srgb,var(--cst-good) 28%,transparent)}
+.latency-report-state.warn{color:var(--cst-warn);background:var(--cst-warn-bg);border-color:color-mix(in srgb,var(--cst-warn) 32%,transparent)}
+
+.report-tabs{display:inline-flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--cst-line);border-radius:11px;background:var(--cst-panel-2);flex:none}
+.report-tab{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 13px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--cst-muted);font-size:12.5px;font-weight:550;cursor:pointer;transition:background .14s,color .14s,border-color .14s,box-shadow .14s}
+.report-tab small{padding:1px 6px;border-radius:999px;background:var(--cst-panel);color:var(--cst-muted);font-size:10.5px;font-weight:700;font-variant-numeric:tabular-nums}
 .report-tab:hover{color:var(--cst-text)}
-.report-tab[aria-selected="true"]{color:var(--cst-accent);border-bottom-color:var(--cst-accent);background:var(--cst-panel-2);font-weight:650}
+.report-tab[aria-selected="true"]{color:var(--cst-accent);background:var(--cst-panel-solid);border-color:color-mix(in srgb,var(--cst-accent) 26%,var(--cst-line));box-shadow:var(--cst-shadow-xs);font-weight:650}
 .report-tab[aria-selected="true"] small{background:var(--cst-accent-soft);color:var(--cst-accent)}
+
 .report-pane{display:flex;flex-direction:column;gap:12px}
-.latency-report-overview{display:grid;grid-template-columns:195px minmax(0,1fr);gap:24px;padding:16px 18px;border:1px solid var(--cst-line-strong);border-radius:14px;background:var(--cst-panel-2);align-items:center}
-.latency-report-verdict>span{font-size:12px;color:var(--cst-muted)}.latency-report-verdict>strong{display:block;margin:4px 0;font-size:38px;font-weight:600;line-height:1.1;font-variant-numeric:tabular-nums}.latency-report-verdict strong small{font-size:18px;color:var(--cst-muted);font-weight:400}.latency-report-verdict p{font-size:11px;color:var(--cst-muted);margin:6px 0 0}
-.latency-report-distribution-bar{display:flex;gap:3px;height:10px;margin-bottom:14px;border-radius:999px;overflow:hidden;background:var(--cst-panel)}.latency-report-distribution-bar span.good{background:var(--cst-good)}.latency-report-distribution-bar span.warn{background:var(--cst-warn)}.latency-report-distribution-bar span.bad{background:var(--cst-bad)}.latency-report-distribution-bar span.empty{background:var(--cst-line-strong)}
-.latency-report-counts{display:flex;gap:8px;flex-wrap:wrap}.latency-report-count{display:inline-flex;align-items:baseline;gap:7px;min-width:68px;padding:7px 11px;border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel);color:inherit;text-align:left}.latency-report-count.clickable{cursor:pointer}.latency-report-count.clickable:hover{border-color:var(--cst-accent);background:var(--cst-accent-soft)}.latency-report-count:disabled{opacity:.7;cursor:default}.latency-report-count small{color:var(--cst-muted);font-size:11px}.latency-report-count strong{font-size:16px;line-height:1.1;font-weight:600;font-variant-numeric:tabular-nums}.latency-report-count.good strong{color:var(--cst-good)}.latency-report-count.bad strong{color:var(--cst-bad)}.latency-report-count.warn strong{color:var(--cst-warn)}
-.latency-report-note{color:var(--cst-muted);font-size:11px;margin:0}
-.latency-report-compare{margin:0;padding:8px 12px;border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel-2);color:var(--cst-muted);font-size:12px;line-height:1.55}
-.latency-report-http{margin:0;padding:8px 12px;border:1px solid var(--cst-warn-line);border-radius:10px;background:var(--cst-warn-bg);color:var(--cst-warn);font-size:12px;line-height:1.55}
-.latency-report-columns{display:grid;grid-template-columns:minmax(220px,.85fr) minmax(0,1.15fr);gap:14px;align-items:start}
-.latency-report-panel{min-width:0;border:1px solid var(--cst-line);border-radius:14px;background:var(--cst-panel);padding:14px 16px}
+.latency-report-overview{display:grid;grid-template-columns:208px minmax(0,1fr);gap:22px;padding:16px 18px;border:1px solid color-mix(in srgb,var(--cst-accent) 22%,var(--cst-line));border-radius:14px;background:var(--cst-aurora-surface),var(--cst-panel);box-shadow:var(--cst-shadow-xs);align-items:center}
+.latency-report-verdict{display:flex;flex-direction:column;align-items:flex-start;padding:4px 8px 4px 2px;border:0;border-radius:10px;background:transparent;color:inherit;text-align:left;cursor:pointer;transition:background .14s}
+.latency-report-verdict:hover:not(:disabled){background:color-mix(in srgb,var(--cst-accent) 6%,transparent)}
+.latency-report-verdict:disabled{cursor:default}
+.verdict-label{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--cst-muted);font-weight:550}
+.verdict-pct{display:inline-flex;align-items:center;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:750;font-variant-numeric:tabular-nums}
+.verdict-pct.good{background:var(--cst-good-bg);color:var(--cst-good)}
+.verdict-pct.warn{background:var(--cst-warn-bg);color:var(--cst-warn)}
+.verdict-pct.bad{background:var(--cst-bad-bg);color:var(--cst-bad)}
+.latency-report-verdict>strong{display:block;margin:4px 0 2px;font-size:38px;font-weight:750;line-height:1.05;letter-spacing:-.03em;font-variant-numeric:tabular-nums;color:var(--cst-text)}
+.latency-report-verdict strong small{font-size:17px;color:var(--cst-muted);font-weight:500}
+.latency-report-verdict p{font-size:11px;color:var(--cst-muted);margin:5px 0 0}
+
+.latency-report-distribution-bar{display:flex;gap:3px;height:11px;margin-bottom:13px;border-radius:999px;overflow:hidden;background:var(--cst-aurora-track);padding:1px}
+.report-bar-seg{border:0;padding:0;height:100%;border-radius:999px;cursor:pointer;transition:filter .14s,transform .14s}
+.report-bar-seg:hover{filter:brightness(1.1);transform:scaleY(1.18)}
+.report-bar-seg.good{background:var(--cst-aurora-good);box-shadow:0 0 10px rgba(16,185,129,.3)}
+.report-bar-seg.warn{background:var(--cst-aurora-warn)}
+.report-bar-seg.bad{background:linear-gradient(90deg,#e11d48 0%,#fb7185 100%)}
+.report-bar-seg.empty{background:var(--cst-line-strong)}
+
+.latency-report-counts{display:flex;gap:8px;flex-wrap:wrap}
+.latency-report-count{display:inline-flex;align-items:center;gap:6px;min-width:74px;padding:7px 11px;border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel-solid);color:inherit;text-align:left;box-shadow:var(--cst-shadow-xs);transition:border-color .14s,background .14s,transform .14s,box-shadow .14s}
+.latency-report-count i{width:6px;height:6px;border-radius:50%;flex:none;background:var(--cst-subtle)}
+.latency-report-count.good i{background:var(--cst-good)}
+.latency-report-count.warn i{background:var(--cst-warn)}
+.latency-report-count.bad i{background:var(--cst-bad)}
+.latency-report-count.clickable{cursor:pointer}
+.latency-report-count.clickable:hover{border-color:var(--cst-accent);background:var(--cst-accent-soft);transform:translateY(-1px);box-shadow:var(--cst-shadow)}
+.latency-report-count:disabled{opacity:.55;cursor:default;box-shadow:none}
+.latency-report-count small{color:var(--cst-muted);font-size:11.5px;font-weight:550}
+.latency-report-count strong{margin-left:auto;font-size:15px;line-height:1.1;font-weight:750;font-variant-numeric:tabular-nums}
+.latency-report-count.good strong{color:var(--cst-good)}
+.latency-report-count.bad strong{color:var(--cst-bad)}
+.latency-report-count.warn strong{color:var(--cst-warn)}
+
+.latency-report-notes{display:flex;flex-wrap:wrap;gap:8px}
+.latency-report-note{display:inline-flex;align-items:center;gap:8px;padding:5px 11px;border:1px solid var(--cst-line);border-radius:999px;background:var(--cst-panel-2);color:var(--cst-muted);font-size:11.5px;cursor:pointer;transition:border-color .14s,color .14s,background .14s}
+.latency-report-note span{color:var(--cst-accent);font-weight:650}
+.latency-report-note:hover{border-color:var(--cst-accent);background:var(--cst-accent-soft);color:var(--cst-text)}
+
+.latency-report-compare{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:0;padding:9px 13px;border:1px solid var(--cst-line);border-radius:11px;background:var(--cst-panel-2);color:var(--cst-muted);font-size:12px;line-height:1.5}
+.report-inline-chip{display:inline-flex;align-items:center;gap:3px;padding:1.5px 8px;border-radius:999px;border:1px solid transparent;font-size:11.5px;font-weight:650;cursor:pointer;transition:filter .14s}
+.report-inline-chip.bad{background:var(--cst-bad-bg);color:var(--cst-bad);border-color:color-mix(in srgb,var(--cst-bad) 30%,transparent)}
+.report-inline-chip.good{background:var(--cst-good-bg);color:var(--cst-good);border-color:color-mix(in srgb,var(--cst-good) 30%,transparent)}
+.report-inline-chip:hover{filter:brightness(.94)}
+.report-inline-muted{color:var(--cst-muted)}.report-dot{opacity:.5}
+
+.latency-report-http{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;margin:0;padding:9px 13px;border:1px solid color-mix(in srgb,var(--cst-warn) 34%,var(--cst-line));border-radius:11px;background:var(--cst-warn-bg);color:var(--cst-warn);font-size:12px;line-height:1.5;text-align:left;cursor:pointer;transition:border-color .14s,filter .14s,transform .14s}
+.latency-report-http:hover{border-color:var(--cst-warn);filter:brightness(.98);transform:translateY(-1px)}
+.report-http-action{flex:none;font-weight:700;white-space:nowrap;padding:2px 9px;border-radius:999px;background:color-mix(in srgb,var(--cst-warn) 14%,var(--cst-panel-solid))}
+
+.latency-report-columns{display:grid;grid-template-columns:minmax(240px,.88fr) minmax(0,1.12fr);gap:14px;align-items:start}
+.latency-report-panel{min-width:0;border:1px solid var(--cst-line);border-radius:14px;background:var(--cst-panel);padding:14px 16px;box-shadow:var(--cst-shadow-xs)}
 .latency-report-panel>header,.latency-report-group>header{display:flex;align-items:center;justify-content:space-between;gap:10px}
-.latency-report-panel h3{font-size:14px;margin:0 0 2px}.latency-report-panel header small{color:var(--cst-muted);font-size:11px}
-.latency-report-fastest{list-style:none;padding:0;margin:10px 0 0}
-.latency-report-fastest li{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--cst-line)}
-.latency-report-fastest li:first-child{border-top:0;padding-top:4px}
-.latency-report-rank{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;flex:none;border-radius:999px;background:var(--cst-panel-2);color:var(--cst-muted);font-size:11px;font-weight:600;font-variant-numeric:tabular-nums}
+.latency-report-panel h3{font-size:14px;font-weight:700;margin:0 0 2px}
+.latency-report-panel header small{color:var(--cst-muted);font-size:11px}
+
+.latency-report-fastest{list-style:none;padding:0;margin:10px 0 0;display:flex;flex-direction:column;gap:4px}
+.latency-report-fastest li{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid transparent;border-radius:10px;background:var(--cst-panel-2);cursor:pointer;transition:border-color .14s,background .14s,transform .14s}
+.latency-report-fastest li:hover{border-color:color-mix(in srgb,var(--cst-accent) 34%,var(--cst-line));background:color-mix(in srgb,var(--cst-accent) 6%,var(--cst-panel-solid));transform:translateX(2px)}
+.latency-report-rank{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;flex:none;border-radius:999px;background:var(--cst-panel-solid);border:1px solid var(--cst-line);color:var(--cst-muted);font-size:11px;font-weight:750;font-variant-numeric:tabular-nums}
+.latency-report-rank.top1{background:var(--cst-aurora-primary);border-color:transparent;color:#fff;box-shadow:0 3px 10px -2px rgba(79,110,247,.5)}
+.latency-report-rank.top3{background:var(--cst-accent-soft);border-color:color-mix(in srgb,var(--cst-accent) 26%,transparent);color:var(--cst-accent)}
 .latency-report-node{display:flex;min-width:0;flex:1;flex-direction:column;align-items:flex-start;gap:2px}
-.latency-report-node .text-button,.latency-report-group li .text-button,.latency-report-table-wrap .text-button{max-width:100%;white-space:normal;text-align:left}
+.latency-report-node .text-button,.latency-report-group li .text-button,.latency-report-table-wrap .text-button{max-width:100%;white-space:normal;text-align:left;font-weight:600;color:var(--cst-text)}
+.latency-report-fastest li:hover .text-button,.latency-report-group li:hover .text-button,.latency-report-table-wrap tbody tr.clickable-row:hover .text-button{color:var(--cst-accent)}
 .latency-report-node small{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--cst-muted);font-size:11px}
-.latency-report-fastest li>strong{flex:none;font-size:13px;font-variant-numeric:tabular-nums}
+.report-fast-ms{flex:none;padding:2px 8px;border-radius:999px;background:var(--cst-good-bg);color:var(--cst-good);font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums}
+.report-row-arrow{flex:none;color:var(--cst-subtle);font-size:14px;line-height:1;transition:transform .14s,color .14s}
+.report-clickable-item:hover .report-row-arrow,.clickable-row:hover .report-row-arrow{color:var(--cst-accent);transform:translateX(2px)}
+
 .latency-report-empty{padding:12px 0 4px;color:var(--cst-muted);font-size:12px;margin:0}
 .latency-report-groups{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;margin-top:10px}
-.latency-report-group{border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel-2);padding:11px 13px}
-.latency-report-group>header h4{margin:0;font-size:12.5px;font-weight:600}.latency-report-group>header h4 span{color:var(--cst-muted);font-weight:400}
-.latency-report-group>header small{display:block;margin-top:2px;color:var(--cst-muted);font-size:11px}.latency-report-group-note{margin:7px 0 0;padding:6px 8px;border-radius:6px;background:var(--cst-warn-bg);border:1px solid var(--cst-warn-line);color:var(--cst-warn);font-size:11px;line-height:1.55}.latency-report-group ul{display:flex;flex-direction:column;gap:5px;list-style:none;padding:0;margin:8px 0 0}
-.latency-report-group li{display:flex;align-items:baseline;justify-content:space-between;gap:8px;min-width:0;padding-top:5px;border-top:1px dashed var(--cst-line)}
-.latency-report-group li:first-child{border-top:0;padding-top:0}
-.report-group-node{display:inline-flex;align-items:baseline;gap:6px;flex-wrap:wrap;min-width:0}
+.latency-report-group{border:1px solid var(--cst-line);border-radius:11px;background:var(--cst-panel-2);padding:11px 12px;min-width:0}
+.report-group-title{min-width:0}
+.latency-report-group>header h4{margin:0;font-size:13px;font-weight:700}
+.report-group-drill{display:inline-flex;align-items:center;gap:4px;padding:0;border:0;background:transparent;color:var(--cst-text);font:inherit;cursor:pointer;text-align:left}
+.report-group-drill:hover{color:var(--cst-accent)}
+.report-group-drill span{color:var(--cst-muted);font-weight:500;font-size:12px}
+.report-group-drill:hover span{color:var(--cst-accent)}
+.latency-report-group>header small{display:block;margin-top:2px;color:var(--cst-muted);font-size:11px}
+.latency-report-group-note{margin:7px 0 0;padding:6px 8px;border-radius:7px;background:var(--cst-warn-bg);border:1px solid color-mix(in srgb,var(--cst-warn) 32%,transparent);color:var(--cst-warn);font-size:11px;line-height:1.55}
+.latency-report-group ul{display:flex;flex-direction:column;gap:4px;list-style:none;padding:0;margin:8px 0 0}
+.latency-report-group li{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0;padding:6px 8px;border:1px solid transparent;border-radius:8px;background:var(--cst-panel-solid);cursor:pointer;transition:border-color .14s,background .14s}
+.latency-report-group li:hover{border-color:color-mix(in srgb,var(--cst-accent) 34%,var(--cst-line));background:color-mix(in srgb,var(--cst-accent) 5%,var(--cst-panel-solid))}
+.report-group-node{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+.report-group-tail{display:inline-flex;align-items:center;gap:6px;flex:none}
 .latency-report-group li small{min-width:0;color:var(--cst-muted);font-size:11px;text-align:right;white-space:nowrap}
 .latency-report-group.suspected{border-color:color-mix(in srgb,var(--cst-accent) 35%,var(--cst-line))}
 .latency-report-group.skipped{background:color-mix(in srgb,var(--cst-panel) 85%,var(--cst-hover))}
-.latency-report-retry{min-height:26px;padding:3px 9px;font-size:11px;flex:none}
-.latency-report-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;padding-top:4px}
+.latency-report-retry{min-height:27px;padding:3px 10px;font-size:11.5px;flex:none;border-radius:8px}
+.report-expand-btn{margin-top:7px;font-size:12px;font-weight:600}
+
+.latency-report-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;padding-top:6px;border-top:1px solid var(--cst-line)}
 .report-detail-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
-.report-detail-filters{display:flex;gap:6px;flex-wrap:wrap}
-.report-filter-chip{display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border:1px solid var(--cst-line);border-radius:999px;background:var(--cst-panel-2);color:var(--cst-muted);font-size:12px;cursor:pointer}
-.report-filter-chip small{font-size:11px;opacity:.8;font-variant-numeric:tabular-nums}
-.report-filter-chip[aria-pressed="true"]{background:var(--cst-accent-soft);border-color:var(--cst-accent);color:var(--cst-accent);font-weight:600}
+.report-detail-filters{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.report-filter-chip{display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border:1px solid var(--cst-line);border-radius:999px;background:var(--cst-panel-2);color:var(--cst-muted);font-size:12px;font-weight:550;cursor:pointer;transition:border-color .12s,background .12s,color .12s}
+.report-filter-chip:hover{border-color:var(--cst-accent);color:var(--cst-text)}
+.report-filter-chip small{font-size:11px;opacity:.85;font-variant-numeric:tabular-nums}
+.report-filter-chip[aria-pressed="true"]{background:var(--cst-accent-soft);border-color:var(--cst-accent);color:var(--cst-accent);font-weight:650}
+.report-subset-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border:1px solid color-mix(in srgb,var(--cst-accent) 42%,transparent);border-radius:999px;background:var(--cst-aurora-surface),var(--cst-panel);color:var(--cst-accent);font-size:12px;font-weight:650;cursor:pointer}
+.report-subset-pill span{font-size:14px;line-height:1}
 .report-detail-search{display:flex;align-items:center;gap:6px}
-.report-detail-search input{width:190px;max-width:100%;padding:5px 10px;border:1px solid var(--cst-line);border-radius:8px;background:var(--cst-panel);color:var(--cst-text);font-size:12px}
-.latency-report-table-wrap{overflow:auto;border:1px solid var(--cst-line);border-radius:12px;background:var(--cst-panel)}
+.report-detail-search input{width:200px;max-width:100%;height:34px;padding:5px 11px;border:1px solid var(--cst-line);border-radius:9px;background:var(--cst-panel-2);color:var(--cst-text);font-size:12.5px}
+.report-detail-search input:focus{outline:none;border-color:var(--cst-accent);background:var(--cst-panel);box-shadow:0 0 0 3px color-mix(in srgb,var(--cst-accent) 13%,transparent)}
+
+.latency-report-table-wrap{overflow:auto;border:1px solid var(--cst-line);border-radius:12px;background:var(--cst-panel);box-shadow:var(--cst-shadow-xs)}
 .latency-report-table-wrap table{width:100%;min-width:700px;border-collapse:collapse;font-size:12px}
-.latency-report-table-wrap th,.latency-report-table-wrap td{padding:9px 10px;border-bottom:1px solid var(--cst-line);text-align:left;vertical-align:top}
+.latency-report-table-wrap th,.latency-report-table-wrap td{padding:9px 11px;border-bottom:1px solid var(--cst-line);text-align:left;vertical-align:middle}
 .latency-report-table-wrap tbody tr:last-child td{border-bottom:0}
-.latency-report-table-wrap tbody tr:hover{background:var(--cst-panel-2)}
-.latency-report-table-wrap th{position:sticky;top:0;background:var(--cst-panel-2);color:var(--cst-muted);font-weight:550;font-size:11px;white-space:nowrap;z-index:1}
+.latency-report-table-wrap tbody tr.clickable-row{cursor:pointer;transition:background .12s}
+.latency-report-table-wrap tbody tr.clickable-row:hover{background:color-mix(in srgb,var(--cst-accent) 5%,var(--cst-panel-2))}
+.latency-report-table-wrap th{position:sticky;top:0;background:var(--cst-panel-2);color:var(--cst-muted);font-weight:600;font-size:11px;white-space:nowrap;z-index:1}
 .latency-report-table-wrap .number{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .latency-report-table-wrap td:first-child{min-width:165px}
 .latency-report-table-wrap td:first-child small,.latency-report-table-wrap td:nth-child(2) small,.latency-report-table-wrap td:last-child small{display:block;max-width:220px;margin-top:3px;color:var(--cst-muted);font-size:11px;line-height:1.4}
-.latency-report-status{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap;border:1px solid var(--cst-line);background:var(--cst-panel-2)}
-.latency-report-status.usable{color:var(--cst-good);background:color-mix(in srgb,var(--cst-good) 10%,var(--cst-panel));border-color:color-mix(in srgb,var(--cst-good) 28%,var(--cst-line))}
-.latency-report-status.slow,.latency-report-status.unstable,.latency-report-status.partial{color:var(--cst-warn);background:var(--cst-warn-bg);border-color:var(--cst-warn-line)}
+.report-detail-note-cell{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.latency-report-status{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:650;white-space:nowrap;border:1px solid var(--cst-line);background:var(--cst-panel-2)}
+.latency-report-status.usable{color:var(--cst-good);background:var(--cst-good-bg);border-color:color-mix(in srgb,var(--cst-good) 28%,transparent)}
+.latency-report-status.slow,.latency-report-status.unstable,.latency-report-status.partial{color:var(--cst-warn);background:var(--cst-warn-bg);border-color:color-mix(in srgb,var(--cst-warn) 32%,transparent)}
 .latency-report-status.partial{white-space:normal}
-.latency-report-status.no-response{color:var(--cst-bad);background:color-mix(in srgb,var(--cst-bad) 10%,var(--cst-panel));border-color:color-mix(in srgb,var(--cst-bad) 28%,var(--cst-line))}
+.latency-report-status.no-response{color:var(--cst-bad);background:var(--cst-bad-bg);border-color:color-mix(in srgb,var(--cst-bad) 28%,transparent)}
 .latency-report-status.incomplete,.latency-report-status.skipped{color:var(--cst-muted)}
-.latency-report-note.partial{color:var(--cst-warn)}
 .latency-report-suspected{color:var(--cst-accent)!important}
 .report-sites-grid{display:flex;flex-wrap:wrap;gap:4px;max-width:290px}
-.report-site-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border-radius:6px;background:var(--cst-panel-2);border:1px solid var(--cst-line);font-size:11px;font-variant-numeric:tabular-nums}
+.report-site-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:7px;background:var(--cst-panel-2);border:1px solid var(--cst-line);font-size:11px;font-variant-numeric:tabular-nums}
 .report-site-chip small{color:var(--cst-muted);font-size:10px}
-.report-site-chip b{font-weight:550;color:var(--cst-text)}
-.report-site-chip.slow{border-color:var(--cst-warn-line);background:var(--cst-warn-bg)}.report-site-chip.slow b{color:var(--cst-warn)}
-.report-site-chip.bad{border-color:color-mix(in srgb,var(--cst-bad) 28%,var(--cst-line));background:color-mix(in srgb,var(--cst-bad) 8%,var(--cst-panel))}.report-site-chip.bad b{color:var(--cst-bad)}
+.report-site-chip b{font-weight:600;color:var(--cst-text)}
+.report-site-chip.slow{border-color:color-mix(in srgb,var(--cst-warn) 34%,transparent);background:var(--cst-warn-bg)}.report-site-chip.slow b{color:var(--cst-warn)}
+.report-site-chip.bad{border-color:color-mix(in srgb,var(--cst-bad) 28%,transparent);background:var(--cst-bad-bg)}.report-site-chip.bad b{color:var(--cst-bad)}
 .report-table-empty{text-align:center;color:var(--cst-muted);padding:20px!important}
 .report-pagination{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--cst-muted)}
 .report-pagination-btns{display:flex;gap:6px}
-@media(max-width:760px){.latency-report-overview{grid-template-columns:minmax(0,1fr);gap:14px}.latency-report-verdict>strong{font-size:32px}.latency-report-columns{grid-template-columns:minmax(0,1fr)}.latency-report-head{gap:8px}.latency-report-meta{max-width:58vw}.latency-report-group li{align-items:flex-start;flex-direction:column;gap:2px}.latency-report-group li small{text-align:left}.latency-report-actions{justify-content:stretch}.latency-report-actions .button{flex:1}}
-.latency-report-problems{overflow:visible;max-height:none}.latency-report-groups,.latency-report-group,.latency-report-group ul{max-height:none;overflow:visible}.report-airport{display:inline-flex;padding:1px 6px;border-radius:999px;background:var(--cst-panel);border:1px solid var(--cst-line);font-size:10px;color:var(--cst-muted)}.airport-summary{border:1px solid var(--cst-line);border-radius:14px;background:var(--cst-panel);padding:12px 14px}.airport-summary-scroll{overflow:auto}.airport-summary h3{font-size:13px;margin:0 0 8px}.airport-summary table{min-width:540px;width:100%;border-collapse:collapse;font-size:12px}.airport-summary th,.airport-summary td{padding:7px;border-bottom:1px solid var(--cst-line);text-align:left}.airport-summary tbody tr:last-child td{border-bottom:0}
-.latency-report-head h2:focus{outline:none}.latency-report-group{min-width:0}.latency-report-group li>span{min-width:0}
+
+.latency-report-problems{overflow:visible;max-height:none}
+.latency-report-groups,.latency-report-group,.latency-report-group ul{max-height:none;overflow:visible}
+.report-airport{display:inline-flex;padding:1px 7px;border-radius:999px;background:var(--cst-panel-2);border:1px solid var(--cst-line);font-size:10px;color:var(--cst-muted)}
+.airport-summary{border:1px solid var(--cst-line);border-radius:14px;background:var(--cst-panel);padding:12px 14px;box-shadow:var(--cst-shadow-xs)}
+.airport-summary header{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:0 0 8px}
+.airport-summary h3{font-size:13.5px;font-weight:700;margin:0}
+.airport-summary header small{font-size:11px;color:var(--cst-muted)}
+.airport-summary-scroll{overflow:auto}
+.airport-summary table{min-width:540px;width:100%;border-collapse:collapse;font-size:12px}
+.airport-summary th,.airport-summary td{padding:7px 8px;border-bottom:1px solid var(--cst-line);text-align:left;font-variant-numeric:tabular-nums}
+.airport-summary tbody tr:last-child td{border-bottom:0}
+.airport-summary tbody tr.clickable-row{cursor:pointer;transition:background .12s}
+.airport-summary tbody tr.clickable-row:hover{background:var(--cst-accent-soft)}
+.airport-summary td.good{color:var(--cst-good);font-weight:650}
+.airport-summary td.bad{color:var(--cst-bad);font-weight:650}
+
+@media(max-width:760px){
+ .latency-report-overview{grid-template-columns:minmax(0,1fr);gap:14px}
+ .latency-report-verdict>strong{font-size:32px}
+ .latency-report-columns{grid-template-columns:minmax(0,1fr)}
+ .latency-report-head{gap:8px}
+ .latency-report-group li{align-items:flex-start;flex-direction:column;gap:3px}
+ .report-group-tail{width:100%;justify-content:space-between}
+ .latency-report-actions{justify-content:stretch}
+ .latency-report-actions .button{flex:1}
+}
 </style>

@@ -75,4 +75,25 @@ describe('latency run report',()=>{
   wrapper.unmount()
  })
 
+ it('drills down from HTTP notices, bar segments, problem groups and whole node rows',async()=>{
+  const refused=item('jp-refused',260)
+  refused.result!.samples[12]={...refused.result!.samples[12],error:'HTTP 403；响应时延已测，业务／地区解锁未确认'}
+  const clean=item('sg-clean',180)
+  const failed=item('us-fail',0,false)
+  const wrapper=mount(LatencyReport,{props:{batch:batch([refused,clean,failed]),airportNames:{p:'机场A'}}})
+  await wrapper.get('.latency-report-http').trigger('click')
+  expect(wrapper.get('.report-tab[aria-selected="true"]').text()).toContain('逐个明细')
+  expect(wrapper.get('.report-subset-pill').text()).toContain('GitHub 拒绝访问')
+  expect(wrapper.findAll('.latency-report-table-wrap tbody tr')).toHaveLength(1)
+  await wrapper.get('.latency-report-table-wrap tbody tr').trigger('click')
+  expect(wrapper.emitted('inspect')?.[0]?.[0]).toMatchObject({node_key:'jp-refused'})
+  await wrapper.findAll('.report-tab')[0]!.trigger('click')
+  await wrapper.get('.latency-report-fastest li').trigger('click')
+  expect(wrapper.emitted('inspect')?.[1]?.[0]).toMatchObject({node_key:'sg-clean'})
+  await wrapper.get('.report-group-drill').trigger('click')
+  expect(wrapper.get('.report-tab[aria-selected="true"]').text()).toContain('逐个明细')
+  expect(wrapper.findAll('.latency-report-table-wrap tbody tr')).toHaveLength(1)
+  wrapper.unmount()
+ })
+
 })

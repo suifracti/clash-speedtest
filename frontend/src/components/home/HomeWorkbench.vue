@@ -12,7 +12,6 @@ import Icon from '../Icon.vue'
 import UiSelect from '../UiSelect.vue'
 import UnlockPicker from '../UnlockPicker.vue'
 import SubscriptionOverview from '../SubscriptionOverview.vue'
-import AirportSidebar from '../AirportSidebar.vue'
 import SiteDisplayPicker from '../SiteDisplayPicker.vue'
 import UnlockServiceMatrix from './UnlockServiceMatrix.vue'
 import NodeInspector from './NodeInspector.vue'
@@ -153,6 +152,9 @@ onMounted(()=>detailViewport?.addEventListener('change',updateDetailViewport))
 onBeforeUnmount(()=>detailViewport?.removeEventListener('change',updateDetailViewport))
 function closeDetails(){if(m.compareOpen.value)m.closeComparison();else{inspectorOpen.value=false;void nextTick(focusReadingRow)}}
 const ledgerExpanded=ref(false)
+function savedSidebarCollapsed(){try{return window.localStorage.getItem('cst.sidebar-collapsed')==='true'}catch{return false}}
+const sidebarCollapsed=ref(savedSidebarCollapsed()),sidebarSearchOpen=ref(false),sidebarSearch=ref('')
+function setSidebarCollapsed(next:boolean){sidebarCollapsed.value=next;try{window.localStorage.setItem('cst.sidebar-collapsed',String(next))}catch{}}
 const focusKey=ref<string|null>(null)
 const focusNode=computed(()=>m.pageNodes.value.find(n=>key(n)===focusKey.value)||m.pageNodes.value[0])
 const readingNode=ref<NodeOption|null>(null),readingNodes=ref<NodeOption[]>([]),readerBody=ref<HTMLElement>()
@@ -350,30 +352,34 @@ function keyNav(e:KeyboardEvent){
 }
 </script>
 <template>
-  <section class="hd hd-workbench-layout" :style="{'--hd-toolbar-size':toolbarHeight+'px'}">
+  <section class="hd hd-workbench-layout" :class="{'sidebar-collapsed':sidebarCollapsed}" :style="{'--hd-toolbar-size':toolbarHeight+'px'}">
     <header class="hd-head">
       <div class="hd-title">
-        <h1>线路工作台</h1>
         <div class="hd-subtitle-row">
+          <button v-if="sidebarCollapsed" type="button" class="hd-sidebar-reveal" title="展开左侧来源与套餐栏" @click="setSidebarCollapsed(false)"><Icon name="panel"/><span>来源 {{chosen.length}}/{{w.airports.value.length}}</span></button>
           <p v-if="filteredAirport"><strong class="hd-head-airport">{{filteredAirport.name}}</strong> · {{filteredAirportNodes}} 个节点 · <button class="hd-link" @click="w.airportFilter.value='all'">看全部 {{chosen.length}} 个机场</button></p>
           <p v-else><button class="hd-link" @click="m.picker.value=true">{{chosen.length?chosen.length+' 个机场':'选择机场'}}</button> · {{chosenNodeCount}} 个节点</p>
           <button v-if="dominantClashUsage" class="hd-clash-usage" :disabled="!dominantClashNode" title="查看正在用的节点；按当前连接累计流量排序，每 30 秒更新" @click="inspectClashUsage"><span class="hd-clash-usage-dot" aria-hidden="true"></span>Clash 正在用：<strong>{{dominantClashName}}</strong><template v-if="dominantClashChains">（经策略组：{{dominantClashChains}}）</template></button>
         </div>
       </div>
-      <div class="hd-head-actions">
-        <button class="hd-btn hd-nav-shortcut" @click="w.page.value='recommend'">帮我选一条<Icon name="arrowRight"/></button>
-        <button v-if="!matrixMode&&!m.compareOpen.value" class="hd-btn" :aria-pressed="inspectorOpen" :title="inspectorOpen?'收起详情，全宽显示节点表':'展开节点详情'" @click="toggleDetails"><Icon name="panel"/>{{inspectorOpen?'全宽列表':'展开详情'}}</button>
-      </div>
     </header>
 
-    <div class="hd-workspace">
-    <section class="hd-source" :class="{'ledger-expanded':ledgerExpanded}" aria-label="机场选择">
+    <div class="hd-workspace" :class="{'sidebar-collapsed':sidebarCollapsed}">
+    <section v-show="!sidebarCollapsed" class="hd-source" :class="{'ledger-expanded':ledgerExpanded,'is-all-airports':w.airportFilter.value==='all'}" aria-label="机场选择">
       <header class="hd-source-heading">
-        <h2>来源与套餐</h2>
-        <span v-if="w.airports.value.length" class="hd-muted small">已纳 {{chosen.length}}/{{w.airports.value.length}}</span>
+        <div class="hd-source-title">
+          <h2>来源与套餐</h2>
+          <span v-if="w.airports.value.length" class="hd-source-count">{{chosen.length}}/{{w.airports.value.length}}</span>
+        </div>
+        <div class="hd-source-head-ops">
+          <button v-if="w.airports.value.length>1&&w.airports.value.length<=5" type="button" class="hd-source-icon-btn" :aria-pressed="sidebarSearchOpen" title="搜索机场" @click="sidebarSearchOpen=!sidebarSearchOpen;if(!sidebarSearchOpen)sidebarSearch=''"><Icon name="search"/></button>
+          <button type="button" class="hd-source-icon-btn hd-sidebar-collapse-btn" title="收起左侧栏，全宽显示列表" @click="setSidebarCollapsed(true)"><Icon name="panel"/></button>
+        </div>
       </header>
-      <div class="hd-source-details"><AirportSidebar @select="id=>w.viewAirport(id)"/></div>
-      <SubscriptionOverview :airports="chosen" :notices="w.notices.value" :airport-id="w.airportFilter.value" @viewed="id=>{w.airportFilter.value=id}">
+      <div v-if="w.airports.value.length>5||sidebarSearchOpen" class="hd-source-search-wrap">
+        <input v-model="sidebarSearch" type="search" class="hd-source-search" placeholder="搜索机场…" aria-label="搜索侧栏机场">
+      </div>
+      <SubscriptionOverview unified :search-query="sidebarSearch" :airports="chosen" :notices="w.notices.value" :airport-id="w.airportFilter.value" @viewed="id=>w.viewAirport(id)">
         <template #additional-actions>
           <div class="hd-source-tools">
             <button class="hd-ledger-toggle hd-link" :aria-expanded="ledgerExpanded" @click="ledgerExpanded=!ledgerExpanded">{{ledgerExpanded?'收起用量明细':'展开用量明细'}}</button>
@@ -393,6 +399,7 @@ function keyNav(e:KeyboardEvent){
           <button class="hd-seg-detail" :aria-pressed="exitMode" @click="selectExit">出口与信誉</button>
         </nav>
         <div class="hd-toolbar-actions">
+          <button v-if="!matrixMode&&!m.compareOpen.value" class="hd-btn hd-icon-toggle" :aria-pressed="inspectorOpen" :title="inspectorOpen?'收起节点详情，全宽显示列表':'展开节点详情侧栏'" @click="toggleDetails"><Icon name="panel"/></button>
           <button class="hd-btn" :disabled="w.loading.value" title="重新载入节点列表" @click="w.refreshNodes().catch(w.fail)"><Icon name="refresh"/>重新载入</button>
           <button v-if="exitMode" class="hd-btn" :disabled="w.busy.value||!m.runNodes.value.length" title="只解析节点入口地址，不经过节点，不算一次真实检测" @click="w.resolveEntries(m.runNodes.value)">解析入口</button>
           <button v-if="!exitMode&&w.project.value!=='combined'" class="hd-btn hd-run-combined" :disabled="w.busy.value||!m.runNodes.value.length||filterScopePending" title="按当前显示的节点范围打开组合检测" @click="m.openCombinedPlan()">组合检测</button>

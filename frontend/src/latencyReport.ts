@@ -6,8 +6,15 @@ export const latencySlowThresholdNote='四站稳定中位阈值 1,500 ms'
 export const latencySlowThresholdMs=1500
 export function latencyResponseUnstable(responses:number,total:number){return responses*6<total*5}
 
+export interface LatencyHttpNotice {
+ label:string
+ samples:number
+ nodeKeys:string[]
+ text:string
+}
+
 // Any HTTP response counts as connected, so refusals stay out of the failure counts.
-export function latencyHttpNotices(report:Pick<LatencyReport,'rows'>){
+export function latencyHttpNoticeDetails(report:Pick<LatencyReport,'rows'>):LatencyHttpNotice[]{
  const groups=new Map<string,{samples:number;nodes:Set<string>}>()
  for(const row of report.rows)for(const sample of row.item.result?.samples||[]){
   const status=sample.success?sample.error?.match(/^HTTP (\d+)/)?.[1]:''
@@ -17,7 +24,16 @@ export function latencyHttpNotices(report:Pick<LatencyReport,'rows'>){
   const group=groups.get(label)||{samples:0,nodes:new Set<string>()}
   group.samples++;group.nodes.add(row.key);groups.set(label,group)
  }
- return [...groups].map(([label,group])=>`${label} ${group.samples} 次，涉及 ${group.nodes.size} 个节点（已连通，可能是限流或风控）`)
+ return [...groups].map(([label,group])=>({
+  label,
+  samples:group.samples,
+  nodeKeys:[...group.nodes],
+  text:`${label} ${group.samples} 次，涉及 ${group.nodes.size} 个节点（已连通，可能是限流或风控）`
+ }))
+}
+
+export function latencyHttpNotices(report:Pick<LatencyReport,'rows'>){
+ return latencyHttpNoticeDetails(report).map(item=>item.text)
 }
 
 export type LatencyReportStatus='usable'|'slow'|'partial'|'unstable'|'no-response'|'skipped'
@@ -106,6 +122,8 @@ export interface LatencyReportComparison {
  comparableNodes:number
  newlyFailed:number
  recovered:number
+ newlyFailedKeys?:string[]
+ recoveredKeys?:string[]
  stableMedianDeltaMs:number|null
  latestPreviousAt?:string
  reason?:string
@@ -312,6 +330,7 @@ export function compareLatencyReports(batch:LatencyBatch,current:LatencyReport,p
  if(!candidates.length)return {...empty,reason:previous.length?'没有更早的同条件批次':'没有更早的同条件记录'}
  const candidateReports=candidates.map(candidate=>({batch:candidate,report:buildLatencyReport(candidate)}))
  let newlyFailed=0,recovered=0,latestPreviousAt:string|undefined
+ const newlyFailedKeys:string[]=[],recoveredKeys:string[]=[]
  const currentStable:number[]=[],previousStable:number[]=[]
  let comparableNodes=0
  for(const row of current.rows){
@@ -326,13 +345,13 @@ export function compareLatencyReports(batch:LatencyBatch,current:LatencyReport,p
   if(!latestPreviousAt||Date.parse(oldBatch.requested_at)>Date.parse(latestPreviousAt))latestPreviousAt=oldBatch.requested_at
   const previousFailed=oldRow.status==='no-response'
   const currentFailed=row.status==='no-response'
-  if(oldRow.responseSamples>0&&currentFailed)newlyFailed++
-  if(previousFailed&&row.responseSamples>0)recovered++
+  if(oldRow.responseSamples>0&&currentFailed){newlyFailed++;newlyFailedKeys.push(row.key)}
+  if(previousFailed&&row.responseSamples>0){recovered++;recoveredKeys.push(row.key)}
   if(row.stableMs!==null&&oldRow.stableMs!==null){currentStable.push(row.stableMs);previousStable.push(oldRow.stableMs)}
  }
  if(!comparableNodes)return {...empty,reason:'没有同一节点、同一配置的已执行记录可比'}
  const currentMedian=inspectorMedian(currentStable),previousMedian=inspectorMedian(previousStable)
- return {comparableNodes,newlyFailed,recovered,stableMedianDeltaMs:currentMedian===null||previousMedian===null?null:currentMedian-previousMedian,latestPreviousAt}
+ return {comparableNodes,newlyFailed,recovered,newlyFailedKeys,recoveredKeys,stableMedianDeltaMs:currentMedian===null||previousMedian===null?null:currentMedian-previousMedian,latestPreviousAt}
 }
 
 export function latencyReportText(batch:LatencyBatch){const c=buildLatencyReport(batch).counts;return `${c.usable} 能用 · ${c.slow} 偏慢 · ${c.unstable} 不稳定${c.partial?` · ${c.partial} 部分站点不通`:""} · ${c.noResponse} 无响应${c.skipped?` · ${c.skipped} 未执行`:''}`}
