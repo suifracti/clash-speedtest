@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {computed,nextTick,ref,watch,onMounted} from 'vue'
+import {computed,nextTick,onBeforeUnmount,onMounted,ref,watch} from 'vue'
 import LatencyReportImage from './LatencyReportImage.vue'
 import ReportMs from './ReportMs.vue'
 import {saveReportImage} from '../reportImage'
@@ -32,8 +32,17 @@ async function exportImage(){
  finally{imageBusy.value=false}
 }
 const report=computed(()=>buildLatencyReport(props.batch,props.airportNames))
-const reportTitle=ref<HTMLElement>()
-onMounted(()=>nextTick(()=>reportTitle.value?.focus({preventScroll:true})))
+const reportRoot=ref<HTMLElement>(),reportTitle=ref<HTMLElement>()
+let boundDialog:HTMLDialogElement|null=null
+function onDialogCancel(event:Event){
+ if(inspectedKey.value){event.preventDefault();closeNodeDetail()}
+}
+onMounted(()=>{
+ boundDialog=reportRoot.value?.closest('dialog')||null
+ boundDialog?.addEventListener('cancel',onDialogCancel)
+ void nextTick(()=>reportTitle.value?.focus({preventScroll:true}))
+})
+onBeforeUnmount(()=>boundDialog?.removeEventListener('cancel',onDialogCancel))
 const reportView=ref<'overview'|'details'>('overview')
 const detailStatus=ref<'all'|LatencyReportStatus>('all')
 const detailSubset=ref<{label:string;keys:Set<string>}|null>(null)
@@ -222,7 +231,7 @@ function inspectedAlerts(row:LatencyReportRow){
 </script>
 
 <template>
- <section class="latency-report" aria-label="延迟检测报告">
+ <section ref="reportRoot" class="latency-report" aria-label="延迟检测报告" @keydown.esc="inspectedRow&&(closeNodeDetail(),$event.stopPropagation())">
   <template v-if="inspectedRow">
    <div class="report-node-detail" aria-label="本轮节点采样详情">
     <header class="report-detail-nav">

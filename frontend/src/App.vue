@@ -9,6 +9,7 @@ import Modal from './components/Modal.vue'
 import HomeView from './components/HomeView.vue'
 import {latencyReportText} from './latencyReport'
 import HoverTip from './components/HoverTip.vue'
+import GlobalChartTip from './components/GlobalChartTip.vue'
 const RecommendationView=defineAsyncComponent(()=>import('./components/RecommendationView.vue'))
 const AirportsView=defineAsyncComponent(()=>import('./components/AirportsView.vue'))
 const MonitorView=defineAsyncComponent(()=>import('./components/MonitorView.vue'))
@@ -193,5 +194,6 @@ onBeforeUnmount(()=>{headerObserver?.disconnect();document.removeEventListener('
     </template>
     <Modal v-if="w.authRequired.value||loggingIn" title="访问此工作台" :closable="false"><form @submit.prevent="login"><p class="muted">输入此服务的访问密码。</p><label class="form-stack">访问密码<input v-model="password" type="password" :disabled="loggingIn" autofocus autocomplete="current-password" required></label><p v-if="loginError" class="inline-error" role="alert">{{loginError}}</p><p v-if="loggingIn" role="status">正在验证并读取工作台…</p><div class="form-actions"><button class="button primary" :disabled="loggingIn" type="submit">{{loggingIn?'正在登录…':'登录'}}</button></div></form></Modal>
     <HoverTip/>
+    <GlobalChartTip/>
   </div>
 </template>

@@ -180,7 +180,7 @@ function run(){if(props.readOnly)return;m.closeHover();props.exitOnly?w.openRepu
       <button class="hd-ins-quick-cell" :class="latencyVerdictValue.tone" @click="jumpTo('latency')"><span>延迟</span><strong>{{latencyVerdictValue.label}}</strong></button>
       <button class="hd-ins-quick-cell" :class="downloadVerdict.tone" @click="jumpTo('download')"><span>下载</span><strong>{{downloadVerdict.label}}</strong></button>
       <button class="hd-ins-quick-cell" :class="serviceVerdict.tone" @click="jumpTo('services-block')"><span>解锁</span><strong>{{serviceVerdict.label}}</strong></button>
-      <button class="hd-ins-quick-cell" :class="landing.purity.tone" @click="jumpTo('exit')"><span>纯净度</span><strong>{{landing.purity.label}}</strong></button>
+      <button class="hd-ins-quick-cell" :class="landing.purity.tone" @click="jumpTo('exit')"><span>纯净度</span><strong>{{landing.purity.score!==null?`${landing.purity.grade} ${landing.purity.score}`:'—'}}</strong></button>
     </nav>
 
     <div v-if="exitOnly||project==='combined'" class="hd-ins-block hd-exit">
@@ -188,7 +188,7 @@ function run(){if(props.readOnly)return;m.closeHover();props.exitOnly?w.openRepu
       <p v-if="exitOnly&&w.entryErrors.value[key(node)]" class="bad" role="alert">{{w.entryErrors.value[key(node)]}}</p>
       <p v-if="!hasExitData" class="exit-unqueried">出口与信誉：未查询 <button class="hd-btn" :disabled="readOnly" @click="!readOnly&&w.openReputationPlan([node])">查询</button></p>
       <template v-else>
-      <p class="exit-purity" :title="landing.purity.title"><span>{{landing.purity.summary}}</span><button class="hd-btn" :disabled="readOnly" @click="!readOnly&&w.openReputationPlan([node])">查询</button></p>
+      <p class="exit-purity" :title="landing.purity.title"><span class="exit-purity-main"><b v-if="landing.purity.score!==null" class="hd-purity-badge" :class="landing.purity.tone">{{landing.purity.grade}} {{landing.purity.score}}</b><span>{{landing.purity.summary}}</span></span><button class="hd-btn" :disabled="readOnly" @click="!readOnly&&w.openReputationPlan([node])">查询</button></p>
       <ol v-if="exitOnly||nodeEntry" class="exit-path" aria-label="线路路径">
         <li v-for="(step,index) in exitPath" :key="step.id"><small>{{step.label}}</small><span :title="step.id==='exit'&&!landing.exitKnown?'出口还没检测，这里按节点名称推断':''">{{step.value}}</span><i v-if="index<exitPath.length-1" aria-hidden="true">→</i></li>
       </ol>
@@ -198,7 +198,7 @@ function run(){if(props.readOnly)return;m.closeHover();props.exitOnly?w.openRepu
     </div>
 
     <div v-if="shows('latency')&&!(m.hoverMode.value==='latency'&&(showRound||showHistory))" class="hd-ins-block hd-latency">
-      <InspectorLatency :series="latencySeries" :node="node" :focus="reportFocus" :read-only="readOnly" @round-change="latencyFocus=$event" @return-latest="w.latencyReportFocus.value=null"/>
+      <InspectorLatency :series="latencySeries" :node="node" :focus="reportFocus" :read-only="readOnly" :shared-clash-status="clashStatus" :shared-clash-loading="clashStatusLoading" use-shared-clash @round-change="latencyFocus=$event" @return-latest="w.latencyReportFocus.value=null"/>
       <small v-if="m.monitorErrors.value[key(node)]" class="bad">监测记录读取失败</small>
     </div>
 
@@ -273,7 +273,7 @@ function run(){if(props.readOnly)return;m.closeHover();props.exitOnly?w.openRepu
 </template>
 
 <style scoped>
-.exit-purity{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px}.exit-purity span{min-width:0;overflow-wrap:anywhere}
+.exit-purity{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px}.exit-purity-main{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0}.exit-purity-main>span{min-width:0;overflow-wrap:anywhere}
 .exit-unqueried{display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--hd-muted);font-size:12px}
 .hd-inspector[data-project="exit"] .hd-ins-verdict{display:block}.hd-inspector[data-project="exit"] .hd-ins-verdict strong{font-size:14px}.landing-sources{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:6px}.landing-sources span{font-size:10px;line-height:1.5;padding:2px 5px;border:1px solid var(--hd-line);border-radius:4px;color:var(--hd-muted);background:var(--hd-panel);white-space:nowrap}
 .exit-path{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:2px 0 8px;padding:0;list-style:none}

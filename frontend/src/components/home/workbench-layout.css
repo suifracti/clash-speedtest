@@ -89,8 +89,11 @@
 .hd-workbench-layout .hd-source .subscription-facts{gap:7px;font-size:12px;line-height:1.5;margin-top:9px}
 .hd-workbench-layout .hd-source .subscription-facts .text-button{font-size:12px}
 .hd-workbench-layout .hd-source .subscription-remaining-label,.hd-workbench-layout .hd-source .subscription-quota-legend{font-size:12px}
-.hd-workbench-layout .hd-source .subscription-remaining-value{font-size:21px}
+.hd-workbench-layout .hd-source .subscription-remaining-value{font-size:19px}
 .hd-workbench-layout .hd-source .subscription-daily{min-width:0;width:100%}
+.hd-workbench-layout .hd-source .cst-usage-summary{gap:5px;height:70px}
+.hd-workbench-layout .hd-source .cst-usage-day-value{font-size:10px}
+.hd-workbench-layout .hd-source .cst-usage-day-track{width:24px}
 .hd-workbench-layout .hd-source .subscription-extra-links>div{position:static;min-width:0;max-width:100%;margin-top:6px;box-shadow:none}
 .hd-workbench-layout .hd-source .subscription-issues{font-size:12px;line-height:1.6;min-width:0}
 .hd-workbench-layout .hd-source .subscription-issues p{display:flex;flex-direction:column;align-items:flex-start;gap:3px;overflow-wrap:anywhere}

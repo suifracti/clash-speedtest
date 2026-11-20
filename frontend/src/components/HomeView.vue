@@ -64,17 +64,17 @@ async function readQualityNodes(nodes:NodeOption[],refresh=false){
  if(refresh){resetQualityState();qualityCutoff.value=new Date().toISOString()}
  const active=qualityGeneration,until=qualityCutoff.value,since=new Date(Date.parse(until)-w.hours.value*3600000).toISOString();qualityLoading.value=true
  const targetNodes=nodes.filter(n=>!qualityData.value[key(n)]&&!pendingQualityData[key(n)])
- const batchMode=targetNodes.length>20
- await mapLimited(targetNodes,4,async n=>{const k=key(n),id=active+'|'+k;if(qualityInflight.has(id))return qualityInflight.get(id);const task=(async()=>{try{const e=await readQuality(n,since,until);if(active===qualityGeneration){if(batchMode){pendingQualityData[k]=e;delete pendingQualityErrors[k];pendingQualityCount++;if(pendingQualityCount>=20)flushQualityBuffer(active);else if(!qualityFlushTimer)qualityFlushTimer=setTimeout(()=>flushQualityBuffer(active),120)}else{qualityData.value[k]=e;w.landingEvidence.value[k]=e.services;delete qualityErrors.value[k]}}}catch(e){if(active===qualityGeneration){const msg=e instanceof Error?e.message:String(e);if(batchMode){pendingQualityErrors[k]=msg;pendingQualityCount++;if(pendingQualityCount>=20)flushQualityBuffer(active);else if(!qualityFlushTimer)qualityFlushTimer=setTimeout(()=>flushQualityBuffer(active),120)}else qualityErrors.value[k]=msg}}finally{qualityInflight.delete(id)}})();qualityInflight.set(id,task);await task})
+ const batchMode=targetNodes.length>20,concurrency=targetNodes.length>40?2:4
+ await mapLimited(targetNodes,concurrency,async n=>{const k=key(n),id=active+'|'+k;if(qualityInflight.has(id))return qualityInflight.get(id);const task=(async()=>{try{const e=await readQuality(n,since,until);if(active===qualityGeneration){if(batchMode){pendingQualityData[k]=e;delete pendingQualityErrors[k];pendingQualityCount++;if(pendingQualityCount>=20)flushQualityBuffer(active);else if(!qualityFlushTimer)qualityFlushTimer=setTimeout(()=>flushQualityBuffer(active),120)}else{qualityData.value[k]=e;w.landingEvidence.value[k]=e.services;delete qualityErrors.value[k]}}}catch(e){if(active===qualityGeneration){const msg=e instanceof Error?e.message:String(e);if(batchMode){pendingQualityErrors[k]=msg;pendingQualityCount++;if(pendingQualityCount>=20)flushQualityBuffer(active);else if(!qualityFlushTimer)qualityFlushTimer=setTimeout(()=>flushQualityBuffer(active),120)}else qualityErrors.value[k]=msg}}finally{qualityInflight.delete(id)}})();qualityInflight.set(id,task);await task})
  flushQualityBuffer(active)
  if(active===qualityGeneration)qualityLoading.value=false
 }
 // Only persisted terminal results invalidate the saved-history snapshot. Defer
 // while a plan/recovered task is active so its frozen comparison window stays put.
-const savedQualityVersion=computed(()=>JSON.stringify([
- ...Object.values(w.latency.value).flat().filter(t=>t.persistence_state==='saved').map(t=>['latency',key(t),t.attempt_id,t.finished_at]),
- ...(['download','service'] as const).flatMap(kind=>Object.values((kind==='download'?w.downloads:w.services).value).flat().filter(a=>a.persistence_state==='saved'&&!['queued','running','cancelling','saving'].includes(a.execution_state)).map(a=>[kind,key(a),a.attempt_id,a.finished_at||a.result?.finished_at||a.requested_at]))
-].sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)))))
+const savedQualityVersion=computed(()=>[
+ ...Object.values(w.latency.value).flat().filter(t=>t.persistence_state==='saved').map(t=>`latency|${key(t)}|${t.attempt_id}|${t.finished_at||''}`),
+ ...(['download','service'] as const).flatMap(kind=>Object.values((kind==='download'?w.downloads:w.services).value).flat().filter(a=>a.persistence_state==='saved'&&!['queued','running','cancelling','saving'].includes(a.execution_state)).map(a=>`${kind}|${key(a)}|${a.attempt_id}|${a.finished_at||a.result?.finished_at||a.requested_at||''}`))
+].sort().join('\n'))
 let appliedQualityVersion=savedQualityVersion.value
 watch([savedQualityVersion,()=>w.busy.value],([version,busy])=>{
  if(busy||version===appliedQualityVersion)return
@@ -210,8 +210,9 @@ function flushWeeklyBuffer(generation:number){
  for(const [id,err] of Object.entries(errs))weeklyErrors.value[id]=err
 }
 function fillWeeklySlots(){
+ const limit=weeklyDemand.value.size>40?3:6
  for(const [id,node] of weeklyWaiting){
-  if(weeklyInFlight.size>=6)break
+  if(weeklyInFlight.size>=limit)break
   if(!weeklyDemand.value.has(id)){weeklyWaiting.delete(id);continue}
   if(weeklyInFlight.has(id))continue
   weeklyWaiting.delete(id)
@@ -250,7 +251,7 @@ function refreshWeekly(){
  scheduleWeeklyReads(weeklyDemand.value)
 }
 watch(weeklyDemand,scheduleWeeklyReads,{immediate:true,flush:'post'})
-watch(()=>w.busy.value,(busy,previous)=>{if(previous&&!busy)refreshWeekly()})
+watch(()=>w.busy.value,(busy,previous)=>{if(previous&&!busy){monitorFetchedAt.clear();refreshWeekly()}})
 
 const hoverTarget=ref(w.displayTarget.value),hoverService=ref(''),servicePage=ref(1),servicesPerPage=computed(()=>w.project.value==='service'?12:3)
 const inlineHistorySource=computed(()=>activeRound.value?.source||(hoverNode.value&&(hoverMode.value==='latency'&&presentation.monitor(hoverNode.value,hoverTarget.value).length&&!presentation.points(hoverNode.value,'latency',hoverTarget.value).some(p=>p.tone!=='empty')||hoverMode.value==='service'&&httpPoints(hoverNode.value).length&&!presentation.services(hoverNode.value,visibleServiceIds.value).length)?'monitor':'manual'))
@@ -345,16 +346,23 @@ function rowPoints(n:NodeOption,p:Project){return p==='latency'?sitePoints(n,w.d
 function sitePoints(n:NodeOption,target:string){return presentation.site(n,target)}
 watch([pageNodes,hoverNode],([nodes,hover])=>presentation.retain(hover?[...nodes,hover]:nodes),{immediate:true,flush:'sync'})
 watch(hoverPoints,list=>{const old=activeRound.value;if(!old||inlineTab.value!=='round')return;const updated=list.find(p=>p.id===old.id&&p.source===old.source);if(updated)activeRound.value=updated;else if(!keepOpen.value)closeHover()},{flush:'post'})
-async function readMonitor(){
+const monitorFetchedAt=new Map<string,number>()
+const MONITOR_CACHE_MS=20_000
+async function readMonitor(force=false){
   void w.loadMeasurementRounds(pageNodes.value)
-  const generation=++monitorGeneration,list=pageNodes.value,project=w.project.value,until=new Date().toISOString(),since=new Date(Date.now()-w.hours.value*3600000).toISOString()
+  const generation=++monitorGeneration,list=pageNodes.value,project=w.project.value,now=Date.now(),until=new Date(now).toISOString(),since=new Date(now-w.hours.value*3600000).toISOString()
   const queries=[...(project==='latency'||project==='combined'?[{probeType:'rtt',target:undefined}]:[]),...(project==='service'||project==='combined'?monitorHTTPServices:[])]
-  for(const n of list)for(const q of queries)try{
-    const result=await api.monitorSamples({profile_id:n.profile_id,node_identity_key:n.node_identity_key,config_revision_key:n.config_revision_key,probe_type:q.probeType,target:q.target,since,until,limit:q.probeType==='rtt'?480:80,order_desc:true})
-    if(generation!==monitorGeneration)return
-    if(q.probeType==='rtt'){if(!sameHistoryRecords(monitorData.value[key(n)],result.items||[]))monitorData.value[key(n)]=result.items||[];delete monitorErrors.value[key(n)]}
-    else{if(!sameHistoryRecords((monitorHTTPData.value[key(n)]||[]).filter(s=>s.probe_type===q.probeType),result.items||[]))monitorHTTPData.value[key(n)]=[...(monitorHTTPData.value[key(n)]||[]).filter(s=>s.probe_type!==q.probeType),...(result.items||[])];delete monitorHTTPErrors.value[key(n)+':'+q.probeType]}
-  }catch(e){if(generation!==monitorGeneration)return;const message=e instanceof Error?e.message:'监测记录读取失败';if(q.probeType==='rtt')monitorErrors.value[key(n)]=message;else monitorHTTPErrors.value[key(n)+':'+q.probeType]=message}
+  for(const n of list)for(const q of queries){
+    const cacheKey=`${w.hours.value}|${q.probeType}|${key(n)}|${n.config_revision_key}`
+    if(!force&&now-(monitorFetchedAt.get(cacheKey)||0)<MONITOR_CACHE_MS)continue
+    try{
+      const result=await api.monitorSamples({profile_id:n.profile_id,node_identity_key:n.node_identity_key,config_revision_key:n.config_revision_key,probe_type:q.probeType,target:q.target,since,until,limit:q.probeType==='rtt'?480:80,order_desc:true})
+      if(generation!==monitorGeneration)return
+      monitorFetchedAt.set(cacheKey,Date.now())
+      if(q.probeType==='rtt'){if(!sameHistoryRecords(monitorData.value[key(n)],result.items||[]))monitorData.value[key(n)]=result.items||[];delete monitorErrors.value[key(n)]}
+      else{if(!sameHistoryRecords((monitorHTTPData.value[key(n)]||[]).filter(s=>s.probe_type===q.probeType),result.items||[]))monitorHTTPData.value[key(n)]=[...(monitorHTTPData.value[key(n)]||[]).filter(s=>s.probe_type!==q.probeType),...(result.items||[])];delete monitorHTTPErrors.value[key(n)+':'+q.probeType]}
+    }catch(e){if(generation!==monitorGeneration)return;monitorFetchedAt.delete(cacheKey);const message=e instanceof Error?e.message:'监测记录读取失败';if(q.probeType==='rtt')monitorErrors.value[key(n)]=message;else monitorHTTPErrors.value[key(n)+':'+q.probeType]=message}
+  }
 }
 
 function keepRound(){clearTimeout(hoverTimer)}
@@ -364,7 +372,7 @@ function inspectRound(n:NodeOption,p:Project,point:TrendPoint,target=w.displayTa
 function openRound(n:NodeOption,p:Project,point:TrendPoint,target=w.displayTarget.value,serviceId=''){keepOpen.value=false;inspectRound(n,p,point,target,serviceId);keepOpen.value=true}
 function expandHistory(){keepRound();keepOpen.value=true;inlineTab.value='history'}
 watch([()=>w.search.value,()=>w.region.value,()=>w.subscription.value,()=>w.airportFilter.value,()=>w.sort.value,()=>w.priorityAirportId.value,()=>w.selectedAirportIds.value],()=>{currentPage.value=1;closeHover()},{deep:true})
-watch(()=>w.hours.value,()=>{presentation.clear();monitorGeneration++;monitorData.value={};monitorErrors.value={};monitorHTTPData.value={};monitorHTTPErrors.value={}});watch(totalPages,count=>currentPage.value=Math.min(currentPage.value,count))
+watch(()=>w.hours.value,()=>{presentation.clear();monitorGeneration++;monitorFetchedAt.clear();monitorData.value={};monitorErrors.value={};monitorHTTPData.value={};monitorHTTPErrors.value={}});watch(totalPages,count=>currentPage.value=Math.min(currentPage.value,count))
 watch([pageNodes,qualityView,qualityScopeKey],([nodes,quick,scope],[,,previousScope])=>{
  if(previousScope!==undefined&&scope!==previousScope){resetQualityState();qualityLoading.value=false
   if((quick||siteSort.value!=='existing'||siteGate.value!=='all'||metricHeader.value)&&w.page.value==='home')void readQualityNodes(metricHeader.value||(quick?(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing'):(siteSort.value!=='existing'||siteGate.value!=='all'))?w.proxyNodes.value:nodes)
@@ -374,7 +382,7 @@ watch([pageNodes,qualityView,qualityScopeKey],([nodes,quick,scope],[,,previousSc
 },{immediate:true})
 watch(()=>w.hours.value,()=>{if(qualityView.value||siteSort.value!=='existing'||siteGate.value!=='all')void readQualityNodes(metricHeader.value||(qualityView.value?(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing'):(siteSort.value!=='existing'||siteGate.value!=='all'))?w.proxyNodes.value:pageNodes.value,true);else{resetQualityState();qualityCutoff.value=new Date().toISOString()}})
 watch([pageNodes,()=>w.project.value,()=>w.hours.value],()=>{if(w.page.value==='home'){void w.ensureHistory(pageNodes.value);void readMonitor()}},{immediate:true})
-watch(()=>w.page.value,p=>{if(p==='home'){void w.ensureHistory(pageNodes.value);void readMonitor();if(qualityView.value||siteSort.value!=='existing'||siteGate.value!=='all')void readQualityNodes(metricHeader.value||(qualityView.value?(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing'):(siteSort.value!=='existing'||siteGate.value!=='all'))?w.proxyNodes.value:pageNodes.value)}else{closeHover();presentation.clear()}})
+watch(()=>w.page.value,p=>{if(p==='home'){void w.ensureHistory(pageNodes.value);void readMonitor();if(qualityView.value||siteSort.value!=='existing'||siteGate.value!=='all')void readQualityNodes(metricHeader.value||(qualityView.value?(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing'):(siteSort.value!=='existing'||siteGate.value!=='all'))?w.proxyNodes.value:pageNodes.value)}else{closeHover();monitorFetchedAt.clear();presentation.clear()}})
 watch(()=>w.serviceIds.value,closeHover,{deep:true})
 watch(()=>w.displayServiceIds.value,()=>{servicePage.value=1;closeHover()},{deep:true})
 watch(servicePage,closeHover)
@@ -382,7 +390,7 @@ watch(servicePages,count=>servicePage.value=Math.min(servicePage.value,count))
 watch([()=>w.project.value,()=>w.hours.value,currentPage],closeHover)
 watch(()=>w.displayTarget.value,()=>{if(keepOpen.value&&hoverNode.value){activeRound.value=null;inlineTab.value='history'}else closeHover()})
 provide(homeModelKey,{refreshWeekly,weeklyStats,weeklyErrors,weeklyProgress,weeklyReady,headerSort,headerSortReady,sortHeader,compareOpen,compareTarget,compareNodes:qualityCompareNodes,compareCompatible,comparisonDownloadStatus,closeComparison,servicePoints:(n:NodeOption,id:string)=>presentation.points(n,'service',w.displayTarget.value,id),hiddenSelectedCount,qualityFiltersPending,monitorData,monitorErrors,monitorHTTPErrors,httpPoints,visibleServices,servicePage,servicePages,servicesPerPage,chosen,filterProfiles,protocolChoices,protocolFilter,qualityGate,qualitySort,qualityLoading,qualityErrors,qualityCutoff,allQualityReady,readQualityNodes,siteSummaries,pageSize,setPageSize,pageNodes,visibleNodes,runNodes,currentPage,totalPages,picker,filterRegions,qualityData,nodeActivities,displayServices,sourceLabel,metricPoint,latestLatencyRound,latencyRowPoint,rowVerdict,siteMetric,siteContext,siteReason,sitePoints,rowPoints,downloadMetric,downloadMetricTone,downloadMetricContext,serviceMetric,serviceTone,shownService,showService,showServiceEvidence,hoverNode,hoverMode,hoverTarget,hoverService,hoverPoints,activeRound,inlineTab,inlineHistorySource,keepOpen,inspectRound,openRound,leaveRound,keepRound,closeHover,expandHistory,openComparison,openCombinedPlan,runLabel})
-onMounted(()=>monitorTimer=setInterval(()=>{if(w.page.value==='home'&&document.visibilityState==='visible')void readMonitor()},30000));onBeforeUnmount(()=>{weeklyGeneration++;weeklyWaiting.clear();clearWeeklyBuffer();qualityGeneration++;clearQualityBuffer();latestServiceCache.clear();presentation.clear();monitorGeneration++;clearTimeout(hoverTimer);clearInterval(monitorTimer)})
+onMounted(()=>monitorTimer=setInterval(()=>{if(w.page.value==='home'&&document.visibilityState==='visible')void readMonitor(true)},30000));onBeforeUnmount(()=>{weeklyGeneration++;weeklyWaiting.clear();clearWeeklyBuffer();qualityGeneration++;clearQualityBuffer();latestServiceCache.clear();monitorFetchedAt.clear();presentation.clear();monitorGeneration++;clearTimeout(hoverTimer);clearInterval(monitorTimer)})
 </script>
 <template>
   <section class="home-view">

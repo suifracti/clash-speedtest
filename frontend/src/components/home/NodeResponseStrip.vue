@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import {computed,inject,onBeforeUnmount,onMounted,shallowRef} from 'vue'
+import {computed,inject} from 'vue'
 import {date,targets,type NodeOption} from '../../domain'
 import {latencyFailureReason,latencySiteSamples} from '../../inspectorLatency'
 import {latencyPointLabel,type SamplePoint,type TrendPoint} from '../../presentation'
+import {computeTipAnchor,hideChartTip,showChartTip} from '../../chartTip'
 import {homeModelKey} from './homeModel'
 import {useWorkspace} from '../../workspace'
 import LatencyHistoryMarks from './LatencyHistoryMarks.vue'
 const props=defineProps<{node:NodeOption;detailed?:boolean;review?:{point:TrendPoint;target:string}}>()
-const emit=defineEmits<{round:[point:TrendPoint,target:string];history:[point:TrendPoint,target:string]}>()
+const emit=defineEmits<{round:[node:NodeOption,point:TrendPoint,target:string];history:[node:NodeOption,point:TrendPoint,target:string]}>()
 const m=inject(homeModelKey)!,w=useWorkspace()
 function sampleLabel(sample:SamplePoint,index:number){
  const text=sample.value!==null?Math.round(sample.value)+' ms':sample.executionState==='cancelled'?'已取消':sample.tone==='empty'?'未执行':latencyFailureReason(sample.error||'')
@@ -42,50 +43,40 @@ const sites=computed(()=>targets.filter(t=>w.displayTargets.value.includes(t.id)
 const peak=computed(()=>Math.max(1,...sites.value.flatMap(s=>s.samples.map(sample=>sample.value??0))))
 function sampleHeight(sample:SamplePoint){return sample.value===null?6:5+Math.round(15*sample.value/peak.value)}
 type SiteInfo=(typeof sites.value)[number]
-const tip=shallowRef<{site:SiteInfo;x:number;y:number;below:boolean}|null>(null)
 function showTip(e:MouseEvent|FocusEvent,site:SiteInfo){
  if(!site.samples.length)return
- const el=e.currentTarget as HTMLElement|null
- if(!el)return
- const rect=el.getBoundingClientRect()
- const vw=typeof window!=='undefined'?window.innerWidth:1280
- const x=Math.max(140,Math.min(vw-140,rect.left+rect.width/2))
- const below=rect.top<200
- tip.value={site,x,y:below?rect.bottom:rect.top,below}
+ const anchor=computeTipAnchor(e.currentTarget as HTMLElement|null,142,200)
+ if(!anchor)return
+ showChartTip({
+  kind:'latency-samples',
+  title:`${site.name} · ${site.roundLabel} ${site.responses}/${site.samples.length}`,
+  time:site.point?date(site.point.time):'',
+  httpNote:site.httpCode?`已连通但返回 HTTP ${site.httpCode}（${site.httpCount}/${site.samples.length} 次，可能限流或风控）`:'',
+  samples:site.samples.map((sample,index)=>{
+   const st=sampleShortStatus(sample)
+   return {seq:`#${index+1}${index===0?' 首次':''}`,text:st.text,badge:st.badge,tone:st.tone}
+  }),
+  ...anchor,
+ })
 }
-function hideTip(){tip.value=null}
-onMounted(()=>window.addEventListener('scroll',hideTip,true))
-onBeforeUnmount(()=>window.removeEventListener('scroll',hideTip,true))
+function onHistorySelect(point:TrendPoint,target:string){emit('history',props.node,point,target)}
 </script>
 <template>
     <span v-for="s in sites" :key="s.id" role="cell" class="response-stop" :class="[s.point?.tone||'empty',{'response-detailed':detailed,'response-reviewing':s.review,'has-http-note':!!s.httpCode}]" :title="s.name+' · '+s.context">
       <span class="response-site">{{s.name}}</span>
       <span class="response-head-line"><strong>{{s.text}}</strong><b v-if="s.httpCode" class="response-http-tag" :title="`${s.name} ${s.httpCount}/${s.samples.length} 次返回 HTTP ${s.httpCode}（已连通，可能限流/风控）`">{{s.httpCode}}</b></span>
       <template v-if="detailed">
-        <button v-if="s.point&&s.samples.length" class="response-round" type="button" :aria-label="s.name+' '+s.roundLabel+'顺序 · '+s.samples.map(sampleLabel).join('；')" @mouseenter="showTip($event,s)" @mouseleave="hideTip" @focus="showTip($event,s)" @blur="hideTip" @click.stop="hideTip();emit('round',s.point,s.id)">
+        <button v-if="s.point&&s.samples.length" class="response-round" type="button" :aria-label="s.name+' '+s.roundLabel+'顺序 · '+s.samples.map(sampleLabel).join('；')" @mouseenter="showTip($event,s)" @mouseleave="hideChartTip" @focus="showTip($event,s)" @blur="hideChartTip" @click.stop="hideChartTip();emit('round',node,s.point,s.id)">
           <span class="response-vertical" aria-hidden="true"><i v-for="(sample,index) in s.samples" :key="sample.id" :class="[sample.tone,{'http-note':!!sample.note}]" :style="{height:sampleHeight(sample)+'px'}" :title="sampleLabel(sample,index)"/></span>
           <small>{{s.roundLabel}} {{s.responses}}/{{s.samples.length}}</small>
         </button>
         <small v-else-if="s.review" class="response-missing">该轮未测</small>
         <span v-else class="response-unrecorded" aria-hidden="true"/>
-        <LatencyHistoryMarks :points="s.history" :label="s.name+' 最近历史'" :target="s.id" :selected="s.review" @select="emit('history',$event,s.id)"/>
+        <LatencyHistoryMarks :points="s.history" :label="s.name+' 最近历史'" :target="s.id" :selected="s.review" @select="onHistorySelect"/>
       </template>
-      <span v-else-if="s.samples.length" class="response-samples" :aria-label="s.name+' 本轮 '+s.samples.length+' 次实际采样'" @mouseenter="showTip($event,s)" @mouseleave="hideTip"><i v-for="(sample,index) in s.samples" :key="sample.id" :class="sample.tone" :title="sampleLabel(sample,index)"/></span>
+      <span v-else-if="s.samples.length" class="response-samples" :aria-label="s.name+' 本轮 '+s.samples.length+' 次实际采样'" @mouseenter="showTip($event,s)" @mouseleave="hideChartTip"><i v-for="(sample,index) in s.samples" :key="sample.id" :class="sample.tone" :title="sampleLabel(sample,index)"/></span>
       <span v-else class="response-unrecorded" aria-hidden="true"/>
     </span>
-    <Teleport to="body">
-      <div v-if="tip" class="cst-chart-tip response-sample-tip" :class="{below:tip.below}" role="tooltip" :style="{left:tip.x+'px',top:tip.y+'px'}">
-        <div class="cst-chart-tip-head"><span>{{tip.site.name}} · {{tip.site.roundLabel}} {{tip.site.responses}}/{{tip.site.samples.length}}</span><span v-if="tip.site.point">{{date(tip.site.point.time)}}</span></div>
-        <div v-if="tip.site.httpCode" class="response-tip-http">已连通但返回 HTTP {{tip.site.httpCode}}（{{tip.site.httpCount}}/{{tip.site.samples.length}} 次，可能限流或风控）</div>
-        <ol class="response-tip-list">
-          <li v-for="(sample,index) in tip.site.samples" :key="sample.id">
-            <span class="tip-seq">#{{index+1}}{{index===0?' 首次':''}}</span>
-            <span class="tip-val" :class="sampleShortStatus(sample).tone">{{sampleShortStatus(sample).text}}</span>
-            <b v-if="sampleShortStatus(sample).badge" class="tip-http">{{sampleShortStatus(sample).badge}}</b>
-          </li>
-        </ol>
-      </div>
-    </Teleport>
 </template>
 <style scoped>
 .response-stop{display:flex;flex-direction:column;justify-content:center;align-items:flex-start;gap:5px;min-width:0;position:relative;min-height:44px;padding-left:10px;border-left:1px solid var(--hd-line);color:var(--hd-text)}
@@ -110,16 +101,4 @@ onBeforeUnmount(()=>window.removeEventListener('scroll',hideTip,true))
 .response-missing{font-size:10px;color:var(--hd-muted);margin-top:7px}
 .response-round:hover small{color:var(--hd-accent)}
 .response-round:focus-visible{outline:2px solid var(--hd-accent);outline-offset:1px}
-</style>
-<style>
-.response-sample-tip{min-width:196px;max-width:270px;gap:5px}
-.response-tip-http{padding:3px 7px;border-radius:6px;background:var(--cst-warn-bg);color:var(--cst-warn);font-size:10.5px;font-weight:600;line-height:1.4}
-.response-tip-list{list-style:none;margin:0;padding:0;display:grid;gap:3px}
-.response-tip-list li{display:flex;align-items:center;gap:6px;font-size:11px;font-variant-numeric:tabular-nums}
-.response-tip-list .tip-seq{color:var(--cst-muted);min-width:44px}
-.response-tip-list .tip-val{font-weight:650;color:var(--cst-text)}
-.response-tip-list .tip-val.good{color:var(--cst-good)}
-.response-tip-list .tip-val.warn{color:var(--cst-warn)}
-.response-tip-list .tip-val.bad{color:var(--cst-bad)}
-.response-tip-list .tip-http{margin-left:auto;padding:0 5px;border-radius:999px;background:var(--cst-warn-bg);color:var(--cst-warn);font-size:9.5px;font-weight:700}
 </style>

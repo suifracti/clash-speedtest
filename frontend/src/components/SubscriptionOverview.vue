@@ -5,6 +5,7 @@ import {bytes,date,subscriptionUsed,type Airport,type LatencyBatch,type NodeOpti
 import {airportAccounts,airportNodeCounts,noticesForAccount,safeAirportLink,parseNoticeUsage,type AirportAccount} from '../airportViewing'
 import {useWorkspace} from '../workspace'
 import {accountDailyUsage,usageRefreshError,shanghaiDay,shiftDay,type DayUsage,type UsageSnapshot} from '../usageDaily'
+import {registerTipDismiss} from '../chartTip'
 import SubscriptionChanges from './SubscriptionChanges.vue'
 import Modal from './Modal.vue'
 import UsageDays from './UsageDays.vue'
@@ -157,6 +158,7 @@ function dayText(day:ReturnType<typeof sumDay>){return day.lowerBound&&day.since
 const allDays=computed(()=>[0,1,2].map(index=>sumDay(displayedAccounts.value,index)))
 const dailyMax=computed(()=>Math.max(1,...allDays.value.map(d=>d.bytes||0)))
 const allDayTip=shallowRef<{day:ReturnType<typeof sumDay>;x:number;y:number;below:boolean}|null>(null)
+let clearAllDayDismiss:(()=>void)|undefined
 function showAllDayTip(e:MouseEvent|FocusEvent,day:ReturnType<typeof sumDay>){
   const el=e.currentTarget as HTMLElement|null
   if(!el)return
@@ -165,8 +167,9 @@ function showAllDayTip(e:MouseEvent|FocusEvent,day:ReturnType<typeof sumDay>){
   const x=Math.max(115,Math.min(vw-115,rect.left+rect.width/2))
   const below=rect.top<96
   allDayTip.value={day,x,y:below?rect.bottom:rect.top,below}
+  if(!clearAllDayDismiss)clearAllDayDismiss=registerTipDismiss(hideAllDayTip)
 }
-function hideAllDayTip(){allDayTip.value=null}
+function hideAllDayTip(){allDayTip.value=null;clearAllDayDismiss?.();clearAllDayDismiss=undefined}
 function accountRow(airport:Airport,list:AirportAccount[]){
   const quotas=list.map(account=>{
     const parsed=parseNoticeUsage(noticesForAccount(props.notices,account)),usage=account.subscription.usage
@@ -293,8 +296,8 @@ async function retryJob(job:SubscriptionRefreshJob){
   }catch(e){error.value=e instanceof Error?e.message:String(e)}finally{loading.value=false}
 }
 watch(disclosureSummary,value=>emit('summary',value),{immediate:true})
-onMounted(()=>{window.addEventListener('scroll',hideAllDayTip,true);void loadJobs()})
-onBeforeUnmount(()=>{disposed=true;clearTimeout(pollTimer);window.removeEventListener('scroll',hideAllDayTip,true)})
+onMounted(()=>{void loadJobs()})
+onBeforeUnmount(()=>{disposed=true;clearTimeout(pollTimer);hideAllDayTip()})
 defineExpose({usageRatio})
 </script>
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import {computed,onBeforeUnmount,onMounted,ref,shallowRef,watch} from 'vue'
+import {computed,onBeforeUnmount,ref,shallowRef,watch} from 'vue'
 import {bytes} from '../domain'
+import {registerTipDismiss} from '../chartTip'
 import {accountDailyUsage,shanghaiDay,shiftDay,type DayUsage,type UsageSnapshot} from '../usageDaily'
 const props=withDefaults(defineProps<{airportId:string;subscriptionId:string;days?:number;chart?:boolean;summary?:boolean;refreshVersion?:number}>(),{days:14,chart:false,summary:false,refreshVersion:0})
 const emit=defineEmits<{account:[value:UsageSnapshot|undefined]}>()
@@ -24,6 +25,7 @@ const max=computed(()=>Math.max(1,...(props.summary?summaryDays.value:series.val
 const summaryLabel=computed(()=>`近 3 日用量：${summaryDays.value.map(d=>`${d.label} ${text(d)}`).join('；')}`)
 const chartDays=computed(()=>[...series.value].reverse())
 const dayTip=shallowRef<{day:DayUsage;x:number;y:number;below:boolean}|null>(null)
+let clearTipDismiss:(()=>void)|undefined
 function showDayTip(e:MouseEvent|FocusEvent,day:DayUsage){
  const el=e.currentTarget as HTMLElement|null
  if(!el)return
@@ -32,8 +34,9 @@ function showDayTip(e:MouseEvent|FocusEvent,day:DayUsage){
  const x=Math.max(115,Math.min(vw-115,rect.left+rect.width/2))
  const below=rect.top<96
  dayTip.value={day,x,y:below?rect.bottom:rect.top,below}
+ if(!clearTipDismiss)clearTipDismiss=registerTipDismiss(hideDayTip)
 }
-function hideDayTip(){dayTip.value=null}
+function hideDayTip(){dayTip.value=null;clearTipDismiss?.();clearTipDismiss=undefined}
 function dayDetail(d:DayUsage){
  const notes:string[]=[]
  if(d.bytes!=null){
@@ -45,8 +48,7 @@ function dayDetail(d:DayUsage){
  if(d.message)notes.push(d.message)
  return notes.join(' · ')
 }
-onMounted(()=>window.addEventListener('scroll',hideDayTip,true))
-onBeforeUnmount(()=>window.removeEventListener('scroll',hideDayTip,true))
+onBeforeUnmount(()=>hideDayTip())
 const caption=computed(()=>{
  if(error.value)return '用量读取失败：'+error.value
  if(!account.value)return loading.value?'正在读取用量…':`近 ${props.days} 天没有用量记录`

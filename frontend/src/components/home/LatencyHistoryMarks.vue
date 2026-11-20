@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import {computed,onBeforeUnmount,onMounted,shallowRef} from 'vue'
-import {date} from '../../domain'
+import {computed} from 'vue'
+import {date,type NodeOption} from '../../domain'
 import {latencyPointLabel,type TrendPoint} from '../../presentation'
+import {computeTipAnchor,hideChartTip,showChartTip} from '../../chartTip'
 
-const props=defineProps<{points:TrendPoint[];label:string;target:string;selected?:TrendPoint}>()
-const emit=defineEmits<{select:[point:TrendPoint]}>()
+const props=defineProps<{points:TrendPoint[];label:string;target:string;selected?:TrendPoint;node?:NodeOption}>()
+const emit=defineEmits<{select:[point:TrendPoint,target:string,node?:NodeOption]}>()
 const selectedIndex=computed(()=>props.points.findIndex(p=>p.id===props.selected?.id&&p.source===props.selected?.source))
 function labelFor(point:TrendPoint){
  const reading=props.target==='all'?'整轮':latencyPointLabel(point,props.target)
@@ -15,35 +16,27 @@ function move(event:KeyboardEvent,previous:boolean){
  const sibling=(previous?button.previousElementSibling:button.nextElementSibling) as HTMLButtonElement|null
  sibling?.focus()
 }
-const tip=shallowRef<{point:TrendPoint;reading:string;x:number;y:number;below:boolean}|null>(null)
 function showTip(e:MouseEvent|FocusEvent,point:TrendPoint){
- const el=e.currentTarget as HTMLElement|null
- if(!el)return
- const rect=el.getBoundingClientRect()
- const vw=typeof window!=='undefined'?window.innerWidth:1280
- const x=Math.max(115,Math.min(vw-115,rect.left+rect.width/2))
- const below=rect.top<90
- const reading=props.target==='all'?'整轮历史（点击回看）':latencyPointLabel(point,props.target)
- tip.value={point,reading,x,y:below?rect.bottom:rect.top,below}
+ const anchor=computeTipAnchor(e.currentTarget as HTMLElement|null,115,90)
+ if(!anchor)return
+ showChartTip({
+  kind:'latency-history',
+  time:date(point.time),
+  source:point.source==='monitor'?'持续监测':'手动检测',
+  reading:props.target==='all'?'整轮历史（点击回看）':latencyPointLabel(point,props.target),
+  unknown:point.tone==='empty',
+  ...anchor,
+ })
 }
-function hideTip(){tip.value=null}
-onMounted(()=>window.addEventListener('scroll',hideTip,true))
-onBeforeUnmount(()=>window.removeEventListener('scroll',hideTip,true))
 </script>
 
 <template>
- <span v-if="points.length" class="response-history" role="group" :aria-label="label" @mouseleave="hideTip">
+ <span v-if="points.length" class="response-history" role="group" :aria-label="label" @mouseleave="hideChartTip">
   <button v-for="(point,index) in points" :key="point.source+':'+point.id" type="button"
    :aria-pressed="index===selectedIndex" :tabindex="index===(selectedIndex<0?points.length-1:selectedIndex)?0:-1"
    :class="[point.tone,{monitor:point.source==='monitor'}]" :title="labelFor(point)" :aria-label="label+' · '+labelFor(point)"
-   @mouseenter="showTip($event,point)" @focus="showTip($event,point)" @blur="hideTip"
-   @keydown.left.stop.prevent="move($event,true)" @keydown.right.stop.prevent="move($event,false)" @click.stop="hideTip();emit('select',point)"/>
-  <Teleport to="body">
-   <div v-if="tip" class="cst-chart-tip" :class="{below:tip.below}" role="tooltip" :style="{left:tip.x+'px',top:tip.y+'px'}">
-    <div class="cst-chart-tip-head"><span>{{date(tip.point.time)}}</span><span>{{tip.point.source==='monitor'?'持续监测':'手动检测'}}</span></div>
-    <strong class="cst-chart-tip-val" :class="{unknown:tip.point.tone==='empty'}">{{tip.reading}}</strong>
-   </div>
-  </Teleport>
+   @mouseenter="showTip($event,point)" @focus="showTip($event,point)" @blur="hideChartTip"
+   @keydown.left.stop.prevent="move($event,true)" @keydown.right.stop.prevent="move($event,false)" @click.stop="hideChartTip();emit('select',point,target,node)"/>
  </span>
 </template>
 

@@ -257,9 +257,9 @@ export function createWorkspace(){
         const id=historyID(kind,n,version);historyStarted.add(id)
         const last=records.at(-1),at=kind==='latency'?(last as LatencyTest|undefined)?.finished_at:((last as Attempt|undefined)?.finished_at||(last as Attempt|undefined)?.started_at||(last as Attempt|undefined)?.requested_at)
         const attemptId=last?.attempt_id
-        if(hasMore&&at&&attemptId){historyCursors.set(id,{at,attemptId});historyHasMore.value={...historyHasMore.value,[id]:true};loaded.delete(`${kind}|${key(n)}`)}
-        else if(hasMore){historyHasMore.value={...historyHasMore.value,[id]:false};historyCursors.delete(id)}
-        else{historyHasMore.value={...historyHasMore.value,[id]:false};historyCursors.delete(id);loaded.add(`${kind}|${key(n)}`)}
+        if(hasMore&&at&&attemptId){historyCursors.set(id,{at,attemptId});historyHasMore.value[id]=true;loaded.delete(`${kind}|${key(n)}`)}
+        else if(hasMore){historyHasMore.value[id]=false;historyCursors.delete(id)}
+        else{historyHasMore.value[id]=false;historyCursors.delete(id);loaded.add(`${kind}|${key(n)}`)}
         setReadError(n,kind,hasMore&&(!at||!attemptId)?'历史分页缺少游标，已停止读取以避免重复记录':undefined)
       }
       try{
@@ -270,7 +270,7 @@ export function createWorkspace(){
         }else await mapLimited(pending,3,async n=>{
           try{
             const w=windowFor(n),cursor=older?historyCursors.get(historyID(kind,n,version)):undefined,limit=kind==='latency'?80:100
-            if(older&&!cursor){historyHasMore.value={...historyHasMore.value,[historyID(kind,n,version)]:false};return}
+            if(older&&!cursor){historyHasMore.value[historyID(kind,n,version)]=false;return}
             const extra=kind==='latency'?{...w,limit,...(cursor?{before_finished_at:cursor.at,before_attempt_id:cursor.attemptId}:{})}:{...w,limit,...(cursor?{before_at:cursor.at,before_attempt_id:cursor.attemptId}:{})}
             const page=kind==='latency'?await api.latencyHistory(n,extra):await api.attemptHistory(kind,n,extra)
             if(version!==historyVersion)return

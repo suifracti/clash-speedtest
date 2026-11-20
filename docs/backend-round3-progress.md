@@ -2,6 +2,10 @@
 
 执行方式与范围以 [roadmap-round3.md](roadmap-round3.md) 顶部两节为准；前后端由 GPT 实施，原分工中 Claude 负责方案与把关；2026-11-18 用户明确授权当前代理自行决定本轮全 UI 重构。测试使用本地服务和临时数据，不代表真实节点检测。
 
+## 当前接续（2026-11-20）
+
+- 完成点击延迟根因治理与综合/解锁/详情全链路收口：将延迟表千级局部 `<Teleport>` 与滚动监听收敛为单实例 `chartTip.ts` + `GlobalChartTip.vue`（仅气泡打开时挂被动监听）；`UiSelect.vue` / `SiteDisplayPicker.vue` 全局捕获监听改为仅展开态挂载；`HomeWorkbench.vue` 消除 `v-for` 闭包并加行级 `v-memo`；`NodeInspector.vue` 与 `InspectorLatency.vue` 共享单次 Clash 状态查询并补齐检查器内 `HTTP 403`/分站超时与纯净度等级徽标；`HomeView.vue` 去除 `savedQualityVersion` 排序内 `JSON.stringify` 并对大列表限流/缓存监测查询；`workspace.ts` 去除历史分页对象展开；修复综合模式冻结列悬停双层错位与单机场侧栏 3 日用量拥挤；综合页「延迟总览」新增分站 403/超时/丢包/高延迟异常标签与四站即时悬浮明细，「服务解锁」与独立「解锁检测」各分组列（AI / 流媒体 / 日本）改为直接展示具体服务短状态芯片（异常优先）与悬停完整原因并支持直点查证；延迟报告节点详情支持 `Esc` 先返回报告。受影响 16 文件 / 137 项前端单测与 `vue-tsc -b && vite build` 全过。
+
 ## 当前接续（2026-11-19）
 
 - 修复 `base.css` 与 `TestPlanModal.vue` 弹窗边缘与标签容器边框缺失/内边距被覆盖的问题（改为 `.modal[open]` 固定头尾、`.modal-body` 内部滚动，并将 `.cst-plan-step details.plan-section` 作用域收窄避免影响 `.plan-tab-panel`）；按用户反馈收敛默认解锁与工作台初选列表，默认保留高区分度的 `Google Gemini`、`Google Antigravity`、`Netflix`、`TikTok` 及日本地区项目，将 `ChatGPT` / `Claude` / `Spotify` / `YouTube Premium` 收纳至“显示传统参考项 (4)”折叠开关（后台规则与历史回放完整保留）。前端 `npm test`（88 文件 / 639 项）与 `vite build` 通过。

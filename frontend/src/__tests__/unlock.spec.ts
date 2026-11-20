@@ -1,5 +1,5 @@
 import {expect,it} from 'vitest'
-import {unlockGroup,unlockGroupSummary,unlockResult,unlockServiceAllowed,unlockSupported} from '../unlock'
+import {unlockGroup,unlockGroupDetail,unlockGroupSummary,unlockResult,unlockServiceAllowed,unlockSupported} from '../unlock'
 import type {Attempt} from '../domain'
 const attempt=(outcome:string)=>({service_id:'chatgpt_unlock',execution_state:'completed',rule:{service_id:'chatgpt_unlock',target_url:''},result:{outcome,details:{service_region:'SG'},summary:'地区不支持'}} as unknown as Attempt)
 it('shares available counts and explicit region refusal reasons',()=>{
@@ -84,4 +84,22 @@ it('skips only excluded regions when a service uses an exclusion list',()=>{
  expect(unlockResult(dlsiteOk)).toMatchObject({state:'available',tone:'good',label:'可用 · JP'})
  const dlsiteBlocked={...attempt('region_blocked'),service_id:'dlsite_unlock',result:{...attempt('region_blocked').result!,outcome:'region_blocked',summary:'DLsite 按当前出口地区隐藏锁区作品（RJ01571432）',details:{hidden_by_country:'true'}}} as Attempt
  expect(unlockResult(dlsiteBlocked)).toMatchObject({state:'unavailable',tone:'warn',label:'不可用'})
+})
+
+it('builds per-service detail items with failures prioritized before passing services',()=>{
+ const catalog=[
+  {service_id:'chatgpt_unlock',name:'ChatGPT'},
+  {service_id:'claude_unlock',name:'Claude'},
+  {service_id:'gemini_unlock',name:'Gemini'},
+  {service_id:'antigravity',name:'Antigravity'},
+ ]
+ const map:Record<string,Attempt>={
+  chatgpt_unlock:{...attempt('unlocked'),service_id:'chatgpt_unlock',result:{...attempt('unlocked').result!,outcome:'unlocked',details:{service_region:'US'}}} as Attempt,
+  claude_unlock:{...attempt('region_blocked'),service_id:'claude_unlock',result:{...attempt('region_blocked').result!,outcome:'region_blocked',summary:'地区不支持'}} as Attempt,
+  gemini_unlock:{...attempt('region_blocked'),service_id:'gemini_unlock',result:{...attempt('region_blocked').result!,outcome:'region_blocked',details:{service_region:'CN'},summary:'Google 判定为中国大陆'}} as Attempt,
+ }
+ const detail=unlockGroupDetail('ai',catalog,id=>map[id],'JP')
+ expect(detail.label).toBe('1/3')
+ expect(detail.attemptedItems.map(i=>`${i.shortName}:${i.shortStatus}`)).toEqual(['Gemini:送中','Claude:不可用 SG','ChatGPT:✓ US'])
+ expect(detail.attemptedItems.map(i=>i.tone)).toEqual(['bad','warn','good'])
 })

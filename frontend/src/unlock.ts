@@ -72,12 +72,88 @@ export function unlockGroupSkipReason(groupId:string,region:string,enabled=true,
  const ids=unlockGroups.find(g=>g.id===groupId)?.ids||[]
  return ids.length&&ids.every(id=>!unlockServiceAllowed(id,region,enabled,rules))?unlockServiceSkipReason(ids[0]!,region,enabled,rules):''
 }
+export const unlockServiceShortNames:Record<string,string>={
+ chatgpt_unlock:'ChatGPT',
+ claude_unlock:'Claude',
+ gemini_unlock:'Gemini',
+ antigravity:'AGY',
+ netflix_unlock:'Netflix',
+ netflix_unlock_ipv4:'Netflix',
+ youtube_premium:'YouTube',
+ spotify_unlock:'Spotify',
+ tiktok_unlock:'TikTok',
+ abema_unlock:'Abema',
+ unext_unlock:'U-NEXT',
+ dmm_unlock:'DMM',
+ dlsite_unlock:'DLsite',
+ radiko_unlock:'Radiko',
+ hulu_jp_unlock:'Hulu JP',
+ fod_unlock:'FOD',
+}
+export function unlockShortName(id:string,fallback:string){
+ return unlockServiceShortNames[id]||fallback.replace(/\s*解锁$/,'').replace(/\s*连通性$/,'')
+}
+export function unlockShortStatus(result:ReturnType<typeof unlockResult>,attempt?:Attempt){
+ if(result.state==='available'){
+  if(result.label.startsWith('完整'))return result.region?`完整 ${result.region}`:'完整'
+  if(result.label.startsWith('模型可用'))return result.region?`可用 ${result.region}`:'可用'
+  return result.region?`✓ ${result.region}`:'✓'
+ }
+ if(result.state==='verification')return '需验证'
+ if(result.state==='partial'){
+  if(result.label.startsWith('仅自制剧'))return '仅自制剧'
+  if(result.label==='限注册')return '限注册'
+  return result.label
+ }
+ if(result.state==='unavailable'){
+  if(result.label.includes('中国大陆')||result.label.includes('送中'))return '送中'
+  if(result.label==='封禁')return '封禁'
+  if(result.label==='策略拦截')return '拦截'
+  if(result.label.includes('漂移'))return '漂移'
+  if(result.label.startsWith('不可用')&&result.region)return `不可用 ${result.region}`
+  return '不可用'
+ }
+ if(!attempt?.result)return '未测'
+ const o=attempt.result.outcome
+ if(o==='timed_out')return '超时'
+ if(o==='challenge'||o==='suspected_challenge')return '验证拦截'
+ if(o==='rate_limited')return '限流'
+ if(o==='transport_error'||o==='connection_failed')return '连接失败'
+ if(['credentials_required','auth_failed','setup_required','permission_denied'].includes(o||''))return result.label
+ return '待确认'
+}
+export interface UnlockDetailItem {
+ id:string
+ name:string
+ shortName:string
+ attempt?:Attempt
+ result:ReturnType<typeof unlockResult>
+ shortStatus:string
+ tone:string
+ measured:boolean
+ attempted:boolean
+}
 export function unlockGroupSummary(groupId:string,catalog:Pick<ServiceRule,'service_id'|'name'>[],lookup:(id:string)=>Attempt|undefined,region?:string,enabled=true,rules:ServiceRegions={},ipType?:IpType){
  const services=catalog.filter(s=>unlockGroup(s.service_id)===groupId),eligible=services.filter(s=>region===undefined||unlockServiceAllowed(s.service_id,region,enabled,rules))
  if((services.length&&!eligible.length)||(!services.length&&region!==undefined&&unlockGroupSkipReason(groupId,region,enabled,rules)))return {available:0,total:0,tone:'empty',label:'—',reason:'',title:services.length?unlockServiceSkipReason(services[0]!.service_id,region!,enabled,rules):unlockGroupSkipReason(groupId,region!,enabled,rules)}
  const list=eligible.map(s=>({...s,result:unlockResult(lookup(s.service_id),s.service_id,ipType)})),available=list.filter(s=>s.result.state==='available').length,unavailable=list.filter(s=>unlockMeasured(s.result.state)&&s.result.state!=='available')
  const total=available+unavailable.length
  return {available,total,tone:unavailable.length?'warn':available?'good':'empty',label:total?available+'/'+total:'未测',reason:unavailable.map(s=>s.name+'：'+(s.result.state==='partial'?s.result.label:s.result.reason)).join('；'),title:list.map(s=>s.name+'：'+s.result.label+' · '+s.result.reason).join('\n')}
+}
+export function unlockGroupDetail(groupId:string,catalog:Pick<ServiceRule,'service_id'|'name'>[],lookup:(id:string)=>Attempt|undefined,region?:string,enabled=true,rules:ServiceRegions={},ipType?:IpType){
+ const summary=unlockGroupSummary(groupId,catalog,lookup,region,enabled,rules,ipType)
+ const services=catalog.filter(s=>unlockGroup(s.service_id)===groupId),eligible=services.filter(s=>region===undefined||unlockServiceAllowed(s.service_id,region,enabled,rules))
+ const skipped=summary.label==='—'
+ if(skipped)return {...summary,skipped:true,items:[] as UnlockDetailItem[],attemptedItems:[] as UnlockDetailItem[]}
+ const rank=(item:UnlockDetailItem)=>item.tone==='bad'?0:item.tone==='warn'?1:item.attempted&&!item.measured?2:item.tone==='good'?3:4
+ const items:UnlockDetailItem[]=eligible.map(s=>{
+  const attempt=lookup(s.service_id),result=unlockResult(attempt,s.service_id,ipType)
+  const measured=unlockMeasured(result.state),attempted=measured||(!!attempt?.result&&!(s.service_id==='disney_unlock'&&!servicePassed(attempt)))
+  const tone=result.tone!=='empty'?result.tone:attempted?'warn':'empty'
+  return {id:s.service_id,name:s.name,shortName:unlockShortName(s.service_id,s.name),attempt,result,shortStatus:unlockShortStatus(result,attempt),tone,measured,attempted}
+ }).sort((a,b)=>rank(a)-rank(b))
+ const attemptedItems=items.filter(item=>item.attempted)
+ return {...summary,skipped:false,items,attemptedItems}
 }
 export function unlockSummary(catalog:Pick<ServiceRule,'service_id'|'name'>[],lookup:(id:string)=>Attempt|undefined,region?:string,enabled=true,rules:ServiceRegions={},ipType?:IpType){
  const groups=unlockGroups.map(g=>({...g,...unlockGroupSummary(g.id,catalog,lookup,region,enabled,rules,ipType)}))

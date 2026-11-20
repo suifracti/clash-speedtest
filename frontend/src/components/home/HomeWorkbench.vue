@@ -23,11 +23,12 @@ import NodeCompare from './NodeCompare.vue'
 import NodeAttrPopover from './NodeAttrPopover.vue'
 import Modal from '../Modal.vue'
 import type {TrendPoint} from '../../presentation'
-import {latencySiteSamples} from '../../inspectorLatency'
+import {latencySiteSamples,stableLatency} from '../../inspectorLatency'
+import {computeTipAnchor,hideChartTip,showChartTip} from '../../chartTip'
 import {homeModelKey,weeklyHistoryKey} from './homeModel'
 import {exitLanding} from '../../exitLanding'
 import {entryCountry,isAnycast,lineLabel,routeKind,routeLabel,routeTone} from '../../entryPath'
-import {unlockGroups,unlockGroupSummary} from '../../unlock'
+import {unlockGroupDetail,unlockGroups} from '../../unlock'
 const w=useWorkspace(),m=inject(homeModelKey)!
 const readingHintId=useId()
 const exitMode=ref(false),serviceView=ref('nodes')
@@ -188,6 +189,9 @@ function reviewLatencyRound(n:NodeOption,point:TrendPoint,target:string){
  latencyReview.value={node:n,point,target}
  void openLatencyRound(n,point,target)
 }
+function onWholeHistorySelect(point:TrendPoint,target:string,node?:NodeOption){
+ if(node)reviewLatencyRound(node,point,target)
+}
 function resetLatencyReview(n:NodeOption){
  latencyReview.value=undefined
  if(m.hoverMode.value==='latency'&&m.hoverNode.value&&sameReadingNode(m.hoverNode.value,n))m.closeHover()
@@ -266,21 +270,82 @@ const nodeRowMeta=computed(()=>Object.fromEntries(m.pageNodes.value.map(n=>{
 })))
 const overviewLatencyMap=computed(()=>overviewMode.value?Object.fromEntries(m.pageNodes.value.map(n=>{
  const verdict=verdicts.value[key(n)]
- const pts=sites.value.map(s=>m.latencyRowPoint(n,s.id))
- const vals=pts.map(p=>p?.value).filter((v):v is number=>v!=null&&Number.isFinite(v)).sort((a,b)=>a-b)
+ const siteData=sites.value.map(s=>{
+  const pt=m.latencyRowPoint(n,s.id)
+  const samples=latencySiteSamples(pt,s.id)
+  const responded=samples.filter(sp=>sp.value!==null).length,total=samples.length
+  const httpCode=samples.map(sp=>sp.note?.match(/HTTP (\d+)/)?.[1]).find(Boolean)||''
+  const httpCount=httpCode?samples.filter(sp=>sp.note?.includes('HTTP '+httpCode)).length:0
+  const stableMs=stableLatency([{id:s.id,points:pt?[pt]:[]}])??(pt?.value??null)
+  const shortName=s.name==='Cloudflare'?'CF':s.name
+  return {id:s.id,name:s.name,shortName,pt,responded,total,httpCode,httpCount,stableMs}
+ })
+ const vals=siteData.map(s=>s.stableMs).filter((v):v is number=>v!=null&&Number.isFinite(v)).sort((a,b)=>a-b)
  const med=median(vals)
- const measured=verdict.tone!=='empty'||vals.length>0
- return [key(n),{measured,verdict,ms:med!==null?`${Math.round(med)} ms`:'',sub:vals.length?`${vals.length}/${sites.value.length} 站响应`:''}]
+ const anomalies:Array<{label:string;tone:'warn'|'bad'}>=[]
+ for(const s of siteData){
+  if(s.total>0&&s.responded===0){anomalies.push({label:`${s.shortName} 超时`,tone:'bad'});continue}
+  if(s.httpCode){
+   const part=s.responded<s.total?`${s.responded}/${s.total}·`:''
+   anomalies.push({label:`${s.shortName} ${part}${s.httpCode}`,tone:'warn'})
+   continue
+  }
+  if(s.total>0&&s.responded<s.total){anomalies.push({label:`${s.shortName} ${s.responded}/${s.total}`,tone:'warn'});continue}
+  if(s.stableMs!==null&&(s.stableMs>=1200||(med!==null&&s.stableMs>=800&&s.stableMs>=med*1.8))){
+   anomalies.push({label:`${s.shortName} ${Math.round(s.stableMs)}ms`,tone:'warn'})
+  }
+ }
+ const tipSites=siteData.map(s=>({
+  name:s.name,
+  value:s.stableMs!==null?`${Math.round(s.stableMs)} ms`:s.total>0?'超时':'未测',
+  count:s.total>0?`${s.responded}/${s.total}`:'—',
+  badge:s.httpCode?`HTTP ${s.httpCode}`:s.total>0&&s.responded===0?'无响应':s.total>0&&s.responded<s.total?'部分丢包':s.stableMs!==null&&s.stableMs>=1200?'延迟高':'',
+  tone:s.total===0?'empty':s.responded===0?'bad':s.httpCode||s.responded<s.total||(s.stableMs!==null&&s.stableMs>=1200)?'warn':'good',
+ }))
+ const measured=verdict.tone!=='empty'||vals.length>0||siteData.some(s=>s.total>0)
+ return [key(n),{measured,verdict,ms:med!==null?`${Math.round(med)} ms`:'',sub:vals.length?`${vals.length}/${sites.value.length} 站响应`:siteData.some(s=>s.total>0)?`0/${sites.value.length} 站响应`:'',anomalies,tipSites}]
 })):{})
 const overviewUnlockMap=computed(()=>overviewMode.value?Object.fromEntries(m.pageNodes.value.map(n=>{
  const region=w.nodeUnlockRegion(n),ipType=exitRows.value[key(n)]?.ipKind.type
- const groups=unlockGroups.map(g=>({id:g.id,name:g.name,...unlockGroupSummary(g.id,catalog.value,serviceId=>m.shownService(n,serviceId),region,w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions,ipType)})).filter(g=>g.total>0||(g.tone!=='empty'&&g.label!=='未测'&&g.label!=='—'))
- return [key(n),groups]
+ const groups=unlockGroups.map(g=>({id:g.id,name:g.name,...unlockGroupDetail(g.id,catalog.value,serviceId=>m.shownService(n,serviceId),region,w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions,ipType)})).filter(g=>g.total>0||g.attemptedItems.length>0||(g.tone!=='empty'&&g.label!=='未测'&&g.label!=='—'))
+ const itemRank=(tone:string)=>tone==='bad'?0:tone==='warn'?1:tone==='good'?2:3
+ const items=groups.flatMap(g=>g.attemptedItems.map(item=>({...item,groupName:g.name}))).sort((a,b)=>itemRank(a.tone)-itemRank(b.tone))
+ return [key(n),{groups,items}]
 })):{})
 const serviceGroupMap=computed(()=>showServiceGroups.value?Object.fromEntries(m.pageNodes.value.map(n=>{
  const region=w.nodeUnlockRegion(n),ipType=exitRows.value[key(n)]?.ipKind.type
- return [key(n),unlockGroups.map(g=>({id:g.id,...unlockGroupSummary(g.id,catalog.value,serviceId=>m.shownService(n,serviceId),region,w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions,ipType)}))]
+ return [key(n),unlockGroups.map(g=>({id:g.id,name:g.name,...unlockGroupDetail(g.id,catalog.value,serviceId=>m.shownService(n,serviceId),region,w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions,ipType)}))]
 })):{})
+function showOverviewLatencyTip(e:MouseEvent,n:NodeOption){
+ const row=overviewLatencyMap.value[key(n)]
+ if(!row?.measured)return
+ const anchor=computeTipAnchor(e.currentTarget as HTMLElement|null,154,180)
+ if(!anchor)return
+ showChartTip({kind:'overview-latency',title:`${nodeRowMeta.value[key(n)]?.displayName||n.display_name} · 延迟`,sub:row.sub||row.verdict.label,sites:row.tipSites,...anchor})
+}
+function showOverviewUnlockTip(e:MouseEvent,n:NodeOption){
+ const data=overviewUnlockMap.value[key(n)]
+ if(!data?.groups.length)return
+ const anchor=computeTipAnchor(e.currentTarget as HTMLElement|null,168,210)
+ if(!anchor)return
+ showChartTip({
+  kind:'unlock-detail',
+  title:`${nodeRowMeta.value[key(n)]?.displayName||n.display_name} · 服务解锁`,
+  groups:data.groups.map(g=>({name:g.name,ratio:g.total?`${g.available}/${g.total} 可用`:'待确认',items:g.attemptedItems.map(item=>({name:item.name,label:item.result.label,tone:item.tone,reason:item.result.reason&&item.result.reason!=='检测规则通过'?item.result.reason:''}))})),
+  ...anchor,
+ })
+}
+function showServiceGroupTip(e:MouseEvent,n:NodeOption,g:(typeof serviceGroupMap.value)[string][number]){
+ if(!g.attemptedItems.length)return
+ const anchor=computeTipAnchor(e.currentTarget as HTMLElement|null,168,210)
+ if(!anchor)return
+ showChartTip({
+  kind:'unlock-detail',
+  title:`${nodeRowMeta.value[key(n)]?.displayName||n.display_name} · ${g.name}`,
+  groups:[{name:g.name,ratio:g.total?`${g.available}/${g.total} 可用`:'待确认',items:g.attemptedItems.map(item=>({name:item.name,label:item.result.label,tone:item.tone,reason:item.result.reason&&item.result.reason!=='检测规则通过'?item.result.reason:''}))}],
+  ...anchor,
+ })
+}
 const weeklyRowMap=computed(()=>showSites.value?Object.fromEntries(m.pageNodes.value.map(n=>[key(n),{
  old:weeklyOld(n),
  respText:weeklyText(n,'responseRate'),
@@ -298,8 +363,8 @@ function quickPlanSingle(n:NodeOption,proj:Exclude<Project,'combined'>){
  if(w.plan.value){w.plan.value.projects=[proj];w.plan.value.includeReputation=false;w.plan.value.reputationServiceIds=[]}
 }
 // Grid tracks follow the active project so each tab shows its own columns.
-const columns=computed(()=>overviewMode.value?['28px','minmax(210px,1.55fr)','repeat(4,minmax(132px,1fr))'].join(' '):exitMode.value?['28px','minmax(185px,1.7fr)','minmax(96px,1.05fr)','84px','minmax(92px,1fr)','82px','78px','76px'].join(' '):showSites.value?['28px','minmax(188px,1.45fr)','82px','96px','78px','72px',...sites.value.map(()=>'minmax(108px,1fr)')].join(' '):w.project.value==='download'?['36px','minmax(215px,1.65fr)','minmax(175px,1.15fr)','minmax(125px,.85fr)','minmax(195px,1.25fr)'].join(' '):['36px','minmax(220px,2.1fr)',...unlockGroups.map(()=>'minmax(110px,1fr)')].join(' '))
-const overviewMinWidth=computed(()=>28+210+4*132+5*10+28)
+const columns=computed(()=>overviewMode.value?['28px','minmax(210px,1.45fr)','minmax(168px,1.25fr)','minmax(122px,.9fr)','minmax(168px,1.25fr)','minmax(132px,.95fr)'].join(' '):exitMode.value?['28px','minmax(185px,1.7fr)','minmax(96px,1.05fr)','84px','minmax(92px,1fr)','82px','78px','76px'].join(' '):showSites.value?['28px','minmax(188px,1.45fr)','82px','96px','78px','72px',...sites.value.map(()=>'minmax(108px,1fr)')].join(' '):w.project.value==='download'?['36px','minmax(215px,1.65fr)','minmax(175px,1.15fr)','minmax(125px,.85fr)','minmax(195px,1.25fr)'].join(' '):['36px','minmax(210px,1.45fr)',...unlockGroups.map(()=>'minmax(175px,1fr)')].join(' '))
+const overviewMinWidth=computed(()=>28+210+168+122+168+132+5*12+28)
 const latencyMinWidth=computed(()=>28+188+82+96+78+72+sites.value.length*108+(sites.value.length+5)*10+28)
 const shownRange=computed(()=>{
  const total=m.visibleNodes.value.length,size=m.pageSize.value
@@ -507,17 +572,21 @@ function keyNav(e:KeyboardEvent){
         </div>
         </div>
         <div ref="rowScroller" class="hd-row-scroll" role="rowgroup" @scroll="syncTableHeading">
-        <div v-for="n in m.pageNodes.value" :key="key(n)" :data-node-key="key(n)" class="hd-tr" role="row" :class="{focus:isFocus(n)&&(inspectorOpen||!!focusKey),selected:selected(n),'clash-using':isClashUsing(n)}" :aria-selected="selected(n)" @click="focus(n)">
+        <div v-for="n in m.pageNodes.value" :key="key(n)" v-memo="[exitMode?'exit':w.project.value,isFocus(n)&&(inspectorOpen||!!focusKey),selected(n),isClashUsing(n),nodeRowMeta[key(n)],overviewMode?overviewLatencyMap[key(n)]:undefined,overviewMode||(!exitMode&&w.project.value==='download')?downloadRows[key(n)]:undefined,overviewMode?overviewUnlockMap[key(n)]:undefined,overviewMode||exitMode||showVerdict?exitRows[key(n)]:undefined,showVerdict&&!overviewMode?verdicts[key(n)]:undefined,showSites?weeklyRowMap[key(n)]:undefined,showSites?wholeLatencyHistory[key(n)]:undefined,showSites?latencyReviewFor(n):undefined,showSites?w.displayTargets.value.length:0,showServiceGroups?serviceGroupMap[key(n)]:undefined,!exitMode&&w.project.value==='download'?w.busy.value:false]" :data-node-key="key(n)" class="hd-tr" role="row" :class="{focus:isFocus(n)&&(inspectorOpen||!!focusKey),selected:selected(n),'clash-using':isClashUsing(n)}" :aria-selected="selected(n)" @click="focus(n)">
           <span role="cell" @click.stop><input type="checkbox" :checked="selected(n)" :aria-label="'选择 '+nodeRowMeta[key(n)].displayName" @change="w.toggleNode(n)"></span>
           <span role="cell" class="hd-node" :class="nodeRowMeta[key(n)].regionClass" :title="n.display_name+' · '+nodeRowMeta[key(n)].fullSource+' · '+n.type"><span><div class="hd-node-title"><span class="hd-flag" :class="nodeRowMeta[key(n)].regionClass">{{n.country_code||'—'}}</span><span v-if="isClashUsing(n)" class="hd-clash-active-badge" aria-label="Clash 正在使用" title="Clash 正在使用"><i class="hd-clash-node-dot" aria-hidden="true"/>在用</span><button class="hd-node-open" :tabindex="isFocus(n)?0:-1" :aria-label="'查看 '+nodeRowMeta[key(n)].displayName+' · '+nodeRowMeta[key(n)].fullSource" @focus="focusKey=key(n)" @click.stop="focus(n)"><strong><span class="hd-node-region">{{nodeRowMeta[key(n)].region}}</span><template v-for="(part,idx) in nodeRowMeta[key(n)].parts" :key="idx"><span class="hd-node-sep"> · </span><span class="hd-node-part" :class="part.kind" :title="part.hintDetail" @mouseenter="showAttrTip($event,part.text)" @mouseleave="clearAttrTip">{{part.text}}</span></template></strong></button></div><small><span class="hd-source-label">{{nodeRowMeta[key(n)].source}}</span> · <b class="hd-proto-tag" :class="nodeRowMeta[key(n)].protoClass">{{n.type}}</b></small>
-            <span v-if="showSites&&wholeLatencyHistory[key(n)]?.length" class="hd-round-history"><span>整轮历史</span><LatencyHistoryMarks class="hd-round-marks" :points="wholeLatencyHistory[key(n)]" target="all" label="整轮历史" :selected="latencyReviewFor(n)?.target==='all'?latencyReviewFor(n)?.point:undefined" @select="reviewLatencyRound(n,$event,'all')"/></span>
+            <span v-if="showSites&&wholeLatencyHistory[key(n)]?.length" class="hd-round-history"><span>整轮历史</span><LatencyHistoryMarks class="hd-round-marks" :node="n" :points="wholeLatencyHistory[key(n)]" target="all" label="整轮历史" :selected="latencyReviewFor(n)?.target==='all'?latencyReviewFor(n)?.point:undefined" @select="onWholeHistorySelect"/></span>
             <span v-if="showSites&&latencyReviewFor(n)" class="hd-round-review"><span>回看 {{date(latencyReviewFor(n)?.point.time)}}</span><button type="button" class="hd-link" @click.stop="resetLatencyReview(n)">回到最新</button></span>
           </span></span>
           <template v-if="overviewMode">
-            <span role="cell" class="hd-ov-cell">
+            <span role="cell" class="hd-ov-cell" @mouseenter="showOverviewLatencyTip($event,n)" @mouseleave="hideChartTip">
               <template v-if="overviewLatencyMap[key(n)].measured">
                 <span class="hd-ov-main"><b class="hd-pill" :class="[overviewLatencyMap[key(n)].verdict.tone,{'partial-sites':overviewLatencyMap[key(n)].verdict.label.startsWith('部分站点不通')}]">{{overviewLatencyMap[key(n)].verdict.label}}</b><strong v-if="overviewLatencyMap[key(n)].ms" class="hd-ov-val">{{overviewLatencyMap[key(n)].ms}}</strong></span>
-                <small v-if="overviewLatencyMap[key(n)].sub" class="hd-ov-sub">{{overviewLatencyMap[key(n)].sub}}</small>
+                <span v-if="overviewLatencyMap[key(n)].sub||overviewLatencyMap[key(n)].anomalies.length" class="hd-ov-meta-row">
+                  <small v-if="overviewLatencyMap[key(n)].sub" class="hd-ov-sub">{{overviewLatencyMap[key(n)].sub}}</small>
+                  <span v-for="a in overviewLatencyMap[key(n)].anomalies.slice(0,3)" :key="a.label" class="hd-ov-tag" :class="a.tone">{{a.label}}</span>
+                  <span v-if="overviewLatencyMap[key(n)].anomalies.length>3" class="hd-ov-tag empty">+{{overviewLatencyMap[key(n)].anomalies.length-3}}</span>
+                </span>
               </template>
               <span v-else class="hd-empty-pill">未测延迟</span>
             </span>
@@ -530,10 +599,16 @@ function keyNav(e:KeyboardEvent){
               <span v-else-if="downloadRows[key(n)].tone!=='empty'&&downloadRows[key(n)].metric!=='未测'" class="hd-ov-main"><b class="hd-pill" :class="downloadRows[key(n)].tone">{{downloadRows[key(n)].metric}}</b></span>
               <span v-else class="hd-empty-pill">未测速</span>
             </span>
-            <span role="cell" class="hd-ov-cell">
-              <span v-if="overviewUnlockMap[key(n)].length" class="hd-ov-chips">
-                <span v-for="g in overviewUnlockMap[key(n)]" :key="g.id" class="hd-ov-chip" :class="g.tone" :title="g.title">{{g.name}} {{g.label}}</span>
-              </span>
+            <span role="cell" class="hd-ov-cell" @mouseenter="showOverviewUnlockTip($event,n)" @mouseleave="hideChartTip">
+              <template v-if="overviewUnlockMap[key(n)].groups.length">
+                <span class="hd-ov-chips">
+                  <span v-for="g in overviewUnlockMap[key(n)].groups" :key="g.id" class="hd-ov-chip" :class="g.tone" :title="g.title">{{g.name}} {{g.total?g.label:'待确认'}}</span>
+                </span>
+                <span v-if="overviewUnlockMap[key(n)].items.length" class="hd-ov-svc-list">
+                  <button v-for="item in overviewUnlockMap[key(n)].items.slice(0,3)" :key="item.id" type="button" class="hd-ov-svc-chip" :class="item.tone" :title="item.name+'：'+item.result.label+(item.result.reason?' · '+item.result.reason:'')" @click.stop="hideChartTip();m.showService(n,item.id)"><b>{{item.shortName}}</b><span>{{item.shortStatus}}</span></button>
+                  <span v-if="overviewUnlockMap[key(n)].items.length>3" class="hd-ov-tag empty">+{{overviewUnlockMap[key(n)].items.length-3}}</span>
+                </span>
+              </template>
               <span v-else class="hd-empty-pill">未测解锁</span>
             </span>
             <span role="cell" class="hd-ov-cell">
@@ -555,7 +630,7 @@ function keyNav(e:KeyboardEvent){
             <template v-else>—</template>
           </span>
           <template v-if="showSites"><span role="cell" class="hd-num hd-history-cell" :class="weeklyRowMap[key(n)].respTone" :title="weeklyRowMap[key(n)].respTitle">{{weeklyRowMap[key(n)].respText}}<small v-if="weeklyRowMap[key(n)].old" class="old-tag">旧</small></span><span role="cell" class="hd-num hd-history-cell" :class="weeklyRowMap[key(n)].volTone" :title="weeklyRowMap[key(n)].volTitle">{{weeklyRowMap[key(n)].volText}}<small v-if="weeklyRowMap[key(n)].old" class="old-tag">旧</small></span></template>
-          <NodeResponseStrip v-if="showSites" :node="n" detailed :review="latencyReviewFor(n)" @round="(point,target)=>openLatencyRound(n,point,target)" @history="(point,target)=>reviewLatencyRound(n,point,target)"/>
+          <NodeResponseStrip v-if="showSites" :node="n" detailed :review="latencyReviewFor(n)" @round="openLatencyRound" @history="reviewLatencyRound"/>
           <template v-if="!exitMode&&w.project.value==='download'">
             <span role="cell" class="hd-num hd-dl-cell" :class="downloadRows[key(n)].tone" :title="downloadRows[key(n)].context">
               <template v-if="downloadRows[key(n)]?.val!==null">
@@ -574,7 +649,21 @@ function keyNav(e:KeyboardEvent){
               <button type="button" class="hd-row-quick" :disabled="w.busy.value" @click.stop="quickPlanSingle(n,'download')">测速</button>
             </span>
           </template>
-          <template v-if="showServiceGroups"><button v-for="g in serviceGroupMap[key(n)]" :key="g.id" role="cell" class="hd-svc-cell hd-num" :class="g.tone" :title="g.title" @click.stop="focus(n)"><span class="hd-svc-pill" :class="g.tone"><i aria-hidden="true"/>{{g.label}}</span></button></template>
+          <template v-if="showServiceGroups">
+            <div v-for="g in serviceGroupMap[key(n)]" :key="g.id" role="cell" class="hd-svc-cell hd-num" :class="[g.tone,{'hd-svc-cell-rich':g.attemptedItems.length>0}]" :title="g.title" @mouseenter="showServiceGroupTip($event,n,g)" @mouseleave="hideChartTip" @click.stop="hideChartTip();focus(n)">
+              <template v-if="g.attemptedItems.length">
+                <div class="hd-svc-head-row">
+                  <span class="hd-svc-pill compact" :class="g.tone"><i aria-hidden="true"/>{{g.total?g.label:'待确认'}}</span>
+                  <span v-if="g.total>=2" class="hd-svc-bar" aria-hidden="true"><i :class="g.tone" :style="{width:Math.round(g.available/g.total*100)+'%'}"/></span>
+                </div>
+                <div class="hd-svc-items">
+                  <button v-for="item in g.attemptedItems.slice(0,6)" :key="item.id" type="button" class="hd-svc-item" :class="item.tone" :title="item.name+'：'+item.result.label+(item.result.reason?' · '+item.result.reason:'')" @click.stop="hideChartTip();m.showService(n,item.id)"><b>{{item.shortName}}</b><small>{{item.shortStatus}}</small></button>
+                  <span v-if="g.attemptedItems.length>6" class="hd-ov-tag empty">+{{g.attemptedItems.length-6}}</span>
+                </div>
+              </template>
+              <span v-else class="hd-svc-pill" :class="g.tone"><i aria-hidden="true"/>{{g.label}}</span>
+            </div>
+          </template>
         </div>
         <div v-if="!m.pageNodes.value.length" class="hd-empty"><Icon name="layers"/><strong>{{!w.airports.value.length?'先添加一份机场订阅':!chosen.length?'先选择一个机场':hasSourceNodes?'节点被筛选条件隐藏了':'这个机场还没有节点'}}</strong><button class="hd-btn" @click="!w.airports.value.length?w.page.value='airports':!chosen.length?m.picker.value=true:hasSourceNodes?clearFilters():w.page.value='airports'">{{!w.airports.value.length?'添加机场':!chosen.length?'选择机场':hasSourceNodes?'清除筛选':'管理订阅'}}</button></div>
         </div>

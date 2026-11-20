@@ -85,14 +85,30 @@ async function keydown(event:KeyboardEvent){
 }
 function outside(event:PointerEvent){if(open.value&&!root.value?.contains(event.target as Node))close(false)}
 function onFocus(event:FocusEvent){if(open.value&&!root.value?.contains(event.target as Node))close(false)}
+let globalBound=false
+function bindGlobal(active:boolean){
+  if(active===globalBound)return
+  globalBound=active
+  if(active){
+    document.addEventListener('pointerdown',outside,true)
+    document.addEventListener('focusin',onFocus,true)
+    window.addEventListener('resize',position,{passive:true})
+    window.addEventListener('scroll',position,{capture:true,passive:true})
+  }else{
+    document.removeEventListener('pointerdown',outside,true)
+    document.removeEventListener('focusin',onFocus,true)
+    window.removeEventListener('resize',position)
+    window.removeEventListener('scroll',position,true)
+  }
+}
+watch(open,bindGlobal)
 onMounted(()=>{
   popoverSupported.value=typeof menu.value?.showPopover==='function';sync();optionsObserver=new MutationObserver(sync);if(native.value)optionsObserver.observe(native.value,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:['disabled','label','value']})
   fieldsObserver=new MutationObserver(sync);let parent=root.value?.parentElement;while(parent){if(parent instanceof HTMLFieldSetElement)fieldsObserver.observe(parent,{attributes:true,attributeFilter:['disabled']});parent=parent.parentElement}
-  document.addEventListener('pointerdown',outside,true);document.addEventListener('focusin',onFocus,true);window.addEventListener('resize',position);window.addEventListener('scroll',position,true)
 })
 onUpdated(sync)
 watch(()=>props.disabled,()=>{void nextTick(sync)})
-onBeforeUnmount(()=>{close(false);clearTimeout(searchTimer);fieldsObserver?.disconnect();optionsObserver?.disconnect();document.removeEventListener('pointerdown',outside,true);document.removeEventListener('focusin',onFocus,true);window.removeEventListener('resize',position);window.removeEventListener('scroll',position,true)})
+onBeforeUnmount(()=>{close(false);bindGlobal(false);clearTimeout(searchTimer);fieldsObserver?.disconnect();optionsObserver?.disconnect()})
 </script>
 
 <template>

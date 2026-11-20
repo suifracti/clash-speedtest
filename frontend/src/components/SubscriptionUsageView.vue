@@ -2,6 +2,7 @@
 import {computed,onBeforeUnmount,onMounted,ref,shallowRef,watch} from 'vue'
 import {api,query,request} from '../api'
 import {bytes,type Settings} from '../domain'
+import {registerTipDismiss} from '../chartTip'
 import {useWorkspace} from '../workspace'
 import UiSelect from './UiSelect.vue'
 import Icon from './Icon.vue'
@@ -25,6 +26,7 @@ const label=(s:string)=>({ok:'机场已报告',baseline:'首次基线',reset:'�
 const chartTip=shallowRef<{bucket:UsageBucket;x:number;y:number;below:boolean}|null>(null)
 const focusedDate=ref('')
 const chartBuckets=computed(()=>report.value?[...report.value.buckets].reverse():[])
+let clearBarDismiss:(()=>void)|undefined
 function showBarTip(e:MouseEvent|FocusEvent,bucket:UsageBucket){
  const el=e.currentTarget as HTMLElement|null
  if(!el)return
@@ -33,8 +35,9 @@ function showBarTip(e:MouseEvent|FocusEvent,bucket:UsageBucket){
  const x=Math.max(120,Math.min(vw-120,rect.left+rect.width/2))
  const below=rect.top<96
  chartTip.value={bucket,x,y:below?rect.bottom:rect.top,below}
+ if(!clearBarDismiss)clearBarDismiss=registerTipDismiss(hideBarTip)
 }
-function hideBarTip(){chartTip.value=null}
+function hideBarTip(){chartTip.value=null;clearBarDismiss?.();clearBarDismiss=undefined}
 function focusBucket(dateKey:string){
  focusedDate.value=dateKey
  const row=document.querySelector<HTMLElement>(`.usage-buckets tbody tr[data-bucket-date="${dateKey}"]`)
@@ -45,8 +48,8 @@ async function update(){updating.value=true;error.value='';notice.value='';try{c
 async function saveDaily(event:Event){if(!settings.value)return;const enabled=(event.target as HTMLInputElement).checked,old=settings.value.subscription_daily_update_enabled;saving.value=true;error.value='';try{const next={...settings.value,subscription_daily_update_enabled:enabled};await api.saveSettings(next);settings.value=next;if(report.value)report.value.daily_enabled=enabled;w.notify(enabled?'已开启每日订阅更新':'已关闭每日订阅更新')}catch(e){settings.value.subscription_daily_update_enabled=old;(event.target as HTMLInputElement).checked=old??true;error.value=e instanceof Error?e.message:String(e)}finally{saving.value=false}}
 function move(direction:number){const d=new Date(anchor.value+'T00:00:00Z');if(!Number.isFinite(d.getTime()))return;if(period.value==='week')d.setUTCDate(d.getUTCDate()+direction*7);else{d.setUTCDate(1);d.setUTCMonth(d.getUTCMonth()+direction)}anchor.value=iso(d)}
 watch([period,anchor,account],()=>{hideBarTip();focusedDate.value='';void load()})
-onMounted(()=>{window.addEventListener('scroll',hideBarTip,true);void load();void api.settings().then(s=>settings.value=s).catch(e=>error.value=e instanceof Error?e.message:String(e))})
-onBeforeUnmount(()=>{disposed=true;generation++;clearTimeout(refreshTimer);window.removeEventListener('scroll',hideBarTip,true)})
+onMounted(()=>{void load();void api.settings().then(s=>settings.value=s).catch(e=>error.value=e instanceof Error?e.message:String(e))})
+onBeforeUnmount(()=>{disposed=true;generation++;clearTimeout(refreshTimer);hideBarTip()})
 </script>
 
 <template><section class="subscription-usage" aria-label="订阅用量监测">

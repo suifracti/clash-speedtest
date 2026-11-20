@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {computed,nextTick,onBeforeUnmount,onMounted,ref,useId} from 'vue'
+import {computed,nextTick,onBeforeUnmount,ref,useId,watch} from 'vue'
 import {targets} from '../domain'
 import Icon from './Icon.vue'
 
@@ -20,8 +20,24 @@ async function show(last=false){if(!choices.value.length)return;open.value=true;
 function triggerKey(e:KeyboardEvent){if(['ArrowDown','ArrowUp'].includes(e.key)){e.preventDefault();void show(e.key==='ArrowUp')}else if(e.key==='Escape'&&open.value){e.preventDefault();close(true)}}
 function menuKey(e:KeyboardEvent){if(e.key==='Escape'){e.preventDefault();e.stopPropagation();close(true);return}if(!['ArrowDown','ArrowUp','Home','End'].includes(e.key)||(e.target instanceof HTMLInputElement&&['Home','End'].includes(e.key)))return;e.preventDefault();const list=buttons(),index=list.indexOf(document.activeElement as HTMLButtonElement);const next=e.key==='Home'?0:e.key==='End'?list.length-1:index<0?(e.key==='ArrowDown'?0:list.length-1):(index+(e.key==='ArrowDown'?1:-1)+list.length)%list.length;list[next]?.focus()}
 function outside(e:Event){if(open.value&&!root.value?.contains(e.target as Node))close()}
-onMounted(()=>{document.addEventListener('pointerdown',outside,true);document.addEventListener('focusin',outside,true);window.addEventListener('resize',position);window.addEventListener('scroll',position,true)})
-onBeforeUnmount(()=>{document.removeEventListener('pointerdown',outside,true);document.removeEventListener('focusin',outside,true);window.removeEventListener('resize',position);window.removeEventListener('scroll',position,true)})
+let globalBound=false
+function bindGlobal(active:boolean){
+ if(active===globalBound)return
+ globalBound=active
+ if(active){
+  document.addEventListener('pointerdown',outside,true)
+  document.addEventListener('focusin',outside,true)
+  window.addEventListener('resize',position,{passive:true})
+  window.addEventListener('scroll',position,{capture:true,passive:true})
+ }else{
+  document.removeEventListener('pointerdown',outside,true)
+  document.removeEventListener('focusin',outside,true)
+  window.removeEventListener('resize',position)
+  window.removeEventListener('scroll',position,true)
+ }
+}
+watch(open,bindGlobal)
+onBeforeUnmount(()=>bindGlobal(false))
 </script>
 
 <template>
