@@ -298,9 +298,9 @@ function quickPlanSingle(n:NodeOption,proj:Exclude<Project,'combined'>){
  if(w.plan.value){w.plan.value.projects=[proj];w.plan.value.includeReputation=false;w.plan.value.reputationServiceIds=[]}
 }
 // Grid tracks follow the active project so each tab shows its own columns.
-const columns=computed(()=>overviewMode.value?['28px','minmax(210px,1.55fr)','repeat(4,minmax(132px,1fr))'].join(' '):exitMode.value?['28px','minmax(185px,1.7fr)','minmax(96px,1.05fr)','84px','minmax(92px,1fr)','82px','78px','76px'].join(' '):showSites.value?['28px','minmax(188px,1.45fr)','82px','64px','86px','78px',...sites.value.map(()=>'minmax(105px,1fr)')].join(' '):w.project.value==='download'?['36px','minmax(215px,1.65fr)','minmax(175px,1.15fr)','minmax(125px,.85fr)','minmax(195px,1.25fr)'].join(' '):['36px','minmax(220px,2.1fr)',...unlockGroups.map(()=>'minmax(110px,1fr)')].join(' '))
+const columns=computed(()=>overviewMode.value?['28px','minmax(210px,1.55fr)','repeat(4,minmax(132px,1fr))'].join(' '):exitMode.value?['28px','minmax(185px,1.7fr)','minmax(96px,1.05fr)','84px','minmax(92px,1fr)','82px','78px','76px'].join(' '):showSites.value?['28px','minmax(188px,1.45fr)','82px','96px','78px','72px',...sites.value.map(()=>'minmax(108px,1fr)')].join(' '):w.project.value==='download'?['36px','minmax(215px,1.65fr)','minmax(175px,1.15fr)','minmax(125px,.85fr)','minmax(195px,1.25fr)'].join(' '):['36px','minmax(220px,2.1fr)',...unlockGroups.map(()=>'minmax(110px,1fr)')].join(' '))
 const overviewMinWidth=computed(()=>28+210+4*132+5*10+28)
-const latencyMinWidth=computed(()=>28+188+82+64+86+78+sites.value.length*105+(sites.value.length+5)*10+28)
+const latencyMinWidth=computed(()=>28+188+82+96+78+72+sites.value.length*108+(sites.value.length+5)*10+28)
 const shownRange=computed(()=>{
  const total=m.visibleNodes.value.length,size=m.pageSize.value
  if(!total||!size)return `共 ${total} 条`
@@ -538,7 +538,7 @@ function keyNav(e:KeyboardEvent){
             </span>
             <span role="cell" class="hd-ov-cell">
               <span v-if="exitRows[key(n)].purity.score!==null||exitRows[key(n)].cfChallenge.tone!=='empty'||exitRows[key(n)].exitKnown" class="hd-ov-chips">
-                <span v-if="exitRows[key(n)].purity.score!==null" class="hd-ov-chip" :class="exitRows[key(n)].purity.tone" :title="exitRows[key(n)].purity.title">{{exitRows[key(n)].purity.label}}</span>
+                <span v-if="exitRows[key(n)].purity.score!==null" class="hd-ov-chip" :class="exitRows[key(n)].purity.tone" :title="exitRows[key(n)].purity.title">{{exitRows[key(n)].purity.grade}} {{exitRows[key(n)].purity.score}} · {{exitRows[key(n)].purity.typeLabel}}</span>
                 <span v-else-if="exitRows[key(n)].exitKnown" class="hd-ov-chip" :class="exitRows[key(n)].tone" :title="exitRows[key(n)].detail">{{exitRows[key(n)].label}}</span>
                 <span v-if="exitRows[key(n)].cfChallenge.tone!=='empty'" class="hd-ov-chip" :class="exitRows[key(n)].cfChallenge.tone" :title="exitRows[key(n)].cfChallenge.detail">CF {{exitRows[key(n)].cfChallenge.shortLabel}}</span>
               </span>
@@ -547,7 +547,13 @@ function keyNav(e:KeyboardEvent){
           </template>
           <template v-if="exitMode"><template v-for="field in exitFields" :key="field"><span v-if="field==='line'" role="cell" class="hd-exit-cell hd-line-cell"><span class="hd-line-badge" :title="exitRows[key(n)].line">{{exitRows[key(n)].line}}</span><span v-if="exitRows[key(n)].route" class="hd-route-tag" :class="exitRows[key(n)].routeTone" :title="exitRows[key(n)].routeTitle">{{exitRows[key(n)].route}}</span></span><span v-else-if="field==='ip'" role="cell" class="hd-exit-cell"><code v-if="exitRows[key(n)].ip&&exitRows[key(n)].ip!=='—'" class="hd-ip-code">{{exitRows[key(n)].ip}}</code><span v-else class="hd-empty-pill">待查询</span></span><span v-else-if="field==='ipTag'" role="cell" class="hd-exit-cell hd-ip-cell"><span class="hd-ip-tag" :class="exitRows[key(n)].ipKind.tone" :title="'IP 类型：'+exitRows[key(n)].ipKind.detail">{{exitRows[key(n)].ipTag}}</span></span><span v-else-if="field==='cfChallenge'" role="cell" class="hd-exit-cell hd-cf-cell"><span class="hd-cf-tag" :class="exitRows[key(n)].cfChallenge.tone" :title="exitRows[key(n)].cfChallenge.label+' · '+exitRows[key(n)].cfChallenge.detail">{{exitRows[key(n)].cfChallenge.shortLabel}}</span></span><span v-else role="cell" class="hd-exit-cell"><span class="hd-exit-pill" :class="field==='label'?exitRows[key(n)].tone:exitRows[key(n)].riskTone" :title="field==='label'?exitRows[key(n)].detail:'IPPure 与机器流量占比取较高值'">{{exitRows[key(n)][field]==='未测'?(field==='label'?'待检测':'未测'):exitRows[key(n)][field]}}</span></span></template></template>
           <span v-if="showVerdict&&!overviewMode" role="cell"><b class="hd-pill" :class="[verdicts[key(n)].tone,{'partial-sites':verdicts[key(n)].label.startsWith('部分站点不通')}]">{{verdicts[key(n)].label}}</b></span>
-          <span v-if="showVerdict&&!overviewMode" role="cell" class="hd-num" :class="exitRows[key(n)].purity.tone" :title="exitRows[key(n)].purity.title">{{exitRows[key(n)].purity.label}}</span>
+          <span v-if="showVerdict&&!overviewMode" role="cell" class="hd-num hd-purity-cell" :class="exitRows[key(n)].purity.tone" :title="exitRows[key(n)].purity.title">
+            <template v-if="exitRows[key(n)].purity.score!==null">
+              <span class="hd-purity-top"><b class="hd-purity-badge" :class="exitRows[key(n)].purity.tone">{{exitRows[key(n)].purity.grade}} {{exitRows[key(n)].purity.score}}</b><small class="hd-purity-type">{{exitRows[key(n)].purity.typeLabel}}</small></span>
+              <span class="hd-purity-bar" aria-hidden="true"><i :class="exitRows[key(n)].purity.tone" :style="{width:Math.max(8,exitRows[key(n)].purity.score!)+'%'}"/></span>
+            </template>
+            <template v-else>—</template>
+          </span>
           <template v-if="showSites"><span role="cell" class="hd-num hd-history-cell" :class="weeklyRowMap[key(n)].respTone" :title="weeklyRowMap[key(n)].respTitle">{{weeklyRowMap[key(n)].respText}}<small v-if="weeklyRowMap[key(n)].old" class="old-tag">旧</small></span><span role="cell" class="hd-num hd-history-cell" :class="weeklyRowMap[key(n)].volTone" :title="weeklyRowMap[key(n)].volTitle">{{weeklyRowMap[key(n)].volText}}<small v-if="weeklyRowMap[key(n)].old" class="old-tag">旧</small></span></template>
           <NodeResponseStrip v-if="showSites" :node="n" detailed :review="latencyReviewFor(n)" @round="(point,target)=>openLatencyRound(n,point,target)" @history="(point,target)=>reviewLatencyRound(n,point,target)"/>
           <template v-if="!exitMode&&w.project.value==='download'">

@@ -39,6 +39,16 @@ export function latencyHttpNotices(report:Pick<LatencyReport,'rows'>){
 export type LatencyReportStatus='usable'|'slow'|'partial'|'unstable'|'no-response'|'skipped'
 export type LatencyReportIssueKind='slow'|'partial'|'unstable'|'no-response'|'suspected'
 
+export interface LatencyReportSample {
+ seq:number
+ timestamp:string
+ latencyMs:number|null
+ success:boolean
+ httpStatus?:string
+ error?:string
+ reason?:string
+}
+
 export interface LatencyReportSite {
  id:string
  name:string
@@ -46,6 +56,19 @@ export interface LatencyReportSite {
  stableMs:number|null
  attemptedSamples:number
  responseSamples:number
+ httpCodes:string[]
+ httpCount:number
+ failCount:number
+ failReasons:string[]
+ samples:LatencyReportSample[]
+}
+
+export interface LatencyReportHttpNote {
+ siteId:string
+ siteName:string
+ code:string
+ count:number
+ total:number
 }
 
 export interface LatencyReportRow {
@@ -61,6 +84,7 @@ export interface LatencyReportRow {
  firstMedianMs:number|null
  stableMs:number|null
  sites:LatencyReportSite[]
+ httpNotes:LatencyReportHttpNote[]
  partialSites:string[]
  skipReason?:string
  suspected:boolean
@@ -177,6 +201,12 @@ function failureReason(row:LatencyReportRow):string{
  return [...counts].sort((a,b)=>b[1]-a[1])[0]?.[0]||'无响应'
 }
 
+function sampleErrorReason(raw?:string){
+ const value=(raw||'').toLowerCase()
+ if(!value)return '失败'
+ return /dns|resolve|解析/.test(value)?'DNS 解析失败':/tls|handshake|certificate|证书/.test(value)?'TLS 握手失败':/timeout|timed out|deadline|超时/.test(value)?'超时':/eof|unexpected eof/.test(value)?'连接中断 (EOF)':/refus|reset|dial|connect|连接/.test(value)?'连接失败':/http|status|状态/.test(value)?'HTTP 异常':'失败'
+}
+
 function makeRow(item:BatchItem,airportNames:Record<string,string>,batchTarget?:string):LatencyReportRow{
  const result=item.result
  const samples=(result?.samples||[]).slice().sort(sampleOrder)
@@ -186,11 +216,23 @@ function makeRow(item:BatchItem,airportNames:Record<string,string>,batchTarget?:
   const id=targetId(sample.target||result?.target,batchTarget)
   if(id)bySite.get(id)?.push(sample)
  }
+ const httpNotes:LatencyReportHttpNote[]=[]
  const sites:LatencyReportSite[]=targets.map(target=>{
   const list=bySite.get(target.id)||[]
   const first=list[0]
   const stableValues=list.slice(1).filter(s=>s.success&&finite(s.latency_ms)).map(s=>s.latency_ms)
-  return {id:target.id,name:target.name,firstMs:first?.success&&finite(first.latency_ms)?first.latency_ms:null,stableMs:inspectorMedian(stableValues),attemptedSamples:list.length,responseSamples:list.filter(s=>s.success).length}
+  const codeCounts=new Map<string,number>()
+  const failReasonsSet=new Set<string>()
+  let httpCount=0,failCount=0
+  const siteSamples:LatencyReportSample[]=list.map((s,idx)=>{
+   const httpStatus=s.success?s.error?.match(/^HTTP (\d+)/)?.[1]:undefined
+   if(httpStatus){httpCount++;codeCounts.set(httpStatus,(codeCounts.get(httpStatus)||0)+1)}
+   const reason=s.success?undefined:sampleErrorReason(s.error)
+   if(!s.success){failCount++;if(reason)failReasonsSet.add(reason)}
+   return {seq:s.seq||idx+1,timestamp:s.timestamp||'',latencyMs:s.success&&finite(s.latency_ms)?s.latency_ms:null,success:s.success,httpStatus,error:s.error||undefined,reason}
+  })
+  for(const [code,count] of codeCounts){httpNotes.push({siteId:target.id,siteName:target.name,code,count,total:list.length})}
+  return {id:target.id,name:target.name,firstMs:first?.success&&finite(first.latency_ms)?first.latency_ms:null,stableMs:inspectorMedian(stableValues),attemptedSamples:list.length,responseSamples:list.filter(s=>s.success).length,httpCodes:[...codeCounts.keys()],httpCount,failCount,failReasons:[...failReasonsSet],samples:siteSamples}
  })
  const sampleSuccesses=samples.filter(s=>s.success).length
  const attemptedSamples=Math.max(samples.length,result?.total_samples||0)
@@ -206,7 +248,7 @@ function makeRow(item:BatchItem,airportNames:Record<string,string>,batchTarget?:
  return {
   key:identity(item),item,nodeName:item.display_name||result?.display_name||item.node_key,
   airportName:airportNames[item.profile_id]||item.profile_id,nodeType:dynamicType||'未知协议',
-  status,executed,attemptedSamples,responseSamples,firstMedianMs,stableMs,sites,partialSites,
+  status,executed,attemptedSamples,responseSamples,firstMedianMs,stableMs,sites,httpNotes,partialSites,
   skipReason:status==='skipped'?skipReason(item):undefined,suspected:false,suspectedReasons:[]
  }
 }

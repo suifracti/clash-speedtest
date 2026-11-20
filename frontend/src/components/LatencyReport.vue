@@ -7,7 +7,7 @@ import {nodeDisplayName} from '../nodePresentation'
 import {stateLabel,type BatchItem,type LatencyBatch} from '../domain'
 import {partialLatencyError} from '../inspectorLatency'
 import {partialLatencyLabel} from '../latencyTargets'
-import {buildLatencyReport,compareLatencyReports,latencyAirportSummary,latencyHttpNoticeDetails,latencySlowThresholdNote,type LatencyReportGroup,type LatencyReportRow,type LatencyReportStatus} from '../latencyReport'
+import {buildLatencyReport,compareLatencyReports,latencyAirportSummary,latencyHttpNoticeDetails,latencySlowThresholdNote,type LatencyReportGroup,type LatencyReportRow,type LatencyReportSite,type LatencyReportStatus} from '../latencyReport'
 
 const props=withDefaults(defineProps<{
  batch:LatencyBatch
@@ -41,10 +41,14 @@ const detailSearch=ref('')
 const detailPage=ref(1)
 const detailPageSize=15
 const expandedGroups=ref(new Set<number>())
+const inspectedKey=ref<string|null>(null)
+const inspectedPool=ref<string[]>([])
+
 function toggleGroup(index:number){const next=new Set(expandedGroups.value);next.has(index)?next.delete(index):next.add(index);expandedGroups.value=next}
-function openDetails(status:'all'|LatencyReportStatus='all'){detailSubset.value=null;detailStatus.value=status;detailPage.value=1;reportView.value='details'}
+function openDetails(status:'all'|LatencyReportStatus='all'){inspectedKey.value=null;detailSubset.value=null;detailStatus.value=status;detailPage.value=1;reportView.value='details'}
 function openSubset(label:string,keys:string[]){
  if(!keys.length)return
+ inspectedKey.value=null
  detailStatus.value='all'
  detailSearch.value=''
  detailSubset.value={label,keys:new Set(keys)}
@@ -59,9 +63,22 @@ function openSuspectedDetails(){
  const keys=report.value.rows.filter(r=>r.suspected).map(r=>r.key)
  openSubset('疑似检测问题',keys)
 }
+function openNodeDetail(row:LatencyReportRow,pool?:LatencyReportRow[]){
+ inspectedKey.value=row.key
+ inspectedPool.value=(pool&&pool.length?pool:filteredRows.value.length?filteredRows.value:report.value.rows).map(r=>r.key)
+}
+function closeNodeDetail(){inspectedKey.value=null}
 function clearDetailFilters(){detailStatus.value='all';detailSubset.value=null;detailSearch.value=''}
-watch(()=>props.batch.batch_id,()=>{reportView.value='overview';clearDetailFilters();detailPage.value=1})
+watch(()=>props.batch.batch_id,()=>{inspectedKey.value=null;reportView.value='overview';clearDetailFilters();detailPage.value=1})
 watch([detailStatus,detailSearch,detailSubset],()=>{detailPage.value=1})
+
+const inspectedRow=computed(()=>inspectedKey.value?report.value.rows.find(r=>r.key===inspectedKey.value)||null:null)
+const inspectedIndex=computed(()=>inspectedKey.value?inspectedPool.value.indexOf(inspectedKey.value):-1)
+function stepInspected(delta:number){
+ const nextKey=inspectedPool.value[inspectedIndex.value+delta]
+ if(nextKey)inspectedKey.value=nextKey
+}
+
 const airportSummary=computed(()=>latencyAirportSummary(report.value))
 const httpNoticeItems=computed(()=>latencyHttpNoticeDetails(report.value))
 const comparison=computed(()=>compareLatencyReports(props.batch,report.value,props.previous))
@@ -101,6 +118,12 @@ function formatTime(value?:string){
  const at=new Date(value)
  if(!Number.isFinite(at.getTime()))return '时间未知'
  return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(at)
+}
+function formatHms(value?:string){
+ if(!value)return ''
+ const at=new Date(value)
+ if(!Number.isFinite(at.getTime()))return ''
+ return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).format(at)
 }
 function formatDuration(value:number|null){
  if(value===null||!Number.isFinite(value))return '未记录'
@@ -143,10 +166,134 @@ const detailPageCount=computed(()=>Math.max(1,Math.ceil(filteredRows.value.lengt
 watch(detailPageCount,count=>{if(detailPage.value>count)detailPage.value=count})
 const pagedRows=computed(()=>filteredRows.value.slice((detailPage.value-1)*detailPageSize,detailPage.value*detailPageSize))
 function shortSiteName(name:string){return name==='Cloudflare'?'CF':name}
+function siteChipClass(site:LatencyReportSite){
+ if(!site.attemptedSamples)return 'empty'
+ if(site.responseSamples===0)return 'bad'
+ if(site.failCount>0)return 'warn'
+ if(site.httpCount>0)return 'http-refused'
+ if(site.stableMs!==null&&site.stableMs>1500)return 'slow'
+ return ''
+}
+function siteChipTitle(site:LatencyReportSite){
+ const parts=[`${site.name}: ${site.responseSamples}/${site.attemptedSamples} 响应`]
+ if(site.stableMs!==null)parts.push(`稳定 ${Math.round(site.stableMs)} ms`)
+ if(site.httpCodes.length)parts.push(`HTTP ${site.httpCodes.join('/')}（${site.httpCount}/${site.attemptedSamples} 次，已连通但被拒绝/限流）`)
+ if(site.failCount)parts.push(`失败 ${site.failCount} 次（${site.failReasons.join(' / ')}）`)
+ return parts.join(' · ')
+}
+function rowFailSummary(row:LatencyReportRow){
+ const parts=row.sites.filter(s=>s.failCount>0).map(s=>`${shortSiteName(s.name)} ${s.failCount}次${s.failReasons[0]||'失败'}`)
+ if(parts.length)return parts.join(' · ')
+ return partialLatencyError(row.item.result)||row.suspectedReasons.join('；')||row.skipReason||''
+}
+function inspectedPeakMs(row:LatencyReportRow){
+ return Math.max(1,...row.sites.flatMap(s=>s.samples.map(sp=>sp.latencyMs??0)))
+}
+function siteMaxMs(site:LatencyReportSite,fallback:number){
+ return Math.max(1,fallback,...site.samples.map(sp=>sp.latencyMs??0))
+}
+function inspectedAlerts(row:LatencyReportRow){
+ const alerts:Array<{tone:'warn'|'bad'|'info';title:string;detail:string}>=[]
+ for(const note of row.httpNotes){
+  const refused=['403','429'].includes(note.code)
+  alerts.push({
+   tone:'warn',
+   title:`${note.siteName} 返回 HTTP ${note.code}（${note.count}/${note.total} 次）`,
+   detail:refused?'代理已成功建立连接并测得响应时延，但目标站点拒绝了本次请求（常见于共享出口 IP 触发限流或风控）。':'代理已连通目标站点，但返回了非常规 HTTP 状态码。'
+  })
+ }
+ for(const site of row.sites){
+  if(!site.failCount)continue
+  const failedSeqs=site.samples.map((sp,idx)=>sp.success?0:idx+1).filter(Boolean)
+  alerts.push({
+   tone:site.responseSamples===0?'bad':'warn',
+   title:`${site.name} 失败 ${site.failCount}/${site.attemptedSamples} 次（${site.failReasons.join(' / ')}）`,
+   detail:`发生在第 ${failedSeqs.join('、')} 次采样`
+  })
+ }
+ if(row.skipReason){
+  alerts.push({tone:'info',title:'未执行采样',detail:row.skipReason})
+ }
+ for(const reason of row.suspectedReasons){
+  alerts.push({tone:'info',title:'疑似检测异常',detail:reason})
+ }
+ return alerts
+}
 </script>
 
 <template>
  <section class="latency-report" aria-label="延迟检测报告">
+  <template v-if="inspectedRow">
+   <div class="report-node-detail" aria-label="本轮节点采样详情">
+    <header class="report-detail-nav">
+     <button type="button" class="button report-back-btn" @click="closeNodeDetail">← 返回报告</button>
+     <div class="report-detail-nav-right">
+      <div v-if="inspectedPool.length>1" class="report-step-group">
+       <button type="button" class="button ghost small" :disabled="inspectedIndex<=0" @click="stepInspected(-1)">上一条</button>
+       <span class="report-step-pos">{{inspectedIndex+1}} / {{inspectedPool.length}}</span>
+       <button type="button" class="button ghost small" :disabled="inspectedIndex<0||inspectedIndex>=inspectedPool.length-1" @click="stepInspected(1)">下一条</button>
+      </div>
+      <button type="button" class="button small" @click="emit('retry',[inspectedRow.item])">重测此节点</button>
+      <button type="button" class="button ghost small" @click="emit('inspect',inspectedRow.item)">去工作台看历史 ↗</button>
+     </div>
+    </header>
+
+    <section class="report-node-hero">
+     <div class="report-node-hero-head">
+      <div>
+       <h3>{{nodeDisplayName(inspectedRow.item)}}</h3>
+       <p>{{inspectedRow.airportName}}<template v-if="inspectedRow.nodeType!=='未知协议'"> · {{inspectedRow.nodeType}}</template> · 本轮 {{formatTime(props.batch.requested_at)}}</p>
+      </div>
+      <span class="latency-report-status" :class="inspectedRow.status">{{statusLabel(inspectedRow)}}</span>
+     </div>
+     <div class="report-node-kpis">
+      <div><small>本轮响应</small><strong>{{inspectedRow.responseSamples}} / {{inspectedRow.attemptedSamples}}</strong></div>
+      <div><small>首次中位（含握手）</small><strong><ReportMs :value="inspectedRow.firstMedianMs"/></strong></div>
+      <div><small>稳定中位（第 2–6 次）</small><strong><ReportMs :value="inspectedRow.stableMs"/></strong></div>
+      <div><small>异常 / 限流</small><strong :class="inspectedAlerts(inspectedRow).length?'warn':'good'">{{inspectedAlerts(inspectedRow).length?`${inspectedAlerts(inspectedRow).length} 项需留意`:'全部直通'}}</strong></div>
+     </div>
+    </section>
+
+    <section v-if="inspectedAlerts(inspectedRow).length" class="report-node-alerts" aria-label="本轮错误与异常说明">
+     <article v-for="(alert,idx) in inspectedAlerts(inspectedRow)" :key="idx" class="report-node-alert" :class="alert.tone">
+      <strong>{{alert.title}}</strong>
+      <small>{{alert.detail}}</small>
+     </article>
+    </section>
+
+    <section class="report-site-cards" aria-label="四站逐次采样明细">
+     <article v-for="site in inspectedRow.sites" :key="site.id" class="report-site-card" :class="siteChipClass(site)">
+      <header class="report-site-card-head">
+       <div class="report-site-card-title">
+        <h4>{{site.name}}</h4>
+        <span class="report-site-count" :class="site.responseSamples===0?'bad':site.failCount>0?'warn':'good'">{{site.responseSamples}}/{{site.attemptedSamples}} 响应</span>
+        <span v-for="code in site.httpCodes" :key="code" class="report-site-http-badge">HTTP {{code}} ×{{site.httpCount}}</span>
+       </div>
+       <span class="report-site-medians">首次 {{formatMs(site.firstMs)}} · 稳定 {{formatMs(site.stableMs)}}</span>
+      </header>
+      <ol v-if="site.samples.length" class="report-attempt-list">
+       <li v-for="(sample,idx) in site.samples" :key="sample.seq+'-'+idx" :class="{failed:!sample.success,'http-refused':!!sample.httpStatus}">
+        <span class="attempt-seq">#{{idx+1}}<em v-if="idx===0">首次</em></span>
+        <time class="attempt-time">{{formatHms(sample.timestamp)||'—'}}</time>
+        <div class="attempt-bar-wrap">
+         <span v-if="sample.latencyMs!==null" class="attempt-bar"><i :class="sample.httpStatus?'warn':sample.latencyMs>1500?'warn':'good'" :style="{width:Math.max(8,Math.min(100,sample.latencyMs/siteMaxMs(site,inspectedPeakMs(inspectedRow))*100))+'%'}"/></span>
+         <span v-else class="attempt-fail-pill">{{sample.reason||'失败'}}</span>
+        </div>
+        <strong class="attempt-ms" :class="sample.latencyMs===null?'bad':sample.httpStatus||sample.latencyMs>1500?'warn':'good'">{{sample.latencyMs!==null?`${Math.round(sample.latencyMs)} ms`:'—'}}</strong>
+        <span class="attempt-note" :title="sample.error||''">
+         <b v-if="sample.httpStatus" class="attempt-http-chip">HTTP {{sample.httpStatus}}</b>
+         <template v-else-if="!sample.success">{{sample.error||sample.reason||'请求失败'}}</template>
+         <template v-else>正常</template>
+        </span>
+       </li>
+      </ol>
+      <p v-else class="latency-report-empty">本轮未采集该站点。</p>
+     </article>
+    </section>
+   </div>
+  </template>
+
+  <template v-else>
   <header class="latency-report-head">
    <div class="latency-report-head-main">
     <div class="latency-report-title-row">
@@ -218,11 +365,11 @@ function shortSiteName(name:string){return name==='Cloudflare'?'CF':name}
 
   <div class="latency-report-columns">
    <section class="latency-report-panel">
-    <header><div><h3>最快 5 个</h3><small>按已测站点稳定中位排序 · 点击整行查详情</small></div></header>
+    <header><div><h3>最快 5 个</h3><small>按已测站点稳定中位排序 · 点行查本轮逐次采样</small></div></header>
     <ol v-if="report.fastest5.length" class="latency-report-fastest">
-     <li v-for="(row,index) in report.fastest5" :key="row.key" class="report-clickable-item" @click="emit('inspect',row.item)">
+     <li v-for="(row,index) in report.fastest5" :key="row.key" class="report-clickable-item" @click="openNodeDetail(row,report.fastest5)">
       <span class="latency-report-rank" :class="index===0?'top1':index<3?'top3':''">{{index+1}}</span>
-      <div class="latency-report-node"><button type="button" class="text-button" @click.stop="emit('inspect',row.item)">{{nodeDisplayName(row.item)}}</button><small>{{row.airportName}}<template v-if="row.nodeType!=='未知协议'"> · {{row.nodeType}}</template></small></div>
+      <div class="latency-report-node"><button type="button" class="text-button" @click.stop="openNodeDetail(row,report.fastest5)">{{nodeDisplayName(row.item)}}</button><small>{{row.airportName}}<template v-if="row.nodeType!=='未知协议'"> · {{row.nodeType}}</template></small></div>
       <strong class="report-fast-ms"><ReportMs :value="row.stableMs"/></strong>
       <span class="report-row-arrow" aria-hidden="true">›</span>
      </li>
@@ -231,7 +378,7 @@ function shortSiteName(name:string){return name==='Cloudflare'?'CF':name}
    </section>
 
    <section class="latency-report-panel latency-report-problems">
-    <header><div><h3>问题按原因</h3><small>点标题筛选整组，点任意节点查看详情</small></div></header>
+    <header><div><h3>问题按原因</h3><small>点标题筛选整组，点节点看本轮逐次报错详情</small></div></header>
     <div v-if="report.groups.length" class="latency-report-groups">
      <article v-for="(group,index) in report.groups" :key="group.kind+'-'+group.reason+'-'+index" class="latency-report-group" :class="group.kind">
       <header>
@@ -244,8 +391,8 @@ function shortSiteName(name:string){return name==='Cloudflare'?'CF':name}
       </header>
       <p v-if="group.kind==='slow'&&props.entryNotice" class="latency-report-group-note">{{props.entryNotice}}</p>
       <ul>
-       <li v-for="row in expandedGroups.has(index)||group.rows.length<=8?group.rows:group.rows.slice(0,6)" :key="row.key" class="report-clickable-item" @click="emit('inspect',row.item)">
-        <span class="report-group-node"><button type="button" class="text-button" @click.stop="emit('inspect',row.item)">{{nodeDisplayName(row.item)}}</button><span v-if="row.airportName" class="report-airport">{{row.airportName}}</span></span>
+       <li v-for="row in expandedGroups.has(index)||group.rows.length<=8?group.rows:group.rows.slice(0,6)" :key="row.key" class="report-clickable-item" @click="openNodeDetail(row,group.rows)">
+        <span class="report-group-node"><button type="button" class="text-button" @click.stop="openNodeDetail(row,group.rows)">{{nodeDisplayName(row.item)}}</button><span v-if="row.airportName" class="report-airport">{{row.airportName}}</span></span>
         <span class="report-group-tail"><small v-if="group.kind==='slow'||!sharedIssueDetail(group)&&issueDetail(group,row)!==group.reason">{{issueDetail(group,row)}}</small><span class="report-row-arrow" aria-hidden="true">›</span></span>
        </li>
       </ul>
@@ -272,12 +419,30 @@ function shortSiteName(name:string){return name==='Cloudflare'?'CF':name}
     <table>
      <thead><tr><th>节点</th><th>结果</th><th class="number">首次中位</th><th class="number">稳定中位</th><th>各站稳定延迟</th><th>说明</th></tr></thead>
      <tbody>
-      <tr v-for="row in pagedRows" :key="row.key" class="clickable-row" @click="emit('inspect',row.item)">
-       <td><button type="button" class="text-button" @click.stop="emit('inspect',row.item)">{{nodeDisplayName(row.item)}}</button><small>{{row.airportName}}<template v-if="row.nodeType!=='未知协议'"> · {{row.nodeType}}</template></small></td>
+      <tr v-for="row in pagedRows" :key="row.key" class="clickable-row" @click="openNodeDetail(row,filteredRows)">
+       <td><button type="button" class="text-button" @click.stop="openNodeDetail(row,filteredRows)">{{nodeDisplayName(row.item)}}</button><small>{{row.airportName}}<template v-if="row.nodeType!=='未知协议'"> · {{row.nodeType}}</template></small></td>
        <td><span class="latency-report-status" :class="row.status">{{statusLabel(row)}}</span><small v-if="row.suspected" class="latency-report-suspected">疑似检测问题</small></td>
        <td class="number"><ReportMs :value="row.firstMedianMs"/></td><td class="number"><ReportMs :value="row.stableMs"/></td>
-       <td><div class="report-sites-grid"><span v-for="site in row.sites" :key="site.id" class="report-site-chip" :class="{bad:site.stableMs===null,slow:site.stableMs!==null&&site.stableMs>1500}" :title="`${site.name}: ${formatMs(site.stableMs)}`"><small>{{shortSiteName(site.name)}}</small><b>{{formatMs(site.stableMs)}}</b></span></div></td>
-       <td><div class="report-detail-note-cell"><small>{{partialLatencyError(row.item.result)||row.suspectedReasons.join('；')||row.skipReason||'—'}}</small><span class="report-row-arrow" aria-hidden="true">›</span></div></td>
+       <td>
+        <div class="report-sites-grid">
+         <span v-for="site in row.sites" :key="site.id" class="report-site-chip" :class="siteChipClass(site)" :title="siteChipTitle(site)">
+          <small>{{shortSiteName(site.name)}}</small>
+          <b>{{site.responseSamples===0&&site.attemptedSamples>0?(site.failReasons[0]||'失败'):formatMs(site.stableMs)}}</b>
+          <em v-if="site.httpCodes.length" class="site-chip-http">{{site.httpCodes[0]}}</em>
+          <em v-else-if="site.failCount>0&&site.responseSamples>0" class="site-chip-fail">{{site.responseSamples}}/{{site.attemptedSamples}}</em>
+         </span>
+        </div>
+       </td>
+       <td>
+        <div class="report-detail-note-cell">
+         <div class="report-note-stack">
+          <span v-for="note in row.httpNotes" :key="note.siteId+note.code" class="report-http-pill">{{shortSiteName(note.siteName)}} {{note.code}} ({{note.count}}/{{note.total}})</span>
+          <small v-if="rowFailSummary(row)">{{rowFailSummary(row)}}</small>
+          <small v-else-if="!row.httpNotes.length">—</small>
+         </div>
+         <span class="report-row-arrow" aria-hidden="true">›</span>
+        </div>
+       </td>
       </tr>
       <tr v-if="!pagedRows.length"><td colspan="6" class="report-table-empty">没有符合当前筛选条件的节点</td></tr>
      </tbody>
@@ -294,6 +459,7 @@ function shortSiteName(name:string){return name==='Cloudflare'?'CF':name}
    <button v-if="issueItems.length" class="button" @click="emit('retry',issueItems)">重测问题（{{issueItems.length}}）</button>
    <button class="button primary" :disabled="!report.usableItems.length" @click="emit('export',report.usableItems)">导出能用的 {{report.usableItems.length}} 个</button>
   </footer>
+  </template>
 
   <p v-if="imageMessage" :role="imageError?'alert':'status'">{{imageMessage}}</p>
   <Teleport to="body"><div v-if="imageBusy" ref="imageRoot" class="report-image-stage" aria-hidden="true"><LatencyReportImage :report="report" :summary="summaryLine" :comparison="comparisonLine" :monitor="monitor"/></div></Teleport>
@@ -430,7 +596,7 @@ function shortSiteName(name:string){return name==='Cloudflare'?'CF':name}
 .report-detail-search input:focus{outline:none;border-color:var(--cst-accent);background:var(--cst-panel);box-shadow:0 0 0 3px color-mix(in srgb,var(--cst-accent) 13%,transparent)}
 
 .latency-report-table-wrap{overflow:auto;border:1px solid var(--cst-line);border-radius:12px;background:var(--cst-panel);box-shadow:var(--cst-shadow-xs)}
-.latency-report-table-wrap table{width:100%;min-width:700px;border-collapse:collapse;font-size:12px}
+.latency-report-table-wrap table{width:100%;min-width:720px;border-collapse:collapse;font-size:12px}
 .latency-report-table-wrap th,.latency-report-table-wrap td{padding:9px 11px;border-bottom:1px solid var(--cst-line);text-align:left;vertical-align:middle}
 .latency-report-table-wrap tbody tr:last-child td{border-bottom:0}
 .latency-report-table-wrap tbody tr.clickable-row{cursor:pointer;transition:background .12s}
@@ -438,8 +604,11 @@ function shortSiteName(name:string){return name==='Cloudflare'?'CF':name}
 .latency-report-table-wrap th{position:sticky;top:0;background:var(--cst-panel-2);color:var(--cst-muted);font-weight:600;font-size:11px;white-space:nowrap;z-index:1}
 .latency-report-table-wrap .number{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .latency-report-table-wrap td:first-child{min-width:165px}
-.latency-report-table-wrap td:first-child small,.latency-report-table-wrap td:nth-child(2) small,.latency-report-table-wrap td:last-child small{display:block;max-width:220px;margin-top:3px;color:var(--cst-muted);font-size:11px;line-height:1.4}
+.latency-report-table-wrap td:first-child small,.latency-report-table-wrap td:nth-child(2) small{display:block;max-width:220px;margin-top:3px;color:var(--cst-muted);font-size:11px;line-height:1.4}
 .report-detail-note-cell{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.report-note-stack{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;min-width:0}
+.report-note-stack small{color:var(--cst-muted);font-size:11px;line-height:1.4}
+.report-http-pill{display:inline-flex;align-items:center;padding:1px 7px;border-radius:999px;background:var(--cst-warn-bg);border:1px solid color-mix(in srgb,var(--cst-warn) 34%,transparent);color:var(--cst-warn);font-size:10.5px;font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums}
 .latency-report-status{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:650;white-space:nowrap;border:1px solid var(--cst-line);background:var(--cst-panel-2)}
 .latency-report-status.usable{color:var(--cst-good);background:var(--cst-good-bg);border-color:color-mix(in srgb,var(--cst-good) 28%,transparent)}
 .latency-report-status.slow,.latency-report-status.unstable,.latency-report-status.partial{color:var(--cst-warn);background:var(--cst-warn-bg);border-color:color-mix(in srgb,var(--cst-warn) 32%,transparent)}
@@ -447,15 +616,75 @@ function shortSiteName(name:string){return name==='Cloudflare'?'CF':name}
 .latency-report-status.no-response{color:var(--cst-bad);background:var(--cst-bad-bg);border-color:color-mix(in srgb,var(--cst-bad) 28%,transparent)}
 .latency-report-status.incomplete,.latency-report-status.skipped{color:var(--cst-muted)}
 .latency-report-suspected{color:var(--cst-accent)!important}
-.report-sites-grid{display:flex;flex-wrap:wrap;gap:4px;max-width:290px}
+.report-sites-grid{display:flex;flex-wrap:wrap;gap:4px;max-width:310px}
 .report-site-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:7px;background:var(--cst-panel-2);border:1px solid var(--cst-line);font-size:11px;font-variant-numeric:tabular-nums}
 .report-site-chip small{color:var(--cst-muted);font-size:10px}
 .report-site-chip b{font-weight:600;color:var(--cst-text)}
-.report-site-chip.slow{border-color:color-mix(in srgb,var(--cst-warn) 34%,transparent);background:var(--cst-warn-bg)}.report-site-chip.slow b{color:var(--cst-warn)}
-.report-site-chip.bad{border-color:color-mix(in srgb,var(--cst-bad) 28%,transparent);background:var(--cst-bad-bg)}.report-site-chip.bad b{color:var(--cst-bad)}
+.report-site-chip em{font-style:normal;font-size:9.5px;font-weight:750;padding:0 4px;border-radius:999px;line-height:1.45}
+.report-site-chip .site-chip-http{background:color-mix(in srgb,var(--cst-warn) 18%,var(--cst-panel-solid));color:var(--cst-warn)}
+.report-site-chip .site-chip-fail{background:color-mix(in srgb,var(--cst-warn) 18%,var(--cst-panel-solid));color:var(--cst-warn)}
+.report-site-chip.http-refused{border-color:color-mix(in srgb,var(--cst-warn) 40%,var(--cst-line));background:var(--cst-warn-bg)}
+.report-site-chip.slow,.report-site-chip.warn{border-color:color-mix(in srgb,var(--cst-warn) 38%,transparent);background:var(--cst-warn-bg)}
+.report-site-chip.slow b,.report-site-chip.warn b{color:var(--cst-warn)}
+.report-site-chip.bad{border-color:color-mix(in srgb,var(--cst-bad) 32%,transparent);background:var(--cst-bad-bg)}
+.report-site-chip.bad b{color:var(--cst-bad)}
 .report-table-empty{text-align:center;color:var(--cst-muted);padding:20px!important}
 .report-pagination{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--cst-muted)}
 .report-pagination-btns{display:flex;gap:6px}
+
+/* 报告内嵌逐次采样详情视图 */
+.report-node-detail{display:flex;flex-direction:column;gap:14px}
+.report-detail-nav{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.report-back-btn{min-height:32px;padding:4px 12px;font-size:12.5px;font-weight:650}
+.report-detail-nav-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.report-step-group{display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border:1px solid var(--cst-line);border-radius:9px;background:var(--cst-panel-2)}
+.report-step-pos{font-size:11.5px;color:var(--cst-muted);font-variant-numeric:tabular-nums;padding:0 4px}
+.report-node-hero{display:flex;flex-direction:column;gap:12px;padding:15px 17px;border:1px solid color-mix(in srgb,var(--cst-accent) 22%,var(--cst-line));border-radius:14px;background:var(--cst-aurora-surface),var(--cst-panel);box-shadow:var(--cst-shadow-xs)}
+.report-node-hero-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.report-node-hero-head h3{margin:0 0 3px;font-size:16px;font-weight:750;color:var(--cst-text)}
+.report-node-hero-head p{margin:0;font-size:12px;color:var(--cst-muted)}
+.report-node-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.report-node-kpis>div{padding:9px 11px;border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel-solid);display:flex;flex-direction:column;gap:3px}
+.report-node-kpis small{font-size:11px;color:var(--cst-muted)}
+.report-node-kpis strong{font-size:15px;font-weight:750;font-variant-numeric:tabular-nums;color:var(--cst-text)}
+.report-node-kpis strong.good{color:var(--cst-good)}.report-node-kpis strong.warn{color:var(--cst-warn)}
+.report-node-alerts{display:grid;gap:8px}
+.report-node-alert{display:flex;flex-direction:column;gap:2px;padding:9px 12px;border-radius:10px;border:1px solid var(--cst-line);background:var(--cst-panel-2);font-size:12px}
+.report-node-alert.warn{background:var(--cst-warn-bg);border-color:color-mix(in srgb,var(--cst-warn) 34%,transparent);color:var(--cst-warn)}
+.report-node-alert.bad{background:var(--cst-bad-bg);border-color:color-mix(in srgb,var(--cst-bad) 32%,transparent);color:var(--cst-bad)}
+.report-node-alert.info{background:var(--cst-accent-soft);border-color:color-mix(in srgb,var(--cst-accent) 28%,transparent);color:var(--cst-accent)}
+.report-node-alert strong{font-weight:700;font-size:12px}
+.report-node-alert small{opacity:.9;font-size:11.5px;line-height:1.45;color:var(--cst-text)}
+.report-site-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.report-site-card{border:1px solid var(--cst-line);border-radius:12px;background:var(--cst-panel);padding:12px 14px;display:flex;flex-direction:column;gap:9px;box-shadow:var(--cst-shadow-xs)}
+.report-site-card.bad{border-color:color-mix(in srgb,var(--cst-bad) 30%,var(--cst-line))}
+.report-site-card.warn,.report-site-card.http-refused{border-color:color-mix(in srgb,var(--cst-warn) 34%,var(--cst-line))}
+.report-site-card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding-bottom:8px;border-bottom:1px solid var(--cst-line)}
+.report-site-card-title{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}
+.report-site-card-title h4{margin:0;font-size:13.5px;font-weight:750}
+.report-site-count{padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:700;font-variant-numeric:tabular-nums}
+.report-site-count.good{background:var(--cst-good-bg);color:var(--cst-good)}
+.report-site-count.warn{background:var(--cst-warn-bg);color:var(--cst-warn)}
+.report-site-count.bad{background:var(--cst-bad-bg);color:var(--cst-bad)}
+.report-site-http-badge{padding:1px 7px;border-radius:999px;background:var(--cst-warn-bg);border:1px solid color-mix(in srgb,var(--cst-warn) 35%,transparent);color:var(--cst-warn);font-size:10.5px;font-weight:750}
+.report-site-medians{font-size:11px;color:var(--cst-muted);font-variant-numeric:tabular-nums}
+.report-attempt-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px}
+.report-attempt-list li{display:grid;grid-template-columns:54px 56px minmax(64px,1fr) 56px minmax(68px,.9fr);align-items:center;gap:6px;padding:5px 7px;border-radius:8px;background:var(--cst-panel-2);font-size:11.5px;font-variant-numeric:tabular-nums}
+.report-attempt-list li.failed{background:color-mix(in srgb,var(--cst-bad) 6%,var(--cst-panel-2))}
+.report-attempt-list li.http-refused{background:color-mix(in srgb,var(--cst-warn) 7%,var(--cst-panel-2))}
+.attempt-seq{color:var(--cst-muted);font-weight:650;white-space:nowrap}
+.attempt-seq em{font-style:normal;margin-left:3px;padding:0 4px;border-radius:4px;background:var(--cst-panel-solid);border:1px solid var(--cst-line);font-size:9.5px;font-weight:600}
+.attempt-time{color:var(--cst-subtle);font-size:10.5px}
+.attempt-bar-wrap{display:flex;align-items:center;min-width:0}
+.attempt-bar{display:block;width:100%;height:6px;border-radius:999px;overflow:hidden;background:var(--cst-aurora-track)}
+.attempt-bar i{display:block;height:100%;border-radius:inherit}
+.attempt-bar i.good{background:var(--cst-aurora-bar)}
+.attempt-bar i.warn{background:var(--cst-aurora-warn)}
+.attempt-fail-pill{display:inline-flex;align-items:center;padding:1px 7px;border-radius:999px;background:var(--cst-bad-bg);color:var(--cst-bad);font-size:10px;font-weight:700;white-space:nowrap}
+.attempt-ms{text-align:right;font-weight:700;white-space:nowrap}
+.attempt-ms.good{color:var(--cst-text)}.attempt-ms.warn{color:var(--cst-warn)}.attempt-ms.bad{color:var(--cst-bad)}
+.attempt-note{text-align:right;color:var(--cst-muted);font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.attempt-http-chip{display:inline-flex;padding:1px 6px;border-radius:999px;background:var(--cst-warn-bg);color:var(--cst-warn);font-size:10px;font-weight:750}
 
 .latency-report-problems{overflow:visible;max-height:none}
 .latency-report-groups,.latency-report-group,.latency-report-group ul{max-height:none;overflow:visible}
@@ -476,7 +705,8 @@ function shortSiteName(name:string){return name==='Cloudflare'?'CF':name}
 @media(max-width:760px){
  .latency-report-overview{grid-template-columns:minmax(0,1fr);gap:14px}
  .latency-report-verdict>strong{font-size:32px}
- .latency-report-columns{grid-template-columns:minmax(0,1fr)}
+ .latency-report-columns,.report-site-cards{grid-template-columns:minmax(0,1fr)}
+ .report-node-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
  .latency-report-head{gap:8px}
  .latency-report-group li{align-items:flex-start;flex-direction:column;gap:3px}
  .report-group-tail{width:100%;justify-content:space-between}

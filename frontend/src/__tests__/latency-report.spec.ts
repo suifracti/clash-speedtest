@@ -75,7 +75,7 @@ describe('latency run report',()=>{
   wrapper.unmount()
  })
 
- it('drills down from HTTP notices, bar segments, problem groups and whole node rows',async()=>{
+ it('drills down from HTTP notices, bar segments, problem groups and opens in-report sample details before optional jump',async()=>{
   const refused=item('jp-refused',260)
   refused.result!.samples[12]={...refused.result!.samples[12],error:'HTTP 403；响应时延已测，业务／地区解锁未确认'}
   const clean=item('sg-clean',180)
@@ -85,11 +85,22 @@ describe('latency run report',()=>{
   expect(wrapper.get('.report-tab[aria-selected="true"]').text()).toContain('逐个明细')
   expect(wrapper.get('.report-subset-pill').text()).toContain('GitHub 拒绝访问')
   expect(wrapper.findAll('.latency-report-table-wrap tbody tr')).toHaveLength(1)
+  expect(wrapper.get('.latency-report-table-wrap tbody tr').text()).toContain('GitHub 403 (1/6)')
+  expect(wrapper.get('.site-chip-http').text()).toBe('403')
   await wrapper.get('.latency-report-table-wrap tbody tr').trigger('click')
+  expect(wrapper.emitted('inspect')).toBeUndefined()
+  const detail=wrapper.get('.report-node-detail')
+  expect(detail.text()).toContain('GitHub 返回 HTTP 403')
+  expect(detail.findAll('.report-site-card')).toHaveLength(4)
+  expect(detail.findAll('.report-attempt-list li')).toHaveLength(24)
+  await detail.findAll('button').find(b=>b.text().includes('去工作台看历史'))!.trigger('click')
   expect(wrapper.emitted('inspect')?.[0]?.[0]).toMatchObject({node_key:'jp-refused'})
+  await detail.get('.report-back-btn').trigger('click')
+  expect(wrapper.find('.report-node-detail').exists()).toBe(false)
   await wrapper.findAll('.report-tab')[0]!.trigger('click')
   await wrapper.get('.latency-report-fastest li').trigger('click')
-  expect(wrapper.emitted('inspect')?.[1]?.[0]).toMatchObject({node_key:'sg-clean'})
+  expect(wrapper.get('.report-node-detail').text()).toContain('新加坡 · clean')
+  await wrapper.get('.report-back-btn').trigger('click')
   await wrapper.get('.report-group-drill').trigger('click')
   expect(wrapper.get('.report-tab[aria-selected="true"]').text()).toContain('逐个明细')
   expect(wrapper.findAll('.latency-report-table-wrap tbody tr')).toHaveLength(1)

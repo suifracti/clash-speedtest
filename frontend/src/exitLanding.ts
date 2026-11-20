@@ -32,7 +32,9 @@ export function exitLanding(node:Pick<NodeOption,'country_code'>,attempts:Attemp
  const typeText=ipKind.type==='idc'?'机房 IP':ipKind.type==='residential'?'住宅 IP':ipKind.type==='mobile'?'移动 IP':'类型未知'
  const originText=ipKind.origin==='native'?`原生 ${library[0]||consensusRegion||'地区未知'}`:ipKind.origin==='broadcast'?'广播 IP':'原生未知'
  const purityDate=purityAt?new Date(purityAt).toLocaleDateString('en-US',{month:'2-digit',day:'2-digit'}):''
- const purity={score:purityScore,label:purityScore===null?'—':`${purityScore} · ${ipKind.typeLabel}`,tone:purityScore===null?'empty':purityScore>=80?'good':purityScore>=50?'warn':'bad',title:reputation?`由 ${reputation.provider} 风险分 ${riskScore(reputation)} 换算 · 越高越干净 · ${purityAt}`:'没有可换算的风险分',summary:`纯净度 ${purityScore??'—'} · ${typeText} · ${originText}`+(purityDate?` · ${purityDate} 查询`:'')}
+ const purityGrade=purityScore===null?'':purityScore>=80?'纯净':purityScore>=60?'较净':purityScore>=40?'一般':'较差'
+ const rawRisk=reputation?Math.round(riskScore(reputation)!):null
+ const purity={score:purityScore,grade:purityGrade,rawRisk,typeLabel:ipKind.typeLabel,label:purityScore===null?'—':`${purityScore} · ${ipKind.typeLabel}`,tone:purityScore===null?'empty':purityScore>=80?'good':purityScore>=50?'warn':'bad',title:reputation?`纯净度 ${purityScore}/100（${purityGrade}，越高越干净）· 由 ${reputation.provider} 风险分 ${riskScore(reputation)} 换算 · 越高越干净 · ${typeText}${purityAt?' · '+purityAt:''}`:'没有可换算的风险分',summary:`纯净度 ${purityScore??'—'} · ${typeText} · ${originText}`+(purityDate?` · ${purityDate} 查询`:'')}
  const cfChallengeAttempt=find('cloudflare_challenge')
  const cfChallengeRes=cfChallengeAttempt?unlockResult(cfChallengeAttempt,'cloudflare_challenge'):undefined
  const cfChallenge=cfChallengeRes&&(cfChallengeRes.tone==='good'||cfChallengeRes.tone==='warn'||cfChallengeRes.tone==='bad')
