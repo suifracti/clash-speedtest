@@ -53,8 +53,11 @@ export function airportExitSummary(nodes:NodeOption[],data:Record<string,Quality
    else cfBad++
   }
  }
+ const purityAvg=purityCount?Math.round(puritySum/purityCount):null
+ const purityGrade=purityAvg===null?'':purityAvg>=80?'纯净':purityAvg>=60?'较净':purityAvg>=40?'一般':'较差'
+ const purityTone=purityAvg===null?'empty':purityAvg>=80?'good':purityAvg>=50?'warn':'bad'
  return {
-  purityCount,purityAvg:purityCount?Math.round(puritySum/purityCount):null,purityClean,purityRisky,
+  purityCount,purityAvg,purityGrade,purityTone,purityClean,purityRisky,
   cfCount,cfGood,cfWarn,cfBad,
  }
 }

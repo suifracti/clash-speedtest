@@ -11,6 +11,7 @@ import LatencyReports from './LatencyReports.vue'
 import MeasurementRoundModal from './MeasurementRoundModal.vue'
 import HistoryAnalyticsPanel from './HistoryAnalyticsPanel.vue'
 import {compareLatencyItem,type LatencyDelta} from '../historyCompare'
+import {buildLatencyReport,latencyHttpNoticeDetails} from '../latencyReport'
 import Icon from './Icon.vue'
 import Modal from './Modal.vue'
 const w=useWorkspace(),tab=ref('batch'),batch=ref<LatencyBatch|null>(null),loading=ref(false),error=ref(''),nodeId=ref(''),profile=ref(''),target=ref(''),cursor=ref(''),hasMore=ref(false),samples=ref<MonitorSample[]>([]),facets=ref<{nodes:{node_key:string;node_identity_key:string;profile_id:string;display_name:string}[];profiles:string[];targets:string[]}>({nodes:[],profiles:[],targets:[]}),legacy=ref<Record<string,any>[]>([]),legacyDetail=ref<Record<string,any>|null>(null)
@@ -72,6 +73,18 @@ let detailGeneration=0
 function closeDetails(){detailGeneration++;batch.value=null;manualDetail.value=undefined;legacyDetail.value=null;olderLoaded.value=[];compareReading.value=false}
 function openManualRound(round:ManualRoundSummary){closeDetails();manualDetail.value=round}
 async function openBatch(id:string){const token=++detailGeneration;try{const result=await api.batch(id);if(token===detailGeneration){batch.value=result;detailCache.set(result.batch_id,result);void loadPrevious(result,token)}}catch(e){if(token===detailGeneration)w.fail(e)}}
+function batchAlertMeta(b:LatencyBatch){
+ const full=b.items?.length?b:detailCache.get(b.batch_id)
+ if(!full?.items?.length)return {http:'',issues:0}
+ const built=buildLatencyReport(full),notices=latencyHttpNoticeDetails(built)
+ return {http:notices.length?notices[0]!.label:'',issues:built.issues.length}
+}
+function batchStateTone(state:string){
+ if(state==='completed')return 'good'
+ if(state.includes('fail'))return 'bad'
+ if(state.includes('issue')||state.includes('cancel')||state.includes('interrupt'))return 'warn'
+ return ''
+}
 // 按天分组的时间线（上海时间）。
 const dayKey=(v:string)=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(v))
 const timeOf=(v:string)=>new Date(v).toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit'})
@@ -120,7 +133,7 @@ onBeforeUnmount(()=>{generation++;facetGeneration++;manualGeneration++;detailGen
    <h3>{{g.label}}<small>{{g.rows.length}} 轮</small></h3>
    <template v-for="row in g.rows" :key="row.id">
     <button v-if="row.batch" class="history-batch-row cst-tl-row" :aria-current="batch?.batch_id===row.batch.batch_id?'true':undefined" @click="openBatch(row.batch.batch_id)">
-     <time>{{timeOf(row.at)}}</time><span><strong>{{row.batch.target_id==='all'?'多站延迟检测':'延迟检测'}} · {{row.batch.item_count}} 个节点</strong><small>{{date(row.at)}}<template v-if="row.batch.sample_count"> · 计划每站 {{row.batch.sample_count}} 次</template></small></span><span class="badge" :class="row.batch.state==='completed'?'good':''">{{stateLabel(row.batch.state)}}</span>
+     <time>{{timeOf(row.at)}}</time><span><strong>{{row.batch.target_id==='all'?'多站延迟检测':'延迟检测'}} · {{row.batch.item_count}} 个节点</strong><small>{{date(row.at)}}<template v-if="row.batch.sample_count"> · 计划每站 {{row.batch.sample_count}} 次</template></small></span><span class="cst-tl-badges"><span class="badge" :class="batchStateTone(row.batch.state)">{{stateLabel(row.batch.state)}}</span><span v-if="batchAlertMeta(row.batch).http" class="cst-tl-alert warn">{{batchAlertMeta(row.batch).http}}</span><span v-if="batchAlertMeta(row.batch).issues" class="cst-tl-alert">{{batchAlertMeta(row.batch).issues}} 项异常</span></span>
     </button>
     <button v-else-if="row.round" class="history-batch-row cst-tl-row" @click="openManualRound(row.round)">
      <time>{{timeOf(row.at)}}</time><span><strong>{{manualRoundLabel(row.round)}} · {{row.round.node_count}} 个节点</strong><small>{{date(row.at)}} · {{manualRoundCount(row.round)}} 项</small></span><span class="badge">{{manualRoundState(row.round.state)}}</span>
@@ -161,7 +174,7 @@ onBeforeUnmount(()=>{generation++;facetGeneration++;manualGeneration++;detailGen
 .cst-day h3 small{font-weight:400}
 .cst-tl-row{display:grid;grid-template-columns:48px minmax(0,1fr);gap:6px 10px;align-items:start;width:100%;padding:12px 14px;border:1px solid var(--cst-line);border-left:3px solid transparent;border-radius:12px;background:var(--cst-panel);color:var(--cst-text);text-align:left;margin:0;box-shadow:0 1px 2px rgba(15,23,42,.03);transition:border-color .14s ease,box-shadow .14s ease}
 .cst-tl-row:hover{border-color:color-mix(in srgb,var(--cst-accent) 30%,var(--cst-line))}.cst-tl-row[aria-current=true]{border-color:color-mix(in srgb,var(--cst-accent) 45%,var(--cst-line));border-left-color:var(--cst-accent);background:color-mix(in srgb,var(--cst-accent) 4%,var(--cst-panel));box-shadow:0 4px 12px rgba(15,23,42,.05)}
-.cst-tl-row time{font-variant-numeric:tabular-nums;font-weight:600;font-size:14px}.cst-tl-row strong{display:block;font-size:13px;font-weight:500}.cst-tl-row small{display:block;color:var(--cst-muted);font-size:11px;margin-top:6px;line-height:1.6}.cst-tl-row .badge{grid-column:2;justify-self:start;font-weight:500;background:none;padding:0;border:0}
+.cst-tl-row time{font-variant-numeric:tabular-nums;font-weight:600;font-size:14px}.cst-tl-row strong{display:block;font-size:13px;font-weight:500}.cst-tl-row small{display:block;color:var(--cst-muted);font-size:11px;margin-top:6px;line-height:1.6}.cst-tl-row .badge{grid-column:2;justify-self:start;font-weight:500;background:none;padding:0;border:0}.cst-tl-badges{grid-column:2;display:flex;flex-wrap:wrap;align-items:center;gap:6px}.cst-tl-badges .badge.warn{color:var(--cst-warn)}.cst-tl-badges .badge.bad{color:var(--cst-bad)}.cst-tl-alert{display:inline-flex;align-items:center;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:700;color:var(--cst-warn);background:var(--cst-warn-bg);border:1px solid color-mix(in srgb,var(--cst-warn) 30%,transparent)}
 .cst-record{position:sticky;top:calc(var(--cst-nav-height,56px) + 16px);max-height:calc(100vh - var(--cst-nav-height,56px) - 32px);overflow:auto;background:var(--cst-panel);border:1px solid var(--cst-line);border-top:2.5px solid transparent;background-image:linear-gradient(var(--cst-panel-solid),var(--cst-panel-solid)),var(--cst-aurora-ribbon);background-origin:border-box;background-clip:padding-box,border-box;border-radius:var(--cst-radius);padding:24px;display:flex;flex-direction:column;gap:18px;min-width:0;box-shadow:var(--cst-shadow-xs)}
 .cst-record-head{display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid var(--cst-line);padding-bottom:18px}.cst-record-head h2{margin:0;font-size:23px;font-weight:600}.cst-record-head p{margin-top:6px;font-size:12px;color:var(--cst-muted)}
 .record-placeholder{align-self:stretch;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:12px;padding:44px 32px;color:var(--cst-muted);background:var(--cst-panel);border:1px dashed var(--cst-line-strong);border-radius:16px;text-align:center}.record-placeholder>.icon{width:28px;height:28px}.record-placeholder p{font-size:13px;line-height:1.8}.record-placeholder h2{font-size:16px;font-weight:600;color:var(--cst-text)}

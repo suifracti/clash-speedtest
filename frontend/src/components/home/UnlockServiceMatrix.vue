@@ -5,7 +5,8 @@ import {api,saveFile} from '../../api'
 import {date,key} from '../../domain'
 import {nodeDisplayName,nodeRegionLabel} from '../../nodePresentation'
 import {attemptObservedAt} from '../../nodeQuality'
-import {unlockGroups,unlockResult,unlockMeasured,unlockServiceAllowed,unlockServiceSkipReason} from '../../unlock'
+import {unlockResult,unlockMeasured,unlockServiceAllowed,unlockServiceSkipReason} from '../../unlock'
+import {displayUnlockGroups} from '../../unlockGroupStore'
 import {exitLanding} from '../../exitLanding'
 import {homeModelKey} from './homeModel'
 const emit=defineEmits<{inspect:[node:import('../../domain').NodeOption]}>()
@@ -13,7 +14,7 @@ const w=useWorkspace(),m=inject(homeModelKey)!,selected=ref({service:'gemini_unl
 const nodes=m.runNodes
 watch(()=>JSON.stringify([nodes.value.map(key),w.hours.value,m.qualityCutoff.value]),()=>void m.readQualityNodes(nodes.value),{immediate:true})
 const regions=computed(()=>[...new Set(nodes.value.map(n=>w.nodeUnlockRegion(n)))].sort())
-const groups=computed(()=>unlockGroups.map(g=>({...g,items:g.ids.map(id=>m.displayServices.value.find(s=>s.service_id===id)).filter((s):s is NonNullable<typeof s>=>!!s)})).filter(g=>g.items.length))
+const groups=computed(()=>displayUnlockGroups.value.map(g=>({...g,items:g.ids.map(id=>m.displayServices.value.find(s=>s.service_id===id)).filter((s):s is NonNullable<typeof s>=>!!s)})).filter(g=>g.items.length))
 watch([regions,groups],()=>{
  if(!regions.value.includes(selected.value.region))selected.value.region=regions.value[0]||''
  if(!groups.value.some(g=>g.items.some(s=>s.service_id===selected.value.service)))selected.value.service=groups.value[0]?.items[0]?.service_id||''

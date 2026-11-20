@@ -290,6 +290,7 @@ body.cst-resizing{cursor:col-resize;user-select:none}
 .hd-purity-bar i.good{background:var(--cst-aurora-good,var(--hd-good))}
 .hd-purity-bar i.warn{background:var(--cst-aurora-warn,var(--hd-warn))}
 .hd-purity-bar i.bad{background:linear-gradient(90deg,#e11d48 0%,#fb7185 100%)}
+.hd-exit-purity-sub{font-size:10px;font-weight:500;color:var(--hd-muted);line-height:1.25;white-space:nowrap}
 
 /* 窄窗口 */
 @media (max-width:1100px){

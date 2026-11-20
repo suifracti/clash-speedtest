@@ -2,6 +2,7 @@ import {api} from './api'
 import {downloadSpeed,key,median,scope,type NodeScope,type LatencyTest,type MonitorSample,type NodeOption,type Attempt} from './domain'
 import {latencyTargets,latencyTargetId} from './latencyTargets'
 import {servicePassed} from './sharedResults'
+import {exitLanding} from './exitLanding'
 export interface QualityGroup {key:string;source:string;method:string;target:string;condition:string;comparable:boolean;total:number;success:number;excluded:number;p50:number|null;p95:number|null;jitter:number|null;successRate:number|null;lastAt:string;insufficient:boolean}
 export type QualityReadKind='latency'|'monitor'|'download'|'service'
 export interface QualityReadStatus {complete:boolean;error?:string}
@@ -16,6 +17,23 @@ export function latencyReadComplete(e:QualityEvidence,g?:QualityGroup){return !!
 export function qualityMatchesGate(e:QualityEvidence|undefined,g:QualityGroup|undefined,gate:string,until:string){
  if(gate==='all')return true;if(!e)return false
  if(gate==='download')return e.reads.download.complete&&!!downloadEvidence(e.downloads).valid
+ if(gate==='purity_clean'){
+  if(!e.reads.service.complete)return false
+  const score=exitLanding({country_code:''},e.services).purity.score
+  return score!==null&&score>=80
+ }
+ if(gate==='latency_issue'){
+  if(!e.reads.latency.complete&&!e.reads.monitor.complete)return false
+  const latestTest=[...e.tests].sort((a,b)=>(Date.parse(b.finished_at)||0)-(Date.parse(a.finished_at)||0))[0]
+  if(latestTest?.samples?.length){
+   const hasFail=latestTest.samples.some(s=>!s.success&&!excludedError(s.error))
+   const hasHttp=latestTest.samples.some(s=>/\bHTTP\s*(403|429|5\d\d)\b/i.test(s.error||''))
+   const okValues=latestTest.samples.filter(s=>s.success&&Number.isFinite(s.latency_ms)).map(s=>s.latency_ms).sort((a,b)=>a-b)
+   const med=median(okValues)
+   if(hasFail||hasHttp||(med!==null&&med>=1200))return true
+  }
+  return !!g&&((g.successRate!==null&&g.successRate<100)||(g.p50!==null&&g.p50>=1200))
+ }
  if(gate==='service')return e.reads.service.complete&&latestServices(e.services).some(a=>{
   const at=attemptObservedAt(a),id=a.service_id||a.rule.service_id
   // Undated or conflicting simultaneous conclusions cannot prove current success.

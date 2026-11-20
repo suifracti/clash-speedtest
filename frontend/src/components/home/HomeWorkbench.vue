@@ -28,7 +28,8 @@ import {computeTipAnchor,hideChartTip,showChartTip} from '../../chartTip'
 import {homeModelKey,weeklyHistoryKey} from './homeModel'
 import {exitLanding} from '../../exitLanding'
 import {entryCountry,isAnycast,lineLabel,routeKind,routeLabel,routeTone} from '../../entryPath'
-import {unlockGroupDetail,unlockGroups} from '../../unlock'
+import {unlockGroupDetailFor} from '../../unlock'
+import {displayUnlockGroups} from '../../unlockGroupStore'
 const w=useWorkspace(),m=inject(homeModelKey)!
 const readingHintId=useId()
 const exitMode=ref(false),serviceView=ref('nodes')
@@ -73,8 +74,8 @@ function selectInspectorProject(id:Project|'exit'){if(id==='exit')selectExit();e
 function selectExit(){exitMode.value=true;m.headerSort.value='';m.qualityGate.value='all';m.qualitySort.value='existing';if(['latency','download','service'].includes(w.sort.value))w.sort.value='region'}
 // 出口表只读缓存；真要解析要按“解析入口”或跑一次出口检测。
 watch([exitMode,()=>m.pageNodes.value],()=>{if(exitMode.value)void w.readEntries(m.pageNodes.value,false).catch(()=>{})},{immediate:true})
-const exitColumns=['线路','出口 IP','真实落地','IP 类型','CF 盾','风险']
-const exitFields=['line','ip','label','ipTag','cfChallenge','riskLabel'] as const
+const exitColumns=['线路','出口 IP','真实落地','IP 类型','CF 盾','纯净度']
+const exitFields=['line','ip','label','ipTag','cfChallenge','purity'] as const
 const sites=computed(()=>targets.filter(t=>w.displayTargets.value.includes(t.id)))
 // 同名节点的七天统计包含配置变化前后的历史。
 const weeklyProgress=m.weeklyProgress
@@ -114,10 +115,10 @@ const sorts=computed(()=>[{id:'region',label:'地区 → 机场'},{id:'airport',
  ...(!exitMode.value&&['latency','combined'].includes(w.project.value)?[{id:'latency',label:'已保存延迟 / 监测'}]:[]),
  ...(!exitMode.value&&['download','combined'].includes(w.project.value)?[{id:'download',label:'最近下载速度'}]:[]),
  ...(!exitMode.value&&['service','combined'].includes(w.project.value)?[{id:'service',label:'自选服务通过'}]:[])])
-const gates=[{id:'all',label:'全部节点',short:'全部'},{id:'samples',label:'测得够多的（成功样本 ≥5 次）',short:'测得够多的'},{id:'response',label:'稳定能连的（近 7 天响应率 ≥90%）',short:'稳定能连的'},{id:'fresh',label:'最近 24 小时测过的',short:'最近 24 小时测过的'},{id:'download',label:'有过有效下载速度的',short:'有过有效下载速度的节点'},{id:'service',label:'已选服务检测通过的',short:'已选服务检测通过的节点'}]
+const gates=[{id:'all',label:'全部节点',short:'全部'},{id:'samples',label:'测得够多的（成功样本 ≥5 次）',short:'测得够多的'},{id:'response',label:'稳定能连的（近 7 天响应率 ≥90%）',short:'稳定能连的'},{id:'fresh',label:'最近 24 小时测过的',short:'最近 24 小时测过的'},{id:'latency_issue',label:'延迟有异常（含 403 / 超时 / 丢包 / 高延迟）',short:'延迟有异常的'},{id:'purity_clean',label:'出口纯净度 ≥ 80（纯净）',short:'纯净度 ≥ 80'},{id:'download',label:'有过有效下载速度的',short:'有过有效下载速度的节点'},{id:'service',label:'已选服务检测通过的',short:'已选服务检测通过的节点'}]
 // 每个标签只给和它相关的条件；综合标签保留全部。
-const tabGateIds:Record<Project,string[]>={combined:['all','samples','response','fresh','download','service'],latency:['all','samples','response','fresh'],download:['all','download'],service:['all','service']}
-const tabGates=computed(()=>gates.filter(g=>(exitMode.value?['all']:tabGateIds[w.project.value]).includes(g.id)))
+const tabGateIds:Record<Project,string[]>={combined:['all','samples','response','fresh','latency_issue','purity_clean','download','service'],latency:['all','samples','response','fresh','latency_issue','purity_clean'],download:['all','download'],service:['all','service']}
+const tabGates=computed(()=>gates.filter(g=>(exitMode.value?['all','purity_clean']:tabGateIds[w.project.value]).includes(g.id)))
 const latencyTab=computed(()=>!exitMode.value&&['combined','latency'].includes(w.project.value))
 const resultHint=computed(()=>({combined:'按已保存的检测记录筛选和排序',latency:'用已保存的延迟记录筛选，再按延迟统计排序',download:'用已保存的测速记录筛选',service:'用已保存的服务检测记录筛选'} as Record<Project,string>)[w.project.value])
 watch(()=>w.project.value,p=>{if(!tabGateIds[p].includes(m.qualityGate.value))m.qualityGate.value='all';if(!['combined','latency'].includes(p)&&m.qualitySort.value!=='existing')m.qualitySort.value='existing'})
@@ -307,14 +308,15 @@ const overviewLatencyMap=computed(()=>overviewMode.value?Object.fromEntries(m.pa
 })):{})
 const overviewUnlockMap=computed(()=>overviewMode.value?Object.fromEntries(m.pageNodes.value.map(n=>{
  const region=w.nodeUnlockRegion(n),ipType=exitRows.value[key(n)]?.ipKind.type
- const groups=unlockGroups.map(g=>({id:g.id,name:g.name,...unlockGroupDetail(g.id,catalog.value,serviceId=>m.shownService(n,serviceId),region,w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions,ipType)})).filter(g=>g.total>0||g.attemptedItems.length>0||(g.tone!=='empty'&&g.label!=='未测'&&g.label!=='—'))
+ const groups=displayUnlockGroups.value.map(g=>({id:g.id,name:g.name,...unlockGroupDetailFor(g,catalog.value,serviceId=>m.shownService(n,serviceId),region,w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions,ipType)})).filter(g=>g.total>0||g.attemptedItems.length>0||(g.tone!=='empty'&&g.label!=='未测'&&g.label!=='—'))
  const itemRank=(tone:string)=>tone==='bad'?0:tone==='warn'?1:tone==='good'?2:3
- const items=groups.flatMap(g=>g.attemptedItems.map(item=>({...item,groupName:g.name}))).sort((a,b)=>itemRank(a.tone)-itemRank(b.tone))
+ const seenIds=new Set<string>()
+ const items=groups.flatMap(g=>g.attemptedItems.map(item=>({...item,groupName:g.name}))).filter(item=>{if(seenIds.has(item.id))return false;seenIds.add(item.id);return true}).sort((a,b)=>itemRank(a.tone)-itemRank(b.tone))
  return [key(n),{groups,items}]
 })):{})
 const serviceGroupMap=computed(()=>showServiceGroups.value?Object.fromEntries(m.pageNodes.value.map(n=>{
  const region=w.nodeUnlockRegion(n),ipType=exitRows.value[key(n)]?.ipKind.type
- return [key(n),unlockGroups.map(g=>({id:g.id,name:g.name,...unlockGroupDetail(g.id,catalog.value,serviceId=>m.shownService(n,serviceId),region,w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions,ipType)}))]
+ return [key(n),displayUnlockGroups.value.map(g=>({id:g.id,name:g.name,...unlockGroupDetailFor(g,catalog.value,serviceId=>m.shownService(n,serviceId),region,w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions,ipType)}))]
 })):{})
 function showOverviewLatencyTip(e:MouseEvent,n:NodeOption){
  const row=overviewLatencyMap.value[key(n)]
@@ -363,9 +365,11 @@ function quickPlanSingle(n:NodeOption,proj:Exclude<Project,'combined'>){
  if(w.plan.value){w.plan.value.projects=[proj];w.plan.value.includeReputation=false;w.plan.value.reputationServiceIds=[]}
 }
 // Grid tracks follow the active project so each tab shows its own columns.
-const columns=computed(()=>overviewMode.value?['28px','minmax(210px,1.45fr)','minmax(168px,1.25fr)','minmax(122px,.9fr)','minmax(168px,1.25fr)','minmax(132px,.95fr)'].join(' '):exitMode.value?['28px','minmax(185px,1.7fr)','minmax(96px,1.05fr)','84px','minmax(92px,1fr)','82px','78px','76px'].join(' '):showSites.value?['28px','minmax(188px,1.45fr)','82px','96px','78px','72px',...sites.value.map(()=>'minmax(108px,1fr)')].join(' '):w.project.value==='download'?['36px','minmax(215px,1.65fr)','minmax(175px,1.15fr)','minmax(125px,.85fr)','minmax(195px,1.25fr)'].join(' '):['36px','minmax(210px,1.45fr)',...unlockGroups.map(()=>'minmax(175px,1fr)')].join(' '))
+const columns=computed(()=>overviewMode.value?['28px','minmax(210px,1.45fr)','minmax(168px,1.25fr)','minmax(122px,.9fr)','minmax(168px,1.25fr)','minmax(132px,.95fr)'].join(' '):exitMode.value?['28px','minmax(185px,1.55fr)','minmax(96px,1fr)','84px','minmax(92px,1fr)','80px','76px','minmax(112px,.95fr)'].join(' '):showSites.value?['28px','minmax(188px,1.45fr)','82px','96px','78px','72px',...sites.value.map(()=>'minmax(108px,1fr)')].join(' '):w.project.value==='download'?['36px','minmax(215px,1.65fr)','minmax(175px,1.15fr)','minmax(125px,.85fr)','minmax(195px,1.25fr)'].join(' '):['28px','minmax(205px,1.4fr)',...displayUnlockGroups.value.map(()=>'minmax(175px,1fr)')].join(' '))
 const overviewMinWidth=computed(()=>28+210+168+122+168+132+5*12+28)
 const latencyMinWidth=computed(()=>28+188+82+96+78+72+sites.value.length*108+(sites.value.length+5)*10+28)
+const serviceMinWidth=computed(()=>28+205+displayUnlockGroups.value.length*175+(displayUnlockGroups.value.length+1)*10+28)
+const exitMinWidth=computed(()=>28+185+96+84+92+80+76+112+7*10+28)
 const shownRange=computed(()=>{
  const total=m.visibleNodes.value.length,size=m.pageSize.value
  if(!total||!size)return `共 ${total} 条`
@@ -544,12 +548,12 @@ function keyNav(e:KeyboardEvent){
         <button class="hd-btn" :disabled="m.currentPage.value>=m.totalPages.value" aria-label="下一页" @click="changePage(1)">下一页</button>
       </div>
     </nav>
-    <div class="hd-body" :class="{'overview-mode':overviewMode,'latency-mode':showSites,'download-mode':!exitMode&&w.project.value==='download','service-mode':!exitMode&&w.project.value==='service','exit-mode':exitMode,'full-table':detailsOverlay||!inspectorOpen}" :style="{'--hd-side-w':visibleSideWidth+'px','--hd-overview-width':overviewMinWidth+'px','--hd-latency-width':latencyMinWidth+'px'}">
+    <div class="hd-body" :class="{'overview-mode':overviewMode,'latency-mode':showSites,'download-mode':!exitMode&&w.project.value==='download','service-mode':!exitMode&&w.project.value==='service','exit-mode':exitMode,'full-table':detailsOverlay||!inspectorOpen}" :style="{'--hd-side-w':visibleSideWidth+'px','--hd-overview-width':overviewMinWidth+'px','--hd-latency-width':latencyMinWidth+'px','--hd-service-width':serviceMinWidth+'px','--hd-exit-width':exitMinWidth+'px'}">
       <div ref="table" class="hd-table" role="table" aria-label="节点列表" :aria-describedby="latencyTab?readingHintId:undefined" tabindex="0" :style="{'--hd-cols':columns}" @keydown="keyNav">
         <div class="hd-table-head" role="rowgroup">
         <div class="hd-tr hd-th" role="row">
           <span role="columnheader"><input type="checkbox" :checked="allOnPage" aria-label="选择本页全部节点" @change="w.toggleAll(m.pageNodes.value)"></span>
-          <WorkbenchSortHeader column="name" label="节点"/><template v-if="exitMode"><template v-for="label in exitColumns" :key="label"><WorkbenchSortHeader v-if="label==='CF 盾'" column="cfChallenge" label="CF 盾"/><span v-else role="columnheader">{{label}}</span></template></template>
+          <WorkbenchSortHeader column="name" label="节点"/><template v-if="exitMode"><template v-for="label in exitColumns" :key="label"><WorkbenchSortHeader v-if="label==='CF 盾'" column="cfChallenge" label="CF 盾"/><WorkbenchSortHeader v-else-if="label==='纯净度'" column="purity" label="纯净度"/><span v-else role="columnheader">{{label}}</span></template></template>
           <template v-if="overviewMode">
             <WorkbenchSortHeader column="verdict" label="延迟总览"/>
             <WorkbenchSortHeader column="download" label="下载速度"/>
@@ -568,7 +572,7 @@ function keyNav(e:KeyboardEvent){
             <span role="columnheader">峰值 / 全程</span>
             <WorkbenchSortHeader column="downloadTime" label="测速源与记录"/>
           </template>
-          <template v-if="!exitMode&&w.project.value==='service'"><WorkbenchSortHeader v-for="g in unlockGroups" :key="g.id" :column="'unlock:'+g.id" :label="g.name"/></template>
+          <template v-if="!exitMode&&w.project.value==='service'"><WorkbenchSortHeader v-for="g in displayUnlockGroups" :key="g.id" :column="'unlock:'+g.id" :label="g.name"/></template>
         </div>
         </div>
         <div ref="rowScroller" class="hd-row-scroll" role="rowgroup" @scroll="syncTableHeading">
@@ -620,7 +624,7 @@ function keyNav(e:KeyboardEvent){
               <span v-else class="hd-empty-pill">未测出口</span>
             </span>
           </template>
-          <template v-if="exitMode"><template v-for="field in exitFields" :key="field"><span v-if="field==='line'" role="cell" class="hd-exit-cell hd-line-cell"><span class="hd-line-badge" :title="exitRows[key(n)].line">{{exitRows[key(n)].line}}</span><span v-if="exitRows[key(n)].route" class="hd-route-tag" :class="exitRows[key(n)].routeTone" :title="exitRows[key(n)].routeTitle">{{exitRows[key(n)].route}}</span></span><span v-else-if="field==='ip'" role="cell" class="hd-exit-cell"><code v-if="exitRows[key(n)].ip&&exitRows[key(n)].ip!=='—'" class="hd-ip-code">{{exitRows[key(n)].ip}}</code><span v-else class="hd-empty-pill">待查询</span></span><span v-else-if="field==='ipTag'" role="cell" class="hd-exit-cell hd-ip-cell"><span class="hd-ip-tag" :class="exitRows[key(n)].ipKind.tone" :title="'IP 类型：'+exitRows[key(n)].ipKind.detail">{{exitRows[key(n)].ipTag}}</span></span><span v-else-if="field==='cfChallenge'" role="cell" class="hd-exit-cell hd-cf-cell"><span class="hd-cf-tag" :class="exitRows[key(n)].cfChallenge.tone" :title="exitRows[key(n)].cfChallenge.label+' · '+exitRows[key(n)].cfChallenge.detail">{{exitRows[key(n)].cfChallenge.shortLabel}}</span></span><span v-else role="cell" class="hd-exit-cell"><span class="hd-exit-pill" :class="field==='label'?exitRows[key(n)].tone:exitRows[key(n)].riskTone" :title="field==='label'?exitRows[key(n)].detail:'IPPure 与机器流量占比取较高值'">{{exitRows[key(n)][field]==='未测'?(field==='label'?'待检测':'未测'):exitRows[key(n)][field]}}</span></span></template></template>
+          <template v-if="exitMode"><template v-for="field in exitFields" :key="field"><span v-if="field==='line'" role="cell" class="hd-exit-cell hd-line-cell"><span class="hd-line-badge" :title="exitRows[key(n)].line">{{exitRows[key(n)].line}}</span><span v-if="exitRows[key(n)].route" class="hd-route-tag" :class="exitRows[key(n)].routeTone" :title="exitRows[key(n)].routeTitle">{{exitRows[key(n)].route}}</span></span><span v-else-if="field==='ip'" role="cell" class="hd-exit-cell"><code v-if="exitRows[key(n)].ip&&exitRows[key(n)].ip!=='—'" class="hd-ip-code">{{exitRows[key(n)].ip}}</code><span v-else class="hd-empty-pill">待查询</span></span><span v-else-if="field==='ipTag'" role="cell" class="hd-exit-cell hd-ip-cell"><span class="hd-ip-tag" :class="exitRows[key(n)].ipKind.tone" :title="'IP 类型：'+exitRows[key(n)].ipKind.detail">{{exitRows[key(n)].ipTag}}</span></span><span v-else-if="field==='cfChallenge'" role="cell" class="hd-exit-cell hd-cf-cell"><span class="hd-cf-tag" :class="exitRows[key(n)].cfChallenge.tone" :title="exitRows[key(n)].cfChallenge.label+' · '+exitRows[key(n)].cfChallenge.detail">{{exitRows[key(n)].cfChallenge.shortLabel}}</span></span><span v-else-if="field==='purity'" role="cell" class="hd-exit-cell hd-purity-cell" :class="exitRows[key(n)].purity.tone" :title="exitRows[key(n)].purity.title+(exitRows[key(n)].riskLabel!=='未测'?' · 风险峰值 '+exitRows[key(n)].riskLabel:'')"><template v-if="exitRows[key(n)].purity.score!==null"><span class="hd-purity-top"><b class="hd-purity-badge" :class="exitRows[key(n)].purity.tone">{{exitRows[key(n)].purity.grade}} {{exitRows[key(n)].purity.score}}</b></span><span class="hd-purity-bar" aria-hidden="true"><i :class="exitRows[key(n)].purity.tone" :style="{width:Math.max(8,exitRows[key(n)].purity.score!)+'%'}"/></span><small v-if="exitRows[key(n)].riskLabel!=='未测'" class="hd-exit-purity-sub">{{exitRows[key(n)].riskLabel}}</small></template><span v-else-if="exitRows[key(n)].riskLabel!=='未测'" class="hd-exit-pill" :class="exitRows[key(n)].riskTone">{{exitRows[key(n)].riskLabel}}</span><span v-else class="hd-empty-pill">未测</span></span><span v-else role="cell" class="hd-exit-cell"><span class="hd-exit-pill" :class="exitRows[key(n)].tone" :title="exitRows[key(n)].detail">{{exitRows[key(n)].label==='未测'?'待检测':exitRows[key(n)].label}}</span></span></template></template>
           <span v-if="showVerdict&&!overviewMode" role="cell"><b class="hd-pill" :class="[verdicts[key(n)].tone,{'partial-sites':verdicts[key(n)].label.startsWith('部分站点不通')}]">{{verdicts[key(n)].label}}</b></span>
           <span v-if="showVerdict&&!overviewMode" role="cell" class="hd-num hd-purity-cell" :class="exitRows[key(n)].purity.tone" :title="exitRows[key(n)].purity.title">
             <template v-if="exitRows[key(n)].purity.score!==null">

@@ -180,6 +180,7 @@ onMounted(()=>void refresh())
          <div class="candidate-title">
           <strong>{{nodeDisplayName(candidate.node)}}</strong>
           <small class="candidate-source">{{candidateSource(candidate.node)}} · {{candidate.node.type}}</small>
+          <span v-if="candidate.purity" class="cf-chip" :class="candidate.purity.tone" :title="candidate.purity.title">{{candidate.purity.grade}} {{candidate.purity.score}}</span>
           <span v-if="candidate.cfChallenge" class="cf-chip" :class="candidate.cfChallenge.tone" :title="candidate.cfChallenge.detail">{{candidate.cfChallenge.label}}</span>
          </div>
          <span class="candidate-hero" :class="{'candidate-reference':!isRecommendation(candidate)}">{{candidateHero(candidate)}}</span>

@@ -8,6 +8,7 @@ import {compareNodes,nodeDisplayName,nodeRegion,nodeSourceIndex,sourceForNode,un
 import {downloadGroup,latencyComparisonGroup,serviceAvailabilitySummary,serviceComparisonGroup} from './sharedResults'
 import {readSortSnapshot,type SortResult} from './sortSnapshot'
 import {clearUsageCache} from './usageDaily'
+import {syncUnlockGroupsFromStorage} from './unlockGroupStore'
 const startRejected=(e:unknown)=>{const status=(e as {status?:number})?.status;return !!status&&status>=400&&status<500}
 export const terminal=(state:string)=>!['queued','running','cancelling','saving'].includes(state)
 const delay=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms))
@@ -29,6 +30,7 @@ const activeWorkKey='speedtest.active-work'
 const serviceScope=(n:NodeOption,serviceId?:string)=>serviceId?{...n,service_id:serviceId}:n
 function savedWork():ActiveWork|null{try{const value=JSON.parse(window.sessionStorage.getItem(activeWorkKey)||'null');if(!value||!['latency','download','service'].includes(value.kind)||typeof value.requestId!=='string')return null;if(value.kind!=='latency'){if(!value.node||!value.node.profile_id||!value.node.node_key||!value.node.node_identity_key||!value.node.config_revision_key)return null;value.node={...scope(value.node),profile_name:value.node.profile_id,display_name:'待确认节点',type:'',country_code:'',country_flag:''}}return value}catch{return null}}
 export function createWorkspace(){
+  syncUnlockGroupsFromStorage()
   const booted=ref(false),nodesReady=ref(false),settingsSection=ref('appearance')
   const latencyReportFocus=ref<{nodeKey:string;id:string;test:LatencyTest}|null>(null)
   const reportSelection=ref<{batch:LatencyBatch;monitor:boolean;previous:LatencyBatch[]}|null>(null)

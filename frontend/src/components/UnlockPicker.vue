@@ -2,35 +2,14 @@
 import {computed,nextTick,ref} from 'vue'
 import {useWorkspace} from '../workspace'
 import type {ServiceRule} from '../domain'
-import {unlockGroups,unlockGroup,unlockSupported} from '../unlock'
+import {unlockGroup,unlockSupported} from '../unlock'
+import {defaultPresetGroups,editableUnlockGroups,optionalUnlockIds,persistUnlockGroups,resetDefaultUnlockGroups,syncUnlockGroupsFromStorage} from '../unlockGroupStore'
 const props=defineProps<{modelValue:string[];catalog:ServiceRule[]}>(),emit=defineEmits<{'update:modelValue':[value:string[]]}>(),search=ref(''),customName=ref(''),customOpen=ref(false),showOptional=ref(false),editingGroupId=ref(''),nameInput=ref<HTMLInputElement|null>(null)
 const w=useWorkspace()
-const customKey='cst.custom-unlock-groups',groupsKey='cst.unlock-groups.v2'
-const optionalUnlockIds=new Set(['chatgpt_unlock','claude_unlock','spotify_unlock','youtube_premium'])
-interface EditableUnlockGroup{id:string;name:string;ids:string[];custom?:boolean}
+syncUnlockGroupsFromStorage()
 const selectable=computed(()=>props.catalog.filter(s=>!s.superseded_by&&unlockGroup(s.service_id)!=='legacy'))
-function defaultPresetGroups():EditableUnlockGroup[]{
- return unlockGroups.map(g=>({id:g.id,name:g.name,ids:g.ids.filter(id=>id!=='antigravity'&&!optionalUnlockIds.has(id)&&unlockSupported(id)),custom:false}))
-}
-function loadGroups():EditableUnlockGroup[]{
- try{
-  const raw=window.localStorage.getItem(groupsKey)
-  if(raw){
-   const parsed=JSON.parse(raw)
-   if(Array.isArray(parsed))return parsed.filter((g):g is EditableUnlockGroup=>!!g&&typeof g.id==='string'&&typeof g.name==='string'&&Array.isArray(g.ids))
-  }
-  const legacyRaw=window.localStorage.getItem(customKey),legacy=legacyRaw?JSON.parse(legacyRaw):[]
-  const extras=Array.isArray(legacy)?legacy.filter((g):g is EditableUnlockGroup=>!!g&&typeof g.id==='string'&&typeof g.name==='string'&&Array.isArray(g.ids)).map(g=>({...g,custom:true})):[]
-  return [...defaultPresetGroups(),...extras]
- }catch{return defaultPresetGroups()}
-}
-const groups=ref<EditableUnlockGroup[]>(loadGroups())
-function persistGroups(){
- try{
-  window.localStorage.setItem(groupsKey,JSON.stringify(groups.value))
-  window.localStorage.setItem(customKey,JSON.stringify(groups.value.filter(g=>g.custom)))
- }catch{}
-}
+const groups=editableUnlockGroups
+const persistGroups=persistUnlockGroups
 const categoryNames:Record<string,string>={ai:'AI 服务',streaming:'流媒体',japan:'日本地区'}
 const optionalCount=computed(()=>selectable.value.filter(s=>optionalUnlockIds.has(s.service_id)).length)
 const editingOptional=computed(()=>!!groups.value.find(g=>g.id===editingGroupId.value)?.ids.some(id=>optionalUnlockIds.has(id)))
@@ -94,9 +73,8 @@ function removeGroup(id:string){
  persistGroups()
 }
 function resetDefaultGroups(){
- const customOnly=groups.value.filter(g=>g.custom)
- groups.value=[...defaultPresetGroups(),...customOnly]
- cancelEditGroup();persistGroups()
+ resetDefaultUnlockGroups()
+ cancelEditGroup()
 }
 const editingGroup=computed(()=>groups.value.find(g=>g.id===editingGroupId.value))
 const defaultsCustomized=computed(()=>{

@@ -17,7 +17,8 @@ import {date,isReputationRule,sameHistoryRecords,downloadReading,downloadPeakSpe
 import {airportNodeCount as countAirportNodes} from '../airportViewing'
 import {attemptStatus,downloadNoDataReason,triggerLabel} from '../measurementRounds'
 import {latencyPointLabel,createPresentationCache,manualLatencyPoint,monitorLatencyPoints,monitorHTTPServices,type TrendPoint} from '../presentation'
-import {unlockGroups,unlockGroupSummary} from '../unlock'
+import {unlockGroupDetailFor} from '../unlock'
+import {displayUnlockGroups} from '../unlockGroupStore'
 import Modal from './Modal.vue'
 import MeasurementResults from './MeasurementResults.vue'
 import {nodeDisplayName,nodeRegion} from '../nodePresentation'
@@ -164,9 +165,9 @@ function headerValue(node:NodeOption,field:string):number|null{
  const landing=exitLanding(node,[...(evidence?.services||[]),...(w.services.value[key(node)]||[])])
  if(field==='purity')return landing.purity.score
  if(field==='cfChallenge')return landing.cfChallenge.rank
- const groups=field==='service'?unlockGroups:unlockGroups.filter(g=>g.id===field.slice(7))
+ const groups=field==='service'?displayUnlockGroups.value:displayUnlockGroups.value.filter(g=>g.id===field.slice(7))
  const catalog=w.catalog.value.filter(rule=>!isReputationRule(rule))
- const results=groups.map(g=>unlockGroupSummary(g.id,catalog,id=>shownService(node,id),w.nodeUnlockRegion(node),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions,landing.ipKind.type))
+ const results=groups.map(g=>unlockGroupDetailFor(g,catalog,id=>shownService(node,id),w.nodeUnlockRegion(node),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions,landing.ipKind.type))
  const total=results.reduce((sum,r)=>sum+r.total,0)
  return total?results.reduce((sum,r)=>sum+r.available,0)/total:null
 }

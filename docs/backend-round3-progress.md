@@ -4,6 +4,7 @@
 
 ## 当前接续（2026-11-20）
 
+- 补齐 8 项全站联动与体验收口：新建共享响应式 `unlockGroupStore.ts` 与 `unlockGroupDetailFor`，让 `UnlockPicker.vue` 中的改名/新建/删除自定义解锁分组实时同步至「解锁检测」动态列头、「综合 → 服务解锁」、`UnlockInspector.vue`、`UnlockServiceMatrix.vue` 与 `HomeView.vue` 列排序；「出口与信誉」末列升级为可排序「纯净度」分级条（保留风险小注与悬停对比），并修补 `exitLanding.ts` 空 `country_code` 防护；统一 `HoverTip.vue` 与 `AutoPickReportModal.vue` 至极光双主题体系；「机场体检」卡片与排行表、「为你选线」候选卡全面接入纯净度色标；为「解锁检测」与「出口与信誉」补齐左侧复选框/节点名无缝冻结列；「更多筛选」新增“延迟有异常”与“出口纯净度 ≥ 80”两项快筛；「检测记录」报告与批次时间线直出 `GitHub 拒绝访问` 与异常节点计数。受影响 12 文件 / 115 项前端单测与 `vue-tsc -b && vite build` 全过。
 - 完成点击延迟根因治理与综合/解锁/详情全链路收口：将延迟表千级局部 `<Teleport>` 与滚动监听收敛为单实例 `chartTip.ts` + `GlobalChartTip.vue`（仅气泡打开时挂被动监听）；`UiSelect.vue` / `SiteDisplayPicker.vue` 全局捕获监听改为仅展开态挂载；`HomeWorkbench.vue` 消除 `v-for` 闭包并加行级 `v-memo`；`NodeInspector.vue` 与 `InspectorLatency.vue` 共享单次 Clash 状态查询并补齐检查器内 `HTTP 403`/分站超时与纯净度等级徽标；`HomeView.vue` 去除 `savedQualityVersion` 排序内 `JSON.stringify` 并对大列表限流/缓存监测查询；`workspace.ts` 去除历史分页对象展开；修复综合模式冻结列悬停双层错位与单机场侧栏 3 日用量拥挤；综合页「延迟总览」新增分站 403/超时/丢包/高延迟异常标签与四站即时悬浮明细，「服务解锁」与独立「解锁检测」各分组列（AI / 流媒体 / 日本）改为直接展示具体服务短状态芯片（异常优先）与悬停完整原因并支持直点查证；延迟报告节点详情支持 `Esc` 先返回报告。受影响 16 文件 / 137 项前端单测与 `vue-tsc -b && vite build` 全过。
 
 ## 当前接续（2026-11-19）

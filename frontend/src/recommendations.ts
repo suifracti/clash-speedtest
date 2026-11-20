@@ -4,16 +4,20 @@ import {attemptObservedAt,latestServices,qualityGroups,type QualityEvidence,type
 import {nodeRegion,nodeRegionLabel} from './nodePresentation'
 import {downloadGroup,serviceComparisonGroup,serviceIsProfile,servicePassed} from './sharedResults'
 import {unlockResult} from './unlock'
+import {exitLanding} from './exitLanding'
 export const purposes=[{id:'streaming',name:'流媒体与解锁'},{id:'ai',name:'AI'},{id:'download',name:'下载'},{id:'daily',name:'日常'}] as const
 export type Purpose=typeof purposes[number]['id']
 export type ServicePurpose=Extract<Purpose,'ai'|'streaming'>
 export interface CfChallengeHint {
  tone:'good'|'warn'|'bad';label:string;detail:string
 }
+export interface PurityHint {
+ score:number;grade:string;tone:'good'|'warn'|'bad';typeLabel:string;title:string
+}
 export interface Candidate {
  node:NodeOption;region:string;condition:string;score:number;basis:string;count:number;at:string
  comparable?:boolean;responseRate?:number;jitter?:number;downloadKind?:'stable'|'full'|'partial'
- siteCount?:number;respondingSites?:number;blockedSites?:string[];cfChallenge?:CfChallengeHint
+ siteCount?:number;respondingSites?:number;blockedSites?:string[];cfChallenge?:CfChallengeHint;purity?:PurityHint
  inspectionScope?:NodeScope;inspectionServiceId?:string;inspectionTargetId?:string;configuration:'current'|'historical'|'mixed'|'unknown'
 }
 export function recommendationRegion(node:NodeOption){
@@ -72,7 +76,16 @@ function cfChallengeHint(node:NodeOption,e:QualityEvidence):CfChallengeHint|unde
  return undefined
 }
 
-function dailyCandidate(node:NodeOption,e:QualityEvidence,region:string,cfChallenge?:CfChallengeHint):Candidate|undefined{
+function purityHint(node:NodeOption,e:QualityEvidence):PurityHint|undefined{
+ if(!e.reads.service.complete)return undefined
+ const currentSaved=e.services.filter(a=>a.persistence_state==='saved'&&a.profile_id===node.profile_id&&a.node_key===node.node_key&&a.node_identity_key===node.node_identity_key&&a.config_revision_key===node.config_revision_key)
+ if(!currentSaved.length)return undefined
+ const p=exitLanding(node,currentSaved).purity
+ if(p.score===null||p.tone==='empty')return undefined
+ return {score:p.score,grade:p.grade,tone:p.tone as 'good'|'warn'|'bad',typeLabel:p.typeLabel,title:p.title}
+}
+
+function dailyCandidate(node:NodeOption,e:QualityEvidence,region:string,cfChallenge?:CfChallengeHint,purity?:PurityHint):Candidate|undefined{
  const cohorts=new Map<string,{target:typeof activeLatencyTargets[number];g:QualityGroup}[]>()
  for(const target of activeLatencyTargets){
   const g=qualityGroups(e.tests,e.monitor,target.id)[0]
@@ -98,7 +111,7 @@ function dailyCandidate(node:NodeOption,e:QualityEvidence,region:string,cfChalle
    ...provenance(node,dailySourcesForTarget(e,target.id,g.key)),
    node,region,condition:g.key,comparable:g.comparable,
    responseRate:g.successRate??0,score:g.p50,jitter:g.jitter??undefined,
-   siteCount:1,respondingSites:1,cfChallenge,inspectionTargetId:target.id,
+   siteCount:1,respondingSites:1,cfChallenge,purity,inspectionTargetId:target.id,
    basis:`${target.name} · ${g.success}/${g.total} 次响应 · 中位 ${g.p50.toFixed(0)} ms${g.jitter===null?'':` · 波动 ${g.jitter.toFixed(0)} ms`}`,
    count:g.total,at:g.lastAt,
   }
@@ -129,7 +142,7 @@ function dailyCandidate(node:NodeOption,e:QualityEvidence,region:string,cfChalle
   node,region,condition,comparable,responseRate,score,jitter,
   siteCount:sites.length,respondingSites:responding.length,
   blockedSites:blockedNames.length?blockedNames:undefined,
-  cfChallenge,
+  cfChallenge,purity,
   basis,count:totalSamples,at:lastAt,
  }
 }
@@ -198,9 +211,9 @@ export function recommend(nodes:NodeOption[],data:Record<string,QualityEvidence>
  for(const node of nodes){
   const e=data[key(node)],region=recommendationRegion(node)
   if(!e||region==='unknown')continue
-  const cfChallenge=cfChallengeHint(node,e)
+  const cfChallenge=cfChallengeHint(node,e),purity=purityHint(node,e)
 
-  const daily=dailyCandidate(node,e,region,cfChallenge)
+  const daily=dailyCandidate(node,e,region,cfChallenge,purity)
   if(daily)lists.daily.push(daily)
 
   const savedDownloads=e.downloads.filter(a=>a.persistence_state==='saved'&&a.result&&!unmeasured.includes(a.execution_state))
@@ -209,7 +222,7 @@ export function recommend(nodes:NodeOption[],data:Record<string,QualityEvidence>
   if(e.reads.download.complete&&latest&&reading&&group.kind!=='invalid'&&(group.comparable||!!latest.rule.method&&latest.rule.rule_version!==undefined)){
    const at=attemptObservedAt(latest)
    if(at)lists.download.push({...provenance(node,[{record:latest,at}]),node,region,condition:group.key,comparable:group.comparable,
-    downloadKind:group.kind==='partial'?'partial':latest.rule.mode==='adaptive'?'stable':'full',cfChallenge,
+    downloadKind:group.kind==='partial'?'partial':latest.rule.mode==='adaptive'?'stable':'full',cfChallenge,purity,
     score:reading.value,basis:`${downloadSourceName(latest)} · ${reading.label} ${reading.value.toFixed(2)} MiB/s${group.kind==='partial'?` · ${outcomeLabel(latest.result?.end_reason||latest.result?.outcome)}`:''}`,
     count:savedDownloads.filter(a=>downloadGroup(a).key===group.key).length,at})
   }
@@ -228,7 +241,7 @@ export function recommend(nodes:NodeOption[],data:Record<string,QualityEvidence>
    const count=savedServices.filter(a=>serviceID(a)===id&&servicePassed(a)&&
     a.profile_id===recent.profile_id&&a.node_key===recent.node_key&&a.node_identity_key===recent.node_identity_key&&a.config_revision_key===recent.config_revision_key&&
     serviceComparisonGroup([a],[id]).key===condition).length
-   lists[purpose].push({...provenance(node,[{record:recent,at,serviceId:id}]),node,region,condition,score:count,cfChallenge,
+   lists[purpose].push({...provenance(node,[{record:recent,at,serviceId:id}]),node,region,condition,score:count,cfChallenge,purity,
     basis:`${rule.name} · 规则通过`,count,at})
   }
  }

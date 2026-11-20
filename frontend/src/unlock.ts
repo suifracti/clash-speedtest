@@ -140,20 +140,39 @@ export function unlockGroupSummary(groupId:string,catalog:Pick<ServiceRule,'serv
  const total=available+unavailable.length
  return {available,total,tone:unavailable.length?'warn':available?'good':'empty',label:total?available+'/'+total:'未测',reason:unavailable.map(s=>s.name+'：'+(s.result.state==='partial'?s.result.label:s.result.reason)).join('；'),title:list.map(s=>s.name+'：'+s.result.label+' · '+s.result.reason).join('\n')}
 }
-export function unlockGroupDetail(groupId:string,catalog:Pick<ServiceRule,'service_id'|'name'>[],lookup:(id:string)=>Attempt|undefined,region?:string,enabled=true,rules:ServiceRegions={},ipType?:IpType){
- const summary=unlockGroupSummary(groupId,catalog,lookup,region,enabled,rules,ipType)
- const services=catalog.filter(s=>unlockGroup(s.service_id)===groupId),eligible=services.filter(s=>region===undefined||unlockServiceAllowed(s.service_id,region,enabled,rules))
- const skipped=summary.label==='—'
- if(skipped)return {...summary,skipped:true,items:[] as UnlockDetailItem[],attemptedItems:[] as UnlockDetailItem[]}
+export function unlockGroupDetailFor(group:{id:string;name:string;ids:readonly string[];regions?:readonly string[]},catalog:Pick<ServiceRule,'service_id'|'name'>[],lookup:(id:string)=>Attempt|undefined,region?:string,enabled=true,rules:ServiceRegions={},ipType?:IpType){
+ const idSet=new Set(group.ids)
+ const services=catalog.filter(s=>idSet.has(s.service_id))
+ const eligible=services.filter(s=>region===undefined||unlockServiceAllowed(s.service_id,region,enabled,rules))
+ const groupRegions=group.regions||[]
+ const groupSkip=!services.length&&region!==undefined&&groupRegions.length&&enabled
+  ?(groupRegions.some(excludedRegion)?(groupRegions.includes('!'+region)?'已排除此地区，不检测':''):groupRegions.includes(region)?'':groupRegions.length===1&&groupRegions[0]==='JP'?'非日本节点，不检测':'不适用于此地区，不检测')
+  :''
+ if((services.length&&!eligible.length)||groupSkip){
+  const title=services.length?unlockServiceSkipReason(services[0]!.service_id,region!,enabled,rules):groupSkip
+  return {available:0,total:0,tone:'empty',label:'—',reason:'',title,skipped:true,items:[] as UnlockDetailItem[],attemptedItems:[] as UnlockDetailItem[]}
+ }
+ const list=eligible.map(s=>({s,attempt:lookup(s.service_id)})).map(({s,attempt})=>({...s,attempt,result:unlockResult(attempt,s.service_id,ipType)}))
+ const available=list.filter(s=>s.result.state==='available').length
+ const unavailable=list.filter(s=>unlockMeasured(s.result.state)&&s.result.state!=='available')
+ const total=available+unavailable.length
+ const tone=unavailable.length?'warn':available?'good':'empty'
+ const label=total?available+'/'+total:'未测'
+ const reason=unavailable.map(s=>s.name+'：'+(s.result.state==='partial'?s.result.label:s.result.reason)).join('；')
+ const title=list.map(s=>s.name+'：'+s.result.label+' · '+s.result.reason).join('\n')
  const rank=(item:UnlockDetailItem)=>item.tone==='bad'?0:item.tone==='warn'?1:item.attempted&&!item.measured?2:item.tone==='good'?3:4
- const items:UnlockDetailItem[]=eligible.map(s=>{
-  const attempt=lookup(s.service_id),result=unlockResult(attempt,s.service_id,ipType)
-  const measured=unlockMeasured(result.state),attempted=measured||(!!attempt?.result&&!(s.service_id==='disney_unlock'&&!servicePassed(attempt)))
-  const tone=result.tone!=='empty'?result.tone:attempted?'warn':'empty'
-  return {id:s.service_id,name:s.name,shortName:unlockShortName(s.service_id,s.name),attempt,result,shortStatus:unlockShortStatus(result,attempt),tone,measured,attempted}
+ const items:UnlockDetailItem[]=list.map(s=>{
+  const measured=unlockMeasured(s.result.state),attempted=measured||(!!s.attempt?.result&&!(s.service_id==='disney_unlock'&&!servicePassed(s.attempt)))
+  const itemTone=s.result.tone!=='empty'?s.result.tone:attempted?'warn':'empty'
+  return {id:s.service_id,name:s.name,shortName:unlockShortName(s.service_id,s.name),attempt:s.attempt,result:s.result,shortStatus:unlockShortStatus(s.result,s.attempt),tone:itemTone,measured,attempted}
  }).sort((a,b)=>rank(a)-rank(b))
  const attemptedItems=items.filter(item=>item.attempted)
- return {...summary,skipped:false,items,attemptedItems}
+ return {available,total,tone,label,reason,title,skipped:false,items,attemptedItems}
+}
+export function unlockGroupDetail(groupId:string,catalog:Pick<ServiceRule,'service_id'|'name'>[],lookup:(id:string)=>Attempt|undefined,region?:string,enabled=true,rules:ServiceRegions={},ipType?:IpType){
+ const canonical=unlockGroups.find(g=>g.id===groupId)
+ if(canonical)return unlockGroupDetailFor(canonical,catalog,lookup,region,enabled,rules,ipType)
+ return {available:0,total:0,tone:'empty',label:'未测',reason:'',title:'',skipped:false,items:[] as UnlockDetailItem[],attemptedItems:[] as UnlockDetailItem[]}
 }
 export function unlockSummary(catalog:Pick<ServiceRule,'service_id'|'name'>[],lookup:(id:string)=>Attempt|undefined,region?:string,enabled=true,rules:ServiceRegions={},ipType?:IpType){
  const groups=unlockGroups.map(g=>({...g,...unlockGroupSummary(g.id,catalog,lookup,region,enabled,rules,ipType)}))

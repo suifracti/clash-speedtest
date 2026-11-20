@@ -5,7 +5,7 @@ import {date,type ManualRoundSummary} from '../domain'
 import {manualRoundCount,manualRoundLabel,manualRoundState} from '../measurementRounds'
 import {api} from '../api'
 import {readLatencyReports,type SavedLatencyReport} from '../latencyReportData'
-import {buildLatencyReport,latencyReportText} from '../latencyReport'
+import {buildLatencyReport,latencyHttpNoticeDetails,latencyReportText} from '../latencyReport'
 import type {AutoPickReportMeta} from '../autoPick'
 const props=withDefaults(defineProps<{manualRounds?:ManualRoundSummary[];manualLoading?:boolean;manualError?:boolean}>(),{manualRounds:()=>[]})
 const emit=defineEmits<{'open-round':[round:ManualRoundSummary]}>()
@@ -27,9 +27,15 @@ onBeforeUnmount(()=>{mounted=false})
 const loading=computed(()=>reading.value.latency||reading.value.auto||props.manualLoading)
 const hasError=computed(()=>!!errors.value.latency||!!errors.value.auto||props.manualError)
 const reports=computed(()=>[
- ...rows.value.map(row=>({id:(row.monitor?'monitor:':'manual:')+row.batch.batch_id,at:row.batch.requested_at,kind:row.monitor?'监测报告':'手动检测',summary:latencyReportText(row.batch),issue:buildLatencyReport(row.batch).issues.length>0,row,auto:null,round:null})),
- ...autoPickRows.value.map(auto=>({id:'auto:'+auto.report_id,at:auto.created_at,kind:'自动精选',summary:auto.summary,issue:auto.kept_previous||auto.status!=='selected',row:null,auto,round:null})),
- ...props.manualRounds.map(round=>({id:'round:'+round.round_id,at:round.started_at,kind:manualRoundLabel(round),summary:`${round.node_count} 个节点 · ${manualRoundCount(round)} 项 · ${manualRoundState(round.state)}`,issue:round.state==='interrupted',row:null,auto:null,round}))
+ ...rows.value.map(row=>{
+  const built=buildLatencyReport(row.batch)
+  const httpNotices=latencyHttpNoticeDetails(built)
+  const httpTag=httpNotices.length?httpNotices[0]!.label:''
+  const issueCount=built.issues.length
+  return {id:(row.monitor?'monitor:':'manual:')+row.batch.batch_id,at:row.batch.requested_at,kind:row.monitor?'监测报告':'手动检测',summary:latencyReportText(row.batch),issue:issueCount>0,issueTag:issueCount?`${issueCount} 个异常`:'',httpTag,row,auto:null,round:null}
+ }),
+ ...autoPickRows.value.map(auto=>({id:'auto:'+auto.report_id,at:auto.created_at,kind:'自动精选',summary:auto.summary,issue:auto.kept_previous||auto.status!=='selected',issueTag:'',httpTag:'',row:null,auto,round:null})),
+ ...props.manualRounds.map(round=>({id:'round:'+round.round_id,at:round.started_at,kind:manualRoundLabel(round),summary:`${round.node_count} 个节点 · ${manualRoundCount(round)} 项 · ${manualRoundState(round.state)}`,issue:round.state==='interrupted',issueTag:'',httpTag:'',row:null,auto:null,round}))
 ].sort((a,b)=>(Date.parse(b.at)||0)-(Date.parse(a.at)||0)))
 const days=computed(()=>{
  const groups:{day:string;rows:typeof reports.value}[]=[]
@@ -54,7 +60,8 @@ function time(at:string){const d=new Date(at);return Number.isFinite(d.getTime()
     <button v-for="r in group.rows" :key="r.id" class="report-row" @click="openReport(r)">
      <time :datetime="r.at" :title="date(r.at)">{{time(r.at)}}</time>
      <span class="report-summary"><small>{{r.kind}}</small><strong>{{r.summary}}</strong></span>
-     <span v-if="r.issue" class="report-attention">有待留意</span><span class="report-open" aria-hidden="true">查看 ›</span>
+     <span v-if="r.httpTag" class="report-attention http">{{r.httpTag}}</span>
+     <span v-if="r.issue" class="report-attention">{{r.issueTag||'有待留意'}}</span><span class="report-open" aria-hidden="true">查看 ›</span>
     </button>
    </div>
   </section>
