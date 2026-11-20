@@ -90,3 +90,21 @@ it('starts an airport report with the airport already selected in the account le
  expect(readQualityBatch).toHaveBeenLastCalledWith([nodes[1]],expect.any(String),expect.any(String))
  wrapper.unmount()
 })
+
+it('opens a preconfigured region plan from RecommendationView without starting a run',async()=>{
+ const plan=ref<any>(null)
+ const openPlan=vi.fn((list:NodeOption[])=>{plan.value={nodes:list,projects:['latency'],target:'cloudflare',samples:3,includeReputation:true,reputationServiceIds:['ippure_ip_quality'],serviceIds:[]}})
+ const wWithPlan={...w,plan,openPlan}
+ const wrapper=mount(RecommendationView,{global:{provide:{[workspaceKey as symbol]:wWithPlan},stubs:{TrendChart:true}}})
+ await flushPromises()
+ const buttons=wrapper.findAll('.region-plan-btn')
+ expect(buttons.length).toBeGreaterThanOrEqual(2)
+ await buttons[0]!.trigger('click')
+ expect(openPlan).toHaveBeenCalledTimes(1)
+ expect(plan.value.nodes).toHaveLength(1)
+ expect(plan.value.projects).toEqual(['latency'])
+ expect(plan.value.target).toBe('all')
+ expect(plan.value.samples).toBe(6)
+ expect(plan.value.includeReputation).toBe(false)
+ wrapper.unmount()
+})

@@ -2,8 +2,8 @@ import {groupServices,type AutoPickReport} from './autoPick'
 import {outcomeReasons} from './unlock'
 
 // 报告只保存服务 ID 与 outcome，没有地区与详细原因：这里只翻译已存下的信息。
-const serviceOrder=['chatgpt_unlock','claude_unlock','gemini_unlock','antigravity','netflix_unlock','youtube_premium','disney_unlock','prime_video','spotify_unlock','tiktok_unlock']
-const shortLabels:Record<string,string>={chatgpt_unlock:'ChatGPT',claude_unlock:'Claude',gemini_unlock:'Gemini',antigravity:'Antigravity',netflix_unlock:'Netflix',youtube_premium:'YouTube Premium',disney_unlock:'Disney+',prime_video:'Prime Video',spotify_unlock:'Spotify',tiktok_unlock:'TikTok'}
+const serviceOrder=['gemini_unlock','chatgpt_unlock','claude_unlock','antigravity','netflix_unlock','tiktok_unlock','dlsite_unlock','youtube_premium','disney_unlock','prime_video','spotify_unlock']
+const shortLabels:Record<string,string>={chatgpt_unlock:'ChatGPT',claude_unlock:'Claude',gemini_unlock:'Gemini',antigravity:'Antigravity',netflix_unlock:'Netflix',youtube_premium:'YouTube Premium',disney_unlock:'Disney+',prime_video:'Prime Video',spotify_unlock:'Spotify',tiktok_unlock:'TikTok',dlsite_unlock:'DLsite'}
 const fullLabels:Record<string,string>={}
 for(const group of Object.values(groupServices))for(const service of group)fullLabels[service.id]=service.label
 

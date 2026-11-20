@@ -170,12 +170,12 @@ func TestAutoPickKeepsUnlockFailuresInDailyGroup(t *testing.T) {
 			autoPickNodeKey(nodes[1]): {LatencyMS: 240, ResponseRate: 100, Samples: 6, Success: 6},
 		}, nil
 	}
-	// 01 两项都通；02 的 Claude 结论是“需人机验证”，按新规则算没通过。
+	// 01 通过；02 的 Gemini 结论是“需人机验证”，按规则算没通过。
 	svc.autoPick().hooks.checkService = func(_ context.Context, node monitor.MonitoredNode, rule publicservice.Rule) publicservice.Result {
 		if node.NodeKey == "k1" {
 			return publicservice.Result{Outcome: "unlocked", RequestCount: 1, Summary: "可用"}
 		}
-		if rule.ServiceID == "claude_unlock" {
+		if rule.ServiceID == "gemini_unlock" {
 			return publicservice.Result{Outcome: "verification_required", RequestCount: 1, Summary: "需人机验证"}
 		}
 		return publicservice.Result{Outcome: "unlocked", RequestCount: 1, Summary: "可用"}

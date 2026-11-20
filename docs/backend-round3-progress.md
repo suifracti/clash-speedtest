@@ -1066,3 +1066,9 @@ Go speedtester、publicservice、application、history 全包回归与 vet 通�
 ### 2026-11-19 延迟工作台行内回看与整轮历史
 
 原站点历史点只打开详情，列表读数与采样仍取最新。现在点站点点位切换行内该站，点节点名下「整轮历史」同时回看该轮各站和结论，选中位置标出回看时间。旧单站轮次只显示实际采过的站，缺测单独标明。保留原始详情入口和返回最新的控件。相关前端 41 项及生产构建通过。
+
+### 2026-11-20 「为你选线」升级、审计门禁同步与自动精选口径对齐
+
+- **「为你选线」升级**：[recommendations.ts](frontend/src/recommendations.ts) 与 [RecommendationView.vue](frontend/src/components/RecommendationView.vue) 的日常推荐改为按同条件聚合四站（Cloudflare / Google / GitHub / Apple）证据并兼容单站历史，多站批次优先于单站批次；单站 5 次以上全失败的线路标为 `部分站点不通` 且不再作为首选/次选推荐或导出 Clash。AI 默认优先 `gemini_unlock`，“流媒体与解锁”纳入 `日本` 类别（含 `dlsite_unlock`、ABEMA、DMM TV 等）。候选卡片展示当前配置已保存的 `cloudflare_challenge` 人机验证提示，次选显示与首选的同条件差异，缺证据或少次选的地区提供“补测本区”按钮直开预配置检测草稿（不自动执行）。
+- **审计门禁同步与自动精选对齐**：[candidate-capabilities.json](docs/candidate-capabilities.json) 将 `six_site_quality` 在 `NodeResponseStrip.vue` 中的锚点同步为重构后的 `latencyRowPoint`（保留全部 14 项能力条目）；[autopick.go](core/autopick/autopick.go)、[autoPick.ts](frontend/src/autoPick.ts)、[autoPickReportText.ts](frontend/src/autoPickReportText.ts) 与 [AutoPickCard.vue](frontend/src/components/AutoPickCard.vue) 将 AI 默认必需服务切为 `gemini_unlock`（保留 `chatgpt_unlock`/`claude_unlock` 兼容已存配置，继续不自动纳入 `antigravity`），流媒体组新增 `tiktok_unlock` 与 `dlsite_unlock` 可选。
+- **验证**：`python -m unittest discover -s scripts/tests -v` 29 项全过、`go vet` 与 `./core/autopick ./core/publicservice ./application ./adapter/web ./adapter/desktop -count=1` 全过、前端 `vue-tsc -b && vite build` 与 88 文件 / 646 项 Vitest 全过；同步更新本地 Web 运行版并跳过桌面端构建，未发实网测速。

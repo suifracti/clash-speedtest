@@ -52,13 +52,15 @@ export const reportStatusLabels:Record<string,string>={selected:'成功',kept_pr
 // 与 core/autopick 的 GroupServices / DefaultRequiredServices 保持一致。
 export const groupServices:Record<'ai'|'streaming',{id:string;label:string}[]>={
   ai:[
+    {id:'gemini_unlock',label:'Gemini'},
     {id:'chatgpt_unlock',label:'ChatGPT'},
-    {id:'claude_unlock',label:'Claude'},
-    {id:'gemini_unlock',label:'Gemini'}
+    {id:'claude_unlock',label:'Claude'}
   ],
   streaming:[
     {id:'netflix_unlock',label:'Netflix 完整片库'},
+    {id:'tiktok_unlock',label:'TikTok'},
+    {id:'dlsite_unlock',label:'DLsite'},
     {id:'youtube_premium',label:'YouTube Premium'}
   ]
 }
-export const defaultRequiredServices:{ai:string[];streaming:string[]}={ai:['chatgpt_unlock','claude_unlock'],streaming:['netflix_unlock']}
+export const defaultRequiredServices:{ai:string[];streaming:string[]}={ai:['gemini_unlock'],streaming:['netflix_unlock']}

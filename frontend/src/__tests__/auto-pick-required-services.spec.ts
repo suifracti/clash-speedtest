@@ -62,6 +62,32 @@ describe('auto-pick required services',()=>{
     expect(wrapper.find('.auto-pick-dirty').exists()).toBe(false)
   })
 
+  it('defaults AI required service to Gemini and allows selecting TikTok and DLsite under streaming',async()=>{
+    vi.mocked(api.autoPick).mockResolvedValueOnce({...status,config:{...status.config,ai_required:undefined,streaming_required:undefined}})
+    vi.mocked(api.saveAutoPick).mockImplementation(async(cfg:any)=>{
+      const projects=1+(cfg.include_ai?cfg.ai_required.length:0)+(cfg.include_streaming?cfg.streaming_required.length:0)
+      return {...status,config:{...status.config,...cfg},estimate:{nodes:10,projects,requests:10*projects,warn:false}} as any
+    })
+    const wrapper=mountCard()
+    await flushPromises()
+    const aiToggle=wrapper.findAll('label.check-field').find(label=>label.text().includes('AI 组'))!
+    await aiToggle.get('input').setValue(true)
+    const streamingToggle=wrapper.findAll('label.check-field').find(label=>label.text().includes('流媒体组'))!
+    await streamingToggle.get('input').setValue(true)
+    await flushPromises()
+    const expands=wrapper.findAll('button.text-button').filter(button=>button.text().includes('必需'))
+    await expands[1]!.trigger('click')
+    await wrapper.findAll('label.check-field').find(label=>label.text().trim()==='TikTok')!.get('input').setValue(true)
+    await wrapper.findAll('label.check-field').find(label=>label.text().trim()==='DLsite')!.get('input').setValue(true)
+    await flushPromises()
+    const save=wrapper.findAll('button.button').find(button=>button.text().includes('保存设置'))!
+    await save.trigger('click')
+    await flushPromises()
+    const payload=vi.mocked(api.saveAutoPick).mock.calls[0][0] as any
+    expect(payload.ai_required).toEqual(['gemini_unlock'])
+    expect(payload.streaming_required).toEqual(['netflix_unlock','tiktok_unlock','dlsite_unlock'])
+  })
+
   it('says the schedule and the subscription only live while CST runs',async()=>{
     const wrapper=mountCard()
     await flushPromises()

@@ -38,14 +38,14 @@ func TestConfigDefaultsAndEstimate(t *testing.T) {
 		t.Fatalf("latency-only estimate: %d", got)
 	}
 	cfg.IncludeAI = true
-	if got := cfg.EstimateRequests(10); got != 30 {
+	if got := cfg.EstimateRequests(10); got != 20 {
 		t.Fatalf("ai estimate: %d", got)
 	}
-	if got := cfg.RequiredServices(PurposeAI); len(got) != 2 || got[0] != "chatgpt_unlock" || got[1] != "claude_unlock" {
+	if got := cfg.RequiredServices(PurposeAI); len(got) != 1 || got[0] != "gemini_unlock" {
 		t.Fatalf("ai defaults: %+v", got)
 	}
 	cfg.IncludeStreaming = true
-	if got := cfg.EstimateRequests(10); got != 40 {
+	if got := cfg.EstimateRequests(10); got != 30 {
 		t.Fatalf("ai+streaming estimate: %d", got)
 	}
 	if got := cfg.RequiredServices(PurposeStreaming); len(got) != 1 || got[0] != "netflix_unlock" {
@@ -63,16 +63,19 @@ func TestConfigDefaultsAndEstimate(t *testing.T) {
 func TestRequiredServicesAreTheOnlyOnesProbed(t *testing.T) {
 	cfg := Config{AirportIDs: []string{"a"}, Schedule: Schedule6h, IncludeAI: true, IncludeStreaming: true}
 	cfg.Normalize()
-	if got := cfg.Projects(); got != 4 {
-		t.Fatalf("projects: %d, want 1 latency + 2 ai + 1 streaming", got)
+	if got := cfg.Projects(); got != 3 {
+		t.Fatalf("projects: %d, want 1 latency + 1 ai + 1 streaming", got)
 	}
 	cfg.AIRequired = []string{"chatgpt_unlock", "gemini_unlock", "claude_unlock", "antigravity", "nope"}
-	cfg.StreamingRequired = []string{"youtube_premium"}
+	cfg.StreamingRequired = []string{"tiktok_unlock", "dlsite_unlock", "youtube_premium", "nope"}
 	cfg.Normalize()
 	if got := cfg.AIRequired; len(got) != 3 || got[2] != "claude_unlock" {
-		t.Fatalf("unknown service not dropped: %+v", got)
+		t.Fatalf("unknown AI service not dropped or legacy AI services lost: %+v", got)
 	}
-	if got := cfg.Projects(); got != 5 {
+	if got := cfg.StreamingRequired; len(got) != 3 || got[0] != "tiktok_unlock" || got[1] != "dlsite_unlock" || got[2] != "youtube_premium" {
+		t.Fatalf("streaming services normalized unexpectedly: %+v", got)
+	}
+	if got := cfg.Projects(); got != 7 {
 		t.Fatalf("projects after edit: %d", got)
 	}
 	// 显式清空必需服务不能默默退回默认值。

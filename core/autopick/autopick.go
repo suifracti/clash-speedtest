@@ -42,14 +42,15 @@ const (
 // GroupServices lists every unlock service a group can require. The user picks
 // the required subset per group; the rest are never probed.
 var GroupServices = map[string][]string{
-	PurposeAI:        {"chatgpt_unlock", "claude_unlock", "gemini_unlock"},
-	PurposeStreaming: {"netflix_unlock", "youtube_premium"},
+	PurposeAI:        {"gemini_unlock", "chatgpt_unlock", "claude_unlock"},
+	PurposeStreaming: {"netflix_unlock", "tiktok_unlock", "dlsite_unlock", "youtube_premium"},
 }
 
 // DefaultRequiredServices is the required subset used until the user edits it.
-// Gemini stays optional. Antigravity is manual-only because it uses an account.
+// Gemini is the default AI probe while ChatGPT/Claude remain selectable for
+// saved configs. Antigravity is manual-only because it uses an account.
 var DefaultRequiredServices = map[string][]string{
-	PurposeAI:        {"chatgpt_unlock", "claude_unlock"},
+	PurposeAI:        {"gemini_unlock"},
 	PurposeStreaming: {"netflix_unlock"},
 }
 

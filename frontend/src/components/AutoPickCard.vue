@@ -179,13 +179,13 @@ onBeforeUnmount(()=>{mounted=false;readGeneration++;stopPolling()})
           <label v-for="service in groupServices.ai" :key="service.id" class="check-field">
             <input v-model="form.ai_required" type="checkbox" :value="service.id">{{service.label}}
           </label>
-          <p class="muted small">只检测勾上的必需服务。Gemini 和 Antigravity 常卡在验证页或凭据上，默认不要求。</p>
+          <p class="muted small">只检测勾上的必需服务。默认优先检测 Gemini，可按需勾选 ChatGPT 或 Claude；Antigravity 依赖账号凭据，仅在工作台手动测。</p>
         </div>
         <div v-if="form.include_streaming&&expanded.streaming" class="auto-pick-services">
           <label v-for="service in groupServices.streaming" :key="service.id" class="check-field">
             <input v-model="form.streaming_required" type="checkbox" :value="service.id">{{service.label}}
           </label>
-          <p class="muted small">只检测勾上的必需服务。默认只要求 Netflix 完整片库，“仅自制剧”算没通过。</p>
+          <p class="muted small">只检测勾上的必需服务。默认要求 Netflix 完整片库（“仅自制剧”算没通过），可按需勾选 TikTok、DLsite 等解锁项。</p>
         </div>
         <p v-if="missingRequired" class="inline-warning">勾选的组至少要保留一个必需服务。</p>
         <div class="auto-pick-rules">

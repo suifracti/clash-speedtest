@@ -1,5 +1,5 @@
 import {expect,it} from 'vitest'
-import {isRecommendation,recommend} from '../recommendations'
+import {candidateDiff,isRecommendation,recommend,recommendationService,recommendationServices} from '../recommendations'
 import {key,type Attempt,type LatencyTest,type NodeOption,type ServiceRule} from '../domain'
 import type {QualityEvidence} from '../nodeQuality'
 it('ranks continuous download ahead of an initial burst followed by a timeout stall',()=>{
@@ -107,4 +107,79 @@ it('uses only the selected service and never fills a missing historical identity
  expect(recommend([node],{[key(node)]:e},catalog,{ai:'ai-b'}).ai[0]).toMatchObject({
   configuration:'unknown',inspectionServiceId:'ai-b',inspectionScope:{node_identity_key:'',node_key:'older',config_revision_key:'older'},
  })
+})
+
+it('uses four-site daily evidence and disqualifies a fast node with a completely blocked site',()=>{
+ const at='2026-11-20T06:00:00Z'
+ const urls={
+  cloudflare:'https://speed.cloudflare.com/__down?bytes=1',
+  google:'https://www.gstatic.com/generate_204',
+  github:'https://api.github.com/zen',
+  apple:'https://captive.apple.com/hotspot-detect.html',
+ }
+ const mkNode=(id:string,region='JP'):NodeOption=>({profile_id:'p',node_key:id,node_identity_key:id,config_revision_key:'r',display_name:id,profile_name:'P',type:'hysteria2',country_code:region,country_flag:''})
+ const mkSite=(n:NodeOption,id:keyof typeof urls,ms:number,ok=true):LatencyTest=>({
+  ...n,attempt_id:`lat-${n.node_key}-${id}`,display_name:n.display_name,node_type:n.type,source:'workbench',method:'http_get_via_proxy_first_byte',method_version:2,target:urls[id],requested_at:at,finished_at:at,status:'completed',latency_ms:ok?ms:0,total_samples:6,success_samples:ok?6:0,failure_samples:ok?0:6,persistence_state:'saved',
+  samples:Array.from({length:6},(_,seq)=>({seq:seq+1,target:urls[id],timestamp:at,latency_ms:ok?ms:0,success:ok,error:ok?'':'timeout'})),
+ })
+ const brokenFast=mkNode('broken-fast','JP')
+ const healthy1=mkNode('healthy-1','JP')
+ const healthy2=mkNode('healthy-2','JP')
+ const singleSiteFast=mkNode('single-cf','JP')
+ const aloneBroken=mkNode('alone-broken','SG')
+ const emptyReads={latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}}
+ const data:Record<string,QualityEvidence>={
+  [key(brokenFast)]:{tests:[mkSite(brokenFast,'cloudflare',25,true),mkSite(brokenFast,'google',0,false),mkSite(brokenFast,'github',30,true),mkSite(brokenFast,'apple',28,true)],monitor:[],downloads:[],services:[],reads:emptyReads,complete:true,since:at,until:at},
+  [key(healthy1)]:{tests:[mkSite(healthy1,'cloudflare',130,true),mkSite(healthy1,'google',140,true),mkSite(healthy1,'github',150,true),mkSite(healthy1,'apple',135,true)],monitor:[],downloads:[],services:[],reads:emptyReads,complete:true,since:at,until:at},
+  [key(healthy2)]:{tests:[mkSite(healthy2,'cloudflare',160,true),mkSite(healthy2,'google',170,true),mkSite(healthy2,'github',180,true),mkSite(healthy2,'apple',165,true)],monitor:[],downloads:[],services:[],reads:emptyReads,complete:true,since:at,until:at},
+  [key(singleSiteFast)]:{tests:[mkSite(singleSiteFast,'cloudflare',60,true)],monitor:[],downloads:[],services:[],reads:emptyReads,complete:true,since:at,until:at},
+  [key(aloneBroken)]:{tests:[mkSite(aloneBroken,'cloudflare',40,true),mkSite(aloneBroken,'google',0,false),mkSite(aloneBroken,'github',45,true),mkSite(aloneBroken,'apple',42,true)],monitor:[],downloads:[],services:[],reads:emptyReads,complete:true,since:at,until:at},
+ }
+ const daily=recommend([brokenFast,healthy1,healthy2,singleSiteFast,aloneBroken],data,[]).daily
+ const jp=daily.filter(c=>c.region==='JP')
+ const sg=daily.filter(c=>c.region==='SG')
+ expect(jp.map(c=>c.node.node_key)).toEqual(['healthy-1','healthy-2'])
+ expect(jp[0]!.basis).toContain('四站综合（4/4 站）')
+ expect(jp[0]!.inspectionTargetId).toBeUndefined()
+ expect(candidateDiff(jp[0]!,jp[1]!,'daily')).toBe('中位延迟比首选高 30 ms')
+ expect(sg).toHaveLength(1)
+ expect(isRecommendation(sg[0]!)).toBe(false)
+ expect(sg[0]!.blockedSites).toEqual(['Google'])
+ expect(sg[0]!.basis).toContain('部分站点不通（Google）')
+})
+
+it('defaults AI to gemini_unlock, exposes Japan unlock services like DLsite, and attaches saved CF challenge hints',()=>{
+ const at='2026-11-20T06:00:00Z'
+ const node:NodeOption={profile_id:'p',node_key:'jp1',node_identity_key:'jp1',config_revision_key:'r1',display_name:'JP 1',profile_name:'P',type:'ss',country_code:'JP',country_flag:''}
+ const catalog=[
+  {service_id:'chatgpt_unlock',name:'ChatGPT',category:'AI',result_kind:'unlock'},
+  {service_id:'gemini_unlock',name:'Google Gemini',category:'AI',result_kind:'unlock'},
+  {service_id:'netflix_unlock',name:'Netflix',category:'流媒体',result_kind:'unlock'},
+  {service_id:'dlsite_unlock',name:'DLsite',category:'日本',result_kind:'unlock'},
+ ] as ServiceRule[]
+ const aiOptions=recommendationServices(catalog,'ai')
+ expect(recommendationService(aiOptions,'ai')?.service_id).toBe('gemini_unlock')
+ const streamOptions=recommendationServices(catalog,'streaming')
+ expect(streamOptions.map(r=>r.service_id)).toEqual(['netflix_unlock','dlsite_unlock'])
+
+ const mkAttempt=(serviceId:string,outcome:string,rev='r1',detail=''):Attempt=>({
+  ...node,config_revision_key:rev,attempt_id:`att-${serviceId}-${rev}`,request_id:`req-${serviceId}`,requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',service_id:serviceId,
+  rule:{service_id:serviceId,name:serviceId,target_url:'https://example.invalid'},
+  result:{outcome,bytes_read:0,finished_at:at,details:detail?{cf_challenge_detail:detail}:{}},
+ })
+ const e:QualityEvidence={
+  tests:[],monitor:[],downloads:[],
+  services:[
+   mkAttempt('dlsite_unlock','unlocked','r1'),
+   mkAttempt('cloudflare_challenge','verification_required','r1','ChatGPT: 直通(200) · Claude: 弹盾(403)'),
+  ],
+  reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true,since:at,until:at,
+ }
+ const picks=recommend([node],{[key(node)]:e},catalog,{streaming:'dlsite_unlock'}).streaming
+ expect(picks).toHaveLength(1)
+ expect(picks[0]!.basis).toContain('DLsite · 规则通过')
+ expect(picks[0]!.cfChallenge).toMatchObject({tone:'warn',label:'部分弹 CF 盾'})
+ // Mismatched revision CF evidence must not be attached as current.
+ e.services=[mkAttempt('dlsite_unlock','unlocked','r1'),mkAttempt('cloudflare_challenge','challenge','old-rev','all 403')]
+ expect(recommend([node],{[key(node)]:e},catalog,{streaming:'dlsite_unlock'}).streaming[0]!.cfChallenge).toBeUndefined()
 })
