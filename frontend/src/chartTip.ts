@@ -30,7 +30,7 @@ export interface UnlockTipGroup {
 
 export type ChartTipPayload=
  | {kind:'latency-samples';title:string;time?:string;httpNote?:string;samples:LatencySampleTipRow[];x:number;y:number;below:boolean}
- | {kind:'overview-latency';title:string;sub?:string;sites:OverviewLatencyTipSite[];x:number;y:number;below:boolean}
+ | {kind:'overview-latency';title:string;sub?:string;time?:string;sites:OverviewLatencyTipSite[];compare?:{text:string;tone:string};x:number;y:number;below:boolean}
  | {kind:'unlock-detail';title:string;groups:UnlockTipGroup[];x:number;y:number;below:boolean}
 
 export const activeChartTip=shallowRef<ChartTipPayload|null>(null)

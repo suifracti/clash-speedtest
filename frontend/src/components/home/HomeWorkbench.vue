@@ -243,7 +243,7 @@ const verdicts=computed(()=>showVerdict.value?Object.fromEntries(m.pageNodes.val
  return [key(n),m.rowVerdict(n,review?.target==='all'?review.point:undefined)]
 })):{})
 function run(){if(filterScopePending.value)return;if(exitMode.value){m.closeHover();w.openReputationPlan([...m.runNodes.value]);return}if(w.project.value==='combined')m.openCombinedPlan();else{m.closeHover();w.openPlan([...m.runNodes.value])}}
-const wholeLatencyHistory=computed(()=>Object.fromEntries(showSites.value?m.pageNodes.value.map(n=>[
+const wholeLatencyHistory=computed(()=>Object.fromEntries(showVerdict.value?m.pageNodes.value.map(n=>[
  key(n),m.sitePoints(n,'all').filter(p=>w.displayTargets.value.some(id=>latencySiteSamples(p,id).length)).slice(-8),
 ]):[]))
 const downloadRows=computed(()=>showDownload.value?Object.fromEntries(m.pageNodes.value.map(n=>{
@@ -270,10 +270,25 @@ const nodeRowMeta=computed(()=>Object.fromEntries(m.pageNodes.value.map(n=>{
   protoClass:protocolBadgeClass(n.type),
  }]
 })))
+function roundLatencySummary(pt:TrendPoint|undefined){
+ if(!pt)return null
+ const vals:number[]=[]
+ let measuredSites=0
+ for(const s of sites.value){
+  const samples=latencySiteSamples(pt,s.id)
+  if(!samples.length)continue
+  measuredSites++
+  const ms=stableLatency([{id:s.id,points:[{...pt,samples}]}])
+  if(ms!==null&&Number.isFinite(ms))vals.push(ms)
+ }
+ if(!measuredSites)return null
+ return {med:median(vals),responding:vals.length,measuredSites,time:pt.time}
+}
 const overviewLatencyMap=computed(()=>overviewMode.value?Object.fromEntries(m.pageNodes.value.map(n=>{
  const verdict=verdicts.value[key(n)]
+ const review=latencyReviewFor(n),reviewPoint=review?.target==='all'?review.point:undefined
  const siteData=sites.value.map(s=>{
-  const pt=m.latencyRowPoint(n,s.id)
+  const pt=m.latencyRowPoint(n,s.id,reviewPoint)
   const samples=latencySiteSamples(pt,s.id)
   const responded=samples.filter(sp=>sp.value!==null).length,total=samples.length
   const httpCode=samples.map(sp=>sp.note?.match(/HTTP (\d+)/)?.[1]).find(Boolean)||''
@@ -297,6 +312,46 @@ const overviewLatencyMap=computed(()=>overviewMode.value?Object.fromEntries(m.pa
    anomalies.push({label:`${s.shortName} ${Math.round(s.stableMs)}ms`,tone:'warn'})
   }
  }
+ const hist=wholeLatencyHistory.value[key(n)]||[]
+ const curIdx=reviewPoint?hist.findIndex(p=>p.id===reviewPoint.id&&p.source===reviewPoint.source):hist.length-1
+ const curPoint=reviewPoint??(curIdx>=0?hist[curIdx]:undefined)
+ const prevPoint=curIdx>0?hist[curIdx-1]:undefined
+ const prev=roundLatencySummary(prevPoint)
+ let delta:{label:string;tone:'good'|'warn'|'bad'}|null=null
+ let compareTip:{text:string;tone:'good'|'warn'|'bad'|'muted'}|null=null
+ const curHasSamples=siteData.some(s=>s.total>0)
+ if(prev){
+  const prevAt=date(prev.time)
+  if(prev.responding>0&&vals.length===0&&curHasSamples){
+   delta={label:'转离线',tone:'bad'}
+   compareTip={text:`较上轮 ${prevAt} (${prev.med!==null?Math.round(prev.med)+' ms':prev.responding+' 站响应'})：本轮全部无响应`,tone:'bad'}
+  }else if(prev.responding===0&&vals.length>0){
+   delta={label:'已恢复',tone:'good'}
+   compareTip={text:`较上轮 ${prevAt} (全部无响应)：已恢复${med!==null?'至 '+Math.round(med)+' ms':''}`,tone:'good'}
+  }else if(med!==null&&prev.med!==null){
+   const diff=Math.round(med-prev.med)
+   const ratio=prev.med>0?Math.abs(diff)/prev.med:0
+   const sign=diff>0?'+':''
+   const pctText=prev.med>0&&Math.abs(diff)>=40?` (${sign}${Math.round(diff/prev.med*100)}%)`:''
+   if(diff>=80||(diff>=40&&ratio>=0.25)){
+    const tone=diff>=300||ratio>=0.7?'bad':'warn'
+    delta={label:`↑+${diff}ms`,tone}
+    compareTip={text:`较上轮 ${prevAt} (${Math.round(prev.med)} ms)：${sign}${diff} ms${pctText}`,tone}
+   }else if(diff<=-80||(diff<=-40&&ratio>=0.25)){
+    delta={label:`↓${diff}ms`,tone:'good'}
+    compareTip={text:`较上轮 ${prevAt} (${Math.round(prev.med)} ms)：${diff} ms${pctText}`,tone:'good'}
+   }else{
+    compareTip={text:`较上轮 ${prevAt} (${Math.round(prev.med)} ms)：${Math.abs(diff)<20?'基本持平':`${sign}${diff} ms`}`,tone:'muted'}
+   }
+  }
+ }else if(reviewPoint&&hist.length>1){
+  const latest=roundLatencySummary(hist[hist.length-1])
+  if(latest&&med!==null&&latest.med!==null){
+   const diff=Math.round(latest.med-med)
+   const sign=diff>0?'+':''
+   compareTip={text:`最新一轮 ${date(latest.time)} 为 ${Math.round(latest.med)} ms（${Math.abs(diff)<20?'与本轮持平':`较本轮 ${sign}${diff} ms`}）`,tone:'muted'}
+  }
+ }
  const tipSites=siteData.map(s=>({
   name:s.name,
   value:s.stableMs!==null?`${Math.round(s.stableMs)} ms`:s.total>0?'超时':'未测',
@@ -304,8 +359,8 @@ const overviewLatencyMap=computed(()=>overviewMode.value?Object.fromEntries(m.pa
   badge:s.httpCode?`HTTP ${s.httpCode}`:s.total>0&&s.responded===0?'无响应':s.total>0&&s.responded<s.total?'部分丢包':s.stableMs!==null&&s.stableMs>=1200?'延迟高':'',
   tone:s.total===0?'empty':s.responded===0?'bad':s.httpCode||s.responded<s.total||(s.stableMs!==null&&s.stableMs>=1200)?'warn':'good',
  }))
- const measured=verdict.tone!=='empty'||vals.length>0||siteData.some(s=>s.total>0)
- return [key(n),{measured,verdict,ms:med!==null?`${Math.round(med)} ms`:'',sub:vals.length?`${vals.length}/${sites.value.length} 站响应`:siteData.some(s=>s.total>0)?`0/${sites.value.length} 站响应`:'',anomalies,tipSites}]
+ const measured=verdict.tone!=='empty'||vals.length>0||curHasSamples
+ return [key(n),{measured,verdict,ms:med!==null?`${Math.round(med)} ms`:'',sub:vals.length?`${vals.length}/${sites.value.length} 站响应`:curHasSamples?`0/${sites.value.length} 站响应`:'',anomalies,tipSites,delta,compareTip,reviewing:!!reviewPoint,roundTime:curPoint?.time||''}]
 })):{})
 const overviewUnlockMap=computed(()=>overviewMode.value?Object.fromEntries(m.pageNodes.value.map(n=>{
  const region=w.nodeUnlockRegion(n),ipType=exitRows.value[key(n)]?.ipKind.type
@@ -324,7 +379,7 @@ function showOverviewLatencyTip(e:MouseEvent,n:NodeOption){
  if(!row?.measured)return
  const anchor=computeTipAnchor(e.currentTarget as HTMLElement|null,154,180)
  if(!anchor)return
- showChartTip({kind:'overview-latency',title:`${nodeRowMeta.value[key(n)]?.displayName||n.display_name} · 延迟`,sub:row.sub||row.verdict.label,sites:row.tipSites,...anchor})
+ showChartTip({kind:'overview-latency',title:`${nodeRowMeta.value[key(n)]?.displayName||n.display_name} · ${row.reviewing?'回看延迟':'延迟'}`,time:row.roundTime?date(row.roundTime):undefined,sub:row.sub||row.verdict.label,sites:row.tipSites,compare:row.compareTip||undefined,...anchor})
 }
 function showOverviewUnlockTip(e:MouseEvent,n:NodeOption){
  const data=overviewUnlockMap.value[key(n)]
@@ -578,16 +633,16 @@ function keyNav(e:KeyboardEvent){
         </div>
         </div>
         <div ref="rowScroller" class="hd-row-scroll" role="rowgroup" @scroll="syncTableHeading">
-        <div v-for="n in m.pageNodes.value" :key="key(n)" v-memo="[exitMode?'exit':w.project.value,isFocus(n)&&(inspectorOpen||!!focusKey),selected(n),isClashUsing(n),nodeRowMeta[key(n)],overviewMode?overviewLatencyMap[key(n)]:undefined,overviewMode||(!exitMode&&w.project.value==='download')?downloadRows[key(n)]:undefined,overviewMode?overviewUnlockMap[key(n)]:undefined,overviewMode||exitMode||showVerdict?exitRows[key(n)]:undefined,showVerdict&&!overviewMode?verdicts[key(n)]:undefined,showSites?weeklyRowMap[key(n)]:undefined,showSites?wholeLatencyHistory[key(n)]:undefined,showSites?latencyReviewFor(n):undefined,showSites?w.displayTargets.value.length:0,showServiceGroups?serviceGroupMap[key(n)]:undefined,!exitMode&&w.project.value==='download'?w.busy.value:false]" :data-node-key="key(n)" class="hd-tr" role="row" :class="{focus:isFocus(n)&&(inspectorOpen||!!focusKey),selected:selected(n),'clash-using':isClashUsing(n)}" :aria-selected="selected(n)" @click="focus(n)">
+        <div v-for="n in m.pageNodes.value" :key="key(n)" v-memo="[exitMode?'exit':w.project.value,isFocus(n)&&(inspectorOpen||!!focusKey),selected(n),isClashUsing(n),nodeRowMeta[key(n)],overviewMode?overviewLatencyMap[key(n)]:undefined,overviewMode||(!exitMode&&w.project.value==='download')?downloadRows[key(n)]:undefined,overviewMode?overviewUnlockMap[key(n)]:undefined,overviewMode||exitMode||showVerdict?exitRows[key(n)]:undefined,showVerdict&&!overviewMode?verdicts[key(n)]:undefined,showSites?weeklyRowMap[key(n)]:undefined,showVerdict?wholeLatencyHistory[key(n)]:undefined,showVerdict?latencyReviewFor(n):undefined,showVerdict?w.displayTargets.value.length:0,showServiceGroups?serviceGroupMap[key(n)]:undefined,!exitMode&&w.project.value==='download'?w.busy.value:false]" :data-node-key="key(n)" class="hd-tr" role="row" :class="{focus:isFocus(n)&&(inspectorOpen||!!focusKey),selected:selected(n),'clash-using':isClashUsing(n)}" :aria-selected="selected(n)" @click="focus(n)">
           <span role="cell" @click.stop><input type="checkbox" :checked="selected(n)" :aria-label="'选择 '+nodeRowMeta[key(n)].displayName" @change="w.toggleNode(n)"></span>
           <span role="cell" class="hd-node" :class="nodeRowMeta[key(n)].regionClass" :title="n.display_name+' · '+nodeRowMeta[key(n)].fullSource+' · '+n.type"><span><div class="hd-node-title"><span class="hd-flag" :class="nodeRowMeta[key(n)].regionClass">{{n.country_code||'—'}}</span><span v-if="isClashUsing(n)" class="hd-clash-active-badge" aria-label="Clash 正在使用" title="Clash 正在使用"><i class="hd-clash-node-dot" aria-hidden="true"/>在用</span><button class="hd-node-open" :tabindex="isFocus(n)?0:-1" :aria-label="'查看 '+nodeRowMeta[key(n)].displayName+' · '+nodeRowMeta[key(n)].fullSource" @focus="focusKey=key(n)" @click.stop="focus(n)"><strong><span class="hd-node-region">{{nodeRowMeta[key(n)].region}}</span><template v-for="(part,idx) in nodeRowMeta[key(n)].parts" :key="idx"><span class="hd-node-sep"> · </span><span class="hd-node-part" :class="part.kind" :title="part.hintDetail" @mouseenter="showAttrTip($event,part.text)" @mouseleave="clearAttrTip">{{part.text}}</span></template></strong></button></div><small><span class="hd-source-label">{{nodeRowMeta[key(n)].source}}</span> · <b class="hd-proto-tag" :class="nodeRowMeta[key(n)].protoClass">{{n.type}}</b></small>
-            <span v-if="showSites&&wholeLatencyHistory[key(n)]?.length" class="hd-round-history"><span>整轮历史</span><LatencyHistoryMarks class="hd-round-marks" :node="n" :points="wholeLatencyHistory[key(n)]" target="all" label="整轮历史" :selected="latencyReviewFor(n)?.target==='all'?latencyReviewFor(n)?.point:undefined" @select="onWholeHistorySelect"/></span>
-            <span v-if="showSites&&latencyReviewFor(n)" class="hd-round-review"><span>回看 {{date(latencyReviewFor(n)?.point.time)}}</span><button type="button" class="hd-link" @click.stop="resetLatencyReview(n)">回到最新</button></span>
+            <span v-if="showVerdict&&wholeLatencyHistory[key(n)]?.length" class="hd-round-history"><span>整轮历史</span><LatencyHistoryMarks class="hd-round-marks" :node="n" :points="wholeLatencyHistory[key(n)]" target="all" label="整轮历史" :selected="latencyReviewFor(n)?.target==='all'?latencyReviewFor(n)?.point:undefined" @select="onWholeHistorySelect"/></span>
+            <span v-if="showVerdict&&latencyReviewFor(n)" class="hd-round-review"><span>回看 {{date(latencyReviewFor(n)?.point.time)}}</span><button type="button" class="hd-link" @click.stop="resetLatencyReview(n)">回到最新</button></span>
           </span></span>
           <template v-if="overviewMode">
             <span role="cell" class="hd-ov-cell" @mouseenter="showOverviewLatencyTip($event,n)" @mouseleave="hideChartTip">
               <template v-if="overviewLatencyMap[key(n)].measured">
-                <span class="hd-ov-main"><b class="hd-pill" :class="[overviewLatencyMap[key(n)].verdict.tone,{'partial-sites':overviewLatencyMap[key(n)].verdict.label.startsWith('部分站点不通')}]">{{overviewLatencyMap[key(n)].verdict.label}}</b><strong v-if="overviewLatencyMap[key(n)].ms" class="hd-ov-val">{{overviewLatencyMap[key(n)].ms}}</strong></span>
+                <span class="hd-ov-main"><b class="hd-pill" :class="[overviewLatencyMap[key(n)].verdict.tone,{'partial-sites':overviewLatencyMap[key(n)].verdict.label.startsWith('部分站点不通')}]">{{overviewLatencyMap[key(n)].verdict.label}}</b><strong v-if="overviewLatencyMap[key(n)].ms" class="hd-ov-val">{{overviewLatencyMap[key(n)].ms}}</strong><span v-if="overviewLatencyMap[key(n)].delta" class="hd-ov-delta" :class="overviewLatencyMap[key(n)].delta!.tone" :title="overviewLatencyMap[key(n)].compareTip?.text">{{overviewLatencyMap[key(n)].delta!.label}}</span><span v-if="overviewLatencyMap[key(n)].reviewing" class="hd-ov-review-tag">回看</span></span>
                 <span v-if="overviewLatencyMap[key(n)].sub||overviewLatencyMap[key(n)].anomalies.length" class="hd-ov-meta-row">
                   <small v-if="overviewLatencyMap[key(n)].sub" class="hd-ov-sub">{{overviewLatencyMap[key(n)].sub}}</small>
                   <span v-for="a in overviewLatencyMap[key(n)].anomalies.slice(0,3)" :key="a.label" class="hd-ov-tag" :class="a.tone">{{a.label}}</span>

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import {nodeDisplayName} from '../nodePresentation'
-import {computed,ref,watch,nextTick,onMounted} from 'vue'
+import {computed,ref,watch,nextTick,onMounted,onBeforeUnmount} from 'vue'
 import {api,saveFile} from '../api'
 import {readLatencyBatches} from '../latencyReportData'
-import {bytes,key,targets,type BatchItem,type LatencyBatch} from '../domain'
+import {bytes,key,targets,type BatchItem,type LatencyBatch,type LatencyBatchProgressItem} from '../domain'
 import LatencyReport from './LatencyReport.vue'
 import {latencySampleState} from '../presentation'
 import {downloadNoDataReason} from '../measurementRounds'
@@ -12,8 +12,13 @@ import {buildRetestPlanDraft,classifyQueueIssue,summarizeQueueFailures,type Queu
 import {useWorkspace} from '../workspace'
 import {projectNames,isReputationRule,stateLabel,outcomeLabel,outcomeTone,downloadReading,downloadTone,downloadOutcome,downloadSourceName,type QueueItem} from '../domain'
 import Modal from './Modal.vue'
-const w=useWorkspace(),retrying=ref(''),refreshingToken=ref(false),tokenNotice=ref(''),progressTitle=ref<HTMLElement>()
-onMounted(()=>nextTick(()=>progressTitle.value?.focus({preventScroll:true})))
+const w=useWorkspace(),retrying=ref(''),refreshingToken=ref(false),tokenNotice=ref(''),progressTitle=ref<HTMLElement>(),nowMs=ref(Date.now())
+let elapsedTimer:ReturnType<typeof setInterval>|undefined
+onMounted(()=>{
+ nextTick(()=>progressTitle.value?.focus({preventScroll:true}))
+ elapsedTimer=setInterval(()=>{if(compactLatency.value&&w.busy.value)nowMs.value=Date.now()},1000)
+})
+onBeforeUnmount(()=>{if(elapsedTimer)clearInterval(elapsedTimer)})
 const report=computed(()=>w.reportSelection.value),previous=ref<LatencyBatch[]>([])
 const airportNames=computed(()=>Object.fromEntries(w.nodes.value.map(n=>[n.profile_id,w.nodeAirportName(n)])))
 // 只有本机在境外、且本轮确实有大陆入口的节点时，才在“偏慢”里解释绕路。
@@ -277,7 +282,30 @@ watch(failureSummary,summary=>{if(reasonFilter.value&&!summary.groups.some(g=>g.
 watch(pageCount,count=>queuePage.value=Math.min(queuePage.value,count))
 const succeeded=computed(()=>w.queue.value.filter(q=>q.state==='completed'&&resultStatus(q)?.tone==='good').length)
 const compactLatency=computed(()=>!!w.activeBatch.value&&['queued','running','cancelling','saving'].includes(w.activeBatch.value.state)||w.running.value&&w.queue.value.length>0&&w.queue.value.every(q=>q.project==='latency'))
-const progress=computed(()=>w.activeBatchProgress.value?.batch_id===w.activeBatch.value?.batch_id&&w.activeBatchProgress.value||{total:w.activeBatch.value?.item_count||w.queue.value.length,processed:0,all_success:0,partial_response:0,no_response:0,save_failed:0,not_executed:0})
+const progress=computed(()=>w.activeBatchProgress.value?.batch_id===w.activeBatch.value?.batch_id&&w.activeBatchProgress.value||{requested_at:w.activeBatch.value?.requested_at||'',total:w.activeBatch.value?.item_count||w.queue.value.length,processed:0,running:0,queued:0,all_success:0,partial_response:0,no_response:0,save_failed:0,not_executed:0,running_items:[] as LatencyBatchProgressItem[],recent_items:[] as LatencyBatchProgressItem[]})
+const compactPercent=computed(()=>progress.value.total?Math.min(100,Math.round(progress.value.processed/progress.value.total*100)):0)
+const compactTiming=computed(()=>{
+ const startedRaw=progress.value.requested_at||w.activeBatch.value?.requested_at
+ const started=startedRaw?Date.parse(startedRaw):NaN
+ if(!Number.isFinite(started))return {elapsed:'',eta:''}
+ const sec=Math.max(0,Math.floor((nowMs.value-started)/1000))
+ const fmt=(s:number)=>s>=60?`${Math.floor(s/60)} 分 ${s%60} 秒`:`${s} 秒`
+ const remaining=Math.max(0,progress.value.total-progress.value.processed)
+ const eta=progress.value.processed>=2&&remaining>0&&sec>0?`约剩 ${fmt(Math.max(1,Math.round(sec/progress.value.processed*remaining)))}`:''
+ return {elapsed:`已用 ${fmt(sec)}`,eta}
+})
+function liveItemTone(item:LatencyBatchProgressItem){
+ if(['not_executed','cancelled'].includes(item.execution_state))return 'empty'
+ if(item.total_samples>0&&item.success_samples===item.total_samples)return 'good'
+ if(item.success_samples>0)return 'warn'
+ return 'bad'
+}
+function liveItemLabel(item:LatencyBatchProgressItem){
+ if(['not_executed','cancelled'].includes(item.execution_state))return stateLabel(item.execution_state)
+ if(item.total_samples>0&&item.success_samples===item.total_samples)return item.latency_ms?`${item.latency_ms} ms`:'全部响应'
+ if(item.success_samples>0)return `${item.success_samples}/${item.total_samples}${item.latency_ms?` · ${item.latency_ms} ms`:''}`
+ return '无响应'
+}
 const savingOnly=computed(()=>compactLatency.value?w.activeBatch.value?.state==='saving':counts.value.saving>0&&!counts.value.running&&!counts.value.queued)
 const canCancel=computed(()=>w.busy.value&&(!!w.pendingStart.value||!savingOnly.value))
 const headline=computed(()=>w.pendingStart.value?'正在确认启动状态':w.busy.value?(w.cancelRequested.value?'正在取消，已完成结果保留':savingOnly.value?'正在保存结果':'检测进行中'):w.done.value<w.queue.value.length?'检测已停止，部分项目没有运行完':counts.value.saveFailed?'检测已结束，部分结果未保存':'检测已结束')
@@ -309,9 +337,38 @@ async function retry(q:QueueItem){retrying.value=q.id;try{if(q.batchId&&q.itemId
     </div>
   </dl>
   <template v-if="compactLatency">
-    <div v-if="!w.pendingStart.value" class="compact-progress-counts"><span>全部响应 <strong>{{progress.all_success}}</strong></span><span>部分响应 <strong>{{progress.partial_response}}</strong></span><span>无响应 <strong>{{progress.no_response}}</strong></span><span v-if="progress.not_executed">未执行/取消 <strong>{{progress.not_executed}}</strong></span></div>
+    <div v-if="!w.pendingStart.value" class="compact-live-meta">
+      <strong class="compact-live-pct">{{compactPercent}}%</strong>
+      <span v-if="progress.running" class="compact-live-pill running"><i class="cst-queue-dot running"/>正在测 {{progress.running}} 个</span>
+      <span v-if="progress.queued" class="compact-live-pill">排队 {{progress.queued}} 个</span>
+      <span v-if="compactTiming.elapsed" class="compact-live-time">{{compactTiming.elapsed}}<template v-if="compactTiming.eta"> · {{compactTiming.eta}}</template></span>
+    </div>
+    <div v-if="!w.pendingStart.value" class="compact-progress-counts"><span class="good">全部响应 <strong>{{progress.all_success}}</strong></span><span class="warn">部分响应 <strong>{{progress.partial_response}}</strong></span><span class="bad">无响应 <strong>{{progress.no_response}}</strong></span><span v-if="progress.not_executed">未执行/取消 <strong>{{progress.not_executed}}</strong></span></div>
     <p v-if="progress.save_failed" class="inline-warning" role="alert">保存失败 {{progress.save_failed}} 项；结束后可在报告重试保存。</p>
-    <p class="queue-note">检测中显示整批进度，结束后提供逐节点报告。关闭此窗口不影响检测。</p>
+    <section v-if="!w.pendingStart.value&&progress.running_items?.length" class="compact-live-section" aria-label="正在检测的节点">
+      <header class="compact-live-head"><strong>正在检测</strong><small>并发 {{progress.running_items.length}} 个节点</small></header>
+      <div class="compact-running-grid">
+        <span v-for="item in progress.running_items" :key="item.item_id" class="compact-running-chip" :title="item.display_name">
+          <i class="spinner" aria-hidden="true"/>
+          <span>{{nodeDisplayName({display_name:item.display_name})}}</span>
+          <small v-if="item.node_type">{{item.node_type}}</small>
+        </span>
+      </div>
+    </section>
+    <section v-if="!w.pendingStart.value&&progress.recent_items?.length" class="compact-live-section" aria-label="最近完成节点">
+      <header class="compact-live-head"><strong>最近完成</strong><small>显示最新 {{progress.recent_items.length}} 条（全批结束弹出完整报告）</small></header>
+      <div class="compact-recent-list">
+        <div v-for="item in progress.recent_items" :key="item.item_id" class="compact-recent-row">
+          <div class="compact-recent-node">
+            <strong>{{nodeDisplayName({display_name:item.display_name})}}</strong>
+            <small v-if="item.error_message" class="compact-recent-err">{{shortError(item.error_message)}}</small>
+            <small v-else-if="item.total_samples">{{item.success_samples}}/{{item.total_samples}} 次采样</small>
+          </div>
+          <span class="badge" :class="liveItemTone(item)">{{liveItemLabel(item)}}</span>
+        </div>
+      </div>
+    </section>
+    <p class="queue-note">检测中实时展示并发节点与最新完成明细，结束后自动弹出逐节点报告。关闭此窗口不影响检测。</p>
   </template>
   <template v-else>
     <div class="queue-counts" role="group" aria-label="按检测状态快速筛选">
@@ -409,9 +466,33 @@ button.queue-pill:hover{border-color:var(--cst-accent);color:var(--cst-text);bac
 .queue-issue-sample{font-size:11px;color:var(--cst-muted);line-height:1.45;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .queue-issue-retest{flex:none;white-space:nowrap}
 .queue-clear-reason{margin-left:8px}
-.compact-progress-counts{display:flex;flex-wrap:wrap;gap:12px;padding:12px 0 18px;border-bottom:1px solid var(--cst-line)}
+.compact-live-meta{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin:2px 0 10px;font-size:12px;color:var(--cst-muted);font-variant-numeric:tabular-nums}
+.compact-live-pct{font-size:15px;font-weight:750;color:var(--cst-accent)}
+.compact-live-pill{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;border:1px solid var(--cst-line);background:var(--cst-panel-2);font-size:11.5px;font-weight:600;color:var(--cst-text)}
+.compact-live-pill.running{border-color:color-mix(in srgb,var(--cst-accent) 32%,var(--cst-line));background:var(--cst-accent-soft);color:var(--cst-accent)}
+.compact-live-time{margin-left:auto;font-size:11.5px}
+.compact-progress-counts{display:flex;flex-wrap:wrap;gap:10px;padding:4px 0 14px;border-bottom:1px solid var(--cst-line)}
 .compact-progress-counts span{color:var(--cst-muted);font-size:12px;display:flex;align-items:baseline;gap:8px;padding:8px 12px;border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel-2)}
 .compact-progress-counts strong{color:var(--cst-text);font-size:20px;font-variant-numeric:tabular-nums}
+.compact-progress-counts span.good strong{color:var(--cst-good)}
+.compact-progress-counts span.warn strong{color:var(--cst-warn)}
+.compact-progress-counts span.bad strong{color:var(--cst-bad)}
+.compact-live-section{margin-top:12px;display:grid;gap:8px}
+.compact-live-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.compact-live-head strong{font-size:12.5px;font-weight:700;color:var(--cst-text)}
+.compact-live-head small{font-size:11px;color:var(--cst-muted)}
+.compact-running-grid{display:flex;flex-wrap:wrap;gap:6px}
+.compact-running-chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:4px 10px;border-radius:999px;border:1px solid color-mix(in srgb,var(--cst-accent) 28%,var(--cst-line));background:color-mix(in srgb,var(--cst-accent) 7%,var(--cst-panel));font-size:12px;font-weight:550;color:var(--cst-text)}
+.compact-running-chip .spinner{width:10px;height:10px;flex:none}
+.compact-running-chip>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
+.compact-running-chip small{font-size:10.5px;color:var(--cst-muted);flex:none}
+.compact-recent-list{display:grid;gap:6px;max-height:220px;overflow:auto;padding-right:2px}
+.compact-recent-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 11px;border:1px solid var(--cst-line);border-radius:9px;background:var(--cst-panel-2)}
+.compact-recent-node{min-width:0;display:grid;gap:2px}
+.compact-recent-node strong{font-size:12.5px;font-weight:600;color:var(--cst-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.compact-recent-node small{font-size:11px;color:var(--cst-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.compact-recent-err{color:var(--cst-warn)!important}
+.compact-recent-row .badge{flex:none;white-space:nowrap;font-variant-numeric:tabular-nums}
 .queue-list-tools{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:16px 0 10px}
 .queue-list-tools>small,.queue-note,.queue-empty{font-size:12px;color:var(--cst-muted);line-height:1.7}
 .queue-note{margin:16px 0 0}.queue-empty{padding:22px 16px;border:1px dashed var(--cst-line);border-radius:10px;background:var(--cst-panel-2);text-align:center}

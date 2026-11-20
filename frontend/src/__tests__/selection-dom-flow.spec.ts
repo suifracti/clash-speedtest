@@ -328,4 +328,31 @@ describe('node selection through DOM controls',()=>{
     expect(w.selectedNodes.value).toEqual([])
     expect(nodeInput(wrapper,'美国 · Node B').element).toHaveProperty('checked',false)
   })
+
+  it('shows whole-round history marks, previous-round latency delta, and inline replay without opening inspector in combined overview mode',async()=>{
+    const prevAt='2026-11-20T10:00:00Z',latestAt='2026-11-20T14:00:00Z',cf='https://speed.cloudflare.com/__down?bytes=1'
+    const mkRound=(id:string,at:string,ms:number):LatencyTest=>({
+      ...a,attempt_id:id,display_name:a.display_name,node_type:a.type,requested_at:at,finished_at:at,status:'completed',
+      latency_ms:ms,total_samples:6,success_samples:6,failure_samples:0,persistence_state:'saved',
+      samples:Array.from({length:6},(_,i)=>({seq:i+1,target:cf,timestamp:at,latency_ms:ms,success:true})),
+    })
+    const {w,wrapper}=attach([a],['airport-a'])
+    w.project.value='combined'
+    w.latency.value={[key(a)]:[mkRound('round-latest',latestAt,1157),mkRound('round-prev',prevAt,469)]}
+    await flushPromises()
+    expect(wrapper.find('.hd-round-history').exists()).toBe(true)
+    const marks=wrapper.findAll('.hd-round-marks button')
+    expect(marks).toHaveLength(2)
+    expect(wrapper.get('.hd-ov-val').text()).toBe('1157 ms')
+    expect(wrapper.get('.hd-ov-delta').text()).toBe('↑+688ms')
+    expect(wrapper.get('.hd-ov-delta').classes()).toContain('bad')
+    await marks[0]!.trigger('click');await flushPromises()
+    expect(wrapper.find('.hd-inspector').exists()).toBe(false)
+    expect(wrapper.get('.hd-ov-val').text()).toBe('469 ms')
+    expect(wrapper.get('.hd-ov-review-tag').text()).toBe('回看')
+    expect(wrapper.get('.hd-round-review').text()).toContain('回到最新')
+    await wrapper.get('.hd-round-review button').trigger('click');await flushPromises()
+    expect(wrapper.get('.hd-ov-val').text()).toBe('1157 ms')
+    expect(wrapper.find('.hd-ov-review-tag').exists()).toBe(false)
+  })
 })

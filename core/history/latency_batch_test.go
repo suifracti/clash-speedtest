@@ -86,3 +86,59 @@ func TestSchemaV4UpgradePreservesLatencyRawAndMonitorBudget(t *testing.T) {
 		t.Fatalf("batch target not persisted: batch=%+v err=%v", savedBatch, err)
 	}
 }
+
+func TestGetLatencyBatchProgressIncludesRunningAndRecentItems(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 11, 21, 1, 0, 0, 0, time.UTC)
+	batch := &LatencyBatch{
+		BatchID: "live-batch", RequestID: "live-req", TargetID: "all", TestProject: "latency_stability",
+		TimeoutSeconds: 5, RequestedAt: now, State: "running",
+		Items: []LatencyBatchItem{
+			{ItemID: "i1", ProfileID: "p1", NodeKey: "n1", NodeIdentityKey: "id1", ConfigRevisionKey: "r1", DisplayName: "Node 1", NodeType: "Hysteria2", ExecutionState: "queued"},
+			{ItemID: "i2", ProfileID: "p1", NodeKey: "n2", NodeIdentityKey: "id2", ConfigRevisionKey: "r1", DisplayName: "Node 2", NodeType: "Vless", ExecutionState: "queued"},
+			{ItemID: "i3", ProfileID: "p1", NodeKey: "n3", NodeIdentityKey: "id3", ConfigRevisionKey: "r1", DisplayName: "Node 3", NodeType: "Vless", ExecutionState: "queued"},
+		},
+	}
+	if err := store.CreateLatencyBatch(ctx, batch); err != nil {
+		t.Fatal(err)
+	}
+	doneAt := now.Add(2 * time.Second)
+	if err := store.SaveLatencyTest(ctx, &LatencyTest{
+		AttemptID: "att-1", ProfileID: "p1", NodeKey: "n1", NodeIdentityKey: "id1", ConfigRevisionKey: "r1",
+		DisplayName: "Node 1", NodeType: "Hysteria2", TestProject: "latency_stability",
+		RequestedAt: now, StartedAt: now, FinishedAt: doneAt, Status: "completed",
+		LatencyMs: 145, TotalSamples: 24, SuccessSamples: 24,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateLatencyBatchItem(ctx, &LatencyBatchItem{
+		BatchID: "live-batch", ItemID: "i1", AttemptID: "att-1", ExecutionState: "completed", PersistenceState: "saved",
+		StartedAt: now, FinishedAt: doneAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateLatencyBatchItem(ctx, &LatencyBatchItem{
+		BatchID: "live-batch", ItemID: "i2", ExecutionState: "running", PersistenceState: "pending",
+		StartedAt: now.Add(time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := store.GetLatencyBatchProgress(ctx, "live-batch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Total != 3 || p.Processed != 1 || p.Running != 1 || p.Queued != 1 || p.AllSuccess != 1 {
+		t.Fatalf("unexpected counts: %+v", p)
+	}
+	if len(p.RunningItems) != 1 || p.RunningItems[0].DisplayName != "Node 2" {
+		t.Fatalf("unexpected running items: %+v", p.RunningItems)
+	}
+	if len(p.RecentItems) != 1 || p.RecentItems[0].DisplayName != "Node 1" || p.RecentItems[0].LatencyMs != 145 || p.RecentItems[0].SuccessSamples != 24 {
+		t.Fatalf("unexpected recent items: %+v", p.RecentItems)
+	}
+}

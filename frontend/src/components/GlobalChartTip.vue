@@ -17,7 +17,7 @@ import {activeChartTip} from '../chartTip'
         </ol>
       </template>
       <template v-else-if="activeChartTip.kind==='overview-latency'">
-        <div class="cst-chart-tip-head"><span>{{activeChartTip.title}}</span><span v-if="activeChartTip.sub">{{activeChartTip.sub}}</span></div>
+        <div class="cst-chart-tip-head"><span>{{activeChartTip.title}}</span><span v-if="activeChartTip.time||activeChartTip.sub">{{[activeChartTip.time,activeChartTip.sub].filter(Boolean).join(' · ')}}</span></div>
         <ul class="ov-tip-list">
           <li v-for="s in activeChartTip.sites" :key="s.name">
             <span class="ov-tip-name">{{s.name}}</span>
@@ -26,6 +26,7 @@ import {activeChartTip} from '../chartTip'
             <b v-if="s.badge" class="tip-http" :class="s.tone">{{s.badge}}</b>
           </li>
         </ul>
+        <div v-if="activeChartTip.compare" class="ov-tip-compare" :class="activeChartTip.compare.tone">{{activeChartTip.compare.text}}</div>
       </template>
       <template v-else-if="activeChartTip.kind==='unlock-detail'">
         <div class="cst-chart-tip-head"><span>{{activeChartTip.title}}</span><span>已保存解锁明细</span></div>
@@ -63,6 +64,10 @@ import {activeChartTip} from '../chartTip'
 .tip-http.bad{background:var(--cst-bad-bg);color:var(--cst-bad)}
 .ov-tip-name{color:var(--cst-muted);min-width:66px;font-weight:500}
 .ov-tip-count{color:var(--cst-muted);font-size:10.5px}
+.ov-tip-compare{margin-top:2px;padding-top:5px;border-top:1px solid color-mix(in srgb,var(--cst-line) 75%,transparent);font-size:10.5px;font-weight:600;line-height:1.4;font-variant-numeric:tabular-nums;color:var(--cst-muted)}
+.ov-tip-compare.good{color:var(--cst-good)}
+.ov-tip-compare.warn{color:var(--cst-warn)}
+.ov-tip-compare.bad{color:var(--cst-bad)}
 .unlock-tip-group{display:grid;gap:4px;padding-top:4px;border-top:1px solid color-mix(in srgb,var(--cst-line) 75%,transparent)}
 .unlock-tip-group:first-of-type{padding-top:0;border-top:0}
 .unlock-tip-ghead{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:10.5px;color:var(--cst-muted)}

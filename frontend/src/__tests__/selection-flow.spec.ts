@@ -311,7 +311,7 @@ it('aligns two-node metrics by semantic row and keeps original history and selec
  const w=workspace(),ui=attach(HomeView,w);await flushPromises();await ui.findAll('.hd-tr:not(.hd-th) input')[0].setValue(true);await ui.findAll('.hd-tr:not(.hd-th) input')[1].setValue(true)
  await ui.findAll('button').find(b=>b.text()==='比较已选 2 个节点')!.trigger('click');await flushPromises()
  const table=document.querySelector('.quality-compare table')!;expect(table).not.toBeNull();expect(table.querySelectorAll('thead th[scope=col]')).toHaveLength(3)
- expect([...table.querySelectorAll('tbody th[scope=row]')].map(e=>e.textContent?.trim())).toEqual(['延迟分布','成功率 / 样本','下载','多源信誉','CF 人机验证','服务结论','测量时间','完整证据','原始历史'])
+ expect([...table.querySelectorAll('tbody th[scope=row]')].map(e=>e.textContent?.trim())).toEqual(['四站综合延迟','较上次变化','延迟分布','成功率 / 样本','下载','多源信誉','CF 人机验证','服务结论','测量时间','完整证据','原始历史'])
  expect(table.textContent).toContain('未测');expect(document.querySelector('.quality-compare-status')?.textContent).toContain('不可比较');expect(document.querySelector('.comparison-scroll-hint')).toBeNull()
  const history=table.querySelector('tbody tr:last-child td button') as HTMLButtonElement;history.click();await flushPromises();expect(document.querySelector('.quality-compare')).toBeNull();expect(w.inspectNode.value).toEqual(expect.objectContaining({...a,historyTargetId:'cloudflare',historyProject:'latency',historySource:'manual',historyUntil:expect.any(String)}));expect(w.selectedKeys.value).toEqual([key(a),key(b)]);expect(api.startAttempt).not.toHaveBeenCalled();expect(api.startLatency).not.toHaveBeenCalled();w.dispose()
 })
@@ -348,7 +348,29 @@ it('keeps labels and a keyboard scroll region when comparing three selected node
  for(const checkbox of ui.findAll('.hd-tr:not(.hd-th) input'))await checkbox.setValue(true)
  await ui.findAll('button').find(b=>b.text()==='比较已选 3 个节点')!.trigger('click');await flushPromises()
  const region=document.querySelector('.quality-compare')!;expect(region.getAttribute('tabindex')).toBe('0');expect(region.getAttribute('aria-describedby')).toBe('comparison-scroll-hint');expect(document.getElementById('comparison-scroll-hint')?.textContent).toContain('横向滚动')
- expect(region.querySelectorAll('thead th[scope=col]')).toHaveLength(4);expect(region.querySelectorAll('tbody tr')).toHaveLength(9);expect(w.selectedKeys.value).toHaveLength(3);w.dispose()
+ expect(region.querySelectorAll('thead th[scope=col]')).toHaveLength(4);expect(region.querySelectorAll('tbody tr')).toHaveLength(11);expect(w.selectedKeys.value).toHaveLength(3);w.dispose()
+})
+
+it('highlights fastest four-site latency, shows previous-round delta trend, and filters identical rows with onlyDiffs',async()=>{
+ const t1='2026-11-20T08:00:00Z',t2='2026-11-20T12:00:00Z'
+ const path={method:'physical_socket_v1',interface:'en1',dns_mode:'physical_interface_dns_v1',socket_bind_verified:true,dns_bind_verified:true,tcp_bindings:1,udp_bindings:0,address_family:'IPv4',address_source:'A'}
+ const mkTest=(node:NodeOption,id:string,at:string,ms:number)=>({...node,node_type:'trojan',display_name:'fixture',attempt_id:id,requested_at:at,finished_at:at,status:'completed',latency_ms:ms,total_samples:20,success_samples:20,failure_samples:0,persistence_state:'saved',source:'workbench',method:'http_get_via_proxy_first_byte',method_version:1,network_path:path,samples:targets.slice(0,4).flatMap((t,ti)=>Array.from({length:5},(_,seq)=>({seq:ti*5+seq+1,target:t.urls[0],timestamp:at,latency_ms:ms,success:true})))})
+ vi.mocked(api.latencyHistory).mockImplementation(async node=>({tests:node.profile_id===a.profile_id?[mkTest(a,'a-2',t2,220),mkTest(a,'a-1',t1,210)]:[mkTest(b,'b-2',t2,960),mkTest(b,'b-1',t1,360)],has_more:false,complete:true}))
+ const sameNetflix={...oldService,service_id:'netflix_unlock',rule:{...oldService.rule,service_id:'netflix_unlock',name:'Netflix'}}
+ const diffDisney={...oldService,service_id:'disney_unlock',attempt_id:'dis-a',rule:{...oldService.rule,service_id:'disney_unlock',name:'Disney+'}}
+ vi.mocked(api.attemptHistory).mockImplementation(async(kind,node)=>({attempts:kind==='service'?(node.profile_id===a.profile_id?[{...sameNetflix,...a,attempt_id:'nf-a'},{...diffDisney,...a}]:[{...sameNetflix,...b,attempt_id:'nf-b'}]):[],has_more:false,complete:true}))
+ const w=workspace(),ui=attach(HomeView,w);await flushPromises();w.toggleNode(a);w.toggleNode(b);await flushPromises()
+ await ui.findAll('button').find(btn=>btn.text()==='比较已选 2 个节点')!.trigger('click');await flushPromises()
+ const tableText=document.querySelector('.quality-compare')?.textContent||''
+ expect(tableText).toContain('215 ms');expect(tableText).toContain('最快');expect(tableText).toContain('慢 +445 ms')
+ expect(tableText).toContain('↑+600ms');expect(tableText).toContain('持平')
+ expect(tableText).toContain('Netflix');expect(tableText).toContain('Disney+')
+ const diffBtn=document.querySelector('.compare-diff-toggle') as HTMLButtonElement
+ expect(diffBtn).not.toBeNull();diffBtn.click();await flushPromises()
+ const rowLabels=[...document.querySelectorAll('.quality-compare tbody th[scope=row]')].map(e=>e.textContent?.trim())
+ expect(rowLabels).not.toContain('Netflix')
+ expect(rowLabels).toContain('Disney+')
+ w.dispose();vi.mocked(api.latencyHistory).mockResolvedValue({tests:[],has_more:false,complete:true});vi.mocked(api.attemptHistory).mockResolvedValue({attempts:[],has_more:false,complete:true})
 })
 
 it('labels differently bounded download evidence incomparable rather than aligning it as one speed condition',async()=>{

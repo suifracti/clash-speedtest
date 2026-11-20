@@ -327,12 +327,12 @@ function latestLatencyRound(n:NodeOption){
  return manual||newestPoint(presentation.monitor(n).at(-1),sorting?monitorLatencyPoints(qualityData.value[key(n)]?.monitor||[]).at(-1):undefined)
 }
 function latencyRowPoint(n:NodeOption,target:string,review?:TrendPoint){
- const detailed=w.project.value==='latency'
+ const detailed=w.project.value==='latency',perRound=detailed||!!review
  const round=review??(detailed?latestLatencyRound(n):metricPoint(n,target)),samples=latencySiteSamples(round,target)
- if(!round||!samples.length)return detailed?undefined:round
+ if(!round||!samples.length)return perRound?undefined:round
  const responses=samples.filter(s=>s.value!==null).length
  const tone=samples.every(s=>s.tone==='empty')?'empty':!responses?'bad':responses<samples.length?'warn':'good'
- return {...round,samples,tone,value:detailed?latencyCellValue(round,target,true):round.value} satisfies TrendPoint
+ return {...round,samples,tone,value:perRound?latencyCellValue(round,target,true):round.value} satisfies TrendPoint
 }
 function rowVerdict(n:NodeOption,review?:TrendPoint){
  const sites=targets.filter(s=>w.displayTargets.value.includes(s.id))

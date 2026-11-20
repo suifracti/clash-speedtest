@@ -108,4 +108,5 @@ export interface ManualRoundSummary {round_id:string;started_at:string;state:str
 export interface ManualRoundPage {rounds:ManualRoundSummary[];next_before?:string}
 export interface ManualRoundDetail extends MeasurementRound {next_offset?:number}
 
-export interface LatencyBatchProgress {batch_id:string;state:string;total:number;processed:number;all_success:number;partial_response:number;no_response:number;save_failed:number;not_executed:number}
+export interface LatencyBatchProgressItem {item_id:string;display_name:string;profile_id:string;node_type?:string;execution_state:string;success_samples:number;total_samples:number;latency_ms?:number;error_message?:string;started_at?:string;finished_at?:string}
+export interface LatencyBatchProgress {batch_id:string;state:string;requested_at?:string;total:number;processed:number;running?:number;queued?:number;all_success:number;partial_response:number;no_response:number;save_failed:number;not_executed:number;running_items?:LatencyBatchProgressItem[];recent_items?:LatencyBatchProgressItem[]}

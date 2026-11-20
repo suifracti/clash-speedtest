@@ -436,3 +436,36 @@ it('filters queue items when clicking status count pills and labels reputation p
  expect(document.querySelectorAll('.queue-row')).toHaveLength(3)
  expect(api.startAttempt).not.toHaveBeenCalled()
 })
+
+it('shows live running chips and recent completed feed during a running latency batch',async()=>{
+ w.running.value=true
+ w.activeBatch.value={batch_id:'live-batch',request_id:'req-live',state:'running',requested_at:'2026-11-21T01:00:00Z',item_count:40}
+ w.activeBatchProgress.value={
+  batch_id:'live-batch',state:'running',requested_at:'2026-11-21T01:00:00Z',
+  total:40,processed:3,running:2,queued:35,all_success:2,partial_response:0,no_response:1,
+  save_failed:0,not_executed:0,
+  running_items:[
+   {item_id:'run-1',display_name:'Node SG 01',profile_id:'profile-1',execution_state:'running',success_samples:0,total_samples:0},
+   {item_id:'run-2',display_name:'Node JP 02',profile_id:'profile-1',execution_state:'running',success_samples:0,total_samples:0},
+  ],
+  recent_items:[
+   {item_id:'done-1',display_name:'Node HK 01',profile_id:'profile-1',execution_state:'completed',latency_ms:210,success_samples:24,total_samples:24},
+   {item_id:'done-2',display_name:'Node US 01',profile_id:'profile-1',execution_state:'failed',latency_ms:0,success_samples:0,total_samples:24,error_message:'context deadline exceeded'},
+  ],
+ }
+ attach(QueueModal)
+ const text=document.body.textContent||''
+ expect(text).toContain('已处理 3 / 40 个节点')
+ expect(text).toContain('8%')
+ expect(text).toContain('正在测 2')
+ expect(text).toContain('排队 35')
+ expect(text).toContain('正在检测')
+ expect(text).toContain('Node SG 01')
+ expect(text).toContain('Node JP 02')
+ expect(text).toContain('最近完成')
+ expect(text).toContain('Node HK 01')
+ expect(text).toContain('210 ms')
+ expect(text).toContain('Node US 01')
+ expect(text).toContain('超时')
+ expect(text).toContain('无响应')
+})

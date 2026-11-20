@@ -304,7 +304,7 @@ export function createWorkspace(){
     const version=lifetime;if(!alive(version))return batch
     activeBatch.value=batch;activeBatchProgress.value=null;absorbBatch(batch);polling++
     try{while(alive(version)&&!terminal(activeBatch.value?.state||batch.state)){
-      await delay(1200);if(!alive(version))break
+      await delay(800);if(!alive(version))break
       try{await refreshBatchProgress(batch)}catch(e){if(alive(version))fail(e)}
     }return activeBatch.value||batch}finally{if(version===lifetime)polling--}
   }
