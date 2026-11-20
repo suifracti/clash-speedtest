@@ -27,3 +27,21 @@ it('projects cloudflare_challenge status and rank in exitLanding and exitSummary
  expect(exitRec).toMatchObject({provider:'Cloudflare 人机验证',status:'易弹 CF 人机验证'})
  expect(detailFields(exitRec).find(f=>f.label==='CF 盾站点明细')?.value).toContain('ChatGPT: 弹盾(403)')
 })
+
+it('compares multiple independent reputation stations and flags single-source fallback on timeout',()=>{
+ const multi=exitLanding({country_code:'US'},[
+  record('ippure_ip_quality',{ip:'23.1.2.3',country_code:'US',risk_score:'90',risk_scale_max:'100',risk_direction:'lower_is_better',cf_status:'已取得',cf_risk_score:'96'}),
+  record('ping0_ipv4',{ip:'23.1.2.3',country_code:'US',risk_score:'29',ip_type:'机房 IDC'}),
+  record('ipquery_ip_quality',{ip:'23.1.2.3',country_code:'US',risk_score:'12',ip_type:'机房 IDC'}),
+  record('iplogs_ip_quality',{ip:'23.1.2.3',country_code:'US',risk_score:'85',ip_type:'机房 IDC'}),
+ ])
+ expect(multi.purity.sourceCount).toBe(4)
+ expect(multi.purity.divergent).toBe(true)
+ expect(multi.reputationSources.map(s=>`${s.name}:${s.risk}`)).toEqual(['IPPure:90','Ping0:29','IPQuery:12','IPLogs:85','CF系数:96'])
+
+ const timedOutPure={attempt_id:'timeout-pure',service_id:'ippure_ip_quality',execution_state:'completed',persistence_state:'saved',rule:{service_id:'ippure_ip_quality'},result:{outcome:'timed_out',error_message:'请求超过设定超时',finished_at:'2026-11-20T08:00:00Z'}} as unknown as Attempt
+ const fallback=exitLanding({country_code:'US'},[timedOutPure,record('ping0_ipv4',{ip:'23.1.2.3',country_code:'US',risk_score:'15',ip_type:'机房 IDC'})])
+ expect(fallback.purity.singleFallback).toBe(true)
+ expect(fallback.purity.tone).toBe('warn')
+ expect(fallback.reputationIssues).toContain('IPPure 查询超时')
+})

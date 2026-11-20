@@ -43,7 +43,7 @@ const antigravityBase = "https://daily-cloudcode-pa.googleapis.com/v1internal:"
 func checkAntigravityObserved(ctx context.Context, client *http.Client, token string, started time.Time) Result {
 	observed := make(chan Result, 1)
 	go func() {
-		exitCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		exitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		traceClient := *client
 		traceClient.Jar = nil
@@ -74,7 +74,7 @@ func fetchAntigravityGoogleRegion(ctx context.Context, client *http.Client, toke
 	if client == nil || strings.TrimSpace(token) == "" {
 		return "", false, 0, 0, ""
 	}
-	geoCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	geoCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(geoCtx, http.MethodPost, antigravityBase+"fetchUserInfo", bytes.NewBufferString("{}"))
 	if err != nil {
@@ -297,7 +297,6 @@ func checkAntigravity(ctx context.Context, client *http.Client, token string, st
 
 	genCfg := map[string]any{"maxOutputTokens": 512}
 	if !strings.Contains(r.Model, "thinking") {
-		genCfg["maxOutputTokens"] = 256
 		genCfg["thinkingConfig"] = map[string]any{"thinkingBudget": 0}
 	}
 	body, ok := call("streamGenerateContent?alt=sse", map[string]any{
@@ -514,10 +513,12 @@ func antigravityFlashTier(id string) int {
 	switch {
 	case id == "gemini-3.8-flash-low":
 		return 0
-	case strings.HasPrefix(id, "gemini-3.8-flash"):
+	case id == "gemini-3.8-flash":
 		return 1
-	default:
+	case strings.HasPrefix(id, "gemini-3.8-flash"):
 		return 2
+	default:
+		return 3
 	}
 }
 

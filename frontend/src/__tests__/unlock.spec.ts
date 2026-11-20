@@ -103,3 +103,11 @@ it('builds per-service detail items with failures prioritized before passing ser
  expect(detail.attemptedItems.map(i=>`${i.shortName}:${i.shortStatus}`)).toEqual(['Gemini:送中','Claude:不可用 SG','ChatGPT:✓ US'])
  expect(detail.attemptedItems.map(i=>i.tone)).toEqual(['bad','warn','good'])
 })
+
+it('surfaces exact error messages and failure phases on transport or timeout failures',()=>{
+ const agErr={service_id:'antigravity',execution_state:'completed',rule:{service_id:'antigravity',target_url:''},result:{outcome:'transport_error',failure_phase:'loadCodeAssist',error_message:'TLS 握手失败：connection reset by peer'}} as unknown as Attempt
+ const res=unlockResult(agErr,'antigravity')
+ expect(res.state).toBe('unknown')
+ expect(res.reason).toContain('TLS 握手失败：connection reset by peer')
+ expect(res.reason).toContain('loadCodeAssist')
+})

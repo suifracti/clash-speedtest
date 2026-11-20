@@ -74,7 +74,7 @@ function selectInspectorProject(id:Project|'exit'){if(id==='exit')selectExit();e
 function selectExit(){exitMode.value=true;m.headerSort.value='';m.qualityGate.value='all';m.qualitySort.value='existing';if(['latency','download','service'].includes(w.sort.value))w.sort.value='region'}
 // 出口表只读缓存；真要解析要按“解析入口”或跑一次出口检测。
 watch([exitMode,()=>m.pageNodes.value],()=>{if(exitMode.value)void w.readEntries(m.pageNodes.value,false).catch(()=>{})},{immediate:true})
-const exitColumns=['线路','出口 IP','真实落地','IP 类型','CF 盾','纯净度']
+const exitColumns=['线路','出口 IP','真实落地','IP 类型','CF 盾','多源信誉']
 const exitFields=['line','ip','label','ipTag','cfChallenge','purity'] as const
 const sites=computed(()=>targets.filter(t=>w.displayTargets.value.includes(t.id)))
 // 同名节点的七天统计包含配置变化前后的历史。
@@ -188,7 +188,8 @@ function latencyReviewFor(n:NodeOption){
 }
 function reviewLatencyRound(n:NodeOption,point:TrendPoint,target:string){
  latencyReview.value={node:n,point,target}
- void openLatencyRound(n,point,target)
+ focusKey.value=key(n)
+ if(inspectorOpen.value)void openLatencyRound(n,point,target)
 }
 function onWholeHistorySelect(point:TrendPoint,target:string,node?:NodeOption){
  if(node)reviewLatencyRound(node,point,target)
@@ -365,11 +366,12 @@ function quickPlanSingle(n:NodeOption,proj:Exclude<Project,'combined'>){
  if(w.plan.value){w.plan.value.projects=[proj];w.plan.value.includeReputation=false;w.plan.value.reputationServiceIds=[]}
 }
 // Grid tracks follow the active project so each tab shows its own columns.
-const columns=computed(()=>overviewMode.value?['28px','minmax(210px,1.45fr)','minmax(168px,1.25fr)','minmax(122px,.9fr)','minmax(168px,1.25fr)','minmax(132px,.95fr)'].join(' '):exitMode.value?['28px','minmax(185px,1.55fr)','minmax(96px,1fr)','84px','minmax(92px,1fr)','80px','76px','minmax(112px,.95fr)'].join(' '):showSites.value?['28px','minmax(188px,1.45fr)','82px','96px','78px','72px',...sites.value.map(()=>'minmax(108px,1fr)')].join(' '):w.project.value==='download'?['36px','minmax(215px,1.65fr)','minmax(175px,1.15fr)','minmax(125px,.85fr)','minmax(195px,1.25fr)'].join(' '):['28px','minmax(205px,1.4fr)',...displayUnlockGroups.value.map(()=>'minmax(175px,1fr)')].join(' '))
-const overviewMinWidth=computed(()=>28+210+168+122+168+132+5*12+28)
-const latencyMinWidth=computed(()=>28+188+82+96+78+72+sites.value.length*108+(sites.value.length+5)*10+28)
+const columns=computed(()=>overviewMode.value?['28px','minmax(210px,1.45fr)','minmax(168px,1.25fr)','minmax(122px,.9fr)','minmax(168px,1.25fr)','minmax(150px,1.05fr)'].join(' '):exitMode.value?['28px','minmax(185px,1.5fr)','minmax(96px,1fr)','84px','minmax(92px,1fr)','80px','76px','minmax(165px,1.3fr)'].join(' '):showSites.value?['28px','minmax(188px,1.45fr)','82px','126px','78px','72px',...sites.value.map(()=>'minmax(108px,1fr)')].join(' '):w.project.value==='download'?['28px','minmax(215px,1.65fr)','minmax(175px,1.15fr)','minmax(125px,.85fr)','minmax(195px,1.25fr)'].join(' '):['28px','minmax(205px,1.4fr)',...displayUnlockGroups.value.map(()=>'minmax(175px,1fr)')].join(' '))
+const overviewMinWidth=computed(()=>28+210+168+122+168+150+5*12+28)
+const latencyMinWidth=computed(()=>28+188+82+126+78+72+sites.value.length*108+(sites.value.length+5)*10+28)
+const downloadMinWidth=computed(()=>28+215+175+125+195+4*10+28)
 const serviceMinWidth=computed(()=>28+205+displayUnlockGroups.value.length*175+(displayUnlockGroups.value.length+1)*10+28)
-const exitMinWidth=computed(()=>28+185+96+84+92+80+76+112+7*10+28)
+const exitMinWidth=computed(()=>28+185+96+84+92+80+76+165+7*10+28)
 const shownRange=computed(()=>{
  const total=m.visibleNodes.value.length,size=m.pageSize.value
  if(!total||!size)return `共 ${total} 条`
@@ -548,12 +550,12 @@ function keyNav(e:KeyboardEvent){
         <button class="hd-btn" :disabled="m.currentPage.value>=m.totalPages.value" aria-label="下一页" @click="changePage(1)">下一页</button>
       </div>
     </nav>
-    <div class="hd-body" :class="{'overview-mode':overviewMode,'latency-mode':showSites,'download-mode':!exitMode&&w.project.value==='download','service-mode':!exitMode&&w.project.value==='service','exit-mode':exitMode,'full-table':detailsOverlay||!inspectorOpen}" :style="{'--hd-side-w':visibleSideWidth+'px','--hd-overview-width':overviewMinWidth+'px','--hd-latency-width':latencyMinWidth+'px','--hd-service-width':serviceMinWidth+'px','--hd-exit-width':exitMinWidth+'px'}">
+    <div class="hd-body" :class="{'overview-mode':overviewMode,'latency-mode':showSites,'download-mode':!exitMode&&w.project.value==='download','service-mode':!exitMode&&w.project.value==='service','exit-mode':exitMode,'full-table':detailsOverlay||!inspectorOpen}" :style="{'--hd-side-w':visibleSideWidth+'px','--hd-overview-width':overviewMinWidth+'px','--hd-latency-width':latencyMinWidth+'px','--hd-download-width':downloadMinWidth+'px','--hd-service-width':serviceMinWidth+'px','--hd-exit-width':exitMinWidth+'px'}">
       <div ref="table" class="hd-table" role="table" aria-label="节点列表" :aria-describedby="latencyTab?readingHintId:undefined" tabindex="0" :style="{'--hd-cols':columns}" @keydown="keyNav">
         <div class="hd-table-head" role="rowgroup">
         <div class="hd-tr hd-th" role="row">
           <span role="columnheader"><input type="checkbox" :checked="allOnPage" aria-label="选择本页全部节点" @change="w.toggleAll(m.pageNodes.value)"></span>
-          <WorkbenchSortHeader column="name" label="节点"/><template v-if="exitMode"><template v-for="label in exitColumns" :key="label"><WorkbenchSortHeader v-if="label==='CF 盾'" column="cfChallenge" label="CF 盾"/><WorkbenchSortHeader v-else-if="label==='纯净度'" column="purity" label="纯净度"/><span v-else role="columnheader">{{label}}</span></template></template>
+          <WorkbenchSortHeader column="name" label="节点"/><template v-if="exitMode"><template v-for="label in exitColumns" :key="label"><WorkbenchSortHeader v-if="label==='CF 盾'" column="cfChallenge" label="CF 盾"/><WorkbenchSortHeader v-else-if="label==='多源信誉'" column="purity" label="多源信誉"/><span v-else role="columnheader">{{label}}</span></template></template>
           <template v-if="overviewMode">
             <WorkbenchSortHeader column="verdict" label="延迟总览"/>
             <WorkbenchSortHeader column="download" label="下载速度"/>
@@ -562,7 +564,7 @@ function keyNav(e:KeyboardEvent){
           </template>
           <template v-if="showSites">
             <WorkbenchSortHeader column="verdict" label="结论"/>
-            <WorkbenchSortHeader column="purity" label="纯净度"/>
+            <WorkbenchSortHeader column="purity" label="多源信誉"/>
             <WorkbenchSortHeader column="responseRate" label="7 天响应率"/>
             <WorkbenchSortHeader column="volatility" label="波动幅度"/>
             <WorkbenchSortHeader v-for="s in sites" :key="s.id" class="hd-station-head" :column="'site:'+s.id" :label="s.name"/>
@@ -616,20 +618,26 @@ function keyNav(e:KeyboardEvent){
               <span v-else class="hd-empty-pill">未测解锁</span>
             </span>
             <span role="cell" class="hd-ov-cell">
-              <span v-if="exitRows[key(n)].purity.score!==null||exitRows[key(n)].cfChallenge.tone!=='empty'||exitRows[key(n)].exitKnown" class="hd-ov-chips">
-                <span v-if="exitRows[key(n)].purity.score!==null" class="hd-ov-chip" :class="exitRows[key(n)].purity.tone" :title="exitRows[key(n)].purity.title">{{exitRows[key(n)].purity.grade}} {{exitRows[key(n)].purity.score}} · {{exitRows[key(n)].purity.typeLabel}}</span>
-                <span v-else-if="exitRows[key(n)].exitKnown" class="hd-ov-chip" :class="exitRows[key(n)].tone" :title="exitRows[key(n)].detail">{{exitRows[key(n)].label}}</span>
+              <span v-if="exitRows[key(n)].reputationSources.length||exitRows[key(n)].cfChallenge.tone!=='empty'||exitRows[key(n)].exitKnown" class="hd-ov-chips" :title="exitRows[key(n)].purity.title">
+                <span v-for="src in exitRows[key(n)].reputationSources.filter(s=>s.risk!==null).slice(0,2)" :key="src.id" class="hd-ov-chip" :class="src.tone" :title="src.detail">{{src.name}} {{src.risk}}</span>
+                <span v-if="exitRows[key(n)].reputationSources.filter(s=>s.risk!==null).length>2" class="hd-ov-chip empty">+{{exitRows[key(n)].reputationSources.filter(s=>s.risk!==null).length-2}}</span>
+                <span v-if="exitRows[key(n)].reputationIssues.length" class="hd-ov-chip warn" :title="exitRows[key(n)].reputationIssues.join(' · ')">{{exitRows[key(n)].reputationIssues[0]}}</span>
+                <span v-if="!exitRows[key(n)].reputationSources.length&&exitRows[key(n)].exitKnown" class="hd-ov-chip" :class="exitRows[key(n)].tone" :title="exitRows[key(n)].detail">{{exitRows[key(n)].label}}</span>
                 <span v-if="exitRows[key(n)].cfChallenge.tone!=='empty'" class="hd-ov-chip" :class="exitRows[key(n)].cfChallenge.tone" :title="exitRows[key(n)].cfChallenge.detail">CF {{exitRows[key(n)].cfChallenge.shortLabel}}</span>
               </span>
               <span v-else class="hd-empty-pill">未测出口</span>
             </span>
           </template>
-          <template v-if="exitMode"><template v-for="field in exitFields" :key="field"><span v-if="field==='line'" role="cell" class="hd-exit-cell hd-line-cell"><span class="hd-line-badge" :title="exitRows[key(n)].line">{{exitRows[key(n)].line}}</span><span v-if="exitRows[key(n)].route" class="hd-route-tag" :class="exitRows[key(n)].routeTone" :title="exitRows[key(n)].routeTitle">{{exitRows[key(n)].route}}</span></span><span v-else-if="field==='ip'" role="cell" class="hd-exit-cell"><code v-if="exitRows[key(n)].ip&&exitRows[key(n)].ip!=='—'" class="hd-ip-code">{{exitRows[key(n)].ip}}</code><span v-else class="hd-empty-pill">待查询</span></span><span v-else-if="field==='ipTag'" role="cell" class="hd-exit-cell hd-ip-cell"><span class="hd-ip-tag" :class="exitRows[key(n)].ipKind.tone" :title="'IP 类型：'+exitRows[key(n)].ipKind.detail">{{exitRows[key(n)].ipTag}}</span></span><span v-else-if="field==='cfChallenge'" role="cell" class="hd-exit-cell hd-cf-cell"><span class="hd-cf-tag" :class="exitRows[key(n)].cfChallenge.tone" :title="exitRows[key(n)].cfChallenge.label+' · '+exitRows[key(n)].cfChallenge.detail">{{exitRows[key(n)].cfChallenge.shortLabel}}</span></span><span v-else-if="field==='purity'" role="cell" class="hd-exit-cell hd-purity-cell" :class="exitRows[key(n)].purity.tone" :title="exitRows[key(n)].purity.title+(exitRows[key(n)].riskLabel!=='未测'?' · 风险峰值 '+exitRows[key(n)].riskLabel:'')"><template v-if="exitRows[key(n)].purity.score!==null"><span class="hd-purity-top"><b class="hd-purity-badge" :class="exitRows[key(n)].purity.tone">{{exitRows[key(n)].purity.grade}} {{exitRows[key(n)].purity.score}}</b></span><span class="hd-purity-bar" aria-hidden="true"><i :class="exitRows[key(n)].purity.tone" :style="{width:Math.max(8,exitRows[key(n)].purity.score!)+'%'}"/></span><small v-if="exitRows[key(n)].riskLabel!=='未测'" class="hd-exit-purity-sub">{{exitRows[key(n)].riskLabel}}</small></template><span v-else-if="exitRows[key(n)].riskLabel!=='未测'" class="hd-exit-pill" :class="exitRows[key(n)].riskTone">{{exitRows[key(n)].riskLabel}}</span><span v-else class="hd-empty-pill">未测</span></span><span v-else role="cell" class="hd-exit-cell"><span class="hd-exit-pill" :class="exitRows[key(n)].tone" :title="exitRows[key(n)].detail">{{exitRows[key(n)].label==='未测'?'待检测':exitRows[key(n)].label}}</span></span></template></template>
+          <template v-if="exitMode"><template v-for="field in exitFields" :key="field"><span v-if="field==='line'" role="cell" class="hd-exit-cell hd-line-cell"><span class="hd-line-badge" :title="exitRows[key(n)].line">{{exitRows[key(n)].line}}</span><span v-if="exitRows[key(n)].route" class="hd-route-tag" :class="exitRows[key(n)].routeTone" :title="exitRows[key(n)].routeTitle">{{exitRows[key(n)].route}}</span></span><span v-else-if="field==='ip'" role="cell" class="hd-exit-cell"><code v-if="exitRows[key(n)].ip&&exitRows[key(n)].ip!=='—'" class="hd-ip-code">{{exitRows[key(n)].ip}}</code><span v-else class="hd-empty-pill">待查询</span></span><span v-else-if="field==='ipTag'" role="cell" class="hd-exit-cell hd-ip-cell"><span class="hd-ip-tag" :class="exitRows[key(n)].ipKind.tone" :title="'IP 类型：'+exitRows[key(n)].ipKind.detail">{{exitRows[key(n)].ipTag}}</span></span><span v-else-if="field==='cfChallenge'" role="cell" class="hd-exit-cell hd-cf-cell"><span class="hd-cf-tag" :class="exitRows[key(n)].cfChallenge.tone" :title="exitRows[key(n)].cfChallenge.label+' · '+exitRows[key(n)].cfChallenge.detail">{{exitRows[key(n)].cfChallenge.shortLabel}}</span></span><span v-else-if="field==='purity'" role="cell" class="hd-exit-cell hd-purity-cell" :class="exitRows[key(n)].purity.tone" :title="exitRows[key(n)].purity.title"><template v-if="exitRows[key(n)].reputationSources.length||exitRows[key(n)].reputationIssues.length"><span class="hd-rep-grid"><span v-for="src in exitRows[key(n)].reputationSources.filter(s=>s.risk!==null)" :key="src.id" class="hd-rep-chip" :class="src.tone" :title="src.detail"><b>{{src.name}}</b><i>{{src.risk}}</i></span><span v-for="iss in exitRows[key(n)].reputationIssues.slice(0,2)" :key="iss" class="hd-rep-chip issue" :title="exitRows[key(n)].reputationIssues.join(' · ')">{{iss}}</span></span><small v-if="exitRows[key(n)].purity.divergent" class="hd-rep-note warn">多站分歧大 · 风险分越低越净</small><small v-else-if="exitRows[key(n)].purity.singleFallback" class="hd-rep-note warn">仅单站返回 · 不可直接判纯净</small><small v-else-if="exitRows[key(n)].riskLabel.startsWith('机器')" class="hd-rep-note">{{exitRows[key(n)].riskLabel}}</small></template><span v-else class="hd-empty-pill">未测</span></span><span v-else role="cell" class="hd-exit-cell"><span class="hd-exit-pill" :class="exitRows[key(n)].tone" :title="exitRows[key(n)].detail">{{exitRows[key(n)].label==='未测'?'待检测':exitRows[key(n)].label}}</span></span></template></template>
           <span v-if="showVerdict&&!overviewMode" role="cell"><b class="hd-pill" :class="[verdicts[key(n)].tone,{'partial-sites':verdicts[key(n)].label.startsWith('部分站点不通')}]">{{verdicts[key(n)].label}}</b></span>
           <span v-if="showVerdict&&!overviewMode" role="cell" class="hd-num hd-purity-cell" :class="exitRows[key(n)].purity.tone" :title="exitRows[key(n)].purity.title">
-            <template v-if="exitRows[key(n)].purity.score!==null">
-              <span class="hd-purity-top"><b class="hd-purity-badge" :class="exitRows[key(n)].purity.tone">{{exitRows[key(n)].purity.grade}} {{exitRows[key(n)].purity.score}}</b><small class="hd-purity-type">{{exitRows[key(n)].purity.typeLabel}}</small></span>
-              <span class="hd-purity-bar" aria-hidden="true"><i :class="exitRows[key(n)].purity.tone" :style="{width:Math.max(8,exitRows[key(n)].purity.score!)+'%'}"/></span>
+            <template v-if="exitRows[key(n)].reputationSources.length||exitRows[key(n)].reputationIssues.length">
+              <span class="hd-rep-grid compact">
+                <span v-for="src in exitRows[key(n)].reputationSources.filter(s=>s.risk!==null).slice(0,2)" :key="src.id" class="hd-rep-chip" :class="src.tone" :title="src.detail"><b>{{src.name}}</b><i>{{src.risk}}</i></span>
+                <span v-if="exitRows[key(n)].reputationSources.filter(s=>s.risk!==null).length>2" class="hd-rep-chip empty">+{{exitRows[key(n)].reputationSources.filter(s=>s.risk!==null).length-2}}</span>
+                <span v-if="exitRows[key(n)].reputationIssues.length" class="hd-rep-chip issue">{{exitRows[key(n)].reputationIssues[0]}}</span>
+              </span>
+              <small v-if="exitRows[key(n)].purity.typeLabel&&exitRows[key(n)].purity.typeLabel!=='未知'" class="hd-purity-type">{{exitRows[key(n)].purity.typeLabel}}{{exitRows[key(n)].purity.sourceCount===1?' · 单源':''}}</small>
             </template>
             <template v-else>—</template>
           </span>

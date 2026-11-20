@@ -144,18 +144,19 @@
 .hd-workbench-layout .hd-column-sort:hover{text-decoration:underline;text-underline-offset:3px}
 .hd-workbench-layout .hd-column-sort:focus-visible{outline:2px solid var(--hd-accent);outline-offset:2px;border-radius:3px}
 .hd-workbench-layout .latency-mode .hd-tr{min-width:var(--hd-latency-width);background:var(--hd-panel)}
+.hd-workbench-layout .download-mode .hd-tr{min-width:var(--hd-download-width);background:var(--hd-panel)}
 .hd-workbench-layout .service-mode .hd-tr{min-width:var(--hd-service-width);background:var(--hd-panel)}
 .hd-workbench-layout .exit-mode .hd-tr{min-width:var(--hd-exit-width);background:var(--hd-panel)}
 .hd-workbench-layout .latency-mode .hd-tr:not(.hd-th){padding-block:7px}
-.hd-workbench-layout :is(.latency-mode,.service-mode,.exit-mode) .hd-tr:not(.hd-th):hover{background:color-mix(in srgb,var(--hd-accent) 5%,var(--hd-panel))}
-.hd-workbench-layout :is(.latency-mode,.service-mode,.exit-mode) .hd-tr.focus{background:color-mix(in srgb,var(--hd-accent) 9%,var(--hd-panel))}
-.hd-workbench-layout :is(.latency-mode,.service-mode,.exit-mode) .hd-tr.selected{background:color-mix(in srgb,var(--hd-accent) 11%,var(--hd-panel))}
-.hd-workbench-layout :is(.latency-mode,.service-mode,.exit-mode) .hd-tr.clash-using{background:color-mix(in srgb,var(--hd-good) 9%,var(--hd-panel))}
-.hd-workbench-layout :is(.latency-mode,.service-mode,.exit-mode) .hd-th{background:var(--hd-panel-2)}
-.hd-workbench-layout :is(.latency-mode,.service-mode,.exit-mode) .hd-tr>:first-child,.hd-workbench-layout :is(.latency-mode,.service-mode,.exit-mode) .hd-tr>:nth-child(2){position:sticky;z-index:2;background:inherit;align-self:stretch;display:flex;align-items:center}
-.hd-workbench-layout :is(.latency-mode,.service-mode,.exit-mode) .hd-tr>:first-child{left:0;margin-left:-14px;padding-left:14px;padding-right:10px;width:28px;box-sizing:content-box}
-.hd-workbench-layout :is(.latency-mode,.service-mode,.exit-mode) .hd-tr>:nth-child(2){left:42px;margin-left:-10px;padding-left:10px;padding-right:10px;border-right:1px solid color-mix(in srgb,var(--hd-line) 75%,transparent)}
-.hd-workbench-layout :is(.latency-mode,.service-mode,.exit-mode) .hd-table-head .hd-th>:first-child,.hd-workbench-layout :is(.latency-mode,.service-mode,.exit-mode) .hd-table-head .hd-th>:nth-child(2){z-index:4;transform:translateX(var(--hd-horizontal-offset,0px))}
+.hd-workbench-layout :is(.latency-mode,.download-mode,.service-mode,.exit-mode) .hd-tr:not(.hd-th):hover{background:color-mix(in srgb,var(--hd-accent) 5%,var(--hd-panel))}
+.hd-workbench-layout :is(.latency-mode,.download-mode,.service-mode,.exit-mode) .hd-tr.focus{background:color-mix(in srgb,var(--hd-accent) 9%,var(--hd-panel))}
+.hd-workbench-layout :is(.latency-mode,.download-mode,.service-mode,.exit-mode) .hd-tr.selected{background:color-mix(in srgb,var(--hd-accent) 11%,var(--hd-panel))}
+.hd-workbench-layout :is(.latency-mode,.download-mode,.service-mode,.exit-mode) .hd-tr.clash-using{background:color-mix(in srgb,var(--hd-good) 9%,var(--hd-panel))}
+.hd-workbench-layout :is(.latency-mode,.download-mode,.service-mode,.exit-mode) .hd-th{background:var(--hd-panel-2)}
+.hd-workbench-layout :is(.latency-mode,.download-mode,.service-mode,.exit-mode) .hd-tr>:first-child,.hd-workbench-layout :is(.latency-mode,.download-mode,.service-mode,.exit-mode) .hd-tr>:nth-child(2){position:sticky;z-index:2;background:inherit;align-self:stretch;display:flex;align-items:center}
+.hd-workbench-layout :is(.latency-mode,.download-mode,.service-mode,.exit-mode) .hd-tr>:first-child{left:0;margin-left:-14px;padding-left:14px;padding-right:10px;width:28px;box-sizing:content-box}
+.hd-workbench-layout :is(.latency-mode,.download-mode,.service-mode,.exit-mode) .hd-tr>:nth-child(2){left:42px;margin-left:-10px;padding-left:10px;padding-right:10px;border-right:1px solid color-mix(in srgb,var(--hd-line) 75%,transparent)}
+.hd-workbench-layout :is(.latency-mode,.download-mode,.service-mode,.exit-mode) .hd-table-head .hd-th>:first-child,.hd-workbench-layout :is(.latency-mode,.download-mode,.service-mode,.exit-mode) .hd-table-head .hd-th>:nth-child(2){z-index:4;transform:translateX(var(--hd-horizontal-offset,0px))}
 @media(min-width:1200px){.hd-workbench-layout .hd-selection{left:294px;right:24px}.hd-workbench-layout.sidebar-collapsed .hd-selection{left:24px}}
 @media(max-width:1199px){
  .hd-sidebar-collapse-btn{display:none}

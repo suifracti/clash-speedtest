@@ -90,9 +90,9 @@ var catalog = []Rule{
 	},
 	{
 		ServiceID: "antigravity", Name: "Google Antigravity 可用性", RuleVersion: 7,
-		Category: "AI 服务", Region: "全球", ResultKind: "account_availability", Description: "Google Antigravity (反重力) AI 辅助模型可用性探测。先查 Google 内部地区判定再发真实模型生成请求，不选旧版 2.5 模型，区分账号、地区、策略拒绝与网络故障。",
+		Category: "AI 服务", Region: "全球", ResultKind: "account_availability", Description: "Google Antigravity (反重力) AI 辅助模型可用性探测。先查 Google 内部地区判定再统一使用 gemini-3.8-flash-low（3.8-flash 优先，不选旧版 2.5）发起真实生成，区分账号、地区、策略拒绝与网络故障。",
 		TargetURL: antigravityBase + "streamGenerateContent?alt=sse", Method: http.MethodPost,
-		SuccessCriterion: "使用已绑定 Google 凭据，经所选节点查询账号项目、模型目录（优先 IDE/新版 Flash 模型，不用旧 2.5）与 Google 内部地区判定（fetchUserInfo）；CN/HK/MO 当场止步并判地区拒绝，通过后再发真实模型生成请求并核查正文/拦截标记。另有 1 次 Cloudflare 出口观察",
+		SuccessCriterion: "使用已绑定 Google 凭据，经所选节点查询账号项目、模型目录（统一优先 gemini-3.8-flash-low / 3.8-flash 系列，不用旧 2.5）与 Google 内部地区判定（fetchUserInfo）；CN/HK/MO 当场止步并判地区拒绝，通过后再发真实模型生成请求并核查正文/拦截标记。另有 1 次 Cloudflare 出口观察",
 		RedirectPolicy:   "do_not_follow", TimeoutSeconds: int(DefaultTimeout.Seconds()), MaximumBodyBytes: MaximumResponseBytes,
 	},
 	{
@@ -407,6 +407,8 @@ func Catalog() []Rule {
 	}
 	byID["ping0_ipv4"] = ping0FamilyRule("IPv4")
 	byID["ping0_ipv6"] = ping0FamilyRule("IPv6")
+	byID["ipquery_ip_quality"] = ipQueryRule()
+	byID["iplogs_ip_quality"] = ipLogsRule()
 	byID["google_region"] = googleRegionRule()
 	byID["cloudflare_challenge"] = cloudflareChallengeRule()
 
@@ -419,7 +421,7 @@ func Catalog() []Rule {
 		"abema_unlock", "unext_unlock", "dmm_unlock", "dlsite_unlock", "radiko_unlock", "hulu_jp_unlock", "fod_unlock",
 		// IP 信誉与纯净度：出口地址与机房 -> IP 风险与纯净度 -> 地区与人机验证
 		"cloudflare_trace", "exit_ipv4", "exit_ipv6",
-		"ippure_ip_quality", "ping0_ipv4", "ping0_ipv6",
+		"ippure_ip_quality", "ping0_ipv4", "ping0_ipv6", "ipquery_ip_quality", "iplogs_ip_quality",
 		"google_region", "cloudflare_challenge",
 	}
 	result := make([]Rule, 0, len(byID))
@@ -445,6 +447,12 @@ func RuleFor(serviceID string) (Rule, bool) {
 	}
 	if serviceID == "cloudflare_challenge" {
 		return cloudflareChallengeRule(), true
+	}
+	if serviceID == "ipquery_ip_quality" {
+		return ipQueryRule(), true
+	}
+	if serviceID == "iplogs_ip_quality" {
+		return ipLogsRule(), true
 	}
 	for _, rule := range append(aiUnlockRules(), regionUnlockRules()...) {
 		if rule.ServiceID == serviceID {
@@ -1062,6 +1070,10 @@ func (c Checker) checkOnce(ctx context.Context, client *http.Client, node monito
 		return checkPing0(ctx, client, rule, startedAt)
 	case "ippure_ip_quality":
 		return checkIPPure(ctx, client, rule, startedAt)
+	case "ipquery_ip_quality":
+		return checkIPQuery(ctx, client, rule, startedAt)
+	case "iplogs_ip_quality":
+		return checkIPLogs(ctx, client, rule, startedAt)
 	case "netflix_unlock", netflixIPv4Service:
 		return checkNetflix(ctx, client, rule, startedAt)
 	case "abema_unlock":

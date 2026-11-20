@@ -16,12 +16,14 @@ export interface IpKind {
  detail:string;measured:boolean;
 }
 
-const providerOrder=['IPPure','Ping0','IPOK']
+const providerOrder=['IPPure','Ping0','IPQuery','IPLogs','IPOK']
 const typeLabel:Record<IpType,string>={idc:'机房',residential:'家宽',mobile:'移动',unknown:'未知'}
 const originLabel:Record<IpOrigin,string>={native:'原生',broadcast:'广播',unknown:'未知'}
 const sourceIds:[string,string[]][]=[
  ['IPPure',['ippure_ip_quality']],
  ['Ping0',['ping0_ipv4','ping0_ipv6','ping0_ip_quality']],
+ ['IPQuery',['ipquery_ip_quality']],
+ ['IPLogs',['iplogs_ip_quality']],
  ['IPOK',['ipok_ipv4','ipok_ipv6']],
 ]
 

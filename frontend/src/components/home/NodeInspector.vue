@@ -8,7 +8,8 @@ import {manualLatencyPoint,monitorLatencyPoints,monitorHTTPServices,type TrendPo
 import Icon from '../Icon.vue'
 import HealthBars from '../HealthBars.vue'
 import UnlockInspector from './UnlockInspector.vue'
-import {unlockSummary} from '../../unlock'
+import {unlockSummaryFor} from '../../unlock'
+import {displayUnlockGroups} from '../../unlockGroupStore'
 import InspectorLatency from './InspectorLatency.vue'
 import {serviceIsProfile} from '../../sharedResults'
 import {exitLanding} from '../../exitLanding'
@@ -57,19 +58,36 @@ async function confirmClashSelection(){
 const reportFocus=computed(()=>w.latencyReportFocus.value?.nodeKey===key(props.node)?w.latencyReportFocus.value:undefined)
 const latencyFocus=ref<import('../../latencyHistory').LatencySeries[]|null>(null)
 const sites=computed(()=>targets.filter(t=>w.displayTargets.value.includes(t.id)))
-// 检查器跟着项目标签变化：只展开当前项目，其余项目收成底部一行摘要，点一下就切过去。
+// 检查器默认跟随当前工作台项目，也可在右侧抽屉内独立切换（全部/延迟/下载/解锁/出口）而不切走左侧列表。
+type InspectorSection='combined'|'latency'|'download'|'service'|'exit'
 const project=computed(()=>w.project.value)
-const shows=(p:Project)=>!props.exitOnly&&(project.value==='combined'||project.value===p)
+const activeSection=ref<InspectorSection>(props.exitOnly?'exit':w.project.value)
+watch([()=>props.exitOnly,()=>w.project.value],([ex,p])=>{activeSection.value=ex?'exit':p})
+const showExit=computed(()=>activeSection.value==='exit'||activeSection.value==='combined')
+const shows=(p:Project)=>activeSection.value==='combined'||activeSection.value===p
 const landing=computed(()=>exitLanding(props.node,attempts.value))
 const nodeEntry=computed(()=>w.entryFor(props.node))
 const exitPath=computed(()=>pathSteps(w.localPosition.value||undefined,nodeEntry.value,landing.value.consensusRegion,landing.value.org))
 const pathNotice=computed(()=>mainlandNotice(entryCountry(nodeEntry.value),w.localPosition.value?.country_code))
 // 打开详情只读入口缓存；解析需要明确点击，不在浏览节点时补发 DNS。
-watch(()=>[key(props.node),props.exitOnly],()=>{if(props.exitOnly)void w.readEntries([props.node],false)},{immediate:true})
+watch(()=>[key(props.node),activeSection.value],()=>{if(activeSection.value==='exit')void w.readEntries([props.node],false)},{immediate:true})
 const latencyVerdictValue=computed(()=>latencyVerdict((latencyFocus.value||latencySeries.value).map(s=>s.points.at(-1)),stableLatency(latencyFocus.value||latencySeries.value),m.weeklyStats.value[key(props.node)]?.allOld?null:m.weeklyStats.value[key(props.node)]?.all.responseRate,(latencyFocus.value||latencySeries.value).map(s=>s.name)))
-const serviceVerdict=computed(()=>unlockSummary(w.catalog.value,id=>m.shownService(props.node,id),w.nodeUnlockRegion(props.node),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions,landing.value.ipKind.type))
+const serviceVerdict=computed(()=>unlockSummaryFor(displayUnlockGroups.value,w.catalog.value,id=>m.shownService(props.node,id),w.nodeUnlockRegion(props.node),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions,landing.value.ipKind.type))
 const downloadVerdict=computed(()=>({tone:m.downloadMetricTone(props.node)||'empty',label:m.downloadMetric(props.node),detail:m.downloadMetricContext(props.node)}))
-const verdict=computed(()=>props.exitOnly?{tone:landing.value.tone,label:landing.value.label,detail:landing.value.detail}:project.value==='download'?downloadVerdict.value:project.value==='service'?serviceVerdict.value:latencyVerdictValue.value)
+const exitVerdict=computed(()=>({tone:landing.value.purity.tone!=='empty'?landing.value.purity.tone:landing.value.tone,label:landing.value.label,detail:landing.value.purity.title||landing.value.detail}))
+const inspectorTabs=computed(()=>[
+ {id:'combined' as const,label:'全部',tone:'empty',title:'同屏查看该节点延迟、下载、解锁与出口'},
+ {id:'latency' as const,label:'延迟',tone:latencyVerdictValue.value.tone,title:'延迟：'+latencyVerdictValue.value.label+' · '+latencyVerdictValue.value.detail},
+ {id:'download' as const,label:'下载',tone:downloadVerdict.value.tone,title:'下载：'+downloadVerdict.value.label},
+ {id:'service' as const,label:'解锁',tone:serviceVerdict.value.tone,title:'解锁：'+serviceVerdict.value.label+' · '+serviceVerdict.value.detail},
+ {id:'exit' as const,label:'出口',tone:exitVerdict.value.tone,title:'出口与信誉：'+exitVerdict.value.detail},
+])
+const verdict=computed(()=>activeSection.value==='exit'?{tone:landing.value.tone,label:landing.value.label,detail:landing.value.detail}:activeSection.value==='download'?downloadVerdict.value:activeSection.value==='service'?serviceVerdict.value:latencyVerdictValue.value)
+const exitHistoryServiceId=computed(()=>{
+ const order=['ippure_ip_quality','ping0_ipv4','ipquery_ip_quality','iplogs_ip_quality','cloudflare_challenge','ping0_ipv6','cloudflare_trace']
+ return order.find(id=>attempts.value.some(a=>(a.service_id||a.rule.service_id)===id))||'ippure_ip_quality'
+})
+function selectInspectorTab(id:InspectorSection){activeSection.value=id;if(m.hoverNode.value&&key(m.hoverNode.value)===key(props.node))m.closeHover()}
 const others=computed(()=>!props.exitOnly&&project.value==='combined'?[]:([
  {id:'latency' as const,name:'延迟',v:latencyVerdictValue.value},
  {id:'download' as const,name:'下载',v:downloadVerdict.value},
@@ -158,7 +176,7 @@ function httpMetric(id:string){const p=m.httpPoints(props.node,id).at(-1);return
 function run(){if(props.readOnly)return;m.closeHover();props.exitOnly?w.openReputationPlan([props.node]):w.openPlan([props.node])}
 </script>
 <template>
-  <section ref="inspector" class="hd-inspector" :data-project="exitOnly?'exit':project" :aria-label="nodeDisplayName(node)+' 详情'">
+  <section ref="inspector" class="hd-inspector" :data-project="activeSection" :aria-label="nodeDisplayName(node)+' 详情'">
     <div class="hd-ins-context">
     <slot name="navigation"/>
     <header class="hd-ins-head">
@@ -173,23 +191,29 @@ function run(){if(props.readOnly)return;m.closeHover();props.exitOnly?w.openRepu
         <button class="hd-btn ghost icon hd-ins-collapse" title="收起详情，切换全宽列表" aria-label="收起详情面板" @click="emit('collapse')"><Icon name="close"/></button>
       </div>
     </header>
+    <nav class="hd-ins-tabs" role="tablist" aria-label="详情模块切换">
+      <button v-for="tab in inspectorTabs" :key="tab.id" type="button" role="tab" :aria-selected="activeSection===tab.id" :class="{active:activeSection===tab.id}" :title="tab.title" @click="selectInspectorTab(tab.id)">
+        <i v-if="tab.id!=='combined'" class="hd-ins-tab-dot" :class="tab.tone" aria-hidden="true"/>
+        <span>{{tab.label}}</span>
+      </button>
+    </nav>
     </div>
     <p v-if="contextNotice" class="hd-reader-notice" :class="{warn:readOnly}" role="status">{{contextNotice}}</p>
-    <div v-if="!exitOnly" class="hd-ins-verdict" :class="verdict.tone"><strong>{{verdict.label}}</strong><span>{{verdict.detail}}</span></div>
-    <nav v-if="!exitOnly&&project==='combined'" class="hd-ins-quick-grid" aria-label="跳到节点检测记录">
+    <div v-if="activeSection!=='exit'" class="hd-ins-verdict" :class="verdict.tone"><strong>{{verdict.label}}</strong><span>{{verdict.detail}}</span></div>
+    <nav v-if="activeSection==='combined'" class="hd-ins-quick-grid" aria-label="跳到节点检测记录">
       <button class="hd-ins-quick-cell" :class="latencyVerdictValue.tone" @click="jumpTo('latency')"><span>延迟</span><strong>{{latencyVerdictValue.label}}</strong></button>
       <button class="hd-ins-quick-cell" :class="downloadVerdict.tone" @click="jumpTo('download')"><span>下载</span><strong>{{downloadVerdict.label}}</strong></button>
       <button class="hd-ins-quick-cell" :class="serviceVerdict.tone" @click="jumpTo('services-block')"><span>解锁</span><strong>{{serviceVerdict.label}}</strong></button>
-      <button class="hd-ins-quick-cell" :class="landing.purity.tone" @click="jumpTo('exit')"><span>纯净度</span><strong>{{landing.purity.score!==null?`${landing.purity.grade} ${landing.purity.score}`:'—'}}</strong></button>
+      <button class="hd-ins-quick-cell" :class="landing.purity.tone" @click="jumpTo('exit')"><span>多源信誉</span><strong>{{landing.purity.sourceCount?`${landing.purity.sourceCount} 站已测`:'—'}}</strong></button>
     </nav>
 
-    <div v-if="exitOnly||project==='combined'" class="hd-ins-block hd-exit">
-      <p v-if="exitOnly" class="hd-entry-read"><span>入口{{nodeEntry?.addresses?.length?'已有缓存':'尚未解析'}}<small>解析入口不经过节点</small></span><button class="hd-btn" :disabled="readOnly||w.entryPending.value[key(node)]" @click="!readOnly&&w.resolveEntries([node])">{{w.entryPending.value[key(node)]?'读取中…':'解析入口'}}</button></p>
-      <p v-if="exitOnly&&w.entryErrors.value[key(node)]" class="bad" role="alert">{{w.entryErrors.value[key(node)]}}</p>
+    <div v-if="showExit" class="hd-ins-block hd-exit">
+      <p v-if="activeSection==='exit'" class="hd-entry-read"><span>入口{{nodeEntry?.addresses?.length?'已有缓存':'尚未解析'}}<small>解析入口不经过节点</small></span><button class="hd-btn" :disabled="readOnly||w.entryPending.value[key(node)]" @click="!readOnly&&w.resolveEntries([node])">{{w.entryPending.value[key(node)]?'读取中…':'解析入口'}}</button></p>
+      <p v-if="activeSection==='exit'&&w.entryErrors.value[key(node)]" class="bad" role="alert">{{w.entryErrors.value[key(node)]}}</p>
       <p v-if="!hasExitData" class="exit-unqueried">出口与信誉：未查询 <button class="hd-btn" :disabled="readOnly" @click="!readOnly&&w.openReputationPlan([node])">查询</button></p>
       <template v-else>
-      <p class="exit-purity" :title="landing.purity.title"><span class="exit-purity-main"><b v-if="landing.purity.score!==null" class="hd-purity-badge" :class="landing.purity.tone">{{landing.purity.grade}} {{landing.purity.score}}</b><span>{{landing.purity.summary}}</span></span><button class="hd-btn" :disabled="readOnly" @click="!readOnly&&w.openReputationPlan([node])">查询</button></p>
-      <ol v-if="exitOnly||nodeEntry" class="exit-path" aria-label="线路路径">
+      <p class="exit-purity" :title="landing.purity.title"><span class="exit-purity-main"><span v-if="landing.reputationSources.length||landing.reputationIssues.length" class="hd-rep-grid"><span v-for="src in landing.reputationSources.filter(s=>s.risk!==null)" :key="src.id" class="hd-rep-chip" :class="src.tone" :title="src.detail"><b>{{src.name}}</b><i>{{src.risk}}</i></span><span v-for="iss in landing.reputationIssues" :key="iss" class="hd-rep-chip issue">{{iss}}</span></span><span class="exit-purity-summary">{{landing.purity.summary}}</span></span><span class="exit-purity-ops"><button class="hd-link" type="button" title="查看出口与信誉历次检测记录" @click="openHistory('service',w.displayTarget.value,exitHistoryServiceId)">历史</button><button class="hd-btn" :disabled="readOnly" @click="!readOnly&&w.openReputationPlan([node])">查询</button></span></p>
+      <ol v-if="activeSection==='exit'||nodeEntry" class="exit-path" aria-label="线路路径">
         <li v-for="(step,index) in exitPath" :key="step.id"><small>{{step.label}}</small><span :title="step.id==='exit'&&!landing.exitKnown?'出口还没检测，这里按节点名称推断':''">{{step.value}}</span><i v-if="index<exitPath.length-1" aria-hidden="true">→</i></li>
       </ol>
       <p v-if="pathNotice" class="exit-path-notice">{{pathNotice}}</p>
@@ -221,10 +245,10 @@ function run(){if(props.readOnly)return;m.closeHover();props.exitOnly?w.openRepu
     </div>
 
     <div v-if="shows('service')" class="hd-ins-block hd-services-block">
-      <h3>解锁检测</h3><UnlockInspector :node="node" :ip-type="landing.ipKind.type"/>
+      <h3>解锁检测</h3><UnlockInspector :node="node" :ip-type="landing.ipKind.type" @history="openHistory('service',w.displayTarget.value,$event)"/>
     </div>
 
-    <div v-if="!exitOnly&&(showRound||showHistory)" class="hd-ins-detail" @mouseenter="m.keepRound" @mouseleave="m.leaveRound" @keydown.esc.stop="m.closeHover">
+    <div v-if="showRound||showHistory" class="hd-ins-detail" @mouseenter="m.keepRound" @mouseleave="m.leaveRound" @keydown.esc.stop="m.closeHover">
       <header><strong>{{showRound?'这一轮的数据':detailTitle}}</strong>
         <span>
           <button v-if="showRound" class="hd-link" @click="m.expandHistory">看完整走势</button>
@@ -273,7 +297,13 @@ function run(){if(props.readOnly)return;m.closeHover();props.exitOnly?w.openRepu
 </template>
 
 <style scoped>
-.exit-purity{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px}.exit-purity-main{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0}.exit-purity-main>span{min-width:0;overflow-wrap:anywhere}
+.hd-ins-tabs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;padding:3px;margin-top:8px;border:1px solid var(--hd-line);border-radius:10px;background:var(--hd-panel-2)}
+.hd-ins-tabs button{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 6px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--hd-muted);font-size:11.5px;font-weight:550;cursor:pointer;white-space:nowrap;transition:background .12s,color .12s,border-color .12s}
+.hd-ins-tabs button:hover{color:var(--hd-text);background:var(--cst-hover)}
+.hd-ins-tabs button.active{background:var(--hd-panel);border-color:color-mix(in srgb,var(--hd-accent) 32%,var(--hd-line));color:var(--hd-accent);font-weight:650;box-shadow:var(--cst-shadow-xs)}
+.hd-ins-tab-dot{width:6px;height:6px;border-radius:50%;flex:none;background:var(--hd-line)}
+.hd-ins-tab-dot.good{background:var(--hd-good)}.hd-ins-tab-dot.warn{background:var(--hd-warn)}.hd-ins-tab-dot.bad{background:var(--hd-bad)}
+.exit-purity{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;font-size:12px}.exit-purity-main{display:flex;flex-direction:column;gap:5px;min-width:0;flex:1}.exit-purity-summary{color:var(--hd-muted);font-size:11px;line-height:1.45;overflow-wrap:anywhere}.exit-purity-ops{display:inline-flex;align-items:center;gap:8px;flex:none}
 .exit-unqueried{display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--hd-muted);font-size:12px}
 .hd-inspector[data-project="exit"] .hd-ins-verdict{display:block}.hd-inspector[data-project="exit"] .hd-ins-verdict strong{font-size:14px}.landing-sources{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:6px}.landing-sources span{font-size:10px;line-height:1.5;padding:2px 5px;border:1px solid var(--hd-line);border-radius:4px;color:var(--hd-muted);background:var(--hd-panel);white-space:nowrap}
 .exit-path{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:2px 0 8px;padding:0;list-style:none}

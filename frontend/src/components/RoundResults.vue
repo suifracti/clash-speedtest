@@ -17,6 +17,7 @@ function notes(group:SampleGroup){
  for(const sample of group.samples){if(sample.note){const code=sample.note.match(/HTTP\s*(\d{3})/)?.[1],text=code?`HTTP ${code}（连通正常）`:sample.note;entries.set(text,(entries.get(text)||0)+1)}}
  return [...entries].map(([text,count])=>`${count} 次${count===group.samples.length?'均为':'为'} ${text}`)
 }
+function sampleHttpCode(note?:string){return note?.match(/HTTP\s*(\d{3})/)?.[1]||''}
 </script>
 <template>
   <section class="round-results" aria-label="本轮测试数据">
@@ -30,10 +31,17 @@ function notes(group:SampleGroup){
     <div class="round-target-list">
       <article v-for="group in groups" :key="group.id" class="round-target">
         <header><strong :title="group.target">{{group.name}}</strong><span>中位数 <b>{{group.value===null?'—':group.value.toFixed(0)+' ms'}}</b></span><small>{{group.samples.filter(s=>s.value!==null).length}}/{{group.samples.length}} 成功</small></header>
-        <div class="round-result-grid"><div v-for="sample in group.samples" :key="sample.id" class="round-result" :class="sample.tone" :title="sample.description"><span>{{sample.label}}</span><strong>{{sample.value===null?(sample.executionState==='cancelled'?'已取消':sample.tone==='empty'?'未执行':latencyFailureReason(sample.error||'')):sample.value.toFixed(0)+' ms'}}</strong></div></div>
+        <div class="round-result-grid"><div v-for="sample in group.samples" :key="sample.id" class="round-result" :class="[sample.tone,{'has-http-note':!!sampleHttpCode(sample.note)}]" :title="sample.description"><span>{{sample.label}}<b v-if="sampleHttpCode(sample.note)" class="round-http-badge">{{sampleHttpCode(sample.note)}}</b></span><strong>{{sample.value===null?(sample.executionState==='cancelled'?'已取消':sample.tone==='empty'?'未执行':latencyFailureReason(sample.error||'')):sample.value.toFixed(0)+' ms'}}</strong></div></div>
         <p v-for="note in notes(group)" :key="note" class="small muted round-note">{{note}}</p>
         <p v-for="failure in failures(group)" :key="failure.error" class="round-failure" :class="group.samples.every(s=>s.executionState==='cancelled')?'muted':'bad'">{{failure.labels}}：{{failure.error}}</p>
       </article>
     </div>
   </section>
 </template>
+<style scoped>
+.round-target{padding:10px 12px;border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel-2);margin-top:8px}
+.round-result.has-http-note{border-color:color-mix(in srgb,var(--cst-warn,#b45309) 42%,var(--cst-line));background:color-mix(in srgb,var(--cst-warn,#b45309) 8%,var(--cst-panel))}
+.round-result>span{display:inline-flex;align-items:center;gap:4px}
+.round-http-badge{display:inline-flex;align-items:center;padding:0 5px;border-radius:999px;background:var(--cst-warn-bg,rgba(245,158,11,.14));border:1px solid color-mix(in srgb,var(--cst-warn,#b45309) 34%,transparent);color:var(--cst-warn,#b45309);font-size:9.5px;font-weight:700;line-height:1.4;font-variant-numeric:tabular-nums}
+.round-note{color:var(--cst-warn,#b45309)}
+</style>

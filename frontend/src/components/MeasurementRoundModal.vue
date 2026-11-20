@@ -51,11 +51,23 @@ function evidence(item:MeasurementRoundItem){
  const result=item.service?.result||item.download?.result
  return [result?.http_status?`HTTP ${result.http_status}`:'',result?.error_message||result?.summary||item.execution_error||item.latency?.error_message||item.not_executed_reason].filter(Boolean).join(' · ')
 }
+function stateTone(v?:string){
+ if(['completed','saved'].includes(v||''))return 'good'
+ if(['failed','interrupted'].includes(v||''))return 'bad'
+ if(['cancelled','not_executed','pending','not_started','skipped_config'].includes(v||''))return 'empty'
+ return 'warn'
+}
+function resultTone(item:MeasurementRoundItem){
+ if(item.service){const o=item.service.result?.outcome||'';if(['matched','unlocked','profiled','reachable'].includes(o))return 'good';if(['transport_error','connection_failed','timed_out','banned'].includes(o))return 'bad';return 'warn'}
+ if(item.download){const o=item.download.result?.outcome||'';if(['completed','byte_limit'].includes(o))return 'good';if(['time_limit','source_rate_limited'].includes(o))return 'warn';return item.download.result?'bad':'empty'}
+ if(item.latency?.total_samples){return item.latency.success_samples===item.latency.total_samples?'good':item.latency.success_samples>0?'warn':'bad'}
+ return 'empty'
+}
 </script>
 
 <template>
  <Modal :title="manualRoundLabel(summary)" wide @close="emit('close')">
-  <p class="muted small">{{date(summary.started_at)}} · {{summary.node_count}} 个节点 · {{manualRoundCount(summary)}} 项 · {{manualRoundState(detail?.state||summary.state)}}</p>
+  <p class="muted small">{{date(summary.started_at)}} · {{summary.node_count}} 个节点 · {{manualRoundCount(summary)}} 项 · <span class="mr-pill" :class="stateTone(detail?.state||summary.state)">{{manualRoundState(detail?.state||summary.state)}}</span></p>
   <p v-if="loading" role="status" class="muted small">正在读取轮次…</p>
   <p v-if="error" role="alert" class="inline-warning">轮次读取失败：{{error}} <button class="text-button" @click="read(requestedOffset)">重新读取</button></p>
   <template v-if="detail">
@@ -66,12 +78,12 @@ function evidence(item:MeasurementRoundItem){
      <tbody>
       <tr v-for="(item,index) in detail.items" :key="offset+index">
        <td><strong>{{projectName(item)}}</strong><small :title="`配置 ${item.config_revision_key}`">{{nodeName(item)}} · {{accountName(item)}}</small></td>
-       <td>{{stateLabel(item.execution_state)}}</td>
-       <td>{{resultText(item)}}
+       <td><span class="mr-pill" :class="stateTone(item.execution_state)">{{stateLabel(item.execution_state)}}</span></td>
+       <td><span class="mr-pill" :class="resultTone(item)">{{resultText(item)}}</span>
         <small v-if="item.download?.result&&item.download.result.bytes_read>0" :title="item.download.result.bytes_read+' 字节'">已读 {{bytes(item.download.result.bytes_read)}}</small>
         <small v-if="evidence(item)">{{evidence(item)}}</small>
        </td>
-       <td>{{stateLabel(item.persistence_state)}}<small v-if="item.service?.persistence_error||item.download?.persistence_error">{{item.service?.persistence_error||item.download?.persistence_error}}</small></td>
+       <td><span class="mr-pill" :class="stateTone(item.persistence_state)">{{stateLabel(item.persistence_state)}}</span><small v-if="item.service?.persistence_error||item.download?.persistence_error">{{item.service?.persistence_error||item.download?.persistence_error}}</small></td>
       </tr>
      </tbody>
     </table>
@@ -86,13 +98,19 @@ function evidence(item:MeasurementRoundItem){
 </template>
 
 <style scoped>
-.manual-round-table {overflow-x:auto;margin-top:16px}
+.manual-round-table {overflow-x:auto;margin-top:16px;border:1px solid var(--cst-line);border-radius:12px;background:var(--cst-panel)}
 .manual-round-table table {border-collapse:collapse;width:100%;min-width:540px;text-align:left;font-size:13px;table-layout:fixed}
-.manual-round-table th,.manual-round-table td {padding:11px 8px;border-bottom:1px solid var(--cst-line);vertical-align:top;overflow-wrap:anywhere}
-.manual-round-table th {color:var(--cst-muted);font-weight:600}
+.manual-round-table th,.manual-round-table td {padding:11px 12px;border-bottom:1px solid var(--cst-line);vertical-align:top;overflow-wrap:anywhere}
+.manual-round-table thead th {background:var(--cst-panel-2);color:var(--cst-muted);font-weight:600;font-size:12px}
+.manual-round-table tbody tr:last-child td {border-bottom:0}
+.manual-round-table tbody tr:hover td {background:color-mix(in srgb,var(--cst-accent,#2563eb) 4%,transparent)}
 .manual-round-table th:nth-child(1) {width:30%}
 .manual-round-table th:nth-child(2),.manual-round-table th:nth-child(4) {width:14%}
 .manual-round-table small {display:block;color:var(--cst-muted);margin-top:4px;line-height:1.5}
+.mr-pill {display:inline-flex;align-items:center;padding:1px 8px;border-radius:999px;font-size:11.5px;font-weight:600;line-height:1.45;border:1px solid var(--cst-line);background:var(--cst-panel-2);color:var(--cst-muted)}
+.mr-pill.good {color:var(--cst-good,#15803d);background:color-mix(in srgb,var(--cst-good,#15803d) 12%,transparent);border-color:color-mix(in srgb,var(--cst-good,#15803d) 28%,transparent)}
+.mr-pill.warn {color:var(--cst-warn,#b45309);background:color-mix(in srgb,var(--cst-warn,#b45309) 13%,transparent);border-color:color-mix(in srgb,var(--cst-warn,#b45309) 32%,transparent)}
+.mr-pill.bad {color:var(--cst-bad,#b91c1c);background:color-mix(in srgb,var(--cst-bad,#b91c1c) 12%,transparent);border-color:color-mix(in srgb,var(--cst-bad,#b91c1c) 28%,transparent)}
 .manual-round-pages {display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:12px}
 .manual-round-pages span {font-size:12px;color:var(--cst-muted)}
 </style>

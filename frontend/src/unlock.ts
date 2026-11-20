@@ -33,6 +33,11 @@ export function unlockResult(a?:Attempt,serviceId?:string,ipType?:IpType){
   if(o==='service_rejected')return {state:'unavailable',tone:'warn',label:'策略拦截',reason:(r.error_message||'模型请求被服务策略拦截')+googleHint+exitHint+netHint,region:googleRegion||region}
   const agLabels:Record<string,string>={credentials_required:'需要凭据',auth_failed:'凭据失效',setup_required:'账号待开通',permission_denied:'权限不足',rate_limited:'额度受限'}
   if(o&&agLabels[o])return {state:'unknown',tone:'warn',label:agLabels[o],reason:r.error_message||agLabels[o],region:googleRegion||region}
+  const agBase=outcomeReasons[o||'']||''
+  const agErr=(r.error_message||r.summary||'').trim()
+  const agPhase=r.failure_phase&&!agErr.includes(r.failure_phase)?`（阶段：${r.failure_phase}）`:''
+  const agDetail=agBase&&agErr?(agErr.includes(agBase)?agErr:`${agBase}：${agErr}`):(agErr||agBase||'未取得明确结论')
+  return {state:'unknown',tone:'empty',label:'无法判断',reason:agDetail+agPhase+googleHint+exitHint+netHint,region:googleRegion||region}
  }
  if(id==='cloudflare_challenge'){
   const detail=String(details.cf_challenge_detail||'').trim()
@@ -53,7 +58,11 @@ export function unlockResult(a?:Attempt,serviceId?:string,ipType?:IpType){
  if(o==='originals_only')return {state:'partial',tone:'warn',label:'仅自制剧'+(region?'（'+region+'）':''),reason:'未验证账号播放',region}
  if(servicePassed(a))return {state:'available',tone:'good',label:netflix?'完整'+(region?'（'+region+'）':''):'可用 · '+(region||'地区未返回'),reason:netflix?'未验证账号播放':r.summary||'检测规则通过',region}
  if(['region_blocked','region_limited','service_rejected'].includes(o||''))return {state:'unavailable',tone:netflix?'bad':'warn',label:'不可用',reason:r.summary||r.error_message||'地区不支持',region}
- return {state:'unknown',tone:'empty',label:'无法判断',reason:outcomeReasons[o||'']||r.summary||r.error_message||'未取得明确结论',region}
+ const baseReason=outcomeReasons[o||'']||''
+ const rawDetail=(r.error_message||(!baseReason?r.summary:'')||'').trim()
+ const phaseNote=r.failure_phase&&!rawDetail.includes(r.failure_phase)&&!['timeout','http_status'].includes(r.failure_phase)?`（阶段：${r.failure_phase}）`:''
+ const fullReason=baseReason&&rawDetail?(rawDetail.includes(baseReason)?rawDetail:`${baseReason}：${rawDetail}`):(rawDetail||baseReason||'未取得明确结论')
+ return {state:'unknown',tone:'empty',label:'无法判断',reason:fullReason+phaseNote,region}
 }
 export const unlockMeasured=(state:string)=>['available','unavailable','partial','verification'].includes(state)
 export type ServiceRegions=Record<string,string[]>
@@ -174,8 +183,16 @@ export function unlockGroupDetail(groupId:string,catalog:Pick<ServiceRule,'servi
  if(canonical)return unlockGroupDetailFor(canonical,catalog,lookup,region,enabled,rules,ipType)
  return {available:0,total:0,tone:'empty',label:'未测',reason:'',title:'',skipped:false,items:[] as UnlockDetailItem[],attemptedItems:[] as UnlockDetailItem[]}
 }
-export function unlockSummary(catalog:Pick<ServiceRule,'service_id'|'name'>[],lookup:(id:string)=>Attempt|undefined,region?:string,enabled=true,rules:ServiceRegions={},ipType?:IpType){
- const groups=unlockGroups.map(g=>({...g,...unlockGroupSummary(g.id,catalog,lookup,region,enabled,rules,ipType)}))
- const measured=groups.some(g=>g.total)
+export function unlockSummaryFor(activeGroups:readonly {id:string;name:string;ids:readonly string[];regions?:readonly string[]}[],catalog:Pick<ServiceRule,'service_id'|'name'>[],lookup:(id:string)=>Attempt|undefined,region?:string,enabled=true,rules:ServiceRegions={},ipType?:IpType){
+ const groups=activeGroups.map(g=>({...g,...unlockGroupDetailFor(g,catalog,lookup,region,enabled,rules,ipType)}))
+ const measured=groups.some(g=>g.total>0)
+ const pending=groups.flatMap(g=>g.attemptedItems.filter(i=>!i.measured))
+ if(!measured&&pending.length){
+  const detail=pending.map(i=>`${i.name}：${i.result.reason||i.shortStatus}`).join('；')
+  return {tone:'warn' as const,label:`${pending.length} 项待确认`,detail}
+ }
  return {tone:groups.some(g=>g.reason)?'warn':measured?'good':'empty',label:measured?groups.map(g=>g.name+' '+g.label+(g.total?' 可用':'')).join(' · '):'还没做解锁检测',detail:groups.find(g=>g.reason)?.reason||(measured?'依据当前时间范围内已确认的结果':'无法判断与尚未检测不计入统计')}
+}
+export function unlockSummary(catalog:Pick<ServiceRule,'service_id'|'name'>[],lookup:(id:string)=>Attempt|undefined,region?:string,enabled=true,rules:ServiceRegions={},ipType?:IpType){
+ return unlockSummaryFor(unlockGroups,catalog,lookup,region,enabled,rules,ipType)
 }

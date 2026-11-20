@@ -137,14 +137,18 @@ const baseVisibleNodes=computed(()=>{let list=w.filteredNodes.value;if(!qualityV
  if(qualitySort.value!=='existing'&&allQualityReady.value)list=[...list].sort((a,b)=>{const ga=qualitySummaries.value[key(a)],gb=qualitySummaries.value[key(b)],ea=qualityData.value[key(a)],eb=qualityData.value[key(b)];const valid=(g:typeof ga,e:QualityEvidence|undefined)=>!!g&&!!e&&latencyReadComplete(e,g)&&g.comparable&&(qualitySort.value==='observed'?g.success>=1:!g.insufficient)&&(qualitySort.value!=='p95'||g.success>=20);const av=valid(ga,ea),bv=valid(gb,eb);if(av!==bv)return av?-1:1;if(!av)return 0;const group=ga.key.localeCompare(gb.key);if(group)return group;return qualitySort.value==='rate'?(gb.successRate||0)-(ga.successRate||0):(qualitySort.value==='p95'?ga.p95! -gb.p95!:ga.p50! -gb.p50!)})
  return list})
 const names=new Intl.Collator('zh-CN',{numeric:true,sensitivity:'base'})
+function headerSortDirection(field:string):'ascending'|'descending'{
+ return ['purity','responseRate','download','downloadTime','service'].includes(field)||field.startsWith('unlock:')?'descending':'ascending'
+}
 const visibleNodes=computed(()=>{
  const list=baseVisibleNodes.value,field=headerSort.value
  if(!field||!headerSortReady.value)return list
  if(field==='name')return [...list].sort((a,b)=>names.compare(nodeDisplayName(a),nodeDisplayName(b)))
+ const desc=headerSortDirection(field)==='descending'
  const values=new Map(list.map(node=>[key(node),headerValue(node,field)]))
  return [...list].sort((a,b)=>{
   const first=values.get(key(a)),second=values.get(key(b))
-  return first==null?(second==null?0:1):second==null?-1:first-second
+  return first==null?(second==null?0:1):second==null?-1:(desc?second-first:first-second)
  })
 })
 function headerValue(node:NodeOption,field:string):number|null{
@@ -390,7 +394,7 @@ watch(servicePage,closeHover)
 watch(servicePages,count=>servicePage.value=Math.min(servicePage.value,count))
 watch([()=>w.project.value,()=>w.hours.value,currentPage],closeHover)
 watch(()=>w.displayTarget.value,()=>{if(keepOpen.value&&hoverNode.value){activeRound.value=null;inlineTab.value='history'}else closeHover()})
-provide(homeModelKey,{refreshWeekly,weeklyStats,weeklyErrors,weeklyProgress,weeklyReady,headerSort,headerSortReady,sortHeader,compareOpen,compareTarget,compareNodes:qualityCompareNodes,compareCompatible,comparisonDownloadStatus,closeComparison,servicePoints:(n:NodeOption,id:string)=>presentation.points(n,'service',w.displayTarget.value,id),hiddenSelectedCount,qualityFiltersPending,monitorData,monitorErrors,monitorHTTPErrors,httpPoints,visibleServices,servicePage,servicePages,servicesPerPage,chosen,filterProfiles,protocolChoices,protocolFilter,qualityGate,qualitySort,qualityLoading,qualityErrors,qualityCutoff,allQualityReady,readQualityNodes,siteSummaries,pageSize,setPageSize,pageNodes,visibleNodes,runNodes,currentPage,totalPages,picker,filterRegions,qualityData,nodeActivities,displayServices,sourceLabel,metricPoint,latestLatencyRound,latencyRowPoint,rowVerdict,siteMetric,siteContext,siteReason,sitePoints,rowPoints,downloadMetric,downloadMetricTone,downloadMetricContext,serviceMetric,serviceTone,shownService,showService,showServiceEvidence,hoverNode,hoverMode,hoverTarget,hoverService,hoverPoints,activeRound,inlineTab,inlineHistorySource,keepOpen,inspectRound,openRound,leaveRound,keepRound,closeHover,expandHistory,openComparison,openCombinedPlan,runLabel})
+provide(homeModelKey,{refreshWeekly,weeklyStats,weeklyErrors,weeklyProgress,weeklyReady,headerSort,headerSortReady,headerSortDirection,sortHeader,compareOpen,compareTarget,compareNodes:qualityCompareNodes,compareCompatible,comparisonDownloadStatus,closeComparison,servicePoints:(n:NodeOption,id:string)=>presentation.points(n,'service',w.displayTarget.value,id),hiddenSelectedCount,qualityFiltersPending,monitorData,monitorErrors,monitorHTTPErrors,httpPoints,visibleServices,servicePage,servicePages,servicesPerPage,chosen,filterProfiles,protocolChoices,protocolFilter,qualityGate,qualitySort,qualityLoading,qualityErrors,qualityCutoff,allQualityReady,readQualityNodes,siteSummaries,pageSize,setPageSize,pageNodes,visibleNodes,runNodes,currentPage,totalPages,picker,filterRegions,qualityData,nodeActivities,displayServices,sourceLabel,metricPoint,latestLatencyRound,latencyRowPoint,rowVerdict,siteMetric,siteContext,siteReason,sitePoints,rowPoints,downloadMetric,downloadMetricTone,downloadMetricContext,serviceMetric,serviceTone,shownService,showService,showServiceEvidence,hoverNode,hoverMode,hoverTarget,hoverService,hoverPoints,activeRound,inlineTab,inlineHistorySource,keepOpen,inspectRound,openRound,leaveRound,keepRound,closeHover,expandHistory,openComparison,openCombinedPlan,runLabel})
 onMounted(()=>monitorTimer=setInterval(()=>{if(w.page.value==='home'&&document.visibilityState==='visible')void readMonitor(true)},30000));onBeforeUnmount(()=>{weeklyGeneration++;weeklyWaiting.clear();clearWeeklyBuffer();qualityGeneration++;clearQualityBuffer();latestServiceCache.clear();monitorFetchedAt.clear();presentation.clear();monitorGeneration++;clearTimeout(hoverTimer);clearInterval(monitorTimer)})
 </script>
 <template>

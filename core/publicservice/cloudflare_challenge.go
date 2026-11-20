@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,6 +22,8 @@ var cloudflareChallengeTargets = []cfChallengeTarget{
 	{Label: "Claude", URL: "https://claude.ai/"},
 }
 
+const cfChallengePerTargetTimeout = 8 * time.Second
+
 func cloudflareChallengeRule() Rule {
 	return Rule{
 		ServiceID:        "cloudflare_challenge",
@@ -28,11 +31,11 @@ func cloudflareChallengeRule() Rule {
 		Category:         "地区与人机验证",
 		Region:           "全球",
 		ResultKind:       "ip_quality",
-		RuleVersion:      1,
-		Description:      "探测代表性 Cloudflare 保护站点（ChatGPT、Grok、Claude）是否向当前出口弹出人机验证/盾（Managed Challenge / Turnstile），仅观察不绕过。",
+		RuleVersion:      2,
+		Description:      "并行探测代表性 Cloudflare 保护站点（ChatGPT、Grok、Claude）是否向当前出口弹出人机验证/盾（Managed Challenge / Turnstile），单站限时避免拖垮其余站点，仅观察不绕过。",
 		TargetURL:        "https://chatgpt.com/",
 		Method:           http.MethodGet,
-		SuccessCriterion: "依次以普通浏览器请求头访问 3 个代表性 Cloudflare 站点：全部直通判未触发 CF 盾，部分站点弹盾判需人机验证，多数或全部弹盾判易触发 CF 验证",
+		SuccessCriterion: "以普通浏览器请求头并行访问 3 个代表性 Cloudflare 站点（单站限时 8 秒）：全部直通判未触发 CF 盾，部分站点弹盾判需人机验证，多数或全部弹盾判易触发 CF 验证",
 		RedirectPolicy:   "do_not_follow",
 		TimeoutSeconds:   int(DefaultTimeout.Seconds()),
 		MaximumBodyBytes: 16 * 1024,
@@ -58,7 +61,7 @@ func isCloudflareChallengeSignal(resp *http.Response, body []byte) (triggered bo
 
 func checkCloudflareChallenge(ctx context.Context, client *http.Client, rule Rule, started time.Time) Result {
 	result := Result{Details: map[string]string{
-		"probe_note": "基于普通浏览器请求头探测代表性 Cloudflare 站点是否返回 Managed Challenge / Turnstile，仅记录不绕过",
+		"probe_note": "基于普通浏览器请求头并行探测代表性 Cloudflare 站点是否返回 Managed Challenge / Turnstile，仅记录不绕过",
 	}}
 	if client == nil {
 		result.Outcome, result.FailurePhase, result.ErrorMessage = "transport_error", "proxy_setup", "无法建立节点隔离代理连接"
@@ -68,6 +71,105 @@ func checkCloudflareChallenge(ctx context.Context, client *http.Client, rule Rul
 	localClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 	targets := cloudflareChallengeTargets
+	bodyCap := rule.MaximumBodyBytes
+	if bodyCap <= 0 || bodyCap > 32*1024 {
+		bodyCap = 16 * 1024
+	}
+
+	type targetOutcome struct {
+		requested  bool
+		responded  bool
+		passed     bool
+		challenged bool
+		status     int
+		hasStatus  bool
+		bytesRead  int64
+		cfRay      string
+		cfColo     string
+		detail     string
+		evidence   string
+		errRes     *Result
+	}
+	outcomes := make([]targetOutcome, len(targets))
+	var wg sync.WaitGroup
+	for idx, target := range targets {
+		wg.Add(1)
+		go func(i int, target cfChallengeTarget) {
+			defer wg.Done()
+			var out targetOutcome
+			if ctx.Err() != nil {
+				var errRes Result
+				classifyRequestError(&errRes, ctx, ctx.Err())
+				out.errRes = &errRes
+				outcomes[i] = out
+				return
+			}
+			siteCtx, cancel := context.WithTimeout(ctx, cfChallengePerTargetTimeout)
+			defer cancel()
+			req, err := http.NewRequestWithContext(siteCtx, http.MethodGet, target.URL, nil)
+			if err != nil {
+				outcomes[i] = out
+				return
+			}
+			req.Header.Set("User-Agent", browserUserAgent)
+			req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+			req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+
+			out.requested = true
+			resp, err := localClient.Do(req)
+			if err != nil {
+				var errRes Result
+				classifyRequestError(&errRes, siteCtx, err)
+				out.errRes = &errRes
+				if errRes.Outcome == "timed_out" {
+					out.detail = target.Label + ": 超时"
+				} else {
+					out.detail = target.Label + ": 连接失败"
+				}
+				outcomes[i] = out
+				return
+			}
+			status := resp.StatusCode
+			out.status = status
+			out.hasStatus = true
+			if ray := resp.Header.Get("CF-Ray"); ray != "" {
+				out.cfRay = ray
+				if parts := strings.Split(ray, "-"); len(parts) > 1 {
+					out.cfColo = strings.TrimSpace(parts[1])
+				}
+			}
+			body, readErr := io.ReadAll(io.LimitReader(resp.Body, int64(bodyCap)))
+			_ = resp.Body.Close()
+			out.bytesRead = int64(len(body))
+			if readErr != nil && len(body) == 0 {
+				var errRes Result
+				classifyRequestError(&errRes, siteCtx, atRequestPhase(readErr, "response_read"))
+				out.errRes = &errRes
+				out.detail = fmt.Sprintf("%s: 读取失败(%d)", target.Label, status)
+				outcomes[i] = out
+				return
+			}
+
+			out.responded = true
+			if triggered, ev := isCloudflareChallengeSignal(resp, body); triggered {
+				out.challenged = true
+				out.detail = fmt.Sprintf("%s: 弹盾(%d %s)", target.Label, status, ev)
+				out.evidence = target.Label + ":" + ev
+				outcomes[i] = out
+				return
+			}
+			if status >= 200 && status < 400 {
+				out.passed = true
+				out.detail = fmt.Sprintf("%s: 直通(%d)", target.Label, status)
+				outcomes[i] = out
+				return
+			}
+			out.detail = fmt.Sprintf("%s: HTTP %d", target.Label, status)
+			outcomes[i] = out
+		}(idx, target)
+	}
+	wg.Wait()
+
 	var (
 		responded   int
 		passed      int
@@ -76,73 +178,39 @@ func checkCloudflareChallenge(ctx context.Context, client *http.Client, rule Rul
 		evidences   []string
 		firstErr    *Result
 	)
-	bodyCap := rule.MaximumBodyBytes
-	if bodyCap <= 0 || bodyCap > 32*1024 {
-		bodyCap = 16 * 1024
-	}
-
-	for _, target := range targets {
-		if ctx.Err() != nil {
-			if firstErr == nil {
-				var errRes Result
-				classifyRequestError(&errRes, ctx, ctx.Err())
-				firstErr = &errRes
-			}
-			break
+	for _, out := range outcomes {
+		if out.requested {
+			result.RequestCount++
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.URL, nil)
-		if err != nil {
-			continue
+		result.BytesRead += out.bytesRead
+		if out.hasStatus {
+			s := out.status
+			result.HTTPStatus = &s
 		}
-		req.Header.Set("User-Agent", browserUserAgent)
-		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-		req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-
-		result.RequestCount++
-		resp, err := localClient.Do(req)
-		if err != nil {
-			if firstErr == nil {
-				var errRes Result
-				classifyRequestError(&errRes, ctx, err)
-				firstErr = &errRes
-			}
-			siteDetails = append(siteDetails, target.Label+": 连接失败")
-			continue
+		if out.cfRay != "" && result.Details["cf_ray"] == "" {
+			result.Details["cf_ray"] = out.cfRay
 		}
-		status := resp.StatusCode
-		result.HTTPStatus = &status
-		if ray := resp.Header.Get("CF-Ray"); ray != "" {
-			result.Details["cf_ray"] = ray
-			if parts := strings.Split(ray, "-"); len(parts) > 1 && result.Details["cf_colo"] == "" {
-				result.Details["cf_colo"] = strings.TrimSpace(parts[1])
-			}
+		if out.cfColo != "" && result.Details["cf_colo"] == "" {
+			result.Details["cf_colo"] = out.cfColo
 		}
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, int64(bodyCap)))
-		_ = resp.Body.Close()
-		result.BytesRead += int64(len(body))
-		if readErr != nil && len(body) == 0 {
-			if firstErr == nil {
-				var errRes Result
-				classifyRequestError(&errRes, ctx, atRequestPhase(readErr, "response_read"))
-				firstErr = &errRes
-			}
-			siteDetails = append(siteDetails, fmt.Sprintf("%s: 读取失败(%d)", target.Label, status))
-			continue
+		if out.responded {
+			responded++
 		}
-
-		responded++
-		if triggered, ev := isCloudflareChallengeSignal(resp, body); triggered {
-			challenged++
-			siteDetails = append(siteDetails, fmt.Sprintf("%s: 弹盾(%d %s)", target.Label, status, ev))
-			evidences = append(evidences, target.Label+":"+ev)
-			continue
-		}
-		if status >= 200 && status < 400 {
+		if out.passed {
 			passed++
-			siteDetails = append(siteDetails, fmt.Sprintf("%s: 直通(%d)", target.Label, status))
-			continue
 		}
-		siteDetails = append(siteDetails, fmt.Sprintf("%s: HTTP %d", target.Label, status))
+		if out.challenged {
+			challenged++
+		}
+		if out.detail != "" {
+			siteDetails = append(siteDetails, out.detail)
+		}
+		if out.evidence != "" {
+			evidences = append(evidences, out.evidence)
+		}
+		if firstErr == nil && out.errRes != nil {
+			firstErr = out.errRes
+		}
 	}
 
 	result.Details["cf_challenge_sites"] = strconv.Itoa(len(targets))

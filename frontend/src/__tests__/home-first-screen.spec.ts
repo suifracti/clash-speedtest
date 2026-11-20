@@ -137,7 +137,7 @@ it('waits for the full seven-day sort and filter range before applying the known
   workspace.cancelSelection();await flushPromises()
   release();await flushPromises()
   expect(vi.mocked(api.latencyHistoryScopes)).toHaveBeenCalledTimes(25)
-  expect(sort.element.parentElement?.getAttribute('aria-sort')).toBe('ascending')
+  expect(sort.element.parentElement?.getAttribute('aria-sort')).toBe('descending')
   expect(wrapper.findAll('.hd-row-scroll [data-node-key]').map(row=>row.attributes('data-node-key'))).toEqual([key(best)])
   expect(wrapper.text()).toContain('1 个节点读取失败')
   expect(wrapper.get('.hd-run').attributes('disabled')).toBeUndefined()

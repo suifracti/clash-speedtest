@@ -65,4 +65,22 @@ func TestCloudflareChallengeProbeClassifiesCleanPartialAndBlocked(t *testing.T) 
 			t.Fatalf("unexpected transport failure result: %+v", res)
 		}
 	})
+
+	t.Run("one stalled target does not starve parallel targets", func(t *testing.T) {
+		checker := Checker{DriftSamples: 1, ClientFactory: fixtureClient(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Host == "chatgpt.com" {
+				return nil, context.DeadlineExceeded
+			}
+			if req.URL.Host == "claude.ai" {
+				resp := fixtureResponse(req, 403, "text/html", `<html><title>Just a moment...</title></html>`)
+				resp.Header.Set("cf-mitigated", "challenge")
+				return resp, nil
+			}
+			return fixtureResponse(req, 200, "text/html", "<html>ok</html>"), nil
+		})}
+		res := checker.Check(context.Background(), monitor.MonitoredNode{}, rule, DefaultTimeout)
+		if res.Outcome != "challenge" || res.Details["cf_responded_count"] != "2" || res.Details["cf_passed_count"] != "1" || res.Details["cf_challenged_count"] != "1" || !strings.Contains(res.Details["cf_challenge_detail"], "ChatGPT: 超时") {
+			t.Fatalf("expected parallel partial verdict despite one timeout, got %+v", res)
+		}
+	})
 }

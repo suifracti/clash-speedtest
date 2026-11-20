@@ -5,6 +5,7 @@ import {date,key,type NodeOption} from '../../domain'
 import {latencyTargets} from '../../latencyTargets'
 import {latestServices,qualityGroups} from '../../nodeQuality'
 import {nodeDisplayName} from '../../nodePresentation'
+import {exitLanding} from '../../exitLanding'
 import QualityMetrics from '../QualityMetrics.vue'
 import UiSelect from '../UiSelect.vue'
 import Icon from '../Icon.vue'
@@ -13,7 +14,8 @@ const w=useWorkspace(),m=inject(homeModelKey)!
 const section=ref<'all'|'latency'|'download'|'service'>('all')
 const sections=[{id:'all',label:'全部指标'},{id:'latency',label:'延迟'},{id:'download',label:'下载'},{id:'service',label:'服务与出口'}] as const
 const services=computed(()=>Object.fromEntries(m.compareNodes.value.map(n=>[key(n),latestServices(m.qualityData.value[key(n)]?.services||[])])))
-type Field='distribution'|'response'|'download'|'service'|'time'|'details'
+const exitSummaries=computed(()=>Object.fromEntries(m.compareNodes.value.map(n=>[key(n),exitLanding(n,m.qualityData.value[key(n)]?.services||[])])))
+type Field='distribution'|'response'|'download'|'service'|'reputation'|'cfChallenge'|'time'|'details'
 interface Row {id:string;field:Field;label:string;serviceId?:string}
 const serviceRows=computed<Row[]>(()=>{
  const names=new Map<string,string>()
@@ -24,6 +26,7 @@ const serviceRows=computed<Row[]>(()=>{
 const rows=computed<Row[]>(()=>[
  ...(section.value==='all'||section.value==='latency'?[{id:'distribution',field:'distribution' as const,label:'延迟分布'},{id:'response',field:'response' as const,label:'成功率 / 样本'}]:[]),
  ...(section.value==='all'||section.value==='download'?[{id:'download',field:'download' as const,label:'下载'}]:[]),
+ ...(section.value==='all'||section.value==='service'?[{id:'reputation',field:'reputation' as const,label:'多源信誉'},{id:'cfChallenge',field:'cfChallenge' as const,label:'CF 人机验证'}]:[]),
  ...(section.value==='all'||section.value==='service'?serviceRows.value.length?serviceRows.value:[{id:'service',field:'service' as const,label:'服务结论'}]:[]),
  ...(section.value!=='service'?[{id:'time',field:'time' as const,label:'测量时间'}]:[]),{id:'details',field:'details',label:'完整证据'}
 ])
@@ -58,7 +61,23 @@ onMounted(()=>root.value?.querySelector<HTMLElement>('.hd-compare-head button')?
    <table><colgroup><col class="comparison-label-column"><col v-for="n in m.compareNodes.value" :key="key(n)"></colgroup>
     <thead><tr><th scope="col">指标 / 服务</th><th v-for="(n,i) in m.compareNodes.value" :key="key(n)" scope="col"><span class="comparison-node-number">{{String(i+1).padStart(2,'0')}}</span><strong>{{nodeDisplayName(n)}}</strong><small>{{m.sourceLabel(n)}}</small><small>{{n.type}}</small></th></tr></thead>
     <tbody>
-     <tr v-for="row in rows" :key="row.id"><th scope="row">{{row.label}}</th><td v-for="n in m.compareNodes.value" :key="key(n)"><QualityMetrics :comparison-field="row.field" :project="section==='all'?'combined':section" :visible-service-ids="row.serviceId?[row.serviceId]:row.field==='time'?[]:undefined" :evidence="m.qualityData.value[key(n)]" :error="m.qualityErrors.value[key(n)]" :target="m.compareTarget.value" :catalog="w.catalog.value" @select-service="serviceEvidence(n,$event)"/></td></tr>
+     <tr v-for="row in rows" :key="row.id"><th scope="row">{{row.label}}</th><td v-for="n in m.compareNodes.value" :key="key(n)">
+      <div v-if="row.field==='reputation'" class="compare-exit-cell" :title="exitSummaries[key(n)]?.purity.title">
+       <template v-if="exitSummaries[key(n)]?.reputationSources.length||exitSummaries[key(n)]?.reputationIssues.length">
+        <span class="hd-rep-grid">
+         <span v-for="src in exitSummaries[key(n)].reputationSources.filter(s=>s.risk!==null)" :key="src.id" class="hd-rep-chip" :class="src.tone" :title="src.detail"><b>{{src.name}}</b><i>{{src.risk}}</i></span>
+         <span v-for="iss in exitSummaries[key(n)].reputationIssues" :key="iss" class="hd-rep-chip issue">{{iss}}</span>
+        </span>
+        <small class="compare-exit-meta">{{exitSummaries[key(n)].ipKind.tag}} · {{exitSummaries[key(n)].label}}</small>
+       </template>
+       <span v-else class="hd-muted">未测</span>
+      </div>
+      <div v-else-if="row.field==='cfChallenge'" class="compare-exit-cell" :title="exitSummaries[key(n)]?.cfChallenge.detail">
+       <span class="hd-cf-tag" :class="exitSummaries[key(n)]?.cfChallenge.tone||'empty'">{{exitSummaries[key(n)]?.cfChallenge.shortLabel||'未测'}}</span>
+       <small v-if="exitSummaries[key(n)]?.cfChallenge.tone!=='empty'" class="compare-exit-meta">{{exitSummaries[key(n)].cfChallenge.detail}}</small>
+      </div>
+      <QualityMetrics v-else :comparison-field="row.field" :project="section==='all'?'combined':section" :visible-service-ids="row.serviceId?[row.serviceId]:row.field==='time'?[]:undefined" :evidence="m.qualityData.value[key(n)]" :error="m.qualityErrors.value[key(n)]" :target="m.compareTarget.value" :catalog="w.catalog.value" @select-service="serviceEvidence(n,$event)"/>
+     </td></tr>
      <tr><th scope="row">原始历史</th><td v-for="n in m.compareNodes.value" :key="key(n)"><button class="hd-btn" @click="history(n)">查看原始历史</button></td></tr>
     </tbody>
    </table>
@@ -86,5 +105,7 @@ onMounted(()=>root.value?.querySelector<HTMLElement>('.hd-compare-head button')?
 .hd-compare-table thead strong{display:block;margin-bottom:4px;font-size:14px;color:var(--hd-text);font-weight:600}
 .comparison-node-number{display:block;font-size:10px;color:var(--hd-accent);font-variant-numeric:tabular-nums;margin-bottom:6px;letter-spacing:1px}
 .hd-compare-table tbody th{font-size:12px;line-height:1.6;color:var(--hd-muted);font-weight:500}
+.compare-exit-cell{display:flex;flex-direction:column;align-items:flex-start;gap:5px}
+.compare-exit-meta{font-size:11px;color:var(--hd-muted);line-height:1.45;overflow-wrap:anywhere}
 @media(max-width:600px){.comparison-tools{align-items:flex-start}.hd-compare-head h2{font-size:16px}.comparison-sections button{padding:8px}.hd-compare-table th,.hd-compare-table td{padding:10px 12px}.hd-compare-table{max-height:60vh}}
 </style>

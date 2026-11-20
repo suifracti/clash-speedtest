@@ -197,7 +197,7 @@ func checkIPPureBundle(ctx context.Context, client *http.Client, rule Rule, star
 		state.normalRefreshLimit = 3
 		cfPending = make(chan Result, 1)
 		go func() {
-			cfCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
+			cfCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
 			cfPending <- checkIPPureCF(cfCtx, &local, state)
 		}()
@@ -318,7 +318,7 @@ func checkIPPureBundle(ctx context.Context, client *http.Client, rule Rule, star
 	asnCtx := ctx
 	cancelASN := func() {}
 	if rule.RuleVersion >= 7 {
-		asnCtx, cancelASN = context.WithTimeout(ctx, 3*time.Second)
+		asnCtx, cancelASN = context.WithTimeout(ctx, 6*time.Second)
 	}
 	defer cancelASN()
 	part, body, ok := ippureExtraExchange(asnCtx, &local, http.MethodGet, ippureWebAPIBase+"/api/info/asn/botclass/"+asn, nil, state)

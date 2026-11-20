@@ -173,7 +173,7 @@ async function submit(){
       </div>
       <div v-if="w.plan.value.includeReputation" v-show="activeSection==='reputation'" class="plan-section plan-tab-panel reputation-section" role="tabpanel">
         <ServicePicker v-model="reputationServiceIds" :catalog="reputationCatalog"/>
-        <p class="muted small">IPPure 包含 IPv4 风险、Cloudflare 请求环境系数和 ASN 人机流量比；Cloudflare 人机验证检测探测代表性站点是否弹盾（仅观察不绕过）；各项结果独立保存。</p>
+        <p class="muted small">IPPure（含 CF 系数与 ASN 人机比）、Ping0、IPQuery、IPLogs 均按独立源站保存，便于多站横向比对；Cloudflare 人机验证并行探测 3 个代表站点（仅观察不绕过）。</p>
       </div>
       <div class="plan-repetition">
         <label v-if="w.plan.value.projects.includes('service')||w.plan.value.includeReputation" class="inline-field">每服务采样次数<UiSelect v-model.number="w.plan.value.serviceSamples"><option v-for="n in [1,2,4,8]" :key="n" :value="n">{{n===4?'4 次（推荐排查漂移）':n===8?'8 次（深度稳定性）':`${n} 次`}}</option></UiSelect></label>
