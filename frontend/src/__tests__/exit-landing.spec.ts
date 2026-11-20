@@ -1,7 +1,9 @@
 import {expect,it} from 'vitest'
 import {exitLanding} from '../exitLanding'
 import {detailFields,toExitRecord} from '../exitSummaryPresentation'
-import type {Attempt} from '../domain'
+import {qualityMatchesGate,type QualityEvidence} from '../nodeQuality'
+import {manualRoundLabel} from '../measurementRounds'
+import type {Attempt,ManualRoundSummary} from '../domain'
 let serial=0
 const record=(id:string,details:Record<string,string>)=>({attempt_id:String(++serial),service_id:id,execution_state:'completed',persistence_state:'saved',rule:{service_id:id},result:{outcome:'profiled',details,finished_at:new Date(Date.UTC(2026,9,21,0,serial)).toISOString()}} as unknown as Attempt)
 const records=[record('ippure_ip_quality',{ip:'1.2.3.4',country_code:'SG',risk_score:'18',risk_scale_max:'100',risk_direction:'lower_is_better',ip_type:'机房 IDC',origin_type:'原生 IP',asn_bot_percent:'94.22'}),record('cloudflare_trace',{country_code:'SG'}),record('google_region',{service_region:'SG'})]
@@ -44,4 +46,18 @@ it('compares multiple independent reputation stations and flags single-source fa
  expect(fallback.purity.singleFallback).toBe(true)
  expect(fallback.purity.tone).toBe('warn')
  expect(fallback.reputationIssues).toContain('IPPure 查询超时')
+
+ const ev=(services:Attempt[]):QualityEvidence=>({tests:[],monitor:[],downloads:[],services,reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true,since:'2026-11-20T00:00:00Z',until:'2026-11-20T12:00:00Z'})
+ // Clean multi-source consensus passes purity_clean gate.
+ expect(qualityMatchesGate(ev([record('ippure_ip_quality',{risk_score:'12',risk_scale_max:'100',risk_direction:'lower_is_better'}),record('ping0_ipv4',{risk_score:'18'})]),undefined,'purity_clean','2026-11-20T12:00:00Z')).toBe(true)
+ // Single-source fallback after another station timed out must NOT pass purity_clean.
+ expect(qualityMatchesGate(ev([timedOutPure,record('ping0_ipv4',{risk_score:'15'})]),undefined,'purity_clean','2026-11-20T12:00:00Z')).toBe(false)
+ // Strongly divergent stations (0 vs 36 -> avg risk 18 -> purity 82, spread 36>=30) must NOT pass purity_clean or render green.
+ const divergentHigh=[record('ipquery_ip_quality',{risk_score:'0'}),record('iplogs_ip_quality',{risk_score:'36'})]
+ expect(exitLanding({country_code:'SG'},divergentHigh).purity).toMatchObject({score:82,divergent:true,tone:'warn'})
+ expect(qualityMatchesGate(ev(divergentHigh),undefined,'purity_clean','2026-11-20T12:00:00Z')).toBe(false)
+
+ // Pure reputation rounds including cloudflare_challenge label cleanly as 出口与信誉.
+ const repRound={round_id:'r1',started_at:'2026-11-20T12:00:00Z',state:'finished',trigger_type:'manual',node_count:4,latency_count:0,download_count:0,service_count:24,service_ids:['ippure_ip_quality','ipquery_ip_quality','iplogs_ip_quality','cloudflare_challenge']} as ManualRoundSummary
+ expect(manualRoundLabel(repRound)).toBe('出口与信誉')
 })

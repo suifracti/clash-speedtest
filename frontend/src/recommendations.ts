@@ -4,7 +4,7 @@ import {attemptObservedAt,latestServices,qualityGroups,type QualityEvidence,type
 import {nodeRegion,nodeRegionLabel} from './nodePresentation'
 import {downloadGroup,serviceComparisonGroup,serviceIsProfile,servicePassed} from './sharedResults'
 import {unlockResult} from './unlock'
-import {exitLanding} from './exitLanding'
+import {exitLanding,type ReputationSourceItem} from './exitLanding'
 export const purposes=[{id:'streaming',name:'流媒体与解锁'},{id:'ai',name:'AI'},{id:'download',name:'下载'},{id:'daily',name:'日常'}] as const
 export type Purpose=typeof purposes[number]['id']
 export type ServicePurpose=Extract<Purpose,'ai'|'streaming'>
@@ -12,7 +12,9 @@ export interface CfChallengeHint {
  tone:'good'|'warn'|'bad';label:string;detail:string
 }
 export interface PurityHint {
- score:number;grade:string;tone:'good'|'warn'|'bad';typeLabel:string;title:string
+ score:number|null;grade:string;tone:'good'|'warn'|'bad';typeLabel:string;title:string
+ sourceCount:number;divergent:boolean;singleFallback:boolean
+ sources:ReputationSourceItem[];issues:string[];badgeLabel:string
 }
 export interface Candidate {
  node:NodeOption;region:string;condition:string;score:number;basis:string;count:number;at:string
@@ -80,9 +82,29 @@ function purityHint(node:NodeOption,e:QualityEvidence):PurityHint|undefined{
  if(!e.reads.service.complete)return undefined
  const currentSaved=e.services.filter(a=>a.persistence_state==='saved'&&a.profile_id===node.profile_id&&a.node_key===node.node_key&&a.node_identity_key===node.node_identity_key&&a.config_revision_key===node.config_revision_key)
  if(!currentSaved.length)return undefined
- const p=exitLanding(node,currentSaved).purity
- if(p.score===null||p.tone==='empty')return undefined
- return {score:p.score,grade:p.grade,tone:p.tone as 'good'|'warn'|'bad',typeLabel:p.typeLabel,title:p.title}
+ const landing=exitLanding(node,currentSaved),p=landing.purity
+ const scoredSources=landing.reputationSources.filter(s=>s.risk!==null&&s.id!=='cf_risk')
+ if(p.score===null||p.tone==='empty'){
+  if(!landing.reputationIssues.length)return undefined
+  return {
+   score:null,grade:'查询异常',tone:'warn',typeLabel:p.typeLabel,title:p.title,
+   sourceCount:0,divergent:false,singleFallback:false,
+   sources:scoredSources,issues:landing.reputationIssues,
+   badgeLabel:`信誉异常（${landing.reputationIssues.length}）`,
+  }
+ }
+ const badgeLabel=p.singleFallback
+  ?`单源参考 · ${p.grade} ${p.score}`
+  :p.divergent
+   ?`${p.sourceCount}站分歧 · 均${p.score}`
+   :p.sourceCount>=2
+    ?`${p.sourceCount}站共识 · ${p.grade} ${p.score}`
+    :`${p.grade} ${p.score}`
+ return {
+  score:p.score,grade:p.grade,tone:p.tone as 'good'|'warn'|'bad',typeLabel:p.typeLabel,title:p.title,
+  sourceCount:p.sourceCount,divergent:p.divergent,singleFallback:p.singleFallback,
+  sources:scoredSources,issues:landing.reputationIssues,badgeLabel,
+ }
 }
 
 function dailyCandidate(node:NodeOption,e:QualityEvidence,region:string,cfChallenge?:CfChallengeHint,purity?:PurityHint):Candidate|undefined{

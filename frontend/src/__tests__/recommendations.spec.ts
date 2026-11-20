@@ -183,3 +183,25 @@ it('defaults AI to gemini_unlock, exposes Japan unlock services like DLsite, and
  e.services=[mkAttempt('dlsite_unlock','unlocked','r1'),mkAttempt('cloudflare_challenge','challenge','old-rev','all 403')]
  expect(recommend([node],{[key(node)]:e},catalog,{streaming:'dlsite_unlock'}).streaming[0]!.cfChallenge).toBeUndefined()
 })
+
+it('attaches multi-source reputation consensus, divergence and single-source fallback hints on recommendations',()=>{
+ const at='2026-11-20T12:00:00Z'
+ const mkNode=(id:string,region:string):NodeOption=>({profile_id:'p',node_key:id,node_identity_key:id,config_revision_key:'r1',display_name:id,profile_name:'P',type:'hysteria2',country_code:region,country_flag:''})
+ const catalog=[{service_id:'gemini_unlock',name:'Google Gemini',category:'AI',result_kind:'unlock'}] as ServiceRule[]
+ const mkAttempt=(n:NodeOption,serviceId:string,outcome:string,details:Record<string,string>={}):Attempt=>({
+  ...n,attempt_id:`att-${n.node_key}-${serviceId}`,request_id:`req-${n.node_key}-${serviceId}`,requested_at:at,finished_at:at,execution_state:'completed',persistence_state:'saved',service_id:serviceId,
+  rule:{service_id:serviceId,name:serviceId,target_url:'https://example.invalid'},
+  result:{outcome,bytes_read:0,finished_at:at,details},
+ })
+ const divNode=mkNode('sg-div','SG'),fbNode=mkNode('jp-fb','JP'),cleanNode=mkNode('uk-clean','GB')
+ const reads={latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}}
+ const data:Record<string,QualityEvidence>={
+  [key(divNode)]:{tests:[],monitor:[],downloads:[],services:[mkAttempt(divNode,'gemini_unlock','unlocked'),mkAttempt(divNode,'ipquery_ip_quality','profiled',{risk_score:'0'}),mkAttempt(divNode,'iplogs_ip_quality','profiled',{risk_score:'40'})],reads,complete:true,since:at,until:at},
+  [key(fbNode)]:{tests:[],monitor:[],downloads:[],services:[mkAttempt(fbNode,'gemini_unlock','unlocked'),mkAttempt(fbNode,'ippure_ip_quality','timed_out'),mkAttempt(fbNode,'ping0_ipv4','profiled',{risk_score:'15'})],reads,complete:true,since:at,until:at},
+  [key(cleanNode)]:{tests:[],monitor:[],downloads:[],services:[mkAttempt(cleanNode,'gemini_unlock','unlocked'),mkAttempt(cleanNode,'ippure_ip_quality','profiled',{risk_score:'12',risk_scale_max:'100',risk_direction:'lower_is_better'}),mkAttempt(cleanNode,'ping0_ipv4','profiled',{risk_score:'18'})],reads,complete:true,since:at,until:at},
+ }
+ const picks=recommend([divNode,fbNode,cleanNode],data,catalog,{ai:'gemini_unlock'}).ai
+ expect(picks.find(p=>p.region==='SG')?.purity).toMatchObject({divergent:true,tone:'warn',badgeLabel:'2站分歧 · 均80',sourceCount:2})
+ expect(picks.find(p=>p.region==='JP')?.purity).toMatchObject({singleFallback:true,tone:'warn',badgeLabel:'单源参考 · 纯净 85',sourceCount:1})
+ expect(picks.find(p=>p.region==='GB')?.purity).toMatchObject({divergent:false,singleFallback:false,tone:'good',badgeLabel:'2站共识 · 纯净 85',sourceCount:2})
+})

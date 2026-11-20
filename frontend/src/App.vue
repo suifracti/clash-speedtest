@@ -122,7 +122,7 @@ onBeforeUnmount(()=>{headerObserver?.disconnect();document.removeEventListener('
 </script>
 <template>
   <div class="cst-shell observatory-app" :class="{'window-hidden':windowHidden}" :style="headerHeight?{'--cst-nav-height':headerHeight+'px'}:undefined">
-    <header ref="header" class="cst-chrome">
+    <header ref="header" class="cst-chrome" :class="{'has-task':!!task}">
       <div class="cst-masthead">
       <a class="cst-brand" href="#" title="Clash SpeedTest Pro · 极光线路观测台" @click.prevent="navigate('home')">
         <span class="cst-brand-mark" aria-hidden="true">

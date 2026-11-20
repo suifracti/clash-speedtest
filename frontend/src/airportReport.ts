@@ -36,15 +36,19 @@ export function airportNodeStats(evidence?:QualityEvidence){
 }
 
 export function airportExitSummary(nodes:NodeOption[],data:Record<string,QualityEvidence>){
- let puritySum=0,purityCount=0,purityClean=0,purityRisky=0,cfCount=0,cfGood=0,cfWarn=0,cfBad=0
+ let puritySum=0,purityCount=0,purityClean=0,purityRisky=0,purityDivergent=0,purityFallback=0,purityIssueNodes=0,cfCount=0,cfGood=0,cfWarn=0,cfBad=0
  for(const node of nodes){
   const e=data[key(node)]
   if(!e?.services?.length)continue
   const landing=exitLanding(node,e.services)
   if(landing.purity.score!==null){
    purityCount++;puritySum+=landing.purity.score
-   if(landing.purity.score>=80)purityClean++
+   if(landing.purity.divergent)purityDivergent++
+   if(landing.purity.singleFallback)purityFallback++
+   if(landing.purity.score>=80&&!landing.purity.singleFallback&&!landing.purity.divergent)purityClean++
    else if(landing.purity.score<50)purityRisky++
+  }else if(landing.reputationIssues.length){
+   purityIssueNodes++
   }
   if(landing.cfChallenge.tone!=='empty'){
    cfCount++
@@ -55,9 +59,9 @@ export function airportExitSummary(nodes:NodeOption[],data:Record<string,Quality
  }
  const purityAvg=purityCount?Math.round(puritySum/purityCount):null
  const purityGrade=purityAvg===null?'':purityAvg>=80?'纯净':purityAvg>=60?'较净':purityAvg>=40?'一般':'较差'
- const purityTone=purityAvg===null?'empty':purityAvg>=80?'good':purityAvg>=50?'warn':'bad'
+ const purityTone=purityAvg===null?'empty':purityAvg>=80&&!purityDivergent&&!purityFallback?'good':purityAvg>=50?'warn':'bad'
  return {
-  purityCount,purityAvg,purityGrade,purityTone,purityClean,purityRisky,
+  purityCount,purityAvg,purityGrade,purityTone,purityClean,purityRisky,purityDivergent,purityFallback,purityIssueNodes,
   cfCount,cfGood,cfWarn,cfBad,
  }
 }

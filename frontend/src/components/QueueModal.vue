@@ -8,6 +8,7 @@ import LatencyReport from './LatencyReport.vue'
 import {latencySampleState} from '../presentation'
 import {downloadNoDataReason} from '../measurementRounds'
 import {entryCountry,mainlandNotice} from '../entryPath'
+import {buildRetestPlanDraft,classifyQueueIssue,summarizeQueueFailures,type QueueFailureCategory} from '../queueReport'
 import {useWorkspace} from '../workspace'
 import {projectNames,isReputationRule,stateLabel,outcomeLabel,outcomeTone,downloadReading,downloadTone,downloadOutcome,downloadSourceName,type QueueItem} from '../domain'
 import Modal from './Modal.vue'
@@ -182,22 +183,27 @@ function saveState(q:QueueItem):{label:string;tone:string}{
 }
 function errorText(q:QueueItem){const error=q.error;return (error&&!error.startsWith('保存失败')&&error!==persistenceError(q)?error:'')||latencyItem(q)?.error_message||latencyItem(q)?.result?.samples?.find(s=>!s.success)?.error||q.attempt?.result?.error_message||''}
 function shortError(raw:string){
- if(raw.includes('备用源'))return raw
+ if(!raw)return ''
+ if(raw.includes('备用源')||/[\u4e00-\u9fff]/.test(raw))return raw
  if(/timeout|deadline|timed_out/i.test(raw))return '超时'
  if(/refused/i.test(raw))return '连接被拒绝'
  if(/reset/i.test(raw))return '连接被重置'
  if(/closed|EOF/i.test(raw))return '连接被关闭'
  if(/NXDOMAIN|no such host|DNS/i.test(raw))return '域名解析失败'
  if(/cancel/i.test(raw))return '已取消'
- return raw&&/[a-z]{3}/i.test(raw)?'连接失败':raw
+ return /[a-z]{3}/i.test(raw)?'连接失败':raw
 }
 function queueErrorLabel(q:QueueItem){
  const raw=errorText(q)
  if(q.project==='service'&&!['timed_out','transport_error','connection_failed'].includes(q.attempt?.result?.outcome||''))return raw
- return q.project==='download'?downloadNoDataReason(q.attempt)||shortError(raw):shortError(raw)
+ const phase=q.attempt?.result?.failure_phase
+ const text=q.project==='download'?downloadNoDataReason(q.attempt)||shortError(raw):shortError(raw)
+ if(q.project==='service'&&phase&&!['timeout','http_status'].includes(phase)&&text&&!text.includes(phase))return `${text}（阶段：${phase}）`
+ return text
 }
 type QueuePillFilter='all'|'good'|'issue'|'running'|'queued'|'notRun'
-const queueView=ref<'focus'|'all'>('focus'),queueFilter=ref<QueuePillFilter>('all'),queuePage=ref(1),pageSize=50
+const queueView=ref<'focus'|'all'>('focus'),queueFilter=ref<QueuePillFilter>('all'),reasonFilter=ref<QueueFailureCategory|null>(null),queuePage=ref(1),pageSize=50
+const failureSummary=computed(()=>summarizeQueueFailures(w.queue.value,w.catalog.value))
 const isIssueItem=(q:QueueItem)=>(['completed','failed'].includes(q.state)&&resultStatus(q)?.tone!=='good'&&!resultStatus(q)?.notExecuted)||saveFailed(q)||!!q.error
 const issueCount=computed(()=>w.queue.value.filter(isIssueItem).length)
 const attentionQueue=computed(()=>w.queue.value.filter(q=>!['queued','completed'].includes(q.state)||unknownStart(q)||saveFailed(q)||persistenceState(q)==='saving'||!!q.error||q.state==='completed'&&resultStatus(q)?.tone!=='good'))
@@ -211,9 +217,39 @@ function matchesPill(q:QueueItem,filter:QueuePillFilter){
  return true
 }
 function togglePillFilter(next:QueuePillFilter){
+ reasonFilter.value=null
  if(queueFilter.value===next&&queueView.value==='all'){queueFilter.value='all';return}
  queueView.value='all'
  queueFilter.value=next
+}
+function toggleReasonFilter(category:QueueFailureCategory){
+ if(reasonFilter.value===category){reasonFilter.value=null;return}
+ queueView.value='all'
+ queueFilter.value='all'
+ reasonFilter.value=category
+}
+function retestFailureItems(items:QueueItem[],label?:string){
+ if(w.busy.value)return
+ const draft=buildRetestPlanDraft(items,w.nodes.value,w.catalog.value)
+ if(!draft.nodes.length){
+  w.notify('这些异常节点的配置已变化或已移除，请在工作台重新选择')
+  return
+ }
+ if(!draft.projects.length&&!draft.includeReputation){
+  w.notify('未能识别可重测的项目，请手动配置检测计划')
+  return
+ }
+ w.openPlan(draft.nodes)
+ if(w.plan.value){
+  w.plan.value.projects=draft.projects
+  w.plan.value.serviceIds=draft.serviceIds
+  w.plan.value.includeReputation=draft.includeReputation
+  w.plan.value.reputationServiceIds=draft.reputationServiceIds
+ }
+ w.queueOpen.value=false
+ if(draft.missingNodeCount>0){
+  w.notify(`已为 ${draft.nodes.length} 个当前节点生成${label?`「${label}」`:'异常'}重测草稿（跳过 ${draft.missingNodeCount} 个配置已变节点）`)
+ }
 }
 function queueProjectLabel(q:QueueItem){
  const sid=q.serviceId||q.attempt?.service_id;if(q.project==='service'&&sid){
@@ -228,12 +264,16 @@ function cleanProfileName(raw?:string){
  return [...new Set(parts)].join(' · ')
 }
 const filteredQueue=computed(()=>{
+ if(reasonFilter.value){
+  return w.queue.value.filter(q=>classifyQueueIssue(q)?.category===reasonFilter.value)
+ }
  const base=queueFilter.value!=='all'?w.queue.value:queueView.value==='all'?w.queue.value:attentionQueue.value
  return base.filter(q=>matchesPill(q,queueFilter.value))
 })
 const pageCount=computed(()=>Math.max(1,Math.ceil(filteredQueue.value.length/pageSize)))
 const visibleQueue=computed(()=>filteredQueue.value.slice((queuePage.value-1)*pageSize,queuePage.value*pageSize))
-watch([queueView,queueFilter],()=>queuePage.value=1)
+watch([queueView,queueFilter,reasonFilter],()=>queuePage.value=1)
+watch(failureSummary,summary=>{if(reasonFilter.value&&!summary.groups.some(g=>g.category===reasonFilter.value))reasonFilter.value=null})
 watch(pageCount,count=>queuePage.value=Math.min(queuePage.value,count))
 const succeeded=computed(()=>w.queue.value.filter(q=>q.state==='completed'&&resultStatus(q)?.tone==='good').length)
 const compactLatency=computed(()=>!!w.activeBatch.value&&['queued','running','cancelling','saving'].includes(w.activeBatch.value.state)||w.running.value&&w.queue.value.length>0&&w.queue.value.every(q=>q.project==='latency'))
@@ -275,20 +315,43 @@ async function retry(q:QueueItem){retrying.value=q.id;try{if(q.batchId&&q.itemId
   </template>
   <template v-else>
     <div class="queue-counts" role="group" aria-label="按检测状态快速筛选">
-      <button type="button" class="queue-pill" :class="{active:queueView==='all'&&queueFilter==='all'}" :aria-pressed="queueView==='all'&&queueFilter==='all'" @click="queueView='all';queueFilter='all'">已处理 {{w.done.value}} / {{w.queue.value.length}}</button>
-      <button type="button" class="queue-pill good" :class="{active:queueFilter==='good'}" :aria-pressed="queueFilter==='good'" @click="togglePillFilter('good')">已成功 {{succeeded}}</button>
-      <button v-if="issueCount" type="button" class="queue-pill warn" :class="{active:queueFilter==='issue'}" :aria-pressed="queueFilter==='issue'" @click="togglePillFilter('issue')">需留意 / 异常 {{issueCount}}</button>
-      <button v-if="counts.running" type="button" class="queue-pill running" :class="{active:queueFilter==='running'}" :aria-pressed="queueFilter==='running'" @click="togglePillFilter('running')">执行 {{counts.running}}</button>
-      <button v-if="counts.queued" type="button" class="queue-pill" :class="{active:queueFilter==='queued'}" :aria-pressed="queueFilter==='queued'" @click="togglePillFilter('queued')">排队 {{counts.queued}}</button>
-      <button v-if="counts.notRun" type="button" class="queue-pill warn" :class="{active:queueFilter==='notRun'}" :aria-pressed="queueFilter==='notRun'" @click="togglePillFilter('notRun')">未运行/取消 {{counts.notRun}}</button>
+      <button type="button" class="queue-pill" :class="{active:queueView==='all'&&queueFilter==='all'&&!reasonFilter}" :aria-pressed="queueView==='all'&&queueFilter==='all'&&!reasonFilter" @click="reasonFilter=null;queueView='all';queueFilter='all'">已处理 {{w.done.value}} / {{w.queue.value.length}}</button>
+      <button type="button" class="queue-pill good" :class="{active:queueFilter==='good'&&!reasonFilter}" :aria-pressed="queueFilter==='good'&&!reasonFilter" @click="togglePillFilter('good')">已成功 {{succeeded}}</button>
+      <button v-if="issueCount" type="button" class="queue-pill warn" :class="{active:queueFilter==='issue'&&!reasonFilter}" :aria-pressed="queueFilter==='issue'&&!reasonFilter" @click="togglePillFilter('issue')">需留意 / 异常 {{issueCount}}</button>
+      <button v-if="counts.running" type="button" class="queue-pill running" :class="{active:queueFilter==='running'&&!reasonFilter}" :aria-pressed="queueFilter==='running'&&!reasonFilter" @click="togglePillFilter('running')">执行 {{counts.running}}</button>
+      <button v-if="counts.queued" type="button" class="queue-pill" :class="{active:queueFilter==='queued'&&!reasonFilter}" :aria-pressed="queueFilter==='queued'&&!reasonFilter" @click="togglePillFilter('queued')">排队 {{counts.queued}}</button>
+      <button v-if="counts.notRun" type="button" class="queue-pill warn" :class="{active:queueFilter==='notRun'&&!reasonFilter}" :aria-pressed="queueFilter==='notRun'&&!reasonFilter" @click="togglePillFilter('notRun')">未运行/取消 {{counts.notRun}}</button>
       <span v-if="counts.unknown" class="queue-pill warn">启动未知 {{counts.unknown}}</span>
       <span v-if="counts.saving" class="queue-pill">保存中 {{counts.saving}}</span>
       <span v-if="counts.saveFailed" class="queue-pill bad">保存失败 {{counts.saveFailed}}</span>
     </div>
     <p v-if="antigravitySummary" class="queue-counts antigravity-summary" role="status">{{antigravitySummary}}</p>
     <p v-if="antigravityAuthFailed" class="queue-counts antigravity-token-bar"><button class="button ghost small" :disabled="refreshingToken" @click="discoverLocalToken">{{refreshingToken?'正在刷新凭据…':'重新检测 / 刷新本地凭据'}}</button><span v-if="tokenNotice" class="small muted">{{tokenNotice}}</span></p>
+    <section v-if="failureSummary.groups.length" class="queue-issue-report" aria-label="本轮异常按原因汇总">
+      <header class="queue-issue-head">
+        <div>
+          <strong>异常按原因汇总</strong>
+          <small>共 {{failureSummary.totalItems}} 项异常 · 涉及 {{failureSummary.totalNodes}} 个节点 · 点原因可筛选明细</small>
+        </div>
+        <button type="button" class="button small" :disabled="w.busy.value" :title="w.busy.value?'当前检测进行中，结束后可生成重测计划':'打开检测配置草稿，仅包含异常节点与项目（确认后才会开始）'" @click="retestFailureItems(failureSummary.groups.flatMap(g=>g.items))">一键重测异常（{{failureSummary.totalNodes}} 节点）</button>
+      </header>
+      <div class="queue-issue-groups">
+        <article v-for="group in failureSummary.groups" :key="group.category" class="queue-issue-group" :class="[group.tone,{active:reasonFilter===group.category}]">
+          <button type="button" class="queue-issue-main" :aria-pressed="reasonFilter===group.category" @click="toggleReasonFilter(group.category)">
+            <div class="queue-issue-title">
+              <span class="queue-issue-dot" :class="group.tone" aria-hidden="true"/>
+              <strong>{{group.label}}</strong>
+              <span class="queue-issue-meta">{{group.items.length}} 项 · {{group.nodeCount}} 节点</span>
+            </div>
+            <p v-if="group.serviceLabels.length" class="queue-issue-services">{{group.serviceLabels.slice(0,4).join('、')}}{{group.serviceLabels.length>4?` 等 ${group.serviceLabels.length} 项`:''}}</p>
+            <small v-if="group.sampleReason" class="queue-issue-sample">{{group.sampleReason}}</small>
+          </button>
+          <button type="button" class="button ghost small queue-issue-retest" :disabled="w.busy.value" :title="w.busy.value?'检测进行中，结束后可重测':'仅针对此类异常生成重测计划草稿'" @click="retestFailureItems(group.items,group.label)">重测此类（{{group.items.length}}）</button>
+        </article>
+      </div>
+    </section>
     <div v-if="!w.queue.value.length&&w.activeBatch.value" class="muted">恢复的后台批次包含 {{w.activeBatch.value.item_count}} 个节点；结果可在检测历史查看。</div>
-    <div v-if="w.queue.value.length" class="queue-list-tools"><div class="queue-views" role="group" aria-label="检测项目范围"><button :aria-pressed="queueView==='focus'&&queueFilter==='all'" @click="queueFilter='all';queueView='focus'">进行中与需留意 <span>{{attentionQueue.length}}</span></button><button :aria-pressed="queueView==='all'&&queueFilter==='all'" @click="queueFilter='all';queueView='all'">全部项目 <span>{{w.queue.value.length}}</span></button></div><small>点击上方状态胶囊可直接筛选明细</small></div>
+    <div v-if="w.queue.value.length" class="queue-list-tools"><div class="queue-views" role="group" aria-label="检测项目范围"><button :aria-pressed="queueView==='focus'&&queueFilter==='all'&&!reasonFilter" @click="reasonFilter=null;queueFilter='all';queueView='focus'">进行中与需留意 <span>{{attentionQueue.length}}</span></button><button :aria-pressed="queueView==='all'&&queueFilter==='all'&&!reasonFilter" @click="reasonFilter=null;queueFilter='all';queueView='all'">全部项目 <span>{{w.queue.value.length}}</span></button></div><small>{{reasonFilter?`已按原因筛选：${failureSummary.groups.find(g=>g.category===reasonFilter)?.label||''}`:'点击上方状态或异常原因可直接筛选明细'}}<button v-if="reasonFilter" type="button" class="text-button small queue-clear-reason" @click="reasonFilter=null">清除筛选</button></small></div>
     <div v-if="visibleQueue.length" class="cst-queue-cols" aria-hidden="true"><span>节点与项目</span><span>执行</span><span>检测结果</span><span>保存</span></div>
     <div v-for="q in visibleQueue" :key="q.id" class="queue-row cst-queue-row">
       <div class="cst-queue-node"><strong>{{nodeDisplayName(q.node)}}</strong><small>{{cleanProfileName(q.node.profile_name)}} · {{queueProjectLabel(q)}}<template v-if="q.serviceId"> · {{w.catalog.value.find(s=>s.service_id===q.serviceId)?.name||q.serviceId}}</template></small><p v-if="errorText(q)" class="bad small" :title="errorText(q)">{{queueErrorLabel(q)}}</p><p v-if="antigravityEvidenceLine(q)" class="muted small">{{antigravityEvidenceLine(q)}}</p><p v-if="servicePhaseNote(q)" class="muted small">{{servicePhaseNote(q)}}</p><details v-if="antigravityDetails(q).length" class="small muted"><summary>执行详情</summary><p v-for="detail in antigravityDetails(q)" :key="detail">{{detail}}</p></details></div>
@@ -326,6 +389,26 @@ button.queue-pill:hover{border-color:var(--cst-accent);color:var(--cst-text);bac
 .queue-counts>.queue-pill.warn{color:var(--cst-warn);border-color:var(--cst-warn-line);background:var(--cst-warn-bg)}
 .queue-counts>.queue-pill.bad{color:var(--cst-bad);border-color:color-mix(in srgb,var(--cst-bad) 32%,var(--cst-line));background:color-mix(in srgb,var(--cst-bad) 8%,var(--cst-panel))}
 .queue-counts.antigravity-summary{display:block;padding:8px 12px;border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel-2);font-size:12px}
+.queue-issue-report{margin:12px 0 4px;padding:12px 14px;border:1px solid color-mix(in srgb,var(--cst-warn) 30%,var(--cst-line));border-radius:12px;background:color-mix(in srgb,var(--cst-warn-bg) 42%,var(--cst-panel));display:grid;gap:10px}
+.queue-issue-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.queue-issue-head>div{display:grid;gap:2px}
+.queue-issue-head strong{font-size:13px;font-weight:700;color:var(--cst-text)}
+.queue-issue-head small{font-size:11.5px;color:var(--cst-muted)}
+.queue-issue-groups{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px}
+.queue-issue-group{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 11px;border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel);transition:border-color .14s,box-shadow .14s}
+.queue-issue-group.active{border-color:var(--cst-accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--cst-accent) 18%,transparent)}
+.queue-issue-group.bad{border-left:3px solid var(--cst-bad)}
+.queue-issue-group.warn{border-left:3px solid var(--cst-warn)}
+.queue-issue-main{flex:1;min-width:0;border:0;padding:0;background:transparent;text-align:left;display:grid;gap:3px;cursor:pointer;color:inherit}
+.queue-issue-title{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.queue-issue-title strong{font-size:12.5px;font-weight:650;color:var(--cst-text)}
+.queue-issue-dot{width:6px;height:6px;border-radius:50%;flex:none}
+.queue-issue-dot.warn{background:var(--cst-warn)}.queue-issue-dot.bad{background:var(--cst-bad)}
+.queue-issue-meta{font-size:11px;color:var(--cst-muted);font-variant-numeric:tabular-nums}
+.queue-issue-services{margin:0;font-size:11.5px;color:var(--cst-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.queue-issue-sample{font-size:11px;color:var(--cst-muted);line-height:1.45;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.queue-issue-retest{flex:none;white-space:nowrap}
+.queue-clear-reason{margin-left:8px}
 .compact-progress-counts{display:flex;flex-wrap:wrap;gap:12px;padding:12px 0 18px;border-bottom:1px solid var(--cst-line)}
 .compact-progress-counts span{color:var(--cst-muted);font-size:12px;display:flex;align-items:baseline;gap:8px;padding:8px 12px;border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel-2)}
 .compact-progress-counts strong{color:var(--cst-text);font-size:20px;font-variant-numeric:tabular-nums}

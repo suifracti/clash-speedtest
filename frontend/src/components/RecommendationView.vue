@@ -180,13 +180,19 @@ onMounted(()=>void refresh())
          <div class="candidate-title">
           <strong>{{nodeDisplayName(candidate.node)}}</strong>
           <small class="candidate-source">{{candidateSource(candidate.node)}} · {{candidate.node.type}}</small>
-          <span v-if="candidate.purity" class="cf-chip" :class="candidate.purity.tone" :title="candidate.purity.title">{{candidate.purity.grade}} {{candidate.purity.score}}</span>
+          <span v-if="candidate.purity" class="cf-chip" :class="candidate.purity.tone" :title="candidate.purity.title">{{candidate.purity.badgeLabel}}</span>
           <span v-if="candidate.cfChallenge" class="cf-chip" :class="candidate.cfChallenge.tone" :title="candidate.cfChallenge.detail">{{candidate.cfChallenge.label}}</span>
          </div>
          <span class="candidate-hero" :class="{'candidate-reference':!isRecommendation(candidate)}">{{candidateHero(candidate)}}</span>
         </div>
         <div class="candidate-evidence">
          <p>{{candidate.basis}}</p>
+         <div v-if="candidate.purity&&(candidate.purity.sources.length>=2||candidate.purity.issues.length)" class="candidate-rep-strip" :title="candidate.purity.title">
+          <span v-for="src in candidate.purity.sources" :key="src.id" class="candidate-rep-chip" :class="src.tone" :title="src.detail"><b>{{src.name}}</b><i>{{src.risk}}</i></span>
+          <span v-for="iss in candidate.purity.issues.slice(0,2)" :key="iss" class="candidate-rep-chip issue">{{iss}}</span>
+          <small v-if="candidate.purity.divergent" class="candidate-rep-note">多站分歧大 · 风险分越低越净</small>
+          <small v-else-if="candidate.purity.singleFallback" class="candidate-rep-note">仅单站返回 · 谨慎参考</small>
+         </div>
          <div class="candidate-foot">
           <small>{{candidate.count}} {{activePurpose==='daily'?'次采样':isServicePurpose(activePurpose)?'次规则通过':'次同条件读数'}} · 最近 {{date(candidate.at)}}<template v-if="secondPickNote(region.picks,index)"> · <em>{{secondPickNote(region.picks,index)}}</em></template></small>
           <div class="candidate-actions">
@@ -275,6 +281,15 @@ onMounted(()=>void refresh())
 .cf-chip.good{color:var(--cst-good,#15803d);background:color-mix(in srgb,var(--cst-good,#15803d) 10%,transparent);border-color:color-mix(in srgb,var(--cst-good,#15803d) 24%,transparent)}
 .cf-chip.warn{color:var(--cst-warn,#b45309);background:color-mix(in srgb,var(--cst-warn,#b45309) 12%,transparent);border-color:color-mix(in srgb,var(--cst-warn,#b45309) 28%,transparent)}
 .cf-chip.bad{color:var(--cst-bad,#b91c1c);background:color-mix(in srgb,var(--cst-bad,#b91c1c) 10%,transparent);border-color:color-mix(in srgb,var(--cst-bad,#b91c1c) 26%,transparent)}
+.candidate-rep-strip{display:flex;align-items:center;flex-wrap:wrap;gap:4px 6px;margin-top:6px}
+.candidate-rep-chip{display:inline-flex;align-items:center;gap:3px;padding:1px 6px;border-radius:6px;border:1px solid var(--cst-line);background:var(--cst-panel);font-size:10.5px;line-height:1.45;font-variant-numeric:tabular-nums}
+.candidate-rep-chip b{font-weight:600;color:var(--cst-muted)}
+.candidate-rep-chip i{font-style:normal;font-weight:750}
+.candidate-rep-chip.good i{color:var(--cst-good,#15803d)}.candidate-rep-chip.good{border-color:color-mix(in srgb,var(--cst-good,#15803d) 24%,var(--cst-line))}
+.candidate-rep-chip.warn i{color:var(--cst-warn,#b45309)}.candidate-rep-chip.warn{border-color:color-mix(in srgb,var(--cst-warn,#b45309) 28%,var(--cst-line))}
+.candidate-rep-chip.bad i{color:var(--cst-bad,#b91c1c)}.candidate-rep-chip.bad{border-color:color-mix(in srgb,var(--cst-bad,#b91c1c) 26%,var(--cst-line))}
+.candidate-rep-chip.issue{color:var(--cst-warn,#b45309);background:var(--cst-warn-bg);border-color:color-mix(in srgb,var(--cst-warn,#b45309) 28%,transparent);font-weight:600}
+.candidate-rep-note{font-size:10.5px;color:var(--cst-warn,#b45309);font-weight:550}
 .candidate-evidence p{margin:0;font-size:12.5px;line-height:1.5;color:var(--cst-text);overflow-wrap:anywhere}
 .candidate-foot{display:flex;align-items:center;justify-content:space-between;gap:8px 12px;flex-wrap:wrap;margin-top:6px}
 .candidate-foot small,.region-note{font-size:11.5px;line-height:1.55;color:var(--cst-muted)}

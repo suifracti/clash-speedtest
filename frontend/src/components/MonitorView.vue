@@ -313,6 +313,8 @@ onBeforeUnmount(()=>{mounted=false;reloadGeneration++;runsGeneration++;clearInte
 .monitor-modes button[aria-pressed=true]{border-color:color-mix(in srgb,var(--cst-accent) 48%,transparent);background:var(--cst-aurora-surface),var(--cst-panel);color:var(--cst-text);box-shadow:0 0 0 2px color-mix(in srgb,var(--cst-accent) 16%,transparent),var(--cst-shadow)}
 .monitor-modes strong{font-size:15px;font-weight:700;color:var(--cst-text)}.monitor-modes button[aria-pressed=true] strong{color:var(--cst-accent)}
 .monitor-modes small{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;background:var(--cst-panel-2);border:1px solid var(--cst-line);font-size:11px;font-weight:600}
+.monitor-modes button[aria-pressed=true] small{background:var(--cst-accent-soft);border-color:color-mix(in srgb,var(--cst-accent) 26%,transparent);color:var(--cst-accent)}
+.monitor-modes small.warn{background:var(--cst-warn-bg);border-color:color-mix(in srgb,var(--cst-warn) 34%,transparent);color:var(--cst-warn)}
 @media(max-width:760px){.monitor-modes{grid-template-columns:minmax(0,1fr);gap:10px}}
 
 .monitor-resource-values{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(340px,100%),1fr));gap:6px 18px;flex:1;min-width:0}

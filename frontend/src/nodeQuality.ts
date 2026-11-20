@@ -19,8 +19,8 @@ export function qualityMatchesGate(e:QualityEvidence|undefined,g:QualityGroup|un
  if(gate==='download')return e.reads.download.complete&&!!downloadEvidence(e.downloads).valid
  if(gate==='purity_clean'){
   if(!e.reads.service.complete)return false
-  const score=exitLanding({country_code:''},e.services).purity.score
-  return score!==null&&score>=80
+  const p=exitLanding({country_code:''},e.services).purity
+  return p.score!==null&&p.score>=80&&!p.singleFallback&&!p.divergent
  }
  if(gate==='latency_issue'){
   if(!e.reads.latency.complete&&!e.reads.monitor.complete)return false

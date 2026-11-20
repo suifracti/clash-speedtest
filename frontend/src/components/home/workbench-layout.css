@@ -88,8 +88,9 @@
 .hd-workbench-layout .hd-source .subscription-account>small{font-size:12px;line-height:1.5;white-space:normal;overflow-wrap:anywhere}
 .hd-workbench-layout .hd-source .subscription-facts{gap:7px;font-size:12px;line-height:1.5;margin-top:9px}
 .hd-workbench-layout .hd-source .subscription-facts .text-button{font-size:12px}
+.hd-workbench-layout .hd-source .subscription-remaining{align-items:center;gap:4px 6px}
 .hd-workbench-layout .hd-source .subscription-remaining-label,.hd-workbench-layout .hd-source .subscription-quota-legend{font-size:12px}
-.hd-workbench-layout .hd-source .subscription-remaining-value{font-size:19px}
+.hd-workbench-layout .hd-source .subscription-remaining-value{font-size:17.5px}
 .hd-workbench-layout .hd-source .subscription-daily{min-width:0;width:100%}
 .hd-workbench-layout .hd-source .cst-usage-summary{gap:5px;height:70px}
 .hd-workbench-layout .hd-source .cst-usage-day-value{font-size:10px}

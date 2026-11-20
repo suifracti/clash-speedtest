@@ -125,3 +125,37 @@ it('summarizes saved exit purity/CF challenge stats and filters rank table by se
   expect(wrapper.findAll('.rank-node').map(r=>r.text())).toEqual(['日本 · 01'])
  }finally{wrapper.unmount();w.dispose();settings.mockRestore()}
 })
+
+it('flags divergent and single-source fallback purity nodes separately from clean consensus in airport report',async()=>{
+ const make=(id:string,name:string)=>({profile_id:'p',node_key:id,node_identity_key:id,config_revision_key:'r',display_name:name,country_code:'SG',type:'Hysteria2'} as NodeOption)
+ const divNode=make('div','新加坡01'),fbNode=make('fb','新加坡02'),at='2026-11-20T12:00:00Z'
+ const mkLatency=(n:NodeOption)=>({...n,attempt_id:'t-'+n.node_key,requested_at:at,total_samples:3,success_samples:3,samples:[1,2,3].map(seq=>({seq,target:'https://speed.cloudflare.com/__down?bytes=1',timestamp:at,success:true,latency_ms:100}))})
+ const mkSvc=(n:NodeOption,id:string,outcome:string,details:Record<string,string>={})=>({...n,attempt_id:`s-${n.node_key}-${id}`,service_id:id,execution_state:'completed',persistence_state:'saved',rule:{service_id:id},result:{outcome,finished_at:at,details}})
+ const history:Record<string,QualityEvidence>={
+  [key(divNode)]:{
+   tests:[mkLatency(divNode)],monitor:[],downloads:[],
+   services:[mkSvc(divNode,'ipquery_ip_quality','profiled',{risk_score:'0'}),mkSvc(divNode,'iplogs_ip_quality','profiled',{risk_score:'38'})],
+   reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true,since:at,until:at,
+  } as unknown as QualityEvidence,
+  [key(fbNode)]:{
+   tests:[mkLatency(fbNode)],monitor:[],downloads:[],
+   services:[mkSvc(fbNode,'ippure_ip_quality','timed_out'),mkSvc(fbNode,'ping0_ipv4','profiled',{risk_score:'15'})],
+   reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true,since:at,until:at,
+  } as unknown as QualityEvidence,
+ }
+ expect(airportExitSummary([divNode,fbNode],history)).toMatchObject({purityCount:2,purityClean:0,purityDivergent:1,purityFallback:1,purityTone:'warn'})
+ vi.mocked(readQualityBatch).mockReset().mockResolvedValue(history)
+ const settings=vi.spyOn(api,'settings').mockResolvedValue({} as never)
+ const w=createWorkspace();w.airports.value=[{id:'a',name:'机场A',subscriptions:[{id:'p',airport_id:'a'}]}] as never;w.nodes.value=[divNode,fbNode]
+ const wrapper=mount(AirportReport,{global:{provide:{[workspaceKey as symbol]:w},stubs:{TrendChart:true}}})
+ try{
+  await flushPromises()
+  expect(wrapper.get('.report-metrics').text()).toContain('分歧大 1 · 单源回退 1')
+  expect(wrapper.get('.rank-table-wrap').text()).toContain('IPQuery0')
+  expect(wrapper.get('.rank-table-wrap').text()).toContain('IPLogs38')
+  expect(wrapper.get('.rank-table-wrap').text()).toContain('单源 85')
+  // Both divergent and fallback nodes appear when filtering "仅看有问题".
+  await wrapper.get('.rank-filter-pill').trigger('click')
+  expect(wrapper.findAll('.rank-node')).toHaveLength(2)
+ }finally{wrapper.unmount();w.dispose();settings.mockRestore()}
+})

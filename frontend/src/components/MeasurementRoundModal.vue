@@ -34,7 +34,10 @@ function nodeName(item:MeasurementRoundItem){
 }
 function accountName(item:MeasurementRoundItem){
  const source=sources.value.get(item.profile_id)
- return source?`${source.airportName} · ${source.subscriptionName}`:`历史账户 ${item.profile_id}`
+ if(!source)return `历史账户 ${item.profile_id}`
+ return source.subscriptionName&&source.subscriptionName!==source.airportName
+  ?`${source.airportName} · ${source.subscriptionName}`
+  :source.airportName||source.subscriptionName
 }
 function projectName(item:MeasurementRoundItem){
  if(item.project==='latency')return '延迟检测'

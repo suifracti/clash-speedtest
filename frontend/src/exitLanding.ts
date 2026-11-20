@@ -94,7 +94,7 @@ export function exitLanding(node:Pick<NodeOption,'country_code'>,attempts:Attemp
   :reputation
    ?`纯净度 ${purityScore}/100（${purityGrade}，越高越干净）· 由 ${reputation.provider} 风险分 ${riskScore(reputation)} 换算 · 越高越干净${singleFallback?'（其余站点未返回，仅单源参考）':''}${issueNote} · ${typeText}${purityAt?' · '+purityAt:''}`
    :reputationIssues.length?`信誉查询异常：${reputationIssues.join('、')}`:'没有可换算的风险分'
- const purityTone=purityScore===null?'empty':singleFallback?'warn':purityScore>=80?'good':purityScore>=50?'warn':'bad'
+ const purityTone=purityScore===null?'empty':singleFallback||(divergent&&purityScore>=80)?'warn':purityScore>=80?'good':purityScore>=50?'warn':'bad'
  const purity={
   score:purityScore,grade:purityGrade,rawRisk,typeLabel:ipKind.typeLabel,
   sourceCount,divergent,singleFallback,riskMin,riskMax,
