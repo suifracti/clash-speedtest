@@ -90,6 +90,7 @@ type LatencyTestSample struct {
 // LatencyTestFilter scopes history to a logical subscription node.
 type LatencyTestFilter struct {
 	Target              string
+	Targets             []string
 	IncludeLegacyTarget bool
 	ProfileID           string
 	NodeKey             string

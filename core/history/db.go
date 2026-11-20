@@ -1480,15 +1480,34 @@ func (d *DB) QueryLatencyTests(ctx context.Context, filter LatencyTestFilter) (*
 
 	where := `t.profile_id = ? AND t.node_key = ?`
 	args := []any{filter.ProfileID, filter.NodeKey}
-	if filter.Target != "" {
+	targetMatches := make([]string, 0, len(filter.Targets)+1)
+	seenTargets := make(map[string]struct{}, len(filter.Targets)+1)
+	for _, raw := range append([]string{filter.Target}, filter.Targets...) {
+		if raw == "" {
+			continue
+		}
+		if _, ok := seenTargets[raw]; ok {
+			continue
+		}
+		seenTargets[raw] = struct{}{}
+		targetMatches = append(targetMatches, raw)
+	}
+	if len(targetMatches) > 0 {
 		// Eligibility is decided from target children before LIMIT. A six-site
-		// parent uses multi://latency-v1 and must remain queryable by each site.
+		// parent uses multi://latency-v1 and must remain queryable by each site,
+		// including historical URLs mapped to the same site identity.
 		// Preflight failures have no samples; keep their explicit target/evidence
 		// visible in history without turning them into measurements.
-		where += ` AND (EXISTS (SELECT 1 FROM workbench_latency_samples AS target_sample
+		placeholders := strings.TrimRight(strings.Repeat("?,", len(targetMatches)), ",")
+		where += fmt.Sprintf(` AND (EXISTS (SELECT 1 FROM workbench_latency_samples AS target_sample
 			WHERE target_sample.attempt_id = t.attempt_id AND (
-				target_sample.target = ? OR (COALESCE(target_sample.target, '') = '' AND t.target = ?)`
-		args = append(args, filter.Target, filter.Target)
+				target_sample.target IN (%s) OR (COALESCE(target_sample.target, '') = '' AND t.target IN (%s))`, placeholders, placeholders)
+		for _, target := range targetMatches {
+			args = append(args, target)
+		}
+		for _, target := range targetMatches {
+			args = append(args, target)
+		}
 		if filter.IncludeLegacyTarget {
 			where += ` OR (COALESCE(target_sample.target, '') = '' AND COALESCE(t.target, '') = '')`
 		}
@@ -1497,8 +1516,10 @@ func (d *DB) QueryLatencyTests(ctx context.Context, filter LatencyTestFilter) (*
 			where += ` AND target_sample.timestamp >= ? AND target_sample.timestamp < ?`
 			args = append(args, *since, *until)
 		}
-		where += `) OR (t.status='not_executed' AND (t.target = ?`
-		args = append(args, filter.Target)
+		where += fmt.Sprintf(`) OR (t.status='not_executed' AND (t.target IN (%s)`, placeholders)
+		for _, target := range targetMatches {
+			args = append(args, target)
+		}
 		if filter.IncludeLegacyTarget {
 			where += ` OR COALESCE(t.target, '') = ''`
 		}

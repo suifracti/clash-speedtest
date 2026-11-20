@@ -20,7 +20,8 @@ export function latencyHttpNoticeDetails(report:Pick<LatencyReport,'rows'>):Late
   const status=sample.success?sample.error?.match(/^HTTP (\d+)/)?.[1]:''
   if(!status)continue
   const name=activeLatencyTargets.find(t=>t.id===latencyTargetId(sample.target))?.name||'网站'
-  const label=`${name} ${['403','429'].includes(status)?'拒绝访问':'返回 HTTP '+status}`
+  const apiLimited=/API\s*匿名限流/i.test(sample.error||'')
+  const label=`${name} ${apiLimited?'API 匿名限流 (403)':['403','429'].includes(status)?'拒绝访问':'返回 HTTP '+status}`
   const group=groups.get(label)||{samples:0,nodes:new Set<string>()}
   group.samples++;group.nodes.add(row.key);groups.set(label,group)
  }

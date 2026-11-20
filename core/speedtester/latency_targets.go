@@ -15,7 +15,7 @@ func LatencyTargetURL(id string) (string, error) {
 	case "google":
 		return "https://www.gstatic.com/generate_204", nil
 	case "github":
-		return "https://api.github.com/zen", nil
+		return "https://github.com/favicon.ico", nil
 	case "apple":
 		return "https://captive.apple.com/hotspot-detect.html", nil
 	case "microsoft":
@@ -27,10 +27,27 @@ func LatencyTargetURL(id string) (string, error) {
 	}
 }
 
+// LatencyTargetMatchURLs returns the current target URL together with any
+// historical URLs that belong to the same site identity for history queries.
+func LatencyTargetMatchURLs(id string) ([]string, error) {
+	url, err := LatencyTargetURL(id)
+	if err != nil {
+		return nil, err
+	}
+	switch strings.ToLower(strings.TrimSpace(id)) {
+	case "", "cloudflare":
+		return []string{url, "https://cp.cloudflare.com/generate_204"}, nil
+	case "github":
+		return []string{url, "https://api.github.com/zen"}, nil
+	default:
+		return []string{url}, nil
+	}
+}
+
 // LatencyProbeURLs expands the versioned suite while preserving single-target callers.
 func LatencyProbeURLs(target string) []string {
 	if target == "multi://latency-four-v1" {
-		return []string{"https://speed.cloudflare.com/__down?bytes=1", "https://www.gstatic.com/generate_204", "https://api.github.com/zen", "https://captive.apple.com/hotspot-detect.html"}
+		return []string{"https://speed.cloudflare.com/__down?bytes=1", "https://www.gstatic.com/generate_204", "https://github.com/favicon.ico", "https://captive.apple.com/hotspot-detect.html"}
 	}
 	if target != "multi://latency-v1" {
 		return []string{target}

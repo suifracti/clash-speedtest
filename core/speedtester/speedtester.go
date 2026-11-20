@@ -1150,7 +1150,11 @@ rounds:
 				}
 				sample.Duration, sample.LatencyMs, sample.Success = dur, dur.Milliseconds(), true
 				if resp.StatusCode >= 300 {
-					sample.Error = fmt.Sprintf("HTTP %d；响应时延已测，业务／地区解锁未确认", resp.StatusCode)
+					if resp.StatusCode == http.StatusForbidden && strings.TrimSpace(resp.Header.Get("X-RateLimit-Remaining")) == "0" {
+						sample.Error = "HTTP 403（API 匿名限流）；响应时延已测，非节点被封"
+					} else {
+						sample.Error = fmt.Sprintf("HTTP %d；响应时延已测，业务／地区解锁未确认", resp.StatusCode)
+					}
 				}
 				// A short drain can keep the connection reusable. Its result
 				// cannot change the already observed first-byte latency.

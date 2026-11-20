@@ -24,7 +24,7 @@ it('uses the newer same-site stopped-monitor round including refusal latency',as
  const result=await readSortSnapshot([n],'latency','github',[],at,at,()=>{})
  expect(result.snapshot[key(n)].latency).toMatchObject({value:368,tone:'good',source:'monitor'})
  expect(api.latencyHistory).toHaveBeenCalledWith(n,{target_id:'github',since:at,until:at,limit:1})
- expect(api.monitorSamples).toHaveBeenCalledWith(expect.objectContaining({...scope(n),probe_type:'rtt',target:'https://api.github.com/zen'}))
+ expect(api.monitorSamples).toHaveBeenCalledWith(expect.objectContaining({...scope(n),probe_type:'rtt',target:undefined}))
 })
 it('freezes ranking across later history merges and updates only on explicit refresh',async()=>{
  const w=createWorkspace(),other={...n,node_key:'other',node_identity_key:'other'}

@@ -131,7 +131,7 @@ func GetProbeTargets(pset ProbeSetType) []TargetSpec {
 		return []TargetSpec{
 			{ResponseDelayOnly: true, ProbeType: "rtt", URL: "https://speed.cloudflare.com/__down?bytes=1"},
 			{ResponseDelayOnly: true, ProbeType: "rtt", URL: "https://www.gstatic.com/generate_204"},
-			{ResponseDelayOnly: true, ProbeType: "rtt", URL: "https://api.github.com/zen"},
+			{ResponseDelayOnly: true, ProbeType: "rtt", URL: "https://github.com/favicon.ico"},
 			{ResponseDelayOnly: true, ProbeType: "rtt", URL: "https://captive.apple.com/hotspot-detect.html"},
 			{ResponseDelayOnly: true, ProbeType: "rtt", URL: "http://www.msftconnecttest.com/connecttest.txt"},
 			{ResponseDelayOnly: true, ProbeType: "rtt", URL: "https://detectportal.firefox.com/success.txt"},
@@ -561,7 +561,11 @@ func (r *Runner) executeSingleProbe(
 		sample.Success = true
 		sample.ErrorClass = "none"
 		if resp.StatusCode >= 300 {
-			sample.ErrorDetail = fmt.Sprintf("HTTP %d；已测得响应时延，业务／解锁未确认", resp.StatusCode)
+			if resp.StatusCode == http.StatusForbidden && strings.TrimSpace(resp.Header.Get("X-RateLimit-Remaining")) == "0" {
+				sample.ErrorDetail = "HTTP 403（API 匿名限流）；已测得响应时延，非节点被封"
+			} else {
+				sample.ErrorDetail = fmt.Sprintf("HTTP %d；已测得响应时延，业务／解锁未确认", resp.StatusCode)
+			}
 		}
 	} else if resp.StatusCode >= 200 && resp.StatusCode < 400 {
 		sample.Success = true

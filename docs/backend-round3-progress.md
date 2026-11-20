@@ -4,6 +4,10 @@
 
 ## 当前接续（2026-11-20）
 
+- 根治延迟测速 GitHub 大面积 `HTTP 403` 与移除历史小方块遮挡悬浮：
+  1. 实测确认原 `https://api.github.com/zen` 触发 GitHub 匿名 REST API 每 IP 每小时 60 次配额限制（返回 `HTTP 403 rate limit exceeded` + `X-RateLimit-Remaining: 0`），而同出口访问 `https://github.com/favicon.ico` 与 `robots.txt` 均为 `200 OK`。现将工作台与监测四/六站 GitHub 延迟目标统一切换为 `https://github.com/favicon.ico`（`core/speedtester/latency_targets.go`、`core/monitor/runner.go`、`frontend/src/latencyTargets.ts`、`frontend/src/sortSnapshot.ts`），并通过 `LatencyTargetMatchURLs` 与 `LatencyTestFilter.Targets` 完整兼容历史 `api.github.com/zen` 记录；同时在 `speedtester.go`、`runner.go` 与 `latencyReport.ts` 识别 `HTTP 403` + `X-RateLimit-Remaining: 0` 为「API 匿名限流（403）」。
+  2. 移除 `LatencyHistoryMarks.vue` 会遮挡上方回看竖条的自定义悬浮气泡与 `title`（保留无障碍 `aria-label` 与上方 6 根竖条的逐次明细悬浮）。
+  3. 校验：`go vet` + 4 个核心 Go 包（`core/speedtester`、`core/monitor`、`core/history`、`application`，`-count=1`）、受影响 7 份 / 93 项前端单测与 `vue-tsc -b && vite build` 全过。
 - 落地多源信誉共识全站同步、解锁/出口异常归因重测与次级页极光打磨：
   1. **多源信誉共识与分歧保护**（`exitLanding.ts`、`nodeQuality.ts`、`recommendations.ts`、`RecommendationView.vue`、`airportReport.ts`、`AirportReport.vue`、`sharedResults.ts`）：强分歧高均值节点在 `exitLanding` 降级橙色警示；`purity_clean` 筛选与「机场体检」干净计数均排除单源回退（`singleFallback`）与强分歧（`divergent`）节点；「为你选线」与「机场体检」卡片/排行表同步展示多源分站风险芯片、分歧/单源提示及「仅看有问题」联动；`serviceIsProfile` 补齐 `cloudflare_challenge` 使纯出口与信誉轮次统一归类为「出口与信誉」。
   2. **解锁/出口/下载批次异常归因与一键重测**（`queueReport.ts`、`QueueModal.vue`）：针对非延迟队列（解锁检测、出口与信誉、下载测速）自动按原因分组汇总（连接/请求超时、连接/TLS 失败、地区受限/送中、触发验证/弹盾、凭据/额度限流、HTTP/规则未通过等），排除仅保存失败的成功项，支持点击分类筛选队列并保留真实中文报错与 `failure_phase`（零字节下载超时优先展示握手/建连阶段诊断）；提供单类「重测此类」与顶栏「一键重测异常」按钮，严格按 `service` 与 `reputation` 拆分预填 `TestPlanModal` 草稿且不自动启动。

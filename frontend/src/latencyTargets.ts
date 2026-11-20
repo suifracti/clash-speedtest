@@ -1,7 +1,7 @@
 export const latencyTargets=[
  {id:'cloudflare',name:'Cloudflare',match:'speed.cloudflare.com',urls:['https://speed.cloudflare.com/__down?bytes=1','https://cp.cloudflare.com/generate_204']},
  {id:'google',name:'Google',match:'gstatic.com',urls:['https://www.gstatic.com/generate_204']},
- {id:'github',name:'GitHub',match:'api.github.com',urls:['https://api.github.com/zen']},
+ {id:'github',name:'GitHub',match:'github.com',urls:['https://github.com/favicon.ico','https://api.github.com/zen']},
  {id:'apple',name:'Apple',match:'captive.apple.com',urls:['https://captive.apple.com/hotspot-detect.html']},
  {id:'microsoft',name:'Microsoft',match:'msftconnecttest.com',urls:['http://www.msftconnecttest.com/connecttest.txt']},
  {id:'firefox',name:'Firefox',match:'detectportal.firefox.com',urls:['https://detectportal.firefox.com/success.txt']},

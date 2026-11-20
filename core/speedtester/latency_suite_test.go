@@ -29,14 +29,14 @@ func TestLatencySuiteMeasuresEverySiteAndKeepsFailures(t *testing.T) {
 			t.Error("six sites did not start concurrently")
 			return nil, errors.New("concurrent probes blocked")
 		}
-		if r.URL.Host == "api.github.com" {
+		if r.URL.Host == "github.com" {
 			return nil, errors.New("test connection refused")
 		}
 		return &http.Response{StatusCode: 204, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}, nil
 	})}
 	tester := &SpeedTester{config: &Config{LatencyTargetURL: "multi://latency-v1"}}
 	result := tester.testLatencyWithClient(client, 2)
-	for _, host := range []string{"speed.cloudflare.com", "www.gstatic.com", "api.github.com", "captive.apple.com", "www.msftconnecttest.com", "detectportal.firefox.com"} {
+	for _, host := range []string{"speed.cloudflare.com", "www.gstatic.com", "github.com", "captive.apple.com", "www.msftconnecttest.com", "detectportal.firefox.com"} {
 		if counts[host] != 2 {
 			t.Fatalf("%s received %d probes; want 2", host, counts[host])
 		}
@@ -51,7 +51,7 @@ func TestLatencySuiteMeasuresEverySiteAndKeepsFailures(t *testing.T) {
 		}
 		if !sample.Success {
 			failures++
-			if sample.Target != "https://api.github.com/zen" || !strings.Contains(sample.Error, "test connection refused") {
+			if sample.Target != "https://github.com/favicon.ico" || !strings.Contains(sample.Error, "test connection refused") {
 				t.Fatalf("wrong failure: %+v", sample)
 			}
 		}
@@ -65,10 +65,24 @@ func TestLatencyHTTPRefusalKeepsTimingWithoutClaimingBusinessSuccess(t *testing.
 	client := &http.Client{Transport: downloadRoundTripper(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 429, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("limited")), Request: r}, nil
 	})}
-	tester := &SpeedTester{config: &Config{LatencyTargetURL: "https://api.github.com/zen"}}
+	tester := &SpeedTester{config: &Config{LatencyTargetURL: "https://github.com/favicon.ico"}}
 	result := tester.testLatencyWithClient(client, 1)
 	if len(result.samples) != 1 || !result.samples[0].Success || !strings.Contains(result.samples[0].Error, "HTTP 429") {
 		t.Fatalf("response latency and endpoint refusal not separated: %+v", result.samples)
+	}
+}
+
+func TestLatencyHTTP403RateLimitIdentifiedSeparately(t *testing.T) {
+	client := &http.Client{Transport: downloadRoundTripper(func(r *http.Request) (*http.Response, error) {
+		h := make(http.Header)
+		h.Set("X-RateLimit-Limit", "60")
+		h.Set("X-RateLimit-Remaining", "0")
+		return &http.Response{StatusCode: 403, Header: h, Body: io.NopCloser(strings.NewReader(`{"message":"API rate limit exceeded"}`)), Request: r}, nil
+	})}
+	tester := &SpeedTester{config: &Config{LatencyTargetURL: "https://api.github.com/zen"}}
+	result := tester.testLatencyWithClient(client, 1)
+	if len(result.samples) != 1 || !result.samples[0].Success || !strings.Contains(result.samples[0].Error, "HTTP 403（API 匿名限流）") {
+		t.Fatalf("expected rate-limited 403 note, got %+v", result.samples)
 	}
 }
 

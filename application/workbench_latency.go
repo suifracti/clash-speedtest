@@ -202,15 +202,15 @@ func (s *AppService) ListWorkbenchLatencyTests(ctx context.Context, query Workbe
 	if err != nil {
 		return WorkbenchLatencyHistoryResult{}, monitor.NewValidationError(err.Error())
 	}
-	targetURL := ""
+	var targetURLs []string
 	if query.TargetID != "" && query.TargetID != "all" {
-		targetURL, err = speedtester.LatencyTargetURL(query.TargetID)
+		targetURLs, err = speedtester.LatencyTargetMatchURLs(query.TargetID)
 		if err != nil {
 			return WorkbenchLatencyHistoryResult{}, monitor.NewValidationError(err.Error())
 		}
 	}
 	page, err := s.historyStore.QueryLatencyTests(ctx, history.LatencyTestFilter{
-		Target:              targetURL,
+		Targets:             targetURLs,
 		IncludeLegacyTarget: query.TargetID == "cloudflare",
 		ProfileID:           profileID,
 		NodeKey:             nodeKey,
