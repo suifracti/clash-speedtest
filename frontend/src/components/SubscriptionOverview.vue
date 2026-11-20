@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {computed,onBeforeUnmount,onMounted,ref,watch} from 'vue'
+import {computed,onBeforeUnmount,onMounted,ref,shallowRef,watch} from 'vue'
 import {api,type SubscriptionRefreshJob,type SubscriptionRefreshRequest} from '../api'
 import {bytes,date,subscriptionUsed,type Airport,type NodeOption} from '../domain'
 import {airportAccounts,noticesForAccount,safeAirportLink,parseNoticeUsage,type AirportAccount} from '../airportViewing'
@@ -123,6 +123,17 @@ function dayValue(day:ReturnType<typeof sumDay>){return day.partial?'部分记�
 function dayText(day:ReturnType<typeof sumDay>){return day.lowerBound&&day.since?`${dayValue(day)}（${hm(day.since)} 起）`:dayValue(day)}
 const allDays=computed(()=>[0,1,2].map(index=>sumDay(displayedAccounts.value,index)))
 const dailyMax=computed(()=>Math.max(1,...allDays.value.map(d=>d.bytes||0)))
+const allDayTip=shallowRef<{day:ReturnType<typeof sumDay>;x:number;y:number;below:boolean}|null>(null)
+function showAllDayTip(e:MouseEvent|FocusEvent,day:ReturnType<typeof sumDay>){
+  const el=e.currentTarget as HTMLElement|null
+  if(!el)return
+  const rect=el.getBoundingClientRect()
+  const vw=typeof window!=='undefined'?window.innerWidth:1280
+  const x=Math.max(115,Math.min(vw-115,rect.left+rect.width/2))
+  const below=rect.top<96
+  allDayTip.value={day,x,y:below?rect.bottom:rect.top,below}
+}
+function hideAllDayTip(){allDayTip.value=null}
 function accountRow(airport:Airport,list:AirportAccount[]){
   const quotas=list.map(account=>{
     const parsed=parseNoticeUsage(noticesForAccount(props.notices,account)),usage=account.subscription.usage
@@ -249,8 +260,8 @@ async function retryJob(job:SubscriptionRefreshJob){
   }catch(e){error.value=e instanceof Error?e.message:String(e)}finally{loading.value=false}
 }
 watch(disclosureSummary,value=>emit('summary',value),{immediate:true})
-onMounted(()=>void loadJobs())
-onBeforeUnmount(()=>{disposed=true;clearTimeout(pollTimer)})
+onMounted(()=>{window.addEventListener('scroll',hideAllDayTip,true);void loadJobs()})
+onBeforeUnmount(()=>{disposed=true;clearTimeout(pollTimer);window.removeEventListener('scroll',hideAllDayTip,true)})
 defineExpose({usageRatio})
 </script>
 
@@ -275,12 +286,17 @@ defineExpose({usageRatio})
         </div>
         <div class="subscription-daily all-daily">
           <h3>近 3 日用量 · 合计</h3>
-          <div class="all-daily-chart" aria-label="全部机场近三日用量">
-            <div v-for="day in allDays" :key="day.date" :title="day.partial?`已记录 ${bytes(day.bytes!)}，另有账户缺少记录`:dayText(day)">
+          <div class="all-daily-chart" aria-label="全部机场近三日用量" @mouseleave="hideAllDayTip">
+            <div v-for="day in allDays" :key="day.date" :class="{active:allDayTip?.day.date===day.date}" tabindex="0" :title="day.partial?`已记录 ${bytes(day.bytes!)}，另有账户缺少记录`:dayText(day)" @mouseenter="showAllDayTip($event,day)" @focus="showAllDayTip($event,day)" @blur="hideAllDayTip">
               <small>{{dayValue(day)}}</small>
               <span class="all-day-track"><i :class="{unknown:day.bytes===null,partial:day.partial}" :style="{height:day.bytes===null?'100%':Math.max(6,day.bytes/dailyMax*100)+'%'}"/></span>
               <small>{{day.label}}</small>
             </div>
+          </div>
+          <div v-if="allDayTip" class="cst-chart-tip" :class="{below:allDayTip.below}" role="tooltip" :style="{left:allDayTip.x+'px',top:allDayTip.y+'px'}">
+            <div class="cst-chart-tip-head"><span>{{allDayTip.day.date}}</span><span>{{allDayTip.day.label}}</span></div>
+            <strong class="cst-chart-tip-val" :class="{unknown:allDayTip.day.bytes===null}">{{allDayTip.day.bytes!==null?(allDayTip.day.lowerBound?'≥':'')+bytes(allDayTip.day.bytes):dayValue(allDayTip.day)}}</strong>
+            <span v-if="allDayTip.day.partial||allDayTip.day.lowerBound||allDayTip.day.bytes===null" class="cst-chart-tip-meta">{{allDayTip.day.partial?'另有账户当天缺少记录':allDayTip.day.lowerBound&&allDayTip.day.since?`从 ${hm(allDayTip.day.since)} 起记录，实际不低于此值`:allDayTip.day.recorded?'有更新记录但无法归属增量':'当天没有更新记录'}}</span>
           </div>
         </div>
       </div>
@@ -389,7 +405,7 @@ defineExpose({usageRatio})
 .subscription-daily{display:flex;flex-direction:column;justify-content:center;gap:3px;min-width:0;padding-left:12px;border-left:1px solid var(--line)}.subscription-daily h3{margin:0;color:var(--muted);font-size:10px;line-height:12px;font-weight:650}.subscription-daily :deep(.cst-usage-summary){height:50px;gap:4px;padding-bottom:0}.subscription-daily :deep(.cst-usage-day){grid-template-rows:10px 24px 10px;gap:3px}.subscription-daily :deep(.cst-usage-day-value),.subscription-daily :deep(.cst-usage-day-label){font-size:9px;line-height:10px}.subscription-daily :deep(.cst-usage-day-track){width:20px;height:24px;border-radius:5px 5px 2px 2px}.subscription-daily :deep(.cst-usage-caption){font-size:8.5px;line-height:10px}
 
 .subscription-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:6px 8px;min-height:32px;padding-left:14px;border-left:1px solid var(--line);font-size:11px}.subscription-actions .button{min-height:30px;padding:4px 12px;font-size:12px;border-radius:8px}.subscription-actions .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;border:1px solid color-mix(in srgb,currentColor 28%,transparent);font-size:11px;font-weight:650}.subscription-actions .badge::before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor;flex:none}.subscription-actions .text-button{font-size:11px}.subscription-message{color:var(--red);font-size:10px;line-height:1.3}.subscription-issues{position:relative;font-size:11px}.subscription-issues summary{width:max-content;max-width:100%;color:var(--red);cursor:pointer}.subscription-issues p{display:flex;flex-wrap:wrap;gap:4px 8px;margin:6px 0 0;line-height:1.5}.subscription-issues p small{flex:1 0 100%;color:var(--muted)}.issue-retries{display:flex;flex-wrap:wrap;gap:8px;margin-top:7px}.issue-retries button{font-size:12px}.status-read{font-size:11px}.refresh-scope{position:relative}.refresh-scope-panel{position:absolute;top:calc(100% + 5px);right:0;z-index:20;display:grid;gap:8px;width:min(310px,calc(100vw - 28px));max-height:250px;overflow:auto;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--surface);box-shadow:var(--shadow)}.refresh-scope-panel label{display:flex;align-items:center;gap:8px;font-size:12px;line-height:1.4}.refresh-scope-panel label span{overflow-wrap:anywhere}.refresh-scope-panel>.button{justify-self:start}.notice-row{padding:8px 0;border-bottom:1px solid var(--line)}.notice-row small{color:var(--muted)}.notice-row p{margin-top:4px;overflow-wrap:anywhere}
-.subscription-all-main{display:grid;grid-template-columns:minmax(0,1fr) 168px;align-items:center;gap:14px;min-width:0}.subscription-airport-list{display:grid;gap:6px;min-width:0}.subscription-airport-heading{display:flex;align-items:center;gap:8px;font-size:13px}.subscription-airport-heading small,.airport-summary-name small{font-size:10px;color:var(--muted);font-weight:400;margin-left:5px}.subscription-airport-row{display:grid;grid-template-columns:minmax(64px,.55fr) minmax(160px,1.6fr) auto auto auto auto;align-items:center;gap:12px;font-size:12px}.airport-summary-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;font-size:13px}.airport-summary-quota{display:grid;gap:4px;min-width:0}.airport-summary-quota>span{font-size:11px;color:var(--muted);white-space:nowrap}.airport-summary-quota b{color:var(--ink);font-size:13px;font-weight:750}.airport-summary-quota small{display:inline-flex;padding:1px 6px;border-radius:999px;background:var(--blue-soft);color:var(--blue);font-size:10px;font-weight:700;margin-left:5px}.airport-summary-quota .usage-track{height:6px}.airport-summary-time,.airport-summary-today{color:var(--muted);font-size:11px;white-space:nowrap}.airport-refresh-failed{color:var(--red);font-weight:600;white-space:nowrap}.airport-refresh-note{color:var(--muted);white-space:nowrap}.subscription-airport-row .text-button{font-size:11.5px;font-weight:600;color:var(--blue);white-space:nowrap}.subscription-airport-row .text-button:hover{text-decoration:underline}.all-airports>.subscription-issues{order:-1}.all-daily-chart{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.all-daily-chart>div{display:grid;grid-template-rows:13px 22px 13px;align-items:end;justify-items:center;gap:3px}.all-daily-chart small{font-size:9px;line-height:1.2;color:var(--muted);white-space:nowrap}.all-day-track{display:flex;align-items:flex-end;width:20px;height:22px;overflow:hidden;border-radius:5px 5px 2px 2px}.all-day-track i{display:block;width:100%;background:var(--blue);border-radius:inherit}.all-day-track i.partial{opacity:.5}.all-day-track i.unknown{background:repeating-linear-gradient(-45deg,var(--line) 0 3px,transparent 3px 6px);border:1px dashed var(--line)}
+.subscription-all-main{display:grid;grid-template-columns:minmax(0,1fr) 168px;align-items:center;gap:14px;min-width:0}.subscription-airport-list{display:grid;gap:6px;min-width:0}.subscription-airport-heading{display:flex;align-items:center;gap:8px;font-size:13px}.subscription-airport-heading small,.airport-summary-name small{font-size:10px;color:var(--muted);font-weight:400;margin-left:5px}.subscription-airport-row{display:grid;grid-template-columns:minmax(64px,.55fr) minmax(160px,1.6fr) auto auto auto auto;align-items:center;gap:12px;font-size:12px}.airport-summary-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;font-size:13px}.airport-summary-quota{display:grid;gap:4px;min-width:0}.airport-summary-quota>span{font-size:11px;color:var(--muted);white-space:nowrap}.airport-summary-quota b{color:var(--ink);font-size:13px;font-weight:750}.airport-summary-quota small{display:inline-flex;padding:1px 6px;border-radius:999px;background:var(--blue-soft);color:var(--blue);font-size:10px;font-weight:700;margin-left:5px}.airport-summary-quota .usage-track{height:6px}.airport-summary-time,.airport-summary-today{color:var(--muted);font-size:11px;white-space:nowrap}.airport-refresh-failed{color:var(--red);font-weight:600;white-space:nowrap}.airport-refresh-note{color:var(--muted);white-space:nowrap}.subscription-airport-row .text-button{font-size:11.5px;font-weight:600;color:var(--blue);white-space:nowrap}.subscription-airport-row .text-button:hover{text-decoration:underline}.all-airports>.subscription-issues{order:-1}.all-daily-chart{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.all-daily-chart>div{display:grid;grid-template-rows:13px 22px 13px;align-items:end;justify-items:center;gap:3px;padding:3px 2px;border-radius:7px;cursor:pointer;transition:background .12s;outline:none}.all-daily-chart>div:hover,.all-daily-chart>div.active,.all-daily-chart>div:focus-visible{background:var(--cst-accent-soft)}.all-daily-chart small{font-size:9px;line-height:1.2;color:var(--muted);white-space:nowrap}.all-day-track{display:flex;align-items:flex-end;width:20px;height:22px;overflow:hidden;border-radius:5px 5px 2px 2px}.all-day-track i{display:block;width:100%;background:var(--cst-aurora-bar-v,var(--blue));border-radius:inherit}.all-day-track i.partial{opacity:.5}.all-day-track i.unknown{background:repeating-linear-gradient(-45deg,var(--line) 0 3px,transparent 3px 6px);border:1px dashed var(--line)}
 @media(max-width:860px){.subscription-all-main{grid-template-columns:minmax(0,1fr)}.all-daily{flex-direction:row;align-items:center;gap:12px;padding:0;border:0}.all-daily-chart{width:180px;max-width:100%;margin-left:auto}.all-daily-chart small{font-size:10px}.subscription-airport-row{gap:7px}}
 @media(max-width:980px){.subscription-overview{grid-template-columns:minmax(0,1fr)}.subscription-actions{justify-content:flex-start;padding-left:0;border-left:0}.subscription-main{grid-template-columns:minmax(0,1fr) 144px;row-gap:8px}.subscription-identity{grid-column:1/-1}.subscription-message{max-width:100%}}
 @media(max-width:760px){.subscription-airport-row{grid-template-columns:64px minmax(140px,1fr) 48px 26px}.airport-summary-time,.airport-summary-today{grid-row:2}.airport-summary-today{grid-column:1/3}.airport-summary-time{grid-column:3/5}.subscription-airport-row{gap:5px 8px}.subscription-overview{gap:8px;padding:10px}.subscription-main{gap:8px}.subscription-remaining-value{font-size:16px}.subscription-actions{gap:6px}.refresh-scope-panel{left:0;right:auto}}

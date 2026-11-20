@@ -49,4 +49,21 @@ describe('UsageDays refresh',()=>{
     expect(days.text()).toContain('≥2.0 KiB（09:12 起）')
     expect(days.get('div').attributes('title')).toContain('今天从 09:12 开始记录')
   })
+
+  it('shows an instant floating tooltip when hovering sparkline bars',async()=>{
+    mocks.accountDailyUsage.mockResolvedValueOnce({account:undefined,report:undefined,days:[
+      {date:'2026-10-20',label:'今天',bytes:4096,estimated:false,recorded:true},
+      {date:'2026-10-19',label:'昨天',bytes:null,estimated:false,recorded:false},
+    ]})
+    wrapper=mount(UsageDays,{props:{airportId:'a',subscriptionId:'s',days:14,chart:true}})
+    await flushPromises()
+    const bars=wrapper!.findAll('.cst-usage-bars span')
+    expect(bars).toHaveLength(2)
+    await bars[1]!.trigger('mouseenter')
+    const tip=wrapper!.get('.cst-chart-tip[role="tooltip"]')
+    expect(tip.text()).toContain('2026-10-20')
+    expect(tip.text()).toContain('4.0 KiB')
+    await wrapper!.get('.cst-usage-bars').trigger('mouseleave')
+    expect(wrapper!.find('.cst-chart-tip').exists()).toBe(false)
+  })
 })

@@ -3,11 +3,11 @@
   color-scheme:light;
   --cst-bg:#f2f5fc;
   --cst-bg-ambient:radial-gradient(960px 440px at 8% -10%,rgba(99,102,241,.10),transparent 62%),radial-gradient(820px 400px at 92% -12%,rgba(34,211,238,.12),transparent 60%),radial-gradient(700px 360px at 52% 108%,rgba(168,85,247,.07),transparent 62%),#f2f5fc;
-  --cst-side:rgba(255,255,255,.88);
-  --cst-panel:rgba(255,255,255,.88);
+  --cst-side:#ffffff;
+  --cst-panel:#ffffff;
   --cst-panel-solid:#ffffff;
-  --cst-panel-2:rgba(241,245,254,.84);
-  --cst-hover:rgba(232,239,255,.86);
+  --cst-panel-2:#f3f6fd;
+  --cst-hover:#eaf0fe;
   --cst-line:rgba(99,118,178,.16);
   --cst-line-strong:rgba(99,118,178,.28);
   --cst-text:#141b34;
@@ -20,6 +20,7 @@
   --cst-aurora-primary:linear-gradient(135deg,#6366f1 0%,#3b82f6 52%,#06b6d4 100%);
   --cst-aurora-primary-hover:linear-gradient(135deg,#5254e8 0%,#2563eb 50%,#0891b2 100%);
   --cst-aurora-bar:linear-gradient(90deg,#6366f1 0%,#3b82f6 50%,#22d3ee 100%);
+  --cst-aurora-bar-v:linear-gradient(180deg,#22d3ee 0%,#3b82f6 48%,#6366f1 100%);
   --cst-aurora-ribbon:linear-gradient(90deg,#6366f1 0%,#38bdf8 52%,#a855f7 100%);
   --cst-aurora-surface:linear-gradient(135deg,rgba(99,102,241,.08) 0%,rgba(56,189,248,.07) 55%,rgba(168,85,247,.06) 100%);
   --cst-aurora-warn:linear-gradient(90deg,#d97706 0%,#f59e0b 55%,#fbbf24 100%);
@@ -50,11 +51,11 @@
   color-scheme:dark;
   --cst-bg:#090e1c;
   --cst-bg-ambient:radial-gradient(980px 460px at 10% -12%,rgba(99,102,241,.24),transparent 62%),radial-gradient(840px 420px at 90% -10%,rgba(34,211,238,.16),transparent 60%),radial-gradient(740px 380px at 50% 108%,rgba(168,85,247,.16),transparent 62%),#090e1c;
-  --cst-side:rgba(18,25,46,.82);
-  --cst-panel:rgba(18,25,46,.80);
-  --cst-panel-solid:#141c33;
-  --cst-panel-2:rgba(28,38,68,.78);
-  --cst-hover:rgba(42,56,98,.84);
+  --cst-side:#131b31;
+  --cst-panel:#131b31;
+  --cst-panel-solid:#131b31;
+  --cst-panel-2:#1b2544;
+  --cst-hover:#243259;
   --cst-line:rgba(148,174,255,.14);
   --cst-line-strong:rgba(148,174,255,.26);
   --cst-text:#edf2ff;
@@ -67,6 +68,7 @@
   --cst-aurora-primary:linear-gradient(135deg,#6366f1 0%,#3b82f6 52%,#06b6d4 100%);
   --cst-aurora-primary-hover:linear-gradient(135deg,#7679f7 0%,#60a5fa 50%,#22d3ee 100%);
   --cst-aurora-bar:linear-gradient(90deg,#818cf8 0%,#38bdf8 52%,#c084fc 100%);
+  --cst-aurora-bar-v:linear-gradient(180deg,#38bdf8 0%,#818cf8 55%,#a855f7 100%);
   --cst-aurora-ribbon:linear-gradient(90deg,#818cf8 0%,#38bdf8 50%,#c084fc 100%);
   --cst-aurora-surface:linear-gradient(135deg,rgba(129,140,248,.16) 0%,rgba(56,189,248,.11) 55%,rgba(192,132,252,.12) 100%);
   --cst-aurora-warn:linear-gradient(90deg,#f59e0b 0%,#fbbf24 100%);

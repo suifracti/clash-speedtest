@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {computed,onBeforeUnmount,onMounted,ref,watch} from 'vue'
+import {computed,onBeforeUnmount,onMounted,ref,shallowRef,watch} from 'vue'
 import {api,query,request} from '../api'
 import {bytes,type Settings} from '../domain'
 import {useWorkspace} from '../workspace'
@@ -22,13 +22,31 @@ const pages=computed(()=>Math.max(1,Math.ceil((report.value?.intervals.length||0
 const maximum=computed(()=>Math.max(1,...(report.value?.buckets.map(b=>b.bytes||0)||[])))
 const format=(n:number|null|undefined)=>n==null?'—':bytes(n)
 const label=(s:string)=>({ok:'机场已报告',baseline:'首次基线',reset:'计数重置',partial:'用量字段不完整',missing:'未提供用量',local_file:'本地配置',refresh_failed:'更新失败',observed:'已观测',cross_period:'跨期区间'} as Record<string,string>)[s]||s
+const chartTip=shallowRef<{bucket:UsageBucket;x:number;y:number;below:boolean}|null>(null)
+const focusedDate=ref('')
+const chartBuckets=computed(()=>report.value?[...report.value.buckets].reverse():[])
+function showBarTip(e:MouseEvent|FocusEvent,bucket:UsageBucket){
+ const el=e.currentTarget as HTMLElement|null
+ if(!el)return
+ const rect=el.getBoundingClientRect()
+ const vw=typeof window!=='undefined'?window.innerWidth:1280
+ const x=Math.max(120,Math.min(vw-120,rect.left+rect.width/2))
+ const below=rect.top<96
+ chartTip.value={bucket,x,y:below?rect.bottom:rect.top,below}
+}
+function hideBarTip(){chartTip.value=null}
+function focusBucket(dateKey:string){
+ focusedDate.value=dateKey
+ const row=document.querySelector<HTMLElement>(`.usage-buckets tbody tr[data-bucket-date="${dateKey}"]`)
+ row?.scrollIntoView?.({block:'nearest',behavior:'smooth'})
+}
 async function load(){clearTimeout(refreshTimer);const current=++generation;loading.value=true;error.value='';report.value=null;page.value=1;const r=range.value;if(!r){error.value='请选择有效日期';loading.value=false;return}try{const data=await request<UsageReport>('/api/subscription-usage?'+query({...r,period:period.value,account:account.value}),'GET',undefined,'GetSubscriptionUsage',[r.from,r.until,period.value,account.value]);if(disposed||current!==generation)return;report.value=data;if(data.refresh?.state==='running')refreshTimer=setTimeout(()=>{void load()},5000);if(!account.value&&data.accounts.length)accounts.value=data.accounts}catch(e){if(!disposed&&current===generation)error.value=e instanceof Error?e.message:String(e)}finally{if(!disposed&&current===generation)loading.value=false}}
 async function update(){updating.value=true;error.value='';notice.value='';try{const result=await request<{message:string}>('/api/subscription-usage/refresh','POST',undefined,'UpdateSubscriptionUsage');if(disposed)return;await w.refreshNodes();await load();notice.value=result.message}catch(e){if(!disposed)error.value=e instanceof Error?e.message:String(e)}finally{if(!disposed)updating.value=false}}
 async function saveDaily(event:Event){if(!settings.value)return;const enabled=(event.target as HTMLInputElement).checked,old=settings.value.subscription_daily_update_enabled;saving.value=true;error.value='';try{const next={...settings.value,subscription_daily_update_enabled:enabled};await api.saveSettings(next);settings.value=next;if(report.value)report.value.daily_enabled=enabled;w.notify(enabled?'已开启每日订阅更新':'已关闭每日订阅更新')}catch(e){settings.value.subscription_daily_update_enabled=old;(event.target as HTMLInputElement).checked=old??true;error.value=e instanceof Error?e.message:String(e)}finally{saving.value=false}}
 function move(direction:number){const d=new Date(anchor.value+'T00:00:00Z');if(!Number.isFinite(d.getTime()))return;if(period.value==='week')d.setUTCDate(d.getUTCDate()+direction*7);else{d.setUTCDate(1);d.setUTCMonth(d.getUTCMonth()+direction)}anchor.value=iso(d)}
-watch([period,anchor,account],()=>{void load()})
-onMounted(()=>{void load();void api.settings().then(s=>settings.value=s).catch(e=>error.value=e instanceof Error?e.message:String(e))})
-onBeforeUnmount(()=>{disposed=true;generation++;clearTimeout(refreshTimer)})
+watch([period,anchor,account],()=>{hideBarTip();focusedDate.value='';void load()})
+onMounted(()=>{window.addEventListener('scroll',hideBarTip,true);void load();void api.settings().then(s=>settings.value=s).catch(e=>error.value=e instanceof Error?e.message:String(e))})
+onBeforeUnmount(()=>{disposed=true;generation++;clearTimeout(refreshTimer);window.removeEventListener('scroll',hideBarTip,true)})
 </script>
 
 <template><section class="subscription-usage" aria-label="订阅用量监测">
@@ -54,8 +72,14 @@ onBeforeUnmount(()=>{disposed=true;generation++;clearTimeout(refreshTimer)})
   <section class="usage-history" aria-label="所选范围用量汇总">
   <div class="usage-summary"><div><small>本范围已归属增量</small><strong>{{report.observed_bytes==null?'待积累':bytes(report.observed_bytes)}}</strong><span>{{report.from}} — {{report.until}}（上海时间）</span></div><div><small>跨期区间增量</small><strong>{{format(report.unallocated_bytes)}}</strong><span>未按天数摊分，详见观测记录</span></div><div><small>未知或基线记录</small><strong>{{report.unknown_intervals}}</strong><span>首次、重置、失败不当作零用量</span></div></div>
   <details class="cst-info-collapse usage-explanation"><summary>统计口径与采样说明</summary><div class="cst-info-collapse-body"><p>用量来自机场账户计数或订阅公告，不是本工作台探测流量。公告剩余量下降属于估算，无法拆分上传和下载；余额回升按重置或套餐变更处理。日用量为更新区间增量，近午夜更新归前一日并标注估算。漏采跨日和缺少用量字段均保留记录，周、月汇总也只累计能归属的观测区间。</p></div></details>
-  <div class="usage-chart" role="img" :aria-label="`${period==='day'?'日':period==='week'?'周':'月'}用量观测柱状图；灰色表示无可归属数据`"><div v-for="b in [...report.buckets].reverse()" :key="b.date" class="usage-bar" :class="{unknown:b.bytes==null}" :title="`${b.date} · ${b.bytes==null?'暂无可归属数据':bytes(b.bytes)}${b.estimated_intervals?' · 含区间估算':''}`"><i :style="{height:b.bytes==null?'3px':`${Math.max(3,b.bytes/maximum*92)}px`}"/><small>{{period==='month'?b.date.slice(5):b.date.slice(5)}}</small></div></div>
-  <div class="table-scroll"><table class="usage-buckets"><thead><tr><th>{{period==='day'?'日期':period==='week'?'周一开始':'月份'}}</th><th>已观测增量</th><th>上传</th><th>下载</th><th>记录范围</th></tr></thead><tbody><tr v-for="b in report.buckets" :key="b.date"><td>{{b.date}}</td><td>{{format(b.bytes)}}</td><td>{{format(b.upload)}}</td><td>{{format(b.download)}}</td><td>{{b.bytes==null?'暂无可归属数据':`${b.intervals} 个区间`}}<span v-if="b.estimated_intervals" class="badge">含 {{b.estimated_intervals}} 个估算区间</span></td></tr></tbody></table></div>
+  <div class="usage-chart" role="img" :aria-label="`${period==='day'?'日':period==='week'?'周':'月'}用量观测柱状图；灰色表示无可归属数据`" @mouseleave="hideBarTip"><div v-for="b in chartBuckets" :key="b.date" class="usage-bar" :class="{unknown:b.bytes==null,active:chartTip?.bucket.date===b.date||focusedDate===b.date}" tabindex="0" :title="`${b.date} · ${b.bytes==null?'暂无可归属数据':bytes(b.bytes)}${b.estimated_intervals?' · 含区间估算':''}`" @mouseenter="showBarTip($event,b)" @focus="showBarTip($event,b)" @blur="hideBarTip" @click="focusBucket(b.date)"><i :style="{height:b.bytes==null?'3px':`${Math.max(4,b.bytes/maximum*92)}px`}"/><small>{{period==='month'?b.date.slice(5):b.date.slice(5)}}</small></div></div>
+  <div v-if="chartTip" class="cst-chart-tip" :class="{below:chartTip.below}" role="tooltip" :style="{left:chartTip.x+'px',top:chartTip.y+'px'}">
+    <div class="cst-chart-tip-head"><span>{{chartTip.bucket.date}}</span><span v-if="chartTip.bucket.bytes!=null">{{chartTip.bucket.intervals}} 个区间</span></div>
+    <strong class="cst-chart-tip-val" :class="{unknown:chartTip.bucket.bytes==null}">{{chartTip.bucket.bytes==null?'暂无可归属数据':bytes(chartTip.bucket.bytes)}}</strong>
+    <span v-if="chartTip.bucket.upload!=null||chartTip.bucket.download!=null" class="cst-chart-tip-meta">上传 {{format(chartTip.bucket.upload)}} · 下载 {{format(chartTip.bucket.download)}}</span>
+    <span v-if="chartTip.bucket.estimated_intervals" class="cst-chart-tip-meta">含 {{chartTip.bucket.estimated_intervals}} 个区间估算</span>
+  </div>
+  <div class="table-scroll"><table class="usage-buckets"><thead><tr><th>{{period==='day'?'日期':period==='week'?'周一开始':'月份'}}</th><th>已观测增量</th><th>上传</th><th>下载</th><th>记录范围</th></tr></thead><tbody><tr v-for="b in report.buckets" :key="b.date" :data-bucket-date="b.date" :class="{'is-highlighted':chartTip?.bucket.date===b.date||focusedDate===b.date}"><td>{{b.date}}</td><td>{{format(b.bytes)}}</td><td>{{format(b.upload)}}</td><td>{{format(b.download)}}</td><td>{{b.bytes==null?'暂无可归属数据':`${b.intervals} 个区间`}}<span v-if="b.estimated_intervals" class="badge">含 {{b.estimated_intervals}} 个估算区间</span></td></tr></tbody></table></div>
   </section>
   <aside class="usage-snapshots" aria-label="账户最近观测">
   <h3>账户最近观测</h3><div class="usage-accounts"><article v-for="a in report.accounts" :key="a.account_key" :title="a.raw_error"><strong>{{a.airport_name}} · {{a.subscription_name}}</strong><span>{{a.counter_kind==='notice_remaining'?'公告余额':label(a.status)}} · {{date(a.captured_at)}}</span><span v-if="a.counter_kind==='notice_remaining'&&a.remaining!=null">剩余 {{bytes(a.remaining)}}</span><span v-else-if="a.upload!=null&&a.download!=null">累计 {{bytes(a.upload+a.download)}}<template v-if="a.total"> / {{bytes(a.total)}}</template></span><span v-else>用量未知</span><small v-if="a.source==='cached_baseline'">来自已有缓存的旧快照，并非本次采集</small></article></div>
@@ -78,7 +102,7 @@ onBeforeUnmount(()=>{disposed=true;generation++;clearTimeout(refreshTimer)})
 .subscription-usage .usage-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:0 0 18px;padding-bottom:0;border-bottom:0}
 .subscription-usage .usage-summary>div{border:1px solid var(--cst-line);border-radius:11px;background:var(--cst-panel-2);padding:12px 14px;gap:5px}
 .subscription-usage .usage-summary strong{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}.subscription-usage .usage-summary>div:first-child strong{font-size:24px;color:var(--cst-accent)}.subscription-usage .usage-summary small,.subscription-usage .usage-summary span{font-size:11px;line-height:1.5}
-.subscription-usage .usage-chart{border:1px solid var(--cst-line);border-radius:11px;padding:12px;background:var(--cst-panel-2);margin:14px 0}.subscription-usage .usage-bar i{border-radius:3px 3px 0 0}.subscription-usage .usage-bar.unknown i{background:none;border-top:1px dashed var(--cst-line-strong)}
+.subscription-usage .usage-chart{border:1px solid var(--cst-line);border-radius:11px;padding:12px 10px 10px;background:var(--cst-panel-2);margin:14px 0;gap:4px}.subscription-usage .usage-bar{height:100%;justify-content:flex-end;gap:8px;padding:4px 2px 3px;border-radius:7px;cursor:pointer;transition:background .12s;outline:none}.subscription-usage .usage-bar:hover,.subscription-usage .usage-bar.active,.subscription-usage .usage-bar:focus-visible{background:var(--cst-accent-soft)}.subscription-usage .usage-bar:hover small,.subscription-usage .usage-bar.active small{color:var(--cst-accent);font-weight:650}.subscription-usage .usage-bar i{border-radius:4px 4px 1px 1px;background:var(--cst-aurora-bar-v);transition:filter .12s,box-shadow .12s}.subscription-usage .usage-bar:hover i,.subscription-usage .usage-bar.active i{filter:brightness(1.08);box-shadow:0 0 12px -2px rgba(79,110,247,.52)}.subscription-usage .usage-bar.unknown i{background:none;border-top:2px dashed var(--cst-line-strong);box-shadow:none}.subscription-usage .usage-bar.unknown:hover i,.subscription-usage .usage-bar.unknown.active i{border-top-color:var(--cst-accent)}.subscription-usage .usage-buckets tbody tr.is-highlighted{background:var(--cst-accent-soft)}
 .subscription-usage .usage-explanation{border-radius:10px;background:var(--cst-panel-2);border:1px solid var(--cst-line);padding:8px 12px}
 .usage-snapshots{min-width:0;padding:18px;border:1px solid var(--cst-line-strong);border-radius:14px;background:var(--cst-panel);box-shadow:var(--cst-shadow)}.usage-snapshots h3,.usage-observations h3{font-size:14px;margin:0 0 12px}
 .subscription-usage .usage-accounts{display:grid;gap:10px;margin:0}.subscription-usage .usage-accounts article{border:1px solid var(--cst-line);padding:12px 14px;border-radius:11px;background:var(--cst-panel-2);gap:5px}.subscription-usage .usage-accounts strong{font-size:13px;line-height:1.5}.subscription-usage .usage-accounts span,.subscription-usage .usage-accounts small{font-size:11px;line-height:1.6}

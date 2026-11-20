@@ -1,6 +1,7 @@
 /* Navigation and task actions stay together while reading long pages. */
-.cst-shell{--cst-nav-height:56px;display:flex;flex-direction:column;min-height:100vh;background:var(--cst-bg-ambient);background-attachment:fixed}
-.cst-chrome{position:sticky;top:0;z-index:35;background:color-mix(in srgb,var(--cst-panel-solid) 76%,transparent);backdrop-filter:blur(18px) saturate(165%);border-bottom:1px solid var(--cst-line);box-shadow:0 4px 20px -10px rgba(37,56,128,.12)}
+.cst-shell{--cst-nav-height:56px;position:relative;isolation:isolate;display:flex;flex-direction:column;min-height:100vh;background:var(--cst-bg)}
+.cst-shell::before{content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;background:var(--cst-bg-ambient);transform:translateZ(0)}
+.cst-chrome{position:sticky;top:0;z-index:35;background:color-mix(in srgb,var(--cst-panel-solid) 97%,var(--cst-bg));border-bottom:1px solid var(--cst-line);box-shadow:0 4px 16px -10px rgba(37,56,128,.12)}
 .cst-masthead{display:flex;align-items:center;gap:14px;min-height:52px;padding:6px 24px}
 .cst-brand{display:flex;align-items:center;gap:10px;color:var(--cst-text);text-decoration:none;flex:none;transition:opacity .15s}
 .cst-brand:hover{opacity:.92}

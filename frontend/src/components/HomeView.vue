@@ -24,7 +24,16 @@ import {nodeDisplayName,nodeRegion} from '../nodePresentation'
 const w=useWorkspace(),inlineTab=ref<'round'|'history'>('round'),keepOpen=ref(false),picker=ref(false),currentPage=ref(1),hoverNode=ref<NodeOption|null>(null),activeRound=ref<TrendPoint|null>(null),hoverMode=ref<Exclude<Project,'combined'>>('latency'),monitorErrors=ref<Record<string,string>>({}),monitorData=ref<Record<string,import('../domain').MonitorSample[]>>({}),monitorHTTPData=ref<Record<string,import('../domain').MonitorSample[]>>({}),monitorHTTPErrors=ref<Record<string,string>>({})
 const serviceDetail=ref<Attempt|null>(null)
 const serviceDetailPoint=computed<TrendPoint|null>(()=>serviceDetail.value?{id:serviceDetail.value.attempt_id,time:serviceDetail.value.finished_at||serviceDetail.value.requested_at,value:null,tone:attemptTone(serviceDetail.value),description:'已保存服务证据 · 端点响应不代表登录、播放或聊天可用',attempts:[serviceDetail.value],source:'manual',trigger:serviceDetail.value.trigger_type as TrendPoint['trigger']}:null)
-function shownService(n:NodeOption,id:string){const saved=latestServices([...(qualityData.value[key(n)]?.services||[]),...(w.services.value[key(n)]||[])]).find(a=>(a.service_id||a.rule.service_id)===id);return w.sort.value==='service'?w.summaryService(n,id)||saved:saved}
+const latestServiceCache=new Map<string,{q?:Attempt[];w?:Attempt[];map:Map<string,Attempt>}>()
+function latestServiceMap(n:NodeOption){
+ const k=key(n),q=qualityData.value[k]?.services,ws=w.services.value[k],cached=latestServiceCache.get(k)
+ if(cached&&cached.q===q&&cached.w===ws)return cached.map
+ const map=new Map<string,Attempt>()
+ for(const a of latestServices([...(q||[]),...(ws||[])])){const id=a.service_id||a.rule.service_id;if(id)map.set(id,a)}
+ latestServiceCache.set(k,{q,w:ws,map})
+ return map
+}
+function shownService(n:NodeOption,id:string){const saved=latestServiceMap(n).get(id);return w.sort.value==='service'?w.summaryService(n,id)||saved:saved}
 function showServiceEvidence(attempt:Attempt){serviceDetail.value=attempt}
 function showService(n:NodeOption,id:string){const a=shownService(n,id);if(a)serviceDetail.value=a;else w.inspectNode.value=n}
 const nodeActivities=computed(()=>{const result:Record<string,{state:string;label:string}>={};for(const q of w.queue.value){const k=key(q.node),state=w.pendingStart.value&&(q.id===w.pendingStart.value.requestId||w.pendingStart.value.kind==='latency'&&q.project==='latency'&&q.state==='running'&&!q.batchId)?'unknown':q.attempt?.persistence_state==='saving'?'saving':q.attempt?.persistence_state==='failed'?'save_failed':q.state;const rank=(s:string)=>({running:6,cancelling:7,saving:5,queued:4,save_failed:3,failed:2,completed:1}[s]||0);if(!result[k]||rank(state)>rank(result[k].state))result[k]={state,label:({unknown:'启动待确认',running:'检测中',cancelling:'正在取消',saving:'结果已到 · 保存中',queued:'等待检测',save_failed:'保存失败 · 结果保留',failed:'检测已结束 · 查看结果',completed:'检测已结束',cancelled:'已取消',not_executed:'未执行'} as Record<string,string>)[state]||state}}return result})
@@ -36,10 +45,28 @@ const siteSummaries=computed(()=>Object.fromEntries(w.proxyNodes.value.flatMap(n
 const selectedSite=(n:NodeOption)=>siteSummaries.value[key(n)]?.find(s=>s.targetId===siteTarget.value)
 const qualityInflight=new Map<string,Promise<void>>()
 const qualityCompareNodes=computed(()=>w.selectedNodes.value)
+let pendingQualityData:Record<string,QualityEvidence>={}
+let pendingQualityErrors:Record<string,string>={}
+let pendingQualityCount=0
+let qualityFlushTimer:ReturnType<typeof setTimeout>|undefined
+function clearQualityBuffer(){if(qualityFlushTimer){clearTimeout(qualityFlushTimer);qualityFlushTimer=undefined}pendingQualityData={};pendingQualityErrors={};pendingQualityCount=0}
+function flushQualityBuffer(active:number){
+ if(active!==qualityGeneration)return
+ if(qualityFlushTimer){clearTimeout(qualityFlushTimer);qualityFlushTimer=undefined}
+ if(!pendingQualityCount)return
+ const data=pendingQualityData,errs=pendingQualityErrors
+ pendingQualityData={};pendingQualityErrors={};pendingQualityCount=0
+ for(const [k,e] of Object.entries(data)){qualityData.value[k]=e;w.landingEvidence.value[k]=e.services;delete qualityErrors.value[k]}
+ for(const [k,err] of Object.entries(errs)){qualityErrors.value[k]=err}
+}
+function resetQualityState(){qualityGeneration++;clearQualityBuffer();latestServiceCache.clear();qualityData.value={};qualityErrors.value={}}
 async function readQualityNodes(nodes:NodeOption[],refresh=false){
- if(refresh){qualityGeneration++;qualityData.value={};qualityErrors.value={};qualityCutoff.value=new Date().toISOString()}
+ if(refresh){resetQualityState();qualityCutoff.value=new Date().toISOString()}
  const active=qualityGeneration,until=qualityCutoff.value,since=new Date(Date.parse(until)-w.hours.value*3600000).toISOString();qualityLoading.value=true
- await mapLimited(nodes.filter(n=>!qualityData.value[key(n)]),4,async n=>{const id=active+'|'+key(n);if(qualityInflight.has(id))return qualityInflight.get(id);const task=(async()=>{try{const e=await readQuality(n,since,until);if(active===qualityGeneration){qualityData.value[key(n)]=e;w.landingEvidence.value[key(n)]=e.services;delete qualityErrors.value[key(n)]}}catch(e){if(active===qualityGeneration)qualityErrors.value[key(n)]=e instanceof Error?e.message:String(e)}finally{qualityInflight.delete(id)}})();qualityInflight.set(id,task);await task})
+ const targetNodes=nodes.filter(n=>!qualityData.value[key(n)]&&!pendingQualityData[key(n)])
+ const batchMode=targetNodes.length>20
+ await mapLimited(targetNodes,4,async n=>{const k=key(n),id=active+'|'+k;if(qualityInflight.has(id))return qualityInflight.get(id);const task=(async()=>{try{const e=await readQuality(n,since,until);if(active===qualityGeneration){if(batchMode){pendingQualityData[k]=e;delete pendingQualityErrors[k];pendingQualityCount++;if(pendingQualityCount>=20)flushQualityBuffer(active);else if(!qualityFlushTimer)qualityFlushTimer=setTimeout(()=>flushQualityBuffer(active),120)}else{qualityData.value[k]=e;w.landingEvidence.value[k]=e.services;delete qualityErrors.value[k]}}}catch(e){if(active===qualityGeneration){const msg=e instanceof Error?e.message:String(e);if(batchMode){pendingQualityErrors[k]=msg;pendingQualityCount++;if(pendingQualityCount>=20)flushQualityBuffer(active);else if(!qualityFlushTimer)qualityFlushTimer=setTimeout(()=>flushQualityBuffer(active),120)}else qualityErrors.value[k]=msg}}finally{qualityInflight.delete(id)}})();qualityInflight.set(id,task);await task})
+ flushQualityBuffer(active)
  if(active===qualityGeneration)qualityLoading.value=false
 }
 // Only persisted terminal results invalidate the saved-history snapshot. Defer
@@ -52,7 +79,7 @@ let appliedQualityVersion=savedQualityVersion.value
 watch([savedQualityVersion,()=>w.busy.value],([version,busy])=>{
  if(busy||version===appliedQualityVersion)return
  appliedQualityVersion=version
- qualityGeneration++;qualityData.value={};qualityErrors.value={};qualityLoading.value=false;qualityCutoff.value=new Date().toISOString()
+ resetQualityState();qualityLoading.value=false;qualityCutoff.value=new Date().toISOString()
  if(w.page.value!=='home')return
  const quick=qualityView.value,full=metricHeader.value||(quick?(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing'):(siteSort.value!=='existing'||siteGate.value!=='all'))
  if(quick||full||compareOpen.value)void readQualityNodes(full?w.proxyNodes.value:[...new Map([...pageNodes.value,...(compareOpen.value?qualityCompareNodes.value:[])].map(n=>[key(n),n])).values()])
@@ -168,6 +195,20 @@ const weeklyProgress=computed(()=>{
 let weeklyGeneration=0
 let weeklyWaiting=new Map<string,NodeOption>()
 const weeklyInFlight=new Map<string,number>()
+let pendingWeeklyStats:Record<string,WeeklySummary>={}
+let pendingWeeklyErrors:Record<string,string>={}
+let pendingWeeklyCount=0
+let weeklyFlushTimer:ReturnType<typeof setTimeout>|undefined
+function clearWeeklyBuffer(){if(weeklyFlushTimer){clearTimeout(weeklyFlushTimer);weeklyFlushTimer=undefined}pendingWeeklyStats={};pendingWeeklyErrors={};pendingWeeklyCount=0}
+function flushWeeklyBuffer(generation:number){
+ if(generation!==weeklyGeneration)return
+ if(weeklyFlushTimer){clearTimeout(weeklyFlushTimer);weeklyFlushTimer=undefined}
+ if(!pendingWeeklyCount)return
+ const stats=pendingWeeklyStats,errs=pendingWeeklyErrors
+ pendingWeeklyStats={};pendingWeeklyErrors={};pendingWeeklyCount=0
+ for(const [id,summary] of Object.entries(stats))weeklyStats.value[id]=summary
+ for(const [id,err] of Object.entries(errs))weeklyErrors.value[id]=err
+}
 function fillWeeklySlots(){
  for(const [id,node] of weeklyWaiting){
   if(weeklyInFlight.size>=6)break
@@ -177,18 +218,32 @@ function fillWeeklySlots(){
   const generation=weeklyGeneration
   weeklyInFlight.set(id,generation)
   void readLatencyHistoryWithConfig(node,168,weeklyUntil.value).then(history=>{
-   if(generation===weeklyGeneration)weeklyStats.value[id]=weeklySummary(latencyHistorySplit(history.series))
+   if(generation!==weeklyGeneration)return
+   const summary=weeklySummary(latencyHistorySplit(history.series))
+   if(weeklyWaiting.size>0){pendingWeeklyStats[id]=summary;pendingWeeklyCount++}
+   else weeklyStats.value[id]=summary
   }).catch(error=>{
-   if(generation===weeklyGeneration)weeklyErrors.value[id]=(error instanceof Error?error.message:String(error??''))||'读取失败'
-  }).finally(()=>{weeklyInFlight.delete(id);fillWeeklySlots()})
+   if(generation!==weeklyGeneration)return
+   const msg=(error instanceof Error?error.message:String(error??''))||'读取失败'
+   if(weeklyWaiting.size>0){pendingWeeklyErrors[id]=msg;pendingWeeklyCount++}
+   else weeklyErrors.value[id]=msg
+  }).finally(()=>{
+   weeklyInFlight.delete(id)
+   fillWeeklySlots()
+   if(generation===weeklyGeneration&&pendingWeeklyCount>0){
+    if(weeklyInFlight.size===0&&weeklyWaiting.size===0||pendingWeeklyCount>=20)flushWeeklyBuffer(generation)
+    else if(!weeklyFlushTimer)weeklyFlushTimer=setTimeout(()=>flushWeeklyBuffer(generation),120)
+   }
+  })
  }
 }
 function scheduleWeeklyReads(demand:Map<string,NodeOption>){
- weeklyWaiting=new Map([...demand].filter(([id])=>!weeklyRead(id)&&weeklyInFlight.get(id)!==weeklyGeneration))
+ weeklyWaiting=new Map([...demand].filter(([id])=>!weeklyRead(id)&&!pendingWeeklyStats[id]&&!pendingWeeklyErrors[id]&&weeklyInFlight.get(id)!==weeklyGeneration))
  fillWeeklySlots()
 }
 function refreshWeekly(){
  weeklyGeneration++
+ clearWeeklyBuffer()
  weeklyUntil.value=new Date().toISOString()
  weeklyStats.value={}
  weeklyErrors.value={}
@@ -311,13 +366,13 @@ function expandHistory(){keepRound();keepOpen.value=true;inlineTab.value='histor
 watch([()=>w.search.value,()=>w.region.value,()=>w.subscription.value,()=>w.airportFilter.value,()=>w.sort.value,()=>w.priorityAirportId.value,()=>w.selectedAirportIds.value],()=>{currentPage.value=1;closeHover()},{deep:true})
 watch(()=>w.hours.value,()=>{presentation.clear();monitorGeneration++;monitorData.value={};monitorErrors.value={};monitorHTTPData.value={};monitorHTTPErrors.value={}});watch(totalPages,count=>currentPage.value=Math.min(currentPage.value,count))
 watch([pageNodes,qualityView,qualityScopeKey],([nodes,quick,scope],[,,previousScope])=>{
- if(previousScope!==undefined&&scope!==previousScope){qualityGeneration++;qualityData.value={};qualityErrors.value={};qualityLoading.value=false
+ if(previousScope!==undefined&&scope!==previousScope){resetQualityState();qualityLoading.value=false
   if((quick||siteSort.value!=='existing'||siteGate.value!=='all'||metricHeader.value)&&w.page.value==='home')void readQualityNodes(metricHeader.value||(quick?(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing'):(siteSort.value!=='existing'||siteGate.value!=='all'))?w.proxyNodes.value:nodes)
   return
  }
  if((quick||siteSort.value!=='existing'||siteGate.value!=='all')&&w.page.value==='home')void readQualityNodes(nodes)
 },{immediate:true})
-watch(()=>w.hours.value,()=>{if(qualityView.value||siteSort.value!=='existing'||siteGate.value!=='all')void readQualityNodes(metricHeader.value||(qualityView.value?(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing'):(siteSort.value!=='existing'||siteGate.value!=='all'))?w.proxyNodes.value:pageNodes.value,true);else{qualityGeneration++;qualityData.value={};qualityErrors.value={};qualityCutoff.value=new Date().toISOString()}})
+watch(()=>w.hours.value,()=>{if(qualityView.value||siteSort.value!=='existing'||siteGate.value!=='all')void readQualityNodes(metricHeader.value||(qualityView.value?(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing'):(siteSort.value!=='existing'||siteGate.value!=='all'))?w.proxyNodes.value:pageNodes.value,true);else{resetQualityState();qualityCutoff.value=new Date().toISOString()}})
 watch([pageNodes,()=>w.project.value,()=>w.hours.value],()=>{if(w.page.value==='home'){void w.ensureHistory(pageNodes.value);void readMonitor()}},{immediate:true})
 watch(()=>w.page.value,p=>{if(p==='home'){void w.ensureHistory(pageNodes.value);void readMonitor();if(qualityView.value||siteSort.value!=='existing'||siteGate.value!=='all')void readQualityNodes(metricHeader.value||(qualityView.value?(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing'):(siteSort.value!=='existing'||siteGate.value!=='all'))?w.proxyNodes.value:pageNodes.value)}else{closeHover();presentation.clear()}})
 watch(()=>w.serviceIds.value,closeHover,{deep:true})
@@ -327,7 +382,7 @@ watch(servicePages,count=>servicePage.value=Math.min(servicePage.value,count))
 watch([()=>w.project.value,()=>w.hours.value,currentPage],closeHover)
 watch(()=>w.displayTarget.value,()=>{if(keepOpen.value&&hoverNode.value){activeRound.value=null;inlineTab.value='history'}else closeHover()})
 provide(homeModelKey,{refreshWeekly,weeklyStats,weeklyErrors,weeklyProgress,weeklyReady,headerSort,headerSortReady,sortHeader,compareOpen,compareTarget,compareNodes:qualityCompareNodes,compareCompatible,comparisonDownloadStatus,closeComparison,servicePoints:(n:NodeOption,id:string)=>presentation.points(n,'service',w.displayTarget.value,id),hiddenSelectedCount,qualityFiltersPending,monitorData,monitorErrors,monitorHTTPErrors,httpPoints,visibleServices,servicePage,servicePages,servicesPerPage,chosen,filterProfiles,protocolChoices,protocolFilter,qualityGate,qualitySort,qualityLoading,qualityErrors,qualityCutoff,allQualityReady,readQualityNodes,siteSummaries,pageSize,setPageSize,pageNodes,visibleNodes,runNodes,currentPage,totalPages,picker,filterRegions,qualityData,nodeActivities,displayServices,sourceLabel,metricPoint,latestLatencyRound,latencyRowPoint,rowVerdict,siteMetric,siteContext,siteReason,sitePoints,rowPoints,downloadMetric,downloadMetricTone,downloadMetricContext,serviceMetric,serviceTone,shownService,showService,showServiceEvidence,hoverNode,hoverMode,hoverTarget,hoverService,hoverPoints,activeRound,inlineTab,inlineHistorySource,keepOpen,inspectRound,openRound,leaveRound,keepRound,closeHover,expandHistory,openComparison,openCombinedPlan,runLabel})
-onMounted(()=>monitorTimer=setInterval(()=>{if(w.page.value==='home'&&document.visibilityState==='visible')void readMonitor()},30000));onBeforeUnmount(()=>{weeklyGeneration++;weeklyWaiting.clear();qualityGeneration++;presentation.clear();monitorGeneration++;clearTimeout(hoverTimer);clearInterval(monitorTimer)})
+onMounted(()=>monitorTimer=setInterval(()=>{if(w.page.value==='home'&&document.visibilityState==='visible')void readMonitor()},30000));onBeforeUnmount(()=>{weeklyGeneration++;weeklyWaiting.clear();clearWeeklyBuffer();qualityGeneration++;clearQualityBuffer();latestServiceCache.clear();presentation.clear();monitorGeneration++;clearTimeout(hoverTimer);clearInterval(monitorTimer)})
 </script>
 <template>
   <section class="home-view">
