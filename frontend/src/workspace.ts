@@ -383,17 +383,17 @@ export function createWorkspace(){
       if(alive(version)){
         for(const q of queue.value)if(q.state==='queued')q.state=cancelRequested.value?'cancelled':'not_executed'
         for(const id of plans.keys())try{await api.finishRound(id,pendingStart.value||cancelRequested.value||error.value?'interrupted':'finished')}catch(e){fail(e)}
-        await loadMeasurementRounds(frozen.nodes,true)
         if(alive(version)){
           running.value=false
           resumePolling()
-          // A latency report is a useful closeout for an open latency-only task.
-          // Mixed tasks and save failures still need their queue and retry controls.
+          // Open the full latency report immediately once the batch finishes,
+          // without making the user wait for 40+ per-node round history reloads.
           const report=latestReportBatch.value
           const latencyOnly=queue.value.length>0&&queue.value.every(q=>q.project==='latency')
           const needsAttention=queue.value.some(q=>['cancelled','not_executed','interrupted'].includes(q.state)||q.error?.startsWith('保存失败'))
           if(report&&latencyOnly&&!needsAttention&&queueOpen.value&&!reportSelection.value&&!pendingStart.value)openLatencyReport(report)
         }
+        await loadMeasurementRounds(frozen.nodes,true)
       }
     }
   }

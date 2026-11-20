@@ -4,7 +4,8 @@ import LatencyReport from '../components/LatencyReport.vue'
 import {manualLatencyPoint,latencyPointLabel} from '../presentation'
 import {latencyVerdict} from '../components/home/homeModel'
 import {activeLatencyTargets} from '../latencyTargets'
-import {latencyHttpNotices,buildLatencyReport,compareLatencyReports,latencyAirportSummary} from '../latencyReport'
+import {latencyHttpNotices,buildLatencyReport,buildLatencyRunDiff,compareLatencyReports,latencyAirportSummary} from '../latencyReport'
+import {buildLatencyReportCSV,buildLatencyReportHTML} from '../latencyReportExport'
 import type {LatencyBatch,BatchItem} from '../domain'
 const item=(id:string,ms:number,success=true):BatchItem=>({item_id:id,batch_id:'b',profile_id:'p',node_key:id,node_identity_key:id,config_revision_key:'r',display_name:id,execution_state:'completed',persistence_state:'saved',result:{profile_id:'p',node_key:id,node_identity_key:id,config_revision_key:'r',attempt_id:id,display_name:id,node_type:'Vless',requested_at:'2026-10-21T11:00:00Z',finished_at:'2026-10-21T11:01:00Z',status:'completed',latency_ms:ms,total_samples:24,success_samples:success?24:0,failure_samples:success?0:24,persistence_state:'saved',samples:['https://speed.cloudflare.com/__down?bytes=1','https://www.gstatic.com/generate_204','https://api.github.com/zen','https://captive.apple.com/hotspot-detect.html'].flatMap(target=>Array.from({length:6},(_,i)=>({seq:i+1,target,timestamp:'2026-10-21T11:00:00Z',latency_ms:i?ms:9000,success,error:success?'':'context deadline exceeded'})))}})
 const batch=(items:BatchItem[]):LatencyBatch=>({batch_id:'b',request_id:'b',requested_at:'2026-10-21T11:00:00Z',state:'completed',target_id:'all',timeout_seconds:5,sample_count:6,item_count:items.length,items})
@@ -104,6 +105,37 @@ describe('latency run report',()=>{
   await wrapper.get('.report-group-drill').trigger('click')
   expect(wrapper.get('.report-tab[aria-selected="true"]').text()).toContain('逐个明细')
   expect(wrapper.findAll('.latency-report-table-wrap tbody tr')).toHaveLength(1)
+  wrapper.unmount()
+ })
+
+ it('supports interactive run diff tab, region/protocol/show-all detail controls, and CSV/HTML offline report exports',async()=>{
+  const prevBatch={...batch([{...item('jp-01',200,true),profile_id:'a'},{...item('hk-01',300,true),profile_id:'a'}]),batch_id:'prev-b',requested_at:'2026-10-20T10:00:00Z'}
+  const curA={...item('jp-01',950,true),profile_id:'a'};curA.result!.node_type='Hysteria2'
+  const curB={...item('hk-01',0,false),profile_id:'a'};curB.result!.node_type='Vless'
+  const curBatch=batch([curA,curB])
+  const built=buildLatencyReport(curBatch,{a:'机场A'})
+  const diff=buildLatencyRunDiff(curBatch,built,[prevBatch],'auto',{a:'机场A'})
+  expect(diff.counts).toMatchObject({all:2,newlyFailed:1,slower:1})
+  const csv=buildLatencyReportCSV(built)
+  expect(csv.startsWith('\uFEFF')).toBe(true)
+  expect(csv).toContain('Cloudflare(ms)')
+  expect(csv).toContain('950')
+  const html=buildLatencyReportHTML(built,'测试汇总','对比说明',false)
+  expect(html).toContain('<!doctype html>')
+  expect(html).toContain('全部地区')
+  expect(html).toContain('全部协议')
+  expect(html).toContain('导出筛选 CSV')
+
+  const wrapper=mount(LatencyReport,{props:{batch:curBatch,previous:[prevBatch],airportNames:{a:'机场A'}}})
+  expect(wrapper.findAll('.report-tab')).toHaveLength(3)
+  await wrapper.findAll('.report-tab')[2]!.trigger('click')
+  expect(wrapper.get('.report-tab[aria-selected="true"]').text()).toContain('轮次对比')
+  expect(wrapper.get('.latency-report-diff').text()).toContain('转离线')
+  expect(wrapper.get('.latency-report-diff').text()).toContain('↑+750ms')
+  await wrapper.findAll('.report-tab')[1]!.trigger('click')
+  await wrapper.get('select[aria-label="按协议筛选明细"]').setValue('Hysteria2')
+  expect(wrapper.findAll('.latency-report-details .latency-report-table-wrap tbody tr')).toHaveLength(1)
+  expect(wrapper.get('.latency-report-details .latency-report-table-wrap tbody tr').text()).toContain('日本 · 01')
   wrapper.unmount()
  })
 

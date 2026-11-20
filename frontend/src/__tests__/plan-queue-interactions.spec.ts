@@ -9,7 +9,7 @@ import {key,type Attempt,type LatencyBatch,type NodeOption,type LatencyTest} fro
 vi.hoisted(()=>{Object.defineProperty(window,'localStorage',{configurable:true,value:{getItem:()=>null,setItem:()=>{}}})})
 vi.mock('../api',async importOriginal=>{
   const actual=await importOriginal<typeof import('../api')>()
-  return {...actual,api:{...actual.api,airports:vi.fn(),nodes:vi.fn(),startLatency:vi.fn(),startAttempt:vi.fn(),attemptAction:vi.fn(),createRound:vi.fn(),finishRound:vi.fn(),measurementRounds:vi.fn(),attemptHistory:vi.fn(),discoverToken:vi.fn()}}
+  return {...actual,api:{...actual.api,airports:vi.fn(),nodes:vi.fn(),startLatency:vi.fn(),startAttempt:vi.fn(),attemptAction:vi.fn(),createRound:vi.fn(),finishRound:vi.fn(),measurementRounds:vi.fn(),attemptHistory:vi.fn(),latencyHistory:vi.fn(),discoverToken:vi.fn()}}
 })
 const node:NodeOption={profile_id:'sub-a',node_key:'node-a',node_identity_key:'identity-a',config_revision_key:'revision-a',profile_name:'Airport A',display_name:'Node A',type:'ss',country_code:'SG',country_flag:''}
 const airport={id:'airport-a',name:'Airport A',node_count:1,has_cache:true,url_display:'',subscriptions:[{id:'sub-a',airport_id:'airport-a',name:'Default',url_display:'',url_configured:true,node_count:1,has_cache:true}]}
@@ -449,10 +449,19 @@ it('shows live running chips and recent completed feed during a running latency 
    {item_id:'run-2',display_name:'Node JP 02',profile_id:'profile-1',execution_state:'running',success_samples:0,total_samples:0},
   ],
   recent_items:[
-   {item_id:'done-1',display_name:'Node HK 01',profile_id:'profile-1',execution_state:'completed',latency_ms:210,success_samples:24,total_samples:24},
-   {item_id:'done-2',display_name:'Node US 01',profile_id:'profile-1',execution_state:'failed',latency_ms:0,success_samples:0,total_samples:24,error_message:'context deadline exceeded'},
+   {item_id:'done-1',attempt_id:'att-1',display_name:'Node HK 01',profile_id:'profile-1',node_key:'nk-1',node_identity_key:'id-1',config_revision_key:'rev-1',execution_state:'completed',latency_ms:210,success_samples:24,total_samples:24},
+   {item_id:'done-2',attempt_id:'att-2',display_name:'Node US 01',profile_id:'profile-1',node_key:'nk-2',node_identity_key:'id-2',config_revision_key:'rev-1',execution_state:'failed',latency_ms:0,success_samples:0,total_samples:24,error_message:'context deadline exceeded'},
   ],
  }
+ vi.mocked(api.latencyHistory).mockResolvedValue({
+  tests:[{
+   profile_id:'profile-1',node_key:'nk-1',node_identity_key:'id-1',config_revision_key:'rev-1',
+   attempt_id:'att-1',display_name:'Node HK 01',node_type:'Hysteria2',requested_at:'2026-11-21T01:00:00Z',finished_at:'2026-11-21T01:00:02Z',
+   status:'completed',latency_ms:210,total_samples:6,success_samples:6,failure_samples:0,persistence_state:'saved',
+   samples:Array.from({length:6},(_,i)=>({seq:i+1,target:'https://speed.cloudflare.com/__down?bytes=1',timestamp:'2026-11-21T01:00:01Z',latency_ms:210,success:true})),
+  }],
+  has_more:false,complete:true,
+ })
  attach(QueueModal)
  const text=document.body.textContent||''
  expect(text).toContain('已处理 3 / 40 个节点')
@@ -468,4 +477,13 @@ it('shows live running chips and recent completed feed during a running latency 
  expect(text).toContain('Node US 01')
  expect(text).toContain('超时')
  expect(text).toContain('无响应')
+ const noRespBtn=Array.from(document.querySelectorAll('.compact-count-btn')).find(b=>b.textContent?.includes('无响应')) as HTMLButtonElement
+ noRespBtn.click();await flushPromises()
+ expect(document.querySelectorAll('.compact-recent-row')).toHaveLength(1)
+ expect(document.querySelector('.compact-recent-row')?.textContent).toContain('Node US 01')
+ noRespBtn.click();await flushPromises()
+ expect(document.querySelectorAll('.compact-recent-row')).toHaveLength(2)
+ ;(document.querySelector('.compact-recent-row') as HTMLButtonElement).click();await flushPromises()
+ expect(document.querySelector('.compact-recent-detail')?.textContent).toContain('CF')
+ expect(document.querySelector('.compact-recent-detail')?.textContent).toContain('210 ms')
 })

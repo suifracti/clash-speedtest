@@ -2,12 +2,14 @@
 import {computed,nextTick,onBeforeUnmount,onMounted,ref,watch} from 'vue'
 import LatencyReportImage from './LatencyReportImage.vue'
 import ReportMs from './ReportMs.vue'
+import {saveFile} from '../api'
 import {saveReportImage} from '../reportImage'
-import {nodeDisplayName} from '../nodePresentation'
+import {nodeDisplayName,nodeDisplayParts} from '../nodePresentation'
 import {stateLabel,type BatchItem,type LatencyBatch} from '../domain'
 import {partialLatencyError} from '../inspectorLatency'
 import {partialLatencyLabel} from '../latencyTargets'
-import {buildLatencyReport,compareLatencyReports,latencyAirportSummary,latencyHttpNoticeDetails,latencySlowThresholdNote,type LatencyReportGroup,type LatencyReportRow,type LatencyReportSite,type LatencyReportStatus} from '../latencyReport'
+import {buildLatencyReport,buildLatencyRunDiff,compareLatencyReports,latencyAirportSummary,latencyHttpNoticeDetails,latencySlowThresholdNote,type LatencyReportGroup,type LatencyReportRow,type LatencyReportSite,type LatencyReportStatus,type LatencyRunDiffCategory} from '../latencyReport'
+import {buildLatencyReportCSV,buildLatencyReportHTML} from '../latencyReportExport'
 
 const props=withDefaults(defineProps<{
  batch:LatencyBatch
@@ -31,6 +33,21 @@ async function exportImage(){
  }catch(error){imageError.value=true;imageMessage.value='导出图片失败：'+(error instanceof Error?error.message:String(error))}
  finally{imageBusy.value=false}
 }
+async function exportCSV(){
+ imageMessage.value='';imageError.value=false
+ try{
+  const saved=await saveFile(buildLatencyReportCSV(report.value),'CST-report-'+props.batch.requested_at.replace(/[^0-9]/g,'').slice(0,14)+'.csv','text/csv;charset=utf-8')
+  imageMessage.value=saved?'CSV 表格已保存':'已取消保存'
+ }catch(error){imageError.value=true;imageMessage.value='导出 CSV 失败：'+(error instanceof Error?error.message:String(error))}
+}
+async function exportHTML(){
+ imageMessage.value='';imageError.value=false
+ try{
+  const html=buildLatencyReportHTML(report.value,summaryLine.value,comparisonLine.value,props.monitor)
+  const saved=await saveFile(html,'CST-report-'+props.batch.requested_at.replace(/[^0-9]/g,'').slice(0,14)+'.html','text/html;charset=utf-8')
+  imageMessage.value=saved?'离线 HTML 报告已保存（双击可用浏览器独立查看）':'已取消保存'
+ }catch(error){imageError.value=true;imageMessage.value='导出 HTML 报告失败：'+(error instanceof Error?error.message:String(error))}
+}
 const report=computed(()=>buildLatencyReport(props.batch,props.airportNames))
 const reportRoot=ref<HTMLElement>(),reportTitle=ref<HTMLElement>()
 let boundDialog:HTMLDialogElement|null=null
@@ -43,22 +60,32 @@ onMounted(()=>{
  void nextTick(()=>reportTitle.value?.focus({preventScroll:true}))
 })
 onBeforeUnmount(()=>boundDialog?.removeEventListener('cancel',onDialogCancel))
-const reportView=ref<'overview'|'details'>('overview')
+const reportView=ref<'overview'|'details'|'diff'>('overview')
 const detailStatus=ref<'all'|LatencyReportStatus>('all')
+const detailRegion=ref('all')
+const detailProtocol=ref('all')
+const detailSort=ref<'default'|'name'|'first'|'stable'>('default')
+const detailSortDir=ref<1|-1>(1)
+const detailShowAll=ref(false)
 const detailSubset=ref<{label:string;keys:Set<string>}|null>(null)
 const detailSearch=ref('')
 const detailPage=ref(1)
 const detailPageSize=15
+const diffBatchId=ref('auto')
+const diffCategory=ref<'all'|LatencyRunDiffCategory>('all')
 const expandedGroups=ref(new Set<number>())
 const inspectedKey=ref<string|null>(null)
 const inspectedPool=ref<string[]>([])
 
 function toggleGroup(index:number){const next=new Set(expandedGroups.value);next.has(index)?next.delete(index):next.add(index);expandedGroups.value=next}
 function openDetails(status:'all'|LatencyReportStatus='all'){inspectedKey.value=null;detailSubset.value=null;detailStatus.value=status;detailPage.value=1;reportView.value='details'}
+function openRunDiff(category:'all'|LatencyRunDiffCategory='all'){inspectedKey.value=null;diffCategory.value=category;reportView.value='diff'}
 function openSubset(label:string,keys:string[]){
  if(!keys.length)return
  inspectedKey.value=null
  detailStatus.value='all'
+ detailRegion.value='all'
+ detailProtocol.value='all'
  detailSearch.value=''
  detailSubset.value={label,keys:new Set(keys)}
  detailPage.value=1
@@ -77,9 +104,15 @@ function openNodeDetail(row:LatencyReportRow,pool?:LatencyReportRow[]){
  inspectedPool.value=(pool&&pool.length?pool:filteredRows.value.length?filteredRows.value:report.value.rows).map(r=>r.key)
 }
 function closeNodeDetail(){inspectedKey.value=null}
-function clearDetailFilters(){detailStatus.value='all';detailSubset.value=null;detailSearch.value=''}
-watch(()=>props.batch.batch_id,()=>{inspectedKey.value=null;reportView.value='overview';clearDetailFilters();detailPage.value=1})
-watch([detailStatus,detailSearch,detailSubset],()=>{detailPage.value=1})
+function clearDetailFilters(){detailStatus.value='all';detailRegion.value='all';detailProtocol.value='all';detailSort.value='default';detailSortDir.value=1;detailSubset.value=null;detailSearch.value=''}
+function toggleDetailSort(col:'name'|'first'|'stable'){
+ if(detailSort.value===col){
+  if(detailSortDir.value===1)detailSortDir.value=-1
+  else{detailSort.value='default';detailSortDir.value=1}
+ }else{detailSort.value=col;detailSortDir.value=1}
+}
+watch(()=>props.batch.batch_id,()=>{inspectedKey.value=null;reportView.value='overview';clearDetailFilters();detailShowAll.value=false;diffBatchId.value='auto';diffCategory.value='all';detailPage.value=1})
+watch([detailStatus,detailRegion,detailProtocol,detailSearch,detailSubset],()=>{detailPage.value=1})
 
 const inspectedRow=computed(()=>inspectedKey.value?report.value.rows.find(r=>r.key===inspectedKey.value)||null:null)
 const inspectedIndex=computed(()=>inspectedKey.value?inspectedPool.value.indexOf(inspectedKey.value):-1)
@@ -91,6 +124,16 @@ function stepInspected(delta:number){
 const airportSummary=computed(()=>latencyAirportSummary(report.value))
 const httpNoticeItems=computed(()=>latencyHttpNoticeDetails(report.value))
 const comparison=computed(()=>compareLatencyReports(props.batch,report.value,props.previous))
+const runDiff=computed(()=>buildLatencyRunDiff(props.batch,report.value,props.previous,diffBatchId.value,props.airportNames))
+const filteredDiffRows=computed(()=>diffCategory.value==='all'?runDiff.value.rows:runDiff.value.rows.filter(r=>r.category===diffCategory.value))
+const diffChips=computed(()=>[
+ {key:'all' as const,label:'全部对比',value:runDiff.value.counts.all,tone:''},
+ {key:'newly-failed' as const,label:'新增失败',value:runDiff.value.counts.newlyFailed,tone:'bad'},
+ {key:'slower' as const,label:'明显变慢',value:runDiff.value.counts.slower,tone:'warn'},
+ {key:'recovered' as const,label:'已恢复',value:runDiff.value.counts.recovered,tone:'good'},
+ {key:'faster' as const,label:'明显变快',value:runDiff.value.counts.faster,tone:'good'},
+ {key:'steady' as const,label:'基本持平',value:runDiff.value.counts.steady,tone:''},
+].filter(c=>c.key==='all'||c.value>0))
 const usablePercent=computed(()=>report.value.counts.total?Math.round(report.value.counts.usable/report.value.counts.total*1000)/10:0)
 const usableTone=computed(()=>!report.value.counts.total?'empty':usablePercent.value>=80?'good':usablePercent.value>=50?'warn':'bad')
 const stateTone=computed(()=>props.batch.state==='completed'?'good':props.batch.state.includes('fail')||props.batch.state.includes('issue')?'warn':'empty')
@@ -157,6 +200,11 @@ function uniqueItems(rows:LatencyReportRow[]){
  for(const row of rows)unique.set(row.key,row.item)
  return [...unique.values()]
 }
+function rowRegion(row:LatencyReportRow){
+ return nodeDisplayParts(row.item).region||'未识别地区'
+}
+const detailRegions=computed(()=>[...new Set(report.value.rows.map(rowRegion).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'zh-CN')))
+const detailProtocols=computed(()=>[...new Set(report.value.rows.map(r=>r.nodeType).filter(t=>t&&t!=='未知协议'))].sort((a,b)=>a.localeCompare(b,'zh-CN')))
 const detailFilters=computed(()=>[
  {key:'all' as const,label:'全部',value:report.value.rows.length},
  ...countCards.value.filter(c=>c.value>0),
@@ -164,16 +212,28 @@ const detailFilters=computed(()=>[
 ])
 const filteredRows=computed(()=>{
  const q=detailSearch.value.trim().toLowerCase()
- return report.value.rows.filter(row=>{
+ const list=report.value.rows.filter(row=>{
   if(detailSubset.value&&!detailSubset.value.keys.has(row.key))return false
   if(detailStatus.value!=='all'&&row.status!==detailStatus.value)return false
+  if(detailRegion.value!=='all'&&rowRegion(row)!==detailRegion.value)return false
+  if(detailProtocol.value!=='all'&&row.nodeType!==detailProtocol.value)return false
   if(!q)return true
-  return (nodeDisplayName(row.item)+' '+row.airportName+' '+row.nodeType+' '+statusLabel(row)).toLowerCase().includes(q)
+  return (nodeDisplayName(row.item)+' '+row.airportName+' '+row.nodeType+' '+rowRegion(row)+' '+statusLabel(row)).toLowerCase().includes(q)
+ })
+ if(detailSort.value==='default')return list
+ return list.slice().sort((a,b)=>{
+  if(detailSort.value==='name')return nodeDisplayName(a.item).localeCompare(nodeDisplayName(b.item),'zh-CN')*detailSortDir.value
+  const av=detailSort.value==='first'?a.firstMedianMs:a.stableMs
+  const bv=detailSort.value==='first'?b.firstMedianMs:b.stableMs
+  if(av===null&&bv===null)return 0
+  if(av===null)return 1
+  if(bv===null)return -1
+  return (av-bv)*detailSortDir.value
  })
 })
-const detailPageCount=computed(()=>Math.max(1,Math.ceil(filteredRows.value.length/detailPageSize)))
+const detailPageCount=computed(()=>detailShowAll.value?1:Math.max(1,Math.ceil(filteredRows.value.length/detailPageSize)))
 watch(detailPageCount,count=>{if(detailPage.value>count)detailPage.value=count})
-const pagedRows=computed(()=>filteredRows.value.slice((detailPage.value-1)*detailPageSize,detailPage.value*detailPageSize))
+const pagedRows=computed(()=>detailShowAll.value?filteredRows.value:filteredRows.value.slice((detailPage.value-1)*detailPageSize,detailPage.value*detailPageSize))
 function shortSiteName(name:string){return name==='Cloudflare'?'CF':name}
 function siteChipClass(site:LatencyReportSite){
  if(!site.attemptedSamples)return 'empty'
@@ -314,6 +374,7 @@ function inspectedAlerts(row:LatencyReportRow){
    <nav class="report-tabs" role="tablist" aria-label="延迟报告视图">
     <button type="button" class="report-tab" role="tab" :aria-selected="reportView==='overview'" @click="reportView='overview'">结果概览</button>
     <button type="button" class="report-tab" role="tab" :aria-selected="reportView==='details'" @click="reportView='details'">逐个明细 <small>{{report.rows.length}}</small></button>
+    <button v-if="runDiff.candidates.length" type="button" class="report-tab" role="tab" :aria-selected="reportView==='diff'" @click="reportView='diff'">轮次对比 <small>{{runDiff.counts.all}}</small></button>
    </nav>
   </header>
 
@@ -340,7 +401,10 @@ function inspectedAlerts(row:LatencyReportRow){
   </div>
 
   <div class="latency-report-compare">
-   <template v-if="comparison.reason"><span>{{comparisonLine}}</span></template>
+   <template v-if="comparison.reason">
+    <span>{{comparisonLine}}</span>
+    <button v-if="runDiff.candidates.length" type="button" class="report-inline-chip accent" @click="openRunDiff('all')">自选历史轮次对比 ›</button>
+   </template>
    <template v-else>
     <span>和上次同条件（{{comparison.comparableNodes}} 个可比节点）比：</span>
     <button v-if="comparison.newlyFailed>0" type="button" class="report-inline-chip bad" @click="openSubset('较上次新增失败',comparison.newlyFailedKeys||[])">新增失败 {{comparison.newlyFailed}} ›</button>
@@ -350,6 +414,7 @@ function inspectedAlerts(row:LatencyReportRow){
     <span v-else class="report-inline-muted">恢复 0</span>
     <span class="report-dot">·</span>
     <span>{{comparison.stableMedianDeltaMs===null?'稳定中位差暂无数据':`稳定中位差 ${formatSignedMs(comparison.stableMedianDeltaMs)}`}}</span>
+    <button v-if="runDiff.candidates.length" type="button" class="report-inline-chip accent" @click="openRunDiff('all')">逐节点对比 ›</button>
    </template>
   </div>
 
@@ -420,13 +485,21 @@ function inspectedAlerts(row:LatencyReportRow){
      <button v-if="detailSubset" type="button" class="report-subset-pill" @click="detailSubset=null">范围：{{detailSubset.label}}（{{detailSubset.keys.size}}）<span>×</span></button>
     </div>
     <div class="report-detail-search">
+     <select v-if="detailRegions.length>1" v-model="detailRegion" class="report-select" aria-label="按地区筛选明细">
+      <option value="all">全部地区</option>
+      <option v-for="reg in detailRegions" :key="reg" :value="reg">{{reg}}</option>
+     </select>
+     <select v-if="detailProtocols.length>1" v-model="detailProtocol" class="report-select" aria-label="按协议筛选明细">
+      <option value="all">全部协议</option>
+      <option v-for="proto in detailProtocols" :key="proto" :value="proto">{{proto}}</option>
+     </select>
      <input v-model="detailSearch" type="search" placeholder="搜节点、机场、协议" aria-label="筛选节点明细">
-     <button v-if="detailStatus!=='all'||detailSearch||detailSubset" type="button" class="button ghost small" @click="clearDetailFilters">重置</button>
+     <button v-if="detailStatus!=='all'||detailRegion!=='all'||detailProtocol!=='all'||detailSort!=='default'||detailSearch||detailSubset" type="button" class="button ghost small" @click="clearDetailFilters">重置</button>
     </div>
    </div>
    <div class="latency-report-table-wrap">
     <table>
-     <thead><tr><th>节点</th><th>结果</th><th class="number">首次中位</th><th class="number">稳定中位</th><th>各站稳定延迟</th><th>说明</th></tr></thead>
+     <thead><tr><th><button type="button" class="report-sort-head" @click="toggleDetailSort('name')">节点<em v-if="detailSort==='name'">{{detailSortDir===1?'↑':'↓'}}</em></button></th><th>结果</th><th class="number"><button type="button" class="report-sort-head" @click="toggleDetailSort('first')">首次中位<em v-if="detailSort==='first'">{{detailSortDir===1?'↑':'↓'}}</em></button></th><th class="number"><button type="button" class="report-sort-head" @click="toggleDetailSort('stable')">稳定中位<em v-if="detailSort==='stable'">{{detailSortDir===1?'↑':'↓'}}</em></button></th><th>各站稳定延迟</th><th>说明</th></tr></thead>
      <tbody>
       <tr v-for="row in pagedRows" :key="row.key" class="clickable-row" @click="openNodeDetail(row,filteredRows)">
        <td><button type="button" class="text-button" @click.stop="openNodeDetail(row,filteredRows)">{{nodeDisplayName(row.item)}}</button><small>{{row.airportName}}<template v-if="row.nodeType!=='未知协议'"> · {{row.nodeType}}</template></small></td>
@@ -457,16 +530,74 @@ function inspectedAlerts(row:LatencyReportRow){
      </tbody>
     </table>
    </div>
-   <div v-if="detailPageCount>1" class="report-pagination">
-    <span>共 {{filteredRows.length}} 项 · 第 {{detailPage}} / {{detailPageCount}} 页</span>
-    <div class="report-pagination-btns"><button type="button" class="button ghost small" :disabled="detailPage<=1" @click="detailPage--">上一页</button><button type="button" class="button ghost small" :disabled="detailPage>=detailPageCount" @click="detailPage++">下一页</button></div>
+   <div v-if="filteredRows.length>detailPageSize" class="report-pagination">
+    <span>共 {{filteredRows.length}} 项<template v-if="!detailShowAll"> · 第 {{detailPage}} / {{detailPageCount}} 页</template></span>
+    <div class="report-pagination-btns">
+     <button type="button" class="button ghost small" @click="detailShowAll=!detailShowAll">{{detailShowAll?'按页查看':`显示全部 (${filteredRows.length})`}}</button>
+     <template v-if="!detailShowAll">
+      <button type="button" class="button ghost small" :disabled="detailPage<=1" @click="detailPage--">上一页</button>
+      <button type="button" class="button ghost small" :disabled="detailPage>=detailPageCount" @click="detailPage++">下一页</button>
+     </template>
+    </div>
+   </div>
+  </div>
+
+  <div v-if="runDiff.candidates.length" v-show="reportView==='diff'" class="report-pane latency-report-diff">
+   <div class="report-detail-toolbar">
+    <div class="report-detail-filters" role="group" aria-label="按变化类别筛选">
+     <button v-for="c in diffChips" :key="c.key" type="button" class="report-filter-chip" :class="c.tone" :aria-pressed="diffCategory===c.key" @click="diffCategory=c.key">{{c.label}}<small>{{c.value}}</small></button>
+    </div>
+    <label class="report-diff-picker">
+     <span>对比轮次</span>
+     <select v-model="diffBatchId" class="report-select" aria-label="选择对比的历史轮次">
+      <option value="auto">自动匹配各节点上次同条件</option>
+      <option v-for="cand in runDiff.candidates" :key="cand.batchId" :value="cand.batchId">{{formatTime(cand.requestedAt)}} · {{cand.nodeCount}} 节点{{cand.sameConditions?'':'（条件不同）'}}</option>
+     </select>
+    </label>
+   </div>
+   <p v-if="runDiff.conditionNote" class="report-diff-note">{{runDiff.conditionNote}}</p>
+   <div class="latency-report-table-wrap">
+    <table>
+     <thead><tr><th>节点</th><th>上轮</th><th>本轮</th><th class="number">变化</th><th>四站变化</th></tr></thead>
+     <tbody>
+      <tr v-for="d in filteredDiffRows" :key="d.key" class="clickable-row" @click="openNodeDetail(d.row,filteredDiffRows.map(x=>x.row))">
+       <td><button type="button" class="text-button" @click.stop="openNodeDetail(d.row,filteredDiffRows.map(x=>x.row))">{{nodeDisplayName(d.row.item)}}</button><small>{{d.row.airportName}}<template v-if="d.row.nodeType!=='未知协议'"> · {{d.row.nodeType}}</template> · 上轮 {{formatTime(d.prevAt)}}</small></td>
+       <td><span class="latency-report-status" :class="d.prevRow.status">{{statusLabel(d.prevRow)}}</span><small class="report-diff-ms-sub">{{formatMs(d.prevRow.stableMs)}}</small></td>
+       <td><span class="latency-report-status" :class="d.row.status">{{statusLabel(d.row)}}</span><small class="report-diff-ms-sub">{{formatMs(d.row.stableMs)}}</small></td>
+       <td class="number">
+        <span v-if="d.category==='newly-failed'" class="report-diff-pill bad">转离线</span>
+        <span v-else-if="d.category==='recovered'" class="report-diff-pill good">已恢复</span>
+        <span v-else-if="d.deltaMs!==null" class="report-diff-pill" :class="d.category==='slower'?(d.deltaMs>=300?'bad':'warn'):d.category==='faster'?'good':'empty'">{{d.deltaMs>0?`↑+${d.deltaMs}ms`:d.deltaMs<0?`↓${d.deltaMs}ms`:'持平'}}<em v-if="d.deltaPct!==null&&Math.abs(d.deltaMs)>=40"> ({{d.deltaPct>0?'+':''}}{{d.deltaPct}}%)</em></span>
+        <span v-else class="report-inline-muted">—</span>
+       </td>
+       <td>
+        <div class="report-detail-note-cell">
+         <div class="report-sites-grid">
+          <span v-for="sd in d.siteDeltas" :key="sd.id" class="report-site-chip" :class="sd.deltaMs!==null&&sd.deltaMs>=150?'warn':sd.currMs===null&&sd.prevMs!==null?'bad':''">
+           <small>{{sd.shortName}}</small>
+           <b>{{sd.deltaMs!==null?(sd.deltaMs>0?`+${sd.deltaMs}`:sd.deltaMs===0?'0':`${sd.deltaMs}`)+'ms':sd.currMs===null&&sd.prevMs!==null?'转超时':sd.currMs!==null&&sd.prevMs===null?'恢复':'—'}}</b>
+          </span>
+         </div>
+         <span class="report-row-arrow" aria-hidden="true">›</span>
+        </div>
+       </td>
+      </tr>
+      <tr v-if="!filteredDiffRows.length"><td colspan="5" class="report-table-empty">当前筛选下没有可对比的节点变化</td></tr>
+     </tbody>
+    </table>
    </div>
   </div>
 
   <footer class="latency-report-actions">
-   <button class="button" :disabled="imageBusy" @click="exportImage">{{imageBusy?'正在导出…':'导出图片'}}</button>
-   <button v-if="issueItems.length" class="button" @click="emit('retry',issueItems)">重测问题（{{issueItems.length}}）</button>
-   <button class="button primary" :disabled="!report.usableItems.length" @click="emit('export',report.usableItems)">导出能用的 {{report.usableItems.length}} 个</button>
+   <div class="report-export-group">
+    <button type="button" class="button" :disabled="imageBusy" @click="exportImage">{{imageBusy?'正在导出…':'导出图片'}}</button>
+    <button type="button" class="button" @click="exportCSV">导出 CSV</button>
+    <button type="button" class="button" @click="exportHTML">导出离线 HTML</button>
+   </div>
+   <div class="report-primary-group">
+    <button v-if="issueItems.length" type="button" class="button" @click="emit('retry',issueItems)">重测问题（{{issueItems.length}}）</button>
+    <button type="button" class="button primary" :disabled="!report.usableItems.length" @click="emit('export',report.usableItems)">导出能用的 {{report.usableItems.length}} 个</button>
+   </div>
   </footer>
   </template>
 
@@ -542,6 +673,7 @@ function inspectedAlerts(row:LatencyReportRow){
 .report-inline-chip{display:inline-flex;align-items:center;gap:3px;padding:1.5px 8px;border-radius:999px;border:1px solid transparent;font-size:11.5px;font-weight:650;cursor:pointer;transition:filter .14s}
 .report-inline-chip.bad{background:var(--cst-bad-bg);color:var(--cst-bad);border-color:color-mix(in srgb,var(--cst-bad) 30%,transparent)}
 .report-inline-chip.good{background:var(--cst-good-bg);color:var(--cst-good);border-color:color-mix(in srgb,var(--cst-good) 30%,transparent)}
+.report-inline-chip.accent{margin-left:auto;background:var(--cst-accent-soft);color:var(--cst-accent);border-color:color-mix(in srgb,var(--cst-accent) 30%,transparent)}
 .report-inline-chip:hover{filter:brightness(.94)}
 .report-inline-muted{color:var(--cst-muted)}.report-dot{opacity:.5}
 
@@ -600,7 +732,22 @@ function inspectedAlerts(row:LatencyReportRow){
 .report-filter-chip[aria-pressed="true"]{background:var(--cst-accent-soft);border-color:var(--cst-accent);color:var(--cst-accent);font-weight:650}
 .report-subset-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border:1px solid color-mix(in srgb,var(--cst-accent) 42%,transparent);border-radius:999px;background:var(--cst-aurora-surface),var(--cst-panel);color:var(--cst-accent);font-size:12px;font-weight:650;cursor:pointer}
 .report-subset-pill span{font-size:14px;line-height:1}
-.report-detail-search{display:flex;align-items:center;gap:6px}
+.report-detail-search{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.report-select{height:34px;padding:4px 9px;border:1px solid var(--cst-line);border-radius:9px;background:var(--cst-panel-2);color:var(--cst-text);font-size:12px;cursor:pointer}
+.report-select:focus{outline:none;border-color:var(--cst-accent)}
+.report-sort-head{display:inline-flex;align-items:center;gap:4px;border:0;padding:0;background:transparent;color:inherit;font:inherit;cursor:pointer}
+.report-sort-head:hover{color:var(--cst-accent)}
+.report-sort-head em{font-style:normal;color:var(--cst-accent);font-weight:750}
+.report-diff-picker{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--cst-muted)}
+.report-diff-note{margin:0;padding:8px 12px;border-radius:10px;border:1px solid color-mix(in srgb,var(--cst-warn) 34%,var(--cst-line));background:var(--cst-warn-bg);color:var(--cst-warn);font-size:12px}
+.report-diff-ms-sub{display:block;margin-top:3px;font-size:11px;color:var(--cst-muted);font-variant-numeric:tabular-nums}
+.report-diff-pill{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;font-size:11.5px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;border:1px solid var(--cst-line);background:var(--cst-panel-2);color:var(--cst-muted)}
+.report-diff-pill em{font-style:normal;font-weight:600;opacity:.85}
+.report-diff-pill.good{color:var(--cst-good);background:var(--cst-good-bg);border-color:color-mix(in srgb,var(--cst-good) 28%,transparent)}
+.report-diff-pill.warn{color:var(--cst-warn);background:var(--cst-warn-bg);border-color:color-mix(in srgb,var(--cst-warn) 32%,transparent)}
+.report-diff-pill.bad{color:var(--cst-bad);background:var(--cst-bad-bg);border-color:color-mix(in srgb,var(--cst-bad) 30%,transparent)}
+.latency-report-actions{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding-top:4px}
+.report-export-group,.report-primary-group{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .report-detail-search input{width:200px;max-width:100%;height:34px;padding:5px 11px;border:1px solid var(--cst-line);border-radius:9px;background:var(--cst-panel-2);color:var(--cst-text);font-size:12.5px}
 .report-detail-search input:focus{outline:none;border-color:var(--cst-accent);background:var(--cst-panel);box-shadow:0 0 0 3px color-mix(in srgb,var(--cst-accent) 13%,transparent)}
 

@@ -9,17 +9,21 @@ import (
 
 // LatencyBatchProgressItem is a bounded live-feed item for an active latency batch.
 type LatencyBatchProgressItem struct {
-	ItemID         string     `json:"item_id"`
-	DisplayName    string     `json:"display_name"`
-	ProfileID      string     `json:"profile_id"`
-	NodeType       string     `json:"node_type,omitempty"`
-	ExecutionState string     `json:"execution_state"`
-	SuccessSamples int        `json:"success_samples"`
-	TotalSamples   int        `json:"total_samples"`
-	LatencyMs      int64      `json:"latency_ms,omitempty"`
-	ErrorMessage   string     `json:"error_message,omitempty"`
-	StartedAt      *time.Time `json:"started_at,omitempty"`
-	FinishedAt     *time.Time `json:"finished_at,omitempty"`
+	ItemID            string     `json:"item_id"`
+	AttemptID         string     `json:"attempt_id,omitempty"`
+	DisplayName       string     `json:"display_name"`
+	ProfileID         string     `json:"profile_id"`
+	NodeKey           string     `json:"node_key,omitempty"`
+	NodeIdentityKey   string     `json:"node_identity_key,omitempty"`
+	ConfigRevisionKey string     `json:"config_revision_key,omitempty"`
+	NodeType          string     `json:"node_type,omitempty"`
+	ExecutionState    string     `json:"execution_state"`
+	SuccessSamples    int        `json:"success_samples"`
+	TotalSamples      int        `json:"total_samples"`
+	LatencyMs         int64      `json:"latency_ms,omitempty"`
+	ErrorMessage      string     `json:"error_message,omitempty"`
+	StartedAt         *time.Time `json:"started_at,omitempty"`
+	FinishedAt        *time.Time `json:"finished_at,omitempty"`
 }
 
 // LatencyBatchProgress reads counters and bounded live slices from the existing batch/item states.
@@ -88,9 +92,9 @@ func (s *Store) GetLatencyBatchProgress(ctx context.Context, batchID string) (*L
 		}
 	}
 
-	// Bounded recently completed items (latest 20) for live progress feedback.
+	// Bounded recently completed items (latest 100) for interactive filtering & drill-down.
 	if recRows, rErr := s.db.db.QueryContext(ctx, `
- SELECT i.item_id,i.display_name,i.profile_id,COALESCE(i.node_type,''),i.execution_state,
+ SELECT i.item_id,COALESCE(i.attempt_id,''),i.display_name,i.profile_id,i.node_key,i.node_identity_key,i.config_revision_key,COALESCE(i.node_type,''),i.execution_state,
  COALESCE(t.success_samples,CAST(json_extract(NULLIF(i.result_json,''),'$.success_samples') AS INTEGER),0),
  COALESCE(t.total_samples,CAST(json_extract(NULLIF(i.result_json,''),'$.total_samples') AS INTEGER),0),
  COALESCE(t.latency_ms,CAST(json_extract(NULLIF(i.result_json,''),'$.latency_ms') AS INTEGER),0),
@@ -99,12 +103,12 @@ func (s *Store) GetLatencyBatchProgress(ctx context.Context, batchID string) (*L
  FROM workbench_latency_batch_items i
  LEFT JOIN workbench_latency_tests t ON t.attempt_id=i.attempt_id
  WHERE i.batch_id=? AND i.execution_state NOT IN ('queued','running','cancelling')
- ORDER BY COALESCE(i.finished_at, i.started_at, i.requested_at) DESC, i.ordinal DESC LIMIT 20`, batchID); rErr == nil {
+ ORDER BY COALESCE(i.finished_at, i.started_at, i.requested_at) DESC, i.ordinal DESC LIMIT 100`, batchID); rErr == nil {
 		defer recRows.Close()
 		for recRows.Next() {
 			var item LatencyBatchProgressItem
 			var finished sql.NullTime
-			if err := recRows.Scan(&item.ItemID, &item.DisplayName, &item.ProfileID, &item.NodeType, &item.ExecutionState, &item.SuccessSamples, &item.TotalSamples, &item.LatencyMs, &item.ErrorMessage, &finished); err == nil {
+			if err := recRows.Scan(&item.ItemID, &item.AttemptID, &item.DisplayName, &item.ProfileID, &item.NodeKey, &item.NodeIdentityKey, &item.ConfigRevisionKey, &item.NodeType, &item.ExecutionState, &item.SuccessSamples, &item.TotalSamples, &item.LatencyMs, &item.ErrorMessage, &finished); err == nil {
 				if finished.Valid {
 					t := finished.Time.UTC()
 					item.FinishedAt = &t

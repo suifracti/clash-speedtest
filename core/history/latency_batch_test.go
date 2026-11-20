@@ -138,7 +138,7 @@ func TestGetLatencyBatchProgressIncludesRunningAndRecentItems(t *testing.T) {
 	if len(p.RunningItems) != 1 || p.RunningItems[0].DisplayName != "Node 2" {
 		t.Fatalf("unexpected running items: %+v", p.RunningItems)
 	}
-	if len(p.RecentItems) != 1 || p.RecentItems[0].DisplayName != "Node 1" || p.RecentItems[0].LatencyMs != 145 || p.RecentItems[0].SuccessSamples != 24 {
+	if len(p.RecentItems) != 1 || p.RecentItems[0].DisplayName != "Node 1" || p.RecentItems[0].LatencyMs != 145 || p.RecentItems[0].SuccessSamples != 24 || p.RecentItems[0].AttemptID != "att-1" || p.RecentItems[0].NodeKey != "n1" || p.RecentItems[0].NodeIdentityKey != "id1" || p.RecentItems[0].ConfigRevisionKey != "r1" {
 		t.Fatalf("unexpected recent items: %+v", p.RecentItems)
 	}
 }

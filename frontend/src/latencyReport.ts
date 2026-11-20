@@ -406,3 +406,94 @@ export function latencyAirportSummary(report:LatencyReport){
  for(const row of report.rows){const airport=row.airportName;let group=airports.get(airport);if(!group){group={airport,total:0,usable:0,slow:0,partial:0,noResponse:0};airports.set(airport,group)}group.total++;if(row.status==='usable')group.usable++;else if(row.status==='slow'||row.status==='unstable')group.slow++;else if(row.status==='partial')group.partial++;else if(row.status==='no-response')group.noResponse++}
  return [...airports.values()].sort((a,b)=>(b.total?b.usable/b.total:0)-(a.total?a.usable/a.total:0)||a.airport.localeCompare(b.airport))
 }
+
+export type LatencyRunDiffCategory='newly-failed'|'recovered'|'slower'|'faster'|'steady'
+export interface LatencyRunDiffSite {id:string;name:string;shortName:string;prevMs:number|null;currMs:number|null;deltaMs:number|null}
+export interface LatencyRunDiffRow {
+ key:string
+ row:LatencyReportRow
+ prevRow:LatencyReportRow
+ prevAt:string
+ deltaMs:number|null
+ deltaPct:number|null
+ category:LatencyRunDiffCategory
+ siteDeltas:LatencyRunDiffSite[]
+}
+export interface LatencyRunDiffCandidate {batchId:string;requestedAt:string;nodeCount:number;sameConditions:boolean}
+export interface LatencyRunDiff {
+ candidates:LatencyRunDiffCandidate[]
+ selectedBatchId:string
+ conditionNote:string
+ rows:LatencyRunDiffRow[]
+ counts:{all:number;newlyFailed:number;recovered:number;slower:number;faster:number;steady:number}
+ medianDeltaMs:number|null
+}
+
+export function buildLatencyRunDiff(batch:LatencyBatch,current:LatencyReport,previous:LatencyBatch[]=[],selectedBatchId='auto',airportNames:Record<string,string>={}):LatencyRunDiff{
+ const currentAt=Date.parse(batch.requested_at)
+ const earlier=previous
+  .filter(candidate=>candidate.batch_id!==batch.batch_id&&(!Number.isFinite(currentAt)||Date.parse(candidate.requested_at)<currentAt))
+  .slice()
+  .sort((a,b)=>Date.parse(b.requested_at)-Date.parse(a.requested_at))
+ const candidates:LatencyRunDiffCandidate[]=earlier.map(c=>({
+  batchId:c.batch_id,
+  requestedAt:c.requested_at,
+  nodeCount:c.items?.length||c.item_count||0,
+  sameConditions:sameConditions(batch,c),
+ }))
+ const chosenPool=selectedBatchId!=='auto'
+  ?earlier.filter(c=>c.batch_id===selectedBatchId)
+  :(earlier.some(c=>sameConditions(batch,c))?earlier.filter(c=>sameConditions(batch,c)):earlier)
+ const conditionNote=selectedBatchId!=='auto'
+  ?(chosenPool[0]&&!sameConditions(batch,chosenPool[0])?'所选历史轮次与本轮条件不同（目标/超时/采样数存在差异），差值仅供参考。':'')
+  :(earlier.length&&!earlier.some(c=>sameConditions(batch,c))?'未找到完全同条件的更早批次，以下按最近历史轮次对比（仅供参考）。':'')
+ const builtPool=chosenPool.map(c=>({batch:c,report:buildLatencyReport(c,airportNames)}))
+ const rows:LatencyRunDiffRow[]=[]
+ const currStables:number[]=[],prevStables:number[]=[]
+ for(const row of current.rows){
+  if(!row.executed)continue
+  let prevRow:LatencyReportRow|undefined,prevAt=''
+  for(const entry of builtPool){
+   const found=entry.report.rows.find(r=>r.key===row.key&&r.executed)
+   if(found){prevRow=found;prevAt=entry.batch.requested_at;break}
+  }
+  if(!prevRow)continue
+  const deltaMs=row.stableMs!==null&&prevRow.stableMs!==null?Math.round(row.stableMs-prevRow.stableMs):null
+  const deltaPct=deltaMs!==null&&prevRow.stableMs&&prevRow.stableMs>0?Math.round(deltaMs/prevRow.stableMs*100):null
+  if(row.stableMs!==null&&prevRow.stableMs!==null){currStables.push(row.stableMs);prevStables.push(prevRow.stableMs)}
+  let category:LatencyRunDiffCategory='steady'
+  if(prevRow.responseSamples>0&&row.status==='no-response')category='newly-failed'
+  else if(prevRow.status==='no-response'&&row.responseSamples>0)category='recovered'
+  else if(deltaMs!==null&&(deltaMs>=80||(deltaMs>=40&&deltaPct!==null&&deltaPct>=25)))category='slower'
+  else if(deltaMs!==null&&(deltaMs<=-80||(deltaMs<=-40&&deltaPct!==null&&deltaPct<=-25)))category='faster'
+  const siteDeltas:LatencyRunDiffSite[]=row.sites.map(site=>{
+   const prevSite=prevRow!.sites.find(s=>s.id===site.id)
+   const prevMs=prevSite?.stableMs??null,currMs=site.stableMs??null
+   return {id:site.id,name:site.name,shortName:site.name==='Cloudflare'?'CF':site.name,prevMs,currMs,deltaMs:prevMs!==null&&currMs!==null?Math.round(currMs-prevMs):null}
+  })
+  rows.push({key:row.key,row,prevRow,prevAt,deltaMs,deltaPct,category,siteDeltas})
+ }
+ const catOrder:Record<LatencyRunDiffCategory,number>={'newly-failed':0,slower:1,recovered:2,faster:3,steady:4}
+ rows.sort((a,b)=>{
+  if(catOrder[a.category]!==catOrder[b.category])return catOrder[a.category]-catOrder[b.category]
+  if(a.category==='slower')return (b.deltaMs??0)-(a.deltaMs??0)
+  if(a.category==='faster')return (a.deltaMs??0)-(b.deltaMs??0)
+  return Math.abs(b.deltaMs??0)-Math.abs(a.deltaMs??0)||a.row.nodeName.localeCompare(b.row.nodeName,'zh-CN')
+ })
+ const cMed=inspectorMedian(currStables),pMed=inspectorMedian(prevStables)
+ return {
+  candidates,
+  selectedBatchId:selectedBatchId!=='auto'&&chosenPool.length?selectedBatchId:'auto',
+  conditionNote,
+  rows,
+  counts:{
+   all:rows.length,
+   newlyFailed:rows.filter(r=>r.category==='newly-failed').length,
+   recovered:rows.filter(r=>r.category==='recovered').length,
+   slower:rows.filter(r=>r.category==='slower').length,
+   faster:rows.filter(r=>r.category==='faster').length,
+   steady:rows.filter(r=>r.category==='steady').length,
+  },
+  medianDeltaMs:cMed!==null&&pMed!==null?Math.round(cMed-pMed):null,
+ }
+}

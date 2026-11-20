@@ -3,7 +3,8 @@ import {nodeDisplayName} from '../nodePresentation'
 import {computed,ref,watch,nextTick,onMounted,onBeforeUnmount} from 'vue'
 import {api,saveFile} from '../api'
 import {readLatencyBatches} from '../latencyReportData'
-import {bytes,key,targets,type BatchItem,type LatencyBatch,type LatencyBatchProgressItem} from '../domain'
+import {bytes,key,median,targets,type BatchItem,type LatencyBatch,type LatencyBatchProgressItem,type LatencyTest} from '../domain'
+import {latencyTargetId} from '../latencyTargets'
 import LatencyReport from './LatencyReport.vue'
 import {latencySampleState} from '../presentation'
 import {downloadNoDataReason} from '../measurementRounds'
@@ -283,6 +284,68 @@ watch(pageCount,count=>queuePage.value=Math.min(queuePage.value,count))
 const succeeded=computed(()=>w.queue.value.filter(q=>q.state==='completed'&&resultStatus(q)?.tone==='good').length)
 const compactLatency=computed(()=>!!w.activeBatch.value&&['queued','running','cancelling','saving'].includes(w.activeBatch.value.state)||w.running.value&&w.queue.value.length>0&&w.queue.value.every(q=>q.project==='latency'))
 const progress=computed(()=>w.activeBatchProgress.value?.batch_id===w.activeBatch.value?.batch_id&&w.activeBatchProgress.value||{requested_at:w.activeBatch.value?.requested_at||'',total:w.activeBatch.value?.item_count||w.queue.value.length,processed:0,running:0,queued:0,all_success:0,partial_response:0,no_response:0,save_failed:0,not_executed:0,running_items:[] as LatencyBatchProgressItem[],recent_items:[] as LatencyBatchProgressItem[]})
+const compactFilter=ref<'all'|'good'|'warn'|'bad'|'skipped'>('all')
+const expandedLiveId=ref<string|null>(null)
+const liveDetailCache=ref<Record<string,{loading:boolean;error?:string;test?:LatencyTest}>>({})
+watch(()=>w.activeBatch.value?.batch_id,()=>{compactFilter.value='all';expandedLiveId.value=null;liveDetailCache.value={}})
+function toggleCompactFilter(f:'good'|'warn'|'bad'|'skipped'){compactFilter.value=compactFilter.value===f?'all':f}
+function liveItemCategory(item:LatencyBatchProgressItem):'good'|'warn'|'bad'|'skipped'{
+ if(['not_executed','cancelled'].includes(item.execution_state))return 'skipped'
+ if(item.total_samples>0&&item.success_samples===item.total_samples)return 'good'
+ if(item.success_samples>0)return 'warn'
+ return 'bad'
+}
+const filteredRecentItems=computed(()=>(progress.value.recent_items||[]).filter(item=>compactFilter.value==='all'||liveItemCategory(item)===compactFilter.value))
+function compactFilterLabel(f:typeof compactFilter.value){
+ return ({all:'全部已完成',good:'全部响应',warn:'部分响应',bad:'无响应',skipped:'未执行 / 取消'} as const)[f]
+}
+function findCachedLiveTest(item:LatencyBatchProgressItem):LatencyTest|undefined{
+ const fromBatch=batchItems.value.get(item.item_id)?.result
+ if(fromBatch)return fromBatch
+ if(item.node_key&&item.node_identity_key&&item.config_revision_key){
+  const list=w.latency.value[key({profile_id:item.profile_id,node_key:item.node_key,node_identity_key:item.node_identity_key,config_revision_key:item.config_revision_key})]||[]
+  if(item.attempt_id){const matched=list.find(t=>t.attempt_id===item.attempt_id);if(matched)return matched}
+ }
+ return undefined
+}
+async function toggleLiveItemDetail(item:LatencyBatchProgressItem){
+ if(expandedLiveId.value===item.item_id){expandedLiveId.value=null;return}
+ expandedLiveId.value=item.item_id
+ const cached=liveDetailCache.value[item.item_id]
+ if(cached?.test||cached?.loading)return
+ const local=findCachedLiveTest(item)
+ if(local){liveDetailCache.value={...liveDetailCache.value,[item.item_id]:{loading:false,test:local}};return}
+ if(!item.node_key||!item.node_identity_key||!item.config_revision_key)return
+ liveDetailCache.value={...liveDetailCache.value,[item.item_id]:{loading:true}}
+ try{
+  const res=await api.latencyHistory({profile_id:item.profile_id,node_key:item.node_key,node_identity_key:item.node_identity_key,config_revision_key:item.config_revision_key},{limit:4})
+  const found=(item.attempt_id?res.tests?.find(t=>t.attempt_id===item.attempt_id):undefined)||res.tests?.[0]
+  liveDetailCache.value={...liveDetailCache.value,[item.item_id]:{loading:false,test:found,error:found?undefined:'暂未读取到逐站明细，结束后可在完整报告查看'}}
+ }catch(e){
+  liveDetailCache.value={...liveDetailCache.value,[item.item_id]:{loading:false,error:e instanceof Error?e.message:'读取失败'}}
+ }
+}
+function liveSiteBreakdown(test:LatencyTest){
+ return targets.map(t=>{
+  const samples=(test.samples||[]).filter(s=>latencyTargetId(s.target||test.target||'')===t.id)
+  const okSamples=samples.filter(s=>s.success&&Number.isFinite(s.latency_ms))
+  const stableVals=(samples.slice(1).filter(s=>s.success&&Number.isFinite(s.latency_ms)).map(s=>s.latency_ms))
+  const ms=median(stableVals.length?stableVals:okSamples.map(s=>s.latency_ms))
+  const httpCode=samples.map(s=>s.error?.match(/HTTP (\d+)/)?.[1]).find(Boolean)||''
+  const failErr=samples.find(s=>!s.success&&s.error)?.error||''
+  const tone=!samples.length?'empty':okSamples.length===0?'bad':okSamples.length<samples.length||httpCode||(ms!==null&&ms>=1200)?'warn':'good'
+  return {id:t.id,name:t.name,shortName:t.id==='cloudflare'?'CF':t.name,ok:okSamples.length,total:samples.length,ms,httpCode,failErr,tone}
+ })
+}
+const readyReportBatch=computed(()=>{
+ const active=w.activeBatch.value
+ if(active&&['completed','completed_with_issues','completed_with_save_failures','cancelled','cancelled_with_issues','cancelled_with_save_failures','interrupted','interrupted_with_issues','interrupted_with_save_failures','failed'].includes(active.state)){
+  const full=w.batches.value.find(b=>b.batch_id===active.batch_id&&b.items?.length)
+  if(full)return full
+ }
+ if(active&&w.latestReportBatch.value?.batch_id===active.batch_id)return w.latestReportBatch.value
+ return null
+})
 const compactPercent=computed(()=>progress.value.total?Math.min(100,Math.round(progress.value.processed/progress.value.total*100)):0)
 const compactTiming=computed(()=>{
  const startedRaw=progress.value.requested_at||w.activeBatch.value?.requested_at
@@ -308,7 +371,7 @@ function liveItemLabel(item:LatencyBatchProgressItem){
 }
 const savingOnly=computed(()=>compactLatency.value?w.activeBatch.value?.state==='saving':counts.value.saving>0&&!counts.value.running&&!counts.value.queued)
 const canCancel=computed(()=>w.busy.value&&(!!w.pendingStart.value||!savingOnly.value))
-const headline=computed(()=>w.pendingStart.value?'正在确认启动状态':w.busy.value?(w.cancelRequested.value?'正在取消，已完成结果保留':savingOnly.value?'正在保存结果':'检测进行中'):w.done.value<w.queue.value.length?'检测已停止，部分项目没有运行完':counts.value.saveFailed?'检测已结束，部分结果未保存':'检测已结束')
+const headline=computed(()=>w.pendingStart.value?'正在确认启动状态':w.busy.value?(w.cancelRequested.value?'正在取消，已完成结果保留':savingOnly.value?'正在保存结果':compactLatency.value&&progress.value.total>0&&progress.value.processed>=progress.value.total?'正在整理本轮报告':'检测进行中'):w.done.value<w.queue.value.length?'检测已停止，部分项目没有运行完':counts.value.saveFailed?'检测已结束，部分结果未保存':'检测已结束')
 const retryable=(q:QueueItem)=>!!(q.batchId&&q.itemId||q.project!=='latency'&&q.attempt?.result)
 async function retry(q:QueueItem){retrying.value=q.id;try{if(q.batchId&&q.itemId)w.absorbBatch(await api.retryBatch(q.batchId,q.itemId));else if(q.attempt&&q.project!=='latency'){const a=await api.attemptAction(q.project,q.attempt.attempt_id,q.node,'retry-save',q.attempt.service_id||q.serviceId);q.attempt=a;q.error=a.persistence_error;w.mergeAttempt(q.project,a)}}catch(e){w.fail(e)}finally{retrying.value=''}}
 </script>
@@ -317,7 +380,7 @@ async function retry(q:QueueItem){retrying.value=q.id;try{if(q.batchId&&q.itemId
 <template v-else>
   <div class="queue-summary cst-queue-head">
     <div><strong ref="progressTitle" class="queue-title" tabindex="-1" autofocus>{{headline}}</strong><span v-if="!w.pendingStart.value">{{compactLatency?`已处理 ${progress.processed} / ${progress.total} 个节点`:w.queue.value.length?`已处理 ${w.done.value} / ${w.queue.value.length} 项`:'后台任务'}}</span></div>
-    <div class="cst-queue-actions"><button class="button ghost" @click="w.syncActive()">刷新进度</button><button v-if="w.pendingStart.value?.body" class="button" :disabled="w.running.value||w.retryingStart.value" @click="w.retryPending()">{{w.retryingStart.value?'正在确认…':'确认启动状态'}}</button><button v-if="canCancel" class="button danger-outline" :disabled="w.cancelRequested.value" @click="w.cancelTests()">{{w.cancelRequested.value?'正在取消…':'取消检测'}}</button></div>
+    <div class="cst-queue-actions"><button v-if="readyReportBatch" class="button primary" @click="w.openLatencyReport(readyReportBatch)">查看本轮报告</button><button class="button ghost" @click="w.syncActive()">刷新进度</button><button v-if="w.pendingStart.value?.body" class="button" :disabled="w.running.value||w.retryingStart.value" @click="w.retryPending()">{{w.retryingStart.value?'正在确认…':'确认启动状态'}}</button><button v-if="canCancel" class="button danger-outline" :disabled="w.cancelRequested.value" @click="w.cancelTests()">{{w.cancelRequested.value?'正在取消…':'取消检测'}}</button></div>
   </div>
   <p v-if="w.pendingStart.value" class="queue-notice muted">后台还没确认这次启动；确认前不显示进度，也不会重复启动。</p>
   <div v-else class="progress-track" role="progressbar" aria-label="已处理检测项目" :aria-valuenow="compactLatency?progress.processed:w.done.value" :aria-valuemax="compactLatency?progress.total:w.queue.value.length" aria-valuemin="0"><i :style="{width:compactLatency?(progress.total?`${progress.processed/progress.total*100}%`:'0%'):(w.queue.value.length?`${w.done.value/w.queue.value.length*100}%`:'0%')}"/></div>
@@ -343,7 +406,13 @@ async function retry(q:QueueItem){retrying.value=q.id;try{if(q.batchId&&q.itemId
       <span v-if="progress.queued" class="compact-live-pill">排队 {{progress.queued}} 个</span>
       <span v-if="compactTiming.elapsed" class="compact-live-time">{{compactTiming.elapsed}}<template v-if="compactTiming.eta"> · {{compactTiming.eta}}</template></span>
     </div>
-    <div v-if="!w.pendingStart.value" class="compact-progress-counts"><span class="good">全部响应 <strong>{{progress.all_success}}</strong></span><span class="warn">部分响应 <strong>{{progress.partial_response}}</strong></span><span class="bad">无响应 <strong>{{progress.no_response}}</strong></span><span v-if="progress.not_executed">未执行/取消 <strong>{{progress.not_executed}}</strong></span></div>
+    <div v-if="!w.pendingStart.value" class="compact-progress-counts" role="group" aria-label="按响应状态筛选已完成节点">
+      <button type="button" class="compact-count-btn good" :class="{active:compactFilter==='good'}" :aria-pressed="compactFilter==='good'" :disabled="!progress.all_success&&compactFilter!=='good'" @click="toggleCompactFilter('good')">全部响应 <strong>{{progress.all_success}}</strong></button>
+      <button type="button" class="compact-count-btn warn" :class="{active:compactFilter==='warn'}" :aria-pressed="compactFilter==='warn'" :disabled="!progress.partial_response&&compactFilter!=='warn'" @click="toggleCompactFilter('warn')">部分响应 <strong>{{progress.partial_response}}</strong></button>
+      <button type="button" class="compact-count-btn bad" :class="{active:compactFilter==='bad'}" :aria-pressed="compactFilter==='bad'" :disabled="!progress.no_response&&compactFilter!=='bad'" @click="toggleCompactFilter('bad')">无响应 <strong>{{progress.no_response}}</strong></button>
+      <button v-if="progress.not_executed" type="button" class="compact-count-btn" :class="{active:compactFilter==='skipped'}" :aria-pressed="compactFilter==='skipped'" @click="toggleCompactFilter('skipped')">未执行/取消 <strong>{{progress.not_executed}}</strong></button>
+      <button v-if="compactFilter!=='all'" type="button" class="compact-count-reset" @click="compactFilter='all'">显示全部</button>
+    </div>
     <p v-if="progress.save_failed" class="inline-warning" role="alert">保存失败 {{progress.save_failed}} 项；结束后可在报告重试保存。</p>
     <section v-if="!w.pendingStart.value&&progress.running_items?.length" class="compact-live-section" aria-label="正在检测的节点">
       <header class="compact-live-head"><strong>正在检测</strong><small>并发 {{progress.running_items.length}} 个节点</small></header>
@@ -356,19 +425,43 @@ async function retry(q:QueueItem){retrying.value=q.id;try{if(q.batchId&&q.itemId
       </div>
     </section>
     <section v-if="!w.pendingStart.value&&progress.recent_items?.length" class="compact-live-section" aria-label="最近完成节点">
-      <header class="compact-live-head"><strong>最近完成</strong><small>显示最新 {{progress.recent_items.length}} 条（全批结束弹出完整报告）</small></header>
-      <div class="compact-recent-list">
-        <div v-for="item in progress.recent_items" :key="item.item_id" class="compact-recent-row">
-          <div class="compact-recent-node">
-            <strong>{{nodeDisplayName({display_name:item.display_name})}}</strong>
-            <small v-if="item.error_message" class="compact-recent-err">{{shortError(item.error_message)}}</small>
-            <small v-else-if="item.total_samples">{{item.success_samples}}/{{item.total_samples}} 次采样</small>
+      <header class="compact-live-head"><strong>{{compactFilter==='all'?'最近完成':`${compactFilterLabel(compactFilter)}（${filteredRecentItems.length}）`}}</strong><small>{{progress.processed>progress.recent_items.length?`已加载最新 ${progress.recent_items.length} 条`:`共 ${filteredRecentItems.length} 条`}} · 点击节点展开四站明细</small></header>
+      <div v-if="filteredRecentItems.length" class="compact-recent-list">
+        <div v-for="item in filteredRecentItems" :key="item.item_id" class="compact-recent-card" :class="{expanded:expandedLiveId===item.item_id}">
+          <button type="button" class="compact-recent-row" :aria-expanded="expandedLiveId===item.item_id" @click="toggleLiveItemDetail(item)">
+            <div class="compact-recent-node">
+              <strong>{{nodeDisplayName({display_name:item.display_name})}}</strong>
+              <small v-if="item.error_message" class="compact-recent-err">{{shortError(item.error_message)}}</small>
+              <small v-else-if="item.total_samples">{{item.success_samples}}/{{item.total_samples}} 次采样</small>
+            </div>
+            <span class="compact-recent-tail">
+              <span class="badge" :class="liveItemTone(item)">{{liveItemLabel(item)}}</span>
+              <span class="compact-recent-chev" aria-hidden="true">{{expandedLiveId===item.item_id?'▾':'›'}}</span>
+            </span>
+          </button>
+          <div v-if="expandedLiveId===item.item_id" class="compact-recent-detail">
+            <p v-if="liveDetailCache[item.item_id]?.loading" class="muted small">正在读取四站采样明细…</p>
+            <template v-else-if="liveDetailCache[item.item_id]?.test">
+              <div class="compact-site-grid">
+                <span v-for="s in liveSiteBreakdown(liveDetailCache[item.item_id].test!)" :key="s.id" class="compact-site-chip" :class="s.tone" :title="s.failErr||`${s.name}: ${s.ok}/${s.total}`">
+                  <b>{{s.shortName}}</b>
+                  <span>{{s.ms!==null?`${Math.round(s.ms)} ms`:s.total>0?'超时':'未测'}}</span>
+                  <small v-if="s.total">{{s.ok}}/{{s.total}}</small>
+                  <em v-if="s.httpCode">HTTP {{s.httpCode}}</em>
+                </span>
+              </div>
+              <p v-if="item.error_message" class="compact-detail-err">错误明细：{{item.error_message}}</p>
+            </template>
+            <template v-else>
+              <p class="muted small">{{liveDetailCache[item.item_id]?.error||(item.total_samples?`本节点共采样 ${item.total_samples} 次，成功 ${item.success_samples} 次`:'暂无逐站明细')}}</p>
+              <p v-if="item.error_message" class="compact-detail-err">错误明细：{{item.error_message}}</p>
+            </template>
           </div>
-          <span class="badge" :class="liveItemTone(item)">{{liveItemLabel(item)}}</span>
         </div>
       </div>
+      <p v-else class="queue-empty">当前已加载的 {{progress.recent_items.length}} 条记录中没有「{{compactFilterLabel(compactFilter)}}」项，全批结束后可在完整报告查看全部。</p>
     </section>
-    <p class="queue-note">检测中实时展示并发节点与最新完成明细，结束后自动弹出逐节点报告。关闭此窗口不影响检测。</p>
+    <p class="queue-note">点击上方状态卡可筛选已完成节点，点击任意节点可展开四站明细；全部结束后自动打开完整延迟报告。</p>
   </template>
   <template v-else>
     <div class="queue-counts" role="group" aria-label="按检测状态快速筛选">
@@ -471,12 +564,17 @@ button.queue-pill:hover{border-color:var(--cst-accent);color:var(--cst-text);bac
 .compact-live-pill{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;border:1px solid var(--cst-line);background:var(--cst-panel-2);font-size:11.5px;font-weight:600;color:var(--cst-text)}
 .compact-live-pill.running{border-color:color-mix(in srgb,var(--cst-accent) 32%,var(--cst-line));background:var(--cst-accent-soft);color:var(--cst-accent)}
 .compact-live-time{margin-left:auto;font-size:11.5px}
-.compact-progress-counts{display:flex;flex-wrap:wrap;gap:10px;padding:4px 0 14px;border-bottom:1px solid var(--cst-line)}
-.compact-progress-counts span{color:var(--cst-muted);font-size:12px;display:flex;align-items:baseline;gap:8px;padding:8px 12px;border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel-2)}
-.compact-progress-counts strong{color:var(--cst-text);font-size:20px;font-variant-numeric:tabular-nums}
-.compact-progress-counts span.good strong{color:var(--cst-good)}
-.compact-progress-counts span.warn strong{color:var(--cst-warn)}
-.compact-progress-counts span.bad strong{color:var(--cst-bad)}
+.compact-progress-counts{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:4px 0 14px;border-bottom:1px solid var(--cst-line)}
+.compact-count-btn{color:var(--cst-muted);font-size:12px;display:inline-flex;align-items:baseline;gap:8px;padding:8px 12px;border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel-2);cursor:pointer;transition:border-color .14s,background .14s,transform .14s,box-shadow .14s}
+.compact-count-btn:hover:not(:disabled){border-color:var(--cst-accent);background:var(--cst-panel);transform:translateY(-1px);box-shadow:var(--cst-shadow-xs)}
+.compact-count-btn:disabled{opacity:.52;cursor:default}
+.compact-count-btn.active{border-color:var(--cst-accent);background:var(--cst-panel);box-shadow:0 0 0 2px color-mix(in srgb,var(--cst-accent) 22%,transparent);color:var(--cst-text);font-weight:650}
+.compact-count-btn strong{color:var(--cst-text);font-size:20px;font-variant-numeric:tabular-nums}
+.compact-count-btn.good strong{color:var(--cst-good)}
+.compact-count-btn.warn strong{color:var(--cst-warn)}
+.compact-count-btn.bad strong{color:var(--cst-bad)}
+.compact-count-reset{margin-left:auto;padding:5px 10px;border-radius:999px;border:1px solid var(--cst-line);background:var(--cst-panel);color:var(--cst-accent);font-size:11.5px;font-weight:600;cursor:pointer}
+.compact-count-reset:hover{border-color:var(--cst-accent);background:var(--cst-accent-soft)}
 .compact-live-section{margin-top:12px;display:grid;gap:8px}
 .compact-live-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap}
 .compact-live-head strong{font-size:12.5px;font-weight:700;color:var(--cst-text)}
@@ -486,13 +584,28 @@ button.queue-pill:hover{border-color:var(--cst-accent);color:var(--cst-text);bac
 .compact-running-chip .spinner{width:10px;height:10px;flex:none}
 .compact-running-chip>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
 .compact-running-chip small{font-size:10.5px;color:var(--cst-muted);flex:none}
-.compact-recent-list{display:grid;gap:6px;max-height:220px;overflow:auto;padding-right:2px}
-.compact-recent-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 11px;border:1px solid var(--cst-line);border-radius:9px;background:var(--cst-panel-2)}
+.compact-recent-list{display:grid;gap:6px;max-height:270px;overflow:auto;padding-right:2px}
+.compact-recent-card{border:1px solid var(--cst-line);border-radius:10px;background:var(--cst-panel-2);overflow:hidden;transition:border-color .14s,background .14s}
+.compact-recent-card:hover,.compact-recent-card.expanded{border-color:color-mix(in srgb,var(--cst-accent) 36%,var(--cst-line));background:var(--cst-panel)}
+.compact-recent-row{width:100%;border:0;background:transparent;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 11px;text-align:left;cursor:pointer;color:inherit}
 .compact-recent-node{min-width:0;display:grid;gap:2px}
 .compact-recent-node strong{font-size:12.5px;font-weight:600;color:var(--cst-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .compact-recent-node small{font-size:11px;color:var(--cst-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .compact-recent-err{color:var(--cst-warn)!important}
+.compact-recent-tail{display:inline-flex;align-items:center;gap:7px;flex:none}
 .compact-recent-row .badge{flex:none;white-space:nowrap;font-variant-numeric:tabular-nums}
+.compact-recent-chev{color:var(--cst-subtle);font-size:13px;line-height:1}
+.compact-recent-detail{padding:8px 11px 10px;border-top:1px solid color-mix(in srgb,var(--cst-line) 75%,transparent);background:color-mix(in srgb,var(--cst-panel-2) 60%,var(--cst-panel));display:grid;gap:6px}
+.compact-site-grid{display:flex;flex-wrap:wrap;gap:6px}
+.compact-site-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:7px;border:1px solid var(--cst-line);background:var(--cst-panel);font-size:11px;font-variant-numeric:tabular-nums}
+.compact-site-chip b{font-weight:650;color:var(--cst-muted)}
+.compact-site-chip span{font-weight:700;color:var(--cst-text)}
+.compact-site-chip small{color:var(--cst-muted);font-size:10px}
+.compact-site-chip em{font-style:normal;padding:0 5px;border-radius:999px;background:var(--cst-warn-bg);color:var(--cst-warn);font-size:10px;font-weight:700}
+.compact-site-chip.good span{color:var(--cst-good)}
+.compact-site-chip.warn{border-color:color-mix(in srgb,var(--cst-warn) 34%,var(--cst-line));background:var(--cst-warn-bg)}.compact-site-chip.warn span{color:var(--cst-warn)}
+.compact-site-chip.bad{border-color:color-mix(in srgb,var(--cst-bad) 30%,var(--cst-line));background:var(--cst-bad-bg)}.compact-site-chip.bad span{color:var(--cst-bad)}
+.compact-detail-err{margin:0;font-size:11px;color:var(--cst-warn);line-height:1.45;overflow-wrap:anywhere}
 .queue-list-tools{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:16px 0 10px}
 .queue-list-tools>small,.queue-note,.queue-empty{font-size:12px;color:var(--cst-muted);line-height:1.7}
 .queue-note{margin:16px 0 0}.queue-empty{padding:22px 16px;border:1px dashed var(--cst-line);border-radius:10px;background:var(--cst-panel-2);text-align:center}
