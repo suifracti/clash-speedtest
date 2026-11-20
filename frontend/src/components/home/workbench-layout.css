@@ -7,7 +7,7 @@
 .hd-workbench-layout .hd-title p{font-size:13px}
 .hd-workspace{display:grid;grid-template-columns:262px minmax(0,1fr);gap:18px;align-items:start}
 .hd-results{display:flex;flex-direction:column;gap:14px;min-width:0}
-.hd-workbench-layout .hd-source{position:sticky;top:calc(var(--cst-nav-height,56px) + 14px);max-height:calc(100vh - var(--cst-nav-height,56px) - 28px);overflow:auto;scrollbar-width:thin;padding:14px;border:1px solid var(--cst-line);border-radius:var(--cst-radius);background:var(--cst-panel);box-shadow:var(--cst-shadow-xs);min-width:0}
+.hd-workbench-layout .hd-source{position:sticky;top:calc(var(--cst-nav-height,56px) + 14px);max-height:calc(100vh - var(--cst-nav-height,56px) - 28px);overflow:auto;scrollbar-width:thin;padding:14px;border:1px solid var(--cst-line);border-radius:var(--cst-radius);background:var(--cst-panel);backdrop-filter:blur(14px);box-shadow:var(--cst-shadow-xs);min-width:0}
 .hd-source-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 10px;padding-bottom:10px;border-bottom:1px solid var(--cst-line)}
 .hd-source-heading h2{font-size:13.5px;font-weight:700;margin:0;color:var(--cst-text)}
 .hd-source-heading .hd-link{font-size:12px;white-space:nowrap}
@@ -82,7 +82,7 @@
 .hd-workbench-layout .hd-foot{font-size:12px}
 .hd-list-stage{display:flex;flex-direction:column;gap:0;min-width:0}
 .hd-list-stage:not(.attached){gap:10px}
-.hd-workbench-layout .hd-list-pagination{display:flex;justify-content:space-between;align-items:center;gap:8px 16px;flex-wrap:wrap;padding:8px 14px;background:var(--cst-panel);border:1px solid var(--cst-line);border-radius:var(--cst-radius) var(--cst-radius) 0 0;border-bottom:0}
+.hd-workbench-layout .hd-list-pagination{display:flex;justify-content:space-between;align-items:center;gap:8px 16px;flex-wrap:wrap;padding:8px 14px;background:var(--cst-panel);backdrop-filter:blur(14px);border:1px solid var(--cst-line);border-radius:var(--cst-radius) var(--cst-radius) 0 0;border-bottom:0}
 .hd-list-stage:not(.attached) .hd-list-pagination{border-radius:var(--cst-radius);border-bottom:1px solid var(--cst-line);box-shadow:var(--cst-shadow-xs)}
 .hd-list-stage.attached .hd-table{border-top-left-radius:0;border-top-right-radius:0;box-shadow:var(--cst-shadow-xs)}
 .hd-list-stage.attached .hd-table-head{border-top-left-radius:0;border-top-right-radius:0}

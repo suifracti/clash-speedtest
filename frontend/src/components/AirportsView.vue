@@ -349,7 +349,7 @@ onBeforeUnmount(()=>{disposed=true;editGeneration++;removeGeneration++;clearTime
 .summary-stat-card small{font-size:11.5px;font-weight:600;color:var(--cst-muted)}
 .summary-stat-card strong{font-size:20px;font-weight:750;color:var(--cst-text);font-variant-numeric:tabular-nums;letter-spacing:-.02em;margin:0}
 .summary-stat-card span{font-size:11.5px;color:var(--cst-muted)}
-.summary-stat-card.accent{background:linear-gradient(145deg,color-mix(in srgb,var(--cst-accent) 7%,var(--cst-panel)),var(--cst-panel));border-color:color-mix(in srgb,var(--cst-accent) 28%,var(--cst-line))}
+.summary-stat-card.accent{background:var(--cst-aurora-surface),var(--cst-panel);border-color:color-mix(in srgb,var(--cst-accent) 28%,var(--cst-line))}
 .summary-stat-card.accent strong{color:var(--cst-accent)}
 .summary-stat-card.warn{background:var(--cst-warn-bg);border-color:color-mix(in srgb,var(--cst-warn) 35%,var(--cst-line))}
 .summary-stat-card.warn strong{color:var(--cst-warn)}
@@ -363,14 +363,14 @@ onBeforeUnmount(()=>{disposed=true;editGeneration++;removeGeneration++;clearTime
 .account-register-index nav>button{display:flex;align-items:center;gap:10px;width:100%;padding:10px 12px;border:1px solid transparent;background:transparent;text-align:left;border-radius:11px;color:var(--cst-muted);transition:all .14s}
 .account-register-index nav>button[aria-pressed=true]{border-color:color-mix(in srgb,var(--cst-accent) 32%,var(--cst-line));background:color-mix(in srgb,var(--cst-accent) 8%,var(--cst-panel-2));color:var(--cst-text);box-shadow:var(--cst-shadow)}
 .account-register-index nav>button:hover{background:var(--cst-panel)}
-.account-index-initial{display:grid;place-items:center;width:30px;height:30px;border-radius:9px;background:color-mix(in srgb,var(--cst-accent) 12%,var(--cst-panel-2));color:var(--cst-accent);font-size:13px;font-weight:700;flex:none}
+.account-index-initial{display:grid;place-items:center;width:30px;height:30px;border-radius:9px;background:var(--cst-aurora-surface);border:1px solid color-mix(in srgb,var(--cst-accent) 24%,transparent);color:var(--cst-accent);font-size:13px;font-weight:750;flex:none}
 .account-register-index nav strong{display:block;font-size:13px;font-weight:600;overflow-wrap:anywhere}
 .account-register-index nav small{display:block;font-size:11px;color:var(--cst-muted);margin-top:4px}
 .account-register-index nav .icon{margin-left:auto;width:12px;flex:none}
 .cst-ledger{min-width:0}
 .cst-ledger-airport{padding:0;border:1px solid var(--cst-line);border-radius:var(--cst-radius);background:var(--cst-panel);box-shadow:var(--cst-shadow-xs);overflow:hidden}
 .cst-ledger-airport-head{display:flex;align-items:center;gap:14px;padding:20px 24px;border-bottom:1px solid var(--cst-line);flex-wrap:wrap;background:linear-gradient(180deg,color-mix(in srgb,var(--cst-panel-2) 70%,var(--cst-panel)),var(--cst-panel))}
-.cst-ledger-logo{width:44px;height:44px;display:grid;place-items:center;border-radius:12px;background:linear-gradient(135deg,color-mix(in srgb,var(--cst-accent) 16%,var(--cst-panel)),color-mix(in srgb,var(--cst-accent) 6%,var(--cst-panel-2)));border:1px solid color-mix(in srgb,var(--cst-accent) 26%,var(--cst-line));color:var(--cst-accent);font-size:19px;font-weight:750;flex:none}
+.cst-ledger-logo{width:44px;height:44px;display:grid;place-items:center;border-radius:12px;background:var(--cst-aurora-primary);box-shadow:var(--cst-aurora-btn-shadow);color:#ffffff;font-size:18px;font-weight:800;flex:none}
 .cst-ledger-title{flex:1;min-width:200px;display:grid;gap:6px}
 .cst-ledger-title h2{margin:0;font-size:22px;font-weight:600;letter-spacing:-.02em}
 .cst-ledger-title small{color:var(--cst-muted);font-size:12px;line-height:1.8}

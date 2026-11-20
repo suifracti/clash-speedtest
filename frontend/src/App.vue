@@ -123,7 +123,17 @@ onBeforeUnmount(()=>{headerObserver?.disconnect();document.removeEventListener('
   <div class="cst-shell observatory-app" :class="{'window-hidden':windowHidden}" :style="headerHeight?{'--cst-nav-height':headerHeight+'px'}:undefined">
     <header ref="header" class="cst-chrome">
       <div class="cst-masthead">
-      <a class="cst-brand" href="#" @click.prevent="navigate('home')"><span class="cst-brand-mark"><Icon name="pulse"/></span><span class="cst-brand-copy"><strong>CST</strong><small>线路检测</small></span></a>
+      <a class="cst-brand" href="#" title="Clash SpeedTest Pro · 极光线路观测台" @click.prevent="navigate('home')">
+        <span class="cst-brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 28 28" fill="none">
+            <path d="M5.5 17.5C8.8 11.2 13.6 8.2 22.5 6.8" stroke="rgba(255,255,255,.95)" stroke-width="2.2" stroke-linecap="round"/>
+            <path d="M5.5 21.2C10.5 15.8 15.8 13.6 22.5 13.2" stroke="rgba(186,230,253,.92)" stroke-width="2" stroke-linecap="round"/>
+            <circle cx="20.6" cy="7.3" r="2.2" fill="#ffffff"/>
+            <circle cx="8.2" cy="18.2" r="1.7" fill="#bae6fd"/>
+          </svg>
+        </span>
+        <span class="cst-brand-copy"><strong>ClashST</strong><span class="cst-brand-pro">PRO</span></span>
+      </a>
       <nav class="cst-nav" aria-label="主导航">
         <button v-for="p in pages" :key="p.id" type="button" :disabled="!workspaceReady" :title="p.label" :aria-label="p.label" :aria-current="workspaceReady&&w.page.value===p.id?'page':undefined" @click="navigate(p.id)">
           <Icon :name="p.icon"/><span>{{navLabels[p.id]}}</span>

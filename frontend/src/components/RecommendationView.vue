@@ -262,7 +262,7 @@ onMounted(()=>void refresh())
 .region-candidate.first{background:color-mix(in srgb,var(--cst-accent) 5%,var(--cst-panel));border-color:color-mix(in srgb,var(--cst-accent) 30%,var(--cst-line))}
 .region-candidate.reference{border-style:dashed;border-color:color-mix(in srgb,var(--cst-warn) 40%,var(--cst-line))}
 .candidate-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.candidate-slot{display:inline-flex;align-items:center;justify-content:center;padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:700;background:var(--cst-accent);color:#fff;flex:none}
+.candidate-slot{display:inline-flex;align-items:center;justify-content:center;padding:2px 10px;border-radius:999px;font-size:11.5px;font-weight:700;background:var(--cst-aurora-primary);box-shadow:0 3px 10px -2px rgba(79,110,247,.38);color:#fff;flex:none}
 .candidate-slot.secondary{background:var(--cst-panel);color:var(--cst-text);border:1px solid var(--cst-line-strong)}
 .candidate-slot.candidate-reference{background:var(--cst-warn-bg);color:var(--cst-warn)!important;border:1px solid color-mix(in srgb,var(--cst-warn) 32%,transparent)}
 .candidate-reference{color:var(--cst-warn)!important}

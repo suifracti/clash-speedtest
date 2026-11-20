@@ -1,5 +1,41 @@
 <script setup lang="ts">
 defineProps<{name:string}>()
-const paths:Record<string,string>={pulse:'M2 12h4l3-7 5 14 3-7h5',home:'M8 3a9 9 0 1 1-5 5M3 3h5v5',layers:'m12 3 10 5-10 5L2 8Zm-10 9 10 5 10-5M2 16l10 5 10-5',monitor:'M8 8a6 6 0 0 0 0 8m8-8a6 6 0 0 1 0 8M5 5a10 10 0 0 0 0 14M19 5a10 10 0 0 1 0 14M12 10v4',history:'M3 5v5h5M3 10a9 9 0 1 1 2 8M12 7v5l3 2',settings:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2',download:'M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5',globe:'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0M3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18',plus:'M12 5v14M5 12h14',close:'m6 6 12 12M6 18 18 6',chevron:'m9 5 7 7-7 7',down:'m6 9 6 6 6-6',play:'M8 4l12 8-12 8Z',pause:'M8 4v16M16 4v16',stop:'M5 5h14v14H5z',search:'M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0m-2 5 6 6',refresh:'M20 7V3h-4M4 17v4h4M20 7a9 9 0 0 0-15-3M4 17a9 9 0 0 0 15 3',check:'m5 12 4 4L19 6',select:'M8 5h13M8 12h13M8 19h13M3 5h1M3 12h1M3 19h1',data:'M4 7h16v14H4zM2 3h20v4H2zM9 12h6',key:'M14 8a4 4 0 1 1 8 0 4 4 0 0 1-8 0M15 11 3 23M7 19l-3-3M10 16l-3-3',pin:'M8 3h8l-1 6 4 4H5l4-4Zm4 10v8',trash:'M3 6h18M8 6V3h8v3M5 6l1 15h12l1-15M10 10v7M14 10v7',edit:'m15 4 5 5M4 20l5-1L21 7l-5-5L4 14Z',moon:'M20 15A9 9 0 0 1 9 4a9 9 0 1 0 11 11',sun:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8M12 2v2M12 20v2M2 12h2M20 12h2M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2',chart:'M4 3v17h17M7 14l4-5 4 3 5-7',gauge:'M12 13l4-4M5.6 18.4A9 9 0 1 1 18.4 18.4M12 3v2M3 12h2M21 12h-2',activity:'M3 12h4l2.5-6 4 12 2.5-6H21',clock:'M12 6v6l4 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0',panel:'M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Zm12-2v18',arrowRight:'M5 12h14M13 6l6 6-6 6',info:'M12 8h.01M12 11v6M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0'}
+const paths:Record<string,string>={
+  pulse:'M12 3l2.1 6.4L20.5 11.5l-6.4 2.1L12 20l-2.1-6.4-6.4-2.1 6.4-2.1ZM19 3.5v3M17.5 5h3',
+  spark:'M12 3l2.1 6.4L20.5 11.5l-6.4 2.1L12 20l-2.1-6.4-6.4-2.1 6.4-2.1ZM19 3.5v3M17.5 5h3',
+  home:'M6 6.5a2.3 2.3 0 1 0 0-.01M18 6.5a2.3 2.3 0 1 0 0-.01M12 18a2.3 2.3 0 1 0 0-.01M8.2 7.2h7.6M7.2 8.5l3.6 7.4M16.8 8.5l-3.6 7.4',
+  grid:'M4 4h6.5v6.5H4zM13.5 4H20v6.5h-6.5zM4 13.5h6.5V20H4zM13.5 13.5H20V20h-6.5z',
+  layers:'M3.5 7.5A2 2 0 0 1 5.5 5.5h13a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Zm0 3h17M7.5 14.8h3.5',
+  monitor:'M3 12h4l2.4-6.5 4.2 13L16 12h5',
+  history:'M12 7.5V12l3.2 2M20 12a8 8 0 1 1-2.4-5.7M20 4.5v3.8h-3.8',
+  settings:'M4 7h4m4 0h8M10 5v4M4 12h8m4 0h4M14 10v4M4 17h5m4 0h7M11 15v4',
+  download:'M12 3v12m-5-5 5 5 5-5M4 16v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4',
+  globe:'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0M3 12h18M12 3c4.2 4.5 4.2 13.5 0 18-4.2-4.5-4.2-13.5 0-18',
+  plus:'M12 5v14M5 12h14',
+  close:'m6 6 12 12M6 18 18 6',
+  chevron:'m9 5 7 7-7 7',
+  down:'m6 9 6 6 6-6',
+  play:'M7.5 4.8 19 12l-11.5 7.2Z',
+  pause:'M8 4v16M16 4v16',
+  stop:'M6 6h12v12H6z',
+  search:'M16.8 10.4a6.4 6.4 0 1 1-12.8 0 6.4 6.4 0 0 1 12.8 0m-1.8 4.8L20 20',
+  refresh:'M20 7.5V3.5h-4M4 16.5v4h4M20 7.5a8.5 8.5 0 0 0-14.4-2.8M4 16.5a8.5 8.5 0 0 0 14.4 2.8',
+  check:'m5 12.5 4.2 4.2L19 7',
+  select:'M8 5h13M8 12h13M8 19h13M3 5h1M3 12h1M3 19h1',
+  data:'M5 6.5C5 8.16 8.13 9.5 12 9.5s7-1.34 7-3-3.13-3-7-3-7 1.34-7 3Zm0 0v11c0 1.66 3.13 3 7 3s7-1.34 7-3v-11M5 12c0 1.66 3.13 3 7 3s7-1.34 7-3',
+  key:'M14 8a4 4 0 1 1 8 0 4 4 0 0 1-8 0M15 11 3 23M7 19l-3-3M10 16l-3-3',
+  pin:'M8 3h8l-1 6 4 4H5l4-4Zm4 10v8',
+  trash:'M3 6h18M8 6V3.5h8V6M5.5 6l1 14.5h11l1-14.5M10 10.5v6.5M14 10.5v6.5',
+  edit:'m15 4 5 5M4 20l5-1L21 7l-5-5L4 14Z',
+  moon:'M20 15A9 9 0 0 1 9 4a9 9 0 1 0 11 11',
+  sun:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4',
+  chart:'M4 3v17h17M7 14l4-5 4 3 5-7',
+  gauge:'M12 13l4-4M5.6 18.4A9 9 0 1 1 18.4 18.4M12 3v2M3 12h2M21 12h-2',
+  activity:'M3 12h4l2.5-6 4 12 2.5-6H21',
+  clock:'M12 6v6l4 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0',
+  panel:'M3.5 5.5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Zm11.5-2v17',
+  arrowRight:'M5 12h14M13 6l6 6-6 6',
+  info:'M12 8h.01M12 11v6M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0',
+}
 </script>
-<template><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path :d="paths[name]||paths.info"/></svg></template>
+<template><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path :d="paths[name]||paths.info"/></svg></template>
