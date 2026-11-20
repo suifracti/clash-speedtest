@@ -321,12 +321,14 @@ function keyNav(e:KeyboardEvent){
     <header class="hd-head">
       <div class="hd-title">
         <h1>线路工作台</h1>
-        <p v-if="filteredAirport"><strong class="hd-head-airport">{{filteredAirport.name}}</strong> · {{filteredAirportNodes}} 个节点 · <button class="hd-link" @click="w.airportFilter.value='all'">看全部 {{chosen.length}} 个机场</button></p>
-        <p v-else><button class="hd-link" @click="m.picker.value=true">{{chosen.length?chosen.length+' 个机场':'选择机场'}}</button> · {{chosenNodeCount}} 个节点</p>
-        <button v-if="dominantClashUsage" class="hd-clash-usage" :disabled="!dominantClashNode" title="查看正在用的节点；按当前连接累计流量排序，每 30 秒更新" @click="inspectClashUsage"><span class="hd-clash-usage-dot" aria-hidden="true"></span>Clash 正在用：<strong>{{dominantClashName}}</strong><template v-if="dominantClashChains">（经策略组：{{dominantClashChains}}）</template></button>
+        <div class="hd-subtitle-row">
+          <p v-if="filteredAirport"><strong class="hd-head-airport">{{filteredAirport.name}}</strong> · {{filteredAirportNodes}} 个节点 · <button class="hd-link" @click="w.airportFilter.value='all'">看全部 {{chosen.length}} 个机场</button></p>
+          <p v-else><button class="hd-link" @click="m.picker.value=true">{{chosen.length?chosen.length+' 个机场':'选择机场'}}</button> · {{chosenNodeCount}} 个节点</p>
+          <button v-if="dominantClashUsage" class="hd-clash-usage" :disabled="!dominantClashNode" title="查看正在用的节点；按当前连接累计流量排序，每 30 秒更新" @click="inspectClashUsage"><span class="hd-clash-usage-dot" aria-hidden="true"></span>Clash 正在用：<strong>{{dominantClashName}}</strong><template v-if="dominantClashChains">（经策略组：{{dominantClashChains}}）</template></button>
+        </div>
       </div>
       <div class="hd-head-actions">
-        <button class="hd-btn ghost hd-nav-shortcut" @click="w.page.value='recommend'">帮我选一条<Icon name="arrowRight"/></button>
+        <button class="hd-btn hd-nav-shortcut" @click="w.page.value='recommend'">帮我选一条<Icon name="arrowRight"/></button>
         <button v-if="!matrixMode&&!m.compareOpen.value" class="hd-btn" :aria-pressed="inspectorOpen" :title="inspectorOpen?'收起详情，全宽显示节点表':'展开节点详情'" @click="toggleDetails"><Icon name="panel"/>{{inspectorOpen?'全宽列表':'展开详情'}}</button>
       </div>
     </header>
@@ -358,7 +360,7 @@ function keyNav(e:KeyboardEvent){
           <button class="hd-seg-detail" :aria-pressed="exitMode" @click="selectExit">出口与信誉</button>
         </nav>
         <div class="hd-toolbar-actions">
-          <button class="hd-btn ghost" :disabled="w.loading.value" title="重新载入节点列表" @click="w.refreshNodes().catch(w.fail)"><Icon name="refresh"/>重新载入</button>
+          <button class="hd-btn" :disabled="w.loading.value" title="重新载入节点列表" @click="w.refreshNodes().catch(w.fail)"><Icon name="refresh"/>重新载入</button>
           <button v-if="exitMode" class="hd-btn" :disabled="w.busy.value||!m.runNodes.value.length" title="只解析节点入口地址，不经过节点，不算一次真实检测" @click="w.resolveEntries(m.runNodes.value)">解析入口</button>
           <button v-if="!exitMode&&w.project.value!=='combined'" class="hd-btn hd-run-combined" :disabled="w.busy.value||!m.runNodes.value.length||filterScopePending" title="按当前显示的节点范围打开组合检测" @click="m.openCombinedPlan()">组合检测</button>
           <button class="hd-btn primary hd-run" :disabled="w.busy.value||!m.runNodes.value.length||filterScopePending" @click="run"><Icon name="play"/>{{exitMode?'检测出口与信誉':m.runLabel(w.project.value)}} · {{scopeLabel}}</button>
@@ -425,7 +427,8 @@ function keyNav(e:KeyboardEvent){
       <details class="hd-services"><summary>选择解锁项目<small>{{m.displayServices.value.length?'已选 '+m.displayServices.value.length+' 项':'还没选'}}</small></summary><UnlockPicker v-model="w.serviceIds.value" :catalog="catalog"/></details>
     </div>
     <UnlockServiceMatrix v-if="matrixMode" @inspect="n=>{serviceView='nodes';focus(n)}"/>
-    <nav v-if="!matrixMode" class="hd-list-pagination" aria-label="节点列表分页">
+    <div v-if="!matrixMode" class="hd-list-stage" :class="{'attached':detailsOverlay||!inspectorOpen}">
+    <nav class="hd-list-pagination" aria-label="节点列表分页">
       <span class="hd-list-count">{{shownRange}}</span>
       <div class="hd-pages">
         <label class="hd-page-size">每页
@@ -436,7 +439,7 @@ function keyNav(e:KeyboardEvent){
         <button class="hd-btn" :disabled="m.currentPage.value>=m.totalPages.value" aria-label="下一页" @click="changePage(1)">下一页</button>
       </div>
     </nav>
-    <div v-if="!matrixMode" class="hd-body" :class="{'overview-mode':overviewMode,'latency-mode':showSites,'download-mode':!exitMode&&w.project.value==='download','service-mode':!exitMode&&w.project.value==='service','exit-mode':exitMode,'full-table':detailsOverlay||!inspectorOpen}" :style="{'--hd-side-w':visibleSideWidth+'px','--hd-overview-width':overviewMinWidth+'px','--hd-latency-width':latencyMinWidth+'px'}">
+    <div class="hd-body" :class="{'overview-mode':overviewMode,'latency-mode':showSites,'download-mode':!exitMode&&w.project.value==='download','service-mode':!exitMode&&w.project.value==='service','exit-mode':exitMode,'full-table':detailsOverlay||!inspectorOpen}" :style="{'--hd-side-w':visibleSideWidth+'px','--hd-overview-width':overviewMinWidth+'px','--hd-latency-width':latencyMinWidth+'px'}">
       <div ref="table" class="hd-table" role="table" aria-label="节点列表" :aria-describedby="latencyTab?readingHintId:undefined" tabindex="0" :style="{'--hd-cols':columns,'--hd-horizontal-offset':horizontalScroll+'px'}" @keydown="keyNav">
         <div class="hd-table-head" role="rowgroup">
         <div class="hd-tr hd-th" role="row">
@@ -534,6 +537,7 @@ function keyNav(e:KeyboardEvent){
         <div v-if="inspectorOpen" class="hd-resize" role="separator" aria-orientation="vertical" aria-label="调整检查器宽度" :aria-valuenow="visibleSideWidth" :aria-valuemin="SIDE_MIN" :aria-valuemax="maxSideWidth" tabindex="0" @pointerdown="startResize" @keydown.left.prevent="setSide(visibleSideWidth+24)" @keydown.right.prevent="setSide(visibleSideWidth-24)" @dblclick="setSide(420)"/>
         <NodeInspector v-if="readingNode&&inspectorOpen" :key="key(readingNode)+readingNode.node_key" class="hd-side" :node="readingNode" :exit-only="exitMode" :clash-usage="clashUsage" :read-only="!readingCurrent" :context-notice="readingNotice" @collapse="closeDetails" @select-project="selectInspectorProject" @refresh-clash-usage="refreshClashUsage"><template #navigation><NodeReaderNav :index="readingIndex" :count="readingNodes.length" :selected-count="w.selectedNodes.value.length" :previous="readerLabel(-1)" :next="readerLabel(1)" @previous="moveReading(-1)" @next="moveReading(1)" @compare="m.openComparison()"/></template></NodeInspector>
       </template>
+    </div>
     </div>
 
     <Modal v-if="!matrixMode&&(m.compareOpen.value||detailsOverlay&&readingNode&&inspectorOpen)" :key="m.compareOpen.value?'comparison':'node-reader'" :title="m.compareOpen.value?'比较所选节点':'节点详情'" wide :variant="m.compareOpen.value?'workbench-detail-modal comparison-modal':'workbench-detail-modal node-reader-modal'" @close="closeDetails">

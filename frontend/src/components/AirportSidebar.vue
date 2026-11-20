@@ -49,9 +49,9 @@ const health=computed(()=>Object.fromEntries(w.airports.value.map(a=>{
  <p v-if="!visible.length" class="muted small">没有匹配机场</p></template>
 </section></template>
 <style scoped>
-.airport-search{width:100%;height:30px;min-height:30px;padding:4px 10px;font-size:12px;margin:4px 0 6px;border-radius:8px;border:1px solid var(--cst-line);background:var(--cst-panel-2);color:var(--cst-text);transition:border-color .15s,background .15s}
+.airport-search{width:100%;height:34px;min-height:34px;padding:4px 10px;font-size:12.5px;margin:4px 0 8px;border-radius:var(--cst-radius-sm,9px);border:1px solid var(--cst-line);background:var(--cst-panel-2);color:var(--cst-text);transition:border-color .15s,background .15s,box-shadow .15s}
 .airport-search::placeholder{color:var(--cst-subtle)}
-.airport-search:focus{outline:none;border-color:var(--cst-accent);background:var(--cst-panel)}
+.airport-search:focus{outline:none;border-color:var(--cst-accent);background:var(--cst-panel);box-shadow:0 0 0 3px color-mix(in srgb,var(--cst-accent) 13%,transparent)}
 .airport-heading{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--cst-subtle)!important;height:24px!important}
 .airport-heading small{background:transparent!important;padding:0!important;font-weight:500;color:var(--cst-subtle)!important}
 .airport-health{width:6px;height:6px;flex:0 0 6px;border-radius:50%;background:var(--cst-subtle)}

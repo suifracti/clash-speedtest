@@ -180,7 +180,7 @@ function toggleReminder(a:Airport,index:number){const next=maintenanceCopy(a),li
 function addDiscoveredLink(a:Airport,link:{label:string;url:string}){const next=maintenanceCopy(a);if(busy.value||next.links.length>=20)return;next.links.push({...link,monthly_day:0});void persistMaintenance(a,next,'已加入常用入口')}
 function used(s:Subscription){return subscriptionUsed(s.usage)}
 function remaining(s:Subscription){const amount=used(s);return s.usage?.total&&amount!==null?Math.max(0,s.usage.total-amount):null}
-function usagePercent(s:Subscription){return Math.min(100,(used(s)??0)/(s.usage?.total||1)*100)}
+function remainingPercent(s:Subscription){const rem=remaining(s);return rem!==null&&s.usage?.total?Math.min(100,Math.max(0,rem/s.usage.total*100)):null}
 // 订阅头没有用量时，退回到节点列表里的公告文字（标明来源，不当作订阅返回值）。
 function noticeUsage(a:Airport,s:Subscription){const parsed=parseNoticeUsage(noticesForAccount(accountNotices.value,airportAccounts([a]).find(x=>x.subscription.id===s.id)));return noticeBalances.value[s.id]===undefined?parsed:{...parsed,remaining:noticeBalances.value[s.id]}}
 function expireDays(t:number){return Math.ceil((t*1000-Date.now())/86400000)}
@@ -265,7 +265,7 @@ onBeforeUnmount(()=>{disposed=true;editGeneration++;removeGeneration++;clearTime
       <code :title="s.url_display">{{s.url_display}}</code><SubscriptionChanges :airport-id="a.id" :subscription="s"/>
     </div>
     <div class="cst-ledger-quota"><small class="account-field-label">套餐用量</small>
-      <template v-if="s.usage&&(used(s)!==null||noticeUsage(a,s).remaining==null&&noticeUsage(a,s).used==null)"><span><strong>{{used(s)===null?'已用未知':bytes(used(s)!)}}</strong><template v-if="s.usage.total"> / {{bytes(s.usage.total)}}</template></span><div v-if="s.usage.total&&used(s)!==null" class="cst-meter" role="meter" aria-label="套餐已用比例" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Math.round(usagePercent(s))"><i :class="{warn:usagePercent(s)>85}" :style="{width:`${usagePercent(s)}%`}"/></div><small v-if="s.usage.total">{{remaining(s)===null?'剩余未知':'剩余 '+bytes(remaining(s)!)}}</small><small v-else>机场未返回总量</small></template>
+      <template v-if="s.usage&&(used(s)!==null||noticeUsage(a,s).remaining==null&&noticeUsage(a,s).used==null)"><template v-if="s.usage.total&&used(s)!==null"><span class="quota-main-row">剩余 <strong>{{bytes(remaining(s)!)}}</strong> <em class="quota-pct-pill" :class="{warn:(remainingPercent(s)??100)<15}">{{remainingPercent(s)!.toFixed(1)}}% 可用</em></span><div class="cst-meter" role="meter" aria-label="套餐剩余比例" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Math.round(remainingPercent(s)!)"><i :class="{warn:(remainingPercent(s)??100)<15}" :style="{width:`${remainingPercent(s)!}%`}"/></div><small>已用 {{bytes(used(s)!)}} / {{bytes(s.usage.total)}}</small></template><template v-else><span><strong>{{used(s)===null?'已用未知':bytes(used(s)!)}}</strong><template v-if="s.usage.total"> / {{bytes(s.usage.total)}}</template></span><small v-if="s.usage.total">{{remaining(s)===null?'剩余未知':'剩余 '+bytes(remaining(s)!)}}</small><small v-else>机场未返回总量</small></template></template>
       <template v-else-if="noticeUsage(a,s).remaining!=null||noticeUsage(a,s).used!=null"><span><strong>{{noticeUsage(a,s).remaining!=null?'剩余 '+bytes(noticeUsage(a,s).remaining):'已用 '+bytes(noticeUsage(a,s).used)}}</strong><template v-if="noticeUsage(a,s).total"> / {{bytes(noticeUsage(a,s).total)}}</template></span><small>公告识别 · 订阅未返回用量头</small></template>
       <small v-else class="muted">机场未返回套餐用量</small>
     </div>
@@ -345,7 +345,7 @@ onBeforeUnmount(()=>{disposed=true;editGeneration++;removeGeneration++;clearTime
 .airports-header-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-left:auto}
 .airports-top-bar .subscription-view-tabs{margin-bottom:0}
 .account-register-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:18px;padding:0;border:0}
-.summary-stat-card{display:flex;flex-direction:column;gap:4px;padding:15px 18px;border:1px solid var(--cst-line-strong);border-radius:14px;background:var(--cst-panel);box-shadow:var(--cst-shadow)}
+.summary-stat-card{display:flex;flex-direction:column;gap:4px;padding:15px 18px;border:1px solid var(--cst-line);border-radius:var(--cst-radius);background:var(--cst-panel);box-shadow:var(--cst-shadow-xs)}
 .summary-stat-card small{font-size:11.5px;font-weight:600;color:var(--cst-muted)}
 .summary-stat-card strong{font-size:20px;font-weight:750;color:var(--cst-text);font-variant-numeric:tabular-nums;letter-spacing:-.02em;margin:0}
 .summary-stat-card span{font-size:11.5px;color:var(--cst-muted)}
@@ -353,10 +353,10 @@ onBeforeUnmount(()=>{disposed=true;editGeneration++;removeGeneration++;clearTime
 .summary-stat-card.accent strong{color:var(--cst-accent)}
 .summary-stat-card.warn{background:var(--cst-warn-bg);border-color:color-mix(in srgb,var(--cst-warn) 35%,var(--cst-line))}
 .summary-stat-card.warn strong{color:var(--cst-warn)}
-.account-register-summary strong{color:var(--cst-text);font-weight:600;margin-left:8px}
+.account-register-summary .summary-stat-card strong{margin-left:0}
 .account-register-summary small{font-size:11px}
 .account-register{display:grid;grid-template-columns:240px minmax(0,1fr);gap:20px;align-items:start;margin-top:4px}
-.account-register-index{position:sticky;top:calc(var(--cst-nav-height,58px) + 20px);min-width:0;padding:14px;border:1px solid var(--cst-line-strong);border-radius:15px;background:var(--cst-panel);box-shadow:var(--cst-shadow)}
+.account-register-index{position:sticky;top:calc(var(--cst-nav-height,56px) + 16px);min-width:0;padding:14px;border:1px solid var(--cst-line);border-radius:var(--cst-radius);background:var(--cst-panel);box-shadow:var(--cst-shadow-xs)}
 .account-register-index .page-toolbar{display:grid;gap:12px;margin:0 0 16px;padding:0}
 .account-register-index .search-field{width:100%;min-width:0;box-sizing:border-box}
 .account-register-index nav{display:grid;gap:4px}
@@ -368,7 +368,7 @@ onBeforeUnmount(()=>{disposed=true;editGeneration++;removeGeneration++;clearTime
 .account-register-index nav small{display:block;font-size:11px;color:var(--cst-muted);margin-top:4px}
 .account-register-index nav .icon{margin-left:auto;width:12px;flex:none}
 .cst-ledger{min-width:0}
-.cst-ledger-airport{padding:0;border:1px solid var(--cst-line-strong);border-radius:16px;background:var(--cst-panel);box-shadow:var(--cst-shadow);overflow:hidden}
+.cst-ledger-airport{padding:0;border:1px solid var(--cst-line);border-radius:var(--cst-radius);background:var(--cst-panel);box-shadow:var(--cst-shadow-xs);overflow:hidden}
 .cst-ledger-airport-head{display:flex;align-items:center;gap:14px;padding:20px 24px;border-bottom:1px solid var(--cst-line);flex-wrap:wrap;background:linear-gradient(180deg,color-mix(in srgb,var(--cst-panel-2) 70%,var(--cst-panel)),var(--cst-panel))}
 .cst-ledger-logo{width:44px;height:44px;display:grid;place-items:center;border-radius:12px;background:linear-gradient(135deg,color-mix(in srgb,var(--cst-accent) 16%,var(--cst-panel)),color-mix(in srgb,var(--cst-accent) 6%,var(--cst-panel-2)));border:1px solid color-mix(in srgb,var(--cst-accent) 26%,var(--cst-line));color:var(--cst-accent);font-size:19px;font-weight:750;flex:none}
 .cst-ledger-title{flex:1;min-width:200px;display:grid;gap:6px}
@@ -387,8 +387,9 @@ onBeforeUnmount(()=>{disposed=true;editGeneration++;removeGeneration++;clearTime
 .cst-ledger-quota small,.cst-ledger-expire small{color:var(--cst-muted);font-size:12px}
 .cst-ledger-expire strong.warn{color:var(--cst-warn)}.cst-ledger-expire strong.bad{color:var(--cst-bad)}
 .account-field-label{margin-bottom:2px}
-.cst-meter{height:7px;border-radius:999px;background:var(--cst-line);overflow:hidden;margin:3px 0}
-.cst-meter i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--cst-accent),#38bdf8)}.cst-meter i.warn{background:var(--cst-warn)}
+.quota-main-row{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px;font-size:12.5px;color:var(--cst-muted)}.quota-main-row strong{font-size:15.5px;font-weight:750;color:var(--cst-text)}.quota-pct-pill{display:inline-flex;align-items:center;padding:1px 7px;border-radius:999px;background:var(--cst-accent-soft);color:var(--cst-accent);font-style:normal;font-size:10.5px;font-weight:700}.quota-pct-pill.warn{background:var(--cst-warn-bg);color:var(--cst-warn)}
+.cst-meter{height:8px;border-radius:999px;background:var(--blue-soft);overflow:hidden;margin:3px 0}
+.cst-meter i{display:block;height:100%;border-radius:999px;background:var(--blue);transition:width .35s ease}.cst-meter i.warn{background:var(--cst-warn)}
 
 .cst-ledger-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;grid-column:1/-1;padding-top:2px}
 .cst-ledger-foot{padding:16px 24px}
