@@ -49,6 +49,23 @@ it('does not label an unrecorded not-executed cause as a physical-egress failure
   expect(document.body.textContent).not.toContain('物理出口预检失败')
 })
 
+it('counts latency samples with no response, excluding cancelled and unexecuted samples',async()=>{
+ const at='2026-11-21T00:00:00Z',cf='https://speed.cloudflare.com/__down?bytes=1',google='https://www.gstatic.com/generate_204'
+ const probe=(seq:number,target:string,success:boolean,error='')=>({seq,target,success,error,timestamp:at,latency_ms:success?40:0})
+ const row=(id:string,samples:LatencyTest['samples']):LatencyTest=>({...node,attempt_id:id,node_type:'ss',requested_at:at,finished_at:at,status:'completed',latency_ms:40,total_samples:samples.length,success_samples:samples.filter(s=>s.success).length,failure_samples:samples.filter(s=>!s.success).length,persistence_state:'saved',samples})
+ vi.mocked(api.latencyHistory).mockResolvedValue({tests:[
+  row('all-failed',[probe(1,cf,false,'timeout'),probe(2,google,false,'timeout')]),
+  row('partly-failed',[probe(1,cf,false,'timeout'),probe(2,google,true)]),
+  row('skipped',[probe(1,cf,false,'context canceled'),probe(2,google,false,'未执行：物理出口不足')]),
+ ],has_more:true,complete:true})
+ wrapper=mount(NodeDetailModal,{props:{node,initialProject:'latency',initialTargetId:'all'},attachTo:document.body,global:{provide:{[workspaceKey as symbol]:w}}})
+ await flushPromises()
+ expect(document.body.textContent).toContain('3 / 4 次无响应 · 1 轮完全无响应 · 还有历史未载入')
+ const cfButton=Array.from(document.querySelectorAll<HTMLButtonElement>('.history-site-index button')).find(b=>b.textContent?.includes('Cloudflare'))!
+ cfButton.click();await flushPromises()
+ expect(document.body.textContent).toContain('2 / 2 次无响应 · 2 轮完全无响应')
+})
+
 it('opens previously saved unlock rounds from both directories even when the nodes are no longer current',async()=>{
  const started_at='2026-11-18T06:54:00Z'
  const round={round_id:'unlock-round',started_at,state:'finished',node_count:1,latency_count:0,download_count:0,service_count:2,service_ids:['chatgpt_unlock','hulu_jp_unlock']}

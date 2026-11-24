@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {computed,nextTick,onMounted,ref,watch} from 'vue'
+import {ascending} from '../columnSort'
 import {api} from '../api'
 import {useWorkspace} from '../workspace'
 import {bytes,date,isNotice,key,type Settings} from '../domain'
@@ -24,10 +25,10 @@ const protocols=computed(()=>[...new Set(airportNodes.value.map(n=>n.type))].sor
 const report=computed(()=>airportReport(nodes.value,data.value))
 const exitSummary=computed(()=>airportExitSummary(nodes.value,data.value))
 const rankSearch=ref(''),onlyProblems=ref(false)
-type RankField='responseRate'|'median'|'volatility'|'purity'|'lastFailure'
-const rankField=ref<RankField>('responseRate'),rankDescending=ref(true)
-const rankColumns:{id:RankField;label:string}[]=[{id:'responseRate',label:'响应率'},{id:'median',label:'稳定延迟中位数'},{id:'volatility',label:'波动（P90−P10）'},{id:'purity',label:'多源信誉'},{id:'lastFailure',label:'最近一次失败'}]
-function sortRank(field:RankField){if(rankField.value===field)rankDescending.value=!rankDescending.value;else{rankField.value=field;rankDescending.value=field==='responseRate'||field==='purity'||field==='lastFailure'}}
+type RankField='name'|'responseRate'|'total'|'median'|'volatility'|'purity'|'lastFailure'
+const rankField=ref<RankField>()
+const rankColumns:{id:RankField;label:string}[]=[{id:'name',label:'节点'},{id:'responseRate',label:'响应率'},{id:'total',label:'轮数'},{id:'median',label:'稳定延迟中位数'},{id:'volatility',label:'波动（P90−P10）'},{id:'purity',label:'多源信誉'},{id:'lastFailure',label:'最近一次失败'}]
+function sortRank(field:RankField){rankField.value=rankField.value===field?undefined:field}
 const ranks=computed(()=>{
  const query=rankSearch.value.trim().toLowerCase()
  return nodes.value.map(node=>{
@@ -40,9 +41,10 @@ const ranks=computed(()=>{
   const hay=[nodeDisplayName(row.node),row.node.display_name,w.nodeSubscriptionName(row.node),row.node.country_code,nodeRegionLabel(row.node.country_code)].join(' ').toLowerCase()
   return hay.includes(query)
  }).sort((a,b)=>{
-  const value=(r:typeof a)=>rankField.value==='lastFailure'?(r.lastFailure?Date.parse(r.lastFailure.time):null):rankField.value==='purity'?r.purity.score:r[rankField.value]
-  const compare=(av:number|null,bv:number|null,descending:boolean)=>av===null?(bv===null?0:1):bv===null?-1:(av-bv)*(descending?-1:1)
-  return Number(a.total<3)-Number(b.total<3)||compare(value(a),value(b),rankDescending.value)||(rankField.value==='responseRate'?compare(a.median,b.median,false):0)
+  const field=rankField.value
+  if(!field)return Number(a.total<3)-Number(b.total<3)||ascending(a.responseRate===null?null:-a.responseRate,b.responseRate===null?null:-b.responseRate)||ascending(a.median,b.median)
+  const value=(r:typeof a)=>field==='name'?nodeDisplayName(r.node):field==='lastFailure'?(r.lastFailure?Date.parse(r.lastFailure.time):null):field==='purity'?r.purity.score:r[field]
+  return ascending(value(a),value(b))
  })
 })
 async function inspectNode(node:typeof nodes.value[number]){w.page.value='home';await nextTick();w.viewRequest.value=node}
@@ -133,7 +135,7 @@ onMounted(()=>void refresh())
      <button type="button" class="rank-filter-pill" :aria-pressed="onlyProblems" @click="onlyProblems=!onlyProblems">仅看有问题</button>
     </div>
    </div>
-   <div class="rank-table-wrap"><table><thead><tr><th>节点</th><th v-for="col in rankColumns.slice(0,1)" :key="col.id" :aria-sort="rankField===col.id?(rankDescending?'descending':'ascending'):'none'"><button class="text-button" @click="sortRank(col.id)">{{col.label}}{{rankField===col.id?(rankDescending?' ↓':' ↑'):''}}</button></th><th>轮数</th><th v-for="col in rankColumns.slice(1)" :key="col.id" :aria-sort="rankField===col.id?(rankDescending?'descending':'ascending'):'none'"><button class="text-button" @click="sortRank(col.id)">{{col.label}}{{rankField===col.id?(rankDescending?' ↓':' ↑'):''}}</button></th></tr></thead>
+   <div class="rank-table-wrap"><table><thead><tr><th v-for="col in rankColumns" :key="col.id" :aria-sort="rankField===col.id?'ascending':'none'"><button type="button" class="text-button" @click="sortRank(col.id)">{{col.label}}{{rankField===col.id?' ↑':''}}</button></th></tr></thead>
     <tbody><tr v-for="row in ranks" :key="key(row.node)"><td><button class="text-button rank-node" @click="inspectNode(row.node)">{{nodeDisplayName(row.node)}}</button><small v-if="w.nodeSubscriptionName(row.node)" class="rank-account">{{w.nodeSubscriptionName(row.node)}}</small></td><td :class="responseTone(row.responseRate)" :title="`${row.responses}/${row.samples} 次响应`">{{row.responseRate===null?'—':row.responseRate.toFixed(0)+'%'}}<small v-if="row.total<3" class="rank-low">轮数少</small></td><td>{{row.total}}</td><td>{{ms(row.median)}}</td><td title="慢的时候比快的时候多多少（P90−P10）；至少5轮有稳定延迟后显示">{{ms(row.volatility)}}</td><td class="rank-purity-cell" :title="row.purity.title"><template v-if="row.reputationSources.length>=2"><div class="rank-rep-chips"><span v-for="src in row.reputationSources" :key="src.id" class="rank-rep-chip" :class="src.tone" :title="src.detail"><b>{{src.name}}</b><i>{{src.risk}}</i></span><span v-if="row.purity.divergent" class="report-purity-badge compact warn">分歧</span></div></template><template v-else-if="row.purity.score!==null"><span class="report-purity-badge compact" :class="row.purity.tone">{{row.purity.singleFallback?`单源 ${row.purity.score}`:`${row.purity.grade} ${row.purity.score}`}}</span></template><span v-else-if="row.reputationIssues.length" class="report-purity-badge compact warn">查询异常</span><span v-else class="muted">—</span></td><td :title="row.lastFailure?.detail">{{row.lastFailure?date(row.lastFailure.time):'—'}}</td></tr></tbody>
    </table></div>
    <p v-if="!ranks.length" class="muted small">当前筛选范围没有节点。</p>

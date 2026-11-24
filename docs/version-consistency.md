@@ -34,6 +34,10 @@ python3 scripts/candidate_audit.py --online --app /absolute/path/cst-core --mani
 python3 -m unittest discover -s scripts/tests -v
 ```
 
+### 换版本时继续使用原有数据
+
+Web 和桌面共享同一数据目录解析。默认目录由当前用户的系统目录决定（Windows 为 `%LOCALAPPDATA%/ClashSpeedTest`），跟可执行文件摆放位置无关。已有自定义目录可在默认目录的 `data-root.txt` 保存已存在的绝对路径，之后双击或从其他文件夹启动新版都会使用该路径；如果路径不可达，启动会提示，避免另开空库。显式 `--data-dir` 优先，其次为 `CLASH_SPEEDTEST_DATA_DIR`，适合独立候选和旧版启动。历史、用量、账户与设置一起指向原目录。已经分开的数据库仍各自保存。
+
 `--online` 只访问 GitHub Git 远端，不做检测请求。没有远端核对、dirty、main 不在候选、能力缺失、App manifest 不明或不匹配都会明确拒绝。只跑源码检查时 `runtime_acceptance=NOT_CHECKED`，不会冒充 App 已验收；manifest 关联也不等于独立审计编译器或运行行为。
 
 候选 CI 保留源码/远端/main 与能力检查，另接入 Linux Go race/前端回归、Mac 离线契约与带 Git SHA 的 native core 构建。都使用合成/临时数据；Windows、本机原生交互和真实网络不包含在 CI。此前三缺失导致的 CI 红记录保留，不重跑掩盖。

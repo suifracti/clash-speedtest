@@ -33,6 +33,7 @@ import {displayUnlockGroups} from '../../unlockGroupStore'
 const w=useWorkspace(),m=inject(homeModelKey)!
 const readingHintId=useId()
 const exitMode=ref(false),serviceView=ref('nodes')
+watch(exitMode,()=>{m.headerSort.value=''})
 const latencyReview=shallowRef<{node:NodeOption;point:TrendPoint;target:string}>()
 watch([()=>w.project.value,exitMode,()=>w.hours.value],()=>{latencyReview.value=undefined})
 const clashUsage=ref<ClashUsage[]>([])
@@ -74,7 +75,6 @@ function selectInspectorProject(id:Project|'exit'){if(id==='exit')selectExit();e
 function selectExit(){exitMode.value=true;m.headerSort.value='';m.qualityGate.value='all';m.qualitySort.value='existing';if(['latency','download','service'].includes(w.sort.value))w.sort.value='region'}
 // 出口表只读缓存；真要解析要按“解析入口”或跑一次出口检测。
 watch([exitMode,()=>m.pageNodes.value],()=>{if(exitMode.value)void w.readEntries(m.pageNodes.value,false).catch(()=>{})},{immediate:true})
-const exitColumns=['线路','出口 IP','真实落地','IP 类型','CF 盾','多源信誉']
 const exitFields=['line','ip','label','ipTag','cfChallenge','purity'] as const
 const sites=computed(()=>targets.filter(t=>w.displayTargets.value.includes(t.id)))
 // 同名节点的七天统计包含配置变化前后的历史。
@@ -229,6 +229,18 @@ onBeforeUnmount(()=>toolbarObserver?.disconnect())
 watch(()=>w.viewRequest.value,async n=>{
  if(!n)return
  w.viewRequest.value=null
+ if(n.revealRegion){
+  exitMode.value=false
+  if(!m.visibleNodes.value.some(v=>sameReadingNode(v,n))){
+   clearFilters()
+   const airport=w.nodeAirportId(n)
+   if(w.airportFilter.value!=='all'&&w.airportFilter.value!==airport||!w.selectedAirportIds.value?.includes(airport))w.viewAirport('all')
+   w.region.value=nodeRegion(n)
+   w.revealedNode.value=n
+   m.headerSort.value=''
+   await nextTick()
+  }
+ }
  if(w.latencyReportFocus.value?.nodeKey===key(n)){exitMode.value=false;m.qualityGate.value='all';m.protocolFilter.value='all';m.qualitySort.value='existing';m.headerSort.value='';await nextTick()}
  const i=m.visibleNodes.value.findIndex(v=>sameReadingNode(v,n))
  if(i<0){w.inspectNode.value=n;return}
@@ -610,7 +622,7 @@ function keyNav(e:KeyboardEvent){
         <div class="hd-table-head" role="rowgroup">
         <div class="hd-tr hd-th" role="row">
           <span role="columnheader"><input type="checkbox" :checked="allOnPage" aria-label="选择本页全部节点" @change="w.toggleAll(m.pageNodes.value)"></span>
-          <WorkbenchSortHeader column="name" label="节点"/><template v-if="exitMode"><template v-for="label in exitColumns" :key="label"><WorkbenchSortHeader v-if="label==='CF 盾'" column="cfChallenge" label="CF 盾"/><WorkbenchSortHeader v-else-if="label==='多源信誉'" column="purity" label="多源信誉"/><span v-else role="columnheader">{{label}}</span></template></template>
+          <WorkbenchSortHeader column="name" label="节点"/><template v-if="exitMode"><WorkbenchSortHeader column="route" label="线路"/><WorkbenchSortHeader column="exitIp" label="出口 IP"/><WorkbenchSortHeader column="landing" label="真实落地"/><WorkbenchSortHeader column="ipKind" label="IP 类型"/><WorkbenchSortHeader column="cfChallenge" label="CF 盾"/><WorkbenchSortHeader column="purity" label="多源信誉"/></template>
           <template v-if="overviewMode">
             <WorkbenchSortHeader column="verdict" label="延迟总览"/>
             <WorkbenchSortHeader column="download" label="下载速度"/>
@@ -626,7 +638,7 @@ function keyNav(e:KeyboardEvent){
           </template>
           <template v-if="!exitMode&&w.project.value==='download'">
             <WorkbenchSortHeader column="download" label="有效速度"/>
-            <span role="columnheader">峰值 / 全程</span>
+            <WorkbenchSortHeader column="downloadPeak" label="峰值 / 全程"/>
             <WorkbenchSortHeader column="downloadTime" label="测速源与记录"/>
           </template>
           <template v-if="!exitMode&&w.project.value==='service'"><WorkbenchSortHeader v-for="g in displayUnlockGroups" :key="g.id" :column="'unlock:'+g.id" :label="g.name"/></template>

@@ -172,6 +172,13 @@ describe('latency run report',()=>{
   await usRegionBtn.trigger('click')
   expect(wrapper.get('.report-tab[aria-selected="true"]').text()).toContain('逐个明细')
   expect(wrapper.findAll('.latency-report-details .latency-report-table-wrap tbody tr')).toHaveLength(2)
+  const head=wrapper.findAll('.report-sort-head').find(b=>b.text().includes('稳定中位'))!
+  const original=wrapper.findAll('.latency-report-details tbody tr').map(row=>row.text())
+  await head.trigger('click')
+  expect(head.element.parentElement?.getAttribute('aria-sort')).toBe('ascending')
+  await head.trigger('click')
+  expect(head.element.parentElement?.getAttribute('aria-sort')).toBe('none')
+  expect(wrapper.findAll('.latency-report-details tbody tr').map(row=>row.text())).toEqual(original)
   wrapper.unmount()
  })
 

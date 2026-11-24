@@ -23,8 +23,8 @@ type AppPaths struct {
 	Explicit     bool   `json:"explicit"`
 }
 
-// Resolve applies the contract's precedence: explicit value, environment,
-// then the platform default. It never turns a failed resolution into cwd.
+// Resolve prefers the explicit value and environment over the data root saved
+// in the platform's user directory. Executable placement does not affect it.
 func Resolve(explicit string) (AppPaths, error) {
 	raw := strings.TrimSpace(explicit)
 	explicitMode := raw != ""
@@ -43,6 +43,13 @@ func Resolve(explicit string) (AppPaths, error) {
 		root, err = defaultDataRoot()
 		if err != nil {
 			return AppPaths{}, err
+		}
+		pinned, err := readPinnedRoot(root)
+		if err != nil {
+			return AppPaths{}, err
+		}
+		if pinned != "" {
+			root, explicitMode = pinned, true
 		}
 	}
 	root, err := filepath.Abs(root)
@@ -67,6 +74,27 @@ func Resolve(explicit string) (AppPaths, error) {
 	paths.HistoryDir = filepath.Join(root, "history")
 	paths.SettingsFile = filepath.Join(root, "settings.json")
 	return paths, nil
+}
+
+// A pinned location is an explicit selection of an existing data directory.
+// A missing pinned location must not be silently initialized as an empty one.
+func readPinnedRoot(defaultRoot string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(defaultRoot, "data-root.txt"))
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read saved data directory: %w", err)
+	}
+	root := strings.TrimSpace(string(raw))
+	if !filepath.IsAbs(root) {
+		return "", fmt.Errorf("saved data directory must be an absolute path")
+	}
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
+		return "", fmt.Errorf("saved data directory is unavailable")
+	}
+	return filepath.Clean(root), nil
 }
 
 // FromLegacy adapts test and embedding callers that already provide separate
@@ -95,30 +123,7 @@ func FromLegacy(profileDir, historyDir string) AppPaths {
 	}
 }
 
-func executableDir() string {
-	exe, err := os.Executable()
-	if err != nil {
-		return ""
-	}
-	resolved, err := filepath.EvalSymlinks(exe)
-	if err == nil {
-		exe = resolved
-	}
-	dir := filepath.Dir(exe)
-	lowerDir := strings.ToLower(dir)
-	if strings.Contains(lowerDir, "go-build") || strings.Contains(lowerDir, filepath.Join("appdata", "local", "temp")) {
-		return ""
-	}
-	if strings.Contains(lowerDir, ".app/contents/macos") {
-		return ""
-	}
-	return dir
-}
-
 func defaultDataRoot() (string, error) {
-	if exeDir := executableDir(); exeDir != "" {
-		return filepath.Join(exeDir, "data"), nil
-	}
 	var base string
 	switch runtime.GOOS {
 	case "windows":

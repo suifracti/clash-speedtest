@@ -9,6 +9,7 @@ import {useWorkspace} from '../workspace'
 import {bytes,date,downloadSpeed,downloadTone,key,median,outcomeLabel,outcomeTone,sampleFor,stateLabel,targets,type Attempt,type HistoryPage,type LatencyTest,type NodeOption,type Project,type MonitorSample} from '../domain'
 import {attemptStatus,downloadConditionLabel,triggerLabel} from '../measurementRounds'
 import {manualLatencyPoint,latencyPointLabel,latencySampleState,monitorLatencyPoints,monitorHTTPPoints,monitorHTTPServices,type TrendPoint} from '../presentation'
+import {latencySiteSamples} from '../inspectorLatency'
 import Icon from './Icon.vue'
 import Modal from './Modal.vue'
 import TrendChart from './TrendChart.vue'
@@ -57,7 +58,23 @@ const chartPoints=computed<TrendPoint[]>(()=>{
  })
 })
 const samples=computed(()=>tests.value.flatMap(t=>t.samples.map(s=>({...s,...latencySampleState(s),attempt_id:t.attempt_id}))).sort((a,b)=>Date.parse(b.timestamp)-Date.parse(a.timestamp))),sampleSlice=computed(()=>samples.value.slice((samplePage.value-1)*50,samplePage.value*50))
-const siteStats=computed(()=>targets.map(t=>{const list=tests.value.flatMap(test=>sampleFor(test,t.id)),successful=list.filter(s=>s.success);return {...t,value:median(successful.map(s=>s.latency_ms)),success:successful.length,total:list.length}}))
+const latencyRounds=computed(()=>project.value!=='latency'?[]:source.value==='monitor'?monitorLatencyPoints(monitorSamples.value):chartPoints.value)
+const outageStats=computed(()=>{
+ let executed=0,failures=0,rounds=0
+ for(const point of latencyRounds.value){
+  const samples=target.value==='all'?point.samples||[]:latencySiteSamples(point,target.value)
+  const measured=samples.filter(sample=>sample.tone==='good'||sample.tone==='bad')
+  const failed=measured.filter(sample=>sample.tone==='bad').length
+  executed+=measured.length;failures+=failed
+  if(failed&&failed===samples.length)rounds++
+ }
+ return {executed,failures,rounds}
+})
+const siteStats=computed(()=>targets.map(t=>{
+ const list=latencyRounds.value.flatMap(point=>latencySiteSamples(point,t.id))
+ const values=list.flatMap(sample=>sample.value===null?[]:[sample.value])
+ return {...t,value:median(values),success:values.length,total:list.length,failures:list.filter(sample=>sample.tone==='bad').length}
+}))
 async function retry(a:Attempt){const token=version,kind=project.value as 'download'|'service',n={...nodeScope.value};try{const saved=await api.attemptAction(kind,a.attempt_id,n,'retry-save',a.service_id);if(token!==version)return;record.value=saved;await load()}catch(e){if(token===version)error.value=e instanceof Error?e.message:String(e)}}
 const previous=ref<Attempt|null>(null),compareLoading=ref(false),compareError=ref('')
 watch(record,async current=>{
@@ -89,7 +106,7 @@ const comparison=computed(()=>{
       <div class="detail-filters">
         <label>范围<UiSelect v-model.number="w.hours.value" aria-label="节点历史时间范围"><option :value="6">最近 6 小时</option><option :value="24">最近 24 小时</option><option :value="168">最近 7 天</option><option :value="720">最近 30 天</option></UiSelect></label>
         <label v-if="revisionOptions.length>1">配置版本<UiSelect v-model="revision" aria-label="节点配置版本"><option v-for="r in revisionOptions" :key="r.config_revision_key" :value="r.config_revision_key">{{revisionLabel(r)}}</option></UiSelect></label>
-        <label v-if="project==='latency'">站点<UiSelect v-model="target" aria-label="历史延迟站点"><option v-for="t in targets" :key="t.id" :value="t.id">{{t.name}}</option></UiSelect></label>
+        <label v-if="project==='latency'">站点<UiSelect v-model="target" aria-label="历史延迟站点"><option value="all">所有已测站点</option><option v-for="t in targets" :key="t.id" :value="t.id">{{t.name}}</option></UiSelect></label>
         <label v-if="source==='manual'&&project==='service'">服务<UiSelect v-model="serviceId" aria-label="历史服务项目"><option value="">全部服务</option><option v-if="serviceId&&!w.catalog.value.some(s=>s.service_id===serviceId)" :value="serviceId">{{attempts.find(a=>a.service_id===serviceId)?.rule.name||serviceId}}（历史项目）</option><option v-for="s in w.catalog.value" :key="s.service_id" :value="s.service_id">{{s.name}}</option></UiSelect></label>
         <label v-if="source==='monitor'&&project==='service'">监测服务<UiSelect v-model="monitorProbe" aria-label="节点监测服务"><option v-for="p in monitorHTTPServices" :key="p.id" :value="p.id">{{p.name}}</option></UiSelect></label>
       </div>
@@ -104,7 +121,8 @@ const comparison=computed(()=>{
       <p v-if="error" class="inline-error" role="alert">{{error}}</p>
       <div v-if="loading&&!chartPoints.length" class="loading-state">读取记录中…</div>
       <template v-else>
-        <div v-if="source==='manual'&&project==='latency'&&tests.length" class="history-site-index" role="group" aria-label="已读站点样本汇总"><button v-for="s in siteStats" :key="s.id" :aria-pressed="target===s.id" @click="target=s.id"><span>{{s.name}}</span><strong>{{s.value===null?'—':`${s.value.toFixed(0)} ms`}}</strong><small>{{s.total?`${s.success}/${s.total} 样本成功`:'未检测'}}</small></button></div>
+        <p v-if="project==='latency'&&outageStats.executed" class="history-scope-note" role="status">已读采样 <b :class="{bad:outageStats.failures}">{{outageStats.failures}} / {{outageStats.executed}} 次无响应</b> · {{outageStats.rounds}} 轮完全无响应<span v-if="more"> · 还有历史未载入</span></p>
+        <div v-if="project==='latency'&&recordCount" class="history-site-index" role="group" aria-label="已读站点样本汇总"><button v-for="s in siteStats" :key="s.id" :aria-pressed="target===s.id" @click="target=s.id"><span>{{s.name}}</span><strong>{{s.value===null?'—':`${s.value.toFixed(0)} ms`}}</strong><small>{{s.total?`${s.success}/${s.total} 样本成功`:'未检测'}}<b v-if="s.failures" class="bad"> · {{s.failures}} 次无响应</b></small></button></div>
         <p v-if="source==='manual'&&project==='latency'&&tests.length" class="history-scope-note">汇总仅描述已读样本；跨轮方法或出口可能不同，不能据此直接比较节点。各轮条件见“方法与出口”。</p>
         <TrendChart v-if="chartPoints.length&&(source==='monitor'||project!=='service'||serviceId)" :points="chartPoints" :unit="project==='latency'?'ms':project==='download'?'MiB/s':'通过'" label="所选节点检测历史"/>
         <p v-if="more" class="history-partial">当前显示部分历史，统计和导出仅涵盖已读取的记录。</p>

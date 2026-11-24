@@ -27,7 +27,6 @@ export interface HomeModel {
  weeklyReady:ComputedRef<boolean>
  headerSort:Ref<string>
  headerSortReady:ComputedRef<boolean>
- headerSortDirection:(column:string)=>'ascending'|'descending'
  sortHeader:(column:string)=>void
  hiddenSelectedCount:ComputedRef<number>
  qualityFiltersPending:ComputedRef<boolean>

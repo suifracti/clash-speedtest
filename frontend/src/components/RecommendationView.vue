@@ -1,17 +1,19 @@
 <script setup lang="ts">
-import {computed,onMounted,ref,watch} from 'vue'
+import {computed,onBeforeUnmount,ref,shallowRef,watch} from 'vue'
 import {useWorkspace} from '../workspace'
 import {api,saveFile} from '../api'
 import {date,isNotice,key,scope,type NodeOption} from '../domain'
 import {type QualityEvidence} from '../nodeQuality'
-import {readQualityBatch} from '../qualityBatch'
+import {recommendationHistory} from '../recommendationHistory'
 import {candidateDiff,countRiskExcluded,isRecommendation,purposes,recommend,recommendationRegion,recommendationRegions,recommendationService,recommendationServices,type Purpose,type RecommendationRiskPolicy,type ServicePurpose,type Candidate} from '../recommendations'
 import {nodeDisplayName,nodeRegionLabel,regionBadgeClass} from '../nodePresentation'
 import UiSelect from './UiSelect.vue'
 
-const w=useWorkspace(),loading=ref(false),error=ref(''),data=ref<Record<string,QualityEvidence>>({}),readAt=ref('')
+const w=useWorkspace(),loading=ref(false),error=ref(''),data=shallowRef<Record<string,QualityEvidence>>({}),readAt=ref('')
 const nodes=computed(()=>w.nodes.value.filter(n=>!isNotice(n)))
-const selectedAirportId=ref('all')
+const cache=recommendationHistory(w)
+const historyScope=computed(()=>JSON.stringify([w.setup?.value?.data_root,nodes.value.map(n=>JSON.stringify(scope(n))).sort()]))
+const selectedAirportId=ref('all'),selectedRegion=ref('all')
 const riskPolicy=ref<RecommendationRiskPolicy>('all')
 const airportOptions=computed(()=>{
  const counts=new Map<string,number>()
@@ -21,7 +23,10 @@ const airportOptions=computed(()=>{
 watch(airportOptions,opts=>{
  if(selectedAirportId.value!=='all'&&!opts.some(a=>a.id===selectedAirportId.value))selectedAirportId.value='all'
 })
-const scopedNodes=computed(()=>selectedAirportId.value==='all'?nodes.value:nodes.value.filter(n=>w.nodeAirportId(n)===selectedAirportId.value))
+const airportNodes=computed(()=>selectedAirportId.value==='all'?nodes.value:nodes.value.filter(n=>w.nodeAirportId(n)===selectedAirportId.value))
+const regionOptions=computed(()=>recommendationRegions(airportNodes.value))
+watch(regionOptions,options=>{if(selectedRegion.value!=='all'&&!options.includes(selectedRegion.value))selectedRegion.value='all'})
+const scopedNodes=computed(()=>selectedRegion.value==='all'?airportNodes.value:airportNodes.value.filter(n=>recommendationRegion(n)===selectedRegion.value))
 const selectedAirportName=computed(()=>selectedAirportId.value==='all'?'':(airportOptions.value.find(a=>a.id===selectedAirportId.value)?.name||''))
 const activePurpose=ref<Purpose>('daily'),selectedServices=ref<Partial<Record<ServicePurpose,string>>>({})
 const isServicePurpose=(purpose:Purpose):purpose is ServicePurpose=>purpose==='ai'||purpose==='streaming'
@@ -68,15 +73,21 @@ const configurationNote:Record<Candidate['configuration'],string>={
  current:'',historical:'依据来自旧配置，当前配置待测',mixed:'依据包含多个配置版本，当前配置待测',unknown:'历史配置标识不足，当前配置待测',
 }
 
-async function refresh(){
- loading.value=true;error.value='';data.value={}
- const until=new Date().toISOString(),since=new Date(Date.parse(until)-7*86400000).toISOString()
+let refreshVersion=0
+onBeforeUnmount(()=>{refreshVersion++})
+async function refresh(force=false){
+ const version=++refreshVersion
+ const requested=historyScope.value,cached=cache.current(requested)
+ data.value=cached?.data||{};readAt.value=cached?.until||'';error.value=''
+ if(!nodes.value.length){loading.value=false;return}
+ loading.value=true
  try{
-  data.value=await readQualityBatch(nodes.value,since,until)
-  readAt.value=until
+  const snapshot=await cache.read(requested,nodes.value,force)
+  if(version!==refreshVersion)return
+  data.value=snapshot.data;readAt.value=snapshot.until
   if(Object.values(data.value).some(e=>!e.complete))error.value='部分历史读取不完整，推荐使用已核对的记录。'
- }catch(e){error.value=e instanceof Error?e.message:String(e)}
- finally{loading.value=false}
+ }catch(e){if(version===refreshVersion)error.value=e instanceof Error?e.message:String(e)}
+ finally{if(version===refreshVersion)loading.value=false}
 }
 async function exportCandidates(){
  const purpose=activePurpose.value,candidates=recommended.value,name=activeService.value?.name||purposeName.value
@@ -108,7 +119,7 @@ function inspect(candidate:Candidate){
 }
 function openInWorkbench(node:NodeOption){
  w.project.value=projectFor(activePurpose.value)
- if(w.viewRequest)w.viewRequest.value=node
+ w.viewRequest.value={...node,revealRegion:true}
  w.page.value='home'
 }
 function canPlanRegion(region:{code:string;nodes:NodeOption[];picks:Candidate[]}){
@@ -134,7 +145,7 @@ function secondPickNote(picks:Candidate[],index:number){
  if(second.condition!==first.condition)return '检测条件不同'
  return candidateDiff(first,second,activePurpose.value)
 }
-onMounted(()=>void refresh())
+watch(historyScope,()=>void refresh(),{immediate:true})
 </script>
 
 <template>
@@ -144,10 +155,10 @@ onMounted(()=>void refresh())
     <h1>为你选线</h1>
     <p>按用途看各地区的首选和次选。依据近 7 天记录<template v-if="readAt">，截至 {{date(readAt)}}</template>。</p>
    </div>
-   <button class="button" :disabled="loading" @click="refresh">{{loading?'读取中…':'刷新推荐'}}</button>
+   <button class="button" :disabled="loading||!nodes.length" @click="refresh(true)">{{loading?'读取中…':'刷新推荐'}}</button>
   </header>
   <p v-if="error" class="inline-warning" role="alert">{{error}}</p>
-  <p v-if="loading" class="muted" role="status">正在读取历史…</p>
+  <p v-if="loading&&!readAt" class="muted" role="status">正在读取历史…</p>
   <section v-else-if="!nodes.length" class="settings-section recommendation-empty">
    <div><strong>还没有可选线路</strong><p class="muted small">在工作台添加订阅后，可按地区查看推荐。</p></div>
    <button class="button primary" @click="w.page.value='home'">去工作台</button>
@@ -174,6 +185,10 @@ onMounted(()=>void refresh())
       <button type="button" class="rec-filter-pill" :aria-pressed="selectedAirportId==='all'" @click="selectedAirportId='all'">全部机场 <b>{{nodes.length}}</b></button>
       <button v-for="a in airportOptions" :key="a.id" type="button" class="rec-filter-pill" :aria-pressed="selectedAirportId===a.id" @click="selectedAirportId=a.id">{{a.name}} <b>{{a.count}}</b></button>
      </div>
+     <label v-if="regionOptions.length" class="rec-filter-group">
+      <span class="rec-filter-label">地区范围</span>
+      <UiSelect v-model="selectedRegion" aria-label="推荐地区"><option value="all">全部地区</option><option v-for="code in regionOptions" :key="code" :value="code">{{nodeRegionLabel(code)}}</option></UiSelect>
+     </label>
      <div class="rec-filter-group" role="group" aria-label="出口纯净与风控过滤">
       <span class="rec-filter-label">风控约束</span>
       <button v-for="p in riskPolicies" :key="p.id" type="button" class="rec-filter-pill" :aria-pressed="riskPolicy===p.id" :title="p.tip" @click="riskPolicy=p.id">{{p.label}}</button>

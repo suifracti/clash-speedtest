@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import {exitLanding} from '../exitLanding'
-import {inspectorSamples,latencySiteSamples,latencyCellValue,stableLatency} from '../inspectorLatency'
+import {entryCountry,isAnycast,routeKind} from '../entryPath'
+import {ascending} from '../columnSort'
+import {inspectorMedian,inspectorSamples,latencySiteSamples,latencyCellValue,stableLatency} from '../inspectorLatency'
 import {readLatencyHistoryWithConfig,latencyHistorySplit} from '../latencyHistory'
 import {sortSiteRows} from '../siteQualityView'
 import {latestServices,readQuality,multiSiteQuality,qualityGroups,downloadEvidence,latencyReadComplete,qualityMatchesGate,type QualityEvidence,type SiteQualityMetric} from '../nodeQuality'
@@ -13,7 +15,7 @@ import HomeWorkbench from './home/HomeWorkbench.vue'
 import {homeModelKey,latencyVerdict,weeklyHistoryKey,weeklySummary,type WeeklySummary} from './home/homeModel'
 import {useWorkspace} from '../workspace'
 import {api} from '../api'
-import {date,isReputationRule,sameHistoryRecords,downloadReading,downloadPeakSpeed,downloadTone,downloadOutcome,downloadConnectionSeconds,downloadSourceName,key,outcomeLabel,sampleFor,targets,type NodeOption,type Project,type Attempt} from '../domain'
+import {date,isReputationRule,sameHistoryRecords,downloadReading,downloadPeakSpeed,downloadAverageSpeed,downloadTone,downloadOutcome,downloadConnectionSeconds,downloadSourceName,key,outcomeLabel,sampleFor,targets,type NodeOption,type Project,type Attempt} from '../domain'
 import {airportNodeCount as countAirportNodes} from '../airportViewing'
 import {attemptStatus,downloadNoDataReason,triggerLabel} from '../measurementRounds'
 import {latencyPointLabel,createPresentationCache,manualLatencyPoint,monitorLatencyPoints,monitorHTTPServices,type TrendPoint} from '../presentation'
@@ -128,6 +130,7 @@ function sortHeader(column:string){
  headerSort.value=headerSort.value===column?'':column
  currentPage.value=1;closeHover()
  if(headerSort.value&&headerSort.value!=='name'&&!weeklyColumn.value)void readQualityNodes(w.proxyNodes.value)
+ if(headerSort.value==='route')void w.readEntries(w.proxyNodes.value,false).catch(()=>{})
 }
 watch([()=>w.sort.value,()=>w.project.value],()=>headerSort.value='')
 watch(()=>w.displayTargets.value,ids=>{if(headerSort.value.startsWith('site:')&&!ids.includes(headerSort.value.slice(5)))headerSort.value=''})
@@ -136,39 +139,58 @@ const baseVisibleNodes=computed(()=>{let list=w.filteredNodes.value;if(!qualityV
  else if(qualityGate.value!=='all'&&qualityGate.value!=='response'&&allQualityReady.value)list=list.filter(n=>qualityMatchesGate(qualityData.value[key(n)],qualitySummaries.value[key(n)],qualityGate.value,qualityCutoff.value))
  if(qualitySort.value!=='existing'&&allQualityReady.value)list=[...list].sort((a,b)=>{const ga=qualitySummaries.value[key(a)],gb=qualitySummaries.value[key(b)],ea=qualityData.value[key(a)],eb=qualityData.value[key(b)];const valid=(g:typeof ga,e:QualityEvidence|undefined)=>!!g&&!!e&&latencyReadComplete(e,g)&&g.comparable&&(qualitySort.value==='observed'?g.success>=1:!g.insufficient)&&(qualitySort.value!=='p95'||g.success>=20);const av=valid(ga,ea),bv=valid(gb,eb);if(av!==bv)return av?-1:1;if(!av)return 0;const group=ga.key.localeCompare(gb.key);if(group)return group;return qualitySort.value==='rate'?(gb.successRate||0)-(ga.successRate||0):(qualitySort.value==='p95'?ga.p95! -gb.p95!:ga.p50! -gb.p50!)})
  return list})
-const names=new Intl.Collator('zh-CN',{numeric:true,sensitivity:'base'})
-function headerSortDirection(field:string):'ascending'|'descending'{
- return ['purity','responseRate','download','downloadTime','service'].includes(field)||field.startsWith('unlock:')?'descending':'ascending'
-}
 const visibleNodes=computed(()=>{
  const list=baseVisibleNodes.value,field=headerSort.value
  if(!field||!headerSortReady.value)return list
- if(field==='name')return [...list].sort((a,b)=>names.compare(nodeDisplayName(a),nodeDisplayName(b)))
- const desc=headerSortDirection(field)==='descending'
- const values=new Map(list.map(node=>[key(node),headerValue(node,field)]))
- return [...list].sort((a,b)=>{
-  const first=values.get(key(a)),second=values.get(key(b))
-  return first==null?(second==null?0:1):second==null?-1:(desc?second-first:first-second)
- })
+ const values=new Map(list.map(node=>[node,field==='name'?nodeDisplayName(node):headerValue(node,field)]))
+ return [...list].sort((a,b)=>ascending(values.get(a)??null,values.get(b)??null))
 })
-function headerValue(node:NodeOption,field:string):number|null{
+function headerValue(node:NodeOption,field:string):number|string|null{
  const evidence=qualityData.value[key(node)]
  if(field==='responseRate'||field==='volatility')return weeklyStats.value[weeklyHistoryKey(node)]?.all[field]??null
  if(field.startsWith('site:')||field==='verdict'){
   if(evidence&&(!evidence.reads.latency.complete||!evidence.reads.monitor.complete))return null
+  if(field==='verdict'&&w.project.value==='combined'){
+   const values=targets.filter(site=>w.displayTargets.value.includes(site.id)).flatMap(site=>{
+    const point=latencyRowPoint(node,site.id),value=latencyCellValue(point,site.id)??point?.value
+    return value!=null?[value]:[]
+   })
+   return inspectorMedian(values)
+  }
   if(field==='verdict')return ({bad:0,warn:1,good:2,empty:null} as const)[rowVerdict(node).tone]??null
   const target=field.slice(5),detailed=w.project.value==='latency'
   return latencyCellValue(detailed?latestLatencyRound(node):metricPoint(node,target),target,detailed)
  }
- if(field==='download'||field==='downloadTime'){
+ if(field==='download'||field==='downloadTime'||field==='downloadPeak'){
   if(evidence&&!evidence.reads.download.complete)return null
   const attempt=tableDownload(node)
-  return field==='download'?downloadReading(attempt)?.value??null:Date.parse(attempt?.finished_at||attempt?.result?.finished_at||'')||null
+  if(field==='download')return downloadReading(attempt)?.value??null
+  if(field==='downloadPeak')return downloadPeakSpeed(attempt)??downloadAverageSpeed(attempt)
+  return Date.parse(attempt?.finished_at||attempt?.result?.finished_at||'')||null
  }
  if(evidence&&!evidence.reads.service.complete)return null
  const landing=exitLanding(node,[...(evidence?.services||[]),...(w.services.value[key(node)]||[])])
  if(field==='purity')return landing.purity.score
  if(field==='cfChallenge')return landing.cfChallenge.rank
+ if(field==='exitIp')return landing.ip&&landing.ip!=='—'?landing.ip:null
+ if(field==='landing')return ({bad:0,warn:1,good:2,empty:null} as const)[landing.tone]??null
+ if(field==='ipKind'){
+  const kind=landing.ipKind
+  if(!kind.measured)return null
+  if(kind.origin==='broadcast')return 1
+  if(kind.type==='residential'&&kind.origin==='native')return 6
+  if(kind.type==='residential')return 5
+  if(kind.type==='mobile')return 4
+  if(kind.type==='unknown'&&kind.origin==='native')return 3
+  if(kind.type==='idc')return 2
+  return 2
+ }
+ if(field==='route'){
+  const entry=w.entryFor(node)
+  const kind=routeKind(entryCountry(entry),landing.consensusRegion,isAnycast(entry),w.localPosition.value?.country_code)
+  if(!kind||(!landing.exitKnown&&kind!=='anycast'))return null
+  return ({direct:4,cross:4,anycast:3,transit:2,domestic:1} as const)[kind]
+ }
  const groups=field==='service'?displayUnlockGroups.value:displayUnlockGroups.value.filter(g=>g.id===field.slice(7))
  const catalog=w.catalog.value.filter(rule=>!isReputationRule(rule))
  const results=groups.map(g=>unlockGroupDetailFor(g,catalog,id=>shownService(node,id),w.nodeUnlockRegion(node),w.skipByApplicableRegions.value,w.settings.value?.unlock_service_regions,landing.ipKind.type))
@@ -279,7 +301,7 @@ function serviceTone(n:NodeOption,id:string){const a=shownService(n,id);return a
 function hoveredDownloadPoint(n:NodeOption){return hoverMode.value==='download'&&hoverNode.value&&key(hoverNode.value)===key(n)?activeRound.value:null}
 function tableDownload(n:NodeOption){
  const displayed=w.summaryDownload(n)
- if(!['download','downloadTime'].includes(headerSort.value))return displayed
+ if(!['download','downloadTime','downloadPeak'].includes(headerSort.value))return displayed
  return downloadEvidence([...(qualityData.value[key(n)]?.downloads||[]),...(displayed?[displayed]:[])]).latest
 }
 function downloadMetric(n:NodeOption){
@@ -394,7 +416,7 @@ watch(servicePage,closeHover)
 watch(servicePages,count=>servicePage.value=Math.min(servicePage.value,count))
 watch([()=>w.project.value,()=>w.hours.value,currentPage],closeHover)
 watch(()=>w.displayTarget.value,()=>{if(keepOpen.value&&hoverNode.value){activeRound.value=null;inlineTab.value='history'}else closeHover()})
-provide(homeModelKey,{refreshWeekly,weeklyStats,weeklyErrors,weeklyProgress,weeklyReady,headerSort,headerSortReady,headerSortDirection,sortHeader,compareOpen,compareTarget,compareNodes:qualityCompareNodes,compareCompatible,comparisonDownloadStatus,closeComparison,servicePoints:(n:NodeOption,id:string)=>presentation.points(n,'service',w.displayTarget.value,id),hiddenSelectedCount,qualityFiltersPending,monitorData,monitorErrors,monitorHTTPErrors,httpPoints,visibleServices,servicePage,servicePages,servicesPerPage,chosen,filterProfiles,protocolChoices,protocolFilter,qualityGate,qualitySort,qualityLoading,qualityErrors,qualityCutoff,allQualityReady,readQualityNodes,siteSummaries,pageSize,setPageSize,pageNodes,visibleNodes,runNodes,currentPage,totalPages,picker,filterRegions,qualityData,nodeActivities,displayServices,sourceLabel,metricPoint,latestLatencyRound,latencyRowPoint,rowVerdict,siteMetric,siteContext,siteReason,sitePoints,rowPoints,downloadMetric,downloadMetricTone,downloadMetricContext,serviceMetric,serviceTone,shownService,showService,showServiceEvidence,hoverNode,hoverMode,hoverTarget,hoverService,hoverPoints,activeRound,inlineTab,inlineHistorySource,keepOpen,inspectRound,openRound,leaveRound,keepRound,closeHover,expandHistory,openComparison,openCombinedPlan,runLabel})
+provide(homeModelKey,{refreshWeekly,weeklyStats,weeklyErrors,weeklyProgress,weeklyReady,headerSort,headerSortReady,sortHeader,compareOpen,compareTarget,compareNodes:qualityCompareNodes,compareCompatible,comparisonDownloadStatus,closeComparison,servicePoints:(n:NodeOption,id:string)=>presentation.points(n,'service',w.displayTarget.value,id),hiddenSelectedCount,qualityFiltersPending,monitorData,monitorErrors,monitorHTTPErrors,httpPoints,visibleServices,servicePage,servicePages,servicesPerPage,chosen,filterProfiles,protocolChoices,protocolFilter,qualityGate,qualitySort,qualityLoading,qualityErrors,qualityCutoff,allQualityReady,readQualityNodes,siteSummaries,pageSize,setPageSize,pageNodes,visibleNodes,runNodes,currentPage,totalPages,picker,filterRegions,qualityData,nodeActivities,displayServices,sourceLabel,metricPoint,latestLatencyRound,latencyRowPoint,rowVerdict,siteMetric,siteContext,siteReason,sitePoints,rowPoints,downloadMetric,downloadMetricTone,downloadMetricContext,serviceMetric,serviceTone,shownService,showService,showServiceEvidence,hoverNode,hoverMode,hoverTarget,hoverService,hoverPoints,activeRound,inlineTab,inlineHistorySource,keepOpen,inspectRound,openRound,leaveRound,keepRound,closeHover,expandHistory,openComparison,openCombinedPlan,runLabel})
 onMounted(()=>monitorTimer=setInterval(()=>{if(w.page.value==='home'&&document.visibilityState==='visible')void readMonitor(true)},30000));onBeforeUnmount(()=>{weeklyGeneration++;weeklyWaiting.clear();clearWeeklyBuffer();qualityGeneration++;clearQualityBuffer();latestServiceCache.clear();monitorFetchedAt.clear();presentation.clear();monitorGeneration++;clearTimeout(hoverTimer);clearInterval(monitorTimer)})
 </script>
 <template>

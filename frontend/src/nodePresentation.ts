@@ -19,14 +19,16 @@ export function sourceForNode(node:NodeOption,sources:Map<string,NodeSource>):No
 
 // Combined browsing can collapse a shared endpoint across accounts; account
 // histories and explicitly selected measurement scopes remain independent.
-export function uniqueAirportNodes(nodes:NodeOption[],sources:Map<string,NodeSource>):NodeOption[]{
-  const seen=new Set<string>()
-  return nodes.filter(n=>{
-    if(!n.node_identity_key)return true
+export function uniqueAirportNodes(nodes:NodeOption[],sources:Map<string,NodeSource>,preferred?:NodeOption):NodeOption[]{
+  const positions=new Map<string,number>(),visible:NodeOption[]=[]
+  for(const n of nodes){
+    if(!n.node_identity_key){visible.push(n);continue}
     const identity=JSON.stringify([sourceForNode(n,sources).airportId,n.node_identity_key,n.display_name.trim().toLowerCase()])
-    if(seen.has(identity))return false
-    seen.add(identity);return true
-  })
+    const position=positions.get(identity)
+    if(position===undefined){positions.set(identity,visible.length);visible.push(n)}
+    else if(preferred&&key(n)===key(preferred)&&n.node_key===preferred.node_key)visible[position]=n
+  }
+  return visible
 }
 
 export function nodeRegion(node:NodeOption){const code=node.country_code?.trim().toUpperCase();return /^[A-Z]{2}$/.test(code||'')&&!['XX','ZZ'].includes(code)?code:'unknown'}

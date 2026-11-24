@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {computed,nextTick,onBeforeUnmount,onMounted,ref,watch} from 'vue'
+import {ascending} from '../columnSort'
 import LatencyReportImage from './LatencyReportImage.vue'
 import ReportMs from './ReportMs.vue'
 import {saveFile} from '../api'
@@ -65,7 +66,6 @@ const detailStatus=ref<'all'|LatencyReportStatus>('all')
 const detailRegion=ref('all')
 const detailProtocol=ref('all')
 const detailSort=ref<'default'|'name'|'first'|'stable'>('default')
-const detailSortDir=ref<1|-1>(1)
 const detailShowAll=ref(false)
 const detailSubset=ref<{label:string;keys:Set<string>}|null>(null)
 const detailSearch=ref('')
@@ -104,12 +104,10 @@ function openNodeDetail(row:LatencyReportRow,pool?:LatencyReportRow[]){
  inspectedPool.value=(pool&&pool.length?pool:filteredRows.value.length?filteredRows.value:report.value.rows).map(r=>r.key)
 }
 function closeNodeDetail(){inspectedKey.value=null}
-function clearDetailFilters(){detailStatus.value='all';detailRegion.value='all';detailProtocol.value='all';detailSort.value='default';detailSortDir.value=1;detailSubset.value=null;detailSearch.value=''}
+function clearDetailFilters(){detailStatus.value='all';detailRegion.value='all';detailProtocol.value='all';detailSort.value='default';detailSubset.value=null;detailSearch.value=''}
 function toggleDetailSort(col:'name'|'first'|'stable'){
- if(detailSort.value===col){
-  if(detailSortDir.value===1)detailSortDir.value=-1
-  else{detailSort.value='default';detailSortDir.value=1}
- }else{detailSort.value=col;detailSortDir.value=1}
+ detailSort.value=detailSort.value===col?'default':col
+ detailPage.value=1
 }
 watch(()=>props.batch.batch_id,()=>{inspectedKey.value=null;reportView.value='overview';clearDetailFilters();detailShowAll.value=false;diffBatchId.value='auto';diffCategory.value='all';detailPage.value=1})
 watch([detailStatus,detailRegion,detailProtocol,detailSearch,detailSubset],()=>{detailPage.value=1})
@@ -222,13 +220,10 @@ const filteredRows=computed(()=>{
  })
  if(detailSort.value==='default')return list
  return list.slice().sort((a,b)=>{
-  if(detailSort.value==='name')return nodeDisplayName(a.item).localeCompare(nodeDisplayName(b.item),'zh-CN')*detailSortDir.value
+  if(detailSort.value==='name')return ascending(nodeDisplayName(a.item),nodeDisplayName(b.item))
   const av=detailSort.value==='first'?a.firstMedianMs:a.stableMs
   const bv=detailSort.value==='first'?b.firstMedianMs:b.stableMs
-  if(av===null&&bv===null)return 0
-  if(av===null)return 1
-  if(bv===null)return -1
-  return (av-bv)*detailSortDir.value
+  return ascending(av,bv)
  })
 })
 const detailPageCount=computed(()=>detailShowAll.value?1:Math.max(1,Math.ceil(filteredRows.value.length/detailPageSize)))
@@ -633,7 +628,7 @@ function inspectedAlerts(row:LatencyReportRow){
    </div>
    <div class="latency-report-table-wrap">
     <table>
-     <thead><tr><th><button type="button" class="report-sort-head" @click="toggleDetailSort('name')">节点<em v-if="detailSort==='name'">{{detailSortDir===1?'↑':'↓'}}</em></button></th><th>结果</th><th class="number"><button type="button" class="report-sort-head" @click="toggleDetailSort('first')">首次中位<em v-if="detailSort==='first'">{{detailSortDir===1?'↑':'↓'}}</em></button></th><th class="number"><button type="button" class="report-sort-head" @click="toggleDetailSort('stable')">稳定中位<em v-if="detailSort==='stable'">{{detailSortDir===1?'↑':'↓'}}</em></button></th><th>各站稳定延迟</th><th>说明</th></tr></thead>
+     <thead><tr><th :aria-sort="detailSort==='name'?'ascending':'none'"><button type="button" class="report-sort-head" @click="toggleDetailSort('name')">节点<em v-if="detailSort==='name'">↑</em></button></th><th>结果</th><th class="number" :aria-sort="detailSort==='first'?'ascending':'none'"><button type="button" class="report-sort-head" @click="toggleDetailSort('first')">首次中位<em v-if="detailSort==='first'">↑</em></button></th><th class="number" :aria-sort="detailSort==='stable'?'ascending':'none'"><button type="button" class="report-sort-head" @click="toggleDetailSort('stable')">稳定中位<em v-if="detailSort==='stable'">↑</em></button></th><th>各站稳定延迟</th><th>说明</th></tr></thead>
      <tbody>
       <tr v-for="row in pagedRows" :key="row.key" class="clickable-row" @click="openNodeDetail(row,filteredRows)">
        <td><button type="button" class="text-button" @click.stop="openNodeDetail(row,filteredRows)">{{nodeDisplayName(row.item)}}</button><small>{{row.airportName}}<template v-if="row.nodeType!=='未知协议'"> · {{row.nodeType}}</template></small></td>

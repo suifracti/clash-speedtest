@@ -26,10 +26,17 @@
 | Windows Clash Verge 命名管道、同名节点换端口变更抵消、地区首选次选与非 Darwin 场景推荐 | L-015；adapter/controller/mihomo/dial_windows.go；core/profiles/node_changes.go；frontend/src/recommendations.ts；frontend/src/components/RecommendationView.vue |
 | 延迟 Keep-Alive 复用失效、Windows TUN Fake-IP DNS 拖慢物理出口、测量轮次并发锁竞争 | L-016；core/speedtester/speedtester.go；core/speedtester/physical_entry_other.go；core/history/measurement_round.go |
 | UI 像 AI 通用模板、只换皮、重构漏功能；每个功能块开工前要读记忆 | L-017；docs/ui-rebuild-20261118.md；Obsidian 项目 UI 研究与 Decisions |
+| 表头排序、检测进度查看站点、报告样本口径 | L-018；frontend/src/columnSort.ts；frontend/src/components/LatencyReport.vue |
 
 ## 默认自动执行：不等用户提醒
 
 日常记录与联动继承 Vault 根 `AGENTS.md` 的“2 项目记录”，全周期复盘见“5.1 全周期复盘与覆盖”。通过[仓库 AGENTS](../AGENTS.md)定位总规则和本项目主源；本页只维护场景索引、具体经验与已有覆盖点。
+
+## L-018 表头只按正序，再点恢复
+
+适用：工作台列排序、检测进度结果、延迟报告里的中位和轮次对比。
+
+表头第一次按可见指标正序，第二次恢复基础顺序。数值从小到大，名字自然排序，时间从早到晚，未测置后。综合延迟按可见中位值，出口 IP 按所见的脱敏地址，不把已测项排成同一个值。此规则覆盖工作台、延迟报告和机场体检。进度徽章悬浮可看站点采样；报告标题区分四站综合和单站。
 
 ## L-001 包装成功不等于核心已更新
 
@@ -135,6 +142,8 @@
 2026-11-19 停用两项收敛与自定义解锁分组：按既定边界从在用目录（`core/publicservice.Catalog()`、`core/autopick.GroupServices`、`frontend/src/unlock-config.json`、`frontend/src/autoPick.ts`）下线 `disney_unlock` 与 `prime_video`，不再出现在新计划与自动精选中，同时保留 `RuleFor(...)` 与历史队列/详情只读展示；`antigravity` 继续保留于手动自定义解锁列表、`TestPlanModal` 模型风险提示、`PeriodicSamplingPanel` 可选开关及 `SettingsView` 账号凭据管理（并仍在 `autopick` 与常规工作台全选组中默认排除）。同日进一步记录并展示实测证据（`antigravity.go` v6/v7 接回 Google 内部 `v1internal:fetchUserInfo` 地区识别并提前至 `streamGenerateContent?alt=sse` 之前执行，确保 `CN`/`HK`/`MO` 在模型生成前即阻断为 `region_blocked` 且零生成请求；模型筛选改用 `selectAntigravityFlashModels` 优先 `gemini-3.8-flash-low`/`gemini-3.8-flash*` 及更高版本 Flash 降序，且将 `generationConfig` 由原先触发思考模型 `MAX_TOKENS` 空输出的 `maxOutputTokens: 16` 改为 `maxOutputTokens: 256` 并对非 `-thinking` 模型附带 `thinkingConfig.thinkingBudget: 0`，对 `-thinking` 模型使用 `maxOutputTokens: 512`；对照 `7549994` 修复 `core/auth/oauth.go` 对已过期 `oauth_creds.json` 刷新失败仍静默回传过期 token 与 Windows 系统代理缺失的问题，在 `DataRoot/.antigravity_creds.json` 持久化 `refresh_token`/`expiry_date`，启动、状态读取、检测前及收到 `401 auth_failed` 时通过互斥 single-flight 自动刷新/重检并即时重试一次；多次采样共享首轮项目与模型清单以减半请求耗时，放宽 `probe_budget` 至每样本 5 socket 及 `4/8` 次采样 30 秒预算，并在 `checker.go`、`QueueModal.vue`、`TestPlanModal.vue`、`unlock.ts` 补齐 `google_ttfb_ms`、`blocked_ips` 偶发送中/漂移标记与行内一键“检测 / 刷新凭据”操作）并在 `AppSettings.auto_discover_credentials` / `SettingsView.vue` 提供启动自动检测本地凭据开关（开启时在启动时检测一次已知路径凭据并保存 `.antigravity_token.meta` 来源信息，关闭后仍可手动查找）。`UnlockPicker.vue` 将全部解锁分组（含默认 `AI`/`流媒体`/`日本` 及自定义分组）统一为持久化可编辑结构（`localStorage` `cst.unlock-groups.v2`，兼容旧 `cst.custom-unlock-groups`），修复分组卡片文字过窄截断（`流...`/`日...`），默认分组聚焦高区分度项（`AI`：`Google Gemini`；`流媒体`：`Netflix` / `TikTok`；`日本`：`ABEMA` / `U-NEXT` / `DMM TV` / `radiko` / `Hulu Japan` / `FOD`），将 `ChatGPT`/`Claude`/`Spotify`/`YouTube Premium` 收纳进按需展开的“显示传统参考项”开关并保持全部后台规则及历史回放兼容，支持点击`编辑`直接高亮编辑条并展开按类别（`AI 服务` / `流媒体` / `日本地区`）分好组的明细列表（含每组快捷全选/取消与显式加入 `antigravity`）、删除任意不想要的默认或自定义分组以及一键“恢复默认分组”；`ServicePicker.vue` 同步按 `出口地址与机房` / `IP 风险与纯净度` / `地区与人机验证` 分类编组；`base.css` 修复原生 `<dialog class="modal">` 的圆角溢出及 `cst-plan-step` 对 `.plan-tab-panel` 顶部边框/内边距的误覆盖；`TestPlanModal.vue` 将原先垂直堆叠的四段手风琴重构为单区标签页（`plan-tabs`，仍通过 `v-show` 保留已启用项目状态），大幅消除长页滚动；后端 `core/publicservice/cloudflare_challenge.go` 新增 `cloudflare_challenge`（`Cloudflare 人机验证检测`，归入 `IP信誉/纯净度` → `地区与人机验证`），以普通浏览器请求头依次观察 ChatGPT/Grok/Claude 三个代表性 Cloudflare 站点是否返回 `cf-mitigated: challenge` / Turnstile / `Just a moment`（仅记录不绕过），区分未触发（`profiled`）、部分弹盾（`verification_required`）与易弹盾（`challenge`）。
 
 ## L-007 订阅抓取路径、手动冷却豁免与换链接用量连续性
+
+跨版本突然看不到用量时先核实运行目录与数据库。曾按 EXE 所在目录衍生 `data`，已恢复用户固定目录并支持 `data-root.txt` 选定已有根。显式 `--data-dir` 和环境变量优先，保留旧库和 URL 账户哈希。
 
 适用：解释订阅刷新走了哪条网络路径或为何失败；手动刷新被间隔限制；修改订阅链接后节点缓存、失败状态与 14 天/今日用量的衔接。
 

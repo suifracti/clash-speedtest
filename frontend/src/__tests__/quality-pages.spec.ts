@@ -1,6 +1,6 @@
 import {mount,flushPromises} from '@vue/test-utils'
 import {ref} from 'vue'
-import {expect,it,vi} from 'vitest'
+import {beforeEach,expect,it,vi} from 'vitest'
 import AirportReport from '../components/AirportReport.vue'
 import RecommendationView from '../components/RecommendationView.vue'
 import {workspaceKey} from '../workspace'
@@ -14,6 +14,12 @@ vi.mock('../usageDaily',async original=>({...await original<typeof import('../us
 const nodes=['a','b'].map((profile_id,index)=>({profile_id,node_key:profile_id,node_identity_key:profile_id,config_revision_key:'r',display_name:'Node',country_code:index?'SG':'JP'}) as NodeOption)
 const w={hours:ref(24),project:ref('combined'),inspectNode:ref<NodeOption|null>(null),page:ref('recommend'),airports:ref([{id:'a',name:'A'},{id:'b',name:'B'}]),nodes:ref(nodes),catalog:ref<unknown[]>([]),nodeAirportId:(n:NodeOption)=>n.profile_id,nodeAirportName:()=>'',nodeSubscriptionName:()=>'',notify:vi.fn(),fail:vi.fn()}
 const global={provide:{[workspaceKey as symbol]:w},stubs:{TrendChart:true}}
+beforeEach(()=>{
+ global.provide[workspaceKey as symbol]={...w}
+ w.nodes.value=nodes
+ w.catalog.value=[]
+ vi.mocked(readQualityBatch).mockClear()
+})
 it('reads only the selected airport and reads again when it changes',async()=>{
  vi.mocked(readQualityBatch).mockClear();const wrapper=mount(AirportReport,{global});await flushPromises()
  expect(readQualityBatch).toHaveBeenLastCalledWith([nodes[0]],expect.any(String),expect.any(String))
@@ -26,6 +32,24 @@ it('reads seven days for recommendations and labels that window',async()=>{
  const [selected,since,until]=vi.mocked(readQualityBatch).mock.calls[0]!
  expect(selected).toEqual(nodes);expect(Date.parse(until)-Date.parse(since)).toBe(7*86400000);expect(wrapper.text()).toContain('近 7 天');wrapper.unmount()
 })
+it('filters by region and reuses the same snapshot when returning before the refresh interval',async()=>{
+ const started=Date.now(),clock=vi.spyOn(Date,'now').mockReturnValue(started)
+ let wrapper=mount(RecommendationView,{global});await flushPromises()
+ await wrapper.get('select[aria-label="推荐地区"]').setValue('JP');await flushPromises()
+ expect(wrapper.findAll('.region-result h3').map(row=>row.text())).toEqual(['日本'])
+ expect(readQualityBatch).toHaveBeenCalledTimes(1)
+ wrapper.unmount()
+ clock.mockReturnValue(started+9*60_000)
+ wrapper=mount(RecommendationView,{global});await flushPromises()
+ expect(readQualityBatch).toHaveBeenCalledTimes(1)
+ await wrapper.get('.recommendation-page .page-header button').trigger('click');await flushPromises()
+ expect(readQualityBatch).toHaveBeenCalledTimes(2)
+ wrapper.unmount()
+ clock.mockReturnValue(started+20*60_000)
+ wrapper=mount(RecommendationView,{global});await flushPromises()
+ expect(readQualityBatch).toHaveBeenCalledTimes(3)
+ wrapper.unmount();clock.mockRestore()
+})
 it('keeps regions visible with missing evidence and opens the historical reference for the selected service',async()=>{
  let wrapper=mount(RecommendationView,{global});await flushPromises()
  expect(wrapper.findAll('.region-result h3').map(row=>row.text())).toEqual(expect.arrayContaining(['日本','新加坡']))
@@ -35,6 +59,7 @@ it('keeps regions visible with missing evidence and opens the historical referen
  w.catalog.value=[{service_id:'ai',category:'AI',name:'AI',result_kind:'account_availability'}]
  vi.mocked(readQualityBatch).mockResolvedValueOnce({[key(nodes[0])]:{tests:[],monitor:[],downloads:[],services:[{...nodes[0],service_id:'ai',finished_at:'2026-10-19T00:00:00Z',node_key:'old',config_revision_key:'old-revision',execution_state:'completed',persistence_state:'saved',rule:{name:'AI'},result:{outcome:'matched'}}],reads:{latency:{complete:true},monitor:{complete:true},download:{complete:true},service:{complete:true}},complete:true} as unknown as QualityEvidence})
  wrapper=mount(RecommendationView,{global});await flushPromises()
+ await wrapper.get('.recommendation-page .page-header button').trigger('click');await flushPromises()
  await wrapper.get('.recommendation-tabs button:nth-child(3)').trigger('click')
  expect(wrapper.text()).toContain('待复测')
  expect(wrapper.text()).not.toContain('导出 Clash')

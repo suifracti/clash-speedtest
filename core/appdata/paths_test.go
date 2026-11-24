@@ -82,3 +82,42 @@ func TestResolveExplicitFlagWinsOverEnvironmentAndRequiresAbsolute(t *testing.T)
 		t.Fatal("relative explicit data directory should be rejected")
 	}
 }
+
+func TestSavedDataDirectoryIsReusedAndDoesNotFallbackWhenMissing(t *testing.T) {
+	base, original := t.TempDir(), t.TempDir()
+	switch runtime.GOOS {
+	case "windows":
+		t.Setenv("LOCALAPPDATA", base)
+	case "darwin":
+		t.Setenv("HOME", base)
+	default:
+		t.Setenv("XDG_CONFIG_HOME", base)
+	}
+	t.Setenv(DataDirEnv, "")
+	userRoot, err := defaultDataRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(userRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pin := filepath.Join(userRoot, "data-root.txt")
+	if err := os.WriteFile(pin, []byte(original+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	paths, err := Resolve("")
+	if err != nil || paths.DataRoot != original || !paths.Explicit {
+		t.Fatalf("saved selection was not used: %+v, %v", paths, err)
+	}
+	if err := os.WriteFile(pin, []byte(filepath.Join(original, "missing")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Resolve(""); err == nil {
+		t.Fatal("a missing configured directory should not open an empty one elsewhere")
+	}
+	t.Setenv(DataDirEnv, original)
+	paths, err = Resolve("")
+	if err != nil || paths.DataRoot != original {
+		t.Fatalf("environment must override the saved selection: %+v, %v", paths, err)
+	}
+}

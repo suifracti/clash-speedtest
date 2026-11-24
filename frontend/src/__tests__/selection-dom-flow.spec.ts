@@ -32,6 +32,21 @@ beforeEach(()=>{window.localStorage.clear();window.sessionStorage.clear();vi.cle
 afterEach(()=>{expect(vi.mocked(fetch).mock.calls.filter(([url,options])=>!((String(url)==='/api/clash/node-status'&&options?.method==='POST')||(String(url)==='/api/clash/usage'&&options?.method==='GET')))).toEqual([]);wrapper?.unmount();w?.dispose();wrapper=undefined;w=undefined;document.body.innerHTML='';vi.unstubAllGlobals()})
 
 describe('node selection through DOM controls',()=>{
+  it('reveals a recommended node from another airport in all airports filtered to its region',async()=>{
+    const duplicate={...b,profile_id:'sub-a-one',node_key:'other-node',node_identity_key:'other-identity',country_code:'US'}
+    const {w,wrapper}=attach([a,aTwo,b,duplicate],['airport-a'])
+    w.airportFilter.value='airport-a';w.search.value='Node A';w.region.value='JP'
+    w.selectedKeys.value=[key(a)]
+    await flushPromises()
+    w.viewRequest.value={...b,revealRegion:true};await flushPromises()
+    expect(w.airportFilter.value).toBe('all')
+    expect(w.region.value).toBe('US')
+    expect(wrapper.findAll(`${rows} .hd-node-open`)).toHaveLength(2)
+    expect(wrapper.get('.hd-tr.focus').attributes('data-node-key')).toBe(key(b))
+    expect(w.inspectNode.value).toBeNull()
+    expect(w.selectedKeys.value).toEqual([key(a)])
+  })
+
   it('keeps reading outside the airport scope without adding an invisible selection or expanding that scope',async()=>{
     const {w,wrapper}=attach([a,aTwo,b],['airport-a','airport-b']);await flushPromises()
     await wrapper.get('.hd-node-open').trigger('click');await flushPromises()
