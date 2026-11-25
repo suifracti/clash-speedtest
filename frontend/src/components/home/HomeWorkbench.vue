@@ -598,7 +598,8 @@ function keyNav(e:KeyboardEvent){
       <template v-if="weeklyProgress.failed"> · {{weeklyProgress.failed}} 个节点读取失败</template>
       <button v-if="weeklyProgress.processed===weeklyProgress.total" class="hd-link" @click="m.refreshWeekly()">更新七天记录</button>
     </p>
-    <p v-if="m.headerSort.value&&!m.headerSortReady.value&&!['responseRate','volatility'].includes(m.headerSort.value)" class="hd-muted hd-sort-status" role="status">正在读取排序所需的历史…</p>
+    <p v-if="m.headerSort.value&&!m.headerSortReady.value&&!['responseRate','volatility'].includes(m.headerSort.value)" class="hd-muted hd-sort-status" role="status">已按当前读数排序，正在补读本范围的历史…</p>
+    <p v-if="m.headerSortNote.value" class="hd-muted hd-sort-status" role="status">{{m.headerSortNote.value}}</p>
 
     <div v-if="!exitMode&&w.project.value==='service'" class="hd-service-subbar">
       <nav class="hd-seg matrix-switch" aria-label="解锁结果视图"><button :aria-pressed="serviceView==='nodes'" @click="serviceView='nodes'">按节点</button><button :aria-pressed="serviceView==='services'" @click="serviceView='services'">按服务</button></nav>

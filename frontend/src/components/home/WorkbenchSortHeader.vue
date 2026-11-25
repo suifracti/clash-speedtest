@@ -7,9 +7,13 @@ const active=computed(()=>m.headerSort.value===props.column)
 </script>
 
 <template>
- <span role="columnheader" :aria-sort="active&&m.headerSortReady.value?'ascending':'none'">
+ <span role="columnheader" :aria-sort="active?'ascending':'none'">
   <button type="button" class="hd-column-sort" :class="{ 'history-sort': column==='responseRate'||column==='volatility' }"
    :aria-pressed="active" :title="active?'再点恢复原来的顺序':'按'+label+'正序排列，未测放最后'"
-   @click="m.sortHeader(column)">{{label}}<span v-if="active" aria-hidden="true">{{m.headerSortReady.value?'↑':'…'}}</span></button>
+   @click="m.sortHeader(column)">{{label}}<span v-if="active" aria-hidden="true">↑</span></button>
  </span>
 </template>
+
+<style scoped>
+.hd-column-sort{width:100%;min-height:28px;text-align:left}
+</style>

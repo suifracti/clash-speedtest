@@ -111,12 +111,13 @@ it('stops starting reads for an abandoned page while keeping one shared request 
   expect(reads.mock.calls.slice(6).map(([node])=>key(node))).toEqual(pageKeys)
 })
 
-it('waits for the full seven-day sort and filter range before applying the known results',async()=>{
+it('sorts known seven-day values immediately and waits for complete evidence only to filter',async()=>{
   const fixture=nodes().filter(n=>n.profile_id===profileIds[0]).slice(0,25)
-  const best=fixture.at(-1)!,unreadable=fixture[2]!
+  const best=fixture.at(-1)!,partial=fixture[1]!,unreadable=fixture[2]!
   const at=new Date(Date.now()-60_000).toISOString()
   const saved:LatencyTest={...best,attempt_id:'later-page-good',node_type:best.type,requested_at:at,finished_at:at,status:'completed',latency_ms:34,total_samples:2,success_samples:2,failure_samples:0,persistence_state:'saved',samples:[1,2].map(seq=>({seq,target:'https://speed.cloudflare.com/__down?bytes=1',timestamp:at,latency_ms:34,success:true}))}
-  vi.mocked(api.latencyHistory).mockImplementation(async n=>({tests:n.node_key===best.node_key?[saved]:[],has_more:false,complete:true}))
+  const incomplete:LatencyTest={...saved,...partial,attempt_id:'known-partial',success_samples:1,failure_samples:1,samples:[saved.samples[0]!,{...saved.samples[1]!,success:false,latency_ms:0,error:'timeout'}]}
+  vi.mocked(api.latencyHistory).mockImplementation(async n=>({tests:n.node_key===best.node_key?[saved]:n.node_key===partial.node_key?[incomplete]:[],has_more:false,complete:true}))
   let release!:()=>void
   vi.mocked(api.latencyHistoryScopes).mockImplementation(n=>{
     if(n.node_key===best.node_key)return new Promise(resolve=>{release=()=>resolve([])})
@@ -124,12 +125,16 @@ it('waits for the full seven-day sort and filter range before applying the known
     return Promise.resolve([])
   })
   const {workspace,wrapper}=attachHome({nodes:fixture});workspace.project.value='latency';await flushPromises()
-  const first=wrapper.get('.hd-row-scroll [role="row"] .hd-node-open').text()
+  const rowKeys=()=>wrapper.findAll('.hd-row-scroll [data-node-key]').map(row=>row.attributes('data-node-key'))
+  const original=rowKeys()
   const sort=wrapper.findAll('.history-sort').find(button=>button.text().includes('7 天响应率'))!
   await sort.trigger('click');await flushPromises()
   expect(wrapper.text()).toContain('正在读取近 7 天记录')
-  expect(sort.element.parentElement?.getAttribute('aria-sort')).toBe('none')
-  expect(wrapper.get('.hd-row-scroll [role="row"] .hd-node-open').text()).toBe(first)
+  expect(sort.element.parentElement?.getAttribute('aria-sort')).toBe('ascending')
+  expect(rowKeys()[0]).toBe(key(partial))
+  await sort.trigger('click');await flushPromises()
+  expect(rowKeys()).toEqual(original)
+  await sort.trigger('click');await flushPromises()
   await wrapper.get('select[aria-label="质量证据筛选"]').setValue('response');await flushPromises()
   expect(wrapper.get('.hd-run').attributes('disabled')).toBeDefined()
   workspace.toggleNode(fixture[0]!);await flushPromises()
@@ -141,6 +146,19 @@ it('waits for the full seven-day sort and filter range before applying the known
   expect(wrapper.findAll('.hd-row-scroll [data-node-key]').map(row=>row.attributes('data-node-key'))).toEqual([key(best)])
   expect(wrapper.text()).toContain('1 个节点读取失败')
   expect(wrapper.get('.hd-run').attributes('disabled')).toBeUndefined()
+})
+
+it('explains tied values and absent values without claiming the click was ignored',async()=>{
+ const fixture=nodes().filter(n=>n.profile_id===profileIds[0]).slice(0,2)
+ const {workspace,wrapper}=attachHome({nodes:fixture});workspace.project.value='latency';await flushPromises()
+ const sort=wrapper.findAll('.hd-column-sort')
+ await sort.find(button=>button.text()==='波动幅度')!.trigger('click');await flushPromises()
+ expect(wrapper.text()).toContain('这一列没有可排序的读数')
+ await sort.find(button=>button.text().startsWith('波动幅度'))!.trigger('click');await flushPromises()
+ expect(wrapper.text()).not.toContain('这一列没有可排序的读数')
+ workspace.nodes.value=fixture.map(node=>({...node,display_name:'同名测试节点'}));await flushPromises()
+ await sort.find(button=>button.text()==='节点')!.trigger('click');await flushPromises()
+ expect(wrapper.text()).toContain('这一列的值相同，保留原顺序')
 })
 
 it('sorts a station across pages, restores the previous order, and exposes page size above the list',async()=>{

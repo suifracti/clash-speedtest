@@ -63,12 +63,12 @@ function flushQualityBuffer(active:number){
  for(const [k,err] of Object.entries(errs)){qualityErrors.value[k]=err}
 }
 function resetQualityState(){qualityGeneration++;clearQualityBuffer();latestServiceCache.clear();qualityData.value={};qualityErrors.value={}}
-async function readQualityNodes(nodes:NodeOption[],refresh=false){
+async function readQualityNodes(nodes:NodeOption[],refresh=false,needed?:()=>boolean){
  if(refresh){resetQualityState();qualityCutoff.value=new Date().toISOString()}
  const active=qualityGeneration,until=qualityCutoff.value,since=new Date(Date.parse(until)-w.hours.value*3600000).toISOString();qualityLoading.value=true
  const targetNodes=nodes.filter(n=>!qualityData.value[key(n)]&&!pendingQualityData[key(n)])
  const batchMode=targetNodes.length>20,concurrency=targetNodes.length>40?2:4
- await mapLimited(targetNodes,concurrency,async n=>{const k=key(n),id=active+'|'+k;if(qualityInflight.has(id))return qualityInflight.get(id);const task=(async()=>{try{const e=await readQuality(n,since,until);if(active===qualityGeneration){if(batchMode){pendingQualityData[k]=e;delete pendingQualityErrors[k];pendingQualityCount++;if(pendingQualityCount>=20)flushQualityBuffer(active);else if(!qualityFlushTimer)qualityFlushTimer=setTimeout(()=>flushQualityBuffer(active),120)}else{qualityData.value[k]=e;w.landingEvidence.value[k]=e.services;delete qualityErrors.value[k]}}}catch(e){if(active===qualityGeneration){const msg=e instanceof Error?e.message:String(e);if(batchMode){pendingQualityErrors[k]=msg;pendingQualityCount++;if(pendingQualityCount>=20)flushQualityBuffer(active);else if(!qualityFlushTimer)qualityFlushTimer=setTimeout(()=>flushQualityBuffer(active),120)}else qualityErrors.value[k]=msg}}finally{qualityInflight.delete(id)}})();qualityInflight.set(id,task);await task})
+ await mapLimited(targetNodes,concurrency,async n=>{if(active!==qualityGeneration||needed&&!needed())return;const k=key(n),id=active+'|'+k;if(qualityInflight.has(id))return qualityInflight.get(id);const task=(async()=>{try{const e=await readQuality(n,since,until);if(active===qualityGeneration){if(batchMode){pendingQualityData[k]=e;delete pendingQualityErrors[k];pendingQualityCount++;if(pendingQualityCount>=20)flushQualityBuffer(active);else if(!qualityFlushTimer)qualityFlushTimer=setTimeout(()=>flushQualityBuffer(active),120)}else{qualityData.value[k]=e;w.landingEvidence.value[k]=e.services;delete qualityErrors.value[k]}}}catch(e){if(active===qualityGeneration){const msg=e instanceof Error?e.message:String(e);if(batchMode){pendingQualityErrors[k]=msg;pendingQualityCount++;if(pendingQualityCount>=20)flushQualityBuffer(active);else if(!qualityFlushTimer)qualityFlushTimer=setTimeout(()=>flushQualityBuffer(active),120)}else qualityErrors.value[k]=msg}}finally{qualityInflight.delete(id)}})();qualityInflight.set(id,task);await task})
  flushQualityBuffer(active)
  if(active===qualityGeneration)qualityLoading.value=false
 }
@@ -84,8 +84,7 @@ watch([savedQualityVersion,()=>w.busy.value],([version,busy])=>{
  appliedQualityVersion=version
  resetQualityState();qualityLoading.value=false;qualityCutoff.value=new Date().toISOString()
  if(w.page.value!=='home')return
- const quick=qualityView.value,full=metricHeader.value||(quick?(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing'):(siteSort.value!=='existing'||siteGate.value!=='all'))
- if(quick||full||compareOpen.value)void readQualityNodes(full?w.proxyNodes.value:[...new Map([...pageNodes.value,...(compareOpen.value?qualityCompareNodes.value:[])].map(n=>[key(n),n])).values()])
+ if(qualityView.value||modeQualityNeedsAll()||metricHeader.value||compareOpen.value)void readCurrentQuality(compareOpen.value?qualityCompareNodes.value:[])
 })
 const compareCompatible=computed(()=>{const g=qualityCompareNodes.value.map(n=>{const e=qualityData.value[key(n)];const g=e?qualityGroups(e.tests,e.monitor,compareTarget.value)[0]:undefined;return e&&latencyReadComplete(e,g)?g:undefined});return g.length>1&&g.every(v=>v?.comparable&&!v.insufficient&&v.key===g[0]?.key)})
 const comparisonDownloadStatus=computed(()=>{
@@ -125,12 +124,11 @@ const usesWeeklyHistory=computed(()=>['latency','combined'].includes(w.project.v
 const weeklyFullScope=computed(()=>qualityGate.value==='response'||weeklyColumn.value)
 function weeklyRead(id:string){return !!(weeklyStats.value[id]||weeklyErrors.value[id])}
 const weeklyReady=computed(()=>w.proxyNodes.value.every(n=>weeklyRead(weeklyHistoryKey(n))))
-const headerSortReady=computed(()=>headerSort.value==='name'||(weeklyColumn.value?weeklyReady.value:allQualityReady.value))
+const headerSortReady=computed(()=>headerSort.value==='name'||baseVisibleNodes.value.every(n=>weeklyColumn.value?weeklyRead(weeklyHistoryKey(n)):!!(qualityData.value[key(n)]||qualityErrors.value[key(n)])))
 function sortHeader(column:string){
  headerSort.value=headerSort.value===column?'':column
  currentPage.value=1;closeHover()
- if(headerSort.value&&headerSort.value!=='name'&&!weeklyColumn.value)void readQualityNodes(w.proxyNodes.value)
- if(headerSort.value==='route')void w.readEntries(w.proxyNodes.value,false).catch(()=>{})
+ if(headerSort.value==='route')void w.readEntries(baseVisibleNodes.value,false).catch(()=>{})
 }
 watch([()=>w.sort.value,()=>w.project.value],()=>headerSort.value='')
 watch(()=>w.displayTargets.value,ids=>{if(headerSort.value.startsWith('site:')&&!ids.includes(headerSort.value.slice(5)))headerSort.value=''})
@@ -139,17 +137,42 @@ const baseVisibleNodes=computed(()=>{let list=w.filteredNodes.value;if(!qualityV
  else if(qualityGate.value!=='all'&&qualityGate.value!=='response'&&allQualityReady.value)list=list.filter(n=>qualityMatchesGate(qualityData.value[key(n)],qualitySummaries.value[key(n)],qualityGate.value,qualityCutoff.value))
  if(qualitySort.value!=='existing'&&allQualityReady.value)list=[...list].sort((a,b)=>{const ga=qualitySummaries.value[key(a)],gb=qualitySummaries.value[key(b)],ea=qualityData.value[key(a)],eb=qualityData.value[key(b)];const valid=(g:typeof ga,e:QualityEvidence|undefined)=>!!g&&!!e&&latencyReadComplete(e,g)&&g.comparable&&(qualitySort.value==='observed'?g.success>=1:!g.insufficient)&&(qualitySort.value!=='p95'||g.success>=20);const av=valid(ga,ea),bv=valid(gb,eb);if(av!==bv)return av?-1:1;if(!av)return 0;const group=ga.key.localeCompare(gb.key);if(group)return group;return qualitySort.value==='rate'?(gb.successRate||0)-(ga.successRate||0):(qualitySort.value==='p95'?ga.p95! -gb.p95!:ga.p50! -gb.p50!)})
  return list})
-const visibleNodes=computed(()=>{
- const list=baseVisibleNodes.value,field=headerSort.value
- if(!field||!headerSortReady.value)return list
- const values=new Map(list.map(node=>[node,field==='name'?nodeDisplayName(node):headerValue(node,field)]))
- return [...list].sort((a,b)=>ascending(values.get(a)??null,values.get(b)??null))
+const headerReadScope=computed(()=>metricHeader.value?JSON.stringify(baseVisibleNodes.value.map(key).sort()):'')
+watch(headerReadScope,scope=>{if(scope&&w.page.value==='home')void readCurrentQuality()})
+function modeQualityNeedsAll(){
+ return qualityView.value?qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing':siteSort.value!=='existing'||siteGate.value!=='all'
+}
+function readCurrentQuality(extra:NodeOption[]=[],refresh=false){
+ const full=modeQualityNeedsAll(),sortScope=headerReadScope.value
+ const nodes=full?w.proxyNodes.value:sortScope?baseVisibleNodes.value:pageNodes.value
+ const unique=extra.length?[...new Map([...nodes,...extra].map(node=>[key(node),node])).values()]:nodes
+ return readQualityNodes(unique,refresh,!full&&sortScope&&!extra.length?()=>headerReadScope.value===sortScope&&w.page.value==='home':undefined)
+}
+const headerValues=computed(()=>{
+ const field=headerSort.value
+ return new Map(field?baseVisibleNodes.value.map(node=>[node,field==='name'?nodeDisplayName(node):headerValue(node,field)] as const):[])
+})
+const visibleNodes=computed<NodeOption[]>(previous=>{
+ const list=baseVisibleNodes.value
+ if(!headerSort.value)return list
+ const values=headerValues.value
+ const sorted=[...list].sort((a,b)=>ascending(values.get(a)??null,values.get(b)??null))
+ // Evidence can refresh without changing the ordered rows. Keep the page's
+ // existing history work alive when both the nodes and their order are equal.
+ return previous?.length===sorted.length&&sorted.every((node,index)=>node===previous[index])?previous:sorted
+})
+const headerSortNote=computed(()=>{
+ if(!headerSort.value||!headerSortReady.value)return ''
+ const all=[...headerValues.value.values()]
+ if(all.length<2)return ''
+ const known=all.filter(value=>typeof value==='string'||Number.isFinite(value))
+ if(!known.length)return '当前范围这一列没有可排序的读数'
+ return known.length===all.length&&new Set(known).size===1?'当前范围这一列的值相同，保留原顺序':''
 })
 function headerValue(node:NodeOption,field:string):number|string|null{
  const evidence=qualityData.value[key(node)]
  if(field==='responseRate'||field==='volatility')return weeklyStats.value[weeklyHistoryKey(node)]?.all[field]??null
  if(field.startsWith('site:')||field==='verdict'){
-  if(evidence&&(!evidence.reads.latency.complete||!evidence.reads.monitor.complete))return null
   if(field==='verdict'&&w.project.value==='combined'){
    const values=targets.filter(site=>w.displayTargets.value.includes(site.id)).flatMap(site=>{
     const point=latencyRowPoint(node,site.id),value=latencyCellValue(point,site.id)??point?.value
@@ -157,18 +180,21 @@ function headerValue(node:NodeOption,field:string):number|string|null{
    })
    return inspectorMedian(values)
   }
-  if(field==='verdict')return ({bad:0,warn:1,good:2,empty:null} as const)[rowVerdict(node).tone]??null
+  if(field==='verdict'){
+   const verdict=rowVerdict(node)
+   if(verdict.tone==='empty')return null
+   if(verdict.label.startsWith('部分站点不通'))return 2
+   return ({'连不上':0,'刚失败一次':1,'不稳定':3,'偶有失败':4,'偏慢':5,'能用':6} as Record<string,number>)[verdict.label]??null
+  }
   const target=field.slice(5),detailed=w.project.value==='latency'
   return latencyCellValue(detailed?latestLatencyRound(node):metricPoint(node,target),target,detailed)
  }
  if(field==='download'||field==='downloadTime'||field==='downloadPeak'){
-  if(evidence&&!evidence.reads.download.complete)return null
   const attempt=tableDownload(node)
   if(field==='download')return downloadReading(attempt)?.value??null
   if(field==='downloadPeak')return downloadPeakSpeed(attempt)??downloadAverageSpeed(attempt)
   return Date.parse(attempt?.finished_at||attempt?.result?.finished_at||'')||null
  }
- if(evidence&&!evidence.reads.service.complete)return null
  const landing=exitLanding(node,[...(evidence?.services||[]),...(w.services.value[key(node)]||[])])
  if(field==='purity')return landing.purity.score
  if(field==='cfChallenge')return landing.cfChallenge.rank
@@ -208,7 +234,7 @@ try{const raw=window.localStorage?.getItem('speedtest-page-size');if(raw!==null&
 const chosen=computed(()=>w.airports.value.filter(a=>w.selectedAirportIds.value?.includes(a.id))),totalPages=computed(()=>pageSize.value<=0?1:Math.max(1,Math.ceil(visibleNodes.value.length/pageSize.value))),pageNodes=computed(()=>pageSize.value<=0?visibleNodes.value.slice():visibleNodes.value.slice((currentPage.value-1)*pageSize.value,currentPage.value*pageSize.value))
 
 const weeklyDemand=computed(()=>{
- const nodes=w.page.value!=='home'||!usesWeeklyHistory.value?[]:weeklyFullScope.value?w.proxyNodes.value:pageNodes.value
+ const nodes=w.page.value!=='home'||!usesWeeklyHistory.value?[]:qualityGate.value==='response'?w.proxyNodes.value:weeklyColumn.value?baseVisibleNodes.value:pageNodes.value
  return new Map(nodes.map(node=>[weeklyHistoryKey(node),node]))
 })
 const weeklyProgress=computed(()=>{
@@ -402,21 +428,21 @@ watch([()=>w.search.value,()=>w.region.value,()=>w.subscription.value,()=>w.airp
 watch(()=>w.hours.value,()=>{presentation.clear();monitorGeneration++;monitorFetchedAt.clear();monitorData.value={};monitorErrors.value={};monitorHTTPData.value={};monitorHTTPErrors.value={}});watch(totalPages,count=>currentPage.value=Math.min(currentPage.value,count))
 watch([pageNodes,qualityView,qualityScopeKey],([nodes,quick,scope],[,,previousScope])=>{
  if(previousScope!==undefined&&scope!==previousScope){resetQualityState();qualityLoading.value=false
-  if((quick||siteSort.value!=='existing'||siteGate.value!=='all'||metricHeader.value)&&w.page.value==='home')void readQualityNodes(metricHeader.value||(quick?(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing'):(siteSort.value!=='existing'||siteGate.value!=='all'))?w.proxyNodes.value:nodes)
+  if((quick||modeQualityNeedsAll()||metricHeader.value)&&w.page.value==='home')void readCurrentQuality()
   return
  }
  if((quick||siteSort.value!=='existing'||siteGate.value!=='all')&&w.page.value==='home')void readQualityNodes(nodes)
 },{immediate:true})
-watch(()=>w.hours.value,()=>{if(qualityView.value||siteSort.value!=='existing'||siteGate.value!=='all')void readQualityNodes(metricHeader.value||(qualityView.value?(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing'):(siteSort.value!=='existing'||siteGate.value!=='all'))?w.proxyNodes.value:pageNodes.value,true);else{resetQualityState();qualityCutoff.value=new Date().toISOString()}})
+watch(()=>w.hours.value,()=>{if(qualityView.value||modeQualityNeedsAll()||metricHeader.value)void readCurrentQuality([],true);else{resetQualityState();qualityCutoff.value=new Date().toISOString()}})
 watch([pageNodes,()=>w.project.value,()=>w.hours.value],()=>{if(w.page.value==='home'){void w.ensureHistory(pageNodes.value);void readMonitor()}},{immediate:true})
-watch(()=>w.page.value,p=>{if(p==='home'){void w.ensureHistory(pageNodes.value);void readMonitor();if(qualityView.value||siteSort.value!=='existing'||siteGate.value!=='all')void readQualityNodes(metricHeader.value||(qualityView.value?(qualityGate.value!=='all'&&qualityGate.value!=='response'||qualitySort.value!=='existing'):(siteSort.value!=='existing'||siteGate.value!=='all'))?w.proxyNodes.value:pageNodes.value)}else{closeHover();monitorFetchedAt.clear();presentation.clear()}})
+watch(()=>w.page.value,p=>{if(p==='home'){void w.ensureHistory(pageNodes.value);void readMonitor();if(qualityView.value||modeQualityNeedsAll()||metricHeader.value)void readCurrentQuality()}else{closeHover();monitorFetchedAt.clear();presentation.clear()}})
 watch(()=>w.serviceIds.value,closeHover,{deep:true})
 watch(()=>w.displayServiceIds.value,()=>{servicePage.value=1;closeHover()},{deep:true})
 watch(servicePage,closeHover)
 watch(servicePages,count=>servicePage.value=Math.min(servicePage.value,count))
 watch([()=>w.project.value,()=>w.hours.value,currentPage],closeHover)
 watch(()=>w.displayTarget.value,()=>{if(keepOpen.value&&hoverNode.value){activeRound.value=null;inlineTab.value='history'}else closeHover()})
-provide(homeModelKey,{refreshWeekly,weeklyStats,weeklyErrors,weeklyProgress,weeklyReady,headerSort,headerSortReady,sortHeader,compareOpen,compareTarget,compareNodes:qualityCompareNodes,compareCompatible,comparisonDownloadStatus,closeComparison,servicePoints:(n:NodeOption,id:string)=>presentation.points(n,'service',w.displayTarget.value,id),hiddenSelectedCount,qualityFiltersPending,monitorData,monitorErrors,monitorHTTPErrors,httpPoints,visibleServices,servicePage,servicePages,servicesPerPage,chosen,filterProfiles,protocolChoices,protocolFilter,qualityGate,qualitySort,qualityLoading,qualityErrors,qualityCutoff,allQualityReady,readQualityNodes,siteSummaries,pageSize,setPageSize,pageNodes,visibleNodes,runNodes,currentPage,totalPages,picker,filterRegions,qualityData,nodeActivities,displayServices,sourceLabel,metricPoint,latestLatencyRound,latencyRowPoint,rowVerdict,siteMetric,siteContext,siteReason,sitePoints,rowPoints,downloadMetric,downloadMetricTone,downloadMetricContext,serviceMetric,serviceTone,shownService,showService,showServiceEvidence,hoverNode,hoverMode,hoverTarget,hoverService,hoverPoints,activeRound,inlineTab,inlineHistorySource,keepOpen,inspectRound,openRound,leaveRound,keepRound,closeHover,expandHistory,openComparison,openCombinedPlan,runLabel})
+provide(homeModelKey,{refreshWeekly,weeklyStats,weeklyErrors,weeklyProgress,weeklyReady,headerSort,headerSortReady,headerSortNote,sortHeader,compareOpen,compareTarget,compareNodes:qualityCompareNodes,compareCompatible,comparisonDownloadStatus,closeComparison,servicePoints:(n:NodeOption,id:string)=>presentation.points(n,'service',w.displayTarget.value,id),hiddenSelectedCount,qualityFiltersPending,monitorData,monitorErrors,monitorHTTPErrors,httpPoints,visibleServices,servicePage,servicePages,servicesPerPage,chosen,filterProfiles,protocolChoices,protocolFilter,qualityGate,qualitySort,qualityLoading,qualityErrors,qualityCutoff,allQualityReady,readQualityNodes,siteSummaries,pageSize,setPageSize,pageNodes,visibleNodes,runNodes,currentPage,totalPages,picker,filterRegions,qualityData,nodeActivities,displayServices,sourceLabel,metricPoint,latestLatencyRound,latencyRowPoint,rowVerdict,siteMetric,siteContext,siteReason,sitePoints,rowPoints,downloadMetric,downloadMetricTone,downloadMetricContext,serviceMetric,serviceTone,shownService,showService,showServiceEvidence,hoverNode,hoverMode,hoverTarget,hoverService,hoverPoints,activeRound,inlineTab,inlineHistorySource,keepOpen,inspectRound,openRound,leaveRound,keepRound,closeHover,expandHistory,openComparison,openCombinedPlan,runLabel})
 onMounted(()=>monitorTimer=setInterval(()=>{if(w.page.value==='home'&&document.visibilityState==='visible')void readMonitor(true)},30000));onBeforeUnmount(()=>{weeklyGeneration++;weeklyWaiting.clear();clearWeeklyBuffer();qualityGeneration++;clearQualityBuffer();latestServiceCache.clear();monitorFetchedAt.clear();presentation.clear();monitorGeneration++;clearTimeout(hoverTimer);clearInterval(monitorTimer)})
 </script>
 <template>
